@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use App\Repositories\MaterialRepository;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -31,7 +32,7 @@ class MaterialAnalyticsController extends Controller
         }
         
         if (!$organizationId) {
-            throw new \Exception('Контекст организации не определен');
+            throw new \Exception(trans_message('materials.organization_context_not_defined'));
         }
         
         return (int) $organizationId;
@@ -50,23 +51,18 @@ class MaterialAnalyticsController extends Controller
                 $dateTo
             );
 
-            return response()->json([
-                'success' => true,
-                'data' => $summary
-            ]);
+            return AdminResponse::success($summary, trans_message('materials.analytics_summary_success'));
 
         } catch (\Exception $e) {
-            Log::error('Ошибка получения сводки по материалам: ' . $e->getMessage(), [
+            Log::error('MaterialAnalyticsController@summary Exception', [
+                'message' => $e->getMessage(),
                 'user_id' => $request->user()?->id,
                 'date_from' => $request->get('date_from'),
                 'date_to' => $request->get('date_to'),
                 'trace' => $e->getTraceAsString()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка получения сводки по материалам'
-            ], 500);
+            return AdminResponse::error(trans_message('materials.analytics_summary_error'), 500);
         }
     }
 
@@ -89,22 +85,17 @@ class MaterialAnalyticsController extends Controller
                 $dateTo
             );
 
-            return response()->json([
-                'success' => true,
-                'data' => $usage
-            ]);
+            return AdminResponse::success($usage, trans_message('materials.analytics_usage_by_projects_success'));
 
         } catch (\Exception $e) {
-            Log::error('Ошибка получения использования материалов по проектам: ' . $e->getMessage(), [
+            Log::error('MaterialAnalyticsController@usageByProjects Exception', [
+                'message' => $e->getMessage(),
                 'user_id' => $request->user()?->id,
                 'project_ids' => $request->get('project_ids'),
                 'trace' => $e->getTraceAsString()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка получения использования материалов по проектам'
-            ], 500);
+            return AdminResponse::error(trans_message('materials.analytics_usage_by_projects_error'), 500);
         }
     }
 
@@ -127,22 +118,17 @@ class MaterialAnalyticsController extends Controller
                 $dateTo
             );
 
-            return response()->json([
-                'success' => true,
-                'data' => $usage
-            ]);
+            return AdminResponse::success($usage, trans_message('materials.analytics_usage_by_suppliers_success'));
 
         } catch (\Exception $e) {
-            Log::error('Ошибка получения использования материалов по поставщикам: ' . $e->getMessage(), [
+            Log::error('MaterialAnalyticsController@usageBySuppliers Exception', [
+                'message' => $e->getMessage(),
                 'user_id' => $request->user()?->id,
                 'supplier_ids' => $request->get('supplier_ids'),
                 'trace' => $e->getTraceAsString()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка получения использования материалов по поставщикам'
-            ], 500);
+            return AdminResponse::error(trans_message('materials.analytics_usage_by_suppliers_error'), 500);
         }
     }
 
@@ -157,22 +143,17 @@ class MaterialAnalyticsController extends Controller
                 (float) $threshold
             );
 
-            return response()->json([
-                'success' => true,
-                'data' => $materials
-            ]);
+            return AdminResponse::success($materials, trans_message('materials.analytics_low_stock_success'));
 
         } catch (\Exception $e) {
-            Log::error('Ошибка получения материалов с низким остатком: ' . $e->getMessage(), [
+            Log::error('MaterialAnalyticsController@lowStock Exception', [
+                'message' => $e->getMessage(),
                 'user_id' => $request->user()?->id,
                 'threshold' => $request->get('threshold'),
                 'trace' => $e->getTraceAsString()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка получения материалов с низким остатком'
-            ], 500);
+            return AdminResponse::error(trans_message('materials.analytics_low_stock_error'), 500);
         }
     }
 
@@ -193,22 +174,17 @@ class MaterialAnalyticsController extends Controller
                 $dateTo
             );
 
-            return response()->json([
-                'success' => true,
-                'data' => $materials
-            ]);
+            return AdminResponse::success($materials, trans_message('materials.analytics_most_used_success'));
 
         } catch (\Exception $e) {
-            Log::error('Ошибка получения наиболее используемых материалов: ' . $e->getMessage(), [
+            Log::error('MaterialAnalyticsController@mostUsed Exception', [
+                'message' => $e->getMessage(),
                 'user_id' => $request->user()?->id,
                 'period' => $request->get('period'),
                 'trace' => $e->getTraceAsString()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка получения наиболее используемых материалов'
-            ], 500);
+            return AdminResponse::error(trans_message('materials.analytics_most_used_error'), 500);
         }
     }
 
@@ -221,10 +197,7 @@ class MaterialAnalyticsController extends Controller
             $dateTo = $request->get('date_to');
 
             if (!$materialId) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Не указан ID материала'
-                ], 400);
+                return AdminResponse::error(trans_message('materials.analytics_material_id_required'), 400);
             }
 
             $history = $this->materialRepository->getMaterialCostHistory(
@@ -234,22 +207,17 @@ class MaterialAnalyticsController extends Controller
                 $dateTo
             );
 
-            return response()->json([
-                'success' => true,
-                'data' => $history
-            ]);
+            return AdminResponse::success($history, trans_message('materials.analytics_cost_history_success'));
 
         } catch (\Exception $e) {
-            Log::error('Ошибка получения истории стоимости материала: ' . $e->getMessage(), [
+            Log::error('MaterialAnalyticsController@costHistory Exception', [
+                'message' => $e->getMessage(),
                 'user_id' => $request->user()?->id,
                 'material_id' => $request->get('material_id'),
                 'trace' => $e->getTraceAsString()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка получения истории стоимости материала'
-            ], 500);
+            return AdminResponse::error(trans_message('materials.analytics_cost_history_error'), 500);
         }
     }
 
@@ -274,22 +242,17 @@ class MaterialAnalyticsController extends Controller
 
             $report = $this->materialRepository->getMaterialMovementReport($organizationId, $filters);
 
-            return response()->json([
-                'success' => true,
-                'data' => $report
-            ]);
+            return AdminResponse::success($report, trans_message('materials.analytics_movement_report_success'));
 
         } catch (\Exception $e) {
-            Log::error('Ошибка получения отчета по движению материалов: ' . $e->getMessage(), [
+            Log::error('MaterialAnalyticsController@movementReport Exception', [
+                'message' => $e->getMessage(),
                 'user_id' => $request->user()?->id,
                 'filters' => $request->all(),
                 'trace' => $e->getTraceAsString()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка получения отчета по движению материалов'
-            ], 500);
+            return AdminResponse::error(trans_message('materials.analytics_movement_report_error'), 500);
         }
     }
 
@@ -315,22 +278,17 @@ class MaterialAnalyticsController extends Controller
 
             $report = $this->materialRepository->getInventoryReport($organizationId, $filters);
 
-            return response()->json([
-                'success' => true,
-                'data' => $report
-            ]);
+            return AdminResponse::success($report, trans_message('materials.analytics_inventory_report_success'));
 
         } catch (\Exception $e) {
-            Log::error('Ошибка получения инвентаризационного отчета: ' . $e->getMessage(), [
+            Log::error('MaterialAnalyticsController@inventoryReport Exception', [
+                'message' => $e->getMessage(),
                 'user_id' => $request->user()?->id,
                 'filters' => $request->all(),
                 'trace' => $e->getTraceAsString()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка получения инвентаризационного отчета'
-            ], 500);
+            return AdminResponse::error(trans_message('materials.analytics_inventory_report_error'), 500);
         }
     }
 
@@ -351,22 +309,17 @@ class MaterialAnalyticsController extends Controller
 
             $report = $this->materialRepository->getMaterialCostDynamicsReport($organizationId, $filters);
 
-            return response()->json([
-                'success' => true,
-                'data' => $report
-            ]);
+            return AdminResponse::success($report, trans_message('materials.analytics_cost_dynamics_success'));
 
         } catch (\Exception $e) {
-            Log::error('Ошибка получения отчета по динамике стоимости: ' . $e->getMessage(), [
+            Log::error('MaterialAnalyticsController@costDynamicsReport Exception', [
+                'message' => $e->getMessage(),
                 'user_id' => $request->user()?->id,
                 'filters' => $request->all(),
                 'trace' => $e->getTraceAsString()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка получения отчета по динамике стоимости'
-            ], 500);
+            return AdminResponse::error(trans_message('materials.analytics_cost_dynamics_error'), 500);
         }
     }
 
@@ -389,22 +342,17 @@ class MaterialAnalyticsController extends Controller
                 $dateTo
             );
 
-            return response()->json([
-                'success' => true,
-                'data' => $analytics
-            ]);
+            return AdminResponse::success($analytics, trans_message('materials.analytics_project_analytics_success'));
 
         } catch (\Exception $e) {
-            Log::error('Ошибка получения аналитики материалов: ' . $e->getMessage(), [
+            Log::error('MaterialAnalyticsController@getMaterialAnalytics Exception', [
+                'message' => $e->getMessage(),
                 'user_id' => $request->user()?->id,
                 'project_id' => $request->route('project'),
                 'trace' => $e->getTraceAsString()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка получения аналитики материалов'
-            ], 500);
+            return AdminResponse::error(trans_message('materials.analytics_project_analytics_error'), 500);
         }
     }
 
@@ -426,22 +374,17 @@ class MaterialAnalyticsController extends Controller
 
             $costAnalytics = $this->materialRepository->getMaterialCostDynamicsReport($organizationId, $filters);
 
-            return response()->json([
-                'success' => true,
-                'data' => $costAnalytics
-            ]);
+            return AdminResponse::success($costAnalytics, trans_message('materials.analytics_cost_analytics_success'));
 
         } catch (\Exception $e) {
-            Log::error('Ошибка получения аналитики затрат: ' . $e->getMessage(), [
+            Log::error('MaterialAnalyticsController@getCostAnalytics Exception', [
+                'message' => $e->getMessage(),
                 'user_id' => $request->user()?->id,
                 'project_id' => $request->route('project'),
                 'trace' => $e->getTraceAsString()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка получения аналитики затрат'
-            ], 500);
+            return AdminResponse::error(trans_message('materials.analytics_cost_analytics_error'), 500);
         }
     }
 
@@ -462,22 +405,17 @@ class MaterialAnalyticsController extends Controller
 
             $movementReport = $this->materialRepository->getMaterialMovementReport($organizationId, $filters);
 
-            return response()->json([
-                'success' => true,
-                'data' => $movementReport
-            ]);
+            return AdminResponse::success($movementReport, trans_message('materials.analytics_usage_analytics_success'));
 
         } catch (\Exception $e) {
-            Log::error('Ошибка получения аналитики использования: ' . $e->getMessage(), [
+            Log::error('MaterialAnalyticsController@getUsageAnalytics Exception', [
+                'message' => $e->getMessage(),
                 'user_id' => $request->user()?->id,
                 'project_id' => $request->route('project'),
                 'trace' => $e->getTraceAsString()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка получения аналитики использования'
-            ], 500);
+            return AdminResponse::error(trans_message('materials.analytics_usage_analytics_error'), 500);
         }
     }
 } 

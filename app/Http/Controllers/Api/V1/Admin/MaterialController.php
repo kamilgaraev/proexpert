@@ -8,6 +8,7 @@ use App\Http\Requests\Api\V1\Admin\Material\UpdateMaterialRequest;
 use App\Http\Resources\Api\V1\Admin\MaterialResource;
 use App\Http\Resources\Api\V1\Admin\MaterialCollection;
 use App\Http\Resources\Api\V1\Admin\MeasurementUnitResource;
+use App\Http\Responses\AdminResponse;
 use App\Services\Material\MaterialService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -53,10 +54,19 @@ class MaterialController extends Controller
             $materials = $this->materialService->getMaterialsPaginated($request, (int)$perPage);
             return MaterialResource::collection($materials);
         } catch (BusinessLogicException $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: 400);
+            Log::error('MaterialController@index BusinessLogicException', [
+                'message' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
-            Log::error('Error in MaterialController@index', ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
-            return response()->json(['success' => false, 'message' => 'Внутренняя ошибка сервера при получении списка материалов.'], 500);
+            Log::error('MaterialController@index Exception', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('materials.internal_error_list'), 500);
         }
     }
 
@@ -66,10 +76,19 @@ class MaterialController extends Controller
             $material = $this->materialService->createMaterial($request->validated(), $request);
             return new MaterialResource($material->load('measurementUnit'));
         } catch (BusinessLogicException $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: 400);
+            Log::error('MaterialController@store BusinessLogicException', [
+                'message' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
-            Log::error('Error in MaterialController@store', ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
-            return response()->json(['success' => false, 'message' => 'Внутренняя ошибка сервера при создании материала.'], 500);
+            Log::error('MaterialController@store Exception', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('materials.internal_error_create'), 500);
         }
     }
 
@@ -78,7 +97,7 @@ class MaterialController extends Controller
         try {
             $material = $this->materialService->findMaterialById((int)$id, $request);
             if (!$material) {
-                return response()->json(['success' => false, 'message' => 'Материал не найден.'], 404);
+                return AdminResponse::error(trans_message('materials.not_found'), 404);
             }
             
             // Включаем нормы списания, если запрошено
@@ -88,10 +107,21 @@ class MaterialController extends Controller
             
             return new MaterialResource($material->load('measurementUnit'));
         } catch (BusinessLogicException $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: 400);
+            Log::error('MaterialController@show BusinessLogicException', [
+                'id' => $id,
+                'message' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
-            Log::error('Error in MaterialController@show', ['id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
-            return response()->json(['success' => false, 'message' => 'Внутренняя ошибка сервера при получении материала.'], 500);
+            Log::error('MaterialController@show Exception', [
+                'id' => $id,
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('materials.internal_error_get'), 500);
         }
     }
 
@@ -101,21 +131,32 @@ class MaterialController extends Controller
             $updatedSuccessfully = $this->materialService->updateMaterial((int)$id, $request->validated(), $request);
             
             if (!$updatedSuccessfully) { 
-                return response()->json(['success' => false, 'message' => 'Материал не найден или не удалось обновить.'], 404);
+                return AdminResponse::error(trans_message('materials.update_failed'), 404);
             }
             
             // После успешного обновления, снова получаем модель, чтобы вернуть актуальные данные
             $material = $this->materialService->findMaterialById((int)$id, $request);
             if (!$material) { // На всякий случай, если материал исчез между update и find
-                return response()->json(['success' => false, 'message' => 'Материал не найден после обновления.'], 404);
+                return AdminResponse::error(trans_message('materials.not_found_after_update'), 404);
             }
             
             return new MaterialResource($material->load('measurementUnit'));
         } catch (BusinessLogicException $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: 400);
+            Log::error('MaterialController@update BusinessLogicException', [
+                'id' => $id,
+                'message' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
-            Log::error('Error in MaterialController@update', ['id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
-            return response()->json(['success' => false, 'message' => 'Внутренняя ошибка сервера при обновлении материала.'], 500);
+            Log::error('MaterialController@update Exception', [
+                'id' => $id,
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('materials.internal_error_update'), 500);
         }
     }
 
@@ -124,14 +165,25 @@ class MaterialController extends Controller
         try {
             $success = $this->materialService->deleteMaterial((int)$id, $request);
             if (!$success) {
-                return response()->json(['success' => false, 'message' => 'Материал не найден или не удалось удалить.'], 404);
+                return AdminResponse::error(trans_message('materials.delete_failed'), 404);
             }
-            return response()->json(['success' => true, 'message' => 'Материал успешно удален.'], 200);
+            return AdminResponse::success(null, trans_message('materials.deleted'));
         } catch (BusinessLogicException $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: 400);
+            Log::error('MaterialController@destroy BusinessLogicException', [
+                'id' => $id,
+                'message' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
-            Log::error('Error in MaterialController@destroy', ['id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
-            return response()->json(['success' => false, 'message' => 'Внутренняя ошибка сервера при удалении материала.'], 500);
+            Log::error('MaterialController@destroy Exception', [
+                'id' => $id,
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('materials.internal_error_delete'), 500);
         }
     }
 
@@ -146,7 +198,7 @@ class MaterialController extends Controller
             $organizationId = $this->getOrganizationId($request);
             
             if (!$organizationId) {
-                return response()->json(['success' => false, 'message' => 'Organization ID не найден'], 400);
+                return AdminResponse::error(trans_message('materials.organization_not_found'), 400);
             }
             
             $materials = Material::where('organization_id', $organizationId)
@@ -169,28 +221,30 @@ class MaterialController extends Controller
                 ->orderBy('name')
                 ->get();
             
-            return response()->json([
-                'success' => true,
-                'data' => $materials->map(function($material) {
-                    return [
-                        'id' => $material->id,
-                        'name' => $material->name,
-                        'code' => $material->code,
-                        'category' => $material->category,
-                        'asset_type' => $material->additional_properties['asset_type'] ?? 'material',
-                        'measurement_unit_id' => $material->measurement_unit_id,
-                        'measurement_unit' => $material->measurementUnit ? [
-                            'id' => $material->measurementUnit->id,
-                            'name' => $material->measurementUnit->name,
-                            'short_name' => $material->measurementUnit->short_name,
-                        ] : null,
-                        'default_price' => (float)$material->default_price,
-                    ];
-                }),
-            ]);
+            $data = $materials->map(function($material) {
+                return [
+                    'id' => $material->id,
+                    'name' => $material->name,
+                    'code' => $material->code,
+                    'category' => $material->category,
+                    'asset_type' => $material->additional_properties['asset_type'] ?? 'material',
+                    'measurement_unit_id' => $material->measurement_unit_id,
+                    'measurement_unit' => $material->measurementUnit ? [
+                        'id' => $material->measurementUnit->id,
+                        'name' => $material->measurementUnit->name,
+                        'short_name' => $material->measurementUnit->short_name,
+                    ] : null,
+                    'default_price' => (float)$material->default_price,
+                ];
+            });
+            
+            return AdminResponse::success($data, trans_message('materials.autocomplete_success'));
         } catch (\Throwable $e) {
-            Log::error('Error in MaterialController@autocomplete', ['message' => $e->getMessage()]);
-            return response()->json(['success' => false, 'message' => 'Ошибка при поиске материалов'], 500);
+            Log::error('MaterialController@autocomplete Exception', [
+                'message' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('materials.internal_error_autocomplete'), 500);
         }
     }
 
@@ -199,14 +253,23 @@ class MaterialController extends Controller
         try {
             $units = $this->materialService->getMeasurementUnits($request);
             if (is_array($units) && isset($units['success']) && $units['success'] === false) {
-                return response()->json($units, isset($units['code']) ? $units['code'] : 400);
+                return AdminResponse::error($units['message'] ?? trans_message('materials.measurement_units_error'), $units['code'] ?? 400);
             }
-            return response()->json(['success' => true, 'data' => $units]);
+            return AdminResponse::success($units, trans_message('materials.measurement_units_retrieved'));
         } catch (BusinessLogicException $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: 400);
+            Log::error('MaterialController@getMeasurementUnits BusinessLogicException', [
+                'message' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
-            Log::error('Error in MaterialController@getMeasurementUnits', ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
-            return response()->json(['success' => false, 'message' => 'Внутренняя ошибка сервера при получении единиц измерения.'], 500);
+            Log::error('MaterialController@getMeasurementUnits Exception', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('materials.measurement_units_error'), 500);
         }
     }
 
@@ -230,18 +293,32 @@ class MaterialController extends Controller
                 $options
             );
 
-            return response()->json($result);
+            // Преобразуем результат сервиса в AdminResponse
+            if (isset($result['success']) && $result['success']) {
+                return AdminResponse::success($result['data'] ?? $result, $result['message'] ?? trans_message('materials.import_success'));
+            } else {
+                return AdminResponse::error($result['message'] ?? trans_message('materials.import_error'), $result['code'] ?? 400);
+            }
         } catch (\Illuminate\Validation\ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка валидации файла.',
+            Log::error('MaterialController@importMaterials ValidationException', [
                 'errors' => $e->errors(),
-            ], 422);
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('materials.import_validation_error'), 422, $e->errors());
         } catch (BusinessLogicException $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: 400);
+            Log::error('MaterialController@importMaterials BusinessLogicException', [
+                'message' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
-            Log::error('Error in MaterialController@importMaterials', ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
-            return response()->json(['success' => false, 'message' => 'Внутренняя ошибка сервера при импорте материалов.'], 500);
+            Log::error('MaterialController@importMaterials Exception', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('materials.import_error'), 500);
         }
     }
 
@@ -253,35 +330,34 @@ class MaterialController extends Controller
         try {
             $material = $this->materialService->findMaterialById($id, $request);
             if (!$material) {
-                return response()->json([
-                    'success' => false, 
-                    'message' => 'Материал не найден.'
-                ], 404);
+                return AdminResponse::error(trans_message('materials.not_found'), 404);
             }
 
             $rates = $material->getConsumptionRatesWithWorkTypes();
             
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'material_id' => $material->id,
-                    'material_name' => $material->name,
-                    'consumption_rates' => $rates
-                ]
-            ]);
+            $data = [
+                'material_id' => $material->id,
+                'material_name' => $material->name,
+                'consumption_rates' => $rates
+            ];
+            
+            return AdminResponse::success($data, trans_message('materials.consumption_rates_retrieved'));
         } catch (BusinessLogicException $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: 400);
-        } catch (\Throwable $e) {
-            Log::error('Error in MaterialController@getConsumptionRates', [
-                'id' => $id, 
-                'message' => $e->getMessage(), 
-                'file' => $e->getFile(), 
-                'line' => $e->getLine()
+            Log::error('MaterialController@getConsumptionRates BusinessLogicException', [
+                'id' => $id,
+                'message' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при получении норм списания материала.'
-            ], 500);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('MaterialController@getConsumptionRates Exception', [
+                'id' => $id,
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('materials.consumption_rates_error'), 500);
         }
     }
 
@@ -296,18 +372,15 @@ class MaterialController extends Controller
                 'consumption_rates' => 'required|array',
                 'consumption_rates.*' => 'numeric|min:0',
             ], [
-                'consumption_rates.required' => 'Необходимо указать нормы списания.',
-                'consumption_rates.array' => 'Нормы списания должны быть представлены в виде массива.',
-                'consumption_rates.*.numeric' => 'Нормы списания должны быть числовыми значениями.',
-                'consumption_rates.*.min' => 'Нормы списания не могут быть отрицательными.',
+                'consumption_rates.required' => trans_message('materials.consumption_rates_required'),
+                'consumption_rates.array' => trans_message('materials.consumption_rates_must_be_array'),
+                'consumption_rates.*.numeric' => trans_message('materials.consumption_rates_must_be_numeric'),
+                'consumption_rates.*.min' => trans_message('materials.consumption_rates_must_be_positive'),
             ]);
 
             $material = $this->materialService->findMaterialById($id, $request);
             if (!$material) {
-                return response()->json([
-                    'success' => false, 
-                    'message' => 'Материал не найден.'
-                ], 404);
+                return AdminResponse::error(trans_message('materials.not_found'), 404);
             }
 
             // Проверяем существование видов работ
@@ -315,10 +388,7 @@ class MaterialController extends Controller
             $existingWorkTypes = WorkType::whereIn('id', $workTypeIds)->get();
             
             if (count($workTypeIds) != $existingWorkTypes->count()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Некоторые виды работ не найдены.'
-                ], 422);
+                return AdminResponse::error(trans_message('materials.work_types_not_found'), 422);
             }
 
             // Получаем organization_id из middleware или материала
@@ -353,34 +423,36 @@ class MaterialController extends Controller
             $material->save();
 
             // Возвращаем обновленные данные
-            return response()->json([
-                'success' => true,
-                'message' => 'Нормы списания успешно обновлены.',
-                'data' => [
-                    'material_id' => $material->id,
-                    'material_name' => $material->name,
-                    'consumption_rates' => $material->getConsumptionRatesWithWorkTypes()
-                ]
-            ]);
+            $data = [
+                'material_id' => $material->id,
+                'material_name' => $material->name,
+                'consumption_rates' => $material->getConsumptionRatesWithWorkTypes()
+            ];
+            
+            return AdminResponse::success($data, trans_message('materials.consumption_rates_updated'));
         } catch (\Illuminate\Validation\ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка валидации данных.',
+            Log::error('MaterialController@updateConsumptionRates ValidationException', [
+                'id' => $id,
                 'errors' => $e->errors(),
-            ], 422);
-        } catch (BusinessLogicException $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: 400);
-        } catch (\Throwable $e) {
-            Log::error('Error in MaterialController@updateConsumptionRates', [
-                'id' => $id, 
-                'message' => $e->getMessage(), 
-                'file' => $e->getFile(), 
-                'line' => $e->getLine()
+                'user_id' => $request->user()?->id,
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при обновлении норм списания материала.'
-            ], 500);
+            return AdminResponse::error(trans_message('materials.consumption_rates_validation_error'), 422, $e->errors());
+        } catch (BusinessLogicException $e) {
+            Log::error('MaterialController@updateConsumptionRates BusinessLogicException', [
+                'id' => $id,
+                'message' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('MaterialController@updateConsumptionRates Exception', [
+                'id' => $id,
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('materials.consumption_rates_update_error'), 500);
         }
     }
 
@@ -392,62 +464,61 @@ class MaterialController extends Controller
         try {
             $material = $this->materialService->findMaterialById($id, $request);
             if (!$material) {
-                return response()->json([
-                    'success' => false, 
-                    'message' => 'Материал не найден.'
-                ], 404);
+                return AdminResponse::error(trans_message('materials.not_found'), 404);
             }
 
             // Проверка на наличие необходимых полей для интеграции
             $validationErrors = [];
             
             if (empty($material->external_code)) {
-                $validationErrors[] = 'Не указан внешний код материала для интеграции.';
+                $validationErrors[] = trans_message('materials.accounting_external_code_missing');
             }
             
             if (empty($material->sbis_nomenclature_code)) {
-                $validationErrors[] = 'Не указан код номенклатуры СБИС.';
+                $validationErrors[] = trans_message('materials.accounting_sbis_code_missing');
             }
             
             // Проверка соответствия единиц измерения
             if (empty($material->sbis_unit_code)) {
-                $validationErrors[] = 'Не указан код единицы измерения СБИС.';
+                $validationErrors[] = trans_message('materials.accounting_sbis_unit_missing');
             }
             
             // Проверка счета учета
             if (empty($material->accounting_account)) {
-                $validationErrors[] = 'Не указан счет учета в бухгалтерии.';
+                $validationErrors[] = trans_message('materials.accounting_account_missing');
             }
 
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'material_id' => $material->id,
-                    'material_name' => $material->name,
-                    'is_valid' => empty($validationErrors),
-                    'validation_errors' => $validationErrors,
-                    'accounting_data' => [
-                        'external_code' => $material->external_code,
-                        'sbis_nomenclature_code' => $material->sbis_nomenclature_code,
-                        'sbis_unit_code' => $material->sbis_unit_code,
-                        'accounting_account' => $material->accounting_account,
-                        'use_in_accounting_reports' => $material->use_in_accounting_reports,
-                    ]
+            $data = [
+                'material_id' => $material->id,
+                'material_name' => $material->name,
+                'is_valid' => empty($validationErrors),
+                'validation_errors' => $validationErrors,
+                'accounting_data' => [
+                    'external_code' => $material->external_code,
+                    'sbis_nomenclature_code' => $material->sbis_nomenclature_code,
+                    'sbis_unit_code' => $material->sbis_unit_code,
+                    'accounting_account' => $material->accounting_account,
+                    'use_in_accounting_reports' => $material->use_in_accounting_reports,
                 ]
-            ]);
+            ];
+            
+            return AdminResponse::success($data, trans_message('materials.accounting_validation_success'));
         } catch (BusinessLogicException $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: 400);
-        } catch (\Throwable $e) {
-            Log::error('Error in MaterialController@validateForAccounting', [
-                'id' => $id, 
-                'message' => $e->getMessage(), 
-                'file' => $e->getFile(), 
-                'line' => $e->getLine()
+            Log::error('MaterialController@validateForAccounting BusinessLogicException', [
+                'id' => $id,
+                'message' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при проверке материала для интеграции.'
-            ], 500);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('MaterialController@validateForAccounting Exception', [
+                'id' => $id,
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('materials.accounting_validation_error'), 500);
         }
     }
 
