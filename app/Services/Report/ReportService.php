@@ -132,21 +132,6 @@ class ReportService
     }
 
     /**
-     * Отчет по расходу материалов.
-     * 
-     * @deprecated Функциональность больше не поддерживается. 
-     *             Используйте модуль складского учета для отчетов по материалам.
-     * @return array|StreamedResponse
-     */
-    public function getMaterialUsageReport(Request $request): array | StreamedResponse
-    {
-        throw new BusinessLogicException(
-            'Отчет по расходу материалов больше не поддерживается. Используйте модуль складского учета.',
-            410 // 410 Gone - ресурс больше не доступен
-        );
-    }
-
-    /**
      * Отчет по выполненным работам.
      * @return array|StreamedResponse
      */

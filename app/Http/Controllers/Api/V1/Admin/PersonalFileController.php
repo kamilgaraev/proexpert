@@ -1,163 +1,130 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Str;
+use App\Http\Responses\AdminResponse;
+use App\Http\Requests\Api\V1\Admin\File\ListFilesRequest;
 use Illuminate\Http\JsonResponse;
 use App\Models\PersonalFile;
 use App\Services\Storage\FileService;
 use App\Services\Organization\OrganizationContext;
-use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 
+use function trans_message;
+
+/**
+ * Контроллер личных файлов пользователя
+ */
 class PersonalFileController extends Controller
 {
-    /**
-     * Список файлов и папок пользователя (по префиксу path, по умолчанию корень).
-     */
-    public function index(Request $request): JsonResponse
-    {
-        $user = $request->user();
-        $prefix = $request->get('path', ''); // '' значит корень
-        $prefix = trim($prefix, '/');
-        if ($prefix !== '') {
-            $prefix .= '/';
-        }
-
-        $basePrefix = $user->id . '/';
-        $fullPrefix = $basePrefix . $prefix; // если $prefix пустой – получится "<uid>/"
-
-        $query = PersonalFile::where('user_id', $user->id)
-            ->where('path', 'like', $fullPrefix . '%');
-
-        /** @var FileService $fs */
-        $fs = app(FileService::class);
-        $org = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
-        $storage = $fs->disk($org);
-        $items = $query->orderBy('is_folder', 'desc')->orderBy('filename')->get()->map(function (PersonalFile $file) use ($storage) {
-            return [
-                'id'       => $file->id,
-                'path'     => $file->path,
-                'filename' => $file->filename,
-                'size'     => $file->size,
-                'is_folder'=> (bool) $file->is_folder,
-                'download_url' => $file->is_folder ? null : $storage->temporaryUrl($file->path, now()->addMinutes(30)),
-            ];
-        });
-
-        return response()->json($items);
+    public function __construct(
+        protected FileService $fileService
+    ) {
     }
 
     /**
-     * Создание папки.
+     * Получить список личных файлов
      */
-    public function createFolder(Request $request): JsonResponse
+    public function index(ListFilesRequest $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'name' => ['required', 'string', 'max:255'],
-            'parent_path' => ['sometimes', 'string'],
-        ]);
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-        $user = $request->user();
-        $data = $validator->validated();
-        $parent = isset($data['parent_path']) ? trim($data['parent_path'], '/') . '/' : '';
-        $folderName = trim($data['name'], '/');
-        $path = $user->id . '/' . $parent . $folderName . '/';
+        try {
+            $user = $request->user();
+            $params = $request->validated();
+            $sortBy = $params['sort_by'] ?? 'created_at';
+            $sortDir = $params['sort_dir'] ?? 'desc';
+            $perPage = (int)($params['per_page'] ?? 15);
 
-        if (PersonalFile::where('path', $path)->exists()) {
-            return response()->json(['message' => 'Folder already exists.'], 409);
-        }
+            $query = PersonalFile::where('user_id', $user->id)
+                ->where('is_folder', false);
 
-        // Создаём zero-byte объект для папки (S3 не хранит папки реально)
-        $fs = app(FileService::class);
-        $storage = $fs->disk(OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization);
-        $storage->put($path, '');
-
-        PersonalFile::create([
-            'user_id'  => $user->id,
-            'path'     => $path,
-            'filename' => $folderName,
-            'size'     => 0,
-            'is_folder'=> true,
-        ]);
-
-        return response()->json(['message' => 'Folder created.']);
-    }
-
-    /**
-     * Загрузка файла (Multipart form-data: file, parent_path).
-     */
-    public function upload(Request $request): JsonResponse
-    {
-        $validator = Validator::make($request->all(), [
-            'file' => ['required', 'file', 'max:10240'], // 10 MB default limit
-            'parent_path' => ['sometimes', 'string'],
-        ]);
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-        $user = $request->user();
-        $data = $validator->validated();
-        $parent = isset($data['parent_path']) ? trim($data['parent_path'], '/') . '/' : '';
-        $uploaded = $request->file('file');
-        $filename = $uploaded->getClientOriginalName();
-        $path = $user->id . '/' . $parent . $filename;
-
-        $fs = app(FileService::class);
-        $storage = $fs->disk(OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization);
-        if ($storage->exists($path)) {
-            return response()->json(['message' => 'File already exists.'], 409);
-        }
-
-        $fs = app(FileService::class);
-        $storage = $fs->disk(OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization);
-        $storage->put($path, file_get_contents($uploaded->getRealPath()));
-
-        PersonalFile::create([
-            'user_id'  => $user->id,
-            'path'     => $path,
-            'filename' => $filename,
-            'size'     => $uploaded->getSize(),
-            'is_folder'=> false,
-        ]);
-
-        return response()->json(['message' => 'File uploaded.']);
-    }
-
-    /**
-     * Удаление файла или папки.
-     */
-    public function destroy(Request $request, string $id): JsonResponse
-    {
-        $user = $request->user();
-        $file = PersonalFile::where('id', $id)->where('user_id', $user->id)->first();
-        if (!$file) {
-            return response()->json(['message' => 'Not found.'], 404);
-        }
-
-        $fs = app(FileService::class);
-        $storage = $fs->disk(OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization);
-
-        if ($file->is_folder) {
-            // удаляем все объекты с этим префиксом
-            $objects = $storage->allFiles($file->path);
-            foreach ($objects as $obj) {
-                $storage->delete($obj);
-                PersonalFile::where('path', $obj)->delete();
+            if (isset($params['folder'])) {
+                $query->where('path', 'like', $user->id . '/' . $params['folder'] . '%');
             }
-            // удаляем саму папку-объект, если он есть
-            $storage->delete($file->path);
-        } else {
-            $storage->delete($file->path);
+
+            if (isset($params['filename'])) {
+                $query->where('filename', 'like', '%' . $params['filename'] . '%');
+            }
+
+            if (isset($params['date_from'])) {
+                $query->whereDate('created_at', '>=', $params['date_from']);
+            }
+
+            if (isset($params['date_to'])) {
+                $query->whereDate('created_at', '<=', $params['date_to']);
+            }
+
+            $query->orderBy($sortBy, $sortDir);
+            $paginator = $query->paginate($perPage);
+
+            $org = OrganizationContext::getOrganization() ?? $user->currentOrganization;
+            $storage = $this->fileService->disk($org);
+
+            $paginator->getCollection()->transform(function (PersonalFile $file) use ($storage) {
+                $file->download_url = null;
+                try {
+                    if ($storage->exists($file->path)) {
+                        $file->download_url = $storage->temporaryUrl($file->path, now()->addHours(1));
+                    }
+                } catch (\Exception $e) {
+                    Log::warning('[PersonalFileController] Failed to create temporary URL', [
+                        'file_id' => $file->id
+                    ]);
+                }
+                return $file;
+            });
+
+            return AdminResponse::success(
+                $paginator->items(),
+                trans_message('files.files_loaded'),
+                200,
+                [
+                    'current_page' => $paginator->currentPage(),
+                    'last_page' => $paginator->lastPage(),
+                    'per_page' => $paginator->perPage(),
+                    'total' => $paginator->total(),
+                ]
+            );
+        } catch (\Throwable $e) {
+            Log::error('[PersonalFileController] Error loading personal files', [
+                'error' => $e->getMessage()
+            ]);
+            return AdminResponse::error(trans_message('files.load_failed'), 500);
         }
-
-        $file->delete();
-
-        return response()->json(['message' => 'Deleted.']);
     }
-} 
+
+    /**
+     * Удалить личный файл
+     */
+    public function destroy(int $id): JsonResponse
+    {
+        try {
+            $user = request()->user();
+
+            $file = PersonalFile::where('user_id', $user->id)
+                ->where('id', $id)
+                ->firstOrFail();
+
+            $org = OrganizationContext::getOrganization() ?? $user->currentOrganization;
+            $storage = $this->fileService->disk($org);
+
+            if ($storage->exists($file->path)) {
+                $storage->delete($file->path);
+            }
+
+            $file->delete();
+
+            return AdminResponse::success(null, trans_message('files.deleted'));
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return AdminResponse::error(trans_message('files.not_found'), 404);
+        } catch (\Throwable $e) {
+            Log::error('[PersonalFileController] Error deleting personal file', [
+                'error' => $e->getMessage(),
+                'file_id' => $id
+            ]);
+            return AdminResponse::error(trans_message('files.delete_failed'), 500);
+        }
+    }
+}

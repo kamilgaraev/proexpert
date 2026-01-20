@@ -1,124 +1,102 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use App\Services\Report\AdvanceAccountReportService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Auth;
 
+use function trans_message;
+
+/**
+ * Контроллер отчётов по подотчётным средствам
+ */
 class AdvanceAccountReportController extends Controller
 {
-    protected $reportService;
-
-    /**
-     * Конструктор контроллера.
-     *
-     * @param AdvanceAccountReportService $reportService
-     */
-    public function __construct(AdvanceAccountReportService $reportService)
-    {
-        $this->reportService = $reportService;
-        // Авторизация настроена на уровне роутов через middleware стек
+    public function __construct(
+        protected AdvanceAccountReportService $reportService
+    ) {
     }
 
     /**
-     * Получить сводный отчет по подотчетным средствам.
-     *
-     * @param Request $request
-     * @return JsonResponse
+     * Получить сводный отчёт по подотчётным средствам
+     * 
+     * GET /api/v1/admin/advance-accounts/reports/summary
      */
     public function summary(Request $request): JsonResponse
     {
-        $filters = $request->only([
-            'date_from', 'date_to'
-        ]);
-        
-        // Устанавливаем текущую организацию
-        $filters['organization_id'] = Auth::user()->current_organization_id;
+        try {
+            $filters = $request->only(['date_from', 'date_to']);
+            $filters['organization_id'] = $request->user()->current_organization_id;
 
-        $report = $this->reportService->getSummaryReport($filters);
-        return response()->json($report);
+            $report = $this->reportService->getSummaryReport($filters);
+            
+            return AdminResponse::success($report, trans_message('advance_account.summary_loaded'));
+        } catch (\Throwable $e) {
+            return AdminResponse::error(trans_message('advance_account.report_failed'), 500);
+        }
     }
 
     /**
-     * Получить отчет по подотчетным средствам конкретного пользователя.
-     *
-     * @param Request $request
-     * @param int $userId
-     * @return JsonResponse
+     * Получить отчёт по подотчётным средствам конкретного пользователя
+     * 
+     * GET /api/v1/admin/advance-accounts/reports/user/{userId}
      */
     public function userReport(Request $request, int $userId): JsonResponse
     {
-        $filters = $request->only([
-            'date_from', 'date_to'
-        ]);
-        
-        // Устанавливаем текущую организацию и пользователя
-        $filters['organization_id'] = Auth::user()->current_organization_id;
-        $filters['user_id'] = $userId;
+        try {
+            $filters = $request->only(['date_from', 'date_to']);
+            $filters['organization_id'] = $request->user()->current_organization_id;
+            $filters['user_id'] = $userId;
 
-        $report = $this->reportService->getUserReport($filters);
-        return response()->json($report);
+            $report = $this->reportService->getUserReport($filters);
+            
+            return AdminResponse::success($report, trans_message('advance_account.user_report_loaded'));
+        } catch (\Throwable $e) {
+            return AdminResponse::error(trans_message('advance_account.report_failed'), 500);
+        }
     }
 
     /**
-     * Получить отчет по подотчетным средствам по проекту.
-     *
-     * @param Request $request
-     * @param int $projectId
-     * @return JsonResponse
+     * Получить отчёт по подотчётным средствам по проекту
+     * 
+     * GET /api/v1/admin/advance-accounts/reports/project/{projectId}
      */
     public function projectReport(Request $request, int $projectId): JsonResponse
     {
-        $filters = $request->only([
-            'date_from', 'date_to'
-        ]);
-        
-        // Устанавливаем текущую организацию и проект
-        $filters['organization_id'] = Auth::user()->current_organization_id;
-        $filters['project_id'] = $projectId;
+        try {
+            $filters = $request->only(['date_from', 'date_to']);
+            $filters['organization_id'] = $request->user()->current_organization_id;
+            $filters['project_id'] = $projectId;
 
-        $report = $this->reportService->getProjectReport($filters);
-        return response()->json($report);
+            $report = $this->reportService->getProjectReport($filters);
+            
+            return AdminResponse::success($report, trans_message('advance_account.project_report_loaded'));
+        } catch (\Throwable $e) {
+            return AdminResponse::error(trans_message('advance_account.report_failed'), 500);
+        }
     }
 
     /**
-     * Получить отчет по просроченным подотчетным средствам.
-     *
-     * @param Request $request
-     * @return JsonResponse
+     * Получить отчёт по просроченным подотчётным средствам
+     * 
+     * GET /api/v1/admin/advance-accounts/reports/overdue
      */
     public function overdueReport(Request $request): JsonResponse
     {
-        $filters = $request->only([
-            'overdue_days'
-        ]);
-        
-        // Устанавливаем текущую организацию
-        $filters['organization_id'] = Auth::user()->current_organization_id;
+        try {
+            $filters = $request->only(['overdue_days']);
+            $filters['organization_id'] = $request->user()->current_organization_id;
 
-        $report = $this->reportService->getOverdueReport($filters);
-        return response()->json($report);
+            $report = $this->reportService->getOverdueReport($filters);
+            
+            return AdminResponse::success($report, trans_message('advance_account.overdue_report_loaded'));
+        } catch (\Throwable $e) {
+            return AdminResponse::error(trans_message('advance_account.report_failed'), 500);
+        }
     }
-
-    /**
-     * Экспорт отчета в указанном формате.
-     *
-     * @param Request $request
-     * @param string $format
-     * @return \Symfony\Component\HttpFoundation\Response
-     */
-    public function export(Request $request, string $format)
-    {
-        $filters = $request->only([
-            'date_from', 'date_to', 'user_id', 'project_id', 'report_type'
-        ]);
-        
-        // Устанавливаем текущую организацию
-        $filters['organization_id'] = Auth::user()->current_organization_id;
-
-        return $this->reportService->exportReport($filters, $format);
-    }
-} 
+}

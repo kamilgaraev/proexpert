@@ -1,41 +1,42 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Validator;
+use App\Http\Responses\AdminResponse;
+use App\Http\Requests\Api\V1\Admin\File\ListFilesRequest;
 use Illuminate\Http\JsonResponse;
 use App\Models\PersonalFile;
 use App\Services\Storage\FileService;
 use App\Services\Organization\OrganizationContext;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
-use Exception;
 
+use function trans_message;
+
+/**
+ * Контроллер файлов актов
+ */
 class ActFileController extends Controller
 {
-    const ACT_FILES_FOLDER = 'acts';
+    private const ACT_FILES_FOLDER = 'acts';
 
-    public function index(Request $request): JsonResponse
+    public function __construct(
+        protected FileService $fileService
+    ) {
+    }
+
+    /**
+     * Получить список файлов актов
+     * 
+     * GET /api/v1/admin/act-files
+     */
+    public function index(ListFilesRequest $request): JsonResponse
     {
         try {
             $user = $request->user();
-            
-            $validator = Validator::make($request->all(), [
-                'filename' => ['sometimes', 'string'],
-                'date_from' => ['sometimes', 'date'],
-                'date_to' => ['sometimes', 'date'],
-                'sort_by' => ['sometimes', 'in:created_at,size,filename'],
-                'sort_dir' => ['sometimes', 'in:asc,desc'],
-                'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
-            ]);
-
-            if ($validator->fails()) {
-                return response()->json(['errors' => $validator->errors()], 422);
-            }
-
-            $params = $validator->validated();
+            $params = $request->validated();
             $sortBy = $params['sort_by'] ?? 'created_at';
             $sortDir = $params['sort_dir'] ?? 'desc';
             $perPage = (int)($params['per_page'] ?? 15);
@@ -59,147 +60,111 @@ class ActFileController extends Controller
             }
 
             $query->orderBy($sortBy, $sortDir);
-
             $paginator = $query->paginate($perPage);
 
-            $fs = app(FileService::class);
-            $org = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
-            $storage = $fs->disk($org);
+            $org = OrganizationContext::getOrganization() ?? $user->currentOrganization;
+            $storage = $this->fileService->disk($org);
 
             $paginator->getCollection()->transform(function (PersonalFile $file) use ($storage) {
-                $downloadUrl = null;
+                $file->download_url = null;
                 try {
                     if ($storage->exists($file->path)) {
-                        $downloadUrl = $storage->temporaryUrl($file->path, now()->addHours(1));
+                        $file->download_url = $storage->temporaryUrl($file->path, now()->addHours(1));
                     }
-                } catch (Exception $e) {
-                    Log::warning('Не удалось создать временный URL для файла акта', [
+                } catch (\Exception $e) {
+                    Log::warning('[ActFileController] Failed to create temporary URL', [
                         'file_id' => $file->id,
                         'error' => $e->getMessage()
                     ]);
                 }
-
-                return [
-                    'id' => $file->id,
-                    'filename' => $file->filename,
-                    'size' => $file->size,
-                    'created_at' => $file->created_at?->toIso8601String(),
-                    'download_url' => $downloadUrl,
-                ];
+                return $file;
             });
 
-            return response()->json($paginator);
-
-        } catch (Exception $e) {
-            Log::error('Ошибка получения файлов актов', [
+            return AdminResponse::success(
+                $paginator->items(),
+                trans_message('files.files_loaded'),
+                200,
+                [
+                    'current_page' => $paginator->currentPage(),
+                    'last_page' => $paginator->lastPage(),
+                    'per_page' => $paginator->perPage(),
+                    'total' => $paginator->total(),
+                ]
+            );
+        } catch (\Throwable $e) {
+            Log::error('[ActFileController] Error loading act files', [
                 'error' => $e->getMessage()
             ]);
-            
-            return response()->json([
-                'error' => 'Ошибка при получении файлов актов',
-                'message' => $e->getMessage()
-            ], 500);
+            return AdminResponse::error(trans_message('files.load_failed'), 500);
         }
     }
 
-    public function download(Request $request, string $id)
+    /**
+     * Получить конкретный файл акта
+     * 
+     * GET /api/v1/admin/act-files/{id}
+     */
+    public function show(int $id): JsonResponse
     {
         try {
-            $user = $request->user();
-
-            $file = PersonalFile::where('id', $id)
-                ->where('user_id', $user->id)
-                ->first();
-
-            if (!$file) {
-                return response()->json(['error' => 'Файл не найден'], 404);
-            }
-
+            $user = request()->user();
             $actFilesPath = $user->id . '/' . self::ACT_FILES_FOLDER . '/';
-            if (!str_starts_with($file->path, $actFilesPath)) {
-                return response()->json(['error' => 'Файл не является файлом акта'], 403);
+
+            $file = PersonalFile::where('user_id', $user->id)
+                ->where('path', 'like', $actFilesPath . '%')
+                ->where('id', $id)
+                ->firstOrFail();
+
+            $org = OrganizationContext::getOrganization() ?? $user->currentOrganization;
+            $storage = $this->fileService->disk($org);
+
+            $file->download_url = null;
+            if ($storage->exists($file->path)) {
+                $file->download_url = $storage->temporaryUrl($file->path, now()->addHours(1));
             }
 
-            $fs = app(FileService::class);
-            $org = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
-            $storage = $fs->disk($org);
-
-            if (!$storage->exists($file->path)) {
-                return response()->json(['error' => 'Файл не найден в хранилище'], 404);
-            }
-
-            $contents = $storage->get($file->path);
-            
-            $mimeType = $storage->mimeType($file->path) ?? 'application/octet-stream';
-            
-            return response($contents, 200, [
-                'Content-Type' => $mimeType,
-                'Content-Disposition' => 'attachment; filename="' . $file->filename . '"',
-                'Content-Length' => strlen($contents)
-            ]);
-
-        } catch (Exception $e) {
-            Log::error('Ошибка скачивания файла акта из личного хранилища', [
-                'file_id' => $id,
-                'error' => $e->getMessage()
-            ]);
-            
-            return response()->json([
-                'error' => 'Ошибка при скачивании файла',
-                'message' => $e->getMessage()
-            ], 500);
+            return AdminResponse::success($file, trans_message('files.file_found'));
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return AdminResponse::error(trans_message('files.not_found'), 404);
+        } catch (\Throwable $e) {
+            return AdminResponse::error(trans_message('files.operation_failed'), 500);
         }
     }
 
-    public function destroy(Request $request, string $id): JsonResponse
+    /**
+     * Удалить файл акта
+     * 
+     * DELETE /api/v1/admin/act-files/{id}
+     */
+    public function destroy(int $id): JsonResponse
     {
         try {
-            $user = $request->user();
-
-            $file = PersonalFile::where('id', $id)
-                ->where('user_id', $user->id)
-                ->first();
-
-            if (!$file) {
-                return response()->json(['error' => 'Файл не найден'], 404);
-            }
-
+            $user = request()->user();
             $actFilesPath = $user->id . '/' . self::ACT_FILES_FOLDER . '/';
-            if (!str_starts_with($file->path, $actFilesPath)) {
-                return response()->json(['error' => 'Файл не является файлом акта'], 403);
-            }
 
-            $fs = app(FileService::class);
-            $org = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
-            $storage = $fs->disk($org);
+            $file = PersonalFile::where('user_id', $user->id)
+                ->where('path', 'like', $actFilesPath . '%')
+                ->where('id', $id)
+                ->firstOrFail();
 
-            try {
-                if ($storage->exists($file->path)) {
-                    $storage->delete($file->path);
-                }
-            } catch (Exception $e) {
-                Log::warning('Не удалось удалить файл из хранилища', [
-                    'file_id' => $file->id,
-                    'path' => $file->path,
-                    'error' => $e->getMessage()
-                ]);
+            $org = OrganizationContext::getOrganization() ?? $user->currentOrganization;
+            $storage = $this->fileService->disk($org);
+
+            if ($storage->exists($file->path)) {
+                $storage->delete($file->path);
             }
 
             $file->delete();
 
-            return response()->json(['message' => 'Файл успешно удален']);
-
-        } catch (Exception $e) {
-            Log::error('Ошибка удаления файла акта из личного хранилища', [
-                'file_id' => $id,
-                'error' => $e->getMessage()
+            return AdminResponse::success(null, trans_message('files.deleted'));
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return AdminResponse::error(trans_message('files.not_found'), 404);
+        } catch (\Throwable $e) {
+            Log::error('[ActFileController] Error deleting act file', [
+                'error' => $e->getMessage(),
+                'file_id' => $id
             ]);
-            
-            return response()->json([
-                'error' => 'Ошибка при удалении файла',
-                'message' => $e->getMessage()
-            ], 500);
+            return AdminResponse::error(trans_message('files.delete_failed'), 500);
         }
     }
 }
-
