@@ -23,7 +23,7 @@ class ProjectHistoryAnalysisService
         $maxArea = $area * 1.2;
 
         $similarProjects = Project::where('organization_id', $organizationId)
-            ->whereBetween('total_area', [$minArea, $maxArea])
+            ->whereBetween('site_area_m2', [$minArea, $maxArea])
             ->when($buildingType, function ($query, $buildingType) {
                 $query->where('building_type', $buildingType);
             })
@@ -74,7 +74,7 @@ class ProjectHistoryAnalysisService
         $volumes = [];
 
         foreach ($projects as $project) {
-            $projectArea = $project->total_area ?: 1;
+            $projectArea = $project->site_area_m2 ?: 1;
             
             foreach ($project->estimates as $estimate) {
                 foreach ($estimate->items as $item) {
