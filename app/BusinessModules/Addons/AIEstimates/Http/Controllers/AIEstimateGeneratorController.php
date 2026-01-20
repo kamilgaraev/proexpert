@@ -60,7 +60,11 @@ class AIEstimateGeneratorController extends Controller
 
             return AdminResponse::success($data, trans_message('ai_estimates.generation_success'));
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('[AIEstimates] Generation failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
             return AdminResponse::error(trans_message('ai_estimates.generation_error'), 500);
         }
     }
@@ -91,7 +95,11 @@ class AIEstimateGeneratorController extends Controller
 
             return AdminResponse::success($data);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('[AIEstimates] History load failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
             return AdminResponse::error(trans_message('ai_estimates.history_load_error'), 500);
         }
     }
@@ -114,7 +122,11 @@ class AIEstimateGeneratorController extends Controller
 
             return AdminResponse::success(new AIGenerationHistoryResource($generation));
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('[AIEstimates] Show generation failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
             return AdminResponse::error(trans_message('ai_estimates.generation_data_error'), 500);
         }
     }
@@ -146,7 +158,11 @@ class AIEstimateGeneratorController extends Controller
 
             return AdminResponse::success($data, trans_message('ai_estimates.feedback_success'));
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('[AIEstimates] Feedback failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
             return AdminResponse::error(trans_message('ai_estimates.feedback_error'), 500);
         }
     }
@@ -172,7 +188,11 @@ class AIEstimateGeneratorController extends Controller
 
             return AdminResponse::success($exportResult, trans_message('ai_estimates.export_success'));
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('[AIEstimates] Export failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
             return AdminResponse::error(trans_message('ai_estimates.export_error'), 500);
         }
     }
@@ -186,7 +206,13 @@ class AIEstimateGeneratorController extends Controller
 
             return AdminResponse::success($limitInfo);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('[AIEstimates] Usage limits failed', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ]);
             return AdminResponse::error(trans_message('ai_estimates.limits_error'), 500);
         }
     }
@@ -200,7 +226,11 @@ class AIEstimateGeneratorController extends Controller
 
             return AdminResponse::success(null, trans_message('ai_estimates.cache_cleared'));
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('[AIEstimates] Cache clear failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
             return AdminResponse::error(trans_message('ai_estimates.cache_clear_error'), 500);
         }
     }
