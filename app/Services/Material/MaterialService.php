@@ -4,7 +4,6 @@ namespace App\Services\Material;
 
 use App\Repositories\Interfaces\MaterialRepositoryInterface;
 use App\Repositories\Interfaces\MeasurementUnitRepositoryInterface;
-use App\Repositories\Interfaces\Log\MaterialUsageLogRepositoryInterface;
 use App\Services\Logging\LoggingService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Database\Eloquent\Collection;
@@ -22,18 +21,15 @@ class MaterialService
 {
     protected MaterialRepositoryInterface $materialRepository;
     protected MeasurementUnitRepositoryInterface $measurementUnitRepository;
-    protected MaterialUsageLogRepositoryInterface $materialUsageLogRepository;
     protected LoggingService $logging;
 
     public function __construct(
         MaterialRepositoryInterface $materialRepository,
         MeasurementUnitRepositoryInterface $measurementUnitRepository,
-        MaterialUsageLogRepositoryInterface $materialUsageLogRepository,
         LoggingService $logging
     ) {
         $this->materialRepository = $materialRepository;
         $this->measurementUnitRepository = $measurementUnitRepository;
-        $this->materialUsageLogRepository = $materialUsageLogRepository;
         $this->logging = $logging;
     }
 
@@ -232,48 +228,16 @@ class MaterialService
             ->groupBy('materials.id', 'materials.name', 'materials.measurement_unit_id', 'measurement_units.short_name')
             ->get();
 
-        if ($balances->isNotEmpty()) {
-            return $balances->map(function ($balance) {
-                return [
-                    'material_id' => $balance->material_id,
-                    'material_name' => $balance->material_name,
-                    'measurement_unit_id' => $balance->measurement_unit_id,
-                    'measurement_unit_symbol' => $balance->measurement_unit_symbol,
-                    'current_balance' => (float) $balance->current_balance,
-                ];
-            });
-        }
-
-        $logsPaginator = $this->materialUsageLogRepository->getPaginatedLogs(
-            $organizationId, 
-            100000, 
-            ['project_id' => $projectId],
-            'usage_date', 
-            'asc'
-        );
-        $allLogs = collect($logsPaginator->items());
-
-        $calculatedBalances = [];
-
-        foreach ($allLogs as $log) {
-            if (!isset($calculatedBalances[$log->material_id])) {
-                $calculatedBalances[$log->material_id] = [
-                    'material_id' => $log->material_id,
-                    'material_name' => $log->material?->name,
-                    'measurement_unit_id' => $log->material?->measurementUnit?->id,
-                    'measurement_unit_symbol' => $log->material?->measurementUnit?->short_name,
-                    'current_balance' => 0,
-                ];
-            }
-
-            if ($log->operation_type === 'receipt') {
-                $calculatedBalances[$log->material_id]['current_balance'] += $log->quantity;
-            } elseif ($log->operation_type === 'write_off') {
-                $calculatedBalances[$log->material_id]['current_balance'] -= $log->quantity;
-            }
-        }
-
-        return collect(array_values($calculatedBalances));
+        // Возвращаем данные из warehouse_balances (уже получены выше)
+        return $balances->map(function ($balance) {
+            return [
+                'material_id' => $balance->material_id,
+                'material_name' => $balance->material_name,
+                'measurement_unit_id' => $balance->measurement_unit_id,
+                'measurement_unit_symbol' => $balance->measurement_unit_symbol,
+                'current_balance' => (float) $balance->current_balance,
+            ];
+        });
     }
 
     public function getMaterialBalancesByMaterial(int $materialId, int $perPage = 15, ?int $projectId = null, string $sortBy = 'created_at', string $sortDirection = 'desc'): array
