@@ -199,6 +199,9 @@ class AIEstimateGeneratorController extends Controller
 
     public function usageLimits(Request $request, Project $project): JsonResponse
     {
+        // Временное логирование для отладки
+        \Illuminate\Support\Facades\Log::info('Entering usageLimits controller method');
+        
         try {
             /** @var \App\Models\User $user */
             $user = Auth::user();

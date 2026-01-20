@@ -27,7 +27,9 @@ class AIEstimateGenerationService
         protected ProjectHistoryAnalysisService $historyAnalysisService,
         protected EstimateBuilderService $estimateBuilderService,
         protected UsageLimitService $usageLimitService,
-    ) {}
+    ) {
+        \Illuminate\Support\Facades\Log::info('AIEstimateGenerationService instantiated');
+    }
 
     public function generate(AIEstimateRequestDTO $request): AIEstimateResponseDTO
     {

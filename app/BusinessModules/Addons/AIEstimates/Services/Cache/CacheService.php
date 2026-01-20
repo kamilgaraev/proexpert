@@ -13,6 +13,7 @@ class CacheService
         protected CacheKeyGenerator $keyGenerator
     ) {
         $this->defaultTtl = config('ai-estimates.cache.ttl', 3600); // 1 час по умолчанию
+        Log::info('CacheService instantiated');
     }
 
     public function getCached(string $cacheKey): ?array
