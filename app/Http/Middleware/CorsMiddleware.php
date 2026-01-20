@@ -198,7 +198,8 @@ class CorsMiddleware
                 $e instanceof \App\Exceptions\BusinessLogicException ||
                 $e instanceof \Illuminate\Validation\ValidationException ||
                 $e instanceof \Illuminate\Auth\AuthenticationException ||
-                $e instanceof \Illuminate\Auth\Access\AuthorizationException) {
+                $e instanceof \Illuminate\Auth\Access\AuthorizationException ||
+                $e instanceof \InvalidArgumentException) { // Для ошибок конфигурации (например, guard не определён)
                 
                 // Сохраняем CORS заголовки в запросе для Handler
                 $request->attributes->set('cors_headers', $headers);
