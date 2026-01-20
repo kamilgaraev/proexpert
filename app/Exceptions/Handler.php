@@ -81,24 +81,38 @@ class Handler extends ExceptionHandler
             // 
         });
 
-        // Для API запросов мы хотим всегда возвращать JSON
-        $this->renderable(function (Throwable $e, $request) {
-            if ($request->expectsJson() || $request->is('api/*')) {
-                Log::info('[Handler] renderable() called', [
-                    'exception_class' => get_class($e),
-                    'exception_message' => $e->getMessage(),
-                    'exception_code' => $e->getCode(),
-                    'uri' => $request->getRequestUri(),
-                    'method' => $request->getMethod(),
-                ]);
-                
-                // Получаем CORS заголовки из CorsMiddleware если есть
-                $corsHeaders = $request->attributes->get('cors_headers', []);
-                
-                $responseClass = $this->getResponseClassForRequest($request);
-                
-                // ValidationException - ошибки валидации
-                if ($e instanceof ValidationException) {
+        // Для API запросов всегда возвращаем JSON
+        $this->renderable(function (Throwable $e, \Illuminate\Http\Request $request) {
+            // Проверяем, нужен ли JSON ответ
+            if (!is_api_request($request)) {
+                return null; // Пусть обработает стандартный механизм
+            }
+            
+            Log::info('[Handler] Processing API exception', [
+                'exception_class' => get_class($e),
+                'exception_message' => $e->getMessage(),
+                'exception_code' => $e->getCode(),
+                'uri' => $request->getRequestUri(),
+                'method' => $request->getMethod(),
+            ]);
+            
+            // Получаем CORS заголовки из CorsMiddleware если есть
+            $corsHeaders = $request->attributes->get('cors_headers', []);
+            
+            // Определяем класс ответа в зависимости от API
+            $responseClass = $this->getResponseClassForRequest($request);
+            
+            // ============================================================
+            // ОБРАБОТКА СПЕЦИФИЧНЫХ ИСКЛЮЧЕНИЙ
+            // ============================================================
+            
+            // PostTooLargeException - слишком большой запрос
+            if ($e instanceof \Illuminate\Http\Exceptions\PostTooLargeException) {
+                return $this->handlePostTooLargeException($e, $request, $responseClass);
+            }
+            
+            // ValidationException - ошибки валидации
+            if ($e instanceof ValidationException) {
                     $data = [
                         'errors' => $e->errors(),
                     ];
@@ -118,18 +132,19 @@ class Handler extends ExceptionHandler
 
                 // AuthorizationException - нет прав
                 if ($e instanceof AuthorizationException) {
-                    Log::info('[Handler] AuthorizationException caught', [
-                        'message' => $e->getMessage(),
-                        'file' => $e->getFile(),
-                        'line' => $e->getLine(),
-                    ]);
-                    
                     $message = $e->getMessage();
                     if (empty($message) || $message === 'This action is unauthorized.') {
                         $message = trans_message('errors.unauthorized');
                     }
-                    
-                    Log::info('[Handler] Returning 403 response');
+                    return $responseClass::error($message, 403);
+                }
+                
+                // AccessDeniedHttpException - доступ запрещён
+                if ($e instanceof \Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException) {
+                    $message = $e->getMessage();
+                    if (empty($message) || $message === 'This action is unauthorized.') {
+                        $message = trans_message('errors.forbidden');
+                    }
                     return $responseClass::error($message, 403);
                 }
 
@@ -160,12 +175,58 @@ class Handler extends ExceptionHandler
                     return $responseClass::error($message, 402); // 402 Payment Required
                 }
 
-                // Остальные ошибки
-                $statusCode = $e instanceof HttpExceptionInterface ? $e->getStatusCode() : 500;
+                // Остальные HTTP исключения
+                if ($e instanceof HttpExceptionInterface) {
+                    $statusCode = $e->getStatusCode();
+                    $message = $e->getMessage();
+                    
+                    // Переводим стандартные HTTP ошибки
+                    if (empty($message) || $statusCode >= 500) {
+                        $message = match($statusCode) {
+                            400 => trans_message('errors.bad_request'),
+                            403 => trans_message('errors.forbidden'),
+                            404 => trans_message('errors.resource_not_found'),
+                            405 => trans_message('errors.method_not_allowed'),
+                            408 => trans_message('errors.request_timeout'),
+                            429 => trans_message('errors.too_many_requests'),
+                            500 => trans_message('errors.internal_server_error'),
+                            503 => trans_message('errors.service_unavailable'),
+                            default => $message ?: trans_message('errors.server_error'),
+                        };
+                    }
+                    
+                    $data = [];
+                    if (config('app.debug')) {
+                        $data['exception'] = get_class($e);
+                        $data['file'] = $e->getFile();
+                        $data['line'] = $e->getLine();
+                    }
+                    
+                    return $responseClass::error($message, $statusCode, $data);
+                }
+                
+                // Ошибки базы данных
+                if ($e instanceof \Illuminate\Database\QueryException) {
+                    Log::error('[Handler] Database query error', [
+                        'message' => $e->getMessage(),
+                        'sql' => $e->getSql() ?? 'N/A',
+                        'bindings' => $e->getBindings() ?? [],
+                    ]);
+                    
+                    if (config('app.debug')) {
+                        return $responseClass::error($e->getMessage(), 500);
+                    }
+                    
+                    return $responseClass::error(trans_message('errors.database_error'), 500);
+                }
+                
+                // Все остальные исключения
+                $statusCode = 500;
                 $message = $e->getMessage();
-
-                if ($statusCode >= 500 && !config('app.debug')) {
-                    $message = trans_message('errors.server_error');
+                
+                // Не показываем детали ошибок в продакшне
+                if (!config('app.debug')) {
+                    $message = trans_message('errors.internal_server_error');
                 }
                 
                 $data = [];
@@ -173,7 +234,6 @@ class Handler extends ExceptionHandler
                     $data['exception'] = get_class($e);
                     $data['file'] = $e->getFile();
                     $data['line'] = $e->getLine();
-                    // $data['trace'] = $e->getTraceAsString(); // Трассировка может быть очень большой
                 }
 
                 return $responseClass::error($message, $statusCode, $data);
@@ -389,9 +449,71 @@ class Handler extends ExceptionHandler
     }
 
     /**
+     * Обработка PostTooLargeException с детальным логированием
+     */
+    protected function handlePostTooLargeException(
+        \Illuminate\Http\Exceptions\PostTooLargeException $e,
+        \Illuminate\Http\Request $request,
+        string $responseClass
+    ) {
+        // Получаем размер запроса из заголовков
+        $contentLength = $request->header('Content-Length');
+        $contentLengthBytes = $contentLength ? (int)$contentLength : null;
+        $contentLengthMB = $contentLengthBytes ? round($contentLengthBytes / 1024 / 1024, 2) : null;
+
+        // Получаем текущие лимиты PHP
+        $postMaxSize = ini_get('post_max_size');
+        $uploadMaxFilesize = ini_get('upload_max_filesize');
+        $maxFileUploads = ini_get('max_file_uploads');
+
+        // Конвертируем лимиты в байты для сравнения
+        $postMaxSizeBytes = convert_ini_size_to_bytes($postMaxSize);
+        $uploadMaxFilesizeBytes = convert_ini_size_to_bytes($uploadMaxFilesize);
+
+        Log::error('[Handler] PostTooLargeException - Request payload too large', [
+            'uri' => $request->getRequestUri(),
+            'method' => $request->method(),
+            'content_length_header' => $contentLength,
+            'content_length_bytes' => $contentLengthBytes,
+            'content_length_mb' => $contentLengthMB,
+            'php_post_max_size' => $postMaxSize,
+            'php_post_max_size_bytes' => $postMaxSizeBytes,
+            'php_upload_max_filesize' => $uploadMaxFilesize,
+            'php_upload_max_filesize_bytes' => $uploadMaxFilesizeBytes,
+            'php_max_file_uploads' => $maxFileUploads,
+            'content_type' => $request->header('Content-Type'),
+            'has_files' => $request->hasFile('*'),
+            'files_count' => count($request->allFiles()),
+            'user_id' => $request->user()?->id,
+            'organization_id' => $request->attributes->get('current_organization_id'),
+        ]);
+
+        $data = [
+            'request_size_mb' => $contentLengthMB,
+            'limit_post_max_size' => $postMaxSize,
+            'limit_upload_max_filesize' => $uploadMaxFilesize,
+        ];
+
+        // В режиме отладки добавляем больше информации
+        if (config('app.debug')) {
+            $data['php_limits'] = [
+                'post_max_size_bytes' => $postMaxSizeBytes,
+                'upload_max_filesize_bytes' => $uploadMaxFilesizeBytes,
+                'max_file_uploads' => $maxFileUploads,
+            ];
+        }
+
+        return $responseClass::error(
+            trans_message('errors.post_too_large'),
+            413, // 413 Payload Too Large
+            $data
+        );
+    }
+
+    /**
      * Определить класс Response в зависимости от типа API
      */
-    protected function getResponseClassForRequest($request): string
+    protected function getResponseClassForRequest(\Illuminate\Http\Request $request): string
     {
         $path = $request->path();
         
