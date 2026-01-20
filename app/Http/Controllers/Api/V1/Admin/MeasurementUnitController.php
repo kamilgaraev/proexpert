@@ -3,13 +3,16 @@
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use App\Services\MeasurementUnit\MeasurementUnitService;
 use App\Http\Requests\Api\V1\Admin\MeasurementUnit\StoreMeasurementUnitRequest;
 use App\Http\Requests\Api\V1\Admin\MeasurementUnit\UpdateMeasurementUnitRequest;
-use App\Http\Resources\Api\V1\Admin\MeasurementUnitResource; // Уже существует
-use App\Http\Resources\Api\V1\Admin\MeasurementUnitCollection; // Создадим
+use App\Http\Resources\Api\V1\Admin\MeasurementUnitResource;
+use App\Http\Resources\Api\V1\Admin\MeasurementUnitCollection;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Log;
 use Exception;
 
 class MeasurementUnitController extends Controller
@@ -55,17 +58,26 @@ class MeasurementUnitController extends Controller
      */
     public function index(Request $request)
     {
-        $organizationId = $this->getOrganizationId($request);
-        if (!$organizationId) {
-            return response()->json(['message' => 'Organization ID not found in context.'], Response::HTTP_BAD_REQUEST);
+        try {
+            $organizationId = $this->getOrganizationId($request);
+            if (!$organizationId) {
+                return AdminResponse::error(trans_message('measurement_unit.organization_not_found'), 400);
+            }
+
+            $perPage = $request->input('per_page', 15);
+            $filters = $request->only(['type']);
+
+            $measurementUnits = $this->measurementUnitService->getAllMeasurementUnits($organizationId, $perPage, $filters);
+            return new MeasurementUnitCollection($measurementUnits);
+        } catch (\Throwable $e) {
+            Log::error('MeasurementUnitController@index Exception', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('measurement_unit.internal_error_list'), 500);
         }
-
-        $perPage = $request->input('per_page', 15);
-        $filters = $request->only(['type']);
-        // $filters['organization_id'] = $organizationId; // organizationId передается напрямую в сервис
-
-        $measurementUnits = $this->measurementUnitService->getAllMeasurementUnits($organizationId, $perPage, $filters);
-        return new MeasurementUnitCollection($measurementUnits);
     }
 
     /**
@@ -84,7 +96,7 @@ class MeasurementUnitController extends Controller
     {
         $organizationId = $this->getOrganizationId($request);
         if (!$organizationId) {
-            return response()->json(['message' => 'Organization ID not found in context.'], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(trans_message('measurement_unit.organization_not_found'), 400);
         }
 
         try {
@@ -94,7 +106,11 @@ class MeasurementUnitController extends Controller
                     ->response()
                     ->setStatusCode(Response::HTTP_CREATED);
         } catch (Exception $e) {
-            return response()->json(['message' => 'Ошибка создания единицы измерения', 'error' => $e->getMessage()], Response::HTTP_INTERNAL_SERVER_ERROR);
+            Log::error('MeasurementUnitController@store Exception', [
+                'message' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('measurement_unit.internal_error_create'), 500);
         }
     }
 
@@ -112,17 +128,26 @@ class MeasurementUnitController extends Controller
      */
     public function show(int $id, Request $request)
     {
-        $organizationId = $this->getOrganizationId($request);
-        if (!$organizationId) {
-            return response()->json(['message' => 'Organization ID not found in context.'], Response::HTTP_BAD_REQUEST);
-        }
+        try {
+            $organizationId = $this->getOrganizationId($request);
+            if (!$organizationId) {
+                return AdminResponse::error(trans_message('measurement_unit.organization_not_found'), 400);
+            }
 
-        $measurementUnit = $this->measurementUnitService->getMeasurementUnitById($id, $organizationId);
+            $measurementUnit = $this->measurementUnitService->getMeasurementUnitById($id, $organizationId);
 
-        if (!$measurementUnit) {
-            return response()->json(['message' => 'Единица измерения не найдена'], Response::HTTP_NOT_FOUND);
+            if (!$measurementUnit) {
+                return AdminResponse::error(trans_message('measurement_unit.not_found'), 404);
+            }
+            return new MeasurementUnitResource($measurementUnit);
+        } catch (\Throwable $e) {
+            Log::error('MeasurementUnitController@show Exception', [
+                'id' => $id,
+                'message' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('measurement_unit.internal_error_get'), 500);
         }
-        return new MeasurementUnitResource($measurementUnit);
     }
 
     /**
@@ -143,18 +168,23 @@ class MeasurementUnitController extends Controller
     {
         $organizationId = $this->getOrganizationId($request);
         if (!$organizationId) {
-            return response()->json(['message' => 'Organization ID not found in context.'], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(trans_message('measurement_unit.organization_not_found'), 400);
         }
 
         try {
             $dto = $request->toDto();
             $measurementUnit = $this->measurementUnitService->updateMeasurementUnit($id, $dto, $organizationId);
             if (!$measurementUnit) {
-                return response()->json(['message' => 'Единица измерения не найдена или не может быть обновлена'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('measurement_unit.update_failed'), 404);
             }
             return new MeasurementUnitResource($measurementUnit);
         } catch (Exception $e) {
-            return response()->json(['message' => 'Ошибка обновления единицы измерения', 'error' => $e->getMessage()], Response::HTTP_INTERNAL_SERVER_ERROR);
+            Log::error('MeasurementUnitController@update Exception', [
+                'id' => $id,
+                'message' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('measurement_unit.internal_error_update'), 500);
         }
     }
 
@@ -171,22 +201,26 @@ class MeasurementUnitController extends Controller
      *     @OA\Response(response=401, description="Не авторизован")
      * )
      */
-    public function destroy(int $id, Request $request)
+    public function destroy(int $id, Request $request): JsonResponse
     {
         $organizationId = $this->getOrganizationId($request);
         if (!$organizationId) {
-            return response()->json(['message' => 'Organization ID not found in context.'], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(trans_message('measurement_unit.organization_not_found'), 400);
         }
 
         try {
             $deleted = $this->measurementUnitService->deleteMeasurementUnit($id, $organizationId);
             if (!$deleted) {
-                return response()->json(['message' => 'Единица измерения не найдена'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('measurement_unit.delete_failed'), 404);
             }
-            return response()->json(null, Response::HTTP_NO_CONTENT);
+            return AdminResponse::success(null, trans_message('measurement_unit.deleted'));
         } catch (Exception $e) {
-            // Более специфичные коды ошибок можно вернуть на основе типа Exception
-            return response()->json(['message' => 'Ошибка удаления единицы измерения', 'error' => $e->getMessage()], Response::HTTP_FORBIDDEN); // Или HTTP_INTERNAL_SERVER_ERROR
+            Log::error('MeasurementUnitController@destroy Exception', [
+                'id' => $id,
+                'message' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('measurement_unit.internal_error_delete'), 500);
         }
     }
 
@@ -202,12 +236,20 @@ class MeasurementUnitController extends Controller
      */
     public function getMaterialUnits(Request $request)
     {
-        $organizationId = $this->getOrganizationId($request);
-        if (!$organizationId) {
-            return response()->json(['message' => 'Organization ID not found in context.'], Response::HTTP_BAD_REQUEST);
-        }
+        try {
+            $organizationId = $this->getOrganizationId($request);
+            if (!$organizationId) {
+                return AdminResponse::error(trans_message('measurement_unit.organization_not_found'), 400);
+            }
 
-        $units = $this->measurementUnitService->getMaterialMeasurementUnits($organizationId);
-        return MeasurementUnitResource::collection($units);
+            $units = $this->measurementUnitService->getMaterialMeasurementUnits($organizationId);
+            return MeasurementUnitResource::collection($units);
+        } catch (\Throwable $e) {
+            Log::error('MeasurementUnitController@getMaterialUnits Exception', [
+                'message' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('measurement_unit.internal_error_list'), 500);
+        }
     }
 }

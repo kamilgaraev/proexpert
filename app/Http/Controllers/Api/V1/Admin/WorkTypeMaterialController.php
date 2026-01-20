@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use App\Models\WorkType;
 use App\Models\Material;
 use App\Services\WorkTypeMaterial\WorkTypeMaterialService; 
@@ -10,6 +11,7 @@ use App\Http\Requests\Api\V1\Admin\WorkTypeMaterial\StoreWorkTypeMaterialRequest
 use App\Http\Resources\Api\V1\Admin\Material\MaterialMiniResource; 
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 use App\Exceptions\BusinessLogicException;
 use Illuminate\Validation\ValidationException;
@@ -28,36 +30,55 @@ class WorkTypeMaterialController extends Controller
     /**
      * Получить список материалов, привязанных к виду работ.
      */
-    public function indexForWorkType(Request $request, WorkType $workType): JsonResponse
+    public function indexForWorkType(Request $request, WorkType $workType)
     {
-        // Проверка, что вид работ принадлежит текущей организации (если сервис не делает это)
-        if ($workType->organization_id !== $this->workTypeMaterialService->getCurrentOrgId($request)) {
-            return response()->json(['success' => false, 'message' => 'Вид работ не найден в вашей организации.'], Response::HTTP_FORBIDDEN);
+        try {
+            if ($workType->organization_id !== $this->workTypeMaterialService->getCurrentOrgId($request)) {
+                return AdminResponse::error(trans_message('work_type.not_found_in_organization'), 403);
+            }
+            
+            $materials = $this->workTypeMaterialService->getMaterialsForWorkType($workType);
+            return MaterialMiniResource::collection($materials);
+        } catch (\Throwable $e) {
+            Log::error('WorkTypeMaterialController@indexForWorkType Exception', [
+                'work_type_id' => $workType->id,
+                'message' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('work_type.internal_error_list'), 500);
         }
-        
-        $materials = $this->workTypeMaterialService->getMaterialsForWorkType($workType);
-        return MaterialMiniResource::collection($materials)->response(); // Используем MaterialMiniResource или создадим WorkTypeMaterialResource
     }
 
     /**
      * Привязать материал к виду работ или обновить существующую связь.
      * Принимает массив материалов для привязки.
      */
-    public function storeOrUpdateForWorkType(StoreWorkTypeMaterialRequest $request, WorkType $workType): JsonResponse
+    public function storeOrUpdateForWorkType(StoreWorkTypeMaterialRequest $request, WorkType $workType)
     {
         if ($workType->organization_id !== $this->workTypeMaterialService->getCurrentOrgId($request)) {
-            return response()->json(['success' => false, 'message' => 'Вид работ не найден в вашей организации.'], Response::HTTP_FORBIDDEN);
+            return AdminResponse::error(trans_message('work_type.not_found_in_organization'), 403);
         }
 
         try {
-            $dtos = $request->toDtos(); // Предполагаем, что Request вернет массив DTO
+            $dtos = $request->toDtos();
             $this->workTypeMaterialService->syncMaterialsForWorkType($workType, $dtos);
             
-            // Возвращаем обновленный список материалов для этого вида работ
             $materials = $this->workTypeMaterialService->getMaterialsForWorkType($workType);
-            return MaterialMiniResource::collection($materials)->response();
+            return MaterialMiniResource::collection($materials);
         } catch (BusinessLogicException $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: Response::HTTP_BAD_REQUEST);
+            Log::error('WorkTypeMaterialController@storeOrUpdateForWorkType BusinessLogicException', [
+                'work_type_id' => $workType->id,
+                'message' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('WorkTypeMaterialController@storeOrUpdateForWorkType Exception', [
+                'work_type_id' => $workType->id,
+                'message' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('work_type.internal_error_update'), 500);
         }
     }
 
@@ -68,14 +89,28 @@ class WorkTypeMaterialController extends Controller
     {
         if ($workType->organization_id !== $this->workTypeMaterialService->getCurrentOrgId($request) || 
             $material->organization_id !== $this->workTypeMaterialService->getCurrentOrgId($request) ) {
-            return response()->json(['success' => false, 'message' => 'Ресурс не найден в вашей организации.'], Response::HTTP_FORBIDDEN);
+            return AdminResponse::error(trans_message('work_type.resource_not_found_in_organization'), 403);
         }
 
         try {
             $this->workTypeMaterialService->removeMaterialFromWorkType($workType, $material);
-            return response()->json(null, Response::HTTP_NO_CONTENT);
+            return AdminResponse::success(null, trans_message('work_type.material_removed'));
         } catch (BusinessLogicException $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: Response::HTTP_BAD_REQUEST);
+            Log::error('WorkTypeMaterialController@destroyForWorkType BusinessLogicException', [
+                'work_type_id' => $workType->id,
+                'material_id' => $material->id,
+                'message' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('WorkTypeMaterialController@destroyForWorkType Exception', [
+                'work_type_id' => $workType->id,
+                'material_id' => $material->id,
+                'message' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('work_type.internal_error_delete'), 500);
         }
     }
 
@@ -86,11 +121,13 @@ class WorkTypeMaterialController extends Controller
     {
         $organizationId = $this->workTypeMaterialService->getCurrentOrgId($request);
         if ($workType->organization_id !== $organizationId) {
-            return response()->json(['success' => false, 'message' => 'Вид работ не найден в вашей организации.'], Response::HTTP_FORBIDDEN);
+            return AdminResponse::error(trans_message('work_type.not_found_in_organization'), 403);
         }
 
         $validated = $request->validate([
             'quantity' => 'required|numeric|min:0.0001',
+        ], [
+            'quantity.required' => trans_message('work_type.quantity_required'),
         ]);
 
         try {
@@ -99,15 +136,23 @@ class WorkTypeMaterialController extends Controller
                 (float)$validated['quantity'],
                 $organizationId
             );
-            return response()->json(['success' => true, 'data' => $suggestedMaterials]);
+            return AdminResponse::success($suggestedMaterials, trans_message('work_type.suggested_materials_retrieved'));
         } catch (BusinessLogicException $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: Response::HTTP_BAD_REQUEST);
+            Log::error('WorkTypeMaterialController@getSuggestedMaterialsForWorkType BusinessLogicException', [
+                'work_type_id' => $workType->id,
+                'message' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка валидации.',
-                'errors' => $e->errors(),
-            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            return AdminResponse::error(trans_message('errors.validation_failed'), 422, $e->errors());
+        } catch (\Throwable $e) {
+            Log::error('WorkTypeMaterialController@getSuggestedMaterialsForWorkType Exception', [
+                'work_type_id' => $workType->id,
+                'message' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('work_type.internal_error_list'), 500);
         }
     }
 } 

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use App\Http\Requests\Api\V1\Admin\CostCategory\StoreCostCategoryRequest;
 use App\Http\Requests\Api\V1\Admin\CostCategory\UpdateCostCategoryRequest;
 use App\Http\Resources\Api\V1\Admin\CostCategory\CostCategoryResource;
@@ -33,18 +34,19 @@ class CostCategoryController extends Controller
             $costCategories = $this->costCategoryService->getCostCategoriesForCurrentOrg($request, (int)$perPage);
             return CostCategoryResource::collection($costCategories);
         } catch (BusinessLogicException $e) {
-            return response()->json([
-                'success' => false,
+            Log::error('CostCategoryController@index BusinessLogicException', [
                 'message' => $e->getMessage(),
-            ], $e->getCode() ?: 400);
-        } catch (\Throwable $e) {
-            Log::error('Error in CostCategoryController@index', [
-                'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
+                'user_id' => $request->user()?->id,
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при получении списка категорий затрат.',
-            ], 500);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('CostCategoryController@index Exception', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('cost_category.internal_error_list'), 500);
         }
     }
 
@@ -57,18 +59,19 @@ class CostCategoryController extends Controller
             $costCategory = $this->costCategoryService->createCostCategory($request->validated(), $request);
             return new CostCategoryResource($costCategory->load('parent'));
         } catch (BusinessLogicException $e) {
-            return response()->json([
-                'success' => false,
+            Log::error('CostCategoryController@store BusinessLogicException', [
                 'message' => $e->getMessage(),
-            ], $e->getCode() ?: 400);
-        } catch (\Throwable $e) {
-            Log::error('Error in CostCategoryController@store', [
-                'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
+                'user_id' => $request->user()?->id,
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при создании категории затрат.',
-            ], 500);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('CostCategoryController@store Exception', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('cost_category.internal_error_create'), 500);
         }
     }
 
@@ -81,29 +84,28 @@ class CostCategoryController extends Controller
             $costCategory = $this->costCategoryService->findCostCategoryByIdForCurrentOrg((int)$id, $request);
             
             if (!$costCategory) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Категория затрат не найдена в вашей организации.'
-                ], 404);
+                return AdminResponse::error(trans_message('cost_category.not_found'), 404);
             }
             
-            // Загружаем связанные данные
             $costCategory->load(['parent', 'children']);
             
             return new CostCategoryResource($costCategory);
         } catch (BusinessLogicException $e) {
-            return response()->json([
-                'success' => false,
+            Log::error('CostCategoryController@show BusinessLogicException', [
+                'id' => $id,
                 'message' => $e->getMessage(),
-            ], $e->getCode() ?: 400);
-        } catch (\Throwable $e) {
-            Log::error('Error in CostCategoryController@show', [
-                'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
+                'user_id' => $request->user()?->id,
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при получении категории затрат.',
-            ], 500);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('CostCategoryController@show Exception', [
+                'id' => $id,
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('cost_category.internal_error_get'), 500);
         }
     }
 
@@ -116,29 +118,28 @@ class CostCategoryController extends Controller
             $costCategory = $this->costCategoryService->updateCostCategory((int)$id, $request->validated(), $request);
             
             if (!$costCategory) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Категория затрат не найдена или не удалось обновить.'
-                ], 404);
+                return AdminResponse::error(trans_message('cost_category.update_failed'), 404);
             }
             
-            // Загружаем связанные данные
             $costCategory->load(['parent', 'children']);
             
             return new CostCategoryResource($costCategory);
         } catch (BusinessLogicException $e) {
-            return response()->json([
-                'success' => false,
+            Log::error('CostCategoryController@update BusinessLogicException', [
+                'id' => $id,
                 'message' => $e->getMessage(),
-            ], $e->getCode() ?: 400);
-        } catch (\Throwable $e) {
-            Log::error('Error in CostCategoryController@update', [
-                'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
+                'user_id' => $request->user()?->id,
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при обновлении категории затрат.',
-            ], 500);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('CostCategoryController@update Exception', [
+                'id' => $id,
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('cost_category.internal_error_update'), 500);
         }
     }
 
@@ -151,29 +152,26 @@ class CostCategoryController extends Controller
             $success = $this->costCategoryService->deleteCostCategory((int)$id, $request);
             
             if (!$success) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Категория затрат не найдена или не удалось удалить.'
-                ], 404);
+                return AdminResponse::error(trans_message('cost_category.delete_failed'), 404);
             }
             
-            return response()->json([
-                'success' => true,
-                'message' => 'Категория затрат успешно удалена.'
-            ], 200);
+            return AdminResponse::success(null, trans_message('cost_category.deleted'));
         } catch (BusinessLogicException $e) {
-            return response()->json([
-                'success' => false,
+            Log::error('CostCategoryController@destroy BusinessLogicException', [
+                'id' => $id,
                 'message' => $e->getMessage(),
-            ], $e->getCode() ?: 400);
-        } catch (\Throwable $e) {
-            Log::error('Error in CostCategoryController@destroy', [
-                'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
+                'user_id' => $request->user()?->id,
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при удалении категории затрат.',
-            ], 500);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('CostCategoryController@destroy Exception', [
+                'id' => $id,
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('cost_category.internal_error_delete'), 500);
         }
     }
     
@@ -218,20 +216,25 @@ class CostCategoryController extends Controller
                 $request->user()->current_organization_id
             );
             
-            return response()->json($importResult);
+            if (isset($importResult['success']) && $importResult['success']) {
+                return AdminResponse::success($importResult['data'] ?? $importResult, $importResult['message'] ?? trans_message('cost_category.import_success'));
+            } else {
+                return AdminResponse::error($importResult['message'] ?? trans_message('cost_category.internal_error_import'), $importResult['code'] ?? 400);
+            }
         } catch (BusinessLogicException $e) {
-            return response()->json([
-                'success' => false,
+            Log::error('CostCategoryController@import BusinessLogicException', [
                 'message' => $e->getMessage(),
-            ], $e->getCode() ?: 400);
-        } catch (\Throwable $e) {
-            Log::error('Error in CostCategoryController@import', [
-                'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
+                'user_id' => $request->user()?->id,
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при импорте категорий затрат.',
-            ], 500);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('CostCategoryController@import Exception', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'user_id' => $request->user()?->id,
+            ]);
+            return AdminResponse::error(trans_message('cost_category.internal_error_import'), 500);
         }
     }
 }
