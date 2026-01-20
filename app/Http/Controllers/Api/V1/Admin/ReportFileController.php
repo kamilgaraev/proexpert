@@ -1,168 +1,133 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Str;
-use Illuminate\Pagination\LengthAwarePaginator;
-use Illuminate\Support\Carbon;
+use App\Http\Responses\AdminResponse;
+use App\Http\Requests\Api\V1\Admin\File\ListFilesRequest;
 use Illuminate\Http\JsonResponse;
-use App\Models\ReportFile;
-use Illuminate\Support\Facades\Auth;
+use App\Models\PersonalFile;
 use App\Services\Storage\FileService;
 use App\Services\Organization\OrganizationContext;
+use Illuminate\Support\Facades\Log;
 
+use function trans_message;
+
+/**
+ * Контроллер файлов отчётов
+ */
 class ReportFileController extends Controller
 {
-    /**
-     * Список файлов отчётов с поддержкой фильтров и пагинации.
-     */
-    public function index(Request $request): JsonResponse
-    {
-        // Валидация входных параметров
-        $validator = Validator::make($request->all(), [
-            'type'      => ['sometimes', 'string'],
-            'date_from' => ['sometimes', 'date'],
-            'date_to'   => ['sometimes', 'date'],
-            'filename'  => ['sometimes', 'string'],
-            'sort_by'   => ['sometimes', 'in:created_at,size,filename'],
-            'sort_dir'  => ['sometimes', 'in:asc,desc'],
-            'per_page'  => ['sometimes', 'integer', 'min:1', 'max:100'],
-        ]);
+    private const REPORT_FILES_FOLDER = 'reports';
 
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
-        $params    = $validator->validated();
-        $sortBy    = $params['sort_by'] ?? 'created_at';
-        $sortDir   = $params['sort_dir'] ?? 'desc';
-        $perPage   = (int)($params['per_page'] ?? 15);
-        $typeFilter= $params['type'] ?? null;
-        $filenameFilter = isset($params['filename']) ? Str::lower($params['filename']) : null;
-        $dateFrom  = isset($params['date_from']) ? Carbon::parse($params['date_from'])->startOfDay() : null;
-        $dateTo    = isset($params['date_to']) ? Carbon::parse($params['date_to'])->endOfDay() : null;
-
-        // Получаем текущую организацию
-        $org = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
-
-        // Формируем запрос к БД
-        $query = ReportFile::query()->where('organization_id', $org->id);
-        if ($typeFilter) {
-            $query->where('type', $typeFilter);
-        }
-        if ($filenameFilter) {
-            $query->whereRaw('LOWER(filename) LIKE ?', ['%' . $filenameFilter . '%']);
-        }
-        if ($dateFrom) {
-            $query->whereDate('created_at', '>=', $dateFrom);
-        }
-        if ($dateTo) {
-            $query->whereDate('created_at', '<=', $dateTo);
-        }
-
-        $query->orderBy($sortBy, $sortDir);
-
-        /** @var \Illuminate\Pagination\LengthAwarePaginator $paginator */
-        $paginator = $query->paginate($perPage);
-
-        // Дополняем download_url для каждого элемента
-        /** @var FileService $fs */
-        $fs = app(FileService::class);
-        $org = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
-        $storage = $fs->disk($org);
-        $paginator->getCollection()->transform(function (ReportFile $file) use ($storage) {
-            return [
-                'id'          => $this->encodeKey($file->path),
-                'path'        => $file->path,
-                'filename'    => $file->filename,
-                'name'        => $file->name ?? $file->filename,
-                'type'        => $file->type,
-                'size'        => $file->size,
-                'created_at'  => $file->created_at?->toIso8601String(),
-                'expires_at'  => $file->expires_at?->toIso8601String(),
-                'download_url'=> $storage->temporaryUrl($file->path, now()->addMinutes(5)),
-            ];
-        });
-
-        return response()->json($paginator);
+    public function __construct(
+        protected FileService $fileService
+    ) {
     }
 
     /**
-     * Удаление файла отчёта.
+     * Получить список файлов отчётов
      */
-    public function destroy(string $key): JsonResponse
+    public function index(ListFilesRequest $request): JsonResponse
     {
-        $path = $this->decodeKey($key);
-        /** @var FileService $fs */
-        $fs = app(FileService::class);
-        $org = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
+        try {
+            $user = $request->user();
+            $params = $request->validated();
+            $sortBy = $params['sort_by'] ?? 'created_at';
+            $sortDir = $params['sort_dir'] ?? 'desc';
+            $perPage = (int)($params['per_page'] ?? 15);
 
-        // Проверяем, что файл принадлежит текущей организации
-        $file = ReportFile::where('path', $path)->where('organization_id', $org->id)->first();
-        if (!$file) {
-            return response()->json(['message' => 'File not found or access denied.'], 404);
+            $reportFilesPath = $user->id . '/' . self::REPORT_FILES_FOLDER . '/';
+
+            $query = PersonalFile::where('user_id', $user->id)
+                ->where('path', 'like', $reportFilesPath . '%')
+                ->where('is_folder', false);
+
+            if (isset($params['filename'])) {
+                $query->where('filename', 'like', '%' . $params['filename'] . '%');
+            }
+
+            if (isset($params['date_from'])) {
+                $query->whereDate('created_at', '>=', $params['date_from']);
+            }
+
+            if (isset($params['date_to'])) {
+                $query->whereDate('created_at', '<=', $params['date_to']);
+            }
+
+            $query->orderBy($sortBy, $sortDir);
+            $paginator = $query->paginate($perPage);
+
+            $org = OrganizationContext::getOrganization() ?? $user->currentOrganization;
+            $storage = $this->fileService->disk($org);
+
+            $paginator->getCollection()->transform(function (PersonalFile $file) use ($storage) {
+                $file->download_url = null;
+                try {
+                    if ($storage->exists($file->path)) {
+                        $file->download_url = $storage->temporaryUrl($file->path, now()->addHours(1));
+                    }
+                } catch (\Exception $e) {
+                    Log::warning('[ReportFileController] Failed to create temporary URL', [
+                        'file_id' => $file->id
+                    ]);
+                }
+                return $file;
+            });
+
+            return AdminResponse::success(
+                $paginator->items(),
+                trans_message('files.files_loaded'),
+                200,
+                [
+                    'current_page' => $paginator->currentPage(),
+                    'last_page' => $paginator->lastPage(),
+                    'per_page' => $paginator->perPage(),
+                    'total' => $paginator->total(),
+                ]
+            );
+        } catch (\Throwable $e) {
+            Log::error('[ReportFileController] Error loading report files', [
+                'error' => $e->getMessage()
+            ]);
+            return AdminResponse::error(trans_message('files.load_failed'), 500);
         }
+    }
 
-        $storage = $fs->disk($org);
+    /**
+     * Удалить файл отчёта
+     */
+    public function destroy(int $id): JsonResponse
+    {
+        try {
+            $user = request()->user();
+            $reportFilesPath = $user->id . '/' . self::REPORT_FILES_FOLDER . '/';
 
-        if (!$storage->exists($path)) {
-            // всё равно пытаемся удалить запись из БД
+            $file = PersonalFile::where('user_id', $user->id)
+                ->where('path', 'like', $reportFilesPath . '%')
+                ->where('id', $id)
+                ->firstOrFail();
+
+            $org = OrganizationContext::getOrganization() ?? $user->currentOrganization;
+            $storage = $this->fileService->disk($org);
+
+            if ($storage->exists($file->path)) {
+                $storage->delete($file->path);
+            }
+
             $file->delete();
-            return response()->json(['message' => 'File not found.'], 404);
+
+            return AdminResponse::success(null, trans_message('files.deleted'));
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return AdminResponse::error(trans_message('files.not_found'), 404);
+        } catch (\Throwable $e) {
+            Log::error('[ReportFileController] Error deleting report file', [
+                'error' => $e->getMessage(),
+                'file_id' => $id
+            ]);
+            return AdminResponse::error(trans_message('files.delete_failed'), 500);
         }
-
-        $storage->delete($path);
-        $file->delete();
-
-        return response()->json(['message' => 'File deleted.']);
     }
-
-    /**
-     * Обновление читаемого названия файла.
-     */
-    public function update(Request $request, string $key): JsonResponse
-    {
-        $validator = Validator::make($request->all(), [
-            'name' => ['required', 'string', 'max:255'],
-        ]);
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
-        $path = $this->decodeKey($key);
-        $org = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
-
-        $file = ReportFile::where('path', $path)->where('organization_id', $org->id)->first();
-        if (!$file) {
-            return response()->json(['message' => 'File not found or access denied.'], 404);
-        }
-
-        $file->name = $validator->validated()['name'];
-        $file->save();
-
-        return response()->json(['message' => 'Name updated.']);
-    }
-
-    // ---------------------------------------------------------------------
-    // Helpers
-    // ---------------------------------------------------------------------
-
-    private function encodeKey(string $value): string
-    {
-        return rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
-    }
-
-    private function decodeKey(string $encoded): string
-    {
-        $encoded = strtr($encoded, '-_', '+/');
-        $padding = 4 - (strlen($encoded) % 4);
-        if ($padding < 4) {
-            $encoded .= str_repeat('=', $padding);
-        }
-        return base64_decode($encoded);
-    }
-} 
+}
