@@ -16,6 +16,11 @@ use App\Services\Logging\LoggingService;
 use App\Services\ErrorTracking\ErrorTrackingService;
 use App\Exceptions\Billing\InsufficientBalanceException;
 use App\Exceptions\BusinessLogicException;
+use App\Exceptions\AI\AIServiceException;
+use App\Exceptions\AI\AIServiceUnavailableException;
+use App\Exceptions\AI\AIQuotaExceededException;
+use App\Exceptions\AI\AIAuthenticationException;
+use App\Exceptions\AI\AIParsingException;
 use App\Http\Responses\AdminResponse;
 use App\Http\Responses\MobileResponse;
 use App\Http\Responses\LandingResponse;
@@ -44,6 +49,8 @@ class Handler extends ExceptionHandler
         \Illuminate\Database\Eloquent\ModelNotFoundException::class,
         ValidationException::class,
         InsufficientBalanceException::class,
+        // AI исключения - квота превышена (это ожидаемая ситуация)
+        AIQuotaExceededException::class,
     ];
 
     /**
@@ -173,6 +180,32 @@ class Handler extends ExceptionHandler
                 if ($e instanceof InsufficientBalanceException) {
                     $message = $e->getMessage() ?: trans_message('errors.insufficient_balance');
                     return $responseClass::error($message, 402); // 402 Payment Required
+                }
+
+                // AI Service Exceptions - ошибки AI сервисов
+                if ($e instanceof AIServiceException) {
+                    $statusCode = $e->getHttpStatusCode();
+                    $message = $e->getMessage();
+                    
+                    // Логируем в зависимости от типа ошибки
+                    $logLevel = match(true) {
+                        $e instanceof AIAuthenticationException => 'error', // Критично - проблема конфигурации
+                        $e instanceof AIQuotaExceededException => 'warning', // Ожидаемо - превышен лимит
+                        $e instanceof AIServiceUnavailableException => 'warning', // Временная проблема
+                        $e instanceof AIParsingException => 'error', // Проблема логики
+                        default => 'error',
+                    };
+                    
+                    Log::log($logLevel, '[Handler] AI Service Exception', [
+                        'exception_class' => get_class($e),
+                        'message' => $message,
+                        'status_code' => $statusCode,
+                        'organization_id' => $request->attributes->get('current_organization_id'),
+                        'user_id' => $request->user()?->id,
+                    ]);
+                    
+                    // Для пользователя возвращаем понятное сообщение
+                    return $responseClass::error($message, $statusCode);
                 }
 
                 // Остальные HTTP исключения
@@ -372,6 +405,21 @@ class Handler extends ExceptionHandler
             $logging->business('exception.insufficient_balance', array_merge($exceptionContext, [
                 'billing_context' => true
             ]), 'warning');
+            
+        } elseif ($exception instanceof AIServiceException) {
+            // TECHNICAL: Ошибки AI сервисов - важны для мониторинга интеграций
+            $logLevel = match(true) {
+                $exception instanceof AIAuthenticationException => 'error', // Критично - проблема конфигурации
+                $exception instanceof AIQuotaExceededException => 'warning', // Ожидаемо - превышен лимит
+                $exception instanceof AIServiceUnavailableException => 'warning', // Временная проблема
+                $exception instanceof AIParsingException => 'error', // Проблема логики
+                default => 'error',
+            };
+            
+            $logging->technical('exception.ai_service', array_merge($exceptionContext, [
+                'ai_exception_type' => class_basename($exception),
+                'http_status_code' => $exception->getHttpStatusCode(),
+            ]), $logLevel);
             
         } elseif ($exception instanceof \Illuminate\Database\Eloquent\ModelNotFoundException) {
             // TECHNICAL: Модель не найдена - может указывать на проблемы данных

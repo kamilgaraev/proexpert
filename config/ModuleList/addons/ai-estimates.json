@@ -1,0 +1,122 @@
+{
+  "name": "AI Генерация Смет",
+  "slug": "ai-estimates",
+  "description": "Автоматическая генерация строительных смет с помощью искусственного интеллекта YandexGPT",
+  "version": "1.0.0",
+  "type": "addon",
+  "billing_model": "subscription",
+  "category": "estimates",
+  "icon": "sparkles",
+  "color": "#7C3AED",
+  "dependencies": [
+    "organizations",
+    "users",
+    "budget-estimates"
+  ],
+  "conflicts": [],
+  "features": [
+    "Автоматическая генерация смет на основе описания проекта",
+    "Умный подбор позиций из каталога EstimatePositionCatalog",
+    "Анализ похожих проектов организации для точности расчетов",
+    "Обработка загруженных файлов (чертежи, спецификации) с помощью OCR",
+    "Распознавание текста через Yandex Vision API",
+    "Автоматический расчет объемов и стоимости работ",
+    "Кеширование результатов для оптимизации",
+    "История всех генераций с возможностью повторного использования",
+    "Система обратной связи для обучения AI",
+    "Экспорт сгенерированных смет в PDF, Excel",
+    "Контроль лимитов использования",
+    "Интеграция с YandexGPT 5 Pro"
+  ],
+  "permissions": [
+    {
+      "name": "ai_estimates.generate",
+      "description": "Генерировать сметы с помощью AI"
+    },
+    {
+      "name": "ai_estimates.view_history",
+      "description": "Просмотр истории генераций"
+    },
+    {
+      "name": "ai_estimates.view_generation",
+      "description": "Просмотр конкретной генерации"
+    },
+    {
+      "name": "ai_estimates.provide_feedback",
+      "description": "Предоставление обратной связи"
+    },
+    {
+      "name": "ai_estimates.export",
+      "description": "Экспорт сгенерированных смет"
+    },
+    {
+      "name": "ai_estimates.clear_cache",
+      "description": "Очистка кеша"
+    },
+    {
+      "name": "ai_estimates.configure",
+      "description": "Настройка модуля"
+    }
+  ],
+  "limits": {
+    "max_generations_per_month": 10,
+    "max_file_size_mb": 50,
+    "max_files_per_request": 10,
+    "concurrent_generations": 1,
+    "cache_ttl_hours": 24
+  },
+  "pricing": {
+    "monthly_price": 5000,
+    "currency": "RUB",
+    "trial_days": 14,
+    "features_included": [
+      "10 генераций смет в месяц",
+      "Обработка до 10 файлов за запрос",
+      "Доступ к истории генераций",
+      "Экспорт в PDF и Excel",
+      "Техническая поддержка"
+    ]
+  },
+  "settings_schema": {
+    "ai_settings": {
+      "model": {
+        "type": "string",
+        "default": "yandexgpt-5-pro",
+        "description": "Модель YandexGPT"
+      },
+      "temperature": {
+        "type": "float",
+        "default": 0.3,
+        "min": 0,
+        "max": 1,
+        "description": "Температура генерации (креативность)"
+      },
+      "confidence_threshold": {
+        "type": "float",
+        "default": 0.75,
+        "min": 0,
+        "max": 1,
+        "description": "Порог уверенности для принятия позиций"
+      },
+      "use_project_history": {
+        "type": "boolean",
+        "default": true,
+        "description": "Использовать историю проектов для улучшения точности"
+      }
+    },
+    "cache_settings": {
+      "enabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Включить кеширование результатов"
+      },
+      "ttl": {
+        "type": "integer",
+        "default": 3600,
+        "min": 60,
+        "max": 86400,
+        "description": "Время жизни кеша (секунды)"
+      }
+    }
+  }
+}
