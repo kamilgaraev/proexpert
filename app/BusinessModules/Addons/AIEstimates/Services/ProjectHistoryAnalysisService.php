@@ -25,7 +25,7 @@ class ProjectHistoryAnalysisService
         $similarProjects = Project::where('organization_id', $organizationId)
             ->whereBetween('site_area_m2', [$minArea, $maxArea])
             ->when($buildingType, function ($query, $buildingType) {
-                $query->where('building_type', $buildingType);
+                $query->where('additional_info->building_type', $buildingType);
             })
             ->with(['estimates' => function ($query) {
                 $query->whereNotNull('approved_at')
