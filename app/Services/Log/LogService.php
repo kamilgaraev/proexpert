@@ -2,14 +2,12 @@
 
 namespace App\Services\Log;
 
-use App\Repositories\Interfaces\Log\MaterialUsageLogRepositoryInterface;
 use App\Repositories\Interfaces\Log\WorkCompletionLogRepositoryInterface;
 use App\Repositories\Interfaces\ProjectRepositoryInterface;
 use App\Repositories\Interfaces\MaterialRepositoryInterface;
 use App\Repositories\Interfaces\WorkTypeRepositoryInterface;
 use App\Models\User;
 use App\Models\Project;
-use App\Models\Models\Log\MaterialUsageLog;
 use App\Models\Models\Log\WorkCompletionLog;
 use App\Exceptions\BusinessLogicException;
 use Illuminate\Support\Facades\Auth;
@@ -22,7 +20,6 @@ use App\Services\Material\MaterialService;
 
 class LogService
 {
-    protected MaterialUsageLogRepositoryInterface $materialUsageLogRepository;
     protected WorkCompletionLogRepositoryInterface $workCompletionLogRepository;
     protected ProjectRepositoryInterface $projectRepository;
     protected MaterialRepositoryInterface $materialRepository;
@@ -31,7 +28,6 @@ class LogService
     protected MaterialService $materialService;
 
     public function __construct(
-        MaterialUsageLogRepositoryInterface $materialUsageLogRepository,
         WorkCompletionLogRepositoryInterface $workCompletionLogRepository,
         ProjectRepositoryInterface $projectRepository,
         MaterialRepositoryInterface $materialRepository,
@@ -39,7 +35,6 @@ class LogService
         ImageUploadService $imageUploadService,
         MaterialService $materialService
     ) {
-        $this->materialUsageLogRepository = $materialUsageLogRepository;
         $this->workCompletionLogRepository = $workCompletionLogRepository;
         $this->projectRepository = $projectRepository;
         $this->materialRepository = $materialRepository;

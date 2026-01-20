@@ -11,7 +11,6 @@ use App\Repositories\Interfaces\MaterialRepositoryInterface;
 use App\Repositories\Interfaces\WorkTypeRepositoryInterface;
 use App\Repositories\Interfaces\SupplierRepositoryInterface;
 use App\Repositories\Interfaces\RoleRepositoryInterface;
-// use App\Repositories\Interfaces\Log\MaterialUsageLogRepositoryInterface; // УДАЛЕНО: репозиторий больше не существует
 use App\Repositories\Interfaces\Log\WorkCompletionLogRepositoryInterface;
 use App\Repositories\Interfaces\MeasurementUnitRepositoryInterface;
 use App\Repositories\Interfaces\ReportTemplateRepositoryInterface;
@@ -23,7 +22,6 @@ use App\Repositories\RoleRepository;
 use App\Repositories\SupplierRepository;
 use App\Repositories\UserRepository;
 use App\Repositories\WorkTypeRepository;
-// use App\Repositories\Log\MaterialUsageLogRepository; // УДАЛЕНО: репозиторий больше не существует
 use App\Repositories\Log\WorkCompletionLogRepository;
 use App\Repositories\ReportTemplateRepository;
 use App\Repositories\RateCoefficient\RateCoefficientRepository;
@@ -61,7 +59,6 @@ class RepositoryServiceProvider extends ServiceProvider
         $this->app->bind(WorkTypeRepositoryInterface::class, WorkTypeRepository::class);
         $this->app->bind(SupplierRepositoryInterface::class, SupplierRepository::class);
         $this->app->bind(RoleRepositoryInterface::class, RoleRepository::class);
-        // $this->app->bind(MaterialUsageLogRepositoryInterface::class, MaterialUsageLogRepository::class); // УДАЛЕНО: репозиторий больше не существует
         $this->app->bind(WorkCompletionLogRepositoryInterface::class, WorkCompletionLogRepository::class);
         $this->app->bind(ReportTemplateRepositoryInterface::class, ReportTemplateRepository::class);
         $this->app->bind(RateCoefficientRepositoryInterface::class, RateCoefficientRepository::class);

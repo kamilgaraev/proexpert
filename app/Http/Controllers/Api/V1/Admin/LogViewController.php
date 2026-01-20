@@ -6,7 +6,6 @@ use App\Http\Controllers\Controller;
 use App\Services\Admin\LogViewingService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
-use App\Http\Resources\Api\V1\Admin\Log\MaterialUsageLogResource;
 use App\Http\Resources\Api\V1\Admin\Log\WorkCompletionLogResource;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use App\Exceptions\BusinessLogicException;
@@ -23,23 +22,16 @@ class LogViewController extends Controller
 
     /**
      * Получить пагинированный список логов использования материалов.
+     * 
+     * @deprecated Функциональность больше не поддерживается.
+     *             Используйте модуль складского учета.
      */
-    public function getMaterialLogs(Request $request): AnonymousResourceCollection | JsonResponse
+    public function getMaterialLogs(Request $request): JsonResponse
     {
-        try {
-            $logs = $this->logViewingService->getMaterialUsageLogs($request);
-            return MaterialUsageLogResource::collection($logs);
-        } catch (BusinessLogicException $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: 400);
-        } catch (\Throwable $e) {
-            Log::error('[LogViewController@getMaterialLogs] Unexpected error', [
-                'message' => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
-                // 'trace' => $e->getTraceAsString(),
-            ]);
-            return response()->json(['success' => false, 'message' => 'Внутренняя ошибка сервера при запросе логов материалов.'], 500);
-        }
+        throw new BusinessLogicException(
+            'Логи использования материалов больше не поддерживаются. Используйте модуль складского учета.',
+            410
+        );
     }
 
     /**
