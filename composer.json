@@ -16,7 +16,6 @@
         "laravel/reverb": "^1.6",
         "laravel/tinker": "^2.9",
         "league/flysystem-aws-s3-v3": "^3.29",
-        "maatwebsite/excel": "^1.1",
         "openai-php/client": "^0.17.1",
         "phpoffice/phpspreadsheet": "^3.9",
         "predis/predis": "^3.2",
