@@ -173,6 +173,11 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         try {
             return new \SimpleXMLElement($content);
         } catch (\Exception $e) {
+            $errors = libxml_get_errors();
+            foreach ($errors as $error) {
+                Log::warning("[XmlParser] LibXML Error: {$error->message} at line {$error->line}");
+            }
+            libxml_clear_errors();
             return null;
         }
     }
@@ -191,35 +196,67 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         $content = preg_replace('/[^\x{0009}\x{000a}\x{000d}\x{0020}-\x{D7FF}\x{E000}-\x{FFFD}]+/u', ' ', $content);
 
         // 1. Поиск позиций
-        // Улучшенный паттерн с поддержкой многострочности и unicode (u modifier)
-        preg_match_all('/<(Item|Position|Line|Row)([^>]+)>/iu', $content, $matches);
+        // Улучшенный паттерн с поддержкой многострочности, unicode и захватом смещения
+        preg_match_all('/<(Item|Position|Line|Row)([^>]+)>/iu', $content, $matches, PREG_OFFSET_CAPTURE);
         
         if (!empty($matches[2])) {
-            foreach ($matches[2] as $attrs) {
+            foreach ($matches[2] as $index => $match) {
+                $attrs = $match[0];
+                $offset = $match[1]; // Позиция конца открывающего тега
+                
                 $item = [];
                 // Парсим атрибуты с поддержкой кириллицы
                 preg_match('/(Caption|Name|Title|Naim|Description|Наименование)="([^"]+)"/iu', $attrs, $mName);
-                preg_match('/(Quant|Quantity|Volume|Fit|Vol|Kol|Количество)="([^"]+)"/iu', $attrs, $mQty);
-                preg_match('/(Price|Cost|UnitCost|PriceCurr|Цена)="([^"]+)"/iu', $attrs, $mPrice);
+                preg_match('/(Quant|Quantity|Volume|Fit|FizObjem|Vol|Kol|Количество)="([^"]+)"/iu', $attrs, $mQty);
+                preg_match('/(Price|Cost|UnitCost|PriceCurr|Stoimost|Цена)="([^"]+)"/iu', $attrs, $mPrice);
                 preg_match('/(Unit|Measure|Units|EdIzm|ЕдИзм)="([^"]+)"/iu', $attrs, $mUnit);
                 
                 // Важно: имя должно быть
                 $name = $mName[2] ?? null;
                 if (!$name) continue;
+
+                $quantity = isset($mQty[2]) ? $mQty[2] : 0;
+                $unitPrice = isset($mPrice[2]) ? $mPrice[2] : 0;
+                
+                // --- ADVANCED REGEX LOOKAHEAD ---
+                // Если количество похоже на формулу или 0, ищем в дочерних тегах (сканируем вперед на 2000 символов)
+                if (preg_match('/[a-zA-Zа-яА-Я\(]/u', $quantity) || $quantity == 0) {
+                    $searchScope = substr($content, $offset, 2000); // 2KB вперед
+                    
+                    // Ищем <Quantity ... Result="...">
+                    if (preg_match('/<Quantity[^>]+Result="([^"]+)"/iu', $searchScope, $mResQty)) {
+                         $quantity = $mResQty[1];
+                    }
+                }
+
+                // Если цена 0, ищем итоги или стоимость
+                if ($unitPrice == 0) {
+                     $searchScope = substr($content, $offset, 3000); // 3KB вперед (может быть много ресурсов)
+                     
+                     // Ищем <Itog ... TotalWithNRSP="..."> или Total
+                     if (preg_match('/<Itog[^>]+(TotalWithNRSP|TotalWithHP_SP|Total)="([^"]+)"/iu', $searchScope, $mTotal)) {
+                         $total = (float)str_replace(',', '.', $mTotal[2]);
+                         // Если есть total и quantity, вычисляем цену
+                         $qtyVal = (float)str_replace(',', '.', $quantity);
+                         if ($qtyVal > 0) {
+                             $unitPrice = $total / $qtyVal;
+                         }
+                     }
+                }
                 
                 $items[] = (new EstimateImportRowDTO(
                     rowNumber: 0,
                     sectionNumber: null,
                     itemName: html_entity_decode($name), // Декодируем entities если есть
                     unit: isset($mUnit[2]) ? html_entity_decode($mUnit[2]) : null,
-                    quantity: (float)str_replace(',', '.', ($mQty[2] ?? 0)), // Replace comma for float
-                    unitPrice: (float)str_replace(',', '.', ($mPrice[2] ?? 0)),
+                    quantity: (float)str_replace(',', '.', $quantity), 
+                    unitPrice: (float)str_replace(',', '.', $unitPrice),
                     code: null,
                     isSection: false,
                     level: 1,
                     sectionPath: null,
                     isNotAccounted: false,
-                    rawData: ['attributes' => $attrs]
+                    rawData: ['attributes' => $attrs, 'parse_method' => 'regex_advanced']
                 ))->toArray();
             }
         }
@@ -445,7 +482,21 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         $unit = $this->extractValue($item, ['Measure', 'Unit', 'Units', 'EdIzm']);
         
         // 1. Robust Quantity Detection
-        $qty = (float)$this->extractValue($item, ['Fit', 'FizObjem', 'Volume', 'Vol', 'Quant', 'Quantity', 'Kol']);
+        $qty = 0.0;
+        
+        // Сначала проверяем вложенный тег Quantity с атрибутом Result (Специфика ГрандСметы)
+        if (isset($item->Quantity) && isset($item->Quantity['Result'])) {
+            $qty = (float)str_replace(',', '.', (string)$item->Quantity['Result']);
+        }
+        
+        // Если не нашли, проверяем атрибуты самого элемента
+        if ($qty == 0) {
+            $rawQty = $this->extractValue($item, ['Fit', 'FizObjem', 'Volume', 'Vol', 'Quant', 'Quantity', 'Kol']);
+            // Если значение похоже на формулу (содержит буквы/скобки), игнорируем его для прямого кастинга
+            if (!preg_match('/[a-zA-Zа-яА-Я\(]/', $rawQty)) {
+                $qty = (float)str_replace(',', '.', $rawQty);
+            }
+        }
         
         // Coefficient check from Unit
         $quantityCoefficient = 1.0;
@@ -464,6 +515,11 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             $price = (float)($priceNode['Value'] ?? $priceNode);
         } else {
             $price = (float)$this->extractValue($item, ['Price', 'UnitCost', 'Cena']);
+        }
+
+        // GrandSmeta Price check (often in UnitPrice attribute or similar)
+        if ($price == 0 && isset($item['UnitPrice'])) {
+             $price = (float)$item['UnitPrice'];
         }
 
         $costNode = $item->Cost ?? $item->TotalCost ?? $item->Total ?? null;
