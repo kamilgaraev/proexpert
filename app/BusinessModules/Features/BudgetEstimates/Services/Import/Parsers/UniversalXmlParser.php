@@ -58,19 +58,27 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         $items = [];
         
         // 1. Попытка найти стандартную структуру (ГрандСмета, GGE)
-        $estimateNode = $this->findEstimateNode($xml);
-        
-        if ($estimateNode) {
-            Log::info('[XmlParser] Found structured estimate node', ['node' => $estimateNode->getName()]);
-            $this->parseNodeRecursively($estimateNode, $sections, $items);
+        if ($xml) {
+            $estimateNode = $this->findEstimateNode($xml);
+            
+            if ($estimateNode) {
+                Log::info('[XmlParser] Found structured estimate node', ['node' => $estimateNode->getName()]);
+                $this->parseNodeRecursively($estimateNode, $sections, $items);
+            } else {
+                // 2. Эвристический поиск позиций, если структура не распознана
+                Log::warning('[XmlParser] Structured estimate node not found, using heuristics');
+                $this->findItemsHeuristically($xml, $items);
+            }
+            
+            // Метаданные
+            $metadata = $this->parseMetadata($xml);
         } else {
-            // 2. Эвристический поиск позиций, если структура не распознана
-            Log::warning('[XmlParser] Structured estimate node not found, using heuristics');
-            $this->findItemsHeuristically($xml, $items);
+            // FALLBACK: Если XML не загрузился, пробуем Regex-парсинг (для битых файлов)
+            Log::warning('[XmlParser] XML load failed, attempting regex parsing');
+            $this->parseWithRegex($filePath, $sections, $items);
+            $metadata = ['program' => 'GrandSmeta (Regex)', 'date' => date('Y-m-d')];
         }
         
-        // Метаданные
-        $metadata = $this->parseMetadata($xml);
         $metadata['parser'] = 'universal_xml';
         
         // Определяем тип сметы по генератору
@@ -99,6 +107,49 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             estimateType: $estimateType,
             typeConfidence: 100.0
         );
+    }
+    
+    private function parseWithRegex(string $filePath, array &$sections, array &$items): void
+    {
+        $content = file_get_contents($filePath);
+        // Простейший парсинг для восстановления хоть чего-то
+        // Ищем <Item ...> или <Position ...>
+        
+        // 1. Поиск позиций
+        // <Item Caption="Name" Quantity="10" Price="100" Unit="m2">
+        // <Position ...>
+        
+        // Паттерн для поиска тегов позиций с атрибутами
+        // Это очень упрощенно, но может спасти в крайнем случае
+        preg_match_all('/<(Item|Position|Line)([^>]+)>/i', $content, $matches);
+        
+        if (!empty($matches[2])) {
+            foreach ($matches[2] as $attrs) {
+                $item = [];
+                // Парсим атрибуты
+                preg_match('/(Caption|Name|Title)="([^"]+)"/i', $attrs, $mName);
+                preg_match('/(Quant|Quantity|Volume|Fit)="([^"]+)"/i', $attrs, $mQty);
+                preg_match('/(Price|Cost|UnitCost)="([^"]+)"/i', $attrs, $mPrice);
+                preg_match('/(Unit|Measure)="([^"]+)"/i', $attrs, $mUnit);
+                
+                if (empty($mName)) continue;
+                
+                $items[] = (new EstimateImportRowDTO(
+                    rowNumber: 0,
+                    sectionNumber: null,
+                    itemName: $mName[2] ?? 'Unknown',
+                    unit: $mUnit[2] ?? null,
+                    quantity: (float)($mQty[2] ?? 0),
+                    unitPrice: (float)($mPrice[2] ?? 0),
+                    code: null,
+                    isSection: false,
+                    level: 1,
+                    sectionPath: null,
+                    isNotAccounted: false,
+                    rawData: ['attributes' => $attrs]
+                ))->toArray();
+            }
+        }
     }
 
     public function detectStructure(string $filePath): array
@@ -149,35 +200,39 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         return $this->detectStructure($filePath);
     }
 
-    private function loadXML(string $filePath): \SimpleXMLElement
+    private function loadXML(string $filePath): ?\SimpleXMLElement
     {
         libxml_use_internal_errors(true);
         
         $content = file_get_contents($filePath);
         
-        // Попытка исправить кодировку, если она кривая (часто бывает Windows-1251 без объявления)
+        if (!$content) return null;
+        
+        // 1. Очистка BOM
+        $content = trim($content);
+        $bom = pack('H*','EFBBBF');
+        $content = preg_replace("/^$bom/", '', $content);
+
+        // 2. Исправление кодировки
         if (!preg_match('/encoding=["\'](.*?)["\']/', $content)) {
-            // Если нет объявления кодировки, но есть кириллица в 1251
-            if ($this->isWindows1251($content)) {
-                $content = '<?xml version="1.0" encoding="windows-1251"?>' . "\n" . $content;
+            if (!mb_check_encoding($content, 'UTF-8')) {
+                 if (!str_contains($content, '<?xml')) {
+                     $content = '<?xml version="1.0" encoding="windows-1251"?>' . "\n" . $content;
+                 } else {
+                     $content = str_replace('<?xml version="1.0"?>', '<?xml version="1.0" encoding="windows-1251"?>', $content);
+                 }
             }
         }
+        
+        // 3. Санитизация
+        $content = preg_replace('/[^\x{0009}\x{000a}\x{000d}\x{0020}-\x{D7FF}\x{E000}-\x{FFFD}]+/u', ' ', $content);
         
         try {
-            $xml = new \SimpleXMLElement($content);
+            return new \SimpleXMLElement($content);
         } catch (\Exception $e) {
-            // Fallback: попробуем sanitize
-            $content = $this->sanitizeXml($content);
-            try {
-                $xml = new \SimpleXMLElement($content);
-            } catch (\Exception $e2) {
-                $errors = libxml_get_errors();
-                libxml_clear_errors();
-                throw new \RuntimeException('XML Parsing failed: ' . $e2->getMessage());
-            }
+            // Если совсем все плохо, возвращаем null, включится Regex-mode
+            return null;
         }
-        
-        return $xml;
     }
     
     private function isWindows1251($string): bool

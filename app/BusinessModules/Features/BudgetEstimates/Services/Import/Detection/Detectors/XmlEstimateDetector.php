@@ -23,7 +23,7 @@ class XmlEstimateDetector implements EstimateTypeDetectorInterface
         
         $xml = null;
         
-        // 1. Пытаемся получить XML объект
+        // 1. Пытаемся получить XML объект или анализируем строку
         if ($content instanceof SimpleXMLElement) {
             $xml = $content;
         } elseif (is_string($content)) {
@@ -58,6 +58,33 @@ class XmlEstimateDetector implements EstimateTypeDetectorInterface
                     libxml_clear_errors();
                 } catch (\Exception $e) {
                     // Не валидный XML
+                }
+            }
+
+            // FALLBACK: Если simplexml не справился, используем Regex для детекции
+            // Это решает проблему "битых" файлов или странных кодировок, которые ломают парсер, 
+            // но текст в них читаем.
+            if (!$xml) {
+                // Ищем ключевые маркеры ГрандСметы или XML сметы
+                $regexConfidence = 0;
+                $regexIndicators = [];
+                
+                if (preg_match('/<GrandSmeta/i', $content) || preg_match('/Generator="GrandSmeta"/i', $content)) {
+                    $regexConfidence = 100;
+                    $regexIndicators[] = 'regex_match_grandsmeta';
+                    $this->detectedType = 'grandsmeta';
+                    $this->description = 'ГрандСмета (экспорт из программы)';
+                } elseif (preg_match('/<Estimate/i', $content) || preg_match('/<LocalEstimate/i', $content)) {
+                     $regexConfidence = 80;
+                     $regexIndicators[] = 'regex_match_estimate';
+                     $this->detectedType = 'xml_estimate';
+                }
+                
+                if ($regexConfidence > 0) {
+                     return [
+                        'confidence' => $regexConfidence,
+                        'indicators' => array_merge(['valid_xml_structure_failed_but_regex_passed'], $regexIndicators),
+                    ];
                 }
             }
         }
