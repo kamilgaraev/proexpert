@@ -248,8 +248,8 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             }
         }
         
-        foreach ($foundSections as $section) {
-            $this->processSection($section, $sections, $items, $parentPath, $level);
+        foreach ($foundSections as $i => $section) {
+            $this->processSection($section, $sections, $items, $parentPath, $level, $i + 1);
         }
 
         // 2. Ищем позиции
@@ -280,15 +280,18 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
     private function isLeafNode(\SimpleXMLElement $node): bool
     {
         // Считаем узел "листом" (свойствами), если у него нет детей или его имя похоже на свойство
-        $propKeywords = ['Price', 'Cost', 'Quantity', 'Measure', 'Unit', 'Name', 'Code', 'Resources', 'Coefficients'];
+        $propKeywords = ['Price', 'Cost', 'Quantity', 'Measure', 'Unit', 'Name', 'Code', 'Resources', 'Coefficients', 'Itog'];
         if ($this->matchesKeywords($node->getName(), $propKeywords)) return true;
         
         return $node->count() === 0;
     }
 
-    private function processSection(\SimpleXMLElement $section, array &$sections, array &$items, string $parentPath, int $level): void
+    private function processSection(\SimpleXMLElement $section, array &$sections, array &$items, string $parentPath, int $level, int $index = 1): void
     {
         $num = $this->extractValue($section, ['Number', 'Num', 'No', 'Id']);
+        if (!$num) {
+            $num = (string)$index;
+        }
         $name = $this->extractValue($section, ['Name', 'Caption', 'Title']);
         
         $currentPath = $parentPath ? "$parentPath.$num" : $num;
@@ -347,13 +350,21 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         $name = $this->extractValue($item, ['Name', 'Caption', 'Title', 'Description']);
         $unit = $this->extractValue($item, ['Measure', 'Unit', 'Units', 'EdIzm']);
         
-        $qty = (float)$this->extractValue($item, ['Quant', 'Quantity', 'Volume', 'Kol']);
+        // 1. Robust Quantity Detection
+        $qty = (float)$this->extractValue($item, ['Fit', 'FizObjem', 'Volume', 'Vol', 'Quant', 'Quantity', 'Kol']);
         
+        // Coefficient check from Unit
+        $quantityCoefficient = 1.0;
+        if ($unit && preg_match('/^(\d+)\s+/', trim($unit), $matches)) {
+            $val = (float)$matches[1];
+            if ($val > 0) $quantityCoefficient = $val;
+        }
+
         // Цена и Стоимость
         $price = 0.0;
         $total = 0.0;
 
-        // 1. Пытаемся найти прямые атрибуты
+        // 2. Пытаемся найти прямые атрибуты
         $priceNode = $item->Price ?? $item->UnitCost ?? $item->Direct ?? null;
         if ($priceNode) {
             $price = (float)($priceNode['Value'] ?? $priceNode);
@@ -368,22 +379,71 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             $total = (float)$this->extractValue($item, ['Cost', 'TotalCost', 'Summa']);
         }
 
-        // 2. Специфика ГрандСметы: Ищем стоимость в итогах (<Itog>)
-        if ($total == 0 && isset($item->Itog)) {
-            // Ищем "Всего по позиции" или просто берем последний/самый большой итог
-            // Часто структура: <Itog> <ItogRes> <Itog DataType="TotalWithNP" TotalCurr="...">
-            $itogs = $item->xpath('.//Itog[@TotalCurr]');
-            foreach ($itogs as $itogXml) {
-                $val = (float)$itogXml['TotalCurr'];
-                // Эвристика: ищем "Всего" или берем максимальное значение (обычно это итог с НР и СП)
-                $caption = (string)($itogXml['Caption'] ?? '');
-                if (mb_stripos($caption, 'Всего') !== false || $val > $total) {
-                    $total = $val;
+        // 3. Специфика ГрандСметы: Ищем стоимость в итогах (<Itog>)
+        if (isset($item->Itog)) {
+            $bestTotal = 0.0;
+            $foundBest = false;
+            
+            // Check specific attributes
+            $targetAttrs = ['TotalWithNRSP', 'TotalWithHP_SP', 'TotalWithHPSP', 'Total'];
+            foreach ($targetAttrs as $attr) {
+                if (isset($item->Itog[$attr])) {
+                    $val = (float)$item->Itog[$attr];
+                    if ($val > 0) {
+                        $bestTotal = $val;
+                        $foundBest = true;
+                        break;
+                    }
                 }
+            }
+            
+            if (!$foundBest) {
+                // Ищем во вложенных итогах
+                $itogs = $item->xpath('.//Itog[@TotalCurr] | .//Itog[@Total]');
+                foreach ($itogs as $itogXml) {
+                    $val = (float)($itogXml['TotalCurr'] ?? $itogXml['Total'] ?? 0);
+                    $caption = (string)($itogXml['Caption'] ?? '');
+                    
+                    if (mb_stripos($caption, 'Всего') !== false || $val > $bestTotal) {
+                        $bestTotal = $val;
+                    }
+                }
+            }
+            
+            if ($bestTotal > 0) {
+                $total = $bestTotal;
+            }
+        }
+        
+        // 4. Учет НР и СП
+        $hp = (float)$this->extractValue($item, ['HP', 'Overhead']);
+        $sp = (float)$this->extractValue($item, ['SP', 'Profit']);
+        
+        // 5. Resource Summation Fallback
+        $resourcesTotal = 0.0;
+        $hasResources = isset($item->Resources) && count($item->Resources->children()) > 0;
+        
+        if ($hasResources) {
+            foreach ($item->Resources->children() as $res) {
+                $nodeName = $res->getName();
+                if (in_array($nodeName, ['Tzr', 'Tzm'])) continue; // Skip labor if needed, but keeping for cost sum
+
+                $resTotal = (float)$this->extractValue($res, ['Total', 'Cost', 'Summa']);
+                if ($resTotal == 0) {
+                    $resQty = (float)$this->extractValue($res, ['Quant', 'Quantity']);
+                    $resPrice = (float)$this->extractValue($res, ['Price', 'PriceCurr']);
+                    $resTotal = $resQty * $resPrice;
+                }
+                $resourcesTotal += $resTotal;
             }
         }
 
-        // Если нашли Total, но не нашли Price, вычисляем обратным счетом
+        // Если цена 0, и есть ресурсы - берем сумму ресурсов
+        if ($total == 0 && $resourcesTotal > 0) {
+            $total = $resourcesTotal;
+        }
+
+        // 6. Back calculation
         if ($price == 0 && $qty > 0 && $total > 0) {
             $price = $total / $qty;
         } elseif ($total == 0 && $qty > 0 && $price > 0) {
@@ -403,10 +463,11 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             sectionPath: $parentPath,
             currentTotalAmount: $total,
             isNotAccounted: false,
-            rawData: $this->xmlToArray($item)
+            rawData: $this->xmlToArray($item),
+            quantityCoefficient: $quantityCoefficient
         ))->toArray();
         
-        // Ресурсы (Универсальный обход)
+        // Ресурсы
         if (isset($item->Resources)) {
              foreach ($item->Resources->children() as $res) {
                  $this->processResource($res, $items, $parentPath, $level);
@@ -416,8 +477,6 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
     
     private function processResource(\SimpleXMLElement $res, array &$items, string $parentPath, int $level): void
     {
-        // Пропускаем трудозатраты (Tzr, Tzm), так как они обычно входят в расценку, 
-        // если только это не отдельные позиции материалов
         $nodeName = $res->getName();
         if (in_array($nodeName, ['Tzr', 'Tzm'])) {
             return;
@@ -426,9 +485,8 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         $name = $this->extractValue($res, ['Name', 'Caption']);
         $code = $this->extractValue($res, ['Code', 'Justification']);
         $unit = $this->extractValue($res, ['Measure', 'Unit', 'Units']);
-        $qty = (float)$this->extractValue($res, ['Quant', 'Quantity']);
+        $qty = (float)$this->extractValue($res, ['Quant', 'Quantity', 'Fit', 'FizObjem']);
         
-        // Цена ресурса (PriceCurr, PriceBase или атрибут)
         $price = 0.0;
         if (isset($res->PriceCurr)) {
             $price = (float)($res->PriceCurr['Value'] ?? $res->PriceCurr);
@@ -437,12 +495,14 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         } else {
             $price = (float)$this->extractValue($res, ['Price', 'Cost']);
         }
-
-        // Проверяем, не является ли это неучтенным материалом
-        // В ГрандСмете часто неучтенные материалы имеют атрибут Options="...NotCount..." или просто добавлены
-        // Но для надежности просто выводим все материалы
         
-        // Если нет имени или количества, пропускаем
+        if ($price == 0) {
+             $total = (float)$this->extractValue($res, ['Total', 'Cost']);
+             if ($total > 0 && $qty > 0) {
+                 $price = $total / $qty;
+             }
+        }
+
         if (empty($name) && empty($code)) return;
 
         $items[] = (new EstimateImportRowDTO(
@@ -456,7 +516,7 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             isSection: false,
             level: $level + 1,
             sectionPath: $parentPath,
-            isNotAccounted: true, // Считаем вложенные ресурсы материалами
+            isNotAccounted: true, 
             itemType: 'material',
             rawData: $this->xmlToArray($res)
         ))->toArray();
