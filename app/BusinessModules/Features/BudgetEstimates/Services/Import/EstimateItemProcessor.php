@@ -162,12 +162,21 @@ class EstimateItemProcessor
                 continue;
             }
 
-            // Set current section from stack
-            $currentSectionId = $this->sectionStack->getCurrentSectionId();
-            
-            // Если раздела нет в стеке, но в DTO есть sectionPath (из старого парсера), используем его
-            if ($currentSectionId === null && $dto->sectionPath && isset($context->sectionsMap[$dto->sectionPath])) {
+            // 1. Priority: Explicit Section Path mapping (for XML/Stream parsers that separate structure)
+            if ($dto->sectionPath && isset($context->sectionsMap[$dto->sectionPath])) {
                 $currentSectionId = $context->sectionsMap[$dto->sectionPath];
+            } 
+            // 2. Fallback: Stack Context (for nested parsers like Excel indentation)
+            else {
+                $currentSectionId = $this->sectionStack->getCurrentSectionId();
+            }
+            
+            // Если и так не нашли, пробуем по номеру секции (если есть)
+            if ($currentSectionId === null && $dto->sectionNumber) {
+                 // Поиск по мапе, если ключом был номер (бывает в некоторых парсерах)
+                 if (isset($context->sectionsMap[$dto->sectionNumber])) {
+                     $currentSectionId = $context->sectionsMap[$dto->sectionNumber];
+                 }
             }
             
             $context->currentSectionId = $currentSectionId;
