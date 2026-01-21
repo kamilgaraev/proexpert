@@ -12,6 +12,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\ExcelSi
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\ProhelperEstimateParser;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\Factory\ParserFactory;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\ExcelStreamParser;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\UniversalXmlParser;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\NormativeMatchingService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\NormativeCodeService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Detection\EstimateTypeDetector;
@@ -612,7 +613,7 @@ class EstimateImportService
         }
         
         return match ($extension) {
-            'xml' => new \App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\GrandSmetaXMLParser(),
+            'xml' => new UniversalXmlParser(),
             'csv' => new \App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\LocalEstimateCSVParser(),
             'txt', 'rik' => new \App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\RIKParser(),
             default => new ExcelSimpleTableParser(),
