@@ -2,6 +2,7 @@
 
 namespace App\BusinessModules\Features\BudgetEstimates\Contracts;
 
+use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportDTO;
 use Generator;
 
 interface StreamParserInterface
@@ -11,9 +12,9 @@ interface StreamParserInterface
      * This ensures constant memory usage regardless of file size.
      *
      * @param string $filePath
-     * @return Generator
+     * @return Generator|EstimateImportDTO
      */
-    public function parse(string $filePath): Generator;
+    public function parse(string $filePath): Generator|EstimateImportDTO;
 
     /**
      * Check if the parser supports the given file extension.

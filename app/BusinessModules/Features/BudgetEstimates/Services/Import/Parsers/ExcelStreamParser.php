@@ -3,13 +3,14 @@
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers;
 
 use App\BusinessModules\Features\BudgetEstimates\Contracts\StreamParserInterface;
+use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportDTO;
 use Shuchkin\SimpleXLSX;
 use Generator;
 use RuntimeException;
 
 class ExcelStreamParser implements StreamParserInterface
 {
-    public function parse(string $filePath): Generator
+    public function parse(string $filePath): Generator|EstimateImportDTO
     {
         if (!file_exists($filePath)) {
             throw new RuntimeException("File not found: {$filePath}");

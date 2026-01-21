@@ -4,9 +4,11 @@ namespace App\BusinessModules\Features\BudgetEstimates\Contracts;
 
 use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportDTO;
 
+use Generator;
+
 interface EstimateImportParserInterface
 {
-    public function parse(string $filePath): EstimateImportDTO;
+    public function parse(string $filePath): EstimateImportDTO|Generator;
     
     public function detectStructure(string $filePath): array;
     
