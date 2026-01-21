@@ -264,6 +264,21 @@ class UserService
             $this->userRepository->attachToOrganization($newUser->id, $intOrganizationId);
             $this->userRepository->assignRoleToUser($newUser->id, $adminRoleSlug, $intOrganizationId);
             
+            if (!$newUser->hasVerifiedEmail()) {
+                try {
+                    $newUser->sendEmailVerificationNotification();
+                    Log::info('[UserService] Email verification sent to new admin', [
+                        'user_id' => $newUser->id,
+                        'email' => $newUser->email
+                    ]);
+                } catch (\Exception $e) {
+                    Log::error('[UserService] Failed to send email verification to admin', [
+                        'user_id' => $newUser->id,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+            
             // AUDIT: Создание нового пользователя с ролью администратора
             $this->logging->audit('user.admin.created.new', [
                 'user_id' => $newUser->id,
@@ -615,6 +630,22 @@ class UserService
             $newUser = $this->userRepository->create($data);
             $this->userRepository->attachToOrganization($newUser->id, $organizationId, false); // Attach as NOT an owner
             $this->userRepository->assignRoleToUser($newUser->id, $foremanRoleSlug, $organizationId);
+
+            if (!$newUser->hasVerifiedEmail()) {
+                try {
+                    $newUser->sendEmailVerificationNotification();
+                    Log::info('[UserService] Email verification sent to new foreman', [
+                        'user_id' => $newUser->id,
+                        'email' => $newUser->email
+                    ]);
+                } catch (\Exception $e) {
+                    Log::error('[UserService] Failed to send email verification to foreman', [
+                        'user_id' => $newUser->id,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+
             return $newUser;
         }
     }

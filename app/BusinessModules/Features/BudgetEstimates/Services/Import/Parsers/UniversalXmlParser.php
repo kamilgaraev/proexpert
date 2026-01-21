@@ -300,6 +300,39 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         $this->parseNodeRecursively($section, $sections, $items, $currentPath, $level + 1);
     }
 
+    private function xmlToArray($xml): array
+    {
+        if ($xml instanceof \SimpleXMLElement) {
+            $attributes = [];
+            foreach ($xml->attributes() as $k => $v) {
+                $attributes[$k] = (string)$v;
+            }
+            
+            $children = [];
+            foreach ($xml->children() as $k => $v) {
+                $children[$k][] = $this->xmlToArray($v);
+            }
+            
+            // Simplify children if only one
+            foreach ($children as $k => $v) {
+                if (count($v) === 1) {
+                    $children[$k] = $v[0];
+                }
+            }
+            
+            $value = (string)$xml;
+            
+            $result = [];
+            if (!empty($attributes)) $result['@attributes'] = $attributes;
+            if (!empty($children)) $result = array_merge($result, $children);
+            if (trim($value) !== '' && empty($children)) $result['@value'] = $value;
+            
+            return $result;
+        }
+        
+        return (array)$xml;
+    }
+
     private function processItem(\SimpleXMLElement $item, array &$items, string $parentPath, int $level): void
     {
         $num = $this->extractValue($item, ['Number', 'Num', 'No']);
@@ -363,7 +396,7 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             sectionPath: $parentPath,
             currentTotalAmount: $total,
             isNotAccounted: false,
-            rawData: (array)$item
+            rawData: $this->xmlToArray($item)
         ))->toArray();
         
         // Ресурсы (Универсальный обход)
@@ -417,7 +450,8 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             level: $level + 1,
             sectionPath: $parentPath,
             isNotAccounted: true, // Считаем вложенные ресурсы материалами
-            itemType: 'material'
+            itemType: 'material',
+            rawData: $this->xmlToArray($res)
         ))->toArray();
     }
 
