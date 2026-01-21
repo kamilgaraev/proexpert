@@ -351,13 +351,22 @@ class EstimateImportService
             'validate_only' => $validateOnly,
         ]);
         
+        // Объединяем разделы и позиции для передачи в процессор, если данные берутся из кэша (превью)
+        // В превью они разделены, но процессор ожидает единый поток.
+        $preloadedData = null;
+        if (!empty($previewData)) {
+            $sections = $previewData['sections'] ?? [];
+            $items = $previewData['items'] ?? [];
+            $preloadedData = array_merge($sections, $items);
+        }
+        
         // Dry Run всегда синхронно (пока)
         if ($validateOnly) {
-            return $this->syncImport($fileId, $matchingConfig, $estimateSettings, $jobId, true, $previewData['items'] ?? null);
+            return $this->syncImport($fileId, $matchingConfig, $estimateSettings, $jobId, true, $preloadedData);
         }
         
         if (!$shouldQueue) {
-            return $this->syncImport($fileId, $matchingConfig, $estimateSettings, $jobId, false, $previewData['items'] ?? null);
+            return $this->syncImport($fileId, $matchingConfig, $estimateSettings, $jobId, false, $preloadedData);
         } else {
             return $this->queueImport($fileId, $matchingConfig, $estimateSettings);
         }
@@ -778,7 +787,7 @@ class EstimateImportService
                     itemsTotal: is_array($iterator) ? count($iterator) : 0,
                     itemsImported: $itemsResult['imported'],
                     itemsSkipped: $itemsResult['skipped'],
-                    sectionsCreated: 0,
+                    sectionsCreated: $itemsResult['sections_created'] ?? 0,
                     newWorkTypesCreated: [], 
                     warnings: $itemsResult['warnings'] ?? [], 
                     errors: [],
@@ -793,7 +802,7 @@ class EstimateImportService
                 itemsTotal: is_array($iterator) ? count($iterator) : 0,
                 itemsImported: $itemsResult['imported'],
                 itemsSkipped: $itemsResult['skipped'],
-                sectionsCreated: 0, // Считается внутри
+                sectionsCreated: $itemsResult['sections_created'] ?? 0, 
                 newWorkTypesCreated: [], 
                 warnings: [], // Warnings now inside items
                 errors: [],
