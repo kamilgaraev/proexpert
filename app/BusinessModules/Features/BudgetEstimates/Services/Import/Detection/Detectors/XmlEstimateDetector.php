@@ -42,21 +42,47 @@ class XmlEstimateDetector implements EstimateTypeDetectorInterface
             $bom = pack('H*','EFBBBF');
             $content = preg_replace("/^$bom/", '', $content);
             
+            // Если после удаления BOM строка пустая - выходим
+            if (empty($content)) {
+                 return [
+                    'confidence' => 0,
+                    'indicators' => ['Empty content after cleanup'],
+                ];
+            }
+            
             // 2. Исправляем кодировку (Windows-1251 -> UTF-8), если не объявлена
             // Часто бывает <?xml version="1.0" ... без encoding, но внутри 1251
-            if (!preg_match('/encoding=["\'](.*?)["\']/', $content)) {
+            // Используем str_contains вместо preg_match для проверки заголовка, чтобы избежать проблем с кодировкой в regex
+            $hasEncoding = str_contains($content, 'encoding=');
+            
+            if (!$hasEncoding) {
                  if (!mb_check_encoding($content, 'UTF-8')) {
-                     // Добавляем объявление 1251
+                     // Пытаемся сконвертировать из 1251 в UTF-8 перед любыми операциями
+                     try {
+                        $content = mb_convert_encoding($content, 'UTF-8', 'Windows-1251');
+                     } catch (\Throwable $e) {
+                         // Если конвертация не удалась, оставляем как есть
+                     }
+                     
+                     // Добавляем объявление
                      if (!str_contains($content, '<?xml')) {
-                         $content = '<?xml version="1.0" encoding="windows-1251"?>' . "\n" . $content;
+                         $content = '<?xml version="1.0" encoding="utf-8"?>' . "\n" . $content;
                      } else {
-                         $content = str_replace('<?xml version="1.0"?>', '<?xml version="1.0" encoding="windows-1251"?>', $content);
+                         // Заменяем заголовок на UTF-8 (так как мы сконвертировали контент)
+                         $content = str_replace('<?xml version="1.0"?>', '<?xml version="1.0" encoding="utf-8"?>', $content);
                      }
                  }
             }
 
-            // 3. Санитизация невалидных символов
-            $content = preg_replace('/[^\x{0009}\x{000a}\x{000d}\x{0020}-\x{D7FF}\x{E000}-\x{FFFD}]+/u', ' ', $content);
+            // 3. Санитизация невалидных символов (теперь безопасна, так как мы постарались привести к UTF-8)
+            $sanitized = preg_replace('/[^\x{0009}\x{000a}\x{000d}\x{0020}-\x{D7FF}\x{E000}-\x{FFFD}]+/u', ' ', $content);
+            
+            if ($sanitized !== null) {
+                $content = $sanitized;
+            } else {
+                // Если preg_replace вернул null (ошибка кодировки), попробуем почистить другим способом или оставим как есть
+                // для fallback regex
+            }
 
             // Проверка на XML заголовок или теги
             if (str_contains($content, '<?xml') || (str_contains($content, '<') && str_contains($content, '>'))) {
