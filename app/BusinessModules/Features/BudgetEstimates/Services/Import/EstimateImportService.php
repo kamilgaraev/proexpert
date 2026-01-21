@@ -211,7 +211,7 @@ class EstimateImportService
         
         // Для превью используем старый парсер, так как он возвращает DTO
         // Но с обновленным маппингом
-        $parser = new ExcelSimpleTableParser();
+        $parser = $this->getParser($fileData['file_path']);
         
         if ($columnMapping !== null) {
             Cache::put("estimate_import_mapping:{$fileId}", $columnMapping, now()->addHours(24));
@@ -710,6 +710,10 @@ class EstimateImportService
                         }
                     })();
                     
+                } elseif ($parser instanceof UniversalXmlParser) {
+                    // Для XML используем потоковый парсинг через генератор
+                    $iterator = $parser->parse($fileData['file_path']);
+                    Log::info('[EstimateImport] Using UniversalXmlParser stream iterator');
                 } else {
                     // Fallback для других парсеров (XML, CSV) - пока через память или их собственные методы
                     // Временное решение: используем превью данные

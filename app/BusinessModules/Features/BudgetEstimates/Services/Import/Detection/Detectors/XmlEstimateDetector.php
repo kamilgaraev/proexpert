@@ -13,6 +13,9 @@ use SimpleXMLElement;
  */
 class XmlEstimateDetector implements EstimateTypeDetectorInterface
 {
+    private string $detectedType = 'xml_estimate';
+    private string $description = 'XML Смета (ГрандСмета, GGE или совместимый формат)';
+
     public function detect($content): array
     {
         $indicators = [];
@@ -55,6 +58,12 @@ class XmlEstimateDetector implements EstimateTypeDetectorInterface
             if (strcasecmp($rootName, $root) === 0) {
                 $indicators[] = "root_element_{$rootName}";
                 $confidence += 40;
+                
+                // Если корень явно GrandSmeta, меняем тип
+                if (strcasecmp($rootName, 'GrandSmeta') === 0) {
+                    $this->detectedType = 'grandsmeta';
+                    $this->description = 'ГрандСмета (экспорт из программы)';
+                }
                 break;
             }
         }
@@ -64,10 +73,17 @@ class XmlEstimateDetector implements EstimateTypeDetectorInterface
         if (!empty($generator)) {
             $indicators[] = "generator_{$generator}";
             // Если генератор известен (GrandSmeta, Smeta.ru и т.д.), повышаем уверенность
-            if (mb_stripos($generator, 'GrandSmeta') !== false || 
-                mb_stripos($generator, 'Smeta') !== false || 
-                mb_stripos($generator, 'GGE') !== false) {
+            if (mb_stripos($generator, 'GrandSmeta') !== false) {
                 $confidence += 30;
+                $this->detectedType = 'grandsmeta';
+                $this->description = 'ГрандСмета (экспорт из программы)';
+            } elseif (mb_stripos($generator, 'Smeta') !== false) {
+                $confidence += 30;
+                $this->detectedType = 'smartsmeta';
+                $this->description = 'SmartSmeta / Smeta.ru';
+            } elseif (mb_stripos($generator, 'GGE') !== false) {
+                $confidence += 30;
+                // GGE обычно обрабатывается как generic XML или имеет свой формат, оставим xml_estimate или добавим gge если нужно
             } else {
                 $confidence += 10;
             }
@@ -168,11 +184,11 @@ class XmlEstimateDetector implements EstimateTypeDetectorInterface
     
     public function getType(): string
     {
-        return 'xml_estimate';
+        return $this->detectedType;
     }
     
     public function getDescription(): string
     {
-        return 'XML Смета (ГрандСмета, GGE или совместимый формат)';
+        return $this->description;
     }
 }
