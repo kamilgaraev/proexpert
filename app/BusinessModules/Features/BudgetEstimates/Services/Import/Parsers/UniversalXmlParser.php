@@ -109,38 +109,111 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         );
     }
     
-    private function parseWithRegex(string $filePath, array &$sections, array &$items): void
+    private function prepareContent(string $filePath): ?string
     {
         $content = file_get_contents($filePath);
-        // Простейший парсинг для восстановления хоть чего-то
-        // Ищем <Item ...> или <Position ...>
+        if (!$content) return null;
+
+        // 1. Очистка BOM и trim
+        $content = trim($content);
+        $bom = pack('H*','EFBBBF');
+        $content = preg_replace("/^$bom/", '', $content);
         
+        // 2. Детекция и исправление кодировки
+        // Сначала ищем объявление encoding в заголовке
+        $hasEncoding = str_contains($content, 'encoding=');
+        
+        if (!$hasEncoding) {
+            // Если заголовка нет, проверяем на UTF-8
+            if (!mb_check_encoding($content, 'UTF-8')) {
+                // Если не UTF-8, пробуем конвертировать из Windows-1251 (самый частый кейс для РФ)
+                try {
+                    $converted = mb_convert_encoding($content, 'UTF-8', 'Windows-1251');
+                    if ($converted) {
+                        $content = $converted;
+                        // Добавляем/исправляем заголовок
+                        if (!str_contains($content, '<?xml')) {
+                            $content = '<?xml version="1.0" encoding="utf-8"?>' . "\n" . $content;
+                        } else {
+                            $content = str_replace('<?xml version="1.0"?>', '<?xml version="1.0" encoding="utf-8"?>', $content);
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    // Ignore conversion errors
+                }
+            }
+        } elseif (preg_match('/encoding=["\']windows-1251["\']/i', $content)) {
+             // Если явно указано 1251, но мы хотим работать с UTF-8 строкой для Regex
+             // (SimpleXML сам справится с 1251, если она указана, но для Regex нам нужен UTF-8)
+             // НО! Если мы поменяем кодировку строки, нам нужно поменять и заголовок на utf-8, 
+             // иначе simplexml сойдет с ума (строка utf-8, а заголовок 1251).
+             
+             // Лучше оставим как есть для simplexml (он умеет читать encoding),
+             // но для parseWithRegex нам придется конвертировать вручную.
+        }
+
+        // 3. Санитизация (только валидные UTF-8 символы)
+        // Делаем это только если строка валидный UTF-8, иначе испортим 1251
+        if (mb_check_encoding($content, 'UTF-8')) {
+            $content = preg_replace('/[^\x{0009}\x{000a}\x{000d}\x{0020}-\x{D7FF}\x{E000}-\x{FFFD}]+/u', ' ', $content);
+        }
+        
+        return $content;
+    }
+
+    private function loadXML(string $filePath): ?\SimpleXMLElement
+    {
+        libxml_use_internal_errors(true);
+        
+        // Используем подготовленный контент
+        $content = $this->prepareContent($filePath);
+        
+        if (!$content) return null;
+        
+        try {
+            return new \SimpleXMLElement($content);
+        } catch (\Exception $e) {
+            return null;
+        }
+    }
+
+    private function parseWithRegex(string $filePath, array &$sections, array &$items): void
+    {
+        // Для Regex нам ОБЯЗАТЕЛЬНО нужен UTF-8, чтобы корректно искать кириллицу
+        $content = file_get_contents($filePath);
+        
+        // Принудительная конвертация в UTF-8 для Regex парсинга
+        if (!mb_check_encoding($content, 'UTF-8')) {
+            $content = mb_convert_encoding($content, 'UTF-8', 'Windows-1251');
+        }
+        
+        // Санитизация
+        $content = preg_replace('/[^\x{0009}\x{000a}\x{000d}\x{0020}-\x{D7FF}\x{E000}-\x{FFFD}]+/u', ' ', $content);
+
         // 1. Поиск позиций
-        // <Item Caption="Name" Quantity="10" Price="100" Unit="m2">
-        // <Position ...>
-        
-        // Паттерн для поиска тегов позиций с атрибутами
-        // Это очень упрощенно, но может спасти в крайнем случае
-        preg_match_all('/<(Item|Position|Line)([^>]+)>/i', $content, $matches);
+        // Улучшенный паттерн с поддержкой многострочности и unicode (u modifier)
+        preg_match_all('/<(Item|Position|Line|Row)([^>]+)>/iu', $content, $matches);
         
         if (!empty($matches[2])) {
             foreach ($matches[2] as $attrs) {
                 $item = [];
-                // Парсим атрибуты
-                preg_match('/(Caption|Name|Title)="([^"]+)"/i', $attrs, $mName);
-                preg_match('/(Quant|Quantity|Volume|Fit)="([^"]+)"/i', $attrs, $mQty);
-                preg_match('/(Price|Cost|UnitCost)="([^"]+)"/i', $attrs, $mPrice);
-                preg_match('/(Unit|Measure)="([^"]+)"/i', $attrs, $mUnit);
+                // Парсим атрибуты с поддержкой кириллицы
+                preg_match('/(Caption|Name|Title|Naim|Description|Наименование)="([^"]+)"/iu', $attrs, $mName);
+                preg_match('/(Quant|Quantity|Volume|Fit|Vol|Kol|Количество)="([^"]+)"/iu', $attrs, $mQty);
+                preg_match('/(Price|Cost|UnitCost|PriceCurr|Цена)="([^"]+)"/iu', $attrs, $mPrice);
+                preg_match('/(Unit|Measure|Units|EdIzm|ЕдИзм)="([^"]+)"/iu', $attrs, $mUnit);
                 
-                if (empty($mName)) continue;
+                // Важно: имя должно быть
+                $name = $mName[2] ?? null;
+                if (!$name) continue;
                 
                 $items[] = (new EstimateImportRowDTO(
                     rowNumber: 0,
                     sectionNumber: null,
-                    itemName: $mName[2] ?? 'Unknown',
-                    unit: $mUnit[2] ?? null,
-                    quantity: (float)($mQty[2] ?? 0),
-                    unitPrice: (float)($mPrice[2] ?? 0),
+                    itemName: html_entity_decode($name), // Декодируем entities если есть
+                    unit: isset($mUnit[2]) ? html_entity_decode($mUnit[2]) : null,
+                    quantity: (float)str_replace(',', '.', ($mQty[2] ?? 0)), // Replace comma for float
+                    unitPrice: (float)str_replace(',', '.', ($mPrice[2] ?? 0)),
                     code: null,
                     isSection: false,
                     level: 1,
@@ -200,40 +273,6 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         return $this->detectStructure($filePath);
     }
 
-    private function loadXML(string $filePath): ?\SimpleXMLElement
-    {
-        libxml_use_internal_errors(true);
-        
-        $content = file_get_contents($filePath);
-        
-        if (!$content) return null;
-        
-        // 1. Очистка BOM
-        $content = trim($content);
-        $bom = pack('H*','EFBBBF');
-        $content = preg_replace("/^$bom/", '', $content);
-
-        // 2. Исправление кодировки
-        if (!preg_match('/encoding=["\'](.*?)["\']/', $content)) {
-            if (!mb_check_encoding($content, 'UTF-8')) {
-                 if (!str_contains($content, '<?xml')) {
-                     $content = '<?xml version="1.0" encoding="windows-1251"?>' . "\n" . $content;
-                 } else {
-                     $content = str_replace('<?xml version="1.0"?>', '<?xml version="1.0" encoding="windows-1251"?>', $content);
-                 }
-            }
-        }
-        
-        // 3. Санитизация
-        $content = preg_replace('/[^\x{0009}\x{000a}\x{000d}\x{0020}-\x{D7FF}\x{E000}-\x{FFFD}]+/u', ' ', $content);
-        
-        try {
-            return new \SimpleXMLElement($content);
-        } catch (\Exception $e) {
-            // Если совсем все плохо, возвращаем null, включится Regex-mode
-            return null;
-        }
-    }
     
     private function isWindows1251($string): bool
     {
