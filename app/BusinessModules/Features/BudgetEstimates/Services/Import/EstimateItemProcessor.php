@@ -94,12 +94,14 @@ class EstimateItemProcessor
         
         Log::info('[EstimateItemProcessor] Completed', [
             'imported' => $context->importedCount,
+            'sections_created' => $context->sectionsCreatedCount,
             'skipped' => $context->skippedCount
         ]);
         
         return [
             'imported' => $context->importedCount,
             'skipped' => $context->skippedCount,
+            'sections_created' => $context->sectionsCreatedCount,
             'code_matches' => $context->codeMatchesCount,
             'name_matches' => $context->nameMatchesCount,
             'types_breakdown' => $context->typeStats
@@ -153,7 +155,10 @@ class EstimateItemProcessor
             // Handle Sections (Stack Machine)
             if ($dto->isSection) {
                 $this->handleSection($estimate, $dto, $context);
-                $context->importedCount++; // Считаем разделы как импортированные элементы
+                // Считаем разделы отдельно, но не включаем их в importedCount (позиций), 
+                // если только это не требуется логикой отображения. 
+                // Обычно importedCount = позиции.
+                // $context->importedCount++; 
                 continue;
             }
 
@@ -207,6 +212,9 @@ class EstimateItemProcessor
             
             // Push to stack
             $this->sectionStack->pushSection($section->id, $dto->level);
+            
+            // Увеличиваем счетчик созданных разделов
+            $context->sectionsCreatedCount++;
             
             Log::debug('[EstimateItemProcessor] Section created', [
                 'id' => $section->id,

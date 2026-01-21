@@ -15,6 +15,7 @@ class ImportContext
     // Статистика
     public int $importedCount = 0;
     public int $skippedCount = 0;
+    public int $sectionsCreatedCount = 0;
     public int $codeMatchesCount = 0;
     public int $nameMatchesCount = 0;
     
