@@ -18,6 +18,15 @@ class XmlEstimateDetector implements EstimateTypeDetectorInterface
 
     public function detect($content): array
     {
+        // SAFETY CHECK: Если контент не строка и не SimpleXMLElement (например, Spreadsheet объект),
+        // то этот детектор не применим.
+        if (empty($content) || (!is_string($content) && !($content instanceof SimpleXMLElement))) {
+             return [
+                'confidence' => 0,
+                'indicators' => ['Invalid content type or empty'],
+            ];
+        }
+
         $indicators = [];
         $confidence = 0;
         

@@ -110,27 +110,45 @@ class EstimateImportService
         
         try {
             $fileData = $this->getFileData($fileId);
+            $extension = strtolower(pathinfo($fileData['file_path'], PATHINFO_EXTENSION));
             
             $content = null;
-            
-            try {
-                // Загружаем полный Spreadsheet объект для детектора
-                // ProhelperDetector нуждается в доступе ко всем листам, включая скрытые
-                $content = \PhpOffice\PhpSpreadsheet\IOFactory::load($fileData['file_path']);
-            } catch (\Exception $e) {
-                Log::warning('[EstimateImport] Failed to load file as Spreadsheet, falling back to raw content', [
-                    'file_id' => $fileId,
-                    'error' => $e->getMessage()
-                ]);
-                
-                // Если не удалось загрузить как Excel, читаем как текст/XML
-                // Это нужно для XML форматов (ГрандСмета и др.), которые PhpSpreadsheet может не поддерживать
+
+            // Специальная обработка для XML файлов
+            // Мы НЕ хотим пытаться грузить их через IOFactory, так как это дорого и может вызывать ошибки
+            // или возвращать некорректные Spreadsheet объекты для XML структур
+            if ($extension === 'xml') {
+                Log::info('[EstimateImport] XML file detected, reading raw content directly', ['file_id' => $fileId]);
                 if (file_exists($fileData['file_path'])) {
                     $content = file_get_contents($fileData['file_path']);
-                    
                     if ($content === false) {
-                        Log::error('[EstimateImport] Failed to read file contents', ['file_id' => $fileId]);
+                        Log::error('[EstimateImport] Failed to read XML file contents', ['file_id' => $fileId]);
                         throw new \RuntimeException('Failed to read file contents from disk');
+                    }
+                } else {
+                    throw new \RuntimeException('File not found at path: ' . $fileData['file_path']);
+                }
+            } else {
+                // Для остальных файлов (Excel, CSV) пробуем IOFactory
+                try {
+                    // Загружаем полный Spreadsheet объект для детектора
+                    // ProhelperDetector нуждается в доступе ко всем листам, включая скрытые
+                    $content = \PhpOffice\PhpSpreadsheet\IOFactory::load($fileData['file_path']);
+                } catch (\Exception $e) {
+                    Log::warning('[EstimateImport] Failed to load file as Spreadsheet, falling back to raw content', [
+                        'file_id' => $fileId,
+                        'error' => $e->getMessage()
+                    ]);
+                    
+                    // Если не удалось загрузить как Excel, читаем как текст/XML
+                    // Это нужно для XML форматов (ГрандСмета и др.), которые PhpSpreadsheet может не поддерживать
+                    if (file_exists($fileData['file_path'])) {
+                        $content = file_get_contents($fileData['file_path']);
+                        
+                        if ($content === false) {
+                            Log::error('[EstimateImport] Failed to read file contents', ['file_id' => $fileId]);
+                            throw new \RuntimeException('Failed to read file contents from disk');
+                        }
                     }
                 }
             }
