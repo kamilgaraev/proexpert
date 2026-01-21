@@ -369,12 +369,47 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
 
     private function parseNodeRecursively(\SimpleXMLElement $node, array &$sections, array &$items, string $parentPath = '', int $level = 0): void
     {
-        // 1. Ищем разделы
-        $sectionKeywords = ['Section', 'Razdel', 'Chapter', 'Part', 'Stage'];
+        // 0. Проверка на прозрачные контейнеры (Chapters, Sections и т.д.)
+        // Если текущий узел - это просто контейнер, мы не создаем для него секцию, а идем внутрь
+        // Но это обрабатывается при вызове из родителя.
+        // Здесь мы смотрим на детей.
+
+        $containerKeywords = ['Chapters', 'Sections', 'Parts', 'Razdels'];
+        $sectionKeywords = ['Section', 'Razdel', 'Chapter', 'Part', 'Stage', 'LocalEstimate']; // LocalEstimate тоже может быть разделом в объектной смете
+
         $foundSections = [];
         
         foreach ($node->children() as $child) {
-            if ($this->matchesKeywords($child->getName(), $sectionKeywords)) {
+            $childName = $child->getName();
+            
+            // Если это явный контейнер (строгое совпадение или множественное число) - проваливаемся внутрь
+            // Case-insensitive check
+            $isContainer = false;
+            foreach ($containerKeywords as $ck) {
+                if (strcasecmp($childName, $ck) === 0) {
+                    $isContainer = true;
+                    break;
+                }
+            }
+            
+            if ($isContainer || $childName === 'Estimates') {
+                $this->parseNodeRecursively($child, $sections, $items, $parentPath, $level);
+                continue;
+            }
+
+            // Если это секция
+            if ($this->matchesKeywords($childName, $sectionKeywords)) {
+                // Дополнительная защита: не является ли это контейнером (проверка на 's' в конце для английских слов)
+                // Если имя 'Chapters' и мы ищем 'Chapter', matchesKeywords вернет true.
+                // Поэтому явно проверяем, не контейнер ли это (еще раз, на всякий случай, если список контейнеров не полон)
+                
+                // Если имя заканчивается на 's' и это не 'Works' (работы) и не 'Items' (хотя Items это тоже контейнер обычно)
+                // То считаем это контейнером и проваливаемся, НЕ создавая секцию.
+                if (substr($childName, -1) === 's' && !in_array($childName, ['Works', 'Resources'])) {
+                     $this->parseNodeRecursively($child, $sections, $items, $parentPath, $level);
+                     continue;
+                }
+
                 $foundSections[] = $child;
             }
         }
@@ -635,25 +670,40 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         $name = $this->extractValue($res, ['Name', 'Caption']);
         $code = $this->extractValue($res, ['Code', 'Justification']);
         $unit = $this->extractValue($res, ['Measure', 'Unit', 'Units']);
-        $qty = (float)$this->extractValue($res, ['Quant', 'Quantity', 'Fit', 'FizObjem']);
+        
+        // Fix: Replace commas with dots BEFORE float conversion
+        $rawQty = $this->extractValue($res, ['Quant', 'Quantity', 'Fit', 'FizObjem']);
+        $qty = (float)str_replace(',', '.', $rawQty);
         
         $price = 0.0;
         if (isset($res->PriceCurr)) {
-            $price = (float)($res->PriceCurr['Value'] ?? $res->PriceCurr);
+            $val = $res->PriceCurr['Value'] ?? $res->PriceCurr;
+            $price = (float)str_replace(',', '.', (string)$val);
         } elseif (isset($res->PriceBase)) {
-            $price = (float)($res->PriceBase['Value'] ?? $res->PriceBase);
+            $val = $res->PriceBase['Value'] ?? $res->PriceBase;
+            $price = (float)str_replace(',', '.', (string)$val);
         } else {
-            $price = (float)$this->extractValue($res, ['Price', 'Cost']);
+            $val = $this->extractValue($res, ['Price', 'Cost']);
+            $price = (float)str_replace(',', '.', $val);
         }
         
         if ($price == 0) {
-             $total = (float)$this->extractValue($res, ['Total', 'Cost']);
+             $valTotal = $this->extractValue($res, ['Total', 'Cost']);
+             $total = (float)str_replace(',', '.', $valTotal);
              if ($total > 0 && $qty > 0) {
                  $price = $total / $qty;
              }
         }
 
         if (empty($name) && empty($code)) return;
+
+        // Determine item type based on node name
+        $itemType = 'material';
+        if ($nodeName === 'Mch' || mb_stripos($name, 'кран') !== false || mb_stripos($name, 'автомобил') !== false) {
+            $itemType = 'equipment';
+        } elseif (in_array($nodeName, ['Tzr', 'Tzm']) || mb_stripos($name, 'труда') !== false) {
+            $itemType = 'labor'; // Though we skip Tzr usually, if we process it here
+        }
 
         $items[] = (new EstimateImportRowDTO(
             rowNumber: 0,
@@ -667,7 +717,7 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             level: $level + 1,
             sectionPath: $parentPath,
             isNotAccounted: true, 
-            itemType: 'material',
+            itemType: $itemType,
             rawData: $this->xmlToArray($res)
         ))->toArray();
     }
