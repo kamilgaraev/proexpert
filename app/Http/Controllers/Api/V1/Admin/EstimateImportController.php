@@ -202,6 +202,12 @@ class EstimateImportController extends Controller
             ]);
             
         } catch (\Exception $e) {
+            Log::error('[EstimateImport] Preview failed', [
+                'file_id' => $fileId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            
             return AdminResponse::error(
                 trans_message('estimate.import_preview_error'),
                 Response::HTTP_UNPROCESSABLE_ENTITY

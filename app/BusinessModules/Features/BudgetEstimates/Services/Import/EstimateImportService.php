@@ -234,22 +234,29 @@ class EstimateImportService
             ];
         }
         
-        $classificationResults = $this->classificationService->classifyBatch($itemsToClassify);
-        
-        // Применяем результаты классификации к items
-        foreach ($importDTO->items as $index => &$item) {
-            if (isset($classificationResults[$index])) {
-                $result = $classificationResults[$index];
-                $item['item_type'] = $result->type;
-                $item['confidence_score'] = $result->confidenceScore;
-                $item['classification_source'] = $result->source;
+        try {
+            $classificationResults = $this->classificationService->classifyBatch($itemsToClassify);
+            
+            // Применяем результаты классификации к items
+            foreach ($importDTO->items as $index => &$item) {
+                if (isset($classificationResults[$index])) {
+                    $result = $classificationResults[$index];
+                    $item['item_type'] = $result->type;
+                    $item['confidence_score'] = $result->confidenceScore;
+                    $item['classification_source'] = $result->source;
+                }
             }
+            unset($item); // Разрываем ссылку
+            
+            Log::info('[EstimateImport] AI classification completed', [
+                'classified_items' => count($classificationResults),
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('[EstimateImport] AI classification failed, skipping', [
+                'error' => $e->getMessage()
+            ]);
+            // Continue without classification
         }
-        unset($item); // Разрываем ссылку
-        
-        Log::info('[EstimateImport] AI classification completed', [
-            'classified_items' => count($classificationResults),
-        ]);
         
         // 🤖 АВТОМАТИЧЕСКИЙ РАСЧЕТ И ПРОВЕРКА СУММ
         if ($this->aiCalculationService) {

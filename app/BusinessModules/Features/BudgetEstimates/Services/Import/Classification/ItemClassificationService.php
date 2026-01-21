@@ -120,7 +120,7 @@ class ItemClassificationService
                     'ai_results_applied' => $aiSuccessCount
                 ]);
                 
-            } catch (\Exception $e) {
+            } catch (\Throwable $e) {
                 Log::error("[ItemClassificationService] AI Strategy failed", [
                     'error' => $e->getMessage(),
                     'trace' => $e->getTraceAsString()
