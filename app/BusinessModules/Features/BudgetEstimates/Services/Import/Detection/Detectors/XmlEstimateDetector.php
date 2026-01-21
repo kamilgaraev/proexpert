@@ -27,6 +27,28 @@ class XmlEstimateDetector implements EstimateTypeDetectorInterface
         if ($content instanceof SimpleXMLElement) {
             $xml = $content;
         } elseif (is_string($content)) {
+            // Очистка и подготовка содержимого
+            // 1. Убираем BOM и пробелы в начале
+            $content = trim($content);
+            $bom = pack('H*','EFBBBF');
+            $content = preg_replace("/^$bom/", '', $content);
+            
+            // 2. Исправляем кодировку (Windows-1251 -> UTF-8), если не объявлена
+            // Часто бывает <?xml version="1.0" ... без encoding, но внутри 1251
+            if (!preg_match('/encoding=["\'](.*?)["\']/', $content)) {
+                 if (!mb_check_encoding($content, 'UTF-8')) {
+                     // Добавляем объявление 1251
+                     if (!str_contains($content, '<?xml')) {
+                         $content = '<?xml version="1.0" encoding="windows-1251"?>' . "\n" . $content;
+                     } else {
+                         $content = str_replace('<?xml version="1.0"?>', '<?xml version="1.0" encoding="windows-1251"?>', $content);
+                     }
+                 }
+            }
+
+            // 3. Санитизация невалидных символов
+            $content = preg_replace('/[^\x{0009}\x{000a}\x{000d}\x{0020}-\x{D7FF}\x{E000}-\x{FFFD}]+/u', ' ', $content);
+
             // Проверка на XML заголовок или теги
             if (str_contains($content, '<?xml') || (str_contains($content, '<') && str_contains($content, '>'))) {
                 try {
