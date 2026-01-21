@@ -378,7 +378,8 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         $sectionKeywords = ['Section', 'Razdel', 'Chapter', 'Part', 'Stage', 'LocalEstimate']; // LocalEstimate тоже может быть разделом в объектной смете
 
         $foundSections = [];
-        
+        $hasProcessedChildren = false; // Flag to prevent double processing in fallback
+
         foreach ($node->children() as $child) {
             $childName = $child->getName();
             
@@ -394,19 +395,16 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             
             if ($isContainer || $childName === 'Estimates') {
                 $this->parseNodeRecursively($child, $sections, $items, $parentPath, $level);
+                $hasProcessedChildren = true;
                 continue;
             }
 
             // Если это секция
             if ($this->matchesKeywords($childName, $sectionKeywords)) {
-                // Дополнительная защита: не является ли это контейнером (проверка на 's' в конце для английских слов)
-                // Если имя 'Chapters' и мы ищем 'Chapter', matchesKeywords вернет true.
-                // Поэтому явно проверяем, не контейнер ли это (еще раз, на всякий случай, если список контейнеров не полон)
-                
-                // Если имя заканчивается на 's' и это не 'Works' (работы) и не 'Items' (хотя Items это тоже контейнер обычно)
-                // То считаем это контейнером и проваливаемся, НЕ создавая секцию.
+                // Дополнительная защита: не является ли это контейнером
                 if (substr($childName, -1) === 's' && !in_array($childName, ['Works', 'Resources'])) {
                      $this->parseNodeRecursively($child, $sections, $items, $parentPath, $level);
+                     $hasProcessedChildren = true;
                      continue;
                 }
 
@@ -432,8 +430,8 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             $this->processItem($item, $items, $parentPath, $level);
         }
         
-        // Если ничего не нашли, но есть дети, пробуем рекурсивно искать в них (если это не позиция)
-        if (empty($foundSections) && empty($foundItems)) {
+        // Если ничего не нашли (и не обрабатывали контейнеры), но есть дети, пробуем рекурсивно искать в них
+        if (empty($foundSections) && empty($foundItems) && !$hasProcessedChildren) {
             foreach ($node->children() as $child) {
                 // Избегаем глубокого спуска в поля (Price, Resources и т.д.)
                 if (!$this->isLeafNode($child)) {
