@@ -4,6 +4,7 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\F
 
 use App\BusinessModules\Features\BudgetEstimates\Contracts\StreamParserInterface;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\ExcelStreamParser;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\UniversalXmlParser;
 use RuntimeException;
 
 class ParserFactory
@@ -18,6 +19,7 @@ class ParserFactory
         // Register available parsers
         $this->parsers = [
             $excelParser,
+            new UniversalXmlParser(),
             // Add other parsers here (e.g. CSV, XML)
         ];
     }

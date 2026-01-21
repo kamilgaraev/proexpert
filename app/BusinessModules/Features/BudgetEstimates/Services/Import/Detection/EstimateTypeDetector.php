@@ -7,6 +7,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\Detection\Detec
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Detection\Detectors\RIKDetector;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Detection\Detectors\FERDetector;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Detection\Detectors\SmartSmetaDetector;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Detection\Detectors\XmlEstimateDetector;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Detection\Detectors\CustomTableDetector;
 use Illuminate\Support\Facades\Log;
 
@@ -27,6 +28,7 @@ class EstimateTypeDetector
         // Порядок важен: Prohelper первый (highest priority), потом специфичные, потом generic
         $this->detectors = [
             new ProhelperDetector(), // Highest priority - native format
+            new XmlEstimateDetector(), // High priority for XML files
             new GrandSmetaDetector(),
             new RIKDetector(),
             new FERDetector(),

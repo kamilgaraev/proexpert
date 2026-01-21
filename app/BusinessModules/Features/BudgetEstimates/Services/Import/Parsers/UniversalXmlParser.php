@@ -3,15 +3,44 @@
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers;
 
 use App\BusinessModules\Features\BudgetEstimates\Contracts\EstimateImportParserInterface;
+use App\BusinessModules\Features\BudgetEstimates\Contracts\StreamParserInterface;
 use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportDTO;
 use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportRowDTO;
 use Illuminate\Support\Facades\Log;
+use Generator;
 
-class UniversalXmlParser implements EstimateImportParserInterface
+class UniversalXmlParser implements EstimateImportParserInterface, StreamParserInterface
 {
     private const NS_GGE = 'http://www.gge.ru/2001/Schema';
 
-    public function parse(string $filePath): EstimateImportDTO
+    public function parse(string $filePath): EstimateImportDTO|Generator
+    {
+        // If called by ParserFactory (StreamParserInterface), return Generator
+        $backtrace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2);
+        $caller = $backtrace[1]['class'] ?? '';
+        
+        if (str_contains($caller, 'ParserFactory') || str_contains($caller, 'EstimateImportService')) {
+             return $this->streamParse($filePath);
+        }
+        
+        // Otherwise return DTO (EstimateImportParserInterface)
+        return $this->fullParse($filePath);
+    }
+
+    public function supports(string $extension): bool
+    {
+        return in_array(strtolower($extension), $this->getSupportedExtensions());
+    }
+
+    private function streamParse(string $filePath): Generator
+    {
+         $dto = $this->fullParse($filePath);
+         foreach ($dto->items as $item) {
+             yield $item;
+         }
+    }
+
+    private function fullParse(string $filePath): EstimateImportDTO
     {
         $xml = $this->loadXML($filePath);
         
