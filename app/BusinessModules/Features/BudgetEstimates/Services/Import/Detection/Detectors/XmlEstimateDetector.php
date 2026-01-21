@@ -58,6 +58,20 @@ class XmlEstimateDetector implements EstimateTypeDetectorInterface
                 break;
             }
         }
+
+        // Проверка атрибута Generator
+        $generator = (string)($xml['Generator'] ?? '');
+        if (!empty($generator)) {
+            $indicators[] = "generator_{$generator}";
+            // Если генератор известен (GrandSmeta, Smeta.ru и т.д.), повышаем уверенность
+            if (mb_stripos($generator, 'GrandSmeta') !== false || 
+                mb_stripos($generator, 'Smeta') !== false || 
+                mb_stripos($generator, 'GGE') !== false) {
+                $confidence += 30;
+            } else {
+                $confidence += 10;
+            }
+        }
         
         // 3. Поиск ключевых узлов внутри
         $hasSections = false;

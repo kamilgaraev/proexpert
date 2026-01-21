@@ -169,8 +169,8 @@ class EstimateImportService
             throw $e;
         }
         
-        // Используем старый парсер для извлечения заголовков, так как он имеет логику header detection
-        $parser = new ExcelSimpleTableParser();
+        // Выбираем парсер в зависимости от типа файла
+        $parser = $this->getParser($fileData['file_path']);
         
         if ($suggestedHeaderRow !== null) {
             $structure = $parser->detectStructureFromRow($fileData['file_path'], $suggestedHeaderRow);
@@ -178,13 +178,15 @@ class EstimateImportService
             $structure = $parser->detectStructure($fileData['file_path']);
         }
         
-        // Используем SmartMappingService для улучшения маппинга
-        $rawHeaders = $structure['raw_headers'];
-        $smartMapping = $this->smartMappingService->detectMapping($rawHeaders);
-        
-        // Обновляем структуру данными из Smart Mapping
-        $structure['column_mapping'] = $smartMapping['mapping'];
-        $structure['detected_columns'] = $smartMapping['detected_columns'];
+        // Используем SmartMappingService только если есть заголовки (для Excel/CSV)
+        $rawHeaders = $structure['raw_headers'] ?? [];
+        if (!empty($rawHeaders)) {
+            $smartMapping = $this->smartMappingService->detectMapping($rawHeaders);
+            
+            // Обновляем структуру данными из Smart Mapping
+            $structure['column_mapping'] = $smartMapping['mapping'];
+            $structure['detected_columns'] = $smartMapping['detected_columns'];
+        }
         
         Cache::put("estimate_import_structure:{$fileId}", $structure, now()->addHours(24));
         

@@ -63,6 +63,18 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         $metadata = $this->parseMetadata($xml);
         $metadata['parser'] = 'universal_xml';
         
+        // Определяем тип сметы по генератору
+        $estimateType = 'xml_auto';
+        $generator = $metadata['program'] ?? '';
+        
+        if (mb_stripos($generator, 'GrandSmeta') !== false) {
+            $estimateType = 'grandsmeta';
+        } elseif (mb_stripos($generator, 'Smeta.ru') !== false) {
+            $estimateType = 'smartsmeta';
+        } elseif (mb_stripos($generator, 'RIK') !== false) {
+            $estimateType = 'rik';
+        }
+        
         // Итоги
         $totals = $this->calculateTotals($items);
         
@@ -74,7 +86,7 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             items: $items,
             totals: $totals,
             metadata: $metadata,
-            estimateType: 'xml_auto',
+            estimateType: $estimateType,
             typeConfidence: 100.0
         );
     }
@@ -288,32 +300,50 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
     private function processItem(\SimpleXMLElement $item, array &$items, string $parentPath, int $level): void
     {
         $num = $this->extractValue($item, ['Number', 'Num', 'No']);
-        $code = $this->extractValue($item, ['Justification', 'Code', 'Cipher', 'Shifr']);
+        $code = $this->extractValue($item, ['Justification', 'Code', 'Cipher', 'Shifr', 'Identifier']);
         $name = $this->extractValue($item, ['Name', 'Caption', 'Title', 'Description']);
-        $unit = $this->extractValue($item, ['Measure', 'Unit', 'EdIzm']);
+        $unit = $this->extractValue($item, ['Measure', 'Unit', 'Units', 'EdIzm']);
         
         $qty = (float)$this->extractValue($item, ['Quant', 'Quantity', 'Volume', 'Kol']);
         
-        // Цена
+        // Цена и Стоимость
         $price = 0.0;
+        $total = 0.0;
+
+        // 1. Пытаемся найти прямые атрибуты
         $priceNode = $item->Price ?? $item->UnitCost ?? $item->Direct ?? null;
         if ($priceNode) {
             $price = (float)($priceNode['Value'] ?? $priceNode);
         } else {
-            // Поиск по атрибутам или детям
             $price = (float)$this->extractValue($item, ['Price', 'UnitCost', 'Cena']);
         }
-        
-        // Стоимость
-        $total = 0.0;
+
         $costNode = $item->Cost ?? $item->TotalCost ?? $item->Total ?? null;
         if ($costNode) {
             $total = (float)($costNode['Value'] ?? $costNode);
         } else {
             $total = (float)$this->extractValue($item, ['Cost', 'TotalCost', 'Summa']);
         }
-        
-        if ($total == 0 && $qty > 0 && $price > 0) {
+
+        // 2. Специфика ГрандСметы: Ищем стоимость в итогах (<Itog>)
+        if ($total == 0 && isset($item->Itog)) {
+            // Ищем "Всего по позиции" или просто берем последний/самый большой итог
+            // Часто структура: <Itog> <ItogRes> <Itog DataType="TotalWithNP" TotalCurr="...">
+            $itogs = $item->xpath('.//Itog[@TotalCurr]');
+            foreach ($itogs as $itogXml) {
+                $val = (float)$itogXml['TotalCurr'];
+                // Эвристика: ищем "Всего" или берем максимальное значение (обычно это итог с НР и СП)
+                $caption = (string)($itogXml['Caption'] ?? '');
+                if (mb_stripos($caption, 'Всего') !== false || $val > $total) {
+                    $total = $val;
+                }
+            }
+        }
+
+        // Если нашли Total, но не нашли Price, вычисляем обратным счетом
+        if ($price == 0 && $qty > 0 && $total > 0) {
+            $price = $total / $qty;
+        } elseif ($total == 0 && $qty > 0 && $price > 0) {
             $total = $qty * $price;
         }
 
@@ -333,9 +363,9 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             rawData: (array)$item
         ))->toArray();
         
-        // Ресурсы
-        if (isset($item->Resources->Resource)) {
-             foreach ($item->Resources->Resource as $res) {
+        // Ресурсы (Универсальный обход)
+        if (isset($item->Resources)) {
+             foreach ($item->Resources->children() as $res) {
                  $this->processResource($res, $items, $parentPath, $level);
              }
         }
@@ -343,12 +373,35 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
     
     private function processResource(\SimpleXMLElement $res, array &$items, string $parentPath, int $level): void
     {
+        // Пропускаем трудозатраты (Tzr, Tzm), так как они обычно входят в расценку, 
+        // если только это не отдельные позиции материалов
+        $nodeName = $res->getName();
+        if (in_array($nodeName, ['Tzr', 'Tzm'])) {
+            return;
+        }
+
         $name = $this->extractValue($res, ['Name', 'Caption']);
         $code = $this->extractValue($res, ['Code', 'Justification']);
-        $unit = $this->extractValue($res, ['Measure', 'Unit']);
+        $unit = $this->extractValue($res, ['Measure', 'Unit', 'Units']);
         $qty = (float)$this->extractValue($res, ['Quant', 'Quantity']);
-        $price = (float)$this->extractValue($res, ['Price', 'Cost']);
         
+        // Цена ресурса (PriceCurr, PriceBase или атрибут)
+        $price = 0.0;
+        if (isset($res->PriceCurr)) {
+            $price = (float)($res->PriceCurr['Value'] ?? $res->PriceCurr);
+        } elseif (isset($res->PriceBase)) {
+            $price = (float)($res->PriceBase['Value'] ?? $res->PriceBase);
+        } else {
+            $price = (float)$this->extractValue($res, ['Price', 'Cost']);
+        }
+
+        // Проверяем, не является ли это неучтенным материалом
+        // В ГрандСмете часто неучтенные материалы имеют атрибут Options="...NotCount..." или просто добавлены
+        // Но для надежности просто выводим все материалы
+        
+        // Если нет имени или количества, пропускаем
+        if (empty($name) && empty($code)) return;
+
         $items[] = (new EstimateImportRowDTO(
             rowNumber: 0,
             sectionNumber: null,
@@ -360,7 +413,7 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             isSection: false,
             level: $level + 1,
             sectionPath: $parentPath,
-            isNotAccounted: true,
+            isNotAccounted: true, // Считаем вложенные ресурсы материалами
             itemType: 'material'
         ))->toArray();
     }
