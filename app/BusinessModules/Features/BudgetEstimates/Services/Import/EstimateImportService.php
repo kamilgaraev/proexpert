@@ -127,6 +127,11 @@ class EstimateImportService
                 // Это нужно для XML форматов (ГрандСмета и др.), которые PhpSpreadsheet может не поддерживать
                 if (file_exists($fileData['file_path'])) {
                     $content = file_get_contents($fileData['file_path']);
+                    
+                    if ($content === false) {
+                        Log::error('[EstimateImport] Failed to read file contents', ['file_id' => $fileId]);
+                        throw new \RuntimeException('Failed to read file contents from disk');
+                    }
                 }
             }
             
