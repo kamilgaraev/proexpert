@@ -211,8 +211,14 @@ class EstimateItemProcessor
             Log::debug('[EstimateItemProcessor] Section created', [
                 'id' => $section->id,
                 'number' => $dto->sectionNumber,
-                'level' => $dto->level
+                'level' => $dto->level,
+                'path' => $dto->sectionPath
             ]);
+            
+            // Save to map for Path Mode lookups
+            if ($dto->sectionPath) {
+                $context->sectionsMap[$dto->sectionPath] = $section->id;
+            }
             
         } catch (\Exception $e) {
             Log::error('[EstimateItemProcessor] Failed to create section', ['error' => $e->getMessage()]);
