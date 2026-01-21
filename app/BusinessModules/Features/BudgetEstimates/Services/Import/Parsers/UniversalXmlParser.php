@@ -38,6 +38,13 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
     private function streamParse(string $filePath): Generator
     {
          $dto = $this->fullParse($filePath);
+         
+         // Сначала отдаем разделы, чтобы создать структуру
+         foreach ($dto->sections as $section) {
+             yield $section;
+         }
+         
+         // Затем позиции
          foreach ($dto->items as $item) {
              yield $item;
          }
