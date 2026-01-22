@@ -1876,6 +1876,17 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         $isBold = $row['style']['is_bold'] ?? false;
         
         // ---------------------------------------------------------
+        // 0. PRE-CHECKS (NUCLEAR OPTION)
+        // ---------------------------------------------------------
+        
+        // Detect "Column Numbers" row (e.g. name="3", qty="4", price="5")
+        // If name is a small number -> almost certainly IGNORE (but here we treat as low scores)
+        if (preg_match('/^\d+$/', $name) && (int)$name < 20) {
+             // This will result in IGNORE because all scores stay 0 or become negative
+             return $scores; 
+        }
+
+        // ---------------------------------------------------------
         // 1. ITEM SCORING
         // ---------------------------------------------------------
         
@@ -1898,6 +1909,12 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         
         // Penalties for Item
         if ($isBold) $scores[self::ROW_TYPE_ITEM] -= 20; // Items are rarely bold
+        
+        // 🛡️ SECURITY: If price is huge (> 1M) and no code -> likely a SUMMARY line being misidentified
+        if (($row['unit_price'] ?? 0) > 1000000 && empty($code)) {
+            $scores[self::ROW_TYPE_ITEM] -= 200;
+            $scores[self::ROW_TYPE_SUMMARY] += 200;
+        }
         
         // ---------------------------------------------------------
         // 2. SECTION SCORING
