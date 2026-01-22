@@ -773,8 +773,7 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
                 if ($overheadAmount == 0 && $profitAmount == 0) {
                     $overheadAmount = $diff;
                     $isManual = true;
-                    // Here $total is Gross, so we need to strip it for Price calculation
-                    $isTotalGross = true;
+                    $isTotalGross = true; // Here $total is Gross, so we need to strip it
                 } elseif (abs(($directCost + $overheadAmount + $profitAmount) - $total) > 0.01) {
                      // Mismatch, likely Total is Gross
                      if (abs(($directCost + $overheadAmount + $profitAmount) - $total) < $total * 0.01) {
