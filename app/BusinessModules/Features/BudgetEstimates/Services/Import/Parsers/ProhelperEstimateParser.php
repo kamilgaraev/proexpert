@@ -12,6 +12,46 @@ class ProhelperEstimateParser implements EstimateImportParserInterface
     protected array $metadata = [];
     protected bool $isProhelperFormat = false;
 
+    public function validateFile(string $filePath): bool
+    {
+        return $this->canParse($filePath);
+    }
+
+    public function getSupportedExtensions(): array
+    {
+        return ['xlsx', 'xls'];
+    }
+
+    public function detectStructure(string $filePath): array
+    {
+        return [
+            'format' => 'prohelper_excel',
+            'detected_columns' => [],
+            'raw_headers' => [],
+            'header_row' => null,
+            'column_mapping' => [],
+        ];
+    }
+
+    public function getHeaderCandidates(): array
+    {
+        return [];
+    }
+
+    public function detectStructureFromRow(string $filePath, int $headerRow): array
+    {
+        return $this->detectStructure($filePath);
+    }
+
+    public function readContent(string $filePath, int $maxRows = 100)
+    {
+        try {
+            return IOFactory::load($filePath);
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
     /**
      * Проверить, является ли файл форматом Prohelper
      */
@@ -102,43 +142,51 @@ class ProhelperEstimateParser implements EstimateImportParserInterface
     {
         // Determine parent section from metadata
         $sectionName = $this->getSectionName($item['section_id']);
+        $parentWorkName = $item['parent_work_id'] ? $this->getParentWorkName($item['parent_work_id']) : null;
+
+        $rawData = [
+            'prohelper_metadata' => [
+                'id' => $item['id'],
+                'section_id' => $item['section_id'],
+                'parent_work_id' => $item['parent_work_id'],
+                'catalog_item_id' => $item['catalog_item_id'],
+                'normative_rate_code' => $item['normative_rate_code'] ?? null,
+                'base_unit_price' => $item['base_unit_price'] ?? 0,
+                'current_unit_price' => $item['current_unit_price'] ?? 0,
+                'direct_costs' => $item['direct_costs'] ?? 0,
+                'materials_cost' => $item['materials_cost'] ?? 0,
+                'machinery_cost' => $item['machinery_cost'] ?? 0,
+                'labor_cost' => $item['labor_cost'] ?? 0,
+                'overhead_amount' => $item['overhead_amount'] ?? 0,
+                'profit_amount' => $item['profit_amount'] ?? 0,
+                'applied_coefficients' => $item['applied_coefficients'] ?? null,
+                'coefficient_total' => $item['coefficient_total'] ?? null,
+                'custom_resources' => $item['custom_resources'] ?? null,
+                'metadata' => $item['metadata'] ?? null,
+                'is_manual' => $item['is_manual'],
+                'is_not_accounted' => $item['is_not_accounted'],
+            ],
+            'position_number' => $item['position_number'],
+            'work_type' => $item['work_type'] ?? null,
+            'parent_work' => $parentWorkName,
+            'section_name' => $sectionName,
+        ];
 
         return new EstimateImportRowDTO(
             rowNumber: $rowNumber,
-            positionNumber: $item['position_number'],
-            code: $item['normative_rate_code'] ?? '',
-            name: $item['name'],
+            sectionNumber: $sectionName,
+            itemName: $item['name'],
             unit: $item['measurement_unit'] ?? '',
             quantity: (float) $item['quantity_total'],
             unitPrice: (float) ($item['unit_price'] ?? 0),
-            totalPrice: (float) ($item['total_amount'] ?? 0),
-            workType: $item['work_type'] ?? null,
-            section: $sectionName,
-            parentWork: $item['parent_work_id'] ? $this->getParentWorkName($item['parent_work_id']) : null,
+            code: $item['normative_rate_code'] ?? '',
+            isSection: false,
             itemType: $item['item_type'],
-            rawData: [
-                'prohelper_metadata' => [
-                    'id' => $item['id'],
-                    'section_id' => $item['section_id'],
-                    'parent_work_id' => $item['parent_work_id'],
-                    'catalog_item_id' => $item['catalog_item_id'],
-                    'normative_rate_code' => $item['normative_rate_code'] ?? null,
-                    'base_unit_price' => $item['base_unit_price'] ?? 0,
-                    'current_unit_price' => $item['current_unit_price'] ?? 0,
-                    'direct_costs' => $item['direct_costs'] ?? 0,
-                    'materials_cost' => $item['materials_cost'] ?? 0,
-                    'machinery_cost' => $item['machinery_cost'] ?? 0,
-                    'labor_cost' => $item['labor_cost'] ?? 0,
-                    'overhead_amount' => $item['overhead_amount'] ?? 0,
-                    'profit_amount' => $item['profit_amount'] ?? 0,
-                    'applied_coefficients' => $item['applied_coefficients'] ?? null,
-                    'coefficient_total' => $item['coefficient_total'] ?? null,
-                    'custom_resources' => $item['custom_resources'] ?? null,
-                    'metadata' => $item['metadata'] ?? null,
-                    'is_manual' => $item['is_manual'],
-                    'is_not_accounted' => $item['is_not_accounted'],
-                ],
-            ],
+            level: 0,
+            sectionPath: null,
+            rawData: $rawData,
+            currentTotalAmount: (float) ($item['total_amount'] ?? 0),
+            isNotAccounted: (bool)($item['is_not_accounted'] ?? false)
         );
     }
 
