@@ -706,21 +706,57 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         }
         
         // 7. Auto-detect manual mode from Total mismatch (Preserve XML Totals)
+        // If we detected Overheads, we MUST adjust the Price/Total base to represent Direct Costs only
+        // because the downstream CalculationService will ADD overheads back.
+        
         $directCost = $qty * $price;
-        if ($total > 0 && $directCost > 0) {
+        $isTotalGross = false;
+        
+        // If the Total came from a Gross Total field (TotalWithNP, TotalWithNRSP)
+        if ($overheadAmount > 0 || $profitAmount > 0) {
+             // Check if Total is close to Direct + Overhead + Profit
+             $grossTotal = $directCost + $overheadAmount + $profitAmount;
+             
+             // If the parsed $total is much larger than $directCost, and matches Gross, 
+             // it means $total and $price are Gross values. We need to strip them.
+             if ($total > $directCost * 1.05) { // 5% margin
+                 $isTotalGross = true;
+             }
+             
+             // Or if we specifically picked a TotalWith... attribute
+             // (We can't easily know which attribute was picked in step 3 without refactoring, 
+             //  so we rely on the numeric check)
+        }
+        
+        // If no explicit overheads found, but Total > Direct
+        if ($total > 0 && $directCost > 0 && !$isTotalGross) {
             $diff = $total - $directCost;
-            // If difference is significant (> 0.01) and positive (Total > Direct)
             if ($diff > 0.01) {
                 if ($overheadAmount == 0 && $profitAmount == 0) {
-                    // Assume the difference is Overhead (or generic markup)
-                    // This preserves the Total Amount from the XML
                     $overheadAmount = $diff;
                     $isManual = true;
+                    // Here $total is Gross, so we need to strip it for Price calculation
+                    $isTotalGross = true;
                 } elseif (abs(($directCost + $overheadAmount + $profitAmount) - $total) > 0.01) {
-                     // If explicit overheads don't sum up to Total, trust Total and adjust Overhead
-                     $overheadAmount = $total - $directCost - $profitAmount;
-                     $isManual = true;
+                     // Mismatch, likely Total is Gross
+                     if (abs(($directCost + $overheadAmount + $profitAmount) - $total) < $total * 0.01) {
+                         // It matches Gross sum
+                         $isTotalGross = true;
+                     } else {
+                         // Total is Gross, but we need to adjust Overhead to match exact Total
+                         $overheadAmount = $total - $directCost - $profitAmount;
+                         $isManual = true;
+                         $isTotalGross = true;
+                     }
                 }
+            }
+        }
+        
+        // Strip Overheads from Price/Total if they are Gross
+        if ($isTotalGross) {
+            $total = $total - $overheadAmount - $profitAmount;
+            if ($qty > 0) {
+                $price = $total / $qty;
             }
         }
 
