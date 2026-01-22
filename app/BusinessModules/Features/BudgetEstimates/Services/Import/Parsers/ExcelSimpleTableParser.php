@@ -15,6 +15,8 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateItemTyp
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\NormativeCodeService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Detection\AISectionDetector;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Mapping\AIColumnMapper;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Strategy\AIPriceStrategyService;
+use App\BusinessModules\Features\BudgetEstimates\Enums\PriceStrategyEnum;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Reader\Xml;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
@@ -27,8 +29,10 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
     private NormativeCodeService $codeService;
     private ?AISectionDetector $aiSectionDetector;
     private ?AIColumnMapper $aiColumnMapper;
+    private ?AIPriceStrategyService $priceStrategyService;
     private array $headerCandidates = [];
     private bool $useAI = true; // Флаг для включения/отключения AI
+    private string $priceStrategy = PriceStrategyEnum::DEFAULT; // Текущая стратегия цен
     
     // ==========================================
     // CONSTANTS: ROW TYPES & STATES
@@ -45,17 +49,21 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
     
     public function __construct(
         ?AISectionDetector $aiSectionDetector = null,
-        ?AIColumnMapper $aiColumnMapper = null
+        ?AIColumnMapper $aiColumnMapper = null,
+        ?AIPriceStrategyService $priceStrategyService = null
     ) {
         $this->typeDetector = new EstimateItemTypeDetector();
         $this->codeService = new NormativeCodeService();
         $this->aiSectionDetector = $aiSectionDetector;
         $this->aiColumnMapper = $aiColumnMapper;
+        $this->priceStrategyService = $priceStrategyService ?? new AIPriceStrategyService();
         
         // AI опционален - если не передан, работаем без него
         if ($aiSectionDetector === null || $aiColumnMapper === null) {
-            $this->useAI = false;
-            Log::info('[ExcelParser] AI services not available, using rule-based detection only');
+            // Но мы попробуем создать их, если есть возможность (или оставить как есть)
+            if ($aiSectionDetector === null) {
+                 // Fallback to null logic handled inside methods
+            }
         }
     }
 
@@ -185,6 +193,10 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         $structure = $this->detectStructure($filePath);
         $headerRow = $structure['header_row'];
         $columnMapping = $structure['column_mapping'];
+        
+        // 🧠 AI PRICE CALIBRATION
+        // Определяем стратегию извлечения цен перед парсингом строк
+        $this->detectPriceStrategy($sheet, $headerRow, $columnMapping);
         
         $rows = $this->extractRows($sheet, $headerRow + 1, $columnMapping);
         
@@ -1101,18 +1113,107 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         return false;
     }
 
+    /**
+     * 🧠 Detect Price Strategy using AI
+     */
+    private function detectPriceStrategy(Worksheet $sheet, int $headerRow, array $columnMapping): void
+    {
+        // 1. Находим колонки с ценами
+        $priceColumns = [];
+        if (!empty($columnMapping['unit_price'])) $priceColumns[] = $columnMapping['unit_price'];
+        if (!empty($columnMapping['total_price'])) $priceColumns[] = $columnMapping['total_price'];
+        // Также проверим колонки, похожие на цену, но не замапленные (если mapping не идеален)
+        
+        if (empty($priceColumns)) {
+            Log::info('[ExcelParser] No price columns mapped, skipping AI strategy detection');
+            return;
+        }
+        
+        // 2. Собираем примеры "сложных" ячеек (где есть перенос строки и числа)
+        $samples = [];
+        $maxSamples = 5;
+        $startRow = $headerRow + 1;
+        $maxRow = min($startRow + 50, $sheet->getHighestRow()); // Смотрим первые 50 строк данных
+        
+        foreach ($priceColumns as $col) {
+            for ($row = $startRow; $row <= $maxRow; $row++) {
+                $value = $sheet->getCell($col . $row)->getValue();
+                
+                // Ищем ячейки с переносом строки И числами
+                if (is_string($value) && str_contains($value, "\n")) {
+                    // Проверяем, что там действительно цифры
+                    if (preg_match('/\d+[\.,]\d+.*\n.*\d+/', $value)) {
+                        $samples[] = trim($value);
+                        if (count($samples) >= $maxSamples) break 2;
+                    }
+                }
+            }
+        }
+        
+        // 3. Если сложных ячеек нет -> стратегия DEFAULT (обычный парсинг)
+        if (empty($samples)) {
+            Log::info('[ExcelParser] No multiline price cells found, using DEFAULT strategy');
+            $this->priceStrategy = PriceStrategyEnum::DEFAULT;
+            return;
+        }
+        
+        // 4. Спрашиваем AI
+        Log::info('[ExcelParser] Detecting price strategy with AI...', ['samples' => $samples]);
+        
+        // Собираем заголовки для контекста
+        $headers = [];
+        foreach ($columnMapping as $field => $col) {
+            if ($col) {
+                $headers[] = $field . ': ' . ($this->headerCandidates[0]['raw_values'][$col] ?? '');
+            }
+        }
+        
+        $this->priceStrategy = $this->priceStrategyService->detectStrategy($samples, $headers);
+        
+        Log::info('[ExcelParser] Price strategy detected', ['strategy' => $this->priceStrategy]);
+    }
+
     private function parseNumericValue($value): ?float
     {
         if ($value === null || $value === '') {
             return null;
         }
         
-        // Handle newlines: take the first line if it looks like a number/formula result
+        // Handle newlines based on AI Strategy
         if (is_string($value) && str_contains($value, "\n")) {
             $lines = explode("\n", $value);
-            $value = trim($lines[0]);
+            
+            // Фильтруем пустые строки
+            $lines = array_values(array_filter(array_map('trim', $lines), fn($l) => $l !== ''));
+            
+            if (empty($lines)) return null;
+            
+            // Выбор значения по стратегии
+            $rawValue = match ($this->priceStrategy) {
+                PriceStrategyEnum::TOP => $lines[0],
+                PriceStrategyEnum::BOTTOM => end($lines),
+                PriceStrategyEnum::MAX => null, // Обработаем ниже
+                default => $lines[0], // Default behavior (top)
+            };
+            
+            // Если стратегия MAX или нужно парсить выбранное значение
+            if ($this->priceStrategy === PriceStrategyEnum::MAX) {
+                $numbers = [];
+                foreach ($lines as $line) {
+                    $num = $this->extractFloat($line);
+                    if ($num !== null) $numbers[] = $num;
+                }
+                return !empty($numbers) ? max($numbers) : null;
+            }
+            
+            $value = $rawValue;
         }
         
+        return $this->extractFloat($value);
+    }
+    
+    private function extractFloat($value): ?float
+    {
         if (is_numeric($value)) {
             return (float)$value;
         }
