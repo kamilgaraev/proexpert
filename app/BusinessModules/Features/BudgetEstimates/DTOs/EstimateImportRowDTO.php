@@ -26,6 +26,9 @@ class EstimateImportRowDTO
         public ?float $currentUnitPrice = null,
         public ?float $priceCoefficient = null,
         public ?float $currentTotalAmount = null, // Сумма из файла
+        public ?float $overheadAmount = null,
+        public ?float $profitAmount = null,
+        public bool $isManual = false,
         public bool $isNotAccounted = false,
         
         // Поля валидации и классификации
@@ -57,6 +60,9 @@ class EstimateImportRowDTO
             'current_unit_price' => $this->currentUnitPrice,
             'price_coefficient' => $this->priceCoefficient,
             'current_total_amount' => $this->currentTotalAmount,
+            'overhead_amount' => $this->overheadAmount,
+            'profit_amount' => $this->profitAmount,
+            'is_manual' => $this->isManual,
             'is_not_accounted' => $this->isNotAccounted,
             'confidence_score' => $this->confidenceScore,
             'classification_source' => $this->classificationSource,
@@ -109,6 +115,9 @@ class EstimateImportRowDTO
             currentUnitPrice: $data['current_unit_price'] ?? $rawData['current_unit_price'] ?? null,
             priceCoefficient: $data['price_coefficient'] ?? $rawData['price_coefficient'] ?? null,
             currentTotalAmount: $data['current_total_amount'] ?? $rawData['current_total_amount'] ?? null,
+            overheadAmount: $data['overhead_amount'] ?? $rawData['overhead_amount'] ?? null,
+            profitAmount: $data['profit_amount'] ?? $rawData['profit_amount'] ?? null,
+            isManual: $data['is_manual'] ?? $rawData['is_manual'] ?? false,
             isNotAccounted: $data['is_not_accounted'] ?? $rawData['is_not_accounted'] ?? false,
             confidenceScore: $data['confidence_score'] ?? null,
             classificationSource: $data['classification_source'] ?? null,
