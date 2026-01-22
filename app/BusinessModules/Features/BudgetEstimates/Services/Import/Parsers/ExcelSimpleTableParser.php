@@ -30,6 +30,19 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
     private array $headerCandidates = [];
     private bool $useAI = true; // Флаг для включения/отключения AI
     
+    // ==========================================
+    // CONSTANTS: ROW TYPES & STATES
+    // ==========================================
+    
+    private const ROW_TYPE_ITEM = 'item';
+    private const ROW_TYPE_SECTION = 'section';
+    private const ROW_TYPE_SUMMARY = 'summary';
+    private const ROW_TYPE_IGNORE = 'ignore';
+    
+    private const STATE_SEARCHING = 'searching';
+    private const STATE_IN_SECTION = 'in_section';
+    private const STATE_SUMMARY_MODE = 'summary_mode';
+    
     public function __construct(
         ?AISectionDetector $aiSectionDetector = null,
         ?AIColumnMapper $aiColumnMapper = null
@@ -634,11 +647,26 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         $rows = [];
         $maxRow = $sheet->getHighestRow();
         $consecutiveEmptyRows = 0;
-        $maxConsecutiveEmptyRows = 20; // Увеличиваем лимит пустых строк подряд до остановки
+        $maxConsecutiveEmptyRows = 20; 
+        
+        // ==========================================
+        // STATE MACHINE INITIALIZATION
+        // ==========================================
+        $currentState = self::STATE_SEARCHING;
+        $currentSectionNumber = null;
         
         for ($rowNum = $startRow; $rowNum <= $maxRow; $rowNum++) {
             $rowData = $this->extractRowData($sheet, $rowNum, $columnMapping);
             
+            // 🧹 SANITIZATION: Clean up 'unit' before classification
+            if (!empty($rowData['unit'])) {
+                // If unit looks like a number or is too long -> clear it
+                if (preg_match('/^[\d\s\.,\n]+$/', $rowData['unit']) || mb_strlen($rowData['unit']) > 15) {
+                    $rowData['unit'] = null;
+                }
+            }
+            
+            // 🗑️ EMPTY CHECK
             if ($this->isEmptyRow($rowData)) {
                 $consecutiveEmptyRows++;
                 if ($consecutiveEmptyRows >= $maxConsecutiveEmptyRows) {
@@ -647,38 +675,69 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                 }
                 continue;
             }
+            $consecutiveEmptyRows = 0;
             
-            $consecutiveEmptyRows = 0; // Сброс счетчика
+            // 🤖 CLASSIFICATION
+            $rowType = $this->classifyRow($rowData);
             
-            // ⭐ Пропуск служебных строк (заголовки групп, пояснения)
-            if ($this->shouldSkipRow($rowData)) {
-                Log::debug('[ExcelParser] Служебная строка пропущена', [
-                    'row' => $rowNum,
-                    'code' => $rowData['code'],
-                    'name' => substr($rowData['name'] ?? '', 0, 50),
-                ]);
-                continue;
+            Log::debug("[ExcelParser] Row {$rowNum} classified as {$rowType}", [
+                'name' => substr($rowData['name'] ?? '', 0, 30),
+                'state_before' => $currentState
+            ]);
+            
+            // ==========================================
+            // STATE MACHINE LOGIC
+            // ==========================================
+            
+            switch ($rowType) {
+                case self::ROW_TYPE_IGNORE:
+                    continue 2; // Skip to next row
+                    
+                case self::ROW_TYPE_SECTION:
+                    // Create new section
+                    $isSection = true;
+                    $currentState = self::STATE_IN_SECTION;
+                    $currentSectionNumber = $rowData['section_number'];
+                    // Fallthrough to add row
+                    break;
+                    
+                case self::ROW_TYPE_SUMMARY:
+                    // Enter summary mode
+                    $currentState = self::STATE_SUMMARY_MODE;
+                    $isSection = true; // Summaries are stored as sections/markers in current structure
+                    // In current DTO, summary rows are treated as sections with item_type=summary
+                    // This matches the previous logic but with better detection
+                    break;
+                    
+                case self::ROW_TYPE_ITEM:
+                    // If we were in SUMMARY_MODE and found an item -> assume we are back in section
+                    // (e.g. sometimes summaries are in the middle, or we missed a section header)
+                    if ($currentState === self::STATE_SUMMARY_MODE) {
+                        $currentState = self::STATE_IN_SECTION;
+                        Log::info("[ExcelParser] Auto-transition from SUMMARY to IN_SECTION at row {$rowNum}");
+                    }
+                    $isSection = false;
+                    break;
+                    
+                default:
+                    $isSection = false;
             }
             
-            // ⭐ Пропуск "мусорных" строк (цифры колонок 1, 2, 3...)
-            if ($this->isGarbageRow($rowData)) {
-                Log::debug('[ExcelParser] Мусорная строка пропущена', [
-                     'row' => $rowNum,
-                     'name' => $rowData['name'],
-                ]);
-                continue;
-            }
-            
-            $isSection = $this->isSectionRow($rowData);
             $level = $this->calculateSectionLevel($rowData['section_number']);
             
-            $itemType = $this->typeDetector->detectType(
-                $rowData['code'],
-                $rowData['name'],
-                $rowData['section_number']
-            );
+            // Determine Item Type
+            if ($rowType === self::ROW_TYPE_SUMMARY) {
+                $itemType = 'summary';
+            } elseif ($rowType === self::ROW_TYPE_SECTION) {
+                $itemType = 'section'; // Or null? The DTO expects 'work'/'material' etc.
+            } else {
+                $itemType = $this->typeDetector->detectType(
+                    $rowData['code'],
+                    $rowData['name'],
+                    $rowData['section_number']
+                );
+            }
             
-            // 🔧 ИСПРАВЛЕНИЕ: itemName не может быть null, используем пустую строку или section_number как fallback
             $itemName = $rowData['name'] ?? '';
             if (empty(trim($itemName)) && !empty($rowData['section_number'])) {
                 $itemName = 'Раздел ' . $rowData['section_number'];
@@ -1551,6 +1610,172 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         }
         
         return $ruleBasedResult;
+    }
+
+    /**
+     * =========================================================================
+     * 🧠 HEURISTIC ANALYSIS ENGINE (SCORING SYSTEM)
+     * =========================================================================
+     */
+
+    /**
+     * Classify a row based on scoring system
+     * 
+     * @param array $row Cleaned row data
+     * @return string One of ROW_TYPE_* constants
+     */
+    private function classifyRow(array $row): string
+    {
+        $scores = $this->calculateRowScores($row);
+        
+        // Find the winner
+        $winner = self::ROW_TYPE_IGNORE;
+        $maxScore = 0;
+        
+        foreach ($scores as $type => $score) {
+            if ($score > $maxScore) {
+                $maxScore = $score;
+                $winner = $type;
+            }
+        }
+        
+        // Threshold check (must be at least 20 points to be anything)
+        if ($maxScore < 20) {
+            return self::ROW_TYPE_IGNORE;
+        }
+        
+        // Log challenging classifications
+        if ($maxScore < 100) {
+            Log::debug('[ExcelParser] Low confidence classification', [
+                'name' => substr($row['name'] ?? '', 0, 50),
+                'winner' => $winner,
+                'scores' => $scores
+            ]);
+        }
+        
+        // Special check: If Section wins but has data -> might be Summary if not explicitly Section
+        if ($winner === self::ROW_TYPE_SECTION) {
+            $hasData = ($row['quantity'] ?? 0) > 0 || ($row['unit_price'] ?? 0) > 0;
+            if ($hasData && $scores[self::ROW_TYPE_SUMMARY] > 0) {
+                // If it has data and some summary signs, prefer summary over section to be safe
+                // But only if section score isn't overwhelming (>200)
+                if ($scores[self::ROW_TYPE_SECTION] < 200) {
+                    return self::ROW_TYPE_SUMMARY;
+                }
+            }
+        }
+        
+        return $winner;
+    }
+
+    /**
+     * Calculate probability scores for each row type
+     * 
+     * @param array $row
+     * @return array ['item' => int, 'section' => int, 'summary' => int]
+     */
+    private function calculateRowScores(array $row): array
+    {
+        $scores = [
+            self::ROW_TYPE_ITEM => 0,
+            self::ROW_TYPE_SECTION => 0,
+            self::ROW_TYPE_SUMMARY => 0,
+        ];
+        
+        $name = trim($row['name'] ?? '');
+        $code = trim($row['code'] ?? '');
+        $unit = trim($row['unit'] ?? '');
+        
+        $hasQuantity = ($row['quantity'] ?? 0) > 0;
+        $hasPrice = ($row['unit_price'] ?? 0) > 0;
+        $isBold = $row['style']['is_bold'] ?? false;
+        
+        // ---------------------------------------------------------
+        // 1. ITEM SCORING
+        // ---------------------------------------------------------
+        
+        // TRUMP CARD: Valid Code (FER/GESN)
+        if (!empty($code) && !$this->codeService->isPseudoCode($code)) {
+            if ($this->codeService->isValidCode($code)) {
+                $scores[self::ROW_TYPE_ITEM] += 500;
+            } else {
+                // Code exists but maybe custom
+                $scores[self::ROW_TYPE_ITEM] += 100;
+            }
+        }
+        
+        // Has Data
+        if ($hasPrice && $hasQuantity) $scores[self::ROW_TYPE_ITEM] += 100;
+        elseif ($hasPrice || $hasQuantity) $scores[self::ROW_TYPE_ITEM] += 50;
+        
+        // Has Unit
+        if (!empty($unit)) $scores[self::ROW_TYPE_ITEM] += 50;
+        
+        // Penalties for Item
+        if ($isBold) $scores[self::ROW_TYPE_ITEM] -= 20; // Items are rarely bold
+        
+        // ---------------------------------------------------------
+        // 2. SECTION SCORING
+        // ---------------------------------------------------------
+        
+        // Keywords
+        if (preg_match('/^(раздел|глава|этап|часть|локальная смет)/ui', $name)) {
+            $scores[self::ROW_TYPE_SECTION] += 200;
+        }
+        
+        // Hierarchical numbering (1., 1.2., II.)
+        if (preg_match('/^(\d+\.|[IVX]+\.)\s+/u', $name)) {
+            $scores[self::ROW_TYPE_SECTION] += 50;
+        }
+        
+        // Styling
+        if ($isBold) $scores[self::ROW_TYPE_SECTION] += 50;
+        if ($row['style']['is_merged'] ?? false) $scores[self::ROW_TYPE_SECTION] += 30;
+        
+        // Caps lock (at least 5 chars)
+        if (mb_strlen($name) > 5 && mb_strtoupper($name) === $name) {
+            $scores[self::ROW_TYPE_SECTION] += 30;
+        }
+        
+        // Absence of data (Sections usually don't have prices in columns, or they have total sum)
+        if (!$hasPrice && !$hasQuantity && empty($unit)) {
+            $scores[self::ROW_TYPE_SECTION] += 50;
+        }
+        
+        // Penalties for Section
+        // If it has code, it's very unlikely to be a section
+        if (!empty($code) && !$this->codeService->isPseudoCode($code)) {
+            $scores[self::ROW_TYPE_SECTION] -= 100;
+        }
+        
+        // ---------------------------------------------------------
+        // 3. SUMMARY SCORING
+        // ---------------------------------------------------------
+        
+        // Strong Keywords
+        if (preg_match('/^(итого|всего|накладные|сметная прибыль|ндс|строительные работы|монтажные работы|оборудование|прочие|зарплата|справочно|в базисном|в текущем)/ui', $name)) {
+            $scores[self::ROW_TYPE_SUMMARY] += 300;
+        }
+        
+        // Secondary Keywords
+        if (preg_match('/(в т\.ч\.|в том числе|начисления|коэффициент|индекс)/ui', $name)) {
+            $scores[self::ROW_TYPE_SUMMARY] += 150;
+        }
+        
+        // Styling
+        if ($isBold) $scores[self::ROW_TYPE_SUMMARY] += 20;
+        
+        // Summaries often have price but no unit and no code
+        if ($hasPrice && empty($unit) && empty($code)) {
+            $scores[self::ROW_TYPE_SUMMARY] += 50;
+        }
+        
+        // Penalties for Summary
+        if (!empty($code) && !$this->codeService->isPseudoCode($code)) {
+            $scores[self::ROW_TYPE_SUMMARY] -= 100;
+        }
+        
+        return $scores;
     }
 }
 
