@@ -458,16 +458,34 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
 
         // 2. Ищем позиции
         $itemKeywords = ['Position', 'Item', 'Poz', 'Line', 'Row', 'Work'];
+        // Добавляем Mat и Mch, так как они могут быть самостоятельными позициями в смете (не внутри ресурсов)
+        $resourceKeywords = ['Mat', 'Mch'];
+        
         $foundItems = [];
         
         foreach ($node->children() as $child) {
-            if ($this->matchesKeywords($child->getName(), $itemKeywords)) {
-                $foundItems[] = $child;
+            $childName = $child->getName();
+            
+            // Если это обычная позиция
+            if ($this->matchesKeywords($childName, $itemKeywords)) {
+                $foundItems[] = ['node' => $child, 'type' => 'work'];
+            }
+            // Если это ресурс верхнего уровня (материал или механизм как отдельная строка)
+            elseif ($this->matchesKeywords($childName, $resourceKeywords)) {
+                // Проверяем, не является ли это просто справочником (обычно ресурсы внутри Position)
+                // Но если мы здесь (в parseNodeRecursively), значит мы внутри Раздела/Сметы.
+                // ГрандСмета допускает материалы как отдельные строки.
+                $foundItems[] = ['node' => $child, 'type' => 'resource'];
             }
         }
         
-        foreach ($foundItems as $item) {
-            $this->processItem($item, $items, $parentPath, $level);
+        foreach ($foundItems as $itemData) {
+            if ($itemData['type'] === 'resource') {
+                // Обрабатываем как ресурс, но добавляем в общий список
+                $this->processResource($itemData['node'], $items, $parentPath, $level);
+            } else {
+                $this->processItem($itemData['node'], $items, $parentPath, $level);
+            }
         }
         
         // Если ничего не нашли (и не обрабатывали контейнеры), но есть дети, пробуем рекурсивно искать в них
@@ -709,10 +727,36 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         // If we detected Overheads, we MUST adjust the Price/Total base to represent Direct Costs only
         // because the downstream CalculationService will ADD overheads back.
         
+        // Попытка найти ЯВНЫЕ прямые затраты в итогах (DataType="TotalPos" или подобное)
+        $directTotal = 0.0;
+        if (isset($item->Itog)) {
+            // Ищем итог с типом "Прямые затраты"
+            $directNodes = $item->xpath('.//Itog[@DataType="TotalPos"] | .//Itog[@DataType="PZ"]');
+            if (!empty($directNodes)) {
+                $directTotal = (float)str_replace(',', '.', (string)($directNodes[0]['TotalCurr'] ?? $directNodes[0]['Total'] ?? $directNodes[0]['PZ'] ?? 0));
+            }
+        }
+
         $directCost = $qty * $price;
         $isTotalGross = false;
         
-        // If the Total came from a Gross Total field (TotalWithNP, TotalWithNRSP)
+        // Если мы нашли явные прямые затраты, используем их как базу
+        if ($directTotal > 0 && $directTotal < $total) {
+             // Значит $total - это Gross, а $directTotal - это Direct
+             // Пересчитываем цену от прямых затрат
+             if ($qty > 0) {
+                 $price = $directTotal / $qty;
+             }
+             // Вычисляем накладные, если их не было
+             if ($overheadAmount == 0 && $profitAmount == 0) {
+                 $overheadAmount = $total - $directTotal; // Все остальное в накладные
+             }
+             $isManual = true;
+             $isTotalGross = true; // Маркер, что текущий $total грязный
+        }
+        // Если явных прямых нет, пробуем вычислить
+        elseif ($overheadAmount > 0 || $profitAmount > 0) {
+             // ... (старая логика) ...
         if ($overheadAmount > 0 || $profitAmount > 0) {
              // Check if Total is close to Direct + Overhead + Profit
              $grossTotal = $directCost + $overheadAmount + $profitAmount;
