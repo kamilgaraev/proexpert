@@ -1465,18 +1465,28 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
     {
         $totalAmount = 0;
         $totalQuantity = 0;
+        $itemsCount = 0;
         
         foreach ($items as $item) {
+            $type = $item['item_type'] ?? 'work';
+            
+            // ⭐ Игнорируем разделы и итоговые строки при подсчете общей суммы
+            // Мы должны считать только сами работы/материалы
+            if ($type === 'section' || $type === 'summary') {
+                continue;
+            }
+            
             $quantity = $item['quantity'] ?? 0;
             $unitPrice = $item['unit_price'] ?? 0;
             $totalAmount += $quantity * $unitPrice;
             $totalQuantity += $quantity;
+            $itemsCount++;
         }
         
         return [
             'total_amount' => $totalAmount,
             'total_quantity' => $totalQuantity,
-            'items_count' => count($items),
+            'items_count' => $itemsCount,
         ];
     }
 
