@@ -756,8 +756,6 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         }
         // Если явных прямых нет, пробуем вычислить
         elseif ($overheadAmount > 0 || $profitAmount > 0) {
-             // ... (старая логика) ...
-        if ($overheadAmount > 0 || $profitAmount > 0) {
              // Check if Total is close to Direct + Overhead + Profit
              $grossTotal = $directCost + $overheadAmount + $profitAmount;
              
@@ -766,10 +764,6 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
              if ($total > $directCost * 1.05) { // 5% margin
                  $isTotalGross = true;
              }
-             
-             // Or if we specifically picked a TotalWith... attribute
-             // (We can't easily know which attribute was picked in step 3 without refactoring, 
-             //  so we rely on the numeric check)
         }
         
         // If no explicit overheads found, but Total > Direct
