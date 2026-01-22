@@ -16,6 +16,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\NormativeCodeSe
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Detection\AISectionDetector;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Mapping\AIColumnMapper;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Strategy\AIPriceStrategyService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Strategy\AIRowClassifierService;
 use App\BusinessModules\Features\BudgetEstimates\Enums\PriceStrategyEnum;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Reader\Xml;
@@ -30,9 +31,11 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
     private ?AISectionDetector $aiSectionDetector;
     private ?AIColumnMapper $aiColumnMapper;
     private ?AIPriceStrategyService $priceStrategyService;
+    private ?AIRowClassifierService $rowClassifierService;
     private array $headerCandidates = [];
     private bool $useAI = true; // Флаг для включения/отключения AI
     private string $priceStrategy = PriceStrategyEnum::DEFAULT; // Текущая стратегия цен
+    private array $aiRowTypes = []; // Кеш типов строк от AI
     
     // ==========================================
     // CONSTANTS: ROW TYPES & STATES
@@ -50,13 +53,15 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
     public function __construct(
         ?AISectionDetector $aiSectionDetector = null,
         ?AIColumnMapper $aiColumnMapper = null,
-        ?AIPriceStrategyService $priceStrategyService = null
+        ?AIPriceStrategyService $priceStrategyService = null,
+        ?AIRowClassifierService $rowClassifierService = null
     ) {
         $this->typeDetector = new EstimateItemTypeDetector();
         $this->codeService = new NormativeCodeService();
         $this->aiSectionDetector = $aiSectionDetector;
         $this->aiColumnMapper = $aiColumnMapper;
         $this->priceStrategyService = $priceStrategyService ?? new AIPriceStrategyService();
+        $this->rowClassifierService = $rowClassifierService ?? new AIRowClassifierService();
         
         // AI опционален - если не передан, работаем без него
         if ($aiSectionDetector === null || $aiColumnMapper === null) {
@@ -198,6 +203,12 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         // Определяем стратегию извлечения цен перед парсингом строк
         $this->detectPriceStrategy($sheet, $headerRow, $columnMapping);
         
+        // 🧠 AI ROW CLASSIFICATION (PRE-PROCESS)
+        // Запускаем пакетную классификацию строк через AI
+        if ($this->useAI && $this->rowClassifierService) {
+            $this->classifyRowsWithAI($sheet, $headerRow + 1, $columnMapping);
+        }
+
         $rows = $this->extractRows($sheet, $headerRow + 1, $columnMapping);
         
         $sections = [];
@@ -690,7 +701,7 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             $consecutiveEmptyRows = 0;
             
             // 🤖 CLASSIFICATION
-            $rowType = $this->classifyRow($rowData);
+            $rowType = $this->classifyRow($rowData, $rowNum);
             
             Log::debug("[ExcelParser] Row {$rowNum} classified as {$rowType}", [
                 'name' => substr($rowData['name'] ?? '', 0, 30),
@@ -1111,6 +1122,57 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         // ИТОГ: Не пропускаем
         // ============================================
         return false;
+    }
+
+    /**
+     * 🧠 Pre-classify rows using AI in batches
+     */
+    private function classifyRowsWithAI(Worksheet $sheet, int $startRow, array $columnMapping): void
+    {
+        $nameColumn = $columnMapping['name'] ?? 'A'; // Default to A if not mapped (fallback)
+        if (!$nameColumn) return;
+
+        $maxRow = $sheet->getHighestRow();
+        $batchSize = 50;
+        $batch = [];
+        
+        Log::info('[ExcelParser] Starting AI Row Classification', ['total_rows' => $maxRow - $startRow]);
+
+        // Собираем батчи и отправляем
+        // TODO: В идеале использовать асинхронные запросы (Guzzle Promises), но пока последовательно для надежности
+        
+        for ($row = $startRow; $row <= $maxRow; $row++) {
+            $val = trim((string)$sheet->getCell($nameColumn . $row)->getValue());
+            
+            if (mb_strlen($val) > 2) { // Пропускаем совсем короткие/пустые
+                $batch[$row] = $val;
+            }
+
+            if (count($batch) >= $batchSize || $row === $maxRow) {
+                if (!empty($batch)) {
+                    $results = $this->rowClassifierService->classifyBatch($batch);
+                    
+                    // Сохраняем результаты в кеш класса
+                    foreach ($results as $id => $type) {
+                        // Маппим AI типы на наши константы
+                        $mappedType = match($type) {
+                            'SECTION' => self::ROW_TYPE_SECTION,
+                            'ITEM' => self::ROW_TYPE_ITEM,
+                            'SUMMARY' => self::ROW_TYPE_SUMMARY,
+                            default => self::ROW_TYPE_IGNORE,
+                        };
+                        $this->aiRowTypes[$id] = $mappedType;
+                    }
+                    
+                    Log::debug('[ExcelParser] Processed AI batch', [
+                        'rows' => count($batch), 
+                        'results' => count($results)
+                    ]);
+                    
+                    $batch = [];
+                }
+            }
+        }
     }
 
     /**
@@ -1730,16 +1792,28 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
      */
 
     /**
-     * Classify a row based on scoring system
+     * Classify a row based on scoring system AND AI results
      * 
      * @param array $row Cleaned row data
+     * @param int $rowNum Row number for AI cache lookup
      * @return string One of ROW_TYPE_* constants
      */
-    private function classifyRow(array $row): string
+    private function classifyRow(array $row, int $rowNum): string
     {
+        // 1. Сначала проверяем AI вердикт (если есть)
+        if (isset($this->aiRowTypes[$rowNum])) {
+            $aiType = $this->aiRowTypes[$rowNum];
+            if ($aiType !== self::ROW_TYPE_IGNORE) {
+                return $aiType;
+            }
+            // Если AI сказал IGNORE, мы можем все равно проверить через Scorer на всякий случай, 
+            // или довериться AI. Давайте доверимся AI для IGNORE тоже, но с проверкой данных.
+            // Если AI сказал IGNORE, но там есть явная цена и код -> это ошибка AI, берем Scorer.
+        }
+
         $scores = $this->calculateRowScores($row);
         
-        // Find the winner
+        // ... (rest of the logic)
         $winner = self::ROW_TYPE_IGNORE;
         $maxScore = 0;
         
