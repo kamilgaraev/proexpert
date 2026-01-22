@@ -550,6 +550,15 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             $price = (float)$this->extractValue($item, ['Price', 'UnitCost', 'Cena']);
         }
 
+        // Check for PriceCurr / PriceBase children (common in GGE)
+        if ($price == 0) {
+             if (isset($item->PriceCurr)) {
+                 $price = (float)str_replace(',', '.', (string)($item->PriceCurr['Value'] ?? $item->PriceCurr));
+             } elseif (isset($item->PriceBase)) {
+                 $price = (float)str_replace(',', '.', (string)($item->PriceBase['Value'] ?? $item->PriceBase));
+             }
+        }
+
         // GrandSmeta Price check (often in UnitPrice attribute or similar)
         if ($price == 0 && isset($item['UnitPrice'])) {
              $price = (float)$item['UnitPrice'];
@@ -602,6 +611,29 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         $hp = (float)$this->extractValue($item, ['HP', 'Overhead']);
         $sp = (float)$this->extractValue($item, ['SP', 'Profit']);
         
+        // GGE/GrandSmeta specific Itog parsing for Overhead/Profit amounts
+        $overheadAmount = 0.0;
+        $profitAmount = 0.0;
+        $isManual = false;
+
+        if (isset($item->Itog)) {
+            // Find Nacl (Overhead)
+            $naclNodes = $item->xpath('.//Itog[@DataType="Nacl"]');
+            if (!empty($naclNodes)) {
+                $overheadAmount = (float)str_replace(',', '.', (string)$naclNodes[0]['PZ']);
+            }
+            
+            // Find Plan (Profit)
+            $planNodes = $item->xpath('.//Itog[@DataType="Plan"]');
+            if (!empty($planNodes)) {
+                $profitAmount = (float)str_replace(',', '.', (string)$planNodes[0]['PZ']);
+            }
+        }
+        
+        if ($overheadAmount > 0 || $profitAmount > 0) {
+            $isManual = true;
+        }
+        
         // 5. Resource Summation Fallback
         $resourcesTotal = 0.0;
         $hasResources = isset($item->Resources) && count($item->Resources->children()) > 0;
@@ -632,6 +664,25 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         } elseif ($total == 0 && $qty > 0 && $price > 0) {
             $total = $qty * $price;
         }
+        
+        // 7. Auto-detect manual mode from Total mismatch (Preserve XML Totals)
+        $directCost = $qty * $price;
+        if ($total > 0 && $directCost > 0) {
+            $diff = $total - $directCost;
+            // If difference is significant (> 0.01) and positive (Total > Direct)
+            if ($diff > 0.01) {
+                if ($overheadAmount == 0 && $profitAmount == 0) {
+                    // Assume the difference is Overhead (or generic markup)
+                    // This preserves the Total Amount from the XML
+                    $overheadAmount = $diff;
+                    $isManual = true;
+                } elseif (abs(($directCost + $overheadAmount + $profitAmount) - $total) > 0.01) {
+                     // If explicit overheads don't sum up to Total, trust Total and adjust Overhead
+                     $overheadAmount = $total - $directCost - $profitAmount;
+                     $isManual = true;
+                }
+            }
+        }
 
         $items[] = (new EstimateImportRowDTO(
             rowNumber: 0,
@@ -645,6 +696,9 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             level: $level,
             sectionPath: $parentPath,
             currentTotalAmount: $total,
+            overheadAmount: $overheadAmount,
+            profitAmount: $profitAmount,
+            isManual: $isManual,
             isNotAccounted: false,
             rawData: $this->xmlToArray($item),
             quantityCoefficient: $quantityCoefficient
