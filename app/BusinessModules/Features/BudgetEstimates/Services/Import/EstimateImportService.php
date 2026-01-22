@@ -361,6 +361,12 @@ class EstimateImportService
             }
         }
 
+        // Apply detected VAT rate if not explicitly set in settings
+        if (!isset($estimateSettings['vat_rate']) && isset($previewData['vat_rate'])) {
+            $estimateSettings['vat_rate'] = $previewData['vat_rate'];
+            Log::info('[EstimateImport] Using detected VAT rate', ['rate' => $estimateSettings['vat_rate']]);
+        }
+
         $jobId = Str::uuid()->toString();
         
         // Логика выбора: если явно forced queue или количество элементов > 500
@@ -703,6 +709,7 @@ class EstimateImportService
                 'organization_id' => $settings['organization_id'],
                 'status' => 'draft',
                 'estimate_date' => now()->toDateString(),
+                'vat_rate' => $settings['vat_rate'] ?? null, // Pass VAT rate
             ]);
             
             $progressTracker->update(25, 100, 0, 25);

@@ -16,7 +16,8 @@ class EstimateImportDTO
         public ?array $rawHeaders = null,
         public ?string $estimateType = null,        // Тип сметы: 'grandsmeta', 'rik', 'fer', 'smartsmeta', 'custom'
         public ?float $typeConfidence = null,       // Уверенность в определении типа (0-100)
-        public array $validationSummary = []        // Сводка по ошибкам и предупреждениям
+        public array $validationSummary = [],       // Сводка по ошибкам и предупреждениям
+        public ?float $vatRate = null               // Ставка НДС (если определена)
     ) {}
     
     public function toArray(): array
@@ -42,6 +43,7 @@ class EstimateImportDTO
             'estimate_type' => $this->estimateType,
             'type_confidence' => $this->typeConfidence,
             'validation_summary' => $this->validationSummary,
+            'vat_rate' => $this->vatRate,
         ];
     }
     

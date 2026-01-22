@@ -96,6 +96,9 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         // Итоги
         $totals = $this->calculateTotals($items);
         
+        // Detect VAT Rate
+        $vatRate = $this->detectVatRate($xml, $totals['total_amount']);
+
         return new EstimateImportDTO(
             fileName: basename($filePath),
             fileSize: filesize($filePath),
@@ -105,8 +108,45 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             totals: $totals,
             metadata: $metadata,
             estimateType: $estimateType,
-            typeConfidence: 100.0
+            typeConfidence: 100.0,
+            validationSummary: [],
+            vatRate: $vatRate
         );
+    }
+    
+    private function detectVatRate(\SimpleXMLElement $xml, float $totalAmount): float
+    {
+        // 1. Try to find explicit NDS tag in Totals
+        $ndsNodes = $xml->xpath('//Itog[@DataType="Nds"] | //Itog[@Caption="НДС"] | //Itog[contains(@Caption, "НДС")]');
+        
+        foreach ($ndsNodes as $node) {
+            // Check if it's a rate
+            if (isset($node['Rate'])) {
+                return (float)$node['Rate'];
+            }
+            // Check if it's an amount and calculate rate
+            $val = (float)str_replace(',', '.', (string)($node['PZ'] ?? $node['TotalCurr'] ?? $node['Total'] ?? 0));
+            if ($val > 0 && $totalAmount > 0) {
+                // If this is VAT amount, approximate rate (e.g. 20%)
+                // Total without VAT = Total - VAT
+                // Rate = VAT / (Total - VAT) * 100
+                // BUT TotalAmount passed here might be WITH or WITHOUT VAT depending on how calculateTotals works.
+                // calculateTotals sums up items. Items usually are with/without VAT? 
+                // Usually items are Direct+Overhead+Profit (without VAT).
+                
+                $rate = ($val / ($totalAmount)) * 100;
+                // Round to nearest standard rate (0, 10, 20)
+                if (abs($rate - 20) < 1) return 20.0;
+                if (abs($rate - 18) < 1) return 18.0;
+                if (abs($rate - 10) < 1) return 10.0;
+            }
+        }
+        
+        // 2. Check global coefficients or properties
+        // ...
+        
+        // Default to 0 for imported estimates if not found (safer than implicit 20%)
+        return 0.0;
     }
     
     private function prepareContent(string $filePath): ?string
