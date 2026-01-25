@@ -12,6 +12,7 @@ class EstimateItemResource extends JsonResource
             'id' => $this->id,
             'estimate_id' => $this->estimate_id,
             'estimate_section_id' => $this->estimate_section_id,
+            'parent_item_id' => $this->parent_work_id, // ID родительской позиции для вложенности
             'item_type' => $this->item_type?->value ?? $this->item_type,
             'item_type_label' => $this->item_type?->label() ?? null,
             'position_number' => $this->position_number,
@@ -60,6 +61,7 @@ class EstimateItemResource extends JsonResource
             'resources' => EstimateItemResourceResource::collection($this->whenLoaded('resources')),
             'works' => EstimateItemWorkResource::collection($this->whenLoaded('works')),
             'totals' => EstimateItemTotalResource::collection($this->whenLoaded('totals')),
+            'children' => EstimateItemResource::collection($this->whenLoaded('childItems')),
         ];
     }
 }
