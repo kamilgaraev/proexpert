@@ -95,6 +95,8 @@ class EstimateController extends Controller
                 'items.workType',
                 'items.measurementUnit',
                 'items.resources',
+                'items.works',
+                'items.totals',
             ])
             ->orderBy('sort_order')
             ->get();
@@ -117,7 +119,7 @@ class EstimateController extends Controller
         $estimateModel->load([
             'items' => function ($query) {
                 $query->whereNull('estimate_section_id')
-                    ->with(['workType', 'measurementUnit', 'resources'])
+                    ->with(['workType', 'measurementUnit', 'resources', 'works', 'totals'])
                     ->orderBy('position_number');
             },
             'project',
@@ -257,14 +259,23 @@ class EstimateController extends Controller
             ->with([
                 'items.workType',
                 'items.measurementUnit',
+                'items.resources',
+                'items.works',
+                'items.totals',
                 'children' => function ($query) {
                     $query->with([
                         'items.workType',
                         'items.measurementUnit',
+                        'items.resources',
+                        'items.works',
+                        'items.totals',
                         'children' => function ($q) {
                             $q->with([
                                 'items.workType',
                                 'items.measurementUnit',
+                                'items.resources',
+                                'items.works',
+                                'items.totals',
                             ])->orderBy('sort_order');
                         }
                     ])->orderBy('sort_order');

@@ -7,6 +7,8 @@ use App\BusinessModules\Features\BudgetEstimates\Services\EstimateItemService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportContext;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\NormativeMatchingService;
 use App\Models\EstimateItem;
+use App\Models\EstimateItemWork;
+use App\Models\EstimateItemTotal;
 use Illuminate\Support\Facades\Log;
 
 class WorkStrategy extends BaseItemStrategy
@@ -95,6 +97,36 @@ class WorkStrategy extends BaseItemStrategy
             
             // ⭐ Обновляем текущую работу для привязки ресурсов (подпозиций)
             $context->currentWorkId = $createdItem->id;
+            
+            // Сохранение WorksList
+            if (!empty($row->worksList)) {
+                foreach ($row->worksList as $workData) {
+                    EstimateItemWork::create([
+                        'estimate_item_id' => $createdItem->id,
+                        'caption' => $workData['caption'] ?? '',
+                        'sort_order' => $workData['sort_order'] ?? 0,
+                        'metadata' => $workData['metadata'] ?? null,
+                    ]);
+                }
+            }
+            
+            // Сохранение Totals
+            if (!empty($row->totals)) {
+                foreach ($row->totals as $totalData) {
+                    EstimateItemTotal::create([
+                        'estimate_item_id' => $createdItem->id,
+                        'data_type' => $totalData['data_type'] ?? null,
+                        'caption' => $totalData['caption'] ?? null,
+                        'quantity_for_one' => $totalData['quantity_for_one'] ?? null,
+                        'quantity_total' => $totalData['quantity_total'] ?? null,
+                        'for_one_curr' => $totalData['for_one_curr'] ?? null,
+                        'total_curr' => $totalData['total_curr'] ?? null,
+                        'total_base' => $totalData['total_base'] ?? null,
+                        'sort_order' => $totalData['sort_order'] ?? 0,
+                        'metadata' => $totalData['metadata'] ?? null,
+                    ]);
+                }
+            }
             
             return $createdItem;
         } catch (\Exception $e) {

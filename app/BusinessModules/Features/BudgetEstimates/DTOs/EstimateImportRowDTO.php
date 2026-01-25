@@ -35,7 +35,11 @@ class EstimateImportRowDTO
         public ?float $confidenceScore = null,
         public ?string $classificationSource = null,
         public array $warnings = [],
-        public bool $hasMathMismatch = false
+        public bool $hasMathMismatch = false,
+        
+        // Вложенные данные из XML
+        public ?array $worksList = null,
+        public ?array $totals = null
     ) {}
     
     public function toArray(): array
@@ -68,6 +72,8 @@ class EstimateImportRowDTO
             'classification_source' => $this->classificationSource,
             'warnings' => $this->warnings,
             'has_math_mismatch' => $this->hasMathMismatch,
+            'works_list' => $this->worksList,
+            'totals' => $this->totals,
         ];
     }
     
@@ -122,7 +128,9 @@ class EstimateImportRowDTO
             confidenceScore: $data['confidence_score'] ?? null,
             classificationSource: $data['classification_source'] ?? null,
             warnings: $data['warnings'] ?? [],
-            hasMathMismatch: $data['has_math_mismatch'] ?? false
+            hasMathMismatch: $data['has_math_mismatch'] ?? false,
+            worksList: $data['works_list'] ?? ($data['raw_data']['works_list'] ?? null),
+            totals: $data['totals'] ?? ($data['raw_data']['totals'] ?? null)
         );
     }
 }

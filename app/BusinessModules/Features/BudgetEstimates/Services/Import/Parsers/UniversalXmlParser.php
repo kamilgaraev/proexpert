@@ -804,6 +804,40 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             }
         }
 
+        // Извлечение WorksList
+        $worksList = [];
+        if (isset($item->WorksList)) {
+            foreach ($item->WorksList->Work as $index => $work) {
+                $worksList[] = [
+                    'caption' => (string)($work['Caption'] ?? $work),
+                    'sort_order' => $index,
+                ];
+            }
+        }
+
+        // Извлечение Itog (полная структура)
+        $totals = [];
+        if (isset($item->Itog)) {
+            $itogNodes = $item->xpath('.//Itog[@DataType] | .//Itog[@Caption]');
+            foreach ($itogNodes as $index => $itog) {
+                $totals[] = [
+                    'data_type' => (string)($itog['DataType'] ?? ''),
+                    'caption' => (string)($itog['Caption'] ?? ''),
+                    'quantity_for_one' => isset($itog['QuantityForOne']) ? (float)str_replace(',', '.', (string)$itog['QuantityForOne']) : null,
+                    'quantity_total' => isset($itog['QuantityTotal']) ? (float)str_replace(',', '.', (string)$itog['QuantityTotal']) : null,
+                    'for_one_curr' => isset($itog['ForOneCurr']) ? (float)str_replace(',', '.', (string)$itog['ForOneCurr']) : null,
+                    'total_curr' => isset($itog['TotalCurr']) ? (float)str_replace(',', '.', (string)$itog['TotalCurr']) : null,
+                    'total_base' => isset($itog['TotalBase']) || isset($itog['PZ']) ? (float)str_replace(',', '.', (string)($itog['TotalBase'] ?? $itog['PZ'])) : null,
+                    'sort_order' => $index,
+                    'metadata' => $this->extractItogMetadata($itog),
+                ];
+            }
+        }
+
+        $rawData = $this->xmlToArray($item);
+        $rawData['works_list'] = $worksList;
+        $rawData['totals'] = $totals;
+
         $items[] = (new EstimateImportRowDTO(
             rowNumber: 0,
             sectionNumber: $num,
@@ -820,8 +854,10 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             profitAmount: $profitAmount,
             isManual: $isManual,
             isNotAccounted: false,
-            rawData: $this->xmlToArray($item),
-            quantityCoefficient: $quantityCoefficient
+            rawData: $rawData,
+            quantityCoefficient: $quantityCoefficient,
+            worksList: !empty($worksList) ? $worksList : null,
+            totals: !empty($totals) ? $totals : null
         ))->toArray();
         
         // Ресурсы
@@ -971,6 +1007,35 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
     private function hasField(\SimpleXMLElement $node, array $keys): bool
     {
         return $this->extractValue($node, $keys) !== '';
+    }
+
+    /**
+     * Извлечь метаданные из узла Itog
+     */
+    private function extractItogMetadata(\SimpleXMLElement $itog): array
+    {
+        $metadata = [];
+        
+        // Извлекаем все атрибуты, которые не были обработаны отдельно
+        $processedAttrs = ['DataType', 'Caption', 'QuantityForOne', 'QuantityTotal', 'ForOneCurr', 'TotalCurr', 'TotalBase', 'PZ', 'Total'];
+        
+        foreach ($itog->attributes() as $key => $value) {
+            if (!in_array($key, $processedAttrs)) {
+                $metadata[$key] = (string)$value;
+            }
+        }
+        
+        // Извлекаем Comment, если есть
+        if (isset($itog['Comment'])) {
+            $metadata['comment'] = (string)$itog['Comment'];
+        }
+        
+        // Извлекаем Rate, если есть
+        if (isset($itog['Rate'])) {
+            $metadata['rate'] = (float)str_replace(',', '.', (string)$itog['Rate']);
+        }
+        
+        return $metadata;
     }
 
     private function calculateTotals(array $items): array

@@ -150,6 +150,16 @@ class EstimateItem extends Model
         return $this->hasMany(EstimateItemResource::class);
     }
 
+    public function works(): HasMany
+    {
+        return $this->hasMany(EstimateItemWork::class)->orderBy('sort_order');
+    }
+
+    public function totals(): HasMany
+    {
+        return $this->hasMany(EstimateItemTotal::class)->orderBy('sort_order');
+    }
+
     /**
      * Фактические объемы работ из журнала работ
      */
@@ -365,7 +375,7 @@ class EstimateItem extends Model
         if ($user && $user->current_organization_id) {
             // Если estimate не найден, возвращаем 404
             if (!$item->estimate) {
-                \Log::warning('[EstimateItem::resolveRouteBinding] Estimate не найден для элемента', [
+                Log::warning('[EstimateItem::resolveRouteBinding] Estimate не найден для элемента', [
                     'item_id' => $item->id,
                     'item_estimate_id' => $item->estimate_id,
                 ]);
