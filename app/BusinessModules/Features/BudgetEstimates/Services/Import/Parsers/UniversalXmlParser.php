@@ -747,14 +747,16 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         $isManual = true;
         
         // 4.1 Commercial / Not In Norms Handling
-        // If item is "NotInNB" (Commercial), Profit (Plan) usually shouldn't exist or is fake.
-        // Often differences are just "Overhead" or "Margin".
-        // We move Profit to Overhead for these items to match GrandSmeta logic which often resets Profit for commercial items.
+        // If item is "NotInNB" (Commercial), the price already includes all markups.
+        // НР (overhead) and СП (profit) must be 0 for commercial items because
+        // the price from VrXXXX or MarketAnalysisDocLink is the final selling price.
         $options = (string)($item['Options'] ?? '');
         $isCommercial = mb_stripos($options, 'NotInNB') !== false;
         
-        if ($isCommercial && $profitAmount > 0) {
-             $overheadAmount += $profitAmount;
+        if ($isCommercial) {
+             // For commercial items, reset overhead and profit to 0
+             // The price is already the final price with all markups included
+             $overheadAmount = 0;
              $profitAmount = 0;
              $isManual = true;
         }
