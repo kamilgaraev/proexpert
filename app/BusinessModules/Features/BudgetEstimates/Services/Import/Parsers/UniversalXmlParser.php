@@ -748,6 +748,7 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         // the price from VrXXXX or MarketAnalysisDocLink is the final selling price.
         $options = (string)($item['Options'] ?? '');
         $isCommercial = mb_stripos($options, 'NotInNB') !== false;
+        $isNotAccounted = false;
         
         if ($isCommercial) {
              // For commercial items, reset overhead and profit to 0
@@ -755,6 +756,8 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
              $overheadAmount = 0;
              $profitAmount = 0;
              $isManual = true;
+             // Commercial positions are not included in GrandSmeta totals
+             $isNotAccounted = true;
         }
 
         // 5. Resource Summation Fallback
@@ -892,7 +895,7 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             overheadAmount: $overheadAmount,
             profitAmount: $profitAmount,
             isManual: $isManual,
-            isNotAccounted: false,
+            isNotAccounted: $isNotAccounted,
             rawData: $rawData,
             quantityCoefficient: $quantityCoefficient,
             worksList: !empty($worksList) ? $worksList : null,
