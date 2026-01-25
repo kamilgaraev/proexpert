@@ -127,25 +127,34 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             // Check if it's an amount and calculate rate
             $val = (float)str_replace(',', '.', (string)($node['PZ'] ?? $node['TotalCurr'] ?? $node['Total'] ?? 0));
             if ($val > 0 && $totalAmount > 0) {
-                // If this is VAT amount, approximate rate (e.g. 20%)
-                // Total without VAT = Total - VAT
-                // Rate = VAT / (Total - VAT) * 100
-                // BUT TotalAmount passed here might be WITH or WITHOUT VAT depending on how calculateTotals works.
-                // calculateTotals sums up items. Items usually are with/without VAT? 
-                // Usually items are Direct+Overhead+Profit (without VAT).
+                // If TotalAmount includes VAT: Rate = VAT / (Total - VAT)
+                // If TotalAmount is without VAT: Rate = VAT / Total
+                // Usually totalAmount here is WITH or WITHOUT?
+                // Let's assume standard rates 20%
                 
-                $rate = ($val / ($totalAmount)) * 100;
-                // Round to nearest standard rate (0, 10, 20)
-                if (abs($rate - 20) < 1) return 20.0;
-                if (abs($rate - 18) < 1) return 18.0;
-                if (abs($rate - 10) < 1) return 10.0;
+                $rate1 = ($val / ($totalAmount - $val)) * 100;
+                $rate2 = ($val / $totalAmount) * 100;
+                
+                if (abs($rate1 - 20) < 1) return 20.0;
+                if (abs($rate2 - 20) < 1) return 20.0;
+                if (abs($rate1 - 10) < 1) return 10.0;
             }
         }
         
-        // 2. Check global coefficients or properties
-        // ...
+        // 2. Check MarketAnalysisDocLink for VAT rate (Commercial estimates often use this)
+        $maNodes = $xml->xpath('//MarketAnalysisDocLink[@VAT]');
+        if (!empty($maNodes)) {
+            foreach ($maNodes as $node) {
+                $vat = (float)str_replace(',', '.', (string)$node['VAT']);
+                if ($vat > 0) return $vat;
+            }
+        }
         
-        // Default to 0 for imported estimates if not found (safer than implicit 20%)
+        // 3. Check Parameters or Properties
+        // <Parameters ... Mode2020Order="2025" ...>
+        // Usually implicit 20% if not specified, but better safe.
+        
+        // Default to 0 for imported estimates if not found
         return 0.0;
     }
     
@@ -717,6 +726,19 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             $isManual = true;
         }
         
+        // 4.1 Commercial / Not In Norms Handling
+        // If item is "NotInNB" (Commercial), Profit (Plan) usually shouldn't exist or is fake.
+        // Often differences are just "Overhead" or "Margin".
+        // We move Profit to Overhead for these items to match GrandSmeta logic which often resets Profit for commercial items.
+        $options = (string)($item['Options'] ?? '');
+        $isCommercial = mb_stripos($options, 'NotInNB') !== false;
+        
+        if ($isCommercial && $profitAmount > 0) {
+             $overheadAmount += $profitAmount;
+             $profitAmount = 0;
+             $isManual = true;
+        }
+
         // 5. Resource Summation Fallback
         $resourcesTotal = 0.0;
         $hasResources = isset($item->Resources) && count($item->Resources->children()) > 0;
