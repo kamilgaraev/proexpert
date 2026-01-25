@@ -640,6 +640,17 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
              }
         }
 
+        // 2.6 GrandSmeta Price Level check (VrXXXX attributes for commercial items)
+        // For commercial items (Options="NotInNB"), price may be stored in VrXXXX attribute
+        // where XXXX is the PriceLevel (e.g., Vr2001 for PriceLevel="2001")
+        if ($price == 0 && isset($item['PriceLevel'])) {
+            $priceLevel = (string)$item['PriceLevel'];
+            $vrAttr = 'Vr' . $priceLevel;
+            if (isset($item[$vrAttr])) {
+                $price = (float)str_replace(',', '.', (string)$item[$vrAttr]);
+            }
+        }
+
         // 3. Специфика ГрандСметы: Ищем стоимость в итогах (<Itog>)
         // ПРИОРИТЕТ: Сначала ищем TotalPos (прямые затраты), потом TotalWithNP (с НР и СП)
         $directTotalFromItog = 0.0;
