@@ -348,7 +348,7 @@ class ResourceMatchingService
         $normalized = mb_strtolower(trim($unitName));
 
         $unit = MeasurementUnit::where('organization_id', $organizationId)
-            ->whereRaw('LOWER(name) = ?', [$normalized])
+            ->whereRaw('LOWER(TRIM(name)) = LOWER(TRIM(?))', [$normalized])
             ->first();
 
         if (!$unit) {
