@@ -691,6 +691,10 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         if ($directTotalFromItog > 0) {
             $total = $directTotalFromItog;
         } elseif ($grossTotalFromItog > 0) {
+            // Если нашли только TotalWithNP, но не нашли НР/СП - это может быть коммерческая позиция
+            // В этом случае TotalWithNP может быть уже с учетом всех наценок, но без явного разделения
+            // Для таких позиций лучше использовать TotalWithNP как прямые затраты (если нет НР/СП)
+            // Но сначала попробуем найти НР/СП ниже
             $total = $grossTotalFromItog;
         }
         
@@ -774,43 +778,29 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         }
         
         // 7. Определяем финальные значения: приоритет TotalPos (прямые затраты)
-        // Если нашли TotalPos - используем его как основу, иначе используем TotalWithNP и вычитаем НР/СП
+        // СТРОГО: Используем TotalPos как прямые затраты. Если его нет - используем TotalWithNP минус НР/СП
         $directCost = $qty * $price;
-        $isTotalGross = false;
         
         if ($directTotalFromItog > 0) {
-            // Нашли явные прямые затраты из TotalPos - используем их
+            // Нашли явные прямые затраты из TotalPos - используем их СТРОГО
             $total = $directTotalFromItog;
             if ($qty > 0) {
                 $price = $directTotalFromItog / $qty;
             }
-            // Если также есть TotalWithNP, можем проверить консистентность
-            if ($grossTotalFromItog > 0 && abs($grossTotalFromItog - ($directTotalFromItog + $overheadAmount + $profitAmount)) > 0.01) {
-                // Есть расхождение - корректируем НР или СП
-                $expectedGross = $directTotalFromItog + $overheadAmount + $profitAmount;
-                if ($grossTotalFromItog > $expectedGross) {
-                    // Недостаток суммы - добавляем в накладные
-                    $overheadAmount += ($grossTotalFromItog - $expectedGross);
-                }
-            }
         } elseif ($grossTotalFromItog > 0) {
-            // Нашли только TotalWithNP (полная стоимость) - нужно вычесть НР и СП
-            $total = $grossTotalFromItog - $overheadAmount - $profitAmount;
-            if ($total < 0) $total = 0; // Защита от отрицательных значений
-            if ($qty > 0) {
-                $price = $total / $qty;
-            }
-            $isTotalGross = true;
-        } elseif ($total > 0 && ($overheadAmount > 0 || $profitAmount > 0)) {
-            // Fallback: если есть НР/СП, но нет явных итогов, проверяем консистентность
-            $expectedGross = $directCost + $overheadAmount + $profitAmount;
-            if (abs($total - $expectedGross) < $total * 0.01) {
-                // Total похож на Gross (прямые + НР + СП)
-                $total = $directCost; // Используем прямые затраты
+            // Нашли только TotalWithNP (полная стоимость) - вычитаем НР и СП для получения прямых
+            if ($overheadAmount > 0 || $profitAmount > 0) {
+                $total = $grossTotalFromItog - $overheadAmount - $profitAmount;
+                if ($total < 0) $total = 0; // Защита от отрицательных значений
                 if ($qty > 0) {
                     $price = $total / $qty;
                 }
-                $isTotalGross = true;
+            } else {
+                // Если нет НР/СП, то TotalWithNP и есть прямые затраты (для коммерческих позиций)
+                $total = $grossTotalFromItog;
+                if ($qty > 0) {
+                    $price = $total / $qty;
+                }
             }
         }
 
@@ -989,6 +979,11 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         $totalQuantity = 0;
         
         foreach ($items as $item) {
+            // ИСКЛЮЧАЕМ ресурсы из расчета (isNotAccounted = true)
+            if ($item['is_not_accounted'] ?? false) {
+                continue;
+            }
+            
             // Summing up Direct Costs + Overheads + Profit to get the full Estimate Value
             $itemTotal = ($item['current_total_amount'] ?? 0) 
                        + ($item['overhead_amount'] ?? 0) 
