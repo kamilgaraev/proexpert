@@ -58,6 +58,8 @@ class EstimateItemResource extends JsonResource
             'work_type' => $this->whenLoaded('workType'),
             'measurement_unit' => $this->whenLoaded('measurementUnit'),
             'resources' => EstimateItemResourceResource::collection($this->whenLoaded('resources')),
+            'works' => EstimateItemWorkResource::collection($this->whenLoaded('works')),
+            'totals' => EstimateItemTotalResource::collection($this->whenLoaded('totals')),
         ];
     }
 }
