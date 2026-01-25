@@ -97,6 +97,9 @@ class EstimateController extends Controller
                 'items.resources',
                 'items.works',
                 'items.totals',
+                'items.childItems' => function ($query) {
+                    $query->with(['workType', 'measurementUnit', 'resources', 'works', 'totals', 'childItems']);
+                },
             ])
             ->orderBy('sort_order')
             ->get();
@@ -106,6 +109,18 @@ class EstimateController extends Controller
             return $sections
                 ->where('parent_section_id', $parentId)
                 ->map(function($section) use ($sections, $buildTree) {
+                    // Строим иерархию позиций внутри раздела
+                    $allItems = $section->items;
+                    $buildItemsTree = function($items, $parentItemId = null) use (&$buildItemsTree) {
+                        return $items
+                            ->where('parent_work_id', $parentItemId)
+                            ->map(function($item) use ($items, $buildItemsTree) {
+                                $item->setRelation('childItems', $buildItemsTree($items, $item->id));
+                                return $item;
+                            })
+                            ->values();
+                    };
+                    $section->setRelation('items', $buildItemsTree($allItems));
                     $section->setRelation('children', $buildTree($sections, $section->id));
                     return $section;
                 })
@@ -116,12 +131,35 @@ class EstimateController extends Controller
         $estimateModel->setRelation('sections', $buildTree($allSections));
         
         // Загружаем позиции без разделов и другие связи
+        $itemsWithoutSection = \App\Models\EstimateItem::where('estimate_id', $estimateModel->id)
+            ->whereNull('estimate_section_id')
+            ->with([
+                'workType', 
+                'measurementUnit', 
+                'resources', 
+                'works', 
+                'totals',
+                'childItems' => function ($q) {
+                    $q->with(['workType', 'measurementUnit', 'resources', 'works', 'totals', 'childItems']);
+                }
+            ])
+            ->orderBy('position_number')
+            ->get();
+        
+        // Строим иерархию позиций без разделов
+        $buildItemsTree = function($items, $parentItemId = null) use (&$buildItemsTree) {
+            return $items
+                ->where('parent_work_id', $parentItemId)
+                ->map(function($item) use ($items, $buildItemsTree) {
+                    $item->setRelation('childItems', $buildItemsTree($items, $item->id));
+                    return $item;
+                })
+                ->values();
+        };
+        
+        $estimateModel->setRelation('items', $buildItemsTree($itemsWithoutSection));
+        
         $estimateModel->load([
-            'items' => function ($query) {
-                $query->whereNull('estimate_section_id')
-                    ->with(['workType', 'measurementUnit', 'resources', 'works', 'totals'])
-                    ->orderBy('position_number');
-            },
             'project',
             'contract',
             'approvedBy',
@@ -262,6 +300,9 @@ class EstimateController extends Controller
                 'items.resources',
                 'items.works',
                 'items.totals',
+                'items.childItems' => function ($q) {
+                    $q->with(['workType', 'measurementUnit', 'resources', 'works', 'totals', 'childItems']);
+                },
                 'children' => function ($query) {
                     $query->with([
                         'items.workType',
@@ -269,6 +310,9 @@ class EstimateController extends Controller
                         'items.resources',
                         'items.works',
                         'items.totals',
+                        'items.childItems' => function ($q) {
+                            $q->with(['workType', 'measurementUnit', 'resources', 'works', 'totals', 'childItems']);
+                        },
                         'children' => function ($q) {
                             $q->with([
                                 'items.workType',
@@ -276,6 +320,9 @@ class EstimateController extends Controller
                                 'items.resources',
                                 'items.works',
                                 'items.totals',
+                                'items.childItems' => function ($q2) {
+                                    $q2->with(['workType', 'measurementUnit', 'resources', 'works', 'totals', 'childItems']);
+                                },
                             ])->orderBy('sort_order');
                         }
                     ])->orderBy('sort_order');
