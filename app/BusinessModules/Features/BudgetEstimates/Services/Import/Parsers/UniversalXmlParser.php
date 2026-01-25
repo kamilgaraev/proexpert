@@ -757,12 +757,7 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             }
         }
 
-        // Если цена 0, и есть ресурсы - берем сумму ресурсов
-        if ($total == 0 && $resourcesTotal > 0) {
-            $total = $resourcesTotal;
-        }
-
-        // 6. Back calculation
+        // 6. Back calculation (только если еще не установили total из Itog)
         if ($price == 0 && $qty > 0 && $total > 0) {
             $price = $total / $qty;
         } elseif ($total == 0 && $qty > 0 && $price > 0) {
@@ -791,6 +786,13 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             }
             if ($qty > 0) {
                 $price = $total / $qty;
+            }
+        } elseif ($total == 0 && $resourcesTotal > 0) {
+            // Fallback: Если цена 0, и есть ресурсы - берем сумму ресурсов
+            // ТОЛЬКО если не нашли TotalPos или TotalWithNP
+            $total = $resourcesTotal;
+            if ($qty > 0) {
+                $price = $resourcesTotal / $qty;
             }
         }
 
