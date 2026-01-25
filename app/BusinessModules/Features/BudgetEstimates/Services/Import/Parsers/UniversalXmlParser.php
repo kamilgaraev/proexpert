@@ -622,6 +622,27 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
              $price = (float)$item['UnitPrice'];
         }
 
+        // 2.5 MarketAnalysisDocLink check (Commercial Quotes)
+        if ($price == 0 && isset($item->MarketAnalysisDocLink)) {
+             $ma = $item->MarketAnalysisDocLink;
+             // Try Total first (usually Unit Price + Storage)
+             if (isset($ma['Total'])) {
+                 $price = (float)str_replace(',', '.', (string)$ma['Total']);
+             } elseif (isset($ma['OptPrice'])) {
+                 $price = (float)str_replace(',', '.', (string)$ma['OptPrice']);
+             } elseif (isset($ma['OptPriceWithVAT'])) {
+                 // If only VAT price is available, use it (better than 0)
+                 // Ideally we should strip VAT, but we don't know the rate for sure here (though it says VAT="20")
+                 $price = (float)str_replace(',', '.', (string)$ma['OptPriceWithVAT']);
+                 if (isset($ma['VAT']) && $price > 0) {
+                     $vat = (float)$ma['VAT'];
+                     if ($vat > 0) {
+                         $price = $price / (1 + $vat/100);
+                     }
+                 }
+             }
+        }
+
         $costNode = $item->Cost ?? $item->TotalCost ?? $item->Total ?? null;
         if ($costNode) {
             $total = (float)($costNode['Value'] ?? $costNode);
@@ -678,13 +699,17 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             // Find Nacl (Overhead)
             $naclNodes = $item->xpath('.//Itog[@DataType="Nacl"]');
             if (!empty($naclNodes)) {
-                $overheadAmount = (float)str_replace(',', '.', (string)$naclNodes[0]['PZ']);
+                $nNode = $naclNodes[0];
+                $val = $nNode['PZ'] ?? $nNode['TotalCurr'] ?? $nNode['Total'] ?? $nNode['Value'] ?? 0;
+                $overheadAmount = (float)str_replace(',', '.', (string)$val);
             }
             
             // Find Plan (Profit)
             $planNodes = $item->xpath('.//Itog[@DataType="Plan"]');
             if (!empty($planNodes)) {
-                $profitAmount = (float)str_replace(',', '.', (string)$planNodes[0]['PZ']);
+                $pNode = $planNodes[0];
+                $val = $pNode['PZ'] ?? $pNode['TotalCurr'] ?? $pNode['Total'] ?? $pNode['Value'] ?? 0;
+                $profitAmount = (float)str_replace(',', '.', (string)$val);
             }
         }
         
@@ -972,7 +997,12 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         $totalQuantity = 0;
         
         foreach ($items as $item) {
-            $totalAmount += ($item['current_total_amount'] ?? 0);
+            // Summing up Direct Costs + Overheads + Profit to get the full Estimate Value
+            $itemTotal = ($item['current_total_amount'] ?? 0) 
+                       + ($item['overhead_amount'] ?? 0) 
+                       + ($item['profit_amount'] ?? 0);
+                       
+            $totalAmount += $itemTotal;
             $totalQuantity += ($item['quantity'] ?? 0);
         }
         
