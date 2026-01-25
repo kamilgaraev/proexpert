@@ -640,13 +640,6 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
              }
         }
 
-        $costNode = $item->Cost ?? $item->TotalCost ?? $item->Total ?? null;
-        if ($costNode) {
-            $total = (float)($costNode['Value'] ?? $costNode);
-        } else {
-            $total = (float)$this->extractValue($item, ['Cost', 'TotalCost', 'Summa']);
-        }
-
         // 3. Специфика ГрандСметы: Ищем стоимость в итогах (<Itog>)
         // ПРИОРИТЕТ: Сначала ищем TotalPos (прямые затраты), потом TotalWithNP (с НР и СП)
         $directTotalFromItog = 0.0;
@@ -661,18 +654,27 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             
             // 3.2. ВТОРОЙ ПРИОРИТЕТ: Ищем TotalWithNP (полная стоимость с НР и СП) - только если не нашли прямые
             if ($directTotalFromItog == 0) {
-                $targetAttrs = ['TotalWithNRSP', 'TotalWithHP_SP', 'TotalWithHPSP', 'Total'];
-                foreach ($targetAttrs as $attr) {
-                    if (isset($item->Itog[$attr])) {
-                        $val = (float)$item->Itog[$attr];
-                        if ($val > 0) {
-                            $grossTotalFromItog = $val;
-                            break;
+                // Ищем по DataType="TotalWithNP"
+                $totalWithNPNodes = $item->xpath('.//Itog[@DataType="TotalWithNP"]');
+                if (!empty($totalWithNPNodes)) {
+                    $grossTotalFromItog = (float)str_replace(',', '.', (string)($totalWithNPNodes[0]['TotalCurr'] ?? $totalWithNPNodes[0]['Total'] ?? 0));
+                }
+                
+                // Fallback: ищем по атрибутам
+                if ($grossTotalFromItog == 0) {
+                    $targetAttrs = ['TotalWithNRSP', 'TotalWithHP_SP', 'TotalWithHPSP', 'Total'];
+                    foreach ($targetAttrs as $attr) {
+                        if (isset($item->Itog[$attr])) {
+                            $val = (float)$item->Itog[$attr];
+                            if ($val > 0) {
+                                $grossTotalFromItog = $val;
+                                break;
+                            }
                         }
                     }
                 }
                 
-                // Ищем во вложенных итогах по Caption
+                // Ищем во вложенных итогах по Caption "Всего"
                 if ($grossTotalFromItog == 0) {
                     $itogs = $item->xpath('.//Itog[@TotalCurr] | .//Itog[@Total]');
                     foreach ($itogs as $itogXml) {
@@ -687,8 +689,16 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             }
         }
         
-        // 3.3. НЕ устанавливаем total здесь - сначала извлечем НР и СП
-        // Потом определим прямые затраты правильно
+        // 3.3. Fallback: ищем в других местах (только если не нашли в Itog)
+        $total = 0.0;
+        if ($directTotalFromItog == 0 && $grossTotalFromItog == 0) {
+            $costNode = $item->Cost ?? $item->TotalCost ?? $item->Total ?? null;
+            if ($costNode) {
+                $total = (float)($costNode['Value'] ?? $costNode);
+            } else {
+                $total = (float)$this->extractValue($item, ['Cost', 'TotalCost', 'Summa']);
+            }
+        }
         
         // 4. Учет НР и СП
         $hp = (float)$this->extractValue($item, ['HP', 'Overhead']);
@@ -757,14 +767,7 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             }
         }
 
-        // 6. Back calculation (только если еще не установили total из Itog)
-        if ($price == 0 && $qty > 0 && $total > 0) {
-            $price = $total / $qty;
-        } elseif ($total == 0 && $qty > 0 && $price > 0) {
-            $total = $qty * $price;
-        }
-        
-        // 7. Определяем финальные значения: приоритет TotalPos (прямые затраты)
+        // 6. Определяем финальные значения: приоритет TotalPos (прямые затраты)
         // СТРОГО: Используем TotalPos как прямые затраты. Если его нет - используем TotalWithNP минус НР/СП
         // ВАЖНО: $total должен быть ТОЛЬКО прямыми затратами, не TotalWithNP!
         
@@ -776,13 +779,27 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             }
         } elseif ($grossTotalFromItog > 0) {
             // Нашли только TotalWithNP (полная стоимость) - вычитаем НР и СП для получения прямых
-            // ВАЖНО: Всегда вычитаем НР и СП, даже если они 0 (для консистентности)
-            $calculatedDirect = $grossTotalFromItog - $overheadAmount - $profitAmount;
-            if ($calculatedDirect > 0) {
-                $total = $calculatedDirect;
-            } else {
-                // Если после вычитания получилось <= 0, используем TotalWithNP как прямые (для коммерческих позиций)
+            if ($overheadAmount > 0 || $profitAmount > 0) {
+                // Есть явные НР и/или СП - вычитаем их для получения прямых затрат
+                $calculatedDirect = $grossTotalFromItog - $overheadAmount - $profitAmount;
+                if ($calculatedDirect > 0) {
+                    $total = $calculatedDirect;
+                } else {
+                    // Если после вычитания получилось <= 0, используем TotalWithNP как прямые
+                    $total = $grossTotalFromItog;
+                    // Сбрасываем НР и СП, чтобы они пересчитались позже
+                    $overheadAmount = 0;
+                    $profitAmount = 0;
+                }
+            } elseif ($isCommercial) {
+                // Коммерческая позиция без явных НР/СП - TotalWithNP это прямые затраты
                 $total = $grossTotalFromItog;
+            } else {
+                // Нормативная позиция без явных НР/СП - НР и СП применяются глобально
+                // ВАЖНО: Используем TotalWithNP как прямые затраты, НР и СП будут пересчитаны позже
+                // с правильными процентами из сметы
+                $total = $grossTotalFromItog;
+                // НР и СП остаются 0, они пересчитаются при создании сметы
             }
             if ($qty > 0) {
                 $price = $total / $qty;
@@ -794,6 +811,14 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             if ($qty > 0) {
                 $price = $resourcesTotal / $qty;
             }
+        } elseif ($total == 0 && $qty > 0 && $price > 0) {
+            // Последний fallback: quantity * price
+            $total = $qty * $price;
+        }
+        
+        // 7. Back calculation для price (если price еще не установлен)
+        if ($price == 0 && $qty > 0 && $total > 0) {
+            $price = $total / $qty;
         }
 
         // Извлечение WorksList
