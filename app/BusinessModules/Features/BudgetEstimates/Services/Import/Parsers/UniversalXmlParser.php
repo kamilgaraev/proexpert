@@ -742,10 +742,6 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             $isManual = true;
         }
         
-        // FORCE MANUAL MODE: Trust XML values completely.
-        // Even if overhead/profit are 0, we must preserve them as 0 and NOT recalculate.
-        $isManual = true;
-        
         // 4.1 Commercial / Not In Norms Handling
         // If item is "NotInNB" (Commercial), the price already includes all markups.
         // НР (overhead) and СП (profit) must be 0 for commercial items because
