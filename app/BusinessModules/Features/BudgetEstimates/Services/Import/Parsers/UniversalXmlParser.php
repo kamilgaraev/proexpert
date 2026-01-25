@@ -687,16 +687,8 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             }
         }
         
-        // 3.3. Устанавливаем total: приоритет прямых затрат из TotalPos
-        if ($directTotalFromItog > 0) {
-            $total = $directTotalFromItog;
-        } elseif ($grossTotalFromItog > 0) {
-            // Если нашли только TotalWithNP, но не нашли НР/СП - это может быть коммерческая позиция
-            // В этом случае TotalWithNP может быть уже с учетом всех наценок, но без явного разделения
-            // Для таких позиций лучше использовать TotalWithNP как прямые затраты (если нет НР/СП)
-            // Но сначала попробуем найти НР/СП ниже
-            $total = $grossTotalFromItog;
-        }
+        // 3.3. НЕ устанавливаем total здесь - сначала извлечем НР и СП
+        // Потом определим прямые затраты правильно
         
         // 4. Учет НР и СП
         $hp = (float)$this->extractValue($item, ['HP', 'Overhead']);
@@ -779,7 +771,7 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         
         // 7. Определяем финальные значения: приоритет TotalPos (прямые затраты)
         // СТРОГО: Используем TotalPos как прямые затраты. Если его нет - используем TotalWithNP минус НР/СП
-        $directCost = $qty * $price;
+        // ВАЖНО: $total должен быть ТОЛЬКО прямыми затратами, не TotalWithNP!
         
         if ($directTotalFromItog > 0) {
             // Нашли явные прямые затраты из TotalPos - используем их СТРОГО
@@ -789,18 +781,16 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             }
         } elseif ($grossTotalFromItog > 0) {
             // Нашли только TotalWithNP (полная стоимость) - вычитаем НР и СП для получения прямых
-            if ($overheadAmount > 0 || $profitAmount > 0) {
-                $total = $grossTotalFromItog - $overheadAmount - $profitAmount;
-                if ($total < 0) $total = 0; // Защита от отрицательных значений
-                if ($qty > 0) {
-                    $price = $total / $qty;
-                }
+            // ВАЖНО: Всегда вычитаем НР и СП, даже если они 0 (для консистентности)
+            $calculatedDirect = $grossTotalFromItog - $overheadAmount - $profitAmount;
+            if ($calculatedDirect > 0) {
+                $total = $calculatedDirect;
             } else {
-                // Если нет НР/СП, то TotalWithNP и есть прямые затраты (для коммерческих позиций)
+                // Если после вычитания получилось <= 0, используем TotalWithNP как прямые (для коммерческих позиций)
                 $total = $grossTotalFromItog;
-                if ($qty > 0) {
-                    $price = $total / $qty;
-                }
+            }
+            if ($qty > 0) {
+                $price = $total / $qty;
             }
         }
 
