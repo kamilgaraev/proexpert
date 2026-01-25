@@ -17,8 +17,9 @@ abstract class BaseItemStrategy implements ItemImportStrategyInterface
         $normalized = mb_strtolower(trim($unitName));
         
         // Попытка найти существующую
+        // Используем whereRaw с правильной параметризацией через bindings
         $unit = MeasurementUnit::where('organization_id', $organizationId)
-            ->whereRaw('LOWER(name) = ?', [$normalized])
+            ->whereRaw('LOWER(TRIM(name)) = LOWER(TRIM(?))', [$normalized])
             ->first();
         
         if ($unit === null) {
