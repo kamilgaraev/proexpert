@@ -141,20 +141,8 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             }
         }
         
-        // 2. Check MarketAnalysisDocLink for VAT rate (Commercial estimates often use this)
-        $maNodes = $xml->xpath('//MarketAnalysisDocLink[@VAT]');
-        if (!empty($maNodes)) {
-            foreach ($maNodes as $node) {
-                $vat = (float)str_replace(',', '.', (string)$node['VAT']);
-                if ($vat > 0) return $vat;
-            }
-        }
-        
-        // 3. Check Parameters or Properties
-        // <Parameters ... Mode2020Order="2025" ...>
-        // Usually implicit 20% if not specified, but better safe.
-        
         // Default to 0 for imported estimates if not found
+        // STRICT: Do not look into items/MarketAnalysis for global VAT rate.
         return 0.0;
     }
     
@@ -660,39 +648,50 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         }
 
         // 3. Специфика ГрандСметы: Ищем стоимость в итогах (<Itog>)
+        // ПРИОРИТЕТ: Сначала ищем TotalPos (прямые затраты), потом TotalWithNP (с НР и СП)
+        $directTotalFromItog = 0.0;
+        $grossTotalFromItog = 0.0;
+        
         if (isset($item->Itog)) {
-            $bestTotal = 0.0;
-            $foundBest = false;
+            // 3.1. ПЕРВЫЙ ПРИОРИТЕТ: Ищем TotalPos (DataType="TotalPos") - ПРЯМЫЕ ЗАТРАТЫ
+            $directNodes = $item->xpath('.//Itog[@DataType="TotalPos"]');
+            if (!empty($directNodes)) {
+                $directTotalFromItog = (float)str_replace(',', '.', (string)($directNodes[0]['TotalCurr'] ?? $directNodes[0]['Total'] ?? $directNodes[0]['PZ'] ?? 0));
+            }
             
-            // Check specific attributes
-            $targetAttrs = ['TotalWithNRSP', 'TotalWithHP_SP', 'TotalWithHPSP', 'Total'];
-            foreach ($targetAttrs as $attr) {
-                if (isset($item->Itog[$attr])) {
-                    $val = (float)$item->Itog[$attr];
-                    if ($val > 0) {
-                        $bestTotal = $val;
-                        $foundBest = true;
-                        break;
+            // 3.2. ВТОРОЙ ПРИОРИТЕТ: Ищем TotalWithNP (полная стоимость с НР и СП) - только если не нашли прямые
+            if ($directTotalFromItog == 0) {
+                $targetAttrs = ['TotalWithNRSP', 'TotalWithHP_SP', 'TotalWithHPSP', 'Total'];
+                foreach ($targetAttrs as $attr) {
+                    if (isset($item->Itog[$attr])) {
+                        $val = (float)$item->Itog[$attr];
+                        if ($val > 0) {
+                            $grossTotalFromItog = $val;
+                            break;
+                        }
+                    }
+                }
+                
+                // Ищем во вложенных итогах по Caption
+                if ($grossTotalFromItog == 0) {
+                    $itogs = $item->xpath('.//Itog[@TotalCurr] | .//Itog[@Total]');
+                    foreach ($itogs as $itogXml) {
+                        $val = (float)($itogXml['TotalCurr'] ?? $itogXml['Total'] ?? 0);
+                        $caption = (string)($itogXml['Caption'] ?? '');
+                        
+                        if (mb_stripos($caption, 'Всего') !== false && $val > $grossTotalFromItog) {
+                            $grossTotalFromItog = $val;
+                        }
                     }
                 }
             }
-            
-            if (!$foundBest) {
-                // Ищем во вложенных итогах
-                $itogs = $item->xpath('.//Itog[@TotalCurr] | .//Itog[@Total]');
-                foreach ($itogs as $itogXml) {
-                    $val = (float)($itogXml['TotalCurr'] ?? $itogXml['Total'] ?? 0);
-                    $caption = (string)($itogXml['Caption'] ?? '');
-                    
-                    if (mb_stripos($caption, 'Всего') !== false || $val > $bestTotal) {
-                        $bestTotal = $val;
-                    }
-                }
-            }
-            
-            if ($bestTotal > 0) {
-                $total = $bestTotal;
-            }
+        }
+        
+        // 3.3. Устанавливаем total: приоритет прямых затрат из TotalPos
+        if ($directTotalFromItog > 0) {
+            $total = $directTotalFromItog;
+        } elseif ($grossTotalFromItog > 0) {
+            $total = $grossTotalFromItog;
         }
         
         // 4. Учет НР и СП
@@ -725,6 +724,10 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         if ($overheadAmount > 0 || $profitAmount > 0) {
             $isManual = true;
         }
+        
+        // FORCE MANUAL MODE: Trust XML values completely.
+        // Even if overhead/profit are 0, we must preserve them as 0 and NOT recalculate.
+        $isManual = true;
         
         // 4.1 Commercial / Not In Norms Handling
         // If item is "NotInNB" (Commercial), Profit (Plan) usually shouldn't exist or is fake.
@@ -770,77 +773,44 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             $total = $qty * $price;
         }
         
-        // 7. Auto-detect manual mode from Total mismatch (Preserve XML Totals)
-        // If we detected Overheads, we MUST adjust the Price/Total base to represent Direct Costs only
-        // because the downstream CalculationService will ADD overheads back.
-        
-        // Попытка найти ЯВНЫЕ прямые затраты в итогах (DataType="TotalPos" или подобное)
-        $directTotal = 0.0;
-        if (isset($item->Itog)) {
-            // Ищем итог с типом "Прямые затраты"
-            $directNodes = $item->xpath('.//Itog[@DataType="TotalPos"] | .//Itog[@DataType="PZ"]');
-            if (!empty($directNodes)) {
-                $directTotal = (float)str_replace(',', '.', (string)($directNodes[0]['TotalCurr'] ?? $directNodes[0]['Total'] ?? $directNodes[0]['PZ'] ?? 0));
-            }
-        }
-
+        // 7. Определяем финальные значения: приоритет TotalPos (прямые затраты)
+        // Если нашли TotalPos - используем его как основу, иначе используем TotalWithNP и вычитаем НР/СП
         $directCost = $qty * $price;
         $isTotalGross = false;
         
-        // Если мы нашли явные прямые затраты, используем их как базу
-        if ($directTotal > 0 && $directTotal < $total) {
-             // Значит $total - это Gross, а $directTotal - это Direct
-             // Пересчитываем цену от прямых затрат
-             if ($qty > 0) {
-                 $price = $directTotal / $qty;
-             }
-             // Вычисляем накладные, если их не было
-             if ($overheadAmount == 0 && $profitAmount == 0) {
-                 $overheadAmount = $total - $directTotal; // Все остальное в накладные
-             }
-             $isManual = true;
-             $isTotalGross = true; // Маркер, что текущий $total грязный
-        }
-        // Если явных прямых нет, пробуем вычислить
-        elseif ($overheadAmount > 0 || $profitAmount > 0) {
-             // Check if Total is close to Direct + Overhead + Profit
-             $grossTotal = $directCost + $overheadAmount + $profitAmount;
-             
-             // If the parsed $total is much larger than $directCost, and matches Gross, 
-             // it means $total and $price are Gross values. We need to strip them.
-             if ($total > $directCost * 1.05) { // 5% margin
-                 $isTotalGross = true;
-             }
-        }
-        
-        // If no explicit overheads found, but Total > Direct
-        if ($total > 0 && $directCost > 0 && !$isTotalGross) {
-            $diff = $total - $directCost;
-            if ($diff > 0.01) {
-                if ($overheadAmount == 0 && $profitAmount == 0) {
-                    $overheadAmount = $diff;
-                    $isManual = true;
-                    $isTotalGross = true; // Here $total is Gross, so we need to strip it
-                } elseif (abs(($directCost + $overheadAmount + $profitAmount) - $total) > 0.01) {
-                     // Mismatch, likely Total is Gross
-                     if (abs(($directCost + $overheadAmount + $profitAmount) - $total) < $total * 0.01) {
-                         // It matches Gross sum
-                         $isTotalGross = true;
-                     } else {
-                         // Total is Gross, but we need to adjust Overhead to match exact Total
-                         $overheadAmount = $total - $directCost - $profitAmount;
-                         $isManual = true;
-                         $isTotalGross = true;
-                     }
+        if ($directTotalFromItog > 0) {
+            // Нашли явные прямые затраты из TotalPos - используем их
+            $total = $directTotalFromItog;
+            if ($qty > 0) {
+                $price = $directTotalFromItog / $qty;
+            }
+            // Если также есть TotalWithNP, можем проверить консистентность
+            if ($grossTotalFromItog > 0 && abs($grossTotalFromItog - ($directTotalFromItog + $overheadAmount + $profitAmount)) > 0.01) {
+                // Есть расхождение - корректируем НР или СП
+                $expectedGross = $directTotalFromItog + $overheadAmount + $profitAmount;
+                if ($grossTotalFromItog > $expectedGross) {
+                    // Недостаток суммы - добавляем в накладные
+                    $overheadAmount += ($grossTotalFromItog - $expectedGross);
                 }
             }
-        }
-        
-        // Strip Overheads from Price/Total if they are Gross
-        if ($isTotalGross) {
-            $total = $total - $overheadAmount - $profitAmount;
+        } elseif ($grossTotalFromItog > 0) {
+            // Нашли только TotalWithNP (полная стоимость) - нужно вычесть НР и СП
+            $total = $grossTotalFromItog - $overheadAmount - $profitAmount;
+            if ($total < 0) $total = 0; // Защита от отрицательных значений
             if ($qty > 0) {
                 $price = $total / $qty;
+            }
+            $isTotalGross = true;
+        } elseif ($total > 0 && ($overheadAmount > 0 || $profitAmount > 0)) {
+            // Fallback: если есть НР/СП, но нет явных итогов, проверяем консистентность
+            $expectedGross = $directCost + $overheadAmount + $profitAmount;
+            if (abs($total - $expectedGross) < $total * 0.01) {
+                // Total похож на Gross (прямые + НР + СП)
+                $total = $directCost; // Используем прямые затраты
+                if ($qty > 0) {
+                    $price = $total / $qty;
+                }
+                $isTotalGross = true;
             }
         }
 
