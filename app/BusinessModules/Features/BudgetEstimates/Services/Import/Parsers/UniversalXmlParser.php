@@ -759,6 +759,18 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
              $overheadAmount = 0;
              $profitAmount = 0;
              $isManual = true;
+             
+             // DEBUG LOG
+             \Log::info('[COMMERCIAL_ITEM_DETECTED]', [
+                 'code' => $code,
+                 'name' => mb_substr($name, 0, 50),
+                 'options' => $options,
+                 'price' => $price,
+                 'qty' => $qty,
+                 'isManual' => $isManual,
+                 'overheadAmount' => $overheadAmount,
+                 'profitAmount' => $profitAmount
+             ]);
         }
 
         // 5. Resource Summation Fallback
