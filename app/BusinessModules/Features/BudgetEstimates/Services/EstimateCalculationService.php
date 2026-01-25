@@ -51,9 +51,12 @@ class EstimateCalculationService
     {
         $total = 0;
         
+        // ИСКЛЮЧАЕМ ресурсы из расчета (is_not_accounted = true)
         $items = $this->itemRepository->getBySection($section->id);
         foreach ($items as $item) {
-            $total += $item->total_amount;
+            if (!$item->is_not_accounted) {
+                $total += $item->total_amount;
+            }
         }
         
         $childSections = $section->children;
@@ -85,7 +88,9 @@ class EstimateCalculationService
     private function performCalculation(Estimate $estimate): array
     {
         // Используем агрегацию на уровне БД вместо цикла
+        // ИСКЛЮЧАЕМ ресурсы из расчета (is_not_accounted = true)
         $totals = EstimateItem::where('estimate_id', $estimate->id)
+            ->where('is_not_accounted', false)
             ->selectRaw('
                 COALESCE(SUM(direct_costs), 0) as total_direct_costs,
                 COALESCE(SUM(overhead_amount), 0) as total_overhead_costs,
