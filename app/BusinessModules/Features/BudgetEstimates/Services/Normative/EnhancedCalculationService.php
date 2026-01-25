@@ -104,7 +104,9 @@ class EnhancedCalculationService
 
     public function calculateEstimateTotal(Estimate $estimate): Estimate
     {
+        // ИСКЛЮЧАЕМ ресурсы из расчета (is_not_accounted = true)
         $totals = $estimate->items()
+            ->where('is_not_accounted', false)
             ->selectRaw('
                 SUM(materials_cost) as total_materials,
                 SUM(machinery_cost) as total_machinery,
