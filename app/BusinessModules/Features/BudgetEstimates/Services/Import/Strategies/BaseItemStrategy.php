@@ -51,8 +51,21 @@ abstract class BaseItemStrategy implements ItemImportStrategyInterface
         $unitPrice = $row->unitPrice ?? $row->currentUnitPrice ?? 0;
         $quantity = $row->quantity ?? 0;
         
-        $directCosts = $quantity * $unitPrice;
-        $totalAmount = $row->currentTotalAmount ?? $directCosts;
+        // ПРИОРИТЕТ: Используем currentTotalAmount как прямые затраты из XML (TotalPos)
+        // Это точное значение из сметы, а не расчетное
+        $directCosts = $row->currentTotalAmount ?? ($quantity * $unitPrice);
+        
+        // Если currentTotalAmount есть, пересчитываем unit_price для консистентности
+        if ($row->currentTotalAmount !== null && $row->currentTotalAmount > 0 && $quantity > 0) {
+            $unitPrice = $row->currentTotalAmount / $quantity;
+        }
+        
+        // total_amount = прямые + НР + СП (если есть)
+        $totalAmount = $directCosts + ($row->overheadAmount ?? 0) + ($row->profitAmount ?? 0);
+        // Если totalAmount получился меньше прямых затрат, используем прямые
+        if ($totalAmount < $directCosts) {
+            $totalAmount = $directCosts;
+        }
         
         return [
             'unit_price' => $unitPrice,

@@ -7,6 +7,7 @@ use App\Models\EstimateItem;
 use App\Models\EstimateSection;
 use App\Repositories\EstimateSectionRepository;
 use App\Repositories\EstimateItemRepository;
+use Illuminate\Support\Facades\Log;
 
 class EstimateCalculationService
 {
@@ -18,11 +19,17 @@ class EstimateCalculationService
 
     public function calculateItemTotal(EstimateItem $item, Estimate $estimate): float
     {
-        $directCosts = $item->quantity * $item->unit_price;
+        // Для ручных позиций используем current_total_amount (из XML) как прямые затраты
+        // Это гарантирует точность данных из исходной сметы
+        if ($item->is_manual && $item->current_total_amount !== null && $item->current_total_amount > 0) {
+            $directCosts = $item->current_total_amount;
+        } else {
+            $directCosts = $item->quantity * $item->unit_price;
+        }
         
         if ($item->is_manual) {
-            $overheadAmount = $item->overhead_amount;
-            $profitAmount = $item->profit_amount;
+            $overheadAmount = $item->overhead_amount ?? 0;
+            $profitAmount = $item->profit_amount ?? 0;
         } else {
             $overheadAmount = $directCosts * ($estimate->overhead_rate / 100);
             $profitAmount = $directCosts * ($estimate->profit_rate / 100);
@@ -129,7 +136,7 @@ class EstimateCalculationService
         $duration = round((microtime(true) - $startTime) * 1000, 2);
         
         // Логирование
-        \Log::info('estimate.recalculated', [
+        Log::info('estimate.recalculated', [
             'estimate_id' => $estimate->id,
             'items_count' => $items->count(),
             'total_amount' => $result['total_amount'],
