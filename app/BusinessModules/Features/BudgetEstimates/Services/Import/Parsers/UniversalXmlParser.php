@@ -807,11 +807,22 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         // Извлечение WorksList
         $worksList = [];
         if (isset($item->WorksList)) {
-            foreach ($item->WorksList->Work as $index => $work) {
-                $worksList[] = [
-                    'caption' => (string)($work['Caption'] ?? $work),
-                    'sort_order' => $index,
-                ];
+            $workIndex = 0;
+            foreach ($item->WorksList->Work as $work) {
+                $caption = '';
+                if (isset($work['Caption'])) {
+                    $caption = (string)$work['Caption'];
+                } elseif (trim((string)$work) !== '') {
+                    $caption = trim((string)$work);
+                }
+                
+                if (!empty($caption)) {
+                    $worksList[] = [
+                        'caption' => $caption,
+                        'sort_order' => $workIndex,
+                    ];
+                    $workIndex++;
+                }
             }
         }
 
@@ -819,7 +830,8 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         $totals = [];
         if (isset($item->Itog)) {
             $itogNodes = $item->xpath('.//Itog[@DataType] | .//Itog[@Caption]');
-            foreach ($itogNodes as $index => $itog) {
+            $totalIndex = 0;
+            foreach ($itogNodes as $itog) {
                 $totals[] = [
                     'data_type' => (string)($itog['DataType'] ?? ''),
                     'caption' => (string)($itog['Caption'] ?? ''),
@@ -828,9 +840,10 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
                     'for_one_curr' => isset($itog['ForOneCurr']) ? (float)str_replace(',', '.', (string)$itog['ForOneCurr']) : null,
                     'total_curr' => isset($itog['TotalCurr']) ? (float)str_replace(',', '.', (string)$itog['TotalCurr']) : null,
                     'total_base' => isset($itog['TotalBase']) || isset($itog['PZ']) ? (float)str_replace(',', '.', (string)($itog['TotalBase'] ?? $itog['PZ'])) : null,
-                    'sort_order' => $index,
+                    'sort_order' => $totalIndex,
                     'metadata' => $this->extractItogMetadata($itog),
                 ];
+                $totalIndex++;
             }
         }
 
