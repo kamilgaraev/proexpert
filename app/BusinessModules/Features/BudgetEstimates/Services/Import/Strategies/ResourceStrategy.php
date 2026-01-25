@@ -46,6 +46,9 @@ class ResourceStrategy extends BaseItemStrategy
             'total_amount' => $costs['total_amount'],
             'current_total_amount' => $row->currentTotalAmount,
             'is_not_accounted' => $row->isNotAccounted,
+            'overhead_amount' => $row->overheadAmount,
+            'profit_amount' => $row->profitAmount,
+            'is_manual' => $row->isManual,
         ];
 
         if (!empty($row->code)) {
