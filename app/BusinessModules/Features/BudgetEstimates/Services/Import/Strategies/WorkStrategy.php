@@ -104,7 +104,7 @@ class WorkStrategy extends BaseItemStrategy
                     EstimateItemWork::create([
                         'estimate_item_id' => $createdItem->id,
                         'caption' => $workData['caption'] ?? '',
-                        'sort_order' => $workData['sort_order'] ?? 0,
+                        'sort_order' => (int)($workData['sort_order'] ?? 0),
                         'metadata' => $workData['metadata'] ?? null,
                     ]);
                 }
@@ -122,7 +122,7 @@ class WorkStrategy extends BaseItemStrategy
                         'for_one_curr' => $totalData['for_one_curr'] ?? null,
                         'total_curr' => $totalData['total_curr'] ?? null,
                         'total_base' => $totalData['total_base'] ?? null,
-                        'sort_order' => $totalData['sort_order'] ?? 0,
+                        'sort_order' => (int)($totalData['sort_order'] ?? 0),
                         'metadata' => $totalData['metadata'] ?? null,
                     ]);
                 }
