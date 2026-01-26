@@ -813,6 +813,7 @@ class EstimateImportService
             $this->calculationService->recalculateAll($estimate);
 
             // Если в XML есть итоговые суммы, используем их как первоисточник
+            /* DISABLED: Testing if calculation matches XML exactly now that items are fixed
             if ($parser instanceof UniversalXmlParser && !empty($fileData['file_path'])) {
                 $summaryTotals = $parser->extractSummaryTotals($fileData['file_path']);
                 if (!empty($summaryTotals)) {
@@ -829,6 +830,7 @@ class EstimateImportService
                     ]);
                 }
             }
+            */
             
             $progressTracker->update(95, 100, 0, 95);
             
