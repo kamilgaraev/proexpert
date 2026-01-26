@@ -812,6 +812,58 @@ class EstimateImportService
             
             $this->calculationService->recalculateAll($estimate);
 
+            // SMART MATERIAL CORRECTION (Proportional adjustment based on Total Direct Difference)
+            // Fixes discrepancies (like 3916.82 RUB) by distributing the diff across materials
+            if ($parser instanceof UniversalXmlParser && !empty($fileData['file_path'])) {
+                $summaryTotals = $parser->extractSummaryTotals($fileData['file_path']);
+                
+                if (!empty($summaryTotals) && isset($summaryTotals['total_direct_costs']) && $summaryTotals['total_direct_costs'] > 0) {
+                    $targetDirect = (float)$summaryTotals['total_direct_costs'];
+                    
+                    // Get current total direct costs
+                    $estimate->refresh();
+                    $currentDirect = (float)$estimate->total_direct_costs;
+                    
+                    // Check if correction is needed
+                    if (abs($currentDirect - $targetDirect) > 0.01) {
+                        $diff = $currentDirect - $targetDirect; // e.g. +3916.82
+                        
+                        // We assume 'work' items (OT, EM, OTM) are correct.
+                        // So we distribute the difference only to pure materials/equipment.
+                        $materials = $estimate->items()
+                            ->whereIn('item_type', ['material', 'equipment'])
+                            ->where('is_not_accounted', false)
+                            ->get();
+                            
+                        $currentMatSum = $materials->sum('direct_costs');
+                        
+                        if ($currentMatSum > 0) {
+                            $newMatSum = $currentMatSum - $diff;
+                            $factor = $newMatSum / $currentMatSum;
+                            
+                            $percent = (1 - $factor) * 100;
+                            Log::info("[EstimateImport] Correcting materials: Diff=$diff, MatSum=$currentMatSum, Factor=$factor ($percent%)");
+                            
+                            // Safety check: Don't correct if change is too huge (> 10%)
+                            if (abs($percent) < 10) {
+                                foreach ($materials as $item) {
+                                    $newDirect = round($item->direct_costs * $factor, 2);
+                                    
+                                    $item->direct_costs = $newDirect;
+                                    $item->current_total_amount = $newDirect + $item->overhead_amount + $item->profit_amount;
+                                    $item->save();
+                                }
+                                
+                                // Re-run full recalculation
+                                $this->calculationService->recalculateAll($estimate);
+                            } else {
+                                Log::warning("[EstimateImport] Skipping material correction: Diff too large ($percent%)");
+                            }
+                        }
+                    }
+                }
+            }
+
             // Если в XML есть итоговые суммы, используем их как первоисточник
             /* DISABLED: Testing if calculation matches XML exactly now that items are fixed
             if ($parser instanceof UniversalXmlParser && !empty($fileData['file_path'])) {
