@@ -660,7 +660,14 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             // 3.1. ПЕРВЫЙ ПРИОРИТЕТ: Ищем TotalPos (DataType="TotalPos") - ПРЯМЫЕ ЗАТРАТЫ
             $directNodes = $item->xpath('.//Itog[@DataType="TotalPos"]');
             if (!empty($directNodes)) {
-                $directTotalFromItog = (float)str_replace(',', '.', (string)($directNodes[0]['TotalCurr'] ?? $directNodes[0]['Total'] ?? $directNodes[0]['PZ'] ?? 0));
+                // Prefer base (PZ/TotalBase) when available to align with summary totals
+                $directTotalFromItog = (float)str_replace(',', '.', (string)(
+                    $directNodes[0]['PZ']
+                    ?? $directNodes[0]['TotalBase']
+                    ?? $directNodes[0]['TotalCurr']
+                    ?? $directNodes[0]['Total']
+                    ?? 0
+                ));
             }
             
             // 3.2. ВТОРОЙ ПРИОРИТЕТ: Ищем TotalWithNP (полная стоимость с НР и СП) - только если не нашли прямые
@@ -669,10 +676,10 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
                 $totalWithNPNodes = $item->xpath('.//Itog[@DataType="TotalWithNP"]');
                 if (!empty($totalWithNPNodes)) {
                     $grossTotalFromItog = (float)str_replace(',', '.', (string)(
-                        $totalWithNPNodes[0]['TotalCurr']
-                        ?? $totalWithNPNodes[0]['Total']
-                        ?? $totalWithNPNodes[0]['PZ']
+                        $totalWithNPNodes[0]['PZ']
                         ?? $totalWithNPNodes[0]['TotalBase']
+                        ?? $totalWithNPNodes[0]['TotalCurr']
+                        ?? $totalWithNPNodes[0]['Total']
                         ?? 0
                     ));
                 }
@@ -731,7 +738,7 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             $naclNodes = $item->xpath('.//Itog[@DataType="Nacl"]');
             if (!empty($naclNodes)) {
                 $nNode = $naclNodes[0];
-                $val = $nNode['PZ'] ?? $nNode['TotalCurr'] ?? $nNode['Total'] ?? $nNode['Value'] ?? 0;
+                $val = $nNode['PZ'] ?? $nNode['TotalBase'] ?? $nNode['TotalCurr'] ?? $nNode['Total'] ?? $nNode['Value'] ?? 0;
                 $overheadAmount = (float)str_replace(',', '.', (string)$val);
             }
             
@@ -739,7 +746,7 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             $planNodes = $item->xpath('.//Itog[@DataType="Plan"]');
             if (!empty($planNodes)) {
                 $pNode = $planNodes[0];
-                $val = $pNode['PZ'] ?? $pNode['TotalCurr'] ?? $pNode['Total'] ?? $pNode['Value'] ?? 0;
+                $val = $pNode['PZ'] ?? $pNode['TotalBase'] ?? $pNode['TotalCurr'] ?? $pNode['Total'] ?? $pNode['Value'] ?? 0;
                 $profitAmount = (float)str_replace(',', '.', (string)$val);
             }
         }
