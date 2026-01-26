@@ -812,55 +812,35 @@ class EstimateImportService
             
             $this->calculationService->recalculateAll($estimate);
 
-            // SMART MATERIAL CORRECTION (Proportional adjustment based on Total Direct Difference)
-            // Fixes discrepancies (like 3916.82 RUB) by distributing the diff across materials
+            // CHECK FOR DISCREPANCIES AND LOG DIAGNOSTICS (No auto-correction)
             if ($parser instanceof UniversalXmlParser && !empty($fileData['file_path'])) {
                 $summaryTotals = $parser->extractSummaryTotals($fileData['file_path']);
                 
-                if (!empty($summaryTotals) && isset($summaryTotals['total_direct_costs']) && $summaryTotals['total_direct_costs'] > 0) {
+                if (!empty($summaryTotals) && isset($summaryTotals['total_direct_costs'])) {
                     $targetDirect = (float)$summaryTotals['total_direct_costs'];
                     
-                    // Get current total direct costs
+                    // Get calculated total direct costs
                     $estimate->refresh();
                     $currentDirect = (float)$estimate->total_direct_costs;
+                    $diff = round($currentDirect - $targetDirect, 2);
                     
-                    // Check if correction is needed
-                    if (abs($currentDirect - $targetDirect) > 0.01) {
-                        $diff = $currentDirect - $targetDirect; // e.g. +3916.82
-                        
-                        // We assume 'work' items (OT, EM, OTM) are correct.
-                        // So we distribute the difference only to pure materials/equipment.
-                        $materials = $estimate->items()
-                            ->whereIn('item_type', ['material', 'equipment'])
-                            ->where('is_not_accounted', false)
-                            ->get();
-                            
-                        $currentMatSum = $materials->sum('direct_costs');
-                        
-                        if ($currentMatSum > 0) {
-                            $newMatSum = $currentMatSum - $diff;
-                            $factor = $newMatSum / $currentMatSum;
-                            
-                            $percent = (1 - $factor) * 100;
-                            Log::info("[EstimateImport] Correcting materials: Diff=$diff, MatSum=$currentMatSum, Factor=$factor ($percent%)");
-                            
-                            // Safety check: Don't correct if change is too huge (> 10%)
-                            if (abs($percent) < 10) {
-                                foreach ($materials as $item) {
-                                    $newDirect = round($item->direct_costs * $factor, 2);
-                                    
-                                    $item->direct_costs = $newDirect;
-                                    $item->current_total_amount = $newDirect + $item->overhead_amount + $item->profit_amount;
-                                    $item->save();
-                                }
-                                
-                                // Re-run full recalculation
-                                $this->calculationService->recalculateAll($estimate);
-                            } else {
-                                Log::warning("[EstimateImport] Skipping material correction: Diff too large ($percent%)");
-                            }
-                        }
+                    // Log discrepancy to estimate diagnostics
+                    $diagnostics = $estimate->import_diagnostics ?? [];
+                    $diagnostics['xml_totals_comparison'] = [
+                        'target_direct_costs' => $targetDirect,
+                        'calculated_direct_costs' => $currentDirect,
+                        'difference' => $diff,
+                        'is_match' => abs($diff) <= 0.01,
+                        'checked_at' => now()->toIso8601String(),
+                        'summary_totals_source' => $summaryTotals
+                    ];
+                    
+                    if (abs($diff) > 0.01) {
+                        Log::warning("[EstimateImport] Discrepancy detected: Calculated=$currentDirect, XML=$targetDirect, Diff=$diff");
                     }
+                    
+                    $estimate->import_diagnostics = $diagnostics;
+                    $estimate->save();
                 }
             }
 
