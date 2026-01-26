@@ -38,6 +38,7 @@ class Estimate extends Model
         'approved_at',
         'approved_by_user_id',
         'metadata',
+        'import_diagnostics',
         'is_onboarding_demo',
     ];
 
@@ -54,6 +55,7 @@ class Estimate extends Model
         'profit_rate' => 'decimal:2',
         'approved_at' => 'datetime',
         'metadata' => 'array',
+        'import_diagnostics' => 'array',
         'is_onboarding_demo' => 'boolean',
     ];
 
