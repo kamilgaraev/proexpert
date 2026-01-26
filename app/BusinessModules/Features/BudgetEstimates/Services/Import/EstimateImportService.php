@@ -717,15 +717,19 @@ class EstimateImportService
             $parser = null;
             $fileData = null;
 
+            if ($fileId) {
+                $fileData = $this->getFileData($fileId);
+                $parser = $this->parserFactory->getParser($fileData['file_path']);
+            }
+
             // Если items переданы (из превью), используем их. Иначе стримим из файла.
             if ($preloadedItems) {
                 $iterator = $preloadedItems;
             } else {
-                $fileData = $this->getFileData($fileId);
-                
-                // Получаем парсер
-                $parser = $this->parserFactory->getParser($fileData['file_path']);
-                
+                if (!$fileData || !$parser) {
+                    throw new \RuntimeException('File data or parser not available for streaming import');
+                }
+
                 if ($parser instanceof ExcelStreamParser) {
                     // Для стриминга используем генератор напрямую
                     $rawIterator = $parser->parse($fileData['file_path']);
