@@ -35,6 +35,16 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         return in_array(strtolower($extension), $this->getSupportedExtensions());
     }
 
+    public function extractSummaryTotals(string $filePath): ?array
+    {
+        $xml = $this->loadXML($filePath);
+        if (!$xml) {
+            return null;
+        }
+
+        return $this->extractSummaryTotalsFromXml($xml);
+    }
+
     private function streamParse(string $filePath): Generator
     {
          $dto = $this->fullParse($filePath);
@@ -1091,6 +1101,63 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         }
         
         return $metadata;
+    }
+
+    private function extractSummaryTotalsFromXml(\SimpleXMLElement $xml): ?array
+    {
+        $summaryNodes = $xml->xpath('//Itog[@DataType="SmetaTotal"]');
+        if (empty($summaryNodes)) {
+            return null;
+        }
+
+        $summaryNode = $summaryNodes[0];
+
+        $totalAmount = $this->getItogValue($summaryNode);
+        $directCosts = $this->getFirstItogValue($summaryNode->xpath('./Itog[@DataType="PZ"]'));
+        $overheadCosts = $this->getFirstItogValue($summaryNode->xpath('./Itog[@DataType="Nacl"]'));
+        $profitCosts = $this->getFirstItogValue($summaryNode->xpath('./Itog[@DataType="Plan"]'));
+
+        if ($totalAmount <= 0 && $directCosts <= 0 && $overheadCosts <= 0 && $profitCosts <= 0) {
+            return null;
+        }
+
+        return [
+            'total_amount' => $totalAmount,
+            'total_direct_costs' => $directCosts,
+            'total_overhead_costs' => $overheadCosts,
+            'total_estimated_profit' => $profitCosts,
+        ];
+    }
+
+    private function getItogValue(\SimpleXMLElement $node): float
+    {
+        $val = $node['PZ']
+            ?? $node['TotalBase']
+            ?? $node['TotalCurr']
+            ?? $node['Total']
+            ?? $node['Value']
+            ?? 0;
+
+        return (float)str_replace(',', '.', (string)$val);
+    }
+
+    /**
+     * @param array<int, \SimpleXMLElement>|false $nodes
+     */
+    private function getFirstItogValue($nodes): float
+    {
+        if (empty($nodes)) {
+            return 0.0;
+        }
+
+        foreach ($nodes as $node) {
+            $value = $this->getItogValue($node);
+            if ($value > 0) {
+                return $value;
+            }
+        }
+
+        return 0.0;
     }
 
     private function calculateTotals(array $items): array

@@ -714,6 +714,9 @@ class EstimateImportService
             
             $progressTracker->update(25, 100, 0, 25);
             
+            $parser = null;
+            $fileData = null;
+
             // Если items переданы (из превью), используем их. Иначе стримим из файла.
             if ($preloadedItems) {
                 $iterator = $preloadedItems;
@@ -804,6 +807,24 @@ class EstimateImportService
             $progressTracker->update(85, 100, 0, 85);
             
             $this->calculationService->recalculateAll($estimate);
+
+            // Если в XML есть итоговые суммы, используем их как первоисточник
+            if ($parser instanceof UniversalXmlParser && !empty($fileData['file_path'])) {
+                $summaryTotals = $parser->extractSummaryTotals($fileData['file_path']);
+                if (!empty($summaryTotals)) {
+                    $totalAmount = round((float)$summaryTotals['total_amount'], 2);
+                    $vatRate = (float)($estimate->vat_rate ?? 0);
+                    $totalAmountWithVat = $totalAmount * (1 + $vatRate / 100);
+
+                    $estimate->update([
+                        'total_direct_costs' => round((float)$summaryTotals['total_direct_costs'], 2),
+                        'total_overhead_costs' => round((float)$summaryTotals['total_overhead_costs'], 2),
+                        'total_estimated_profit' => round((float)$summaryTotals['total_estimated_profit'], 2),
+                        'total_amount' => $totalAmount,
+                        'total_amount_with_vat' => round($totalAmountWithVat, 2),
+                    ]);
+                }
+            }
             
             $progressTracker->update(95, 100, 0, 95);
             
