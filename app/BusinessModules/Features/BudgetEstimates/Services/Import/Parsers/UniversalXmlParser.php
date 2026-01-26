@@ -1162,6 +1162,13 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         $overheadCosts = $this->getFirstItogValue($summaryNode->xpath('./Itog[@DataType="Nacl"]'));
         $profitCosts = $this->getFirstItogValue($summaryNode->xpath('./Itog[@DataType="Plan"]'));
 
+        // Extract MAT (Materials) for high-precision validation
+        $matCosts = 0.0;
+        $pzNode = $summaryNode->xpath('./Itog[@DataType="PZ"]')[0] ?? null;
+        if ($pzNode) {
+            $matCosts = $this->getFirstItogValue($pzNode->xpath('./Itog[@DataType="MAT"]'));
+        }
+
         if ($totalAmount <= 0 && $directCosts <= 0 && $overheadCosts <= 0 && $profitCosts <= 0) {
             return null;
         }
@@ -1171,6 +1178,7 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             'total_direct_costs' => $directCosts,
             'total_overhead_costs' => $overheadCosts,
             'total_estimated_profit' => $profitCosts,
+            'total_materials_costs' => $matCosts,
         ];
     }
 
