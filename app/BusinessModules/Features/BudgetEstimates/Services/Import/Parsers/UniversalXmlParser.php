@@ -668,7 +668,13 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
                 // Ищем по DataType="TotalWithNP"
                 $totalWithNPNodes = $item->xpath('.//Itog[@DataType="TotalWithNP"]');
                 if (!empty($totalWithNPNodes)) {
-                    $grossTotalFromItog = (float)str_replace(',', '.', (string)($totalWithNPNodes[0]['TotalCurr'] ?? $totalWithNPNodes[0]['Total'] ?? 0));
+                    $grossTotalFromItog = (float)str_replace(',', '.', (string)(
+                        $totalWithNPNodes[0]['TotalCurr']
+                        ?? $totalWithNPNodes[0]['Total']
+                        ?? $totalWithNPNodes[0]['PZ']
+                        ?? $totalWithNPNodes[0]['TotalBase']
+                        ?? 0
+                    ));
                 }
                 
                 // Fallback: ищем по атрибутам
@@ -687,9 +693,9 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
                 
                 // Ищем во вложенных итогах по Caption "Всего"
                 if ($grossTotalFromItog == 0) {
-                    $itogs = $item->xpath('.//Itog[@TotalCurr] | .//Itog[@Total]');
+                    $itogs = $item->xpath('.//Itog[@TotalCurr] | .//Itog[@Total] | .//Itog[@PZ] | .//Itog[@TotalBase]');
                     foreach ($itogs as $itogXml) {
-                        $val = (float)($itogXml['TotalCurr'] ?? $itogXml['Total'] ?? 0);
+                        $val = (float)($itogXml['TotalCurr'] ?? $itogXml['Total'] ?? $itogXml['PZ'] ?? $itogXml['TotalBase'] ?? 0);
                         $caption = (string)($itogXml['Caption'] ?? '');
                         
                         if (mb_stripos($caption, 'Всего') !== false && $val > $grossTotalFromItog) {
