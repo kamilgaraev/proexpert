@@ -7,6 +7,8 @@ use App\BusinessModules\Features\BudgetEstimates\Services\EstimateItemService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportContext;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\ResourceMatchingService;
 use App\Models\EstimateItem;
+use App\Models\EstimateItemTotal;
+use App\Models\EstimateItemWork;
 use Illuminate\Support\Facades\Log;
 
 class ResourceStrategy extends BaseItemStrategy
@@ -84,6 +86,38 @@ class ResourceStrategy extends BaseItemStrategy
             }
         }
 
-        return $this->itemService->addItem($itemData, $context->estimate);
+        $createdItem = $this->itemService->addItem($itemData, $context->estimate);
+
+        // Сохранение WorksList (если позиция пришла как material/equipment, но содержит работы)
+        if (!empty($row->worksList)) {
+            foreach ($row->worksList as $workData) {
+                EstimateItemWork::create([
+                    'estimate_item_id' => $createdItem->id,
+                    'caption' => $workData['caption'] ?? '',
+                    'sort_order' => (int)($workData['sort_order'] ?? 0),
+                    'metadata' => $workData['metadata'] ?? null,
+                ]);
+            }
+        }
+
+        // Сохранение Totals (если позиция содержит Itog-структуру)
+        if (!empty($row->totals)) {
+            foreach ($row->totals as $totalData) {
+                EstimateItemTotal::create([
+                    'estimate_item_id' => $createdItem->id,
+                    'data_type' => $totalData['data_type'] ?? null,
+                    'caption' => $totalData['caption'] ?? null,
+                    'quantity_for_one' => $totalData['quantity_for_one'] ?? null,
+                    'quantity_total' => $totalData['quantity_total'] ?? null,
+                    'for_one_curr' => $totalData['for_one_curr'] ?? null,
+                    'total_curr' => $totalData['total_curr'] ?? null,
+                    'total_base' => $totalData['total_base'] ?? null,
+                    'sort_order' => (int)($totalData['sort_order'] ?? 0),
+                    'metadata' => $totalData['metadata'] ?? null,
+                ]);
+            }
+        }
+
+        return $createdItem;
     }
 }
