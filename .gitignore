@@ -47,3 +47,5 @@ app/Console/Commands/Authorization/AssignOwnerRolesCommand.php
 .cursor
 *.txt
 *.xlsx
+*.xml
+*.txt

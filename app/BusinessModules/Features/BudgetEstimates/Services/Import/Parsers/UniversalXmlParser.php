@@ -749,9 +749,18 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         // GGE/GrandSmeta specific Itog parsing for Overhead/Profit amounts
         $overheadAmount = 0.0;
         $profitAmount = 0.0;
+        $otmAmount = 0.0; // Machine Operators Salary (ЗПМ)
         $isManual = false;
 
         if (isset($item->Itog)) {
+            // Find OTM (ЗПМ) - Важно для корректировки прямых затрат
+            $otmNodes = $item->xpath('.//Itog[@DataType="OTM"]');
+            if (!empty($otmNodes)) {
+                $otmNode = $otmNodes[0];
+                $val = $otmNode['PZ'] ?? $otmNode['TotalBase'] ?? $otmNode['TotalCurr'] ?? $otmNode['Total'] ?? $otmNode['Value'] ?? 0;
+                $otmAmount = (float)str_replace(',', '.', (string)$val);
+            }
+
             // Find Nacl (Overhead)
             $naclNodes = $item->xpath('.//Itog[@DataType="Nacl"]');
             if (!empty($naclNodes)) {
@@ -830,10 +839,23 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         // ВАЖНО: $total должен быть ТОЛЬКО прямыми затратами, не TotalWithNP!
         
         if ($directTotalFromItog > 0) {
-            // Нашли явные прямые затраты из TotalPos - используем их СТРОГО
-            $total = $directTotalFromItog;
+            // Нашли явные прямые затраты из TotalPos.
+            // ВАЖНО: В ГрандСмете TotalPos часто включает OTM (ЗПМ), хотя OTM также входит в EM (Эксплуатация машин).
+            // При суммировании сметы (PZ = OT + EM + MAT), OTM учитывается внутри EM.
+            // Если мы возьмем TotalPos как есть, мы получим PZ + OTM, что приведет к завышению суммы прямых затрат.
+            // Поэтому, если OTM > 0, мы должны вычесть его из TotalPos, чтобы получить "чистые" прямые затраты.
+            
+            if ($otmAmount > 0) {
+                // TotalPos = OT + EM + MAT + OTM.
+                // PZ (Direct Costs) = OT + EM + MAT.
+                // Поэтому вычитаем OTM.
+                $total = $directTotalFromItog - $otmAmount;
+            } else {
+                $total = $directTotalFromItog;
+            }
+
             if ($qty > 0) {
-                $price = $directTotalFromItog / $qty;
+                $price = $total / $qty;
             }
         } elseif ($grossTotalFromItog > 0) {
             // Нашли только TotalWithNP (полная стоимость) - вычитаем НР и СП для получения прямых
