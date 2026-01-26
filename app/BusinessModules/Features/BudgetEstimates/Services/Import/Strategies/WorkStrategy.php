@@ -31,6 +31,7 @@ class WorkStrategy extends BaseItemStrategy
         $itemData = [
             'estimate_id' => $context->estimate->id,
             'estimate_section_id' => $context->currentSectionId,
+            'position_number' => $row->sectionNumber ?: null, // Pass explicit number from XML if available
             'parent_work_id' => null, 
             'item_type' => 'work',
             'name' => $row->itemName,
