@@ -577,12 +577,10 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
     private function processItem(\SimpleXMLElement $item, array &$items, string $parentPath, int $level): void
     {
         $num = $this->extractValue($item, ['Number', 'Num', 'No']);
-        if (in_array($num, ['140','141','142','143','144'])) {
-             Log::info("[XmlParser] Processing item $num", [
-                 'code' => (string)$this->extractValue($item, ['Code', 'Justification']),
-                 'name' => mb_substr((string)$this->extractValue($item, ['Name', 'Caption']), 0, 20)
-             ]);
-        }
+        Log::info("[XmlParser] Processing item $num", [
+             'code' => (string)$this->extractValue($item, ['Code', 'Justification']),
+             'name' => mb_substr((string)$this->extractValue($item, ['Name', 'Caption']), 0, 50)
+        ]);
         $code = $this->extractValue($item, ['Justification', 'Code', 'Cipher', 'Shifr', 'Identifier']);
         $name = $this->extractValue($item, ['Name', 'Caption', 'Title', 'Description']);
         $unit = $this->extractValue($item, ['Measure', 'Unit', 'Units', 'EdIzm']);
