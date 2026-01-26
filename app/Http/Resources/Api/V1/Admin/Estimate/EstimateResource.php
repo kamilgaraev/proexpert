@@ -34,6 +34,7 @@ class EstimateResource extends JsonResource
             'approved_at' => $this->approved_at?->toISOString(),
             'approved_by_user_id' => $this->approved_by_user_id,
             'metadata' => $this->metadata,
+            'import_diagnostics' => $this->import_diagnostics,
             'created_at' => $this->created_at?->toISOString(),
             'updated_at' => $this->updated_at?->toISOString(),
             
