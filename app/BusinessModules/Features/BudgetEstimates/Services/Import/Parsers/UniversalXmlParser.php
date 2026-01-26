@@ -750,6 +750,8 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
                 $nNode = $naclNodes[0];
                 $val = $nNode['PZ'] ?? $nNode['TotalBase'] ?? $nNode['TotalCurr'] ?? $nNode['Total'] ?? $nNode['Value'] ?? 0;
                 $overheadAmount = (float)str_replace(',', '.', (string)$val);
+                // Если нашли явный узел Nacl, даже с нулем - это ручной ввод
+                $isManual = true;
             }
             
             // Find Plan (Profit)
@@ -758,6 +760,8 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
                 $pNode = $planNodes[0];
                 $val = $pNode['PZ'] ?? $pNode['TotalBase'] ?? $pNode['TotalCurr'] ?? $pNode['Total'] ?? $pNode['Value'] ?? 0;
                 $profitAmount = (float)str_replace(',', '.', (string)$val);
+                // Если нашли явный узел Plan, даже с нулем - это ручной ввод
+                $isManual = true;
             }
         }
         
