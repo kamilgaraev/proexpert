@@ -64,6 +64,8 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
     {
         $xml = $this->loadXML($filePath);
         
+        Log::info('[XmlParser] fullParse started', ['file' => basename($filePath), 'xml_loaded' => (bool)$xml]);
+        
         $sections = [];
         $items = [];
         
@@ -575,6 +577,12 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
     private function processItem(\SimpleXMLElement $item, array &$items, string $parentPath, int $level): void
     {
         $num = $this->extractValue($item, ['Number', 'Num', 'No']);
+        if (in_array($num, ['140','141','142','143','144'])) {
+             Log::info("[XmlParser] Processing item $num", [
+                 'code' => (string)$this->extractValue($item, ['Code', 'Justification']),
+                 'name' => mb_substr((string)$this->extractValue($item, ['Name', 'Caption']), 0, 20)
+             ]);
+        }
         $code = $this->extractValue($item, ['Justification', 'Code', 'Cipher', 'Shifr', 'Identifier']);
         $name = $this->extractValue($item, ['Name', 'Caption', 'Title', 'Description']);
         $unit = $this->extractValue($item, ['Measure', 'Unit', 'Units', 'EdIzm']);
@@ -765,9 +773,20 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
             }
         }
         
+        
+        // Logic to determine isManual
+        // 1. Explicit Overhead/Profit amounts
         if ($overheadAmount > 0 || $profitAmount > 0) {
             $isManual = true;
         }
+        
+        // 2. Explicit Itog structure present (implies exact calculation from XML)
+        // If XML has Itog with TotalWithNP, but Overhead/Profit are 0, it means they are explicitly 0.
+        // We must set isManual=true to prevent auto-calculation.
+        if (isset($item->Itog) && ($grossTotalFromItog > 0 || $directTotalFromItog > 0)) {
+            $isManual = true;
+        }
+
         
         // 4.1 Commercial / Not In Norms Handling
         // If item is "NotInNB" (Commercial), the price already includes all markups.
