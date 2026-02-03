@@ -26,6 +26,18 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
     ->group(function () {
         
         Route::prefix('estimates')->group(function () {
+            // Импорт смет
+            Route::prefix('import')->name('import.')->group(function () {
+                Route::post('/upload', [EstimateImportController::class, 'upload'])->name('upload');
+                Route::post('/detect-type', [EstimateImportController::class, 'detectType'])->name('detect_type'); // Определение типа сметы
+                Route::post('/detect', [EstimateImportController::class, 'detect'])->name('detect');
+                Route::post('/map', [EstimateImportController::class, 'map'])->name('map');
+                Route::post('/match', [EstimateImportController::class, 'match'])->name('match');
+                Route::post('/execute', [EstimateImportController::class, 'execute'])->name('execute');
+                Route::get('/status/{jobId?}', [EstimateImportController::class, 'status'])->name('status');
+                Route::get('/history', [EstimateImportController::class, 'history'])->name('history');
+            });
+
             // CRUD операции над сметами
             Route::get('/', [EstimateController::class, 'index'])->name('index');
             Route::post('/', [EstimateController::class, 'store'])->name('store');
@@ -68,18 +80,6 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
                 
                 // Пересчет нумерации позиций
                 Route::post('/recalculate-numbers', [EstimateItemController::class, 'recalculateNumbers'])->name('recalculate_numbers');
-            });
-            
-            // Импорт смет
-            Route::prefix('import')->name('import.')->group(function () {
-                Route::post('/upload', [EstimateImportController::class, 'upload'])->name('upload');
-                Route::post('/detect-type', [EstimateImportController::class, 'detectType'])->name('detect_type'); // Определение типа сметы
-                Route::post('/detect', [EstimateImportController::class, 'detect'])->name('detect');
-                Route::post('/map', [EstimateImportController::class, 'map'])->name('map');
-                Route::post('/match', [EstimateImportController::class, 'match'])->name('match');
-                Route::post('/execute', [EstimateImportController::class, 'execute'])->name('execute');
-                Route::get('/status/{jobId}', [EstimateImportController::class, 'status'])->name('status');
-                Route::get('/history', [EstimateImportController::class, 'history'])->name('history');
             });
             
             // Прогресс выполнения сметы
