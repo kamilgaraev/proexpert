@@ -38,7 +38,8 @@ class AccessLogger
         match($level) {
             'error' => Log::error("[ACCESS]", $accessEntry),
             'warning' => Log::warning("[ACCESS]", $accessEntry),
-            default => Log::info("[ACCESS]", $accessEntry)
+            // default => Log::info("[ACCESS]", $accessEntry)
+            default => null // Disable info level access logs to reduce noise
         };
 
         // Отправить метрики в мониторинг
