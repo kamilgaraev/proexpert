@@ -243,11 +243,17 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface
     {
         // Проверка на дубликаты по SysID
         $sysId = (string)($item['SysID'] ?? $item->attributes()->SysID ?? '');
+        $code = (string)($item['Justification'] ?? $item['Code'] ?? $item->Code ?? $item->Justification ?? '');
+        
         if (!empty($sysId)) {
             if (in_array($sysId, $this->processedSysIds)) {
+                Log::info("[GrandSmeta] Skipping duplicate SysID: {$sysId} (Code: {$code})");
                 return; // Пропускаем дубликат
             }
             $this->processedSysIds[] = $sysId;
+            Log::info("[GrandSmeta] Processing SysID: {$sysId} (Code: {$code})");
+        } else {
+            Log::warning("[GrandSmeta] Item without SysID found (Code: {$code})");
         }
 
         // Извлечение основных полей
