@@ -31,7 +31,7 @@ class BusinessLogger
     {
         $businessEntry = $this->createBusinessEntry($event, $context);
         
-        Log::info("[BUSINESS] {$event}", $businessEntry);
+        // Log::info("[BUSINESS] {$event}", $businessEntry);
 
         // Отправить метрику в Prometheus, если доступно
         $this->sendBusinessMetric($event, $context);
