@@ -91,7 +91,7 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface, StreamParser
             
             // Проверка корневых тегов, характерных для смет
             $rootName = $xml->getName();
-            return in_array($rootName, ['GrandSmeta', 'Estimate', 'LocalEstimate', 'ObjectEstimate', 'GGE']);
+            return in_array($rootName, ['GrandSmeta', 'Estimate', 'LocalEstimate', 'ObjectEstimate', 'GGE', 'Document']);
             
         } catch (\Exception $e) {
             return false;

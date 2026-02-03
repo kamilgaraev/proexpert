@@ -95,15 +95,19 @@ class EstimateItemRepository
         $driver = config('database.default');
         $connection = config("database.connections.{$driver}.driver");
         
+        $query = EstimateItem::where('estimate_id', $estimateId);
+
         if ($connection === 'pgsql') {
-            $orderBy = 'CAST(position_number AS INTEGER) DESC';
+            // Postgres: Filter only valid integers before casting to avoid "invalid input syntax" error
+            $query->whereRaw("position_number ~ '^[0-9]+$'");
+            $query->orderByRaw('CAST(position_number AS INTEGER) DESC');
         } else {
-            $orderBy = 'CAST(position_number AS UNSIGNED) DESC';
+            // MySQL/MariaDB: REGEXP for integers
+            $query->whereRaw("position_number REGEXP '^[0-9]+$'");
+            $query->orderByRaw('CAST(position_number AS UNSIGNED) DESC');
         }
         
-        $lastItem = EstimateItem::where('estimate_id', $estimateId)
-            ->orderByRaw($orderBy)
-            ->first();
+        $lastItem = $query->first();
 
         if (!$lastItem) {
             return '1';
