@@ -12,6 +12,7 @@ use Generator;
 class UniversalXmlParser implements EstimateImportParserInterface, StreamParserInterface
 {
     private const NS_GGE = 'http://www.gge.ru/2001/Schema';
+    private array $processedSysIds = [];
 
     public function parse(string $filePath): EstimateImportDTO|Generator
     {
@@ -63,6 +64,7 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
     private function fullParse(string $filePath): EstimateImportDTO
     {
         $xml = $this->loadXML($filePath);
+        $this->processedSysIds = []; // Сброс списка обработанных ID
         
         Log::info('[XmlParser] fullParse started', ['file' => basename($filePath), 'xml_loaded' => (bool)$xml]);
         

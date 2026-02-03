@@ -3,18 +3,20 @@
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers;
 
 use App\BusinessModules\Features\BudgetEstimates\Contracts\EstimateImportParserInterface;
+use App\BusinessModules\Features\BudgetEstimates\Contracts\StreamParserInterface;
 use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportDTO;
 use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportRowDTO;
 use Illuminate\Support\Facades\Log;
+use Generator;
 
-class GrandSmetaXMLParser implements EstimateImportParserInterface
+class GrandSmetaXMLParser implements EstimateImportParserInterface, StreamParserInterface
 {
     // Common XML namespaces for GrandSmeta/GGE
     private const NS_GGE = 'http://www.gge.ru/2001/Schema';
     
     private array $processedSysIds = [];
 
-    public function parse(string $filePath): EstimateImportDTO
+    public function parse(string $filePath): EstimateImportDTO|Generator
     {
         Log::error("[GrandSmeta] Parsing started: {$filePath}");
         $xml = $this->loadXML($filePath);
@@ -94,6 +96,11 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface
         } catch (\Exception $e) {
             return false;
         }
+    }
+
+    public function supports(string $extension): bool
+    {
+        return in_array(strtolower($extension), $this->getSupportedExtensions());
     }
 
     public function getSupportedExtensions(): array
