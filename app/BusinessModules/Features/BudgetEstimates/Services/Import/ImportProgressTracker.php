@@ -4,6 +4,7 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services\Import;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 
 class ImportProgressTracker
 {
@@ -54,6 +55,11 @@ class ImportProgressTracker
 
     private function saveProgress(int $progress): void
     {
+        // Cache progress for real-time access (bypassing DB transaction isolation)
+        if ($this->jobId) {
+            Cache::put("import_progress_{$this->jobId}", $progress, 3600);
+        }
+
         try {
             // Используем отдельное подключение для прогресса, чтобы обновления были видны 
             // другим процессам сразу, даже если основная транзакция еще не завершена
