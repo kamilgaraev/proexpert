@@ -12,12 +12,15 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface
     // Common XML namespaces for GrandSmeta/GGE
     private const NS_GGE = 'http://www.gge.ru/2001/Schema';
     
+    private array $processedSysIds = [];
+
     public function parse(string $filePath): EstimateImportDTO
     {
         $xml = $this->loadXML($filePath);
         
         $sections = [];
         $items = [];
+        $this->processedSysIds = []; // Сброс списка обработанных ID
         
         // Поиск корневого узла для сметы (может быть разный в разных версиях)
         $estimateNode = $this->findEstimateNode($xml);
@@ -238,6 +241,15 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface
 
     private function processItem(\SimpleXMLElement $item, array &$items, string $parentPath, int $level): void
     {
+        // Проверка на дубликаты по SysID
+        $sysId = (string)($item['SysID'] ?? $item->attributes()->SysID ?? '');
+        if (!empty($sysId)) {
+            if (in_array($sysId, $this->processedSysIds)) {
+                return; // Пропускаем дубликат
+            }
+            $this->processedSysIds[] = $sysId;
+        }
+
         // Извлечение основных полей
         $num = (string)($item['Number'] ?? $item['Num'] ?? $item->Number ?? '');
         $code = (string)($item['Justification'] ?? $item['Code'] ?? $item->Code ?? $item->Justification ?? '');
