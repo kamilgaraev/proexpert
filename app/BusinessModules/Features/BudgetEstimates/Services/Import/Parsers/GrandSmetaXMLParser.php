@@ -15,7 +15,6 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface, StreamParser
     private const NS_GGE = 'http://www.gge.ru/2001/Schema';
     
     private const IGNORED_SECTIONS = [
-        'новый раздел',
         'сводка затрат',
         'ведомость ресурсов',
         'ресурсы',

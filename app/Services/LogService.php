@@ -91,8 +91,10 @@ class LogService
      */
     public static function authLog(string $action, array $data): void
     {
+        /*
         $context = array_merge(['action' => $action], $data);
         Log::channel('api')->info("AUTH", self::prepareLogData($context));
+        */
     }
 
     /**
