@@ -33,6 +33,7 @@ class AdvanceAccountTransaction extends Model
         'approved_by_user_id',
         'external_code',
         'accounting_data',
+        'cost_category_id',
         'attachment_ids',
     ];
 
@@ -105,6 +106,15 @@ class AdvanceAccountTransaction extends Model
     public function approvedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'approved_by_user_id');
+    }
+
+
+    /**
+     * Получить категорию затрат.
+     */
+    public function costCategory(): BelongsTo
+    {
+        return $this->belongsTo(CostCategory::class);
     }
 
     /**

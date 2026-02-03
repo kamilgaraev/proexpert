@@ -28,6 +28,7 @@ class TransactionReportRequest extends FormRequest
             'description' => 'required|string|max:255',
             'document_number' => 'required|string|max:100',
             'document_date' => 'required|date',
+            'cost_category_id' => 'nullable|exists:cost_categories,id',
             'files' => 'nullable|array',
             'files.*' => 'file|max:10240', // Максимальный размер файла 10MB
         ];

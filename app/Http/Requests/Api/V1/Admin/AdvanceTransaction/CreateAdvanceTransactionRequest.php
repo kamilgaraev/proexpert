@@ -32,6 +32,7 @@ class CreateAdvanceTransactionRequest extends FormRequest
             'description' => 'nullable|string|max:255',
             'document_number' => 'nullable|string|max:100',
             'document_date' => 'nullable|date',
+            'cost_category_id' => 'nullable|exists:cost_categories,id',
         ];
     }
 } 

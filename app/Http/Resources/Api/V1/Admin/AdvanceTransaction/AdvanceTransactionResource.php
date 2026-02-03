@@ -24,6 +24,7 @@ class AdvanceTransactionResource extends JsonResource
             'description' => $this->description,
             'document_number' => $this->document_number,
             'document_date' => $this->document_date ? $this->document_date->format('Y-m-d') : null,
+            'cost_category_id' => $this->cost_category_id,
             'balance_after' => (float) $this->balance_after,
             'reporting_status' => $this->reporting_status,
             'reported_at' => $this->reported_at ? $this->reported_at->format('Y-m-d H:i:s') : null,
