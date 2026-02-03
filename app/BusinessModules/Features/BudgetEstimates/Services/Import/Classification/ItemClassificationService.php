@@ -6,6 +6,7 @@ use App\BusinessModules\Features\BudgetEstimates\Contracts\ClassificationStrateg
 use App\BusinessModules\Features\BudgetEstimates\DTOs\ClassificationResult;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Classification\Strategies\RegexStrategy;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Classification\Strategies\DictionaryStrategy;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Classification\Strategies\NormativeDatabaseStrategy;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Classification\Strategies\AIStrategy;
 use Illuminate\Support\Facades\Log;
 
@@ -20,10 +21,12 @@ class ItemClassificationService
     public function __construct(
         RegexStrategy $regexStrategy,
         DictionaryStrategy $dictionaryStrategy,
+        NormativeDatabaseStrategy $normativeDatabaseStrategy,
         AIStrategy $aiStrategy
     ) {
         // Local strategies (fast, free)
         $this->strategies = [
+            $normativeDatabaseStrategy, // Highest authority
             $regexStrategy,
             $dictionaryStrategy,
         ];

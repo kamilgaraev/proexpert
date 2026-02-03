@@ -8,6 +8,7 @@ return [
     App\BusinessModules\Features\AdvancedDashboard\AdvancedDashboardServiceProvider::class,
     App\BusinessModules\Features\AIAssistant\AIAssistantServiceProvider::class,
     App\BusinessModules\Features\BudgetEstimates\BudgetEstimatesServiceProvider::class,
+    App\BusinessModules\Features\NormativeReferences\NormativeReferencesServiceProvider::class,
     App\BusinessModules\Features\Notifications\NotificationServiceProvider::class,
     App\BusinessModules\Features\Procurement\ProcurementServiceProvider::class,
     App\BusinessModules\Features\ScheduleManagement\ScheduleManagementServiceProvider::class,
@@ -16,7 +17,6 @@ return [
     App\Providers\AppServiceProvider::class,
     App\Providers\AuthServiceProvider::class,
     App\Providers\BroadcastServiceProvider::class,
-    App\Providers\EventServiceProvider::class,
     App\Providers\HorizonServiceProvider::class,
     App\Providers\RepositoryServiceProvider::class,
 ];
