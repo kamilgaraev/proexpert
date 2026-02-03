@@ -16,6 +16,7 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface
 
     public function parse(string $filePath): EstimateImportDTO
     {
+        Log::error("[GrandSmeta] Parsing started: {$filePath}");
         $xml = $this->loadXML($filePath);
         
         $sections = [];
@@ -245,15 +246,14 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface
         $sysId = (string)($item['SysID'] ?? $item->attributes()->SysID ?? '');
         $code = (string)($item['Justification'] ?? $item['Code'] ?? $item->Code ?? $item->Justification ?? '');
         
+        // Log::error("[GrandSmeta] Processing Item. SysID: '{$sysId}', Code: '{$code}'");
+
         if (!empty($sysId)) {
             if (in_array($sysId, $this->processedSysIds)) {
-                Log::info("[GrandSmeta] Skipping duplicate SysID: {$sysId} (Code: {$code})");
+                // Log::info("[GrandSmeta] Skipping duplicate SysID: {$sysId}");
                 return; // Пропускаем дубликат
             }
             $this->processedSysIds[] = $sysId;
-            Log::info("[GrandSmeta] Processing SysID: {$sysId} (Code: {$code})");
-        } else {
-            Log::warning("[GrandSmeta] Item without SysID found (Code: {$code})");
         }
 
         // Извлечение основных полей
