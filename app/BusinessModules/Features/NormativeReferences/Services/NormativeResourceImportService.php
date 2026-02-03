@@ -101,10 +101,28 @@ class NormativeResourceImportService
                 ['code', 'source'], // Unique keys
                 ['name', 'unit', 'type', 'updated_at'] // Columns to update
             );
-            $stats['inserted'] += count($batch); // Upsert doesn't distinguish insert/update easily in basic counts
+            $stats['inserted'] += count($batch);
         } catch (\Exception $e) {
-            Log::error("Ошибка импорта пачки КСР: " . $e->getMessage());
-            $stats['errors'] += count($batch);
+            // Если массовая вставка упала, пробуем по одной, чтобы найти ошибку
+            // И чтобы не потерять всю пачку
+            foreach ($batch as $item) {
+                try {
+                    DB::table('normative_resources')->upsert(
+                        [$item],
+                        ['code', 'source'],
+                        ['name', 'unit', 'type', 'updated_at']
+                    );
+                    $stats['inserted']++;
+                } catch (\Exception $innerE) {
+                    $stats['errors']++;
+                    // Выведем первую ошибку в консоль/лог
+                    if ($stats['errors'] <= 1) {
+                        $msg = "Ошибка на коде {$item['code']}: " . $innerE->getMessage();
+                        Log::error($msg);
+                        echo "\n[ERROR] " . $msg . "\n";
+                    }
+                }
+            }
         }
     }
 
