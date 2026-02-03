@@ -192,6 +192,7 @@ class AdvanceAccountService
             $transaction->description = $data['description'];
             $transaction->document_number = $data['document_number'];
             $transaction->document_date = $data['document_date'];
+            $transaction->cost_category_id = $data['cost_category_id'] ?? null;
             $transaction->reporting_status = AdvanceAccountTransaction::STATUS_REPORTED;
             $transaction->reported_at = Carbon::now();
             

@@ -17,6 +17,7 @@ use App\Http\Requests\Api\V1\Admin\AdvanceTransaction\TransactionReportRequest;
 use App\Http\Requests\Api\V1\Admin\AdvanceTransaction\TransactionApprovalRequest;
 use App\Http\Resources\Api\V1\Admin\AdvanceTransaction\AdvanceTransactionResource;
 use App\Http\Resources\Api\V1\Admin\AdvanceTransaction\AdvanceTransactionCollection;
+use App\Http\Responses\AdminResponse;
 
 class AdvanceAccountTransactionController extends Controller
 {
@@ -46,18 +47,13 @@ class AdvanceAccountTransactionController extends Controller
 
         if (!$organizationId) {
             // Эта ситуация не должна возникать, если middleware отработал корректно
-            return response()->json([
-                'success' => false,
-                'message' => 'Organization context not found for the user.'
-            ], 400);
+            return AdminResponse::error('Organization context not found for the user.');
         }
 
         // Используем сервис для получения пользователей
         $users = $this->advanceService->getAvailableUsers((int)$organizationId, $search);
 
-        return response()->json([
-            'data' => $users
-        ]);
+        return AdminResponse::success($users);
     }
 
     /**
@@ -75,10 +71,7 @@ class AdvanceAccountTransactionController extends Controller
 
         if (!$organizationId) {
              // Эта ситуация не должна возникать, если middleware отработал корректно
-            return response()->json([
-                'success' => false,
-                'message' => 'Organization context not found for the user.'
-            ], 400);
+            return AdminResponse::error('Organization context not found for the user.');
         }
 
         // Используем сервис для получения проектов
@@ -88,18 +81,16 @@ class AdvanceAccountTransactionController extends Controller
             $search
         );
 
-        return response()->json([
-            'data' => $projects
-        ]);
+        return AdminResponse::success($projects);
     }
 
     /**
      * Получить список транзакций с фильтрацией.
      *
      * @param Request $request
-     * @return AdvanceTransactionCollection
+     * @return JsonResponse
      */
-    public function index(Request $request): AdvanceTransactionCollection
+    public function index(Request $request): JsonResponse
     {
         $filters = $request->only([
             'user_id', 'organization_id', 'project_id', 'type', 
@@ -112,7 +103,7 @@ class AdvanceAccountTransactionController extends Controller
         $perPage = $request->input('per_page', 15);
         $transactions = $this->advanceService->getTransactions($filters, $perPage);
 
-        return new AdvanceTransactionCollection($transactions);
+        return AdminResponse::success(new AdvanceTransactionCollection($transactions));
     }
 
     /**
@@ -120,30 +111,30 @@ class AdvanceAccountTransactionController extends Controller
      *
      * @param Request $request
      * @param AdvanceAccountTransaction $transaction
-     * @return AdvanceTransactionResource
+     * @return JsonResponse
      */
-    public function show(Request $request, AdvanceAccountTransaction $transaction): AdvanceTransactionResource
+    public function show(Request $request, AdvanceAccountTransaction $transaction): JsonResponse
     {
         // Проверяем, что транзакция принадлежит организации пользователя
         if ($transaction->organization_id !== Auth::user()->current_organization_id) {
             // Возвращаем ошибку 404, если ресурс не найден в контексте
-            abort(404, 'Transaction not found or access denied');
+            return AdminResponse::error('Transaction not found or access denied', 404);
         }
 
         // Загружаем связанные данные
         $transaction->load(['user', 'project', 'createdBy', 'approvedBy']);
 
         // Возвращаем ресурс
-        return new AdvanceTransactionResource($transaction);
+        return AdminResponse::success(new AdvanceTransactionResource($transaction));
     }
 
     /**
      * Создать новую транзакцию подотчетных средств.
      *
      * @param CreateAdvanceTransactionRequest $request
-     * @return JsonResponse | AdvanceTransactionResource
+     * @return JsonResponse
      */
-    public function store(CreateAdvanceTransactionRequest $request): JsonResponse | AdvanceTransactionResource
+    public function store(CreateAdvanceTransactionRequest $request): JsonResponse
     {
         // Валидация запроса происходит в CreateAdvanceTransactionRequest
         $validatedData = $request->validated();
@@ -163,16 +154,17 @@ class AdvanceAccountTransactionController extends Controller
             $transaction->load(['user', 'project', 'createdBy']); 
 
             // Возвращаем ресурс созданной транзакции
-            return (new AdvanceTransactionResource($transaction))
-                    ->additional(['success' => true, 'message' => 'Transaction created successfully'])
-                    ->response()
-                    ->setStatusCode(201);
+            return AdminResponse::success(
+                new AdvanceTransactionResource($transaction),
+                'Transaction created successfully',
+                201
+            );
 
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to create transaction: ' . $e->getMessage()
-            ], 500);
+            return AdminResponse::error(
+                'Failed to create transaction: ' . $e->getMessage(),
+                500
+            );
         }
     }
 
@@ -187,10 +179,7 @@ class AdvanceAccountTransactionController extends Controller
     {
         // Проверяем, что транзакция принадлежит организации пользователя
         if ($transaction->organization_id !== Auth::user()->current_organization_id) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Transaction not found or access denied'
-            ], 404);
+            return AdminResponse::error('Transaction not found or access denied', 404);
         }
 
         // Валидация запроса происходит в UpdateAdvanceTransactionRequest
@@ -198,16 +187,15 @@ class AdvanceAccountTransactionController extends Controller
         try {
             $updatedTransaction = $this->advanceService->updateTransaction($transaction, $request->validated());
             
-            return response()->json([
-                'success' => true,
-                'message' => 'Transaction updated successfully',
-                'data' => $updatedTransaction
-            ]);
+            return AdminResponse::success(
+                new AdvanceTransactionResource($updatedTransaction),
+                'Transaction updated successfully'
+            );
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to update transaction: ' . $e->getMessage()
-            ], 500);
+            return AdminResponse::error(
+                'Failed to update transaction: ' . $e->getMessage(),
+                500
+            );
         }
     }
 
@@ -221,24 +209,18 @@ class AdvanceAccountTransactionController extends Controller
     {
         // Проверяем, что транзакция принадлежит организации пользователя
         if ($transaction->organization_id !== Auth::user()->current_organization_id) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Transaction not found or access denied'
-            ], 404);
+            return AdminResponse::error('Transaction not found or access denied', 404);
         }
 
         try {
             $this->advanceService->deleteTransaction($transaction);
             
-            return response()->json([
-                'success' => true,
-                'message' => 'Transaction deleted successfully'
-            ]);
+            return AdminResponse::success(null, 'Transaction deleted successfully');
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to delete transaction: ' . $e->getMessage()
-            ], 500);
+            return AdminResponse::error(
+                'Failed to delete transaction: ' . $e->getMessage(),
+                500
+            );
         }
     }
 
@@ -253,10 +235,7 @@ class AdvanceAccountTransactionController extends Controller
     {
         // Проверяем, что транзакция принадлежит организации пользователя
         if ($transaction->organization_id !== Auth::user()->current_organization_id) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Transaction not found or access denied'
-            ], 404);
+            return AdminResponse::error('Transaction not found or access denied', 404);
         }
 
         // Валидация запроса происходит в TransactionReportRequest
@@ -264,16 +243,15 @@ class AdvanceAccountTransactionController extends Controller
         try {
             $reportedTransaction = $this->advanceService->reportTransaction($transaction, $request->validated());
             
-            return response()->json([
-                'success' => true,
-                'message' => 'Transaction reported successfully',
-                'data' => $reportedTransaction
-            ]);
+            return AdminResponse::success(
+                new AdvanceTransactionResource($reportedTransaction),
+                'Transaction reported successfully'
+            );
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to report transaction: ' . $e->getMessage()
-            ], 500);
+            return AdminResponse::error(
+                'Failed to report transaction: ' . $e->getMessage(),
+                500
+            );
         }
     }
 
@@ -288,10 +266,7 @@ class AdvanceAccountTransactionController extends Controller
     {
         // Проверяем, что транзакция принадлежит организации пользователя
         if ($transaction->organization_id !== Auth::user()->current_organization_id) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Transaction not found or access denied'
-            ], 404);
+            return AdminResponse::error('Transaction not found or access denied', 404);
         }
 
         // Валидация запроса происходит в TransactionApprovalRequest
@@ -299,16 +274,15 @@ class AdvanceAccountTransactionController extends Controller
         try {
             $approvedTransaction = $this->advanceService->approveTransaction($transaction, $request->validated());
             
-            return response()->json([
-                'success' => true,
-                'message' => 'Transaction approved successfully',
-                'data' => $approvedTransaction
-            ]);
+            return AdminResponse::success(
+                new AdvanceTransactionResource($approvedTransaction),
+                'Transaction approved successfully'
+            );
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to approve transaction: ' . $e->getMessage()
-            ], 500);
+            return AdminResponse::error(
+                'Failed to approve transaction: ' . $e->getMessage(),
+                500
+            );
         }
     }
 
@@ -323,10 +297,7 @@ class AdvanceAccountTransactionController extends Controller
     {
         // Проверяем, что транзакция принадлежит организации пользователя
         if ($transaction->organization_id !== Auth::user()->current_organization_id) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Transaction not found or access denied'
-            ], 404);
+            return AdminResponse::error('Transaction not found or access denied', 404);
         }
 
         // Валидация запроса
@@ -338,16 +309,15 @@ class AdvanceAccountTransactionController extends Controller
         try {
             $transaction = $this->advanceService->attachFilesToTransaction($transaction, $request->file('files'));
             
-            return response()->json([
-                'success' => true,
-                'message' => 'Files attached successfully',
-                'data' => $transaction
-            ]);
+            return AdminResponse::success(
+                new AdvanceTransactionResource($transaction),
+                'Files attached successfully'
+            );
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to attach files: ' . $e->getMessage()
-            ], 500);
+            return AdminResponse::error(
+                'Failed to attach files: ' . $e->getMessage(),
+                500
+            );
         }
     }
 
@@ -362,25 +332,21 @@ class AdvanceAccountTransactionController extends Controller
     {
         // Проверяем, что транзакция принадлежит организации пользователя
         if ($transaction->organization_id !== Auth::user()->current_organization_id) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Transaction not found or access denied'
-            ], 404);
+            return AdminResponse::error('Transaction not found or access denied', 404);
         }
 
         try {
             $transaction = $this->advanceService->detachFileFromTransaction($transaction, $fileId);
             
-            return response()->json([
-                'success' => true,
-                'message' => 'File detached successfully',
-                'data' => $transaction
-            ]);
+            return AdminResponse::success(
+                new AdvanceTransactionResource($transaction),
+                'File detached successfully'
+            );
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to detach file: ' . $e->getMessage()
-            ], 500);
+            return AdminResponse::error(
+                'Failed to detach file: ' . $e->getMessage(),
+                500
+            );
         }
     }
-} 
+}
