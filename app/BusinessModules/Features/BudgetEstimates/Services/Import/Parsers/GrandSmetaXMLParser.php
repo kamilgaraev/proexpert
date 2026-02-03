@@ -257,7 +257,7 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface, StreamParser
 
         if (!empty($sysId)) {
             if (in_array($sysId, $this->processedSysIds)) {
-                // Log::info("[GrandSmeta] Skipping duplicate SysID: {$sysId}");
+                Log::info("[GrandSmeta] Skipping duplicate SysID: {$sysId} (Code: {$code})");
                 return; // Пропускаем дубликат
             }
             $this->processedSysIds[] = $sysId;
@@ -265,7 +265,7 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface, StreamParser
 
         // Извлечение основных полей
         $num = (string)($item['Number'] ?? $item['Num'] ?? $item->Number ?? '');
-        $code = (string)($item['Justification'] ?? $item['Code'] ?? $item->Code ?? $item->Justification ?? '');
+        // $code is already extracted above
         $name = (string)($item['Name'] ?? $item['Caption'] ?? $item->Name ?? $item->Caption ?? '');
         $unit = (string)($item['Measure'] ?? $item['Unit'] ?? $item->Measure ?? $item->Unit ?? '');
         
@@ -276,8 +276,10 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface, StreamParser
         // Проверяем атрибут DBFlags различными способами доступа к SimpleXML
         $dbFlags = (string)($item['DBFlags'] ?? $item->attributes()->DBFlags ?? '');
         
+        // Log::info("[GrandSmeta] Item: {$code}, DBFlags: '{$dbFlags}'");
+
         if (str_contains($dbFlags, 'TechK')) {
-            // Log::info("Skipping TechK position: {$code} ({$name})");
+            Log::info("[GrandSmeta] Skipping TechK position: {$code} (DBFlags: {$dbFlags})");
             return; // Пропускаем технологические карты/ресурсы, чтобы не дублировать суммы
         }
 
