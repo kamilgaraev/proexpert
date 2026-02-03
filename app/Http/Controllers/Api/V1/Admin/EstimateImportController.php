@@ -296,8 +296,20 @@ class EstimateImportController extends Controller
         }
     }
 
-    public function status(Request $request, string $project, string $jobId): JsonResponse
+    public function status(Request $request, string $project, ?string $jobId = null): JsonResponse
     {
+        // If jobId is not provided in route, try to get it from query string
+        if (!$jobId) {
+            $jobId = $request->input('jobId');
+        }
+
+        if (!$jobId) {
+            return AdminResponse::error(
+                'Job ID is required',
+                Response::HTTP_BAD_REQUEST
+            );
+        }
+
         try {
             Log::info('[EstimateImport] 🎯 Status endpoint called', [
                 'project' => $project,
