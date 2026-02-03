@@ -247,6 +247,12 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface
         // Количество
         $qty = (float)($item['Quant'] ?? $item['Quantity'] ?? $item->Quant ?? $item->Quantity ?? 0);
         
+        // Дополнительная проверка на служебные позиции (DBFlags="TechK")
+        $dbFlags = (string)($item['DBFlags'] ?? '');
+        if (str_contains($dbFlags, 'TechK')) {
+            return; // Пропускаем технологические карты/ресурсы, чтобы не дублировать суммы
+        }
+
         // Цена за единицу (прямые затраты)
         $price = 0.0;
         if (isset($item->Price)) {
