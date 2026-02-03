@@ -248,8 +248,11 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface
         $qty = (float)($item['Quant'] ?? $item['Quantity'] ?? $item->Quant ?? $item->Quantity ?? 0);
         
         // Дополнительная проверка на служебные позиции (DBFlags="TechK")
-        $dbFlags = (string)($item['DBFlags'] ?? '');
+        // Проверяем атрибут DBFlags различными способами доступа к SimpleXML
+        $dbFlags = (string)($item['DBFlags'] ?? $item->attributes()->DBFlags ?? '');
+        
         if (str_contains($dbFlags, 'TechK')) {
+            // Log::info("Skipping TechK position: {$code} ({$name})");
             return; // Пропускаем технологические карты/ресурсы, чтобы не дублировать суммы
         }
 
