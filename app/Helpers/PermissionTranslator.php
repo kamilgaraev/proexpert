@@ -10,6 +10,11 @@ class PermissionTranslator
         
         foreach ($permissions as $permission => $description) {
             $key = is_numeric($permission) ? $description : $permission;
+            
+            if (!is_string($key)) {
+                continue;
+            }
+
             $parts = explode('.', $key);
             if (count($parts) === 2) {
                 [$group, $action] = $parts;
@@ -31,7 +36,14 @@ class PermissionTranslator
             
             $normalizedModule = str_replace('-', '_', $module);
             
+            if (!is_array($permissions)) {
+                continue;
+            }
+            
             foreach ($permissions as $permission) {
+                if (!is_string($permission)) {
+                    continue;
+                }
                 // 1. Пробуем полный ключ (permissions.modules.{module}.{permission})
                 $fullKey = "permissions.modules.{$normalizedModule}.{$permission}";
                 $translation = __($fullKey, [], 'ru');
@@ -65,6 +77,11 @@ class PermissionTranslator
         
         foreach ($interfaces as $interface => $description) {
             $key = is_numeric($interface) ? $description : $interface;
+            
+            if (!is_string($key)) {
+                continue;
+            }
+
             $translations[$key] = __("permissions.interfaces.{$key}", [], 'ru');
         }
         

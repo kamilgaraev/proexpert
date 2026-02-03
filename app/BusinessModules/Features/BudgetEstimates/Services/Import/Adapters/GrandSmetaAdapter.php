@@ -85,8 +85,22 @@ class GrandSmetaAdapter implements EstimateAdapterInterface
                     }
                     
                     $processedItems[] = $item;
+                } elseif ($this->isMaterialOrEquipment($item)) {
+                    // Это материал или оборудование верхнего уровня
+                    $item->itemType = 'material'; 
+                    
+                    // Пробуем уточнить, оборудование ли это
+                    // ГрандСмета может помечать оборудование в категории VidRab
+                    // Но здесь простая эвристика по названию или коду
+                    if (str_contains(mb_strtolower($item->itemName), 'оборудование') || 
+                        str_contains(mb_strtolower($item->code), 'оборудование')) {
+                        $item->itemType = 'equipment';
+                    }
+                    
+                    $processedItems[] = $item;
                 } else {
                     // Обычная позиция или итог
+
                     $processedItems[] = $item;
                 }
             }
@@ -124,18 +138,48 @@ class GrandSmetaAdapter implements EstimateAdapterInterface
      */
     private function isMainWork(EstimateImportRowDTO $item): bool
     {
-        // Основная работа имеет код ГЭСН и не является ресурсом
-        if (empty($item->code)) {
-            return false;
+        // 1. Проверка по коду на наличие маркеров расценок (ГЭСН, ФЕР, ТЕР, ТСН)
+        if ($item->code && preg_match('/^(ГЭСН|ФЕР|ТЕР|ТСН|GESN|FER|TER|TSN)/iu', $item->code)) {
+            return true;
         }
-        
-        // Проверяем, что код похож на ГЭСН (например, 01-01-001-1)
-        if (preg_match('/^\d{2}-\d{2}-\d{3}-\d{1,2}$/u', $item->code)) {
+
+        // 2. Проверка по наличию вложенных ресурсов (признак работы)
+        // Если у позиции есть список ресурсов, это почти наверняка работа
+        if (!empty($item->rawData['Resources'])) {
+            return true;
+        }
+
+        // 3. Стандартная проверка по формату кода (01-01-001-1), если нет явного префикса
+        if (!empty($item->code) && preg_match('/^\d{2}-\d{2}-\d{3}-\d{1,2}$/u', $item->code)) {
             return true;
         }
         
         return false;
     }
+
+    /**
+     * Определить, является ли позиция материалом или оборудованием верхнего уровня
+     */
+    private function isMaterialOrEquipment(EstimateImportRowDTO $item): bool
+    {
+        if (empty($item->code)) {
+            return false;
+        }
+
+        // Маркеры материалов и оборудования
+        if (preg_match('/^(ФССЦ|ФСБЦ|ТЦ|СЦ|ТССЦ|Ц|ТЦ_|Оборудование)/iu', $item->code)) {
+            return true;
+        }
+
+        // Если это не работа (нет ресурсов) и есть цена, считаем материалом/оборудованием
+        // Но нужно быть осторожным, чтобы не захватить разделы (они отфильтрованы ранее)
+        if (empty($item->rawData['Resources']) && ($item->unitPrice > 0 || $item->currentTotalAmount > 0)) {
+             return true;
+        }
+
+        return false;
+    }
+
     
     /**
      * Определить тип ресурса (ОТ/ЭМ/М/ОТм)
