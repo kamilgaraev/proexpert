@@ -166,6 +166,11 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface
 
     private function parseNodeRecursively(\SimpleXMLElement $node, array &$sections, array &$items, string $parentPath = '', int $level = 0): void
     {
+        // Игнорируем узлы Itog, которые могут попасться при рекурсивном обходе
+        if (in_array(strtolower($node->getName()), ['itog', 'itogres'])) {
+            return;
+        }
+
         // Обработка Разделов (Section, Razdel, Chapter)
         $sectionNodes = [];
         if (isset($node->Sections->Section)) $sectionNodes = $node->Sections->Section;
@@ -190,6 +195,12 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface
         if (empty($sectionNodes) && empty($itemNodes)) {
              foreach ($node->children() as $child) {
                  $name = strtolower($child->getName());
+                 
+                 // Явно игнорируем Itog и прочие служебные теги
+                 if (in_array($name, ['itog', 'itogres', 'reportoptions', 'properties', 'header', 'signature'])) {
+                     continue;
+                 }
+
                  if (in_array($name, ['section', 'razdel', 'chapter'])) {
                      $this->processSection($child, $sections, $items, $parentPath, $level);
                  } elseif (in_array($name, ['position', 'item', 'poz'])) {
