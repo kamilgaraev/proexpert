@@ -490,7 +490,7 @@ class EstimateImportService
             $matchingConfig,
             $estimateSettings,
             $jobId
-        )->onQueue('imports');
+        );
         
         $projectId = $estimateSettings['project_id'] ?? null;
         $statusUrl = $projectId 
@@ -516,9 +516,19 @@ class EstimateImportService
             );
         }
         
+        $progress = $history->progress;
+
+        // If processing, try to get real-time progress from cache (bypassing transaction isolation)
+        if ($history->status === 'processing') {
+            $cachedProgress = Cache::get("import_progress_{$jobId}");
+            if ($cachedProgress !== null) {
+                $progress = (int)$cachedProgress;
+            }
+        }
+        
         return [
             'status' => $history->status,
-            'progress' => $history->progress,
+            'progress' => $progress,
             'estimate_id' => $history->estimate_id,
             'result' => $history->result_log,
             'error' => $history->status === 'failed' ? ($history->result_log['error'] ?? 'Unknown error') : null,

@@ -19,6 +19,8 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Ramsey\Uuid\Uuid;
 
 use function trans_message;
 
@@ -273,7 +275,7 @@ class EstimateImportController extends Controller
         
         $projectId = $request->route('project');
         if ($projectId && !isset($estimateSettings['project_id'])) {
-            $estimateSettings['project_id'] = $projectId;
+            $estimateSettings['project_id'] = $projectId instanceof \Illuminate\Database\Eloquent\Model ? $projectId->id : $projectId;
         }
         
         if (!isset($estimateSettings['project_id'])) {
@@ -289,6 +291,12 @@ class EstimateImportController extends Controller
             return AdminResponse::success($result);
             
         } catch (\Exception $e) {
+            Log::error('[EstimateImport] Execute failed', [
+                'file_id' => $fileId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            
             return AdminResponse::error(
                 trans_message('estimate.import_execute_error'),
                 Response::HTTP_UNPROCESSABLE_ENTITY
@@ -296,9 +304,9 @@ class EstimateImportController extends Controller
         }
     }
 
-    public function status(Request $request, string $project, ?string $jobId = null): JsonResponse
+    public function status(Request $request, $project, ?string $jobId = null): JsonResponse
     {
-        // If jobId is not provided in route, try to get it from query string
+        // 1. Resolve Job ID
         if (!$jobId) {
             $jobId = $request->input('jobId');
         }
@@ -309,28 +317,46 @@ class EstimateImportController extends Controller
                 Response::HTTP_BAD_REQUEST
             );
         }
+        
+        // 2. Validate Job ID format (UUID)
+        if (!Uuid::isValid($jobId)) {
+             return AdminResponse::error(
+                'Invalid Job ID format',
+                Response::HTTP_BAD_REQUEST
+            );
+        }
 
         try {
-            Log::info('[EstimateImport] 🎯 Status endpoint called', [
-                'project' => $project,
+            // Log less verbosely on success, but keep key info
+            // Use debug level for frequent polling to avoid log spam, or info if meaningful
+            Log::debug('[EstimateImport] Status check', [
+                'project_id' => is_object($project) ? $project->id : $project,
                 'job_id' => $jobId,
-                'url' => $request->fullUrl(),
             ]);
             
             $status = $this->importService->getImportStatus($jobId);
             
             return AdminResponse::success($status);
             
-        } catch (\Exception $e) {
-            Log::error('[EstimateImport] ❌ Status endpoint error', [
-                'project' => $project,
+        } catch (ModelNotFoundException $e) {
+            Log::warning('[EstimateImport] Status not found', [
                 'job_id' => $jobId,
-                'error' => $e->getMessage(),
+                'error' => $e->getMessage()
             ]);
             
             return AdminResponse::error(
                 trans_message('estimate.import_status_not_found'),
                 Response::HTTP_NOT_FOUND
+            );
+        } catch (\Exception $e) {
+            Log::error('[EstimateImport] Status check failed', [
+                'job_id' => $jobId,
+                'error' => $e->getMessage(),
+            ]);
+            
+            return AdminResponse::error(
+                trans_message('estimate.import_status_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
             );
         }
     }
@@ -347,4 +373,3 @@ class EstimateImportController extends Controller
         );
     }
 }
-

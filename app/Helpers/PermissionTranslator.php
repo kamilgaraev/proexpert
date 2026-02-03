@@ -32,6 +32,16 @@ class PermissionTranslator
             $normalizedModule = str_replace('-', '_', $module);
             
             foreach ($permissions as $permission) {
+                // 1. Пробуем полный ключ (permissions.modules.{module}.{permission})
+                $fullKey = "permissions.modules.{$normalizedModule}.{$permission}";
+                $translation = __($fullKey, [], 'ru');
+                
+                if ($translation !== $fullKey) {
+                    $translations[$module][$permission] = $translation;
+                    continue;
+                }
+
+                // 2. Пробуем старый метод (permissions.modules.{module}.{last_part})
                 $permParts = explode('.', $permission);
                 // ожидаем формат: {module}.{action}
                 $action = end($permParts);

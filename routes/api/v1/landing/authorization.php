@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Domain\Authorization\Http\Controllers\Api\V1\Landing\CustomRoleController;
 use App\Http\Controllers\Api\V1\Landing\RolesComparisonController;
+use App\Http\Controllers\Api\V1\Landing\SystemRoleController;
 
 /*
 |--------------------------------------------------------------------------
@@ -20,6 +21,10 @@ Route::prefix('authorization')
         // Сравнение ролей (доступен всем аутентифицированным пользователям)
         Route::get('roles/comparison', [RolesComparisonController::class, 'comparison'])
             ->name('roles.comparison');
+
+        // Системные роли
+        Route::get('system-roles', [SystemRoleController::class, 'index'])
+            ->name('system-roles.index');
         
         // Кастомные роли организации
         Route::prefix('custom-roles')->group(function () {
