@@ -36,7 +36,8 @@ class SecurityLogger
             'critical' => Log::critical("[SECURITY] {$event}", $securityEntry),
             'error' => Log::error("[SECURITY] {$event}", $securityEntry),
             'warning' => Log::warning("[SECURITY] {$event}", $securityEntry),
-            default => Log::info("[SECURITY] {$event}", $securityEntry)
+            // default => Log::info("[SECURITY] {$event}", $securityEntry)
+            default => null // Disable info level logs
         };
 
         // Критические события безопасности отправляем в мониторинг

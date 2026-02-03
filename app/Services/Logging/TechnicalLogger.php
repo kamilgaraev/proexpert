@@ -35,7 +35,8 @@ class TechnicalLogger
             'error' => Log::error("[TECHNICAL] {$event}", $technicalEntry),
             'warning' => Log::warning("[TECHNICAL] {$event}", $technicalEntry),
             'debug' => Log::debug("[TECHNICAL] {$event}", $technicalEntry),
-            default => Log::info("[TECHNICAL] {$event}", $technicalEntry)
+            // default => Log::info("[TECHNICAL] {$event}", $technicalEntry)
+            default => null // Disable info level logs
         };
 
         // Отправить критические события в мониторинг
