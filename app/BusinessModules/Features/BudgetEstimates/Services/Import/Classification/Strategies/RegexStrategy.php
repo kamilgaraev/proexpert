@@ -5,8 +5,41 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services\Import\Classific
 use App\BusinessModules\Features\BudgetEstimates\Contracts\ClassificationStrategyInterface;
 use App\BusinessModules\Features\BudgetEstimates\DTOs\ClassificationResult;
 
+/**
+ * Стратегия классификации на основе регулярных выражений.
+ * 
+ * Реализует declarative approach: правила определены в массиве,
+ * что облегчает поддержку и добавление новых стандартов.
+ */
 class RegexStrategy implements ClassificationStrategyInterface
 {
+    // Типы элементов
+    private const TYPE_WORK = 'work';
+    private const TYPE_MATERIAL = 'material';
+    private const TYPE_EQUIPMENT = 'equipment';
+    private const TYPE_LABOR = 'labor';
+
+    // Уровни уверенности
+    private const CONF_STRICT = 1.0;
+    private const CONF_HIGH = 0.9;
+    private const CONF_MEDIUM = 0.6;
+
+    /**
+     * @var array Список правил классификации.
+     * Порядок важен: сверху вниз от наиболее строгих к общим.
+     */
+    private array $rules = [];
+
+    public function __construct()
+    {
+        $this->initRules();
+    }
+
+    public function getName(): string
+    {
+        return 'regex_engine';
+    }
+
     public function classify(string $code, string $name, ?string $unit = null, ?float $price = null): ?ClassificationResult
     {
         if (empty($code)) {
@@ -15,83 +48,35 @@ class RegexStrategy implements ClassificationStrategyInterface
 
         $code = trim($code);
 
-        // ⭐ ТРУДОЗАТРАТЫ: Техническая часть ГЭСН (1-100-20, 4-100-060)
-        if (preg_match('/^\d-\d{3}-\d{2,3}$/u', $code)) {
-            return new ClassificationResult('labor', 1.0, 'regex_strict');
-        }
+        foreach ($this->rules as $rule) {
+            if (preg_match($rule['pattern'], $code, $matches)) {
+                // Если есть дополнительная логика проверки (например, анализ имени)
+                if (isset($rule['validator']) && is_callable($rule['validator'])) {
+                    $validationResult = call_user_func($rule['validator'], $matches, $name);
+                    
+                    // Если валидатор вернул null/false, пропускаем правило
+                    if (!$validationResult) {
+                        continue;
+                    }
+                    
+                    // Если валидатор вернул массив с переопределениями (например, понизил уверенность)
+                    if (is_array($validationResult)) {
+                        return new ClassificationResult(
+                            $validationResult['type'] ?? $rule['type'],
+                            $validationResult['confidence'] ?? $rule['confidence'],
+                            $rule['source'] . '_adjusted'
+                        );
+                    }
+                }
 
-        // ⭐ МАТЕРИАЛЫ: СЦМ (Сборники цен на материалы)
-        if (preg_match('/^СЦМ-\d{3,4}-\d{3,4}$/ui', $code)) {
-            return new ClassificationResult('material', 1.0, 'regex_strict');
-        }
-
-        // ⭐ РАБОТЫ: ГЭСН, ФЕР, ТЕР
-        // Улучшенная логика: проверяем суффикс (м - монтаж, р - ремонт) и контекст имени
-        if (preg_match('/^(ГЭСН|ГСН|ФЕР|ТЕР)([мрп])?/ui', $code, $matches)) {
-            $suffix = mb_strtolower($matches[2] ?? '');
-            
-            // Если это монтажный сборник ('м'), но название не начинается с явного действия (Монтаж...),
-            // то это может быть оборудование/материал (Светильник, Кабель).
-            // Отдаем AI на перепроверку (confidence < 0.8).
-            if ($suffix === 'м') {
-                 $nameLower = mb_strtolower($name);
-                 $isActivity = false;
-                 // Список слов, указывающих на работу
-                 $activities = [
-                     'монтаж', 'установка', 'укладка', 'устройство', 'разборка', 
-                     'смена', 'демонтаж', 'прокладка', 'врезка', 'заделка', 
-                     'окраска', 'изоляция', 'присоединение', 'сборка', 'настройка'
-                 ];
-                 
-                 foreach ($activities as $act) {
-                     if (str_starts_with($nameLower, $act)) {
-                         $isActivity = true;
-                         break;
-                     }
-                 }
-                 
-                 if (!$isActivity) {
-                     // Возвращаем work, но с низкой уверенностью (0.6), чтобы AI мог переопределить в material/equipment
-                     return new ClassificationResult('work', 0.6, 'regex_pattern_weak');
-                 }
-            }
-
-            return new ClassificationResult('work', 1.0, 'regex_strict');
-        }
-
-        // РАБОТЫ: формат XX-XX-XXX-XX
-        if (preg_match('/^\d{2}-\d{2}-\d{3}-\d{1,2}$/u', $code)) {
-            return new ClassificationResult('work', 0.9, 'regex_pattern');
-        }
-
-        // РАБОТЫ: ФСБЦ
-        if (preg_match('/^(ФСБЦ|ФССЦ|ФСБЦс|ФССЦп)[А-Я]?-\d{2}\.\d/ui', $code)) {
-            return new ClassificationResult('work', 1.0, 'regex_strict');
-        }
-
-        // МАТЕРИАЛЫ: ФСБЦ материалы (01.X.XX.XX-XXXX или 14.X.XX.XX-XXXX)
-        if (preg_match('/^(01|14)\.\d{1,2}\.\d{1,2}\.\d{1,2}-\d{4}$/u', $code)) {
-            return new ClassificationResult('material', 1.0, 'regex_strict');
-        }
-
-        // МЕХАНИЗМЫ/ОБОРУДОВАНИЕ: коды 91.XX.XX-XXX
-        if (preg_match('/^91\.\d{2}\.\d{2}-\d{3}$/u', $code)) {
-            return new ClassificationResult('equipment', 1.0, 'regex_strict');
-        }
-
-        // ОБОРУДОВАНИЕ: коды 08.X.XX.XX-XXXX
-        if (preg_match('/^08\.\d{1,2}\.\d{1,2}\.\d{1,2}-\d{4}$/u', $code)) {
-            return new ClassificationResult('equipment', 1.0, 'regex_strict');
-        }
-
-        // МАТЕРИАЛЫ: общий формат XX.XX.XX-XXX (кроме 91 и 08)
-        if (preg_match('/^(\d{2})\.\d{2}\.\d{2}-\d{3,4}$/u', $code, $matches)) {
-            $prefix = $matches[1];
-            if (!in_array($prefix, ['91', '08'])) {
-                return new ClassificationResult('material', 0.9, 'regex_pattern');
+                return new ClassificationResult(
+                    $rule['type'],
+                    $rule['confidence'],
+                    $rule['source']
+                );
             }
         }
-        
+
         return null;
     }
 
@@ -99,12 +84,13 @@ class RegexStrategy implements ClassificationStrategyInterface
     {
         $results = [];
         foreach ($items as $index => $item) {
-            $code = $item['code'] ?? '';
-            $name = $item['name'] ?? '';
-            $unit = $item['unit'] ?? null;
-            $price = $item['price'] ?? null;
+            $result = $this->classify(
+                $item['code'] ?? '',
+                $item['name'] ?? '',
+                $item['unit'] ?? null,
+                $item['price'] ?? null
+            );
             
-            $result = $this->classify($code, $name, $unit, $price);
             if ($result) {
                 $results[$index] = $result;
             }
@@ -112,8 +98,165 @@ class RegexStrategy implements ClassificationStrategyInterface
         return $results;
     }
 
-    public function getName(): string
+    /**
+     * Инициализация правил классификации.
+     * Здесь сосредоточена вся бизнес-логика определения типов.
+     */
+    private function initRules(): void
     {
-        return 'regex';
+        $this->rules = [
+            // ---------------------------------------------------------
+            // 1. ЖЕЛЕЗОБЕТОННЫЕ ПРАВИЛА (Strict, Confidence 1.0)
+            // ---------------------------------------------------------
+
+            // Трудозатраты (Техническая часть ГЭСН: 1-100-20)
+            [
+                'pattern' => '/^\d-\d{3}-\d{2,3}$/u',
+                'type' => self::TYPE_LABOR,
+                'confidence' => self::CONF_STRICT,
+                'source' => 'tech_part_labor'
+            ],
+
+            // Сборники цен на материалы (СЦМ, ФСБЦ, ФССЦ, ТЦ)
+            // Исправленная логика: эти коды ВСЕГДА материалы или оборудование
+            [
+                'pattern' => '/^(ФСБЦ|ФССЦ|ФСБЦс|ФССЦп|ТЦ|ТССЦ|СЦ|СЦМ|Материал)[А-Я]?[-_]?\d+/ui',
+                'type' => self::TYPE_MATERIAL,
+                'confidence' => self::CONF_STRICT,
+                'source' => 'material_price_book',
+                // Уточнение: может это оборудование?
+                'validator' => function ($matches, $name) {
+                    if (mb_stripos($name, 'оборудование') !== false) {
+                        return ['type' => self::TYPE_EQUIPMENT];
+                    }
+                    return true;
+                }
+            ],
+
+            // ФСБЦ материалы старого/нового формата (01.X.XX.XX-XXXX или 14.X.XX.XX-XXXX)
+            [
+                'pattern' => '/^(01|14)\.\d{1,2}\.\d{1,2}\.\d{1,2}-\d{4}$/u',
+                'type' => self::TYPE_MATERIAL,
+                'confidence' => self::CONF_STRICT,
+                'source' => 'fsbc_material_code'
+            ],
+
+            // Механизмы и Оборудование (91.XX.XX-XXX)
+            [
+                'pattern' => '/^91\.\d{2}\.\d{2}-\d{3}$/u',
+                'type' => self::TYPE_EQUIPMENT, // Чаще всего это машины/механизмы, считаем equipment/machinery
+                'confidence' => self::CONF_STRICT,
+                'source' => 'machinery_code'
+            ],
+
+            // Оборудование (08.X.XX.XX-XXXX) - коды классификатора оборудования
+            [
+                'pattern' => '/^(6\d|08)\.\d{1,2}\.\d{1,2}\.\d{1,2}-\d{4}$/u',
+                'type' => self::TYPE_EQUIPMENT,
+                'confidence' => self::CONF_STRICT,
+                'source' => 'equipment_code'
+            ],
+
+            // Оборудование явное (в коде написано "Оборудование")
+            [
+                'pattern' => '/^Оборудование/ui',
+                'type' => self::TYPE_EQUIPMENT,
+                'confidence' => self::CONF_STRICT,
+                'source' => 'explicit_equipment'
+            ],
+
+            // ---------------------------------------------------------
+            // 2. СТАНДАРТНЫЕ РАСЦЕНКИ (High, Confidence 0.9-1.0)
+            // ---------------------------------------------------------
+
+            // ГЭСН, ФЕР, ТЕР - основные расценки на РАБОТЫ
+            [
+                'pattern' => '/^(ГЭСН|ГСН|ФЕР|ТЕР)(r|м|р|п|m)?/ui',
+                'type' => self::TYPE_WORK,
+                'confidence' => self::CONF_STRICT,
+                'source' => 'gov_standard_work',
+                'validator' => function ($matches, $name) {
+                    $suffix = mb_strtolower($matches[2] ?? '');
+                    
+                    // Если это монтажный сборник ('м'), нужно быть внимательным.
+                    // Иногда под видом монтажа скрывается материал, если в названии нет действий.
+                    if ($suffix === 'м') {
+                        if ($this->hasActivityKeywords($name)) {
+                            return true; 
+                        }
+                        // Нет ключевых слов действия -> понижаем уверенность, пусть решает AI
+                        return ['confidence' => self::CONF_MEDIUM];
+                    }
+                    return true;
+                }
+            ],
+
+            // Стандартный формат расценок XX-XX-XXX-XX (без префикса)
+            [
+                'pattern' => '/^\d{2}-\d{2}-\d{3}-\d{1,2}$/u',
+                'type' => self::TYPE_WORK,
+                'confidence' => self::CONF_HIGH,
+                'source' => 'standard_work_format'
+            ],
+
+            // ---------------------------------------------------------
+            // 3. ЭВРИСТИКА (Medium/High)
+            // ---------------------------------------------------------
+
+            // Материалы: общий формат XX.XX.XX-XXX (кроме спец. разделов выше)
+            [
+                'pattern' => '/^(\d{2})\.\d{2}\.\d{2}-\d{3,4}$/u',
+                'type' => self::TYPE_MATERIAL,
+                'confidence' => self::CONF_HIGH,
+                'source' => 'generic_material_format',
+                'validator' => function ($matches, $name) {
+                    $prefix = $matches[1];
+                    // Исключаем машины (91) и оборудование (08), они обработаны выше
+                    if (in_array($prefix, ['91', '08', '61', '62', '63', '64'])) {
+                        return false; // Пусть идет дальше или обрабатывается AI
+                    }
+                    return true;
+                }
+            ],
+            
+            // Коммерческие коды "Прайс", "Счет"
+            [
+                'pattern' => '/^(Прайс|Счет|Сч|ТЦ|КП)[-_]?/ui',
+                'type' => self::TYPE_MATERIAL, // По умолчанию прайсы - это материалы/оборудование
+                'confidence' => self::CONF_MEDIUM, // Средняя, т.к. может быть и "Услуга по..."
+                'source' => 'commercial_price',
+                'validator' => function ($matches, $name) {
+                    if ($this->hasActivityKeywords($name)) {
+                        return ['type' => self::TYPE_WORK]; // Если в прайсе "Монтаж...", то это работа
+                    }
+                    if (mb_stripos($name, 'оборудование') !== false) {
+                        return ['type' => self::TYPE_EQUIPMENT];
+                    }
+                    return true;
+                }
+            ],
+        ];
+    }
+
+    /**
+     * Проверка наличия ключевых слов, обозначающих выполнение работ.
+     */
+    private function hasActivityKeywords(string $name): bool
+    {
+        $nameLower = mb_strtolower($name);
+        $activities = [
+            'монтаж', 'установка', 'укладка', 'устройство', 'разборка', 
+            'смена', 'демонтаж', 'прокладка', 'врезка', 'заделка', 
+            'окраска', 'изоляция', 'присоединение', 'сборка', 'настройка',
+            'пусконалад', 'сверление', 'резка', 'очистка'
+        ];
+        
+        foreach ($activities as $act) {
+            if (str_starts_with($nameLower, $act) || str_contains($nameLower, " $act")) {
+                return true;
+            }
+        }
+        
+        return false;
     }
 }
