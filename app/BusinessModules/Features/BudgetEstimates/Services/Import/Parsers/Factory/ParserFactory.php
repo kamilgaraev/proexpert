@@ -2,6 +2,7 @@
 
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\Factory;
 
+use App\BusinessModules\Features\BudgetEstimates\Contracts\EstimateImportParserInterface;
 use App\BusinessModules\Features\BudgetEstimates\Contracts\StreamParserInterface;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\ExcelStreamParser;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\GrandSmetaXMLParser;
@@ -46,23 +47,14 @@ class ParserFactory
         // Try to find the best match using validation
         foreach ($candidates as $parser) {
             // If parser has validation logic, check content
-            if (method_exists($parser, 'validateFile')) {
+            if ($parser instanceof EstimateImportParserInterface) {
                 if ($parser->validateFile($filePath)) {
                     return $parser;
                 }
-            } else {
-                // If parser doesn't have validation, accept it (optimistic match)
-                // But better to prefer validated ones first.
-                // In our current setup, all have validateFile.
-                return $parser;
             }
         }
         
         // Fallback: if no validation passed (unlikely for valid files), return the first one
-        // or throw exception? 
-        // For UniversalXmlParser, validateFile returns true for almost any XML.
-        // So we should have returned already.
-        
         return $candidates[0];
     }
 }
