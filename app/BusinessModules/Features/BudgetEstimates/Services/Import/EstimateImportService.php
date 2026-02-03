@@ -792,10 +792,15 @@ class EstimateImportService
                         $previewData = $importDTO->toArray();
                     }
 
-                    $iterator = $previewData['items'] ?? []; 
+                    // FIX: Merge sections and items so Processor creates sections first
+                    $sections = $previewData['sections'] ?? [];
+                    $items = $previewData['items'] ?? [];
+                    $iterator = array_merge($sections, $items);
                     
                     Log::info('[EstimateImport] Stream iterator prepared', [
                         'count' => is_array($iterator) ? count($iterator) : 'unknown (generator)',
+                        'sections_count' => count($sections),
+                        'items_count' => count($items),
                         'first_item' => is_array($iterator) && !empty($iterator) ? array_keys($iterator[0]) : null
                     ]); 
                 }
