@@ -14,11 +14,18 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface, StreamParser
     // Common XML namespaces for GrandSmeta/GGE
     private const NS_GGE = 'http://www.gge.ru/2001/Schema';
     
+    private const IGNORED_SECTIONS = [
+        'новый раздел',
+        'сводка затрат',
+        'ведомость ресурсов',
+        'ресурсы',
+    ];
+
     private array $processedSysIds = [];
 
     public function parse(string $filePath): EstimateImportDTO|Generator
     {
-        Log::error("[GrandSmeta] Parsing started: {$filePath}");
+        Log::info("[GrandSmeta] Parsing started: {$filePath}");
         $xml = $this->loadXML($filePath);
         
         $sections = [];
@@ -227,6 +234,12 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface, StreamParser
         $num = (string)($section['Number'] ?? $section['Num'] ?? $section->Number ?? '');
         $name = (string)($section['Name'] ?? $section['Caption'] ?? $section->Name ?? $section->Caption ?? '');
         
+        // Filter out ignored sections (case-insensitive)
+        if (in_array(mb_strtolower(trim($name)), self::IGNORED_SECTIONS)) {
+            Log::info("[GrandSmeta] Ignoring section: '{$name}' (Number: {$num})");
+            return;
+        }
+
         $currentPath = $parentPath ? "$parentPath.$num" : $num;
         
         $sections[] = (new EstimateImportRowDTO(
