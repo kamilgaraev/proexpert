@@ -451,8 +451,8 @@ class AdvanceAccountService
             ->whereHas('roleAssignments', function ($q) use ($organizationId) {
                 $q->whereIn('role_slug', ['foreman', 'site_manager', 'project_manager'])
                   ->whereHas('context', function ($contextQuery) use ($organizationId) {
-                      $contextQuery->where('context_type', 'organization')
-                                   ->where('context_id', $organizationId);
+                      $contextQuery->where('type', 'organization')
+                                   ->where('resource_id', $organizationId);
                   })
                   ->where('is_active', true);
             })
