@@ -18,6 +18,7 @@ use App\Http\Requests\Api\V1\Admin\AdvanceTransaction\TransactionApprovalRequest
 use App\Http\Resources\Api\V1\Admin\AdvanceTransaction\AdvanceTransactionResource;
 use App\Http\Resources\Api\V1\Admin\AdvanceTransaction\AdvanceTransactionCollection;
 use App\Http\Responses\AdminResponse;
+use function trans_message;
 
 class AdvanceAccountTransactionController extends Controller
 {
@@ -101,10 +102,10 @@ class AdvanceAccountTransactionController extends Controller
 
         try {
             $stats = $this->advanceService->getStatistics((int)$organizationId);
-            return AdminResponse::success($stats);
+            return AdminResponse::success($stats, trans_message('advance_account.stats_loaded'));
         } catch (\Exception $e) {
             return AdminResponse::error(
-                'Failed to get statistics: ' . $e->getMessage(),
+                trans_message('advance_account.transaction_failed'), // Или создать отдельный ключ stats_failed
                 500
             );
         }
@@ -144,7 +145,7 @@ class AdvanceAccountTransactionController extends Controller
         // Проверяем, что транзакция принадлежит организации пользователя
         if ($transaction->organization_id !== Auth::user()->current_organization_id) {
             // Возвращаем ошибку 404, если ресурс не найден в контексте
-            return AdminResponse::error('Transaction not found or access denied', 404);
+            return AdminResponse::error(trans_message('advance_account.transaction_not_found'), 404);
         }
 
         // Загружаем связанные данные
@@ -182,13 +183,13 @@ class AdvanceAccountTransactionController extends Controller
             // Возвращаем ресурс созданной транзакции
             return AdminResponse::success(
                 new AdvanceTransactionResource($transaction),
-                'Transaction created successfully',
+                trans_message('advance_account.transaction_created'),
                 201
             );
 
         } catch (\Exception $e) {
             return AdminResponse::error(
-                'Failed to create transaction: ' . $e->getMessage(),
+                trans_message('advance_account.transaction_failed') . ': ' . $e->getMessage(),
                 500
             );
         }
@@ -215,11 +216,11 @@ class AdvanceAccountTransactionController extends Controller
             
             return AdminResponse::success(
                 new AdvanceTransactionResource($updatedTransaction),
-                'Transaction updated successfully'
+                trans_message('advance_account.transaction_updated')
             );
         } catch (\Exception $e) {
             return AdminResponse::error(
-                'Failed to update transaction: ' . $e->getMessage(),
+                trans_message('advance_account.transaction_failed') . ': ' . $e->getMessage(),
                 500
             );
         }
@@ -241,10 +242,10 @@ class AdvanceAccountTransactionController extends Controller
         try {
             $this->advanceService->deleteTransaction($transaction);
             
-            return AdminResponse::success(null, 'Transaction deleted successfully');
+            return AdminResponse::success(null, trans_message('advance_account.transaction_deleted'));
         } catch (\Exception $e) {
             return AdminResponse::error(
-                'Failed to delete transaction: ' . $e->getMessage(),
+                trans_message('advance_account.transaction_failed') . ': ' . $e->getMessage(),
                 500
             );
         }
@@ -271,11 +272,11 @@ class AdvanceAccountTransactionController extends Controller
             
             return AdminResponse::success(
                 new AdvanceTransactionResource($reportedTransaction),
-                'Transaction reported successfully'
+                trans_message('advance_account.transaction_reported')
             );
         } catch (\Exception $e) {
             return AdminResponse::error(
-                'Failed to report transaction: ' . $e->getMessage(),
+                trans_message('advance_account.transaction_failed') . ': ' . $e->getMessage(),
                 500
             );
         }
@@ -302,11 +303,11 @@ class AdvanceAccountTransactionController extends Controller
             
             return AdminResponse::success(
                 new AdvanceTransactionResource($approvedTransaction),
-                'Transaction approved successfully'
+                trans_message('advance_account.transaction_approved')
             );
         } catch (\Exception $e) {
             return AdminResponse::error(
-                'Failed to approve transaction: ' . $e->getMessage(),
+                trans_message('advance_account.transaction_failed') . ': ' . $e->getMessage(),
                 500
             );
         }
@@ -337,11 +338,11 @@ class AdvanceAccountTransactionController extends Controller
             
             return AdminResponse::success(
                 new AdvanceTransactionResource($transaction),
-                'Files attached successfully'
+                trans_message('advance_account.files_attached')
             );
         } catch (\Exception $e) {
             return AdminResponse::error(
-                'Failed to attach files: ' . $e->getMessage(),
+                trans_message('advance_account.transaction_failed') . ': ' . $e->getMessage(),
                 500
             );
         }
@@ -366,11 +367,11 @@ class AdvanceAccountTransactionController extends Controller
             
             return AdminResponse::success(
                 new AdvanceTransactionResource($transaction),
-                'File detached successfully'
+                trans_message('advance_account.file_detached')
             );
         } catch (\Exception $e) {
             return AdminResponse::error(
-                'Failed to detach file: ' . $e->getMessage(),
+                trans_message('advance_account.transaction_failed') . ': ' . $e->getMessage(),
                 500
             );
         }

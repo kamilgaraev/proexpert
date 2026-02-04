@@ -17,6 +17,10 @@ return [
     'transaction_deleted' => 'Транзакция успешно удалена',
     'transaction_approved' => 'Транзакция утверждена',
     'transaction_rejected' => 'Транзакция отклонена',
+    'transaction_reported' => 'Отчет по транзакции успешно сохранен',
+    'files_attached' => 'Файлы успешно прикреплены',
+    'file_detached' => 'Файл успешно откреплен',
+    'stats_loaded' => 'Статистика загружена',
     
     // Ошибки
     'transaction_not_found' => 'Транзакция не найдена',
