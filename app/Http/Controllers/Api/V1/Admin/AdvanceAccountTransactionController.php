@@ -85,6 +85,32 @@ class AdvanceAccountTransactionController extends Controller
     }
 
     /**
+     * Получить статистику по транзакциям.
+     *
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function stats(Request $request): JsonResponse
+    {
+        // Берем ID организации из контекста авторизованного пользователя
+        $organizationId = Auth::user()->current_organization_id;
+
+        if (!$organizationId) {
+            return AdminResponse::error('Organization context not found for the user.');
+        }
+
+        try {
+            $stats = $this->advanceService->getStatistics((int)$organizationId);
+            return AdminResponse::success($stats);
+        } catch (\Exception $e) {
+            return AdminResponse::error(
+                'Failed to get statistics: ' . $e->getMessage(),
+                500
+            );
+        }
+    }
+
+    /**
      * Получить список транзакций с фильтрацией.
      *
      * @param Request $request

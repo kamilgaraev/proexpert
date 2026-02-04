@@ -15,6 +15,10 @@ Route::prefix('advance-transactions')->name('advance-transactions.')->group(func
     // Получение доступных проектов для транзакций
     Route::get('/available-projects', [AdvanceAccountTransactionController::class, 'getAvailableProjects'])
         ->name('available-projects');
+
+    // Статистика по транзакциям
+    Route::get('/stats', [AdvanceAccountTransactionController::class, 'stats'])
+        ->name('stats');
     
     // CRUD маршруты для транзакций
     Route::get('/', [AdvanceAccountTransactionController::class, 'index'])

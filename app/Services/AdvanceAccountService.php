@@ -524,4 +524,67 @@ class AdvanceAccountService
             throw $e; 
         }
     }
+
+    /**
+     * Получить статистику по транзакциям организации.
+     *
+     * @param int $organizationId
+     * @return array
+     */
+    public function getStatistics(int $organizationId): array
+    {
+        $startOfMonth = Carbon::now()->startOfMonth();
+        $endOfMonth = Carbon::now()->endOfMonth();
+
+        // Общая сумма выданных средств (все время)
+        $totalIssued = AdvanceAccountTransaction::where('organization_id', $organizationId)
+            ->where('type', AdvanceAccountTransaction::TYPE_ISSUE)
+            ->sum('amount');
+
+        // Общая сумма расходов (все время)
+        $totalExpenses = AdvanceAccountTransaction::where('organization_id', $organizationId)
+            ->where('type', AdvanceAccountTransaction::TYPE_EXPENSE)
+            ->sum('amount');
+            
+        // Общая сумма возвратов (все время)
+        $totalReturned = AdvanceAccountTransaction::where('organization_id', $organizationId)
+            ->where('type', AdvanceAccountTransaction::TYPE_RETURN)
+            ->sum('amount');
+
+        // Текущий общий баланс на руках у сотрудников
+        // (должен совпадать с суммой current_balance всех пользователей организации)
+        $currentBalance = $totalIssued - $totalExpenses - $totalReturned;
+
+        // Статистика за текущий месяц
+        $monthlyIssued = AdvanceAccountTransaction::where('organization_id', $organizationId)
+            ->where('type', AdvanceAccountTransaction::TYPE_ISSUE)
+            ->whereBetween('created_at', [$startOfMonth, $endOfMonth])
+            ->sum('amount');
+
+        $monthlyExpenses = AdvanceAccountTransaction::where('organization_id', $organizationId)
+            ->where('type', AdvanceAccountTransaction::TYPE_EXPENSE)
+            ->whereBetween('created_at', [$startOfMonth, $endOfMonth])
+            ->sum('amount');
+
+        // Количество транзакций требующих внимания (ожидают утверждения)
+        $pendingApprovalCount = AdvanceAccountTransaction::where('organization_id', $organizationId)
+            ->where('reporting_status', AdvanceAccountTransaction::STATUS_REPORTED)
+            ->count();
+            
+        // Количество транзакций ожидающих отчета
+        $pendingReportCount = AdvanceAccountTransaction::where('organization_id', $organizationId)
+            ->where('reporting_status', AdvanceAccountTransaction::STATUS_PENDING)
+            ->count();
+
+        return [
+            'total_issued' => (float)$totalIssued,
+            'total_expenses' => (float)$totalExpenses,
+            'total_returned' => (float)$totalReturned,
+            'current_balance' => (float)$currentBalance,
+            'monthly_issued' => (float)$monthlyIssued,
+            'monthly_expenses' => (float)$monthlyExpenses,
+            'pending_approval_count' => $pendingApprovalCount,
+            'pending_report_count' => $pendingReportCount,
+        ];
+    }
 } 
