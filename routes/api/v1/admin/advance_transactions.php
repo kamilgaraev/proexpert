@@ -22,21 +22,21 @@ Route::prefix('advance-transactions')->name('advance-transactions.')->group(func
     Route::post('/', [AdvanceAccountTransactionController::class, 'store'])
         ->name('store');
     Route::get('/{transaction}', [AdvanceAccountTransactionController::class, 'show'])
-        ->name('show');
+        ->name('show')->whereNumber('transaction');
     Route::put('/{transaction}', [AdvanceAccountTransactionController::class, 'update'])
-        ->name('update');
+        ->name('update')->whereNumber('transaction');
     Route::delete('/{transaction}', [AdvanceAccountTransactionController::class, 'destroy'])
-        ->name('destroy');
+        ->name('destroy')->whereNumber('transaction');
     
     // Дополнительные действия с транзакциями
     Route::post('/{transaction}/report', [AdvanceAccountTransactionController::class, 'report'])
-        ->name('report');
+        ->name('report')->whereNumber('transaction');
     Route::post('/{transaction}/approve', [AdvanceAccountTransactionController::class, 'approve'])
-        ->name('approve');
+        ->name('approve')->whereNumber('transaction');
     Route::post('/{transaction}/attachments', [AdvanceAccountTransactionController::class, 'attachFiles'])
-        ->name('attach-files');
+        ->name('attach-files')->whereNumber('transaction');
     Route::delete('/{transaction}/attachments/{fileId}', [AdvanceAccountTransactionController::class, 'detachFile'])
-        ->name('detach-file');
+        ->name('detach-file')->whereNumber('transaction');
 });
 
 // Маршруты для работы с балансом пользователей
