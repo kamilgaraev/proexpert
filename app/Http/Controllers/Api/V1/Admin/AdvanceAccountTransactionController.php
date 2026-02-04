@@ -239,6 +239,11 @@ class AdvanceAccountTransactionController extends Controller
             return AdminResponse::error('Transaction not found or access denied', 404);
         }
 
+        // Можно удалять только транзакции со статусом "pending" (в ожидании отчета)
+        if ($transaction->reporting_status !== AdvanceAccountTransaction::STATUS_PENDING) {
+            return AdminResponse::error(trans_message('advance_account.cannot_delete_reported'), 400);
+        }
+
         try {
             $this->advanceService->deleteTransaction($transaction);
             
@@ -263,6 +268,11 @@ class AdvanceAccountTransactionController extends Controller
         // Проверяем, что транзакция принадлежит организации пользователя
         if ($transaction->organization_id !== Auth::user()->current_organization_id) {
             return AdminResponse::error('Transaction not found or access denied', 404);
+        }
+
+        // Проверяем статус транзакции
+        if ($transaction->reporting_status !== AdvanceAccountTransaction::STATUS_PENDING) {
+            return AdminResponse::error(trans_message('advance_account.must_be_pending_to_report'), 400);
         }
 
         // Валидация запроса происходит в TransactionReportRequest
@@ -296,6 +306,11 @@ class AdvanceAccountTransactionController extends Controller
             return AdminResponse::error('Transaction not found or access denied', 404);
         }
 
+        // Проверяем статус транзакции
+        if ($transaction->reporting_status !== AdvanceAccountTransaction::STATUS_REPORTED) {
+            return AdminResponse::error(trans_message('advance_account.must_be_reported_to_approve'), 400);
+        }
+
         // Валидация запроса происходит в TransactionApprovalRequest
 
         try {
@@ -325,6 +340,11 @@ class AdvanceAccountTransactionController extends Controller
         // Проверяем, что транзакция принадлежит организации пользователя
         if ($transaction->organization_id !== Auth::user()->current_organization_id) {
             return AdminResponse::error('Transaction not found or access denied', 404);
+        }
+
+        // Если транзакция уже утверждена, запрещаем добавление файлов
+        if ($transaction->reporting_status === AdvanceAccountTransaction::STATUS_APPROVED) {
+            return AdminResponse::error(trans_message('advance_account.cannot_add_files_approved'), 400);
         }
 
         // Валидация запроса
@@ -360,6 +380,11 @@ class AdvanceAccountTransactionController extends Controller
         // Проверяем, что транзакция принадлежит организации пользователя
         if ($transaction->organization_id !== Auth::user()->current_organization_id) {
             return AdminResponse::error('Transaction not found or access denied', 404);
+        }
+
+        // Если транзакция уже утверждена, запрещаем удаление файлов
+        if ($transaction->reporting_status === AdvanceAccountTransaction::STATUS_APPROVED) {
+            return AdminResponse::error(trans_message('advance_account.cannot_delete_files_approved'), 400);
         }
 
         try {
