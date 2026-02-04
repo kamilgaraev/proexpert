@@ -32,7 +32,7 @@ class CostCategoryController extends Controller
         try {
             $perPage = $request->query('per_page', 15);
             $costCategories = $this->costCategoryService->getCostCategoriesForCurrentOrg($request, (int)$perPage);
-            return CostCategoryResource::collection($costCategories);
+            return AdminResponse::success(CostCategoryResource::collection($costCategories));
         } catch (BusinessLogicException $e) {
             Log::error('CostCategoryController@index BusinessLogicException', [
                 'message' => $e->getMessage(),
