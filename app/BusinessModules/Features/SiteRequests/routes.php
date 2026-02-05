@@ -70,6 +70,7 @@ Route::prefix('api/v1/admin/site-requests')
         Route::get('/', [SiteRequestController::class, 'index'])->name('index');
         Route::post('/', [SiteRequestController::class, 'store'])->name('store');
         Route::get('/{id}', [SiteRequestController::class, 'show'])->name('show');
+        Route::get('/groups/{id}', [SiteRequestController::class, 'showGroup'])->name('show_group'); // Новый роут для групп
         Route::put('/{id}', [SiteRequestController::class, 'update'])->name('update');
         Route::delete('/{id}', [SiteRequestController::class, 'destroy'])->name('destroy');
 
@@ -79,6 +80,7 @@ Route::prefix('api/v1/admin/site-requests')
         Route::post('/{id}/status', [SiteRequestController::class, 'changeStatus'])->name('change_status');
         Route::post('/{id}/assign', [SiteRequestController::class, 'assign'])->name('assign');
         Route::post('/{id}/submit', [SiteRequestController::class, 'submit'])->name('submit');
+        Route::post('/groups/{id}/submit', [SiteRequestController::class, 'submitGroup'])->name('submit_group'); // Новый роут для отправки групп
     });
 
 // ============================================
