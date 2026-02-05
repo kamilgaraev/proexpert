@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Features\SiteRequests\Services;
 
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
+use App\BusinessModules\Features\SiteRequests\Models\SiteRequestGroup;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequestHistory;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
@@ -14,6 +15,7 @@ use App\BusinessModules\Features\SiteRequests\Events\SiteRequestAssigned;
 use App\BusinessModules\Features\SiteRequests\SiteRequestsModule;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
 use Carbon\Carbon;
@@ -38,8 +40,19 @@ class SiteRequestService
     public function find(int $id, int $organizationId): ?SiteRequest
     {
         return SiteRequest::forOrganization($organizationId)
-            ->with(['project', 'user', 'assignedUser', 'files', 'calendarEvent'])
+            ->with(['project', 'user', 'assignedUser', 'files', 'calendarEvent', 'group'])
             ->find($id);
+    }
+
+    /**
+     * Получить группу заявок по ID
+     */
+    public function findGroup(int $id, int $organizationId): ?SiteRequestGroup
+    {
+        return SiteRequestGroup::where('id', $id)
+            ->where('organization_id', $organizationId)
+            ->with(['requests.project', 'requests.user'])
+            ->first();
     }
 
     /**
@@ -51,7 +64,7 @@ class SiteRequestService
         array $filters = []
     ): LengthAwarePaginator {
         $query = SiteRequest::forOrganization($organizationId)
-            ->with(['project', 'user', 'assignedUser']);
+            ->with(['project', 'user', 'assignedUser', 'group']);
 
         // Применяем фильтры
         $this->applyFilters($query, $filters);
@@ -65,19 +78,20 @@ class SiteRequestService
     }
 
     /**
-     * Создать заявку
+     * Создать одиночную заявку
      */
-    public function create(int $organizationId, int $userId, array $data): SiteRequest
+    public function create(int $organizationId, int $userId, array $data, ?int $groupId = null): SiteRequest
     {
         // Проверяем лимиты
         $this->checkLimits($organizationId);
 
-        $request = DB::transaction(function () use ($organizationId, $userId, $data) {
+        $request = DB::transaction(function () use ($organizationId, $userId, $data, $groupId) {
             // Создаем заявку
             $request = SiteRequest::create([
                 'organization_id' => $organizationId,
                 'user_id' => $userId,
                 'status' => SiteRequestStatusEnum::DRAFT->value,
+                'site_request_group_id' => $groupId,
                 ...$data,
             ]);
 
@@ -103,9 +117,45 @@ class SiteRequestService
             'organization_id' => $organizationId,
             'user_id' => $userId,
             'type' => $request->request_type->value,
+            'group_id' => $groupId,
         ]);
 
         return $request->fresh(['project', 'user']);
+    }
+
+    /**
+     * Создать пакет заявок (группу)
+     */
+    public function createBatch(int $organizationId, int $userId, array $data, array $items): SiteRequestGroup
+    {
+        return DB::transaction(function () use ($organizationId, $userId, $data, $items) {
+            // 1. Создаем группу
+            $group = SiteRequestGroup::create([
+                'organization_id' => $organizationId,
+                'project_id' => $data['project_id'],
+                'user_id' => $userId,
+                'title' => $data['title'] ?? 'Новая заявка',
+                'description' => $data['description'] ?? null,
+                'status' => SiteRequestStatusEnum::DRAFT->value,
+            ]);
+
+            // 2. Создаем заявки внутри группы
+            foreach ($items as $itemData) {
+                // Подготовка данных для конкретной заявки
+                // Важно: некоторые поля берутся из общих данных ($data), если они не переопределены в $itemData
+                $requestData = array_merge($data, $itemData);
+
+                // Если у элемента есть специфичное примечание, добавляем его
+                if (!empty($itemData['note'])) {
+                    $requestData['notes'] = ($data['notes'] ?? '') . "\n" . $itemData['note'];
+                }
+
+                // Создаем заявку, привязывая к группе
+                $this->create($organizationId, $userId, $requestData, $group->id);
+            }
+
+            return $group->fresh(['requests']);
+        });
     }
 
     /**
@@ -224,6 +274,31 @@ class SiteRequestService
         ]);
 
         return $request->fresh();
+    }
+
+    /**
+     * Отправить группу заявок на рассмотрение
+     */
+    public function submitGroup(SiteRequestGroup $group, int $userId): SiteRequestGroup
+    {
+        return DB::transaction(function () use ($group, $userId) {
+            // Обновляем статус группы
+            $group->update(['status' => SiteRequestStatusEnum::PENDING->value]);
+
+            // Обновляем статус всех черновиков в группе
+            foreach ($group->requests as $request) {
+                if ($request->status === SiteRequestStatusEnum::DRAFT) {
+                    try {
+                        $this->changeStatus($request, $userId, SiteRequestStatusEnum::PENDING->value);
+                    } catch (\Exception $e) {
+                        // Логируем, но не прерываем весь процесс, если одна заявка не прошла
+                        \Log::warning("Could not submit request {$request->id} in group {$group->id}: " . $e->getMessage());
+                    }
+                }
+            }
+
+            return $group->fresh(['requests']);
+        });
     }
 
     /**
@@ -543,4 +618,3 @@ class SiteRequestService
         Cache::tags([self::CACHE_TAG, "org_{$organizationId}"])->flush();
     }
 }
-

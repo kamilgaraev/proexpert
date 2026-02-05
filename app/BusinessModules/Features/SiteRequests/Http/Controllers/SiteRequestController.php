@@ -10,9 +10,11 @@ use App\BusinessModules\Features\SiteRequests\Http\Requests\UpdateSiteRequestReq
 use App\BusinessModules\Features\SiteRequests\Http\Requests\ChangeStatusRequest;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestResource;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestCollection;
+use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestGroupResource;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Admin API контроллер для заявок
@@ -51,26 +53,16 @@ class SiteRequestController extends Controller
 
             $requests = $this->service->paginate($organizationId, $perPage, $filters);
 
-            return response()->json([
-                'success' => true,
-                'data' => new SiteRequestCollection($requests),
-                'meta' => [
-                    'current_page' => $requests->currentPage(),
-                    'per_page' => $requests->perPage(),
-                    'total' => $requests->total(),
-                    'last_page' => $requests->lastPage(),
-                ],
-            ]);
+            return AdminResponse::success(
+                new SiteRequestCollection($requests)
+            );
         } catch (\Exception $e) {
-            \Log::error('site_requests.index.error', [
+            Log::error('site_requests.index.error', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить заявки',
-            ], 500);
+            return AdminResponse::error(trans('site_requests.list_error'), 500);
         }
     }
 
@@ -85,35 +77,53 @@ class SiteRequestController extends Controller
             $siteRequest = $this->service->find($id, $organizationId);
 
             if (!$siteRequest) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Заявка не найдена',
-                ], 404);
+                return AdminResponse::error(trans('site_requests.not_found'), 404);
             }
 
             // Загружаем историю
             $siteRequest->load('history.user');
 
-            return response()->json([
-                'success' => true,
-                'data' => new SiteRequestResource($siteRequest),
-                'available_transitions' => $this->workflowService->getAvailableTransitions($siteRequest),
-            ]);
+            $resource = (new SiteRequestResource($siteRequest))->resolve($request);
+            $resource['available_transitions'] = $this->workflowService->getAvailableTransitions($siteRequest);
+
+            return AdminResponse::success($resource);
         } catch (\Exception $e) {
-            \Log::error('site_requests.show.error', [
+            Log::error('site_requests.show.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить заявку',
-            ], 500);
+            return AdminResponse::error(trans('site_requests.show_error'), 500);
         }
     }
 
     /**
-     * Создать заявку
+     * Показать группу заявок
+     */
+    public function showGroup(Request $request, int $id): JsonResponse
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+
+            $group = $this->service->findGroup($id, $organizationId);
+
+            if (!$group) {
+                return AdminResponse::error(trans('site_requests.group_not_found'), 404);
+            }
+
+            return AdminResponse::success(new SiteRequestGroupResource($group));
+        } catch (\Exception $e) {
+            Log::error('site_requests.show_group.error', [
+                'id' => $id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans('site_requests.group_show_error'), 500);
+        }
+    }
+
+    /**
+     * Создать заявку (или пакет заявок)
      */
     public function store(StoreSiteRequestRequest $request): JsonResponse
     {
@@ -122,54 +132,34 @@ class SiteRequestController extends Controller
             $userId = auth()->id();
             $data = $request->validated();
 
-            // Обработка массового создания материалов (поддержка фронтенда)
+            // Обработка массового создания (создание группы)
             if (isset($data['materials']) && is_array($data['materials'])) {
-                $createdRequests = [];
                 
-                DB::transaction(function () use ($data, $organizationId, $userId, &$createdRequests) {
-                    foreach ($data['materials'] as $material) {
-                        $itemData = $data;
-                        unset($itemData['materials']); // Убираем массив, чтобы не мешал
+                $items = [];
+                foreach ($data['materials'] as $material) {
+                    // Маппинг данных
+                    $itemData = [
+                        'material_name' => $material['name'] ?? null,
+                        'material_quantity' => $material['quantity'] ?? null,
+                        'material_unit' => $material['unit'] ?? null,
+                        'material_id' => $material['material_id'] ?? null,
+                        'note' => $material['note'] ?? null,
+                    ];
+                    
+                    // Формируем заголовок для каждого элемента
+                    $itemData['title'] = ($data['title'] ?? 'Заявка') . 
+                                        ($itemData['material_name'] ? ' - ' . $itemData['material_name'] : '');
+                    
+                    $items[] = $itemData;
+                }
 
-                        // Маппинг полей материала из массива в корневые поля
-                        $itemData['material_name'] = $material['name'] ?? null;
-                        $itemData['material_quantity'] = $material['quantity'] ?? null;
-                        $itemData['material_unit'] = $material['unit'] ?? null;
-                        $itemData['material_id'] = $material['material_id'] ?? null;
-                        
-                        // Добавляем примечание материала к общим примечаниям
-                        if (!empty($material['note'])) {
-                            $itemData['notes'] = ($itemData['notes'] ? $itemData['notes'] . "\n" : '') . "Примечание к позиции: " . $material['note'];
-                        }
-
-                        // Модифицируем заголовок, чтобы различать заявки в списке
-                        // Например: "Заявка №49 - Доска"
-                        if (!empty($itemData['material_name'])) {
-                            $itemData['title'] = $itemData['title'] . ' - ' . $itemData['material_name'];
-                        }
-
-                        $createdRequests[] = $this->service->create(
-                            $organizationId,
-                            $userId,
-                            $itemData
-                        );
-                    }
-                });
-
-                // Возвращаем результат
-                // Если создано несколько, возвращаем последнюю как основную для редиректа,
-                // но сообщаем о количестве
-                $lastRequest = end($createdRequests);
+                $group = $this->service->createBatch($organizationId, $userId, $data, $items);
                 
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Создано заявок: ' . count($createdRequests),
-                    'data' => new SiteRequestResource($lastRequest),
-                    'meta' => [
-                        'batch_size' => count($createdRequests),
-                        'ids' => array_map(fn($r) => $r->id, $createdRequests)
-                    ]
-                ], 201);
+                return AdminResponse::success(
+                    new SiteRequestGroupResource($group),
+                    trans('site_requests.batch_created_success', ['count' => $group->requests->count()]),
+                    201
+                );
             }
 
             // Стандартное создание одной заявки
@@ -179,26 +169,21 @@ class SiteRequestController extends Controller
                 $data
             );
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Заявка успешно создана',
-                'data' => new SiteRequestResource($siteRequest),
-            ], 201);
+            return AdminResponse::success(
+                new SiteRequestResource($siteRequest),
+                trans('site_requests.created_success'),
+                201
+            );
+
         } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return AdminResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
-            \Log::error('site_requests.store.error', [
+            Log::error('site_requests.store.error', [
                 'data' => $request->validated(),
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось создать заявку',
-            ], 500);
+            return AdminResponse::error(trans('site_requests.store_error'), 500);
         }
     }
 
@@ -214,34 +199,24 @@ class SiteRequestController extends Controller
             $siteRequest = $this->service->find($id, $organizationId);
 
             if (!$siteRequest) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Заявка не найдена',
-                ], 404);
+                return AdminResponse::error(trans('site_requests.not_found'), 404);
             }
 
             $updated = $this->service->update($siteRequest, $userId, $request->validated());
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Заявка успешно обновлена',
-                'data' => new SiteRequestResource($updated),
-            ]);
+            return AdminResponse::success(
+                new SiteRequestResource($updated),
+                trans('site_requests.updated_success')
+            );
         } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return AdminResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
-            \Log::error('site_requests.update.error', [
+            Log::error('site_requests.update.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось обновить заявку',
-            ], 500);
+            return AdminResponse::error(trans('site_requests.update_error'), 500);
         }
     }
 
@@ -257,28 +232,22 @@ class SiteRequestController extends Controller
             $siteRequest = $this->service->find($id, $organizationId);
 
             if (!$siteRequest) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Заявка не найдена',
-                ], 404);
+                return AdminResponse::error(trans('site_requests.not_found'), 404);
             }
 
             $this->service->delete($siteRequest, $userId);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Заявка успешно удалена',
-            ]);
+            return AdminResponse::success(
+                null,
+                trans('site_requests.deleted_success')
+            );
         } catch (\Exception $e) {
-            \Log::error('site_requests.destroy.error', [
+            Log::error('site_requests.destroy.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось удалить заявку',
-            ], 500);
+            return AdminResponse::error(trans('site_requests.destroy_error'), 500);
         }
     }
 
@@ -294,10 +263,7 @@ class SiteRequestController extends Controller
             $siteRequest = $this->service->find($id, $organizationId);
 
             if (!$siteRequest) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Заявка не найдена',
-                ], 404);
+                return AdminResponse::error(trans('site_requests.not_found'), 404);
             }
 
             $updated = $this->service->changeStatus(
@@ -307,26 +273,19 @@ class SiteRequestController extends Controller
                 $request->input('notes')
             );
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Статус заявки изменен',
-                'data' => new SiteRequestResource($updated),
-            ]);
+            return AdminResponse::success(
+                new SiteRequestResource($updated),
+                trans('site_requests.change_status_success')
+            );
         } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return AdminResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
-            \Log::error('site_requests.change_status.error', [
+            Log::error('site_requests.change_status.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось изменить статус',
-            ], 500);
+            return AdminResponse::error(trans('site_requests.change_status_error'), 500);
         }
     }
 
@@ -346,29 +305,22 @@ class SiteRequestController extends Controller
             $siteRequest = $this->service->find($id, $organizationId);
 
             if (!$siteRequest) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Заявка не найдена',
-                ], 404);
+                return AdminResponse::error(trans('site_requests.not_found'), 404);
             }
 
             $updated = $this->service->assign($siteRequest, $userId, $request->input('user_id'));
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Исполнитель назначен',
-                'data' => new SiteRequestResource($updated),
-            ]);
+            return AdminResponse::success(
+                new SiteRequestResource($updated),
+                trans('site_requests.assigned_success')
+            );
         } catch (\Exception $e) {
-            \Log::error('site_requests.assign.error', [
+            Log::error('site_requests.assign.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось назначить исполнителя',
-            ], 500);
+            return AdminResponse::error(trans('site_requests.assign_error'), 500);
         }
     }
 
@@ -384,35 +336,57 @@ class SiteRequestController extends Controller
             $siteRequest = $this->service->find($id, $organizationId);
 
             if (!$siteRequest) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Заявка не найдена',
-                ], 404);
+                return AdminResponse::error(trans('site_requests.not_found'), 404);
             }
 
             $updated = $this->service->submit($siteRequest, $userId);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Заявка отправлена на обработку',
-                'data' => new SiteRequestResource($updated),
-            ]);
+            return AdminResponse::success(
+                new SiteRequestResource($updated),
+                trans('site_requests.submitted_success')
+            );
         } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return AdminResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
-            \Log::error('site_requests.submit.error', [
+            Log::error('site_requests.submit.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось отправить заявку',
-            ], 500);
+            return AdminResponse::error(trans('site_requests.submit_error'), 500);
+        }
+    }
+
+    /**
+     * Отправить группу заявок (из черновика)
+     */
+    public function submitGroup(Request $request, int $groupId): JsonResponse
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            $userId = auth()->id();
+
+            $group = $this->service->findGroup($groupId, $organizationId);
+
+            if (!$group) {
+                return AdminResponse::error(trans('site_requests.group_not_found'), 404);
+            }
+
+            $updatedGroup = $this->service->submitGroup($group, $userId);
+
+            return AdminResponse::success(
+                new SiteRequestGroupResource($updatedGroup),
+                trans('site_requests.group_submitted_success')
+            );
+        } catch (\DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\Exception $e) {
+            Log::error('site_requests.submit_group.error', [
+                'id' => $groupId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans('site_requests.group_submit_error'), 500);
         }
     }
 }
-

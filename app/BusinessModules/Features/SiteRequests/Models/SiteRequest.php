@@ -73,6 +73,7 @@ class SiteRequest extends Model
         // Метаданные
         'metadata',
         'template_id',
+        'site_request_group_id',
         'payment_document_id',
     ];
 
@@ -139,6 +140,14 @@ class SiteRequest extends Model
     public function template(): BelongsTo
     {
         return $this->belongsTo(SiteRequestTemplate::class, 'template_id');
+    }
+
+    /**
+     * Группа заявок (папка)
+     */
+    public function group(): BelongsTo
+    {
+        return $this->belongsTo(SiteRequestGroup::class, 'site_request_group_id');
     }
 
     /**
