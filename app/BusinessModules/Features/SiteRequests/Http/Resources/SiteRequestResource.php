@@ -72,6 +72,7 @@ class SiteRequestResource extends JsonResource
             // Метаданные
             'metadata' => $this->metadata,
             'template_id' => $this->template_id,
+            'site_request_group_id' => $this->site_request_group_id,
 
             // Вычисляемые поля
             'is_overdue' => $this->is_overdue,
@@ -134,6 +135,14 @@ class SiteRequestResource extends JsonResource
                 'status_label' => $this->paymentDocument->status->label(),
                 'due_date' => $this->paymentDocument->due_date?->format('Y-m-d'),
                 'created_at' => $this->paymentDocument->created_at->toIso8601String(),
+            ] : null),
+
+            'group' => $this->whenLoaded('group', fn() => $this->group ? [
+                'id' => $this->group->id,
+                'title' => $this->group->title,
+                'status' => $this->group->status,
+                'status_label' => $this->group->status->label(),
+                'status_color' => $this->group->status->color(),
             ] : null),
 
             // Даты
