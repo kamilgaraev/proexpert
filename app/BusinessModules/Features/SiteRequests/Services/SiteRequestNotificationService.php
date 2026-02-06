@@ -4,6 +4,7 @@ namespace App\BusinessModules\Features\SiteRequests\Services;
 
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\BusinessModules\Features\SiteRequests\SiteRequestsModule;
+use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Models\User;
 use Illuminate\Support\Facades\Log;
 
@@ -212,17 +213,24 @@ class SiteRequestNotificationService
     }
 
     /**
-     * Получить менеджеров организации
+     * Получить менеджеров организации (владельцы и админы по новой системе авторизации).
      */
     private function getOrganizationManagers(int $organizationId): \Illuminate\Support\Collection
     {
+        $context = AuthorizationContext::getOrganizationContext($organizationId);
+        if (!$context) {
+            return collect();
+        }
+
         return User::whereHas('organizations', function ($query) use ($organizationId) {
             $query->where('organizations.id', $organizationId);
         })
-        ->whereHas('roles', function ($query) {
-            $query->whereIn('name', ['admin', 'manager']);
-        })
-        ->get();
+            ->whereHas('roleAssignments', function ($query) use ($context) {
+                $query->active()
+                    ->where('context_id', $context->id)
+                    ->whereIn('role_slug', ['organization_owner', 'organization_admin']);
+            })
+            ->get();
     }
 }
 
