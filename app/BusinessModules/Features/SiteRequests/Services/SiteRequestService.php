@@ -159,6 +159,96 @@ class SiteRequestService
     }
 
     /**
+     * Обновить группу заявок
+     */
+    public function updateGroup(SiteRequestGroup $group, int $userId, array $data): SiteRequestGroup
+    {
+        return DB::transaction(function () use ($group, $userId, $data) {
+            // 1. Обновляем основные поля группы
+            $groupData = array_filter([
+                'title' => $data['title'] ?? null,
+                'description' => $data['description'] ?? null,
+            ]);
+            
+            if (!empty($groupData)) {
+                $group->update($groupData);
+            }
+
+            // 2. Обработка материалов (если переданы)
+            if (isset($data['materials']) && is_array($data['materials'])) {
+                // Получаем текущие ID заявок в группе
+                $existingIds = $group->requests->pluck('id')->toArray();
+                $processedIds = [];
+
+                foreach ($data['materials'] as $itemData) {
+                    // Если передан ID - обновляем существующую заявку
+                    if (!empty($itemData['id']) && in_array($itemData['id'], $existingIds)) {
+                        $request = $group->requests->find($itemData['id']);
+                        
+                        // Формируем данные для обновления
+                        $updateData = [
+                            'material_name' => $itemData['name'] ?? $request->material_name,
+                            'material_quantity' => $itemData['quantity'] ?? $request->material_quantity,
+                            'material_unit' => $itemData['unit'] ?? $request->material_unit,
+                            'material_id' => $itemData['material_id'] ?? $request->material_id,
+                            'notes' => $itemData['note'] ?? $request->notes,
+                        ];
+
+                        // Обновляем общие поля доставки, если они переданы
+                        $deliveryFields = ['delivery_address', 'delivery_time_from', 'delivery_time_to', 'contact_person_name', 'contact_person_phone'];
+                        foreach ($deliveryFields as $field) {
+                            if (array_key_exists($field, $data)) {
+                                $updateData[$field] = $data[$field];
+                            }
+                        }
+
+                        $this->update($request, $userId, $updateData);
+                        $processedIds[] = $itemData['id'];
+                    } 
+                    // Если ID нет - создаем новую заявку в группе
+                    else {
+                        // Берем данные из первого запроса группы как основу для общих полей
+                        $baseRequest = $group->requests->first();
+                        
+                        $createData = [
+                            'project_id' => $group->project_id,
+                            'request_type' => SiteRequestTypeEnum::MATERIAL_REQUEST->value, // Предполагаем что в группе только материалы
+                            'priority' => $baseRequest ? $baseRequest->priority->value : SiteRequestStatusEnum::DRAFT->value,
+                            'required_date' => $baseRequest ? $baseRequest->required_date : null,
+                            'title' => ($group->title ?? 'Заявка') . ($itemData['name'] ? ' - ' . $itemData['name'] : ''),
+                            'material_name' => $itemData['name'] ?? null,
+                            'material_quantity' => $itemData['quantity'] ?? null,
+                            'material_unit' => $itemData['unit'] ?? null,
+                            'material_id' => $itemData['material_id'] ?? null,
+                            'notes' => $itemData['note'] ?? null,
+                        ];
+
+                        // Копируем общие поля из данных или из базового запроса
+                        $commonFields = ['delivery_address', 'delivery_time_from', 'delivery_time_to', 'contact_person_name', 'contact_person_phone'];
+                        foreach ($commonFields as $field) {
+                            $createData[$field] = $data[$field] ?? ($baseRequest ? $baseRequest->$field : null);
+                        }
+
+                        $newRequest = $this->create($group->organization_id, $userId, $createData, $group->id);
+                        $processedIds[] = $newRequest->id;
+                    }
+                }
+
+                // 3. Удаляем заявки, которых нет в новом списке
+                $toDeleteIds = array_diff($existingIds, $processedIds);
+                foreach ($toDeleteIds as $deleteId) {
+                    $requestToDelete = $group->requests->find($deleteId);
+                    if ($requestToDelete) {
+                        $this->delete($requestToDelete, $userId);
+                    }
+                }
+            }
+
+            return $group->fresh(['requests']);
+        });
+    }
+
+    /**
      * Обновить заявку
      */
     public function update(SiteRequest $request, int $userId, array $data): SiteRequest
