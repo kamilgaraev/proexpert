@@ -250,25 +250,33 @@ class PurchaseRequestService
 
     /**
      * Генерировать номер заявки
-     * Использует атомарный инкремент через таблицу счетчиков для предотвращения race condition
-     * Работает корректно даже с Laravel Octane и connection pooling
+     * Использует атомарный инкремент через таблицу счетчиков.
+     * При первом использовании периода (org/year/month) инициализирует счётчик из max существующих номеров.
      */
     private function generateRequestNumber(int $organizationId): string
     {
         $year = (int) date('Y');
         $month = (int) date('m');
-        
-        // Используем raw SQL для атомарного increment с INSERT ON CONFLICT
-        // Метод вызывается внутри транзакции, поэтому не создаем новую
+        $prefix = 'ЗЗ-' . $year . str_pad((string) $month, 2, '0', STR_PAD_LEFT) . '-';
+
+        // Атомарно: если запись счётчика есть — инкремент; если нет — вставляем max(существующие номера)+1
         $result = DB::selectOne("
             INSERT INTO purchase_request_number_counters (organization_id, year, month, last_number, created_at, updated_at)
-            VALUES (?, ?, ?, 1, NOW(), NOW())
-            ON CONFLICT (organization_id, year, month) 
-            DO UPDATE SET 
+            SELECT ?, ?, ?,
+                COALESCE(
+                    (SELECT MAX(CAST(SUBSTRING(request_number FROM '([0-9]+)$') AS INTEGER))
+                     FROM purchase_requests
+                     WHERE organization_id = ?
+                       AND request_number LIKE ?),
+                    0
+                ) + 1,
+                NOW(), NOW()
+            ON CONFLICT (organization_id, year, month)
+            DO UPDATE SET
                 last_number = purchase_request_number_counters.last_number + 1,
                 updated_at = NOW()
             RETURNING last_number
-        ", [$organizationId, $year, $month]);
+        ", [$organizationId, $year, $month, $organizationId, $prefix . '%']);
         
         $newNumber = $result->last_number;
         $requestNumber = sprintf('ЗЗ-%d%02d-%04d', $year, $month, $newNumber);
