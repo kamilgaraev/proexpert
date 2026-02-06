@@ -6,8 +6,9 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Pagination\LengthAwarePaginator;
 
 /**
@@ -99,7 +100,7 @@ class PurchaseRequestService
             // Отправляем событие
             event(new \App\BusinessModules\Features\Procurement\Events\PurchaseRequestCreated($purchaseRequest));
 
-            \Log::info('procurement.purchase_request.created', [
+            Log::info('procurement.purchase_request.created', [
                 'purchase_request_id' => $purchaseRequest->id,
                 'site_request_id' => $siteRequest->id,
                 'organization_id' => $siteRequest->organization_id,
@@ -259,7 +260,8 @@ class PurchaseRequestService
         $month = (int) date('m');
         $prefix = 'ЗЗ-' . $year . str_pad((string) $month, 2, '0', STR_PAD_LEFT) . '-';
 
-        // Атомарно: если запись счётчика есть — инкремент; если нет — вставляем max(существующие номера)+1
+        // Атомарно: если запись счётчика есть — инкремент; если нет — вставляем max(существующие номера)+1.
+        // GREATEST в DO UPDATE страхует от дубликатов, если сид не выполнялся или счётчик был 0.
         $result = DB::selectOne("
             INSERT INTO purchase_request_number_counters (organization_id, year, month, last_number, created_at, updated_at)
             SELECT ?, ?, ?,
@@ -273,7 +275,16 @@ class PurchaseRequestService
                 NOW(), NOW()
             ON CONFLICT (organization_id, year, month)
             DO UPDATE SET
-                last_number = purchase_request_number_counters.last_number + 1,
+                last_number = GREATEST(
+                    purchase_request_number_counters.last_number + 1,
+                    COALESCE(
+                        (SELECT MAX(CAST(SUBSTRING(request_number FROM '([0-9]+)$') AS INTEGER))
+                         FROM purchase_requests
+                         WHERE organization_id = EXCLUDED.organization_id
+                           AND request_number LIKE 'ЗЗ-' || EXCLUDED.year || LPAD(EXCLUDED.month::text, 2, '0') || '-%'),
+                        0
+                    ) + 1
+                ),
                 updated_at = NOW()
             RETURNING last_number
         ", [$organizationId, $year, $month, $organizationId, $prefix . '%']);
@@ -281,7 +292,7 @@ class PurchaseRequestService
         $newNumber = $result->last_number;
         $requestNumber = sprintf('ЗЗ-%d%02d-%04d', $year, $month, $newNumber);
         
-        \Log::debug('procurement.purchase_request.number_generated', [
+        Log::debug('procurement.purchase_request.number_generated', [
             'organization_id' => $organizationId,
             'year' => $year,
             'month' => $month,
