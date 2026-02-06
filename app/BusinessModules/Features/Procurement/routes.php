@@ -6,6 +6,7 @@ use App\BusinessModules\Features\Procurement\Http\Controllers\PurchaseOrderContr
 use App\BusinessModules\Features\Procurement\Http\Controllers\SupplierProposalController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\PurchaseContractController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementDashboardController;
+use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementSettingsController;
 
 /*
 |--------------------------------------------------------------------------
@@ -74,6 +75,15 @@ Route::prefix('api/v1/admin/procurement')
         Route::prefix('dashboard')->name('dashboard.')->group(function () {
             Route::get('/', [ProcurementDashboardController::class, 'index'])->name('index');
             Route::get('/statistics', [ProcurementDashboardController::class, 'statistics'])->name('statistics');
+        });
+        
+        // ============================================
+        // Настройки модуля
+        // ============================================
+        Route::prefix('settings')->name('settings.')->group(function () {
+            Route::get('/', [ProcurementSettingsController::class, 'show'])->name('show');
+            Route::put('/', [ProcurementSettingsController::class, 'update'])->name('update');
+            Route::post('/reset', [ProcurementSettingsController::class, 'reset'])->name('reset');
         });
     });
 

@@ -335,7 +335,7 @@ class ProcurementModule implements ModuleInterface, BillableInterface, Configura
     public function applySettings(int $organizationId, array $settings): void
     {
         if (!$this->validateSettings($settings)) {
-            throw new \InvalidArgumentException('Некорректные настройки модуля закупок');
+            throw new \InvalidArgumentException(trans_message('procurement.settings_invalid'));
         }
 
         $activation = \App\Models\OrganizationModuleActivation::where('organization_id', $organizationId)
