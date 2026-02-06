@@ -8,7 +8,7 @@ use App\Modules\Core\AccessController;
 
 /**
  * Слушатель для автоматического создания заявки на закупку
- * при одобрении заявки с объекта на материалы
+ * при одобрении заявки с объекта (материалы, техника, персонал)
  */
 class CreatePurchaseRequestFromSiteRequest
 {
@@ -24,8 +24,9 @@ class CreatePurchaseRequestFromSiteRequest
     {
         $siteRequest = $event->siteRequest;
 
-        // Проверяем, что это заявка на материалы
-        if ($siteRequest->request_type->value !== 'material_request') {
+        // Проверяем, что это заявка на материалы, технику или персонал
+        $allowedTypes = ['material_request', 'equipment_request', 'personnel_request'];
+        if (!in_array($siteRequest->request_type->value, $allowedTypes)) {
             return;
         }
 

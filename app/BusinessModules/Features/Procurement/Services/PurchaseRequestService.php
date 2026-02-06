@@ -64,8 +64,9 @@ class PurchaseRequestService
      */
     public function createFromSiteRequest(SiteRequest $siteRequest, ?int $assignedTo = null): PurchaseRequest
     {
-        if ($siteRequest->request_type->value !== 'material_request') {
-            throw new \DomainException('Заявка на закупку может быть создана только из заявки на материалы');
+        $allowedTypes = ['material_request', 'equipment_request', 'personnel_request'];
+        if (!in_array($siteRequest->request_type->value, $allowedTypes)) {
+            throw new \DomainException('Заявка на закупку может быть создана только из заявки на материалы, технику или персонал');
         }
 
         DB::beginTransaction();
@@ -73,13 +74,21 @@ class PurchaseRequestService
             // Генерируем номер заявки
             $requestNumber = $this->generateRequestNumber($siteRequest->organization_id);
 
+            // Формируем описание типа заявки
+            $requestTypeLabel = match($siteRequest->request_type->value) {
+                'material_request' => 'заявки на материалы',
+                'equipment_request' => 'заявки на технику',
+                'personnel_request' => 'заявки на персонал',
+                default => 'заявки с объекта',
+            };
+
             $purchaseRequest = PurchaseRequest::create([
                 'organization_id' => $siteRequest->organization_id,
                 'site_request_id' => $siteRequest->id,
                 'assigned_to' => $assignedTo,
                 'request_number' => $requestNumber,
                 'status' => PurchaseRequestStatusEnum::PENDING,
-                'notes' => "Создана из заявки с объекта: {$siteRequest->title}",
+                'notes' => "Создана из {$requestTypeLabel}: {$siteRequest->title}",
             ]);
 
             DB::commit();
