@@ -71,6 +71,7 @@ Route::prefix('api/v1/admin/site-requests')
         Route::post('/', [SiteRequestController::class, 'store'])->name('store');
         Route::get('/{id}', [SiteRequestController::class, 'show'])->name('show');
         Route::get('/groups/{id}', [SiteRequestController::class, 'showGroup'])->name('show_group'); // Новый роут для групп
+        Route::put('/groups/{id}', [SiteRequestController::class, 'updateGroup'])->name('update_group'); // Обновление группы
         Route::put('/{id}', [SiteRequestController::class, 'update'])->name('update');
         Route::delete('/{id}', [SiteRequestController::class, 'destroy'])->name('destroy');
 

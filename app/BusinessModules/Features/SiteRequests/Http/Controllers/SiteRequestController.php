@@ -7,6 +7,7 @@ use App\BusinessModules\Features\SiteRequests\Services\SiteRequestService;
 use App\BusinessModules\Features\SiteRequests\Services\SiteRequestWorkflowService;
 use App\BusinessModules\Features\SiteRequests\Http\Requests\StoreSiteRequestRequest;
 use App\BusinessModules\Features\SiteRequests\Http\Requests\UpdateSiteRequestRequest;
+use App\BusinessModules\Features\SiteRequests\Http\Requests\UpdateSiteRequestGroupRequest;
 use App\BusinessModules\Features\SiteRequests\Http\Requests\ChangeStatusRequest;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestResource;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestCollection;
@@ -119,6 +120,43 @@ class SiteRequestController extends Controller
             ]);
 
             return AdminResponse::error(trans('site_requests.group_show_error'), 500);
+        }
+    }
+
+    /**
+     * Обновить группу заявок (включая состав материалов)
+     */
+    public function updateGroup(UpdateSiteRequestGroupRequest $request, int $id): JsonResponse
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            $userId = auth()->id();
+
+            $group = $this->service->findGroup($id, $organizationId);
+
+            if (!$group) {
+                return AdminResponse::error(trans('site_requests.group_not_found'), 404);
+            }
+
+            if ($group->status !== \App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum::DRAFT) {
+                return AdminResponse::error(trans('site_requests.group_not_editable'), 422);
+            }
+
+            $updatedGroup = $this->service->updateGroup($group, $userId, $request->validated());
+
+            return AdminResponse::success(
+                new SiteRequestGroupResource($updatedGroup),
+                trans('site_requests.group_updated_success')
+            );
+        } catch (\DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\Exception $e) {
+            Log::error('site_requests.update_group.error', [
+                'id' => $id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans('site_requests.group_update_error'), 500);
         }
     }
 
