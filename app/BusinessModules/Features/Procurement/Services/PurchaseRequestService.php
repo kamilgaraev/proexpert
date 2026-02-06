@@ -71,7 +71,7 @@ class PurchaseRequestService
 
         DB::beginTransaction();
         try {
-            // Генерируем номер заявки
+            // Генерируем номер заявки (внутри транзакции для атомарности)
             $requestNumber = $this->generateRequestNumber($siteRequest->organization_id);
 
             // Формируем описание типа заявки
@@ -250,24 +250,55 @@ class PurchaseRequestService
 
     /**
      * Генерировать номер заявки
+     * Использует блокировку для предотвращения race condition
      */
     private function generateRequestNumber(int $organizationId): string
     {
         $year = date('Y');
         $month = date('m');
+        $maxAttempts = 100; // Максимальное количество попыток для избежания бесконечного цикла
+        $attempt = 0;
 
-        $lastRequest = PurchaseRequest::where('organization_id', $organizationId)
-            ->whereYear('created_at', $year)
-            ->whereMonth('created_at', $month)
-            ->orderBy('id', 'desc')
-            ->first();
+        // Используем advisory lock для предотвращения одновременной генерации одинаковых номеров
+        $lockKey = "procurement_request_number_{$organizationId}_{$year}_{$month}";
+        
+        DB::statement("SELECT pg_advisory_xact_lock(hashtext(?))", [$lockKey]);
 
-        $nextNumber = 1;
-        if ($lastRequest && preg_match('/(\d+)$/', $lastRequest->request_number, $matches)) {
-            $nextNumber = intval($matches[1]) + 1;
-        }
+        do {
+            // Блокируем строки для чтения с обновлением (внутри уже существующей транзакции)
+            $lastRequest = PurchaseRequest::where('organization_id', $organizationId)
+                ->whereYear('created_at', $year)
+                ->whereMonth('created_at', $month)
+                ->lockForUpdate()
+                ->orderBy('id', 'desc')
+                ->first();
 
-        return sprintf('ЗЗ-%s%s-%04d', $year, $month, $nextNumber);
+            $nextNumber = 1;
+            if ($lastRequest && preg_match('/(\d+)$/', $lastRequest->request_number, $matches)) {
+                $nextNumber = intval($matches[1]) + 1;
+            }
+
+            $requestNumber = sprintf('ЗЗ-%s%s-%04d', $year, $month, $nextNumber);
+
+            // Проверяем уникальность номера (дополнительная проверка)
+            $exists = PurchaseRequest::where('request_number', $requestNumber)->exists();
+
+            if (!$exists) {
+                return $requestNumber;
+            }
+
+            // Если номер существует, увеличиваем счетчик и пробуем снова
+            $attempt++;
+            if ($attempt >= $maxAttempts) {
+                throw new \RuntimeException('Не удалось сгенерировать уникальный номер заявки после ' . $maxAttempts . ' попыток');
+            }
+
+            // Небольшая задержка для избежания race condition
+            usleep(1000); // 1 миллисекунда
+
+        } while ($attempt < $maxAttempts);
+
+        throw new \RuntimeException('Не удалось сгенерировать уникальный номер заявки');
     }
 
     /**
