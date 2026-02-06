@@ -250,55 +250,38 @@ class PurchaseRequestService
 
     /**
      * Генерировать номер заявки
-     * Использует блокировку для предотвращения race condition
+     * Использует атомарный инкремент через таблицу счетчиков для предотвращения race condition
+     * Работает корректно даже с Laravel Octane и connection pooling
      */
     private function generateRequestNumber(int $organizationId): string
     {
-        $year = date('Y');
-        $month = date('m');
-        $maxAttempts = 100; // Максимальное количество попыток для избежания бесконечного цикла
-        $attempt = 0;
-
-        // Используем advisory lock для предотвращения одновременной генерации одинаковых номеров
-        $lockKey = "procurement_request_number_{$organizationId}_{$year}_{$month}";
+        $year = (int) date('Y');
+        $month = (int) date('m');
         
-        DB::statement("SELECT pg_advisory_xact_lock(hashtext(?))", [$lockKey]);
-
-        do {
-            // Блокируем строки для чтения с обновлением (внутри уже существующей транзакции)
-            $lastRequest = PurchaseRequest::where('organization_id', $organizationId)
-                ->whereYear('created_at', $year)
-                ->whereMonth('created_at', $month)
-                ->lockForUpdate()
-                ->orderBy('id', 'desc')
-                ->first();
-
-            $nextNumber = 1;
-            if ($lastRequest && preg_match('/(\d+)$/', $lastRequest->request_number, $matches)) {
-                $nextNumber = intval($matches[1]) + 1;
-            }
-
-            $requestNumber = sprintf('ЗЗ-%s%s-%04d', $year, $month, $nextNumber);
-
-            // Проверяем уникальность номера (дополнительная проверка)
-            $exists = PurchaseRequest::where('request_number', $requestNumber)->exists();
-
-            if (!$exists) {
-                return $requestNumber;
-            }
-
-            // Если номер существует, увеличиваем счетчик и пробуем снова
-            $attempt++;
-            if ($attempt >= $maxAttempts) {
-                throw new \RuntimeException('Не удалось сгенерировать уникальный номер заявки после ' . $maxAttempts . ' попыток');
-            }
-
-            // Небольшая задержка для избежания race condition
-            usleep(1000); // 1 миллисекунда
-
-        } while ($attempt < $maxAttempts);
-
-        throw new \RuntimeException('Не удалось сгенерировать уникальный номер заявки');
+        // Используем raw SQL для атомарного increment с INSERT ON CONFLICT
+        // Метод вызывается внутри транзакции, поэтому не создаем новую
+        $result = DB::selectOne("
+            INSERT INTO purchase_request_number_counters (organization_id, year, month, last_number, created_at, updated_at)
+            VALUES (?, ?, ?, 1, NOW(), NOW())
+            ON CONFLICT (organization_id, year, month) 
+            DO UPDATE SET 
+                last_number = purchase_request_number_counters.last_number + 1,
+                updated_at = NOW()
+            RETURNING last_number
+        ", [$organizationId, $year, $month]);
+        
+        $newNumber = $result->last_number;
+        $requestNumber = sprintf('ЗЗ-%d%02d-%04d', $year, $month, $newNumber);
+        
+        \Log::debug('procurement.purchase_request.number_generated', [
+            'organization_id' => $organizationId,
+            'year' => $year,
+            'month' => $month,
+            'generated_number' => $requestNumber,
+            'counter_value' => $newNumber,
+        ]);
+        
+        return $requestNumber;
     }
 
     /**
