@@ -556,7 +556,7 @@ class ContractResource extends JsonResource
             
             // Расширенные данные подрядчика
             'contractor_details' => $this->when(
-                $this->relationLoaded('contractor'),
+                $this->relationLoaded('contractor') && $this->contractor,
                 function() {
                     return [
                         'id' => $this->contractor->id,
