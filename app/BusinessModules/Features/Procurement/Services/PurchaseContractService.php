@@ -19,8 +19,13 @@ class PurchaseContractService
      */
     public function createFromOrder(PurchaseOrder $order): Contract
     {
-        // Проверяем активацию модулей
-        $this->validateProcurementContractCreation([], $order->organization_id);
+        // Подготавливаем данные для валидации
+        $validationData = [
+            'supplier_id' => $order->supplier_id,
+        ];
+
+        // Проверяем активацию модулей и данные
+        $this->validateProcurementContractCreation($validationData, $order->organization_id);
 
         DB::beginTransaction();
         try {
@@ -79,8 +84,10 @@ class PurchaseContractService
 
         // Проверяем, что либо contractor_id, либо supplier_id заполнен
         if (empty($data['supplier_id']) && empty($data['contractor_id'])) {
+            // Для обратной совместимости или если данные не переданы (хотя в createFromOrder мы их передаем)
+            // Но ошибка "Необходимо указать..." возникает именно здесь если массив пустой
             throw new \InvalidArgumentException(
-                'Необходимо указать либо поставщика (supplier_id), либо подрядчика (contractor_id)'
+                'Необходимо указать поставщика (supplier_id) для создания договора поставки'
             );
         }
 

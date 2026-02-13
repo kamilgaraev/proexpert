@@ -72,6 +72,10 @@ class ProcurementServiceProvider extends ServiceProvider
         $this->app->singleton(
             Services\CatalogIntegrationService::class
         );
+
+        $this->app->singleton(
+            Services\PurchaseOrderPdfService::class
+        );
     }
 
     /**

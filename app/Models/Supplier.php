@@ -16,6 +16,8 @@ class Supplier extends Model
         'organization_id',
         'name',
         'code',
+        'inn',
+        'ogrn',
         'contact_person',
         'phone',
         'email',

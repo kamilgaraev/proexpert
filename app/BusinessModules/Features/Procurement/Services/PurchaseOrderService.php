@@ -15,6 +15,10 @@ use Illuminate\Support\Facades\Cache;
  */
 class PurchaseOrderService
 {
+    public function __construct(
+        private readonly PurchaseOrderPdfService $pdfService
+    ) {}
+
     /**
      * Создать заказ из заявки на закупку
      */
@@ -62,11 +66,28 @@ class PurchaseOrderService
             throw new \DomainException('Заказ не может быть отправлен в текущем статусе');
         }
 
+        if (!$order->supplier || !$order->supplier->email) {
+            throw new \DomainException('У поставщика не указан контактный email');
+        }
+
         DB::beginTransaction();
         try {
+            $pdfPath = $this->pdfService->store($order);
+            
+            $temporaryUrl = $this->pdfService->getTemporaryUrl($order, $pdfPath, 1440);
+
+            \Illuminate\Support\Facades\Mail::to($order->supplier->email)
+                ->queue(new \App\BusinessModules\Features\Procurement\Mail\PurchaseOrderSentMail($order, $temporaryUrl));
+
             $order->update([
                 'status' => PurchaseOrderStatusEnum::SENT,
                 'sent_at' => now(),
+                'metadata' => array_merge($order->metadata ?? [], [
+                    'pdf_path' => $pdfPath,
+                    'pdf_temporary_url' => $temporaryUrl,
+                    'email_sent_to' => $order->supplier->email,
+                    'sent_by_user_id' => auth()->id()
+                ]),
             ]);
 
             DB::commit();
