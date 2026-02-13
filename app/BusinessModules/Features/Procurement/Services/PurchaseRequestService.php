@@ -18,6 +18,10 @@ class PurchaseRequestService
 {
     private const CACHE_TTL = 3600;
 
+    public function __construct(
+        private readonly PurchaseRequestNumberGenerator $numberGenerator
+    ) {}
+
     /**
      * Получить заявку по ID
      */
@@ -72,8 +76,8 @@ class PurchaseRequestService
 
         DB::beginTransaction();
         try {
-            // Генерируем номер заявки (внутри транзакции для атомарности)
-            $requestNumber = $this->generateRequestNumber($siteRequest->organization_id);
+            // Генерируем номер заявки
+            $requestNumber = $this->numberGenerator->generate($siteRequest->organization_id);
 
             // Формируем описание типа заявки
             $requestTypeLabel = match($siteRequest->request_type->value) {
@@ -123,7 +127,7 @@ class PurchaseRequestService
 
         DB::beginTransaction();
         try {
-            $requestNumber = $this->generateRequestNumber($organizationId);
+            $requestNumber = $this->numberGenerator->generate($organizationId);
 
             $purchaseRequest = PurchaseRequest::create([
                 'organization_id' => $organizationId,
@@ -249,59 +253,7 @@ class PurchaseRequestService
         return $orderService->create($request, $supplierId, []);
     }
 
-    /**
-     * Генерировать номер заявки
-     * Использует атомарный инкремент через таблицу счетчиков.
-     * При первом использовании периода (org/year/month) инициализирует счётчик из max существующих номеров.
-     */
-    private function generateRequestNumber(int $organizationId): string
-    {
-        $year = (int) date('Y');
-        $month = (int) date('m');
-        $prefix = 'ЗЗ-' . $year . str_pad((string) $month, 2, '0', STR_PAD_LEFT) . '-';
-
-        // Атомарно: если запись счётчика есть — инкремент; если нет — вставляем max(существующие номера)+1.
-        // GREATEST в DO UPDATE страхует от дубликатов, если сид не выполнялся или счётчик был 0.
-        $result = DB::selectOne("
-            INSERT INTO purchase_request_number_counters (organization_id, year, month, last_number, created_at, updated_at)
-            SELECT ?, ?, ?,
-                COALESCE(
-                    (SELECT MAX(CAST(SUBSTRING(request_number FROM '([0-9]+)$') AS INTEGER))
-                     FROM purchase_requests
-                     WHERE organization_id = ?
-                       AND request_number LIKE ?),
-                    0
-                ) + 1,
-                NOW(), NOW()
-            ON CONFLICT (organization_id, year, month)
-            DO UPDATE SET
-                last_number = GREATEST(
-                    purchase_request_number_counters.last_number + 1,
-                    COALESCE(
-                        (SELECT MAX(CAST(SUBSTRING(request_number FROM '([0-9]+)$') AS INTEGER))
-                         FROM purchase_requests
-                         WHERE organization_id = EXCLUDED.organization_id
-                           AND request_number LIKE 'ЗЗ-' || EXCLUDED.year || LPAD(EXCLUDED.month::text, 2, '0') || '-%'),
-                        0
-                    ) + 1
-                ),
-                updated_at = NOW()
-            RETURNING last_number
-        ", [$organizationId, $year, $month, $organizationId, $prefix . '%']);
-        
-        $newNumber = $result->last_number;
-        $requestNumber = sprintf('ЗЗ-%d%02d-%04d', $year, $month, $newNumber);
-        
-        Log::debug('procurement.purchase_request.number_generated', [
-            'organization_id' => $organizationId,
-            'year' => $year,
-            'month' => $month,
-            'generated_number' => $requestNumber,
-            'counter_value' => $newNumber,
-        ]);
-        
-        return $requestNumber;
-    }
+    // generateRequestNumber removed in favor of PurchaseRequestNumberGenerator
 
     /**
      * Инвалидация кеша
