@@ -41,14 +41,25 @@ class PurchaseContractService
                 'date' => now(),
                 'subject' => "Договор поставки по заказу {$order->order_number}",
                 'work_type_category' => ContractWorkTypeCategoryEnum::SUPPLY,
+                'base_amount' => $order->total_amount,
                 'total_amount' => $order->total_amount,
                 'status' => ContractStatusEnum::DRAFT,
                 'currency' => $order->currency,
                 'notes' => "Создан из заказа поставщику: {$order->order_number}",
+                'uses_event_sourcing' => true,
             ]);
 
-            // Связываем заказ с договором
             $order->update(['contract_id' => $contract->id]);
+
+            try {
+                $stateEventService = app(\App\Services\Contract\ContractStateEventService::class);
+                $stateEventService->createContractCreatedEvent($contract);
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::warning('Failed to create contract state event for procurement', [
+                    'contract_id' => $contract->id,
+                    'error' => $e->getMessage()
+                ]);
+            }
 
             DB::commit();
 
