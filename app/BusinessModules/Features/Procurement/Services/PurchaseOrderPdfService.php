@@ -28,15 +28,32 @@ class PurchaseOrderPdfService
         $organization = $order->organization;
         $supplier = $order->supplier;
 
-        $orgString = ($organization->legal_name ?? $organization->name);
-        if ($organization->tax_number) $orgString .= ", ИНН " . $organization->tax_number;
-        if ($organization->address) $orgString .= ", " . $organization->address;
-        if ($organization->phone) $orgString .= ", тел.: " . $organization->phone;
+        // Формируем строку организации (Заказчик)
+        $orgParts = [];
+        $orgParts[] = $organization->legal_name ?: $organization->name;
+        
+        $orgInn = $organization->tax_number ?: ($organization->inn ?? null);
+        if ($orgInn) $orgParts[] = "ИНН " . $orgInn;
+        
+        $orgOgrn = $organization->registration_number ?: ($organization->ogrn ?? null);
+        if ($orgOgrn) $orgParts[] = "ОГРН " . $orgOgrn;
+        
+        if ($organization->address) $orgParts[] = $organization->address;
+        if ($organization->phone) $orgParts[] = "тел.: " . $organization->phone;
+        
+        $orgString = implode(', ', array_filter($orgParts));
 
-        $supplierString = ($supplier->name ?? 'Не указано');
-        if ($supplier->inn) $supplierString .= ", ИНН " . $supplier->inn;
-        if ($supplier->address) $supplierString .= ", " . $supplier->address;
-        if ($supplier->phone) $supplierString .= ", тел.: " . $supplier->phone;
+        // Формируем строку поставщика (Исполнитель)
+        $supParts = [];
+        $supParts[] = $supplier->name ?: 'Не указано';
+        
+        $supInn = $supplier->tax_number ?: ($supplier->inn ?? null);
+        if ($supInn) $supParts[] = "ИНН " . $supInn;
+        
+        if ($supplier->address) $supParts[] = $supplier->address;
+        if ($supplier->phone) $supParts[] = "тел.: " . $supplier->phone;
+        
+        $supplierString = implode(', ', array_filter($supParts));
 
         $data = [
             'order' => $order,
