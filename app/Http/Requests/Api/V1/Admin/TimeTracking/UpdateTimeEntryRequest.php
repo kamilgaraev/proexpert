@@ -13,7 +13,7 @@ class UpdateTimeEntryRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return Auth::check() && Auth::user()->can('time_tracking.edit');
+        return \Illuminate\Support\Facades\Auth::check();
     }
 
     /**
