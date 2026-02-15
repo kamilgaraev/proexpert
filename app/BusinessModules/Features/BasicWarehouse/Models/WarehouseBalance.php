@@ -17,6 +17,8 @@ class WarehouseBalance extends Model
 {
     use HasFactory;
 
+    public $timestamps = false;
+
     protected $fillable = [
         'organization_id',
         'warehouse_id',
