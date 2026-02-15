@@ -421,7 +421,7 @@ class ProjectService
                     ->selectRaw("
                         COUNT(DISTINCT wpa.material_id) as unique_materials_count,
                         SUM(wpa.allocated_quantity) as total_allocated,
-                        SUM(wpa.allocated_quantity * wb.average_price) as allocated_value
+                        SUM(wpa.allocated_quantity * wb.unit_price) as allocated_value
                     ")
                     ->first();
                 
@@ -535,7 +535,7 @@ class ProjectService
                         wb.material_id,
                         wb.organization_id,
                         SUM(wb.available_quantity) as total_warehouse_available,
-                        AVG(wb.average_price) as avg_price
+                        SUM(wb.available_quantity * wb.unit_price) as total_val
                     FROM warehouse_balances wb
                     JOIN organization_warehouses ow ON wb.warehouse_id = ow.id
                     WHERE ow.is_active = true
@@ -555,7 +555,7 @@ class ProjectService
                     'w.id as warehouse_id',
                     'wpa.allocated_quantity as allocated_quantity',
                     DB::raw('COALESCE(warehouse_totals.total_warehouse_available, 0) as warehouse_available_total'),
-                    DB::raw('COALESCE(warehouse_totals.avg_price, m.default_price, 0) as average_price'),
+                    DB::raw('CASE WHEN COALESCE(warehouse_totals.total_warehouse_available, 0) > 0 THEN warehouse_totals.total_val / warehouse_totals.total_warehouse_available ELSE COALESCE(m.default_price, 0) END as average_price'),
                     'wpa.allocated_at as last_operation_date',
                     'u.name as allocated_by',
                     'wpa.notes'

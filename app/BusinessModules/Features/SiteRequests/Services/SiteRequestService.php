@@ -584,6 +584,9 @@ class SiteRequestService
     /**
      * Попытаться зарезервировать материал на складе
      */
+    /**
+     * Попытаться зарезервировать материал на складе
+     */
     private function tryReserveMaterial(SiteRequest $request, int $organizationId): void
     {
         $accessController = app(\App\Modules\Core\AccessController::class);
@@ -600,39 +603,39 @@ class SiteRequestService
             $warehouseService = app(\App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService::class);
             $warehouse = $warehouseService->getOrCreateCentralWarehouse($organizationId);
 
-            $balance = $warehouseService->getAssetBalance(
+            // Используем метод сервиса для безопасного резервирования (FIFO по партиям)
+            $reservationResult = $warehouseService->reserveAssets(
                 $organizationId,
                 $warehouse->id,
-                $request->material_id
+                $request->material_id,
+                $request->material_quantity,
+                [
+                    'project_id' => $request->project_id,
+                    'user_id' => $request->user_id,
+                    'reason' => 'Резерв под заявку #' . $request->id,
+                    'site_request_id' => $request->id
+                ]
             );
 
-            if ($balance && $balance->available_quantity >= $request->material_quantity) {
-                $balance->reserve($request->material_quantity);
+            // Сохраняем информацию о резервировании в metadata
+            $request->update([
+                'metadata' => array_merge($request->metadata ?? [], [
+                    'material_reserved' => true,
+                    'reserved_warehouse_id' => $warehouse->id,
+                    'reserved_quantity' => $request->material_quantity,
+                    'reserved_at' => now()->toDateTimeString(),
+                    'asset_reservation_id' => $reservationResult['reservation_id'] ?? null
+                ]),
+            ]);
 
-                // Сохраняем информацию о резервировании в metadata
-                $request->update([
-                    'metadata' => array_merge($request->metadata ?? [], [
-                        'material_reserved' => true,
-                        'reserved_warehouse_id' => $warehouse->id,
-                        'reserved_quantity' => $request->material_quantity,
-                        'reserved_at' => now()->toDateTimeString(),
-                    ]),
-                ]);
+            \Log::info('site_request.material_reserved', [
+                'request_id' => $request->id,
+                'material_id' => $request->material_id,
+                'quantity' => $request->material_quantity,
+                'warehouse_id' => $warehouse->id,
+                'reservation_id' => $reservationResult['reservation_id'] ?? null
+            ]);
 
-                \Log::info('site_request.material_reserved', [
-                    'request_id' => $request->id,
-                    'material_id' => $request->material_id,
-                    'quantity' => $request->material_quantity,
-                    'warehouse_id' => $warehouse->id,
-                ]);
-            } else {
-                \Log::warning('site_request.insufficient_stock', [
-                    'request_id' => $request->id,
-                    'material_id' => $request->material_id,
-                    'requested_quantity' => $request->material_quantity,
-                    'available_quantity' => $balance ? $balance->available_quantity : 0,
-                ]);
-            }
         } catch (\Exception $e) {
             // Не прерываем создание заявки если резервирование не удалось
             \Log::warning('site_request.reservation_failed', [
@@ -663,35 +666,36 @@ class SiteRequestService
             $warehouseService = app(\App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService::class);
             $warehouseId = $metadata['reserved_warehouse_id'] ?? null;
             $quantity = $metadata['reserved_quantity'] ?? null;
+            $reservationId = $metadata['asset_reservation_id'] ?? null;
 
-            if (!$warehouseId || !$quantity || !$request->material_id) {
-                return;
+            if ($reservationId) {
+                // Если есть ID резервации - снимаем через неё (это правильный путь)
+                $warehouseService->unreserveAssets($reservationId);
+            } elseif ($warehouseId && $quantity && $request->material_id) {
+                // Fallback для старых заявок: снимаем количество напрямую
+                $warehouseService->unreserveQuantity(
+                    $request->organization_id,
+                    $warehouseId,
+                    $request->material_id,
+                    $quantity
+                );
             }
 
-            $balance = $warehouseService->getAssetBalance(
-                $request->organization_id,
-                $warehouseId,
-                $request->material_id
-            );
+            // Обновляем metadata
+            $request->update([
+                'metadata' => array_merge($metadata, [
+                    'material_reserved' => false,
+                    'unreserved_at' => now()->toDateTimeString(),
+                ]),
+            ]);
 
-            if ($balance && $balance->reserved_quantity >= $quantity) {
-                $balance->unreserve($quantity);
-
-                // Обновляем metadata
-                $request->update([
-                    'metadata' => array_merge($metadata, [
-                        'material_reserved' => false,
-                        'unreserved_at' => now()->toDateTimeString(),
-                    ]),
-                ]);
-
-                \Log::info('site_request.material_unreserved', [
-                    'request_id' => $request->id,
-                    'material_id' => $request->material_id,
-                    'quantity' => $quantity,
-                    'warehouse_id' => $warehouseId,
-                ]);
-            }
+            \Log::info('site_request.material_unreserved', [
+                'request_id' => $request->id,
+                'material_id' => $request->material_id,
+                'quantity' => $quantity,
+                'warehouse_id' => $warehouseId,
+            ]);
+            
         } catch (\Exception $e) {
             \Log::error('site_request.unreservation_failed', [
                 'request_id' => $request->id,

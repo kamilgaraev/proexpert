@@ -23,7 +23,7 @@ class WarehouseBalance extends Model
         'material_id',
         'available_quantity',
         'reserved_quantity',
-        'average_price',
+        'unit_price',
         'min_stock_level',
         'max_stock_level',
         'location_code',
@@ -31,22 +31,19 @@ class WarehouseBalance extends Model
         'serial_number',
         'expiry_date',
         'last_movement_at',
+        'created_at',
     ];
 
     protected $casts = [
         'available_quantity' => 'decimal:3',
         'reserved_quantity' => 'decimal:3',
-        'average_price' => 'decimal:2',
+        'unit_price' => 'decimal:2',
         'min_stock_level' => 'decimal:3',
         'max_stock_level' => 'decimal:3',
         'expiry_date' => 'date',
         'last_movement_at' => 'datetime',
+        'created_at' => 'datetime',
     ];
-
-    /**
-     * Отключаем timestamps для быстрых обновлений
-     */
-    public $timestamps = false;
 
     /**
      * Получить организацию
@@ -138,7 +135,7 @@ class WarehouseBalance extends Model
      */
     public function getAvailableValueAttribute(): float
     {
-        return (float)$this->available_quantity * (float)$this->average_price;
+        return (float)$this->available_quantity * (float)$this->unit_price;
     }
 
     /**
@@ -146,7 +143,7 @@ class WarehouseBalance extends Model
      */
     public function getTotalValueAttribute(): float
     {
-        return $this->total_quantity * (float)$this->average_price;
+        return $this->total_quantity * (float)$this->unit_price;
     }
 
     /**
@@ -200,27 +197,7 @@ class WarehouseBalance extends Model
     /**
      * Увеличить доступное количество
      */
-    /**
-     * Увеличить доступное количество
-     */
-    public function increaseQuantity(float $quantity, ?float $price = null): void
-    {
-        // Пересчет средней цены при поступлении
-        if ($price !== null && $price > 0) {
-            $oldQuantity = $this->available_quantity;
-            $oldValue = $oldQuantity * $this->average_price;
-            $newValue = $quantity * $price;
-            $totalQuantity = $oldQuantity + $quantity;
 
-            if ($totalQuantity > 0) {
-                $this->average_price = ($oldValue + $newValue) / $totalQuantity;
-            }
-        }
-
-        $this->available_quantity += $quantity;
-        $this->last_movement_at = now();
-        $this->save();
-    }
 
     /**
      * Уменьшить доступное количество
@@ -334,6 +311,22 @@ class WarehouseBalance extends Model
             'requested_quantity' => $requestedQuantity,
             'shortage' => max(0, $requestedQuantity - $availableForAllocation),
         ];
+    }
+    /**
+     * Флаг, указывающий, что это виртуальный (агрегированный) объект
+     * и его нельзя сохранять в БД
+     */
+    public $isVirtual = false;
+
+    /**
+     * Переопределяем сохранение для защиты от записи виртуальных объектов
+     */
+    public function save(array $options = []): bool
+    {
+        if ($this->isVirtual) {
+            throw new \RuntimeException("Попытка сохранить виртуальный (агрегированный) объект WarehouseBalance. Это приведет к повреждению данных партионного учета.");
+        }
+        return parent::save($options);
     }
 }
 

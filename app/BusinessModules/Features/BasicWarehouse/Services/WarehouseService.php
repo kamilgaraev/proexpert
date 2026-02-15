@@ -98,6 +98,9 @@ class WarehouseService implements WarehouseReportDataProvider
     /**
      * Приход актива на склад
      */
+    /**
+     * Приход актива на склад (Партионный учет)
+     */
     public function receiveAsset(
         int $organizationId,
         int $warehouseId,
@@ -108,26 +111,52 @@ class WarehouseService implements WarehouseReportDataProvider
     ): array {
         DB::beginTransaction();
         try {
-            $balance = WarehouseBalance::firstOrNew([
-                'organization_id' => $organizationId,
-                'warehouse_id' => $warehouseId,
-                'material_id' => $materialId,
-            ]);
+            // Ищем существующую партию с такой же ценой и параметрами
+            // (Стратегия: смешиваем партии только если они абсолютно идентичны по цене и срокам)
+            $query = WarehouseBalance::where('organization_id', $organizationId)
+                ->where('warehouse_id', $warehouseId)
+                ->where('material_id', $materialId)
+                ->where('unit_price', $price);
 
-            $balance->increaseQuantity($quantity, $price);
-
-            // Обновляем дополнительные данные
             if (isset($metadata['batch_number'])) {
-                $balance->batch_number = $metadata['batch_number'];
-            }
-            if (isset($metadata['location_code'])) {
-                $balance->location_code = $metadata['location_code'];
-            }
-            if (isset($metadata['expiry_date'])) {
-                $balance->expiry_date = $metadata['expiry_date'];
+                $query->where('batch_number', $metadata['batch_number']);
+            } else {
+                $query->whereNull('batch_number');
             }
 
-            $balance->save();
+            if (isset($metadata['expiry_date'])) {
+                $query->where('expiry_date', $metadata['expiry_date']);
+            } else {
+                $query->whereNull('expiry_date');
+            }
+            
+            // Если включено адресное хранение, то разделяем и по местам
+            if (isset($metadata['location_code'])) {
+                 $query->where('location_code', $metadata['location_code']);
+            }
+
+            $balance = $query->first();
+
+            if ($balance) {
+                // Если партия найдена - увеличиваем количество
+                $balance->available_quantity += $quantity;
+                $balance->last_movement_at = now();
+                $balance->save();
+            } else {
+                // Если нет - создаем новую партию
+                $balance = WarehouseBalance::create([
+                    'organization_id' => $organizationId,
+                    'warehouse_id' => $warehouseId,
+                    'material_id' => $materialId,
+                    'available_quantity' => $quantity,
+                    'unit_price' => $price,
+                    'batch_number' => $metadata['batch_number'] ?? null,
+                    'expiry_date' => $metadata['expiry_date'] ?? null,
+                    'location_code' => $metadata['location_code'] ?? null,
+                    'created_at' => now(), // Важно для FIFO
+                    'last_movement_at' => now(),
+                ]);
+            }
 
             // Создаем запись движения
             $movement = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::create([
@@ -151,7 +180,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 'material_id' => $materialId,
                 'quantity' => $quantity,
                 'price' => $price,
-                'new_balance' => $balance->available_quantity,
+                'batch_id' => $balance->id,
                 'movement_id' => $movement->id,
             ]);
 
@@ -172,7 +201,7 @@ class WarehouseService implements WarehouseReportDataProvider
     }
 
     /**
-     * Списание актива со склада
+     * Списание актива со склада (FIFO стратегия)
      */
     public function writeOffAsset(
         int $organizationId,
@@ -183,13 +212,48 @@ class WarehouseService implements WarehouseReportDataProvider
     ): array {
         DB::beginTransaction();
         try {
-            $balance = WarehouseBalance::where('organization_id', $organizationId)
+            // Получаем все партии с доступным количеством, сортируем по дате создания (FIFO)
+            // (или по сроку годности FEFO, если есть)
+            $batches = WarehouseBalance::where('organization_id', $organizationId)
                 ->where('warehouse_id', $warehouseId)
                 ->where('material_id', $materialId)
+                ->where('available_quantity', '>', 0)
+                ->orderByRaw('CASE WHEN expiry_date IS NOT NULL THEN expiry_date ELSE created_at END ASC')
                 ->lockForUpdate()
-                ->firstOrFail();
+                ->get();
 
-            $balance->decreaseQuantity($quantity);
+            $totalAvailable = $batches->sum('available_quantity');
+
+            if ($totalAvailable < $quantity) {
+                throw new \InvalidArgumentException(
+                    "Недостаточно активов на складе. Доступно: {$totalAvailable}, запрошено: {$quantity}"
+                );
+            }
+
+            $remainingToWriteOff = $quantity;
+            $writeOffDetails = []; // Для истории, с каких партий списали
+            $totalCost = 0;
+
+            foreach ($batches as $batch) {
+                if ($remainingToWriteOff <= 0) break;
+
+                $takeFromBatch = min($batch->available_quantity, $remainingToWriteOff);
+                
+                $batch->decreaseQuantity($takeFromBatch);
+                
+                $remainingToWriteOff -= $takeFromBatch;
+                $writeOffDetails[] = [
+                    'balance_id' => $batch->id,
+                    'quantity' => $takeFromBatch,
+                    'unit_price' => $batch->unit_price,
+                    'batch_number' => $batch->batch_number
+                ];
+                
+                $totalCost += ($takeFromBatch * $batch->unit_price);
+            }
+
+            // Рассчитываем среднюю цену списания для движения
+            $avgWriteOffPrice = $quantity > 0 ? $totalCost / $quantity : 0;
 
             // Создаем запись движения
             $movement = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::create([
@@ -198,12 +262,12 @@ class WarehouseService implements WarehouseReportDataProvider
                 'material_id' => $materialId,
                 'movement_type' => 'write_off',
                 'quantity' => $quantity,
-                'price' => $balance->average_price,
+                'price' => $avgWriteOffPrice, // Фиксируем среднюю цену списания
                 'project_id' => $metadata['project_id'] ?? null,
                 'user_id' => $metadata['user_id'] ?? null,
                 'document_number' => $metadata['document_number'] ?? null,
                 'reason' => $metadata['reason'] ?? null,
-                'metadata' => $metadata,
+                'metadata' => array_merge($metadata, ['batches_source' => $writeOffDetails]),
                 'movement_date' => now(),
             ]);
 
@@ -212,8 +276,8 @@ class WarehouseService implements WarehouseReportDataProvider
                 'warehouse_id' => $warehouseId,
                 'material_id' => $materialId,
                 'quantity' => $quantity,
-                'reason' => $metadata['reason'] ?? null,
-                'remaining_balance' => $balance->available_quantity,
+                'avg_price' => $avgWriteOffPrice,
+                'batches_count' => count($writeOffDetails),
                 'movement_id' => $movement->id,
             ]);
 
@@ -223,9 +287,9 @@ class WarehouseService implements WarehouseReportDataProvider
             $this->clearWarehouseCache($organizationId);
 
             return [
-                'balance' => $balance,
                 'movement' => $movement,
-                'remaining_quantity' => (float)$balance->available_quantity,
+                'write_off_details' => $writeOffDetails,
+                'remaining_total_quantity' => $totalAvailable - $quantity,
             ];
         } catch (\Exception $e) {
             DB::rollBack();
@@ -234,7 +298,7 @@ class WarehouseService implements WarehouseReportDataProvider
     }
 
     /**
-     * Перемещение актива между складами
+     * Перемещение актива между складами (с поддержкой FIFO)
      */
     public function transferAsset(
         int $organizationId,
@@ -246,55 +310,82 @@ class WarehouseService implements WarehouseReportDataProvider
     ): array {
         DB::beginTransaction();
         try {
-            // Получаем исходный баланс для цены
-            $fromBalance = WarehouseBalance::where('organization_id', $organizationId)
+            // 1. Списываем с исходного склада по FIFO
+            $sourceBatches = WarehouseBalance::where('organization_id', $organizationId)
                 ->where('warehouse_id', $fromWarehouseId)
                 ->where('material_id', $materialId)
+                ->where('available_quantity', '>', 0)
+                ->orderByRaw('CASE WHEN expiry_date IS NOT NULL THEN expiry_date ELSE created_at END ASC')
                 ->lockForUpdate()
-                ->firstOrFail();
+                ->get();
+
+            $totalAvailable = $sourceBatches->sum('available_quantity');
+
+            if ($totalAvailable < $quantity) {
+                 throw new \InvalidArgumentException(
+                    "Недостаточно активов для перемещения. Доступно: {$totalAvailable}, запрошено: {$quantity}"
+                );
+            }
+
+            $remainingToTransfer = $quantity;
+            $transferCost = 0;
+            $sourceBatchDetails = [];
+
+            foreach ($sourceBatches as $batch) {
+                if ($remainingToTransfer <= 0) break;
+
+                $takeFromBatch = min($batch->available_quantity, $remainingToTransfer);
+                
+                $batch->decreaseQuantity($takeFromBatch);
+                
+                $remainingToTransfer -= $takeFromBatch;
+                $transferCost += ($takeFromBatch * $batch->unit_price);
+                
+                $sourceBatchDetails[] = [
+                    'source_batch_id' => $batch->id,
+                    'quantity' => $takeFromBatch,
+                    'unit_price' => $batch->unit_price,
+                ];
+            }
+
+            // Средняя цена перемещаемой партии
+            $transferPrice = $quantity > 0 ? $transferCost / $quantity : 0;
+
+            // 2. Приходуем на целевой склад (как одну партию с усредненной ценой)
+            // (Можно было бы переносить партиями, но это сильно усложнит логику, обычно при перемещении принимают по учетной стоимости)
+            $targetResult = $this->receiveAsset(
+                $organizationId,
+                $toWarehouseId,
+                $materialId,
+                $quantity,
+                $transferPrice,
+                array_merge($metadata, [
+                    'reason' => 'Перемещение со склада ' . $fromWarehouseId,
+                    'is_transfer' => true
+                ])
+            );
             
-            $price = $fromBalance->average_price;
-
-            // Списываем с исходного склада
-            $fromBalance->decreaseQuantity($quantity);
-
-            // Приходуем на целевой склад
-            $toBalance = WarehouseBalance::firstOrNew([
-                'organization_id' => $organizationId,
-                'warehouse_id' => $toWarehouseId,
-                'material_id' => $materialId,
+            // Удаляем лишнее движение, которое создал receiveAsset (нам нужны специфичные типы transfer_in/out)
+            // Или просто обновим его тип и связи
+            $movementIn = $targetResult['movement'];
+            $movementIn->update([
+                'movement_type' => 'transfer_in',
+                'from_warehouse_id' => $fromWarehouseId,
             ]);
-            
-            $toBalance->increaseQuantity($quantity, $price);
 
-            // Создаем записи движений
+            // 3. Создаем движение расхода с исходного склада
             $movementOut = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::create([
                 'organization_id' => $organizationId,
                 'warehouse_id' => $fromWarehouseId,
                 'material_id' => $materialId,
                 'movement_type' => 'transfer_out',
                 'quantity' => $quantity,
-                'price' => $price,
+                'price' => $transferPrice,
                 'to_warehouse_id' => $toWarehouseId,
                 'user_id' => $metadata['user_id'] ?? null,
                 'document_number' => $metadata['document_number'] ?? null,
                 'reason' => $metadata['reason'] ?? null,
-                'metadata' => $metadata,
-                'movement_date' => now(),
-            ]);
-
-            $movementIn = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::create([
-                'organization_id' => $organizationId,
-                'warehouse_id' => $toWarehouseId,
-                'material_id' => $materialId,
-                'movement_type' => 'transfer_in',
-                'quantity' => $quantity,
-                'price' => $price,
-                'from_warehouse_id' => $fromWarehouseId,
-                'user_id' => $metadata['user_id'] ?? null,
-                'document_number' => $metadata['document_number'] ?? null,
-                'reason' => $metadata['reason'] ?? null,
-                'metadata' => $metadata,
+                'metadata' => array_merge($metadata, ['source_batches' => $sourceBatchDetails]),
                 'movement_date' => now(),
             ]);
 
@@ -304,6 +395,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 'to_warehouse_id' => $toWarehouseId,
                 'material_id' => $materialId,
                 'quantity' => $quantity,
+                'avg_price' => $transferPrice,
                 'movement_out_id' => $movementOut->id,
                 'movement_in_id' => $movementIn->id,
             ]);
@@ -314,10 +406,10 @@ class WarehouseService implements WarehouseReportDataProvider
             $this->clearWarehouseCache($organizationId);
 
             return [
-                'from_balance' => $fromBalance,
-                'to_balance' => $toBalance,
                 'movement_out' => $movementOut,
                 'movement_in' => $movementIn,
+                'avg_price' => $transferPrice,
+                'source_details' => $sourceBatchDetails
             ];
         } catch (\Exception $e) {
             DB::rollBack();
@@ -326,18 +418,44 @@ class WarehouseService implements WarehouseReportDataProvider
     }
 
     /**
-     * Получить остаток актива на складе
+     * Получить остаток актива на складе (Агрегированный)
      */
     public function getAssetBalance(int $organizationId, int $warehouseId, int $materialId): ?WarehouseBalance
     {
-        return WarehouseBalance::where('organization_id', $organizationId)
+        $batches = WarehouseBalance::where('organization_id', $organizationId)
             ->where('warehouse_id', $warehouseId)
             ->where('material_id', $materialId)
-            ->first();
+            ->get();
+
+        if ($batches->isEmpty()) {
+            return null;
+        }
+
+        // Создаем виртуальный объект баланса с агрегированными данными
+        $totalQty = $batches->sum('available_quantity');
+        $totalReserved = $batches->sum('reserved_quantity');
+        
+        $totalValue = $batches->sum(fn($b) => $b->available_quantity * $b->unit_price);
+        $avgPrice = $totalQty > 0 ? $totalValue / $totalQty : 0;
+        
+        // Берем первый батч как основу для метаданных (материал, склад и т.д.)
+        $virtualBalance = $batches->first()->replicate();
+        $virtualBalance->exists = true; // Чтобы Laravel думал, что модель существует (нужно для связей)
+        $virtualBalance->id = $batches->first()->id; // ID первого батча (условно)
+        $virtualBalance->isVirtual = true; // Запрещаем сохранение
+        
+        $virtualBalance->available_quantity = $totalQty;
+        $virtualBalance->reserved_quantity = $totalReserved;
+        $virtualBalance->unit_price = $avgPrice; // Здесь unit_price выступает как средняя цена
+        
+        // Добавляем инфу о дате последнего движения (максимальная из батчей)
+        $virtualBalance->last_movement_at = $batches->max('last_movement_at');
+        
+        return $virtualBalance;
     }
 
     /**
-     * Получить все остатки на складе
+     * Получить все остатки на складе (Агрегированные)
      */
     public function getWarehouseStock(int $organizationId, int $warehouseId, array $filters = []): \Illuminate\Database\Eloquent\Collection
     {
@@ -368,7 +486,36 @@ class WarehouseService implements WarehouseReportDataProvider
             $query->lowStock();
         }
 
-        return $query->orderBy('available_quantity', 'asc')->get();
+        $allBatches = $query->get();
+        
+        // Группируем по материалам
+        $grouped = $allBatches->groupBy('material_id');
+        
+        $aggregatedCollection = new \Illuminate\Database\Eloquent\Collection();
+        
+        foreach ($grouped as $materialId => $batches) {
+            $totalQty = $batches->sum('available_quantity');
+            $totalReserved = $batches->sum('reserved_quantity');
+            
+            $totalValue = $batches->sum(fn($b) => $b->available_quantity * $b->unit_price);
+            $avgPrice = $totalQty > 0 ? $totalValue / $totalQty : 0;
+            
+            $virtualBalance = $batches->first()->replicate();
+            $virtualBalance->exists = true;
+            $virtualBalance->id = $batches->first()->id;
+            $virtualBalance->isVirtual = true; // Запрещаем сохранение
+            $virtualBalance->available_quantity = $totalQty;
+            $virtualBalance->reserved_quantity = $totalReserved;
+            $virtualBalance->unit_price = $avgPrice;
+            
+             // Загружаем связи, если они были загружены в оригинале
+            $virtualBalance->setRelation('material', $batches->first()->material);
+            $virtualBalance->setRelation('warehouse', $batches->first()->warehouse);
+            
+            $aggregatedCollection->push($virtualBalance);
+        }
+        
+        return $aggregatedCollection;
     }
 
     /**
@@ -383,7 +530,7 @@ class WarehouseService implements WarehouseReportDataProvider
     // ===== Реализация WarehouseReportDataProvider =====
 
     /**
-     * Получить данные по остаткам на складе для отчетов
+     * Получить данные по остаткам на складе для отчетов (Агрегированные)
      */
     public function getStockData(int $organizationId, array $filters = []): array
     {
@@ -417,45 +564,59 @@ class WarehouseService implements WarehouseReportDataProvider
             $query->lowStock();
         }
 
-        // Фильтр по проекту
+        // Фильтр по проекту (для партионного учета сложнее, так как распределение - отдельная таблица)
+        // Но аллокации не привязаны к партиям, они привязаны к "Склад + Материал"
+        // Поэтому фильтрация по аллокациям работает на уровне материала
         if (isset($filters['project_id'])) {
             $query->whereHas('projectAllocations', function ($q) use ($filters) {
                 $q->where('project_id', $filters['project_id']);
             });
         }
 
-        $balances = $query->get();
-
-        return $balances->map(function ($balance) use ($filters) {
-            $result = [
-                'warehouse_id' => $balance->warehouse_id,
-                'warehouse_name' => $balance->warehouse->name,
-                'material_id' => $balance->material_id,
-                'material_name' => $balance->material->name,
-                'material_code' => $balance->material->code,
-                'asset_type' => $balance->material->additional_properties['asset_type'] ?? 'material',
-                'category' => $balance->material->category,
-                'measurement_unit' => $balance->material->measurementUnit->name ?? null,
-                'available_quantity' => (float)$balance->available_quantity,
-                'reserved_quantity' => (float)$balance->reserved_quantity,
-                'total_quantity' => $balance->total_quantity,
-                'average_price' => (float)$balance->average_price,
-                'total_value' => $balance->total_value,
-                'min_stock_level' => (float)$balance->min_stock_level,
-                'max_stock_level' => (float)$balance->max_stock_level,
-                'is_low_stock' => $balance->isLowStock(),
-                'location_code' => $balance->location_code,
-                'last_movement_at' => $balance->last_movement_at?->toDateTimeString(),
+        $allBatches = $query->get();
+        
+        // Группируем по материалам
+        $grouped = $allBatches->groupBy('material_id');
+        
+        $resultData = [];
+        
+        foreach ($grouped as $materialId => $batches) {
+            $totalQty = $batches->sum('available_quantity');
+            $totalReserved = $batches->sum('reserved_quantity');
+            $totalValue = $batches->sum(fn($b) => $b->available_quantity * $b->unit_price);
+            $avgPrice = $totalQty > 0 ? $totalValue / $totalQty : 0;
+            
+            $first = $batches->first();
+            
+            $item = [
+                'warehouse_id' => $first->warehouse_id,
+                'warehouse_name' => $first->warehouse->name,
+                'material_id' => $first->material_id,
+                'material_name' => $first->material->name,
+                'material_code' => $first->material->code,
+                'asset_type' => $first->material->additional_properties['asset_type'] ?? 'material',
+                'category' => $first->material->category,
+                'measurement_unit' => $first->material->measurementUnit->name ?? null,
+                'available_quantity' => (float)$totalQty,
+                'reserved_quantity' => (float)$totalReserved,
+                'total_quantity' => $totalQty + $totalReserved,
+                'average_price' => (float)$avgPrice,
+                'total_value' => $totalValue, // Точная сумма цен всех партий
+                'min_stock_level' => (float)$first->min_stock_level,
+                'max_stock_level' => (float)$first->max_stock_level,
+                'is_low_stock' => $first->min_stock_level > 0 && $totalQty <= $first->min_stock_level,
+                'location_code' => $batches->pluck('location_code')->filter()->unique()->implode(', '),
+                'last_movement_at' => $batches->max('last_movement_at')?->toDateTimeString(),
             ];
 
-            // Добавляем информацию о распределении по проектам
-            $allocations = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseProjectAllocation::where('warehouse_id', $balance->warehouse_id)
-                ->where('material_id', $balance->material_id)
+            // Добавляем информацию о распределении по проектам (она общая для всех партий)
+            $allocations = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseProjectAllocation::where('warehouse_id', $first->warehouse_id)
+                ->where('material_id', $first->material_id)
                 ->with('project:id,name')
                 ->get();
 
             if ($allocations->isNotEmpty()) {
-                $result['project_allocations'] = $allocations->map(function ($allocation) {
+                $item['project_allocations'] = $allocations->map(function ($allocation) {
                     return [
                         'project_id' => $allocation->project_id,
                         'project_name' => $allocation->project->name,
@@ -463,16 +624,18 @@ class WarehouseService implements WarehouseReportDataProvider
                     ];
                 })->toArray();
 
-                $result['allocated_total'] = $allocations->sum('allocated_quantity');
-                $result['unallocated_quantity'] = (float)$balance->available_quantity - $result['allocated_total'];
+                $item['allocated_total'] = $allocations->sum('allocated_quantity');
+                $item['unallocated_quantity'] = (float)$totalQty - $item['allocated_total'];
             } else {
-                $result['project_allocations'] = [];
-                $result['allocated_total'] = 0;
-                $result['unallocated_quantity'] = (float)$balance->available_quantity;
+                $item['project_allocations'] = [];
+                $item['allocated_total'] = 0;
+                $item['unallocated_quantity'] = (float)$totalQty;
             }
+            
+            $resultData[] = $item;
+        }
 
-            return $result;
-        })->toArray();
+        return $resultData;
     }
 
     /**
@@ -701,12 +864,10 @@ class WarehouseService implements WarehouseReportDataProvider
             $averageDailyConsumption = $totalConsumption / $historicalDays;
             $predictedConsumption = $averageDailyConsumption * $horizonDays;
             
-            // Текущий остаток
-            $balance = WarehouseBalance::where('organization_id', $organizationId)
+            // Текущий остаток (сумма по всем партиям)
+            $currentStock = WarehouseBalance::where('organization_id', $organizationId)
                 ->where('material_id', $materialId)
-                ->first();
-            
-            $currentStock = $balance ? (float)$balance->available_quantity : 0;
+                ->sum('available_quantity');
             
             // Дата исчерпания запасов
             $daysUntilStockOut = $averageDailyConsumption > 0 
@@ -890,6 +1051,83 @@ class WarehouseService implements WarehouseReportDataProvider
     /**
      * Зарезервировать активы для проекта
      */
+    /**
+     * Зарезервировать количество актива на складе (FIFO)
+     * Обновляет балансы партий, перенося из available в reserved
+     */
+    public function reserveQuantity(int $organizationId, int $warehouseId, int $materialId, float $quantity): void
+    {
+        $batches = WarehouseBalance::where('organization_id', $organizationId)
+            ->where('warehouse_id', $warehouseId)
+            ->where('material_id', $materialId)
+            ->where('available_quantity', '>', 0)
+            ->orderByRaw('CASE WHEN expiry_date IS NOT NULL THEN expiry_date ELSE created_at END ASC')
+            ->lockForUpdate()
+            ->get();
+
+        $totalAvailable = $batches->sum('available_quantity');
+
+        if ($totalAvailable < $quantity) {
+            throw new \InvalidArgumentException(
+                "Недостаточно активов для резервирования. Доступно: {$totalAvailable}, запрошено: {$quantity}"
+            );
+        }
+
+        $remainingToReserve = $quantity;
+
+        foreach ($batches as $batch) {
+            if ($remainingToReserve <= 0) break;
+
+            $takeFromBatch = min($batch->available_quantity, $remainingToReserve);
+            
+            $batch->reserve($takeFromBatch);
+            
+            $remainingToReserve -= $takeFromBatch;
+        }
+    }
+
+    /**
+     * Снять резервирование количества (освободить FIFO/LIFO или просто наличие)
+     */
+    public function unreserveQuantity(int $organizationId, int $warehouseId, int $materialId, float $quantity): void
+    {
+        // Ищем партии где есть резерв
+        // Снимаем резерв с тех партий, где он есть. Порядок не так важен, но логично снимать с тех, 
+        // которые скорее всего были зарезервированы последними (LIFO) или первыми (FIFO).
+        // Давайте снимать с тех, у кого expiry_date раньше (чтобы освободить "скоропортящиеся" для продажи) => FIFO
+        
+        $batches = WarehouseBalance::where('organization_id', $organizationId)
+            ->where('warehouse_id', $warehouseId)
+            ->where('material_id', $materialId)
+            ->where('reserved_quantity', '>', 0)
+            ->orderByRaw('CASE WHEN expiry_date IS NOT NULL THEN expiry_date ELSE created_at END ASC')
+            ->lockForUpdate()
+            ->get();
+            
+        $totalReserved = $batches->sum('reserved_quantity');
+        
+        if ($totalReserved < $quantity) {
+             throw new \InvalidArgumentException(
+                "Недостаточно зарезервированных активов. Зарезервировано: {$totalReserved}, запрошено: {$quantity}"
+            );
+        }
+        
+        $remainingToUnreserve = $quantity;
+        
+        foreach ($batches as $batch) {
+            if ($remainingToUnreserve <= 0) break;
+            
+            $takeFromBatch = min($batch->reserved_quantity, $remainingToUnreserve);
+            
+            $batch->unreserve($takeFromBatch);
+            
+            $remainingToUnreserve -= $takeFromBatch;
+        }
+    }
+
+    /**
+     * Зарезервировать активы для проекта (создает запись AssetReservation)
+     */
     public function reserveAssets(
         int $organizationId,
         int $warehouseId,
@@ -900,18 +1138,8 @@ class WarehouseService implements WarehouseReportDataProvider
         DB::beginTransaction();
         
         try {
-            // Проверяем доступность активов
-            $balance = WarehouseBalance::where('organization_id', $organizationId)
-                ->where('warehouse_id', $warehouseId)
-                ->where('material_id', $materialId)
-                ->lockForUpdate()
-                ->first();
-            
-            if (!$balance || $balance->available_quantity < $quantity) {
-                throw new \InvalidArgumentException(
-                    "Недостаточно активов для резервирования. Доступно: " . ($balance ? $balance->available_quantity : 0)
-                );
-            }
+            // Проверяем доступность (через getWarehouseStock или напрямую)
+            // Но reserveQuantity сама проверит и выбросит исключение
             
             // Создаем резервацию
             $expiresAt = isset($metadata['expires_hours']) 
@@ -931,8 +1159,8 @@ class WarehouseService implements WarehouseReportDataProvider
                 'metadata' => $metadata,
             ]);
             
-            // Резервируем в балансе
-            $balance->reserve($quantity);
+            // Резервируем в балансах (партии)
+            $this->reserveQuantity($organizationId, $warehouseId, $materialId, $quantity);
             
             $this->logging->business('warehouse.asset.reserved', [
                 'organization_id' => $organizationId,
@@ -944,12 +1172,15 @@ class WarehouseService implements WarehouseReportDataProvider
             
             DB::commit();
             
+            // Получаем остаток для возврата (агрегированный)
+            $balance = $this->getAssetBalance($organizationId, $warehouseId, $materialId);
+            
             return [
                 'reserved' => true,
                 'reservation_id' => $reservation->id,
                 'quantity' => (float)$quantity,
                 'expires_at' => $expiresAt->toDateTimeString(),
-                'remaining_available' => (float)$balance->available_quantity,
+                'remaining_available' => $balance ? (float)$balance->available_quantity : 0,
             ];
             
         } catch (\Exception $e) {
@@ -971,14 +1202,13 @@ class WarehouseService implements WarehouseReportDataProvider
                 ->lockForUpdate()
                 ->firstOrFail();
             
-            // Возвращаем количество в доступные
-            $balance = WarehouseBalance::where('organization_id', $reservation->organization_id)
-                ->where('warehouse_id', $reservation->warehouse_id)
-                ->where('material_id', $reservation->material_id)
-                ->lockForUpdate()
-                ->firstOrFail();
-            
-            $balance->unreserve($reservation->quantity);
+            // Возвращаем количество в доступные (распределяем по партиям)
+            $this->unreserveQuantity(
+                $reservation->organization_id, 
+                $reservation->warehouse_id, 
+                $reservation->material_id, 
+                $reservation->quantity
+            );
             
             // Обновляем статус резервации
             $reservation->update([
@@ -1085,13 +1315,11 @@ class WarehouseService implements WarehouseReportDataProvider
         foreach ($rules as $rule) {
             $rulesChecked++;
             
-            // Получаем текущий остаток
-            $balance = WarehouseBalance::where('organization_id', $organizationId)
+            // Получаем текущий остаток (сумма по всем партиям)
+            $currentStock = WarehouseBalance::where('organization_id', $organizationId)
                 ->where('warehouse_id', $rule->warehouse_id)
                 ->where('material_id', $rule->material_id)
-                ->first();
-            
-            $currentStock = $balance ? (float)$balance->available_quantity : 0;
+                ->sum('available_quantity');
             
             // Проверяем нужно ли пополнение
             if ($rule->needsReorder($currentStock)) {

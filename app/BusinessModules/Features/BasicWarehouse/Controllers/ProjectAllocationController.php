@@ -14,6 +14,10 @@ use Illuminate\Support\Facades\DB;
  */
 class ProjectAllocationController extends Controller
 {
+    public function __construct(
+        protected \App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService $warehouseService
+    ) {}
+
     /**
      * Распределить материал со склада на проект
      * 
@@ -35,11 +39,12 @@ class ProjectAllocationController extends Controller
         DB::beginTransaction();
         try {
             // КРИТИЧЕСКАЯ ПРОВЕРКА: Материал ДОЛЖЕН существовать на складе
-            $balance = WarehouseBalance::where('organization_id', $organizationId)
-                ->where('warehouse_id', $validated['warehouse_id'])
-                ->where('material_id', $validated['material_id'])
-                ->lockForUpdate()
-                ->first();
+            // Используем сервис для получения агрегированного баланса (сумма по всем партиям)
+            $balance = $this->warehouseService->getAssetBalance(
+                $organizationId,
+                $validated['warehouse_id'],
+                $validated['material_id']
+            );
 
             // Если материала НЕТ на складе - ЗАПРЕЩАЕМ распределение
             if (!$balance) {
