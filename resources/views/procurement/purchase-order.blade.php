@@ -5,290 +5,220 @@
     <title>Заказ поставщику №{{ $order->order_number }}</title>
     <style>
         @page {
-            margin: 2cm;
-            size: A4;
+            margin: 1cm;
+            size: A4 landscape;
         }
         
         body {
             font-family: 'DejaVu Sans', Arial, sans-serif;
-            font-size: 11pt;
-            line-height: 1.4;
+            font-size: 10pt;
+            line-height: 1.2;
             color: #000;
         }
         
         .header {
-            text-align: center;
-            margin-bottom: 30px;
+            margin-bottom: 5px;
         }
         
         .header h1 {
             font-size: 16pt;
             font-weight: bold;
-            margin: 10px 0;
+            margin: 0;
+            padding: 0;
         }
         
-        .header .doc-number {
-            font-size: 12pt;
-            margin: 5px 0;
+        .header-line {
+            border: none;
+            border-top: 2px solid #000;
+            margin: 5px 0 10px 0;
         }
         
-        .section {
-            margin: 20px 0;
+        .contractors {
+            width: 100%;
+            margin-bottom: 15px;
+            border-collapse: collapse;
         }
         
-        .section-title {
+        .contractors td {
+            padding: 2px 0;
+            vertical-align: top;
+        }
+        
+        .contractors .label {
+            width: 100px;
+            font-weight: normal;
+        }
+        
+        .contractors .value {
             font-weight: bold;
-            font-size: 12pt;
-            margin-bottom: 10px;
-            border-bottom: 1px solid #000;
-            padding-bottom: 5px;
         }
         
-        table {
+        table.items {
             width: 100%;
             border-collapse: collapse;
-            margin: 15px 0;
+            margin-bottom: 10px;
         }
         
-        table th, table td {
+        table.items th, table.items td {
             border: 1px solid #000;
-            padding: 8px;
-            text-align: left;
-            font-size: 10pt;
+            padding: 4px;
+            font-size: 9pt;
         }
         
-        table th {
-            background-color: #f0f0f0;
+        table.items th {
+            background-color: #fff;
             font-weight: bold;
+            text-align: center;
         }
         
-        .info-block {
-            margin: 10px 0;
-            padding: 10px;
-            border: 1px solid #ccc;
-            background-color: #f9f9f9;
-        }
+        .text-center { text-align: center; }
+        .text-right { text-align: right; }
+        .text-left { text-align: left; }
         
-        .info-row {
-            margin: 5px 0;
-        }
-        
-        .info-label {
-            display: inline-block;
-            width: 180px;
-            font-weight: bold;
-        }
-        
-        .footer {
-            margin-top: 40px;
-        }
-        
-        .signature-block {
-            margin-top: 30px;
-        }
-        
-        .signature-line {
-            display: flex;
-            justify-content: space-between;
-            margin: 20px 0;
-        }
-        
-        .signature-label {
-            width: 150px;
-        }
-        
-        .signature-space {
-            flex: 1;
-            border-bottom: 1px solid #000;
-            margin: 0 10px;
-        }
-        
-        .signature-name {
-            width: 200px;
-            text-align: left;
-        }
-        
-        .total-section {
-            margin-top: 20px;
-            font-size: 12pt;
+        .totals {
+            width: 100%;
+            margin-top: 5px;
         }
         
         .total-row {
-            display: flex;
-            justify-content: flex-end;
-            margin: 5px 0;
+            text-align: right;
+            padding: 2px 0;
         }
         
         .total-label {
+            display: inline-block;
+            width: 150px;
             font-weight: bold;
-            margin-right: 20px;
+            text-align: right;
+            margin-right: 10px;
         }
         
-        .gost-reference {
+        .total-value {
+            display: inline-block;
+            width: 120px;
+            font-weight: bold;
+            text-align: right;
+            border-bottom: 1px solid #fff;
+        }
+        
+        .summary-block {
+            margin-top: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .summary-line {
+            margin-bottom: 3px;
+        }
+        
+        .footer-line {
+            border: none;
+            border-top: 2px solid #000;
+            margin: 10px 0;
+        }
+        
+        .signatures {
+            width: 100%;
+            margin-top: 20px;
+        }
+        
+        .signatures td {
+            padding: 10px 0;
+        }
+        
+        .sig-line {
+            display: inline-block;
+            width: 200px;
+            border-bottom: 1px solid #000;
+            margin: 0 5px;
+        }
+        
+        .notes-block {
+            margin-top: 10px;
             font-size: 9pt;
-            color: #666;
-            margin-top: 30px;
-            text-align: center;
+            font-style: italic;
         }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>ЗАКАЗ ПОСТАВЩИКУ</h1>
-        <div class="doc-number">№ {{ $order->order_number }} от {{ $date_formatted }}</div>
+        <h1>Заказ поставщику № {{ $order->order_number }} от {{ $date_formatted }}</h1>
     </div>
 
-    <div class="section">
-        <div class="section-title">1. ЗАКАЗЧИК</div>
-        <div class="info-block">
-            <div class="info-row">
-                <span class="info-label">Наименование:</span>
-                <span>{{ $organization->legal_name ?? $organization->name ?? 'Не указано' }}</span>
-            </div>
-            @if(isset($organization->tax_number))
-            <div class="info-row">
-                <span class="info-label">ИНН:</span>
-                <span>{{ $organization->tax_number }}</span>
-            </div>
-            @endif
-            @if(isset($organization->registration_number))
-            <div class="info-row">
-                <span class="info-label">ОГРН:</span>
-                <span>{{ $organization->registration_number }}</span>
-            </div>
-            @endif
-            @if(isset($organization->address))
-            <div class="info-row">
-                <span class="info-label">Юридический адрес:</span>
-                <span>{{ $organization->address }}@if($organization->city), {{ $organization->city }}@endif</span>
-            </div>
-            @endif
-            @if(isset($organization->phone))
-            <div class="info-row">
-                <span class="info-label">Телефон:</span>
-                <span>{{ $organization->phone }}</span>
-            </div>
-            @endif
-        </div>
-    </div>
+    <hr class="header-line">
 
-    <div class="section">
-        <div class="section-title">2. ПОСТАВЩИК</div>
-        <div class="info-block">
-            <div class="info-row">
-                <span class="info-label">Наименование:</span>
-                <span>{{ $supplier->name ?? 'Не указано' }}</span>
-            </div>
-            @if(isset($supplier->inn))
-            <div class="info-row">
-                <span class="info-label">ИНН:</span>
-                <span>{{ $supplier->inn }}</span>
-            </div>
-            @endif
-            @if(isset($supplier->contact_person))
-            <div class="info-row">
-                <span class="info-label">Контактное лицо:</span>
-                <span>{{ $supplier->contact_person }}</span>
-            </div>
-            @endif
-            @if(isset($supplier->phone))
-            <div class="info-row">
-                <span class="info-label">Телефон:</span>
-                <span>{{ $supplier->phone }}</span>
-            </div>
-            @endif
-            @if(isset($supplier->email))
-            <div class="info-row">
-                <span class="info-label">Email:</span>
-                <span>{{ $supplier->email }}</span>
-            </div>
-            @endif
-            @if(isset($supplier->address))
-            <div class="info-row">
-                <span class="info-label">Адрес:</span>
-                <span>{{ $supplier->address }}</span>
-            </div>
-            @endif
-        </div>
-    </div>
+    <table class="contractors">
+        <tr>
+            <td class="label">Исполнитель:</td>
+            <td class="value">{{ $supplier_string }}</td>
+        </tr>
+        <tr>
+            <td class="label">Заказчик:</td>
+            <td class="value">{{ $organization_string }}</td>
+        </tr>
+    </table>
 
-    @if(count($items) > 0)
-    <div class="section">
-        <div class="section-title">3. СПЕЦИФИКАЦИЯ ЗАКАЗА</div>
-        <table>
-            <thead>
-                <tr>
-                    <th style="width: 40px;">№</th>
-                    <th>Наименование товара/услуги</th>
-                    <th style="width: 80px;">Единица измерения</th>
-                    <th style="width: 80px;">Количество</th>
-                    <th style="width: 100px;">Цена за ед.</th>
-                    <th style="width: 100px;">Сумма</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach($items as $index => $item)
-                <tr>
-                    <td style="text-align: center;">{{ $index + 1 }}</td>
-                    <td>{{ $item->material_name ?? 'Не указано' }}</td>
-                    <td style="text-align: center;">{{ $item->unit ?? 'шт.' }}</td>
-                    <td style="text-align: right;">{{ number_format($item->quantity ?? 0, 2, ',', ' ') }}</td>
-                    <td style="text-align: right;">{{ number_format($item->unit_price ?? 0, 2, ',', ' ') }}</td>
-                    <td style="text-align: right;">{{ number_format($item->total_price ?? 0, 2, ',', ' ') }}</td>
-                </tr>
-                @endforeach
-            </tbody>
-        </table>
-    </div>
-    @endif
+    <table class="items">
+        <thead>
+            <tr>
+                <th style="width: 30px;">№</th>
+                <th>Товары (работы, услуги)</th>
+                <th style="width: 70px;">Кол-во</th>
+                <th style="width: 40px;">Ед.</th>
+                <th style="width: 90px;">Цена</th>
+                <th style="width: 100px;">Сумма</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach($items as $index => $item)
+            <tr>
+                <td class="text-center">{{ $index + 1 }}</td>
+                <td class="text-left">{{ $item->material_name }}</td>
+                <td class="text-right">{{ number_format($item->quantity, 2, ',', ' ') }}</td>
+                <td class="text-center">{{ $item->unit }}</td>
+                <td class="text-right">{{ number_format($item->unit_price, 2, ',', ' ') }}</td>
+                <td class="text-right">{{ number_format($item->total_price, 2, ',', ' ') }}</td>
+            </tr>
+            @endforeach
+        </tbody>
+    </table>
 
-    <div class="total-section">
+    <div class="totals">
         <div class="total-row">
-            <span class="total-label">ИТОГО:</span>
-            <span>{{ number_format($order->total_amount, 2, ',', ' ') }} {{ $order->currency }}</span>
+            <span class="total-label">Итого:</span>
+            <span class="total-value">{{ number_format($order->total_amount, 2, ',', ' ') }}</span>
         </div>
-        @if($total_amount_words)
-        <div class="total-row" style="font-size: 10pt; font-style: italic;">
-            <span>Всего на сумму: {{ $total_amount_words }}</span>
+        <div class="total-row">
+            <span class="total-label">В том числе НДС:</span>
+            <span class="total-value">0,00</span>
         </div>
-        @endif
     </div>
 
-    @if($order->delivery_date)
-    <div class="section">
-        <div class="section-title">4. УСЛОВИЯ ПОСТАВКИ</div>
-        <div class="info-row">
-            <span class="info-label">Срок поставки:</span>
-            <span>{{ \Carbon\Carbon::parse($order->delivery_date)->format('d.m.Y') }}</span>
+    <div class="summary-block">
+        <div class="summary-line">
+            Всего наименований {{ count($items) }}, на сумму {{ number_format($order->total_amount, 2, ',', ' ') }} руб.
+        </div>
+        <div class="summary-line">
+            <strong>{{ $total_amount_words }}</strong>
         </div>
     </div>
-    @endif
 
     @if($order->notes)
-    <div class="section">
-        <div class="section-title">5. ПРИМЕЧАНИЯ</div>
-        <p>{{ $order->notes }}</p>
+    <div class="notes-block">
+        Примечание: {{ $order->notes }}
     </div>
     @endif
 
-    <div class="footer">
-        <div class="signature-block">
-            <div class="signature-line">
-                <div class="signature-label">От заказчика:</div>
-                <div class="signature-space"></div>
-                <div class="signature-name">(_____________)</div>
-            </div>
-            
-            <div class="signature-line">
-                <div class="signature-label">От поставщика:</div>
-                <div class="signature-space"></div>
-                <div class="signature-name">(_____________)</div>
-            </div>
-        </div>
-        
-        <div class="gost-reference">
-            Документ составлен в соответствии с требованиями ГОСТ Р 7.0.97-2016
-        </div>
-    </div>
+    <hr class="footer-line">
+
+    <table class="signatures">
+        <tr>
+            <td style="width: 50%;">
+                <strong>Исполнитель</strong> <span class="sig-line"></span> ({{ $supplier->contact_person ?? '_____________________' }})
+            </td>
+            <td style="width: 50%;">
+                <strong>Заказчик</strong> <span class="sig-line"></span> (_____________________)
+            </td>
+        </tr>
+    </table>
 </body>
 </html>
