@@ -11,8 +11,12 @@ class ModuleScanner
 {
     public function scanAndRegister(): Collection 
     {
-        $modules = $this->loadFromConfigFiles();
-        
+        // Получаем список слагов из конфигурации
+        $configSlugs = collect($modules)->pluck('slug')->toArray();
+
+        // Удаляем модули, которых больше нет в конфигурации
+        Module::whereNotIn('slug', $configSlugs)->delete();
+
         foreach ($modules as $moduleConfig) {
             $this->registerModule($moduleConfig);
         }

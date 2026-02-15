@@ -550,7 +550,7 @@ class ReportService
 
     /**
      * Генерация аналитики оборачиваемости активов
-     * Только для AdvancedWarehouse + AdvancedReports
+     * Требует активного складского модуля с лимитами на аналитику
      * 
      * @param int $organizationId ID организации
      * @param array $filters Фильтры (date_from, date_to, asset_ids, warehouse_id)
@@ -558,8 +558,7 @@ class ReportService
      */
     public function generateWarehouseTurnoverAnalytics(int $organizationId, array $filters = []): array
     {
-        // Получаем сервис продвинутого склада (будет создан в следующих этапах)
-        // Пока используем BasicWarehouse который возвращает заглушку
+        // Получаем сервис склада
         $warehouseService = app(\App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService::class);
         
         // Получаем данные через интерфейс WarehouseReportDataProvider
@@ -583,7 +582,7 @@ class ReportService
 
     /**
      * Генерация прогноза потребности в материалах
-     * Только для AdvancedWarehouse + AdvancedReports
+     * Требует активного складского модуля с лимитами на прогнозирование
      * 
      * @param int $organizationId ID организации
      * @param array $filters Фильтры (horizon_days, asset_ids)
@@ -591,8 +590,7 @@ class ReportService
      */
     public function generateWarehouseForecastReport(int $organizationId, array $filters = []): array
     {
-        // Получаем сервис продвинутого склада (будет создан в следующих этапах)
-        // Пока используем BasicWarehouse который возвращает заглушку
+        // Получаем сервис склада
         $warehouseService = app(\App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService::class);
         
         // Получаем данные через интерфейс WarehouseReportDataProvider
@@ -616,7 +614,7 @@ class ReportService
 
     /**
      * Генерация ABC/XYZ анализа запасов
-     * Только для AdvancedWarehouse + AdvancedReports
+     * Требует активного складского модуля с лимитами на аналитику
      * 
      * @param int $organizationId ID организации
      * @param array $filters Фильтры (date_from, date_to, warehouse_id)
@@ -624,8 +622,7 @@ class ReportService
      */
     public function generateWarehouseAbcXyzAnalysis(int $organizationId, array $filters = []): array
     {
-        // Получаем сервис продвинутого склада (будет создан в следующих этапах)
-        // Пока используем BasicWarehouse который возвращает заглушку
+        // Получаем сервис склада
         $warehouseService = app(\App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService::class);
         
         // Получаем данные через интерфейс WarehouseReportDataProvider

@@ -1,10 +1,10 @@
 <?php
 
-namespace Tests\Unit\AdvancedWarehouse;
+namespace Tests\Unit\BasicWarehouse;
 
-use App\BusinessModules\Features\AdvancedWarehouse\Models\AssetReservation;
-use App\BusinessModules\Features\AdvancedWarehouse\Models\AutoReorderRule;
-use App\BusinessModules\Features\AdvancedWarehouse\Services\AdvancedWarehouseService;
+use App\BusinessModules\Features\BasicWarehouse\Models\AssetReservation;
+use App\BusinessModules\Features\BasicWarehouse\Models\AutoReorderRule;
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
@@ -14,13 +14,13 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 /**
- * Тесты продвинутых функций склада
+ * Тесты продвинутых функций объединенного склада
  */
-class AdvancedWarehouseServiceTest extends TestCase
+class AdvancedWarehouseFeaturesTest extends TestCase
 {
     use RefreshDatabase;
 
-    protected AdvancedWarehouseService $service;
+    protected WarehouseService $service;
     protected Organization $organization;
     protected OrganizationWarehouse $warehouse;
     protected Material $material;
@@ -29,7 +29,7 @@ class AdvancedWarehouseServiceTest extends TestCase
     {
         parent::setUp();
 
-        $this->service = app(AdvancedWarehouseService::class);
+        $this->service = app(WarehouseService::class);
 
         $this->organization = Organization::factory()->create();
         
@@ -255,4 +255,3 @@ class AdvancedWarehouseServiceTest extends TestCase
         $this->assertNotEmpty($result['assets']);
     }
 }
-
