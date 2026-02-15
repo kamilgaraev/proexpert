@@ -540,10 +540,10 @@ class TimeTrackingService
      */
     public function getTimeEntriesByDays(
         int $organizationId,
-        ?int $userId = null,
-        ?int $projectId = null,
         string $startDate,
-        string $endDate
+        string $endDate,
+        ?int $userId = null,
+        ?int $projectId = null
     ): array {
         $query = TimeEntry::with(['user', 'project', 'workType'])
             ->forOrganization($organizationId)
@@ -571,11 +571,11 @@ class TimeTrackingService
      */
     public function getTimeReport(
         int $organizationId,
-        ?int $userId = null,
-        ?int $projectId = null,
         string $startDate,
         string $endDate,
-        string $groupBy = 'user' // user, project, work_type, date
+        ?int $userId = null,
+        ?int $projectId = null,
+        string $groupBy = 'user'
     ): array {
         $query = TimeEntry::with(['user', 'project', 'workType'])
             ->forOrganization($organizationId)
