@@ -12,18 +12,12 @@ use App\Http\Resources\TimeEntryResource;
 use App\Http\Responses\AdminResponse;
 use App\Services\TimeTrackingService;
 use App\Models\TimeEntry;
-use App\Exceptions\BusinessLogicException;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
 
 use function trans_message;
 
-/**
- * Контроллер учёта рабочего времени
- * 
- * Thin Controller - вся логика в TimeTrackingService
- */
 class TimeTrackingController extends Controller
 {
     public function __construct(
@@ -31,11 +25,6 @@ class TimeTrackingController extends Controller
     ) {
     }
 
-    /**
-     * Получить список записей времени с фильтрацией
-     * 
-     * GET /api/v1/admin/time-tracking
-     */
     public function index(Request $request): JsonResponse
     {
         try {
@@ -48,8 +37,8 @@ class TimeTrackingController extends Controller
                 status: $request->query('status'),
                 startDate: $request->query('start_date'),
                 endDate: $request->query('end_date'),
-                billable: $request->query('billable') !== null ? (bool)$request->query('billable') : null,
-                perPage: (int)$request->query('per_page', 15)
+                billable: $request->query('billable') !== null ? filter_var($request->query('billable'), FILTER_VALIDATE_BOOLEAN) : null,
+                perPage: min((int)$request->query('per_page', 15), 100)
             );
 
             return AdminResponse::success(
@@ -63,22 +52,16 @@ class TimeTrackingController extends Controller
                     'total' => $timeEntries->total(),
                 ]
             );
-        } catch (BusinessLogicException $e) {
-            return AdminResponse::error($e->getMessage(), $e->getCode());
         } catch (\Throwable $e) {
-            Log::error('[TimeTrackingController] Error fetching time entries', [
+            Log::error('[TimeTrackingController] Ошибка получения записей времени', [
                 'error' => $e->getMessage(),
-                'user_id' => $request->user()->id,
+                'trace' => $e->getTraceAsString(),
+                'user_id' => $request->user()?->id,
             ]);
             return AdminResponse::error(trans_message('time_tracking.fetch_failed'), 500);
         }
     }
 
-    /**
-     * Создать новую запись времени
-     * 
-     * POST /api/v1/admin/time-tracking
-     */
     public function store(StoreTimeEntryRequest $request): JsonResponse
     {
         try {
@@ -89,22 +72,16 @@ class TimeTrackingController extends Controller
                 trans_message('time_tracking.entry_created'),
                 201
             );
-        } catch (BusinessLogicException $e) {
-            return AdminResponse::error($e->getMessage(), $e->getCode());
         } catch (\Throwable $e) {
-            Log::error('[TimeTrackingController] Error creating time entry', [
+            Log::error('[TimeTrackingController] Ошибка создания записи времени', [
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
                 'data' => $request->validated(),
             ]);
             return AdminResponse::error(trans_message('time_tracking.create_failed'), 500);
         }
     }
 
-    /**
-     * Получить конкретную запись времени
-     * 
-     * GET /api/v1/admin/time-tracking/{id}
-     */
     public function show(Request $request, int $id): JsonResponse
     {
         try {
@@ -118,15 +95,14 @@ class TimeTrackingController extends Controller
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return AdminResponse::error(trans_message('time_tracking.entry_not_found'), 404);
         } catch (\Throwable $e) {
+            Log::error('[TimeTrackingController] Ошибка получения записи времени', [
+                'error' => $e->getMessage(),
+                'id' => $id,
+            ]);
             return AdminResponse::error(trans_message('time_tracking.fetch_failed'), 500);
         }
     }
 
-    /**
-     * Обновить запись времени
-     * 
-     * PUT/PATCH /api/v1/admin/time-tracking/{id}
-     */
     public function update(UpdateTimeEntryRequest $request, int $id): JsonResponse
     {
         try {
@@ -135,7 +111,15 @@ class TimeTrackingController extends Controller
             $timeEntry = TimeEntry::where('organization_id', $organizationId)
                 ->findOrFail($id);
 
-            $updatedEntry = $this->timeTrackingService->updateTimeEntry($timeEntry, $request->validated());
+            if (!$timeEntry->canBeEdited()) {
+                return AdminResponse::error(trans_message('time_tracking.cannot_edit_approved'), 400);
+            }
+
+            $updatedEntry = $this->timeTrackingService->updateTimeEntry($id, $request->validated());
+
+            if (!$updatedEntry) {
+                return AdminResponse::error(trans_message('time_tracking.update_failed'), 400);
+            }
 
             return AdminResponse::success(
                 new TimeEntryResource($updatedEntry),
@@ -143,22 +127,16 @@ class TimeTrackingController extends Controller
             );
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return AdminResponse::error(trans_message('time_tracking.entry_not_found'), 404);
-        } catch (BusinessLogicException $e) {
-            return AdminResponse::error($e->getMessage(), $e->getCode());
         } catch (\Throwable $e) {
-            Log::error('[TimeTrackingController] Error updating time entry', [
+            Log::error('[TimeTrackingController] Ошибка обновления записи времени', [
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
                 'id' => $id,
             ]);
             return AdminResponse::error(trans_message('time_tracking.update_failed'), 500);
         }
     }
 
-    /**
-     * Удалить запись времени
-     * 
-     * DELETE /api/v1/admin/time-tracking/{id}
-     */
     public function destroy(Request $request, int $id): JsonResponse
     {
         try {
@@ -167,7 +145,15 @@ class TimeTrackingController extends Controller
             $timeEntry = TimeEntry::where('organization_id', $organizationId)
                 ->findOrFail($id);
 
-            $this->timeTrackingService->deleteTimeEntry($timeEntry);
+            if (!$timeEntry->canBeEdited()) {
+                return AdminResponse::error(trans_message('time_tracking.cannot_edit_approved'), 400);
+            }
+
+            $deleted = $this->timeTrackingService->deleteTimeEntry($id);
+
+            if (!$deleted) {
+                return AdminResponse::error(trans_message('time_tracking.delete_failed'), 400);
+            }
 
             return AdminResponse::success(
                 null,
@@ -175,22 +161,16 @@ class TimeTrackingController extends Controller
             );
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return AdminResponse::error(trans_message('time_tracking.entry_not_found'), 404);
-        } catch (BusinessLogicException $e) {
-            return AdminResponse::error($e->getMessage(), $e->getCode());
         } catch (\Throwable $e) {
-            Log::error('[TimeTrackingController] Error deleting time entry', [
+            Log::error('[TimeTrackingController] Ошибка удаления записи времени', [
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
                 'id' => $id,
             ]);
             return AdminResponse::error(trans_message('time_tracking.delete_failed'), 500);
         }
     }
 
-    /**
-     * Утвердить запись времени
-     * 
-     * POST /api/v1/admin/time-tracking/{id}/approve
-     */
     public function approve(ApproveTimeEntryRequest $request, int $id): JsonResponse
     {
         try {
@@ -199,34 +179,34 @@ class TimeTrackingController extends Controller
             $timeEntry = TimeEntry::where('organization_id', $organizationId)
                 ->findOrFail($id);
 
-            $approvedEntry = $this->timeTrackingService->approveTimeEntry(
-                $timeEntry,
-                $request->user()->id,
-                $request->input('notes')
-            );
+            if (!$timeEntry->canBeApproved()) {
+                return AdminResponse::error(trans_message('time_tracking.already_approved'), 400);
+            }
+
+            $approved = $this->timeTrackingService->approveTimeEntry($id, $request->user());
+
+            if (!$approved) {
+                return AdminResponse::error(trans_message('time_tracking.approve_failed'), 400);
+            }
+
+            $timeEntry->refresh();
 
             return AdminResponse::success(
-                new TimeEntryResource($approvedEntry),
+                new TimeEntryResource($timeEntry->load(['user', 'project', 'workType', 'task', 'approvedBy'])),
                 trans_message('time_tracking.entry_approved')
             );
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return AdminResponse::error(trans_message('time_tracking.entry_not_found'), 404);
-        } catch (BusinessLogicException $e) {
-            return AdminResponse::error($e->getMessage(), $e->getCode());
         } catch (\Throwable $e) {
-            Log::error('[TimeTrackingController] Error approving time entry', [
+            Log::error('[TimeTrackingController] Ошибка утверждения записи времени', [
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
                 'id' => $id,
             ]);
             return AdminResponse::error(trans_message('time_tracking.approve_failed'), 500);
         }
     }
 
-    /**
-     * Отклонить запись времени
-     * 
-     * POST /api/v1/admin/time-tracking/{id}/reject
-     */
     public function reject(ApproveTimeEntryRequest $request, int $id): JsonResponse
     {
         try {
@@ -235,69 +215,81 @@ class TimeTrackingController extends Controller
             $timeEntry = TimeEntry::where('organization_id', $organizationId)
                 ->findOrFail($id);
 
-            $rejectedEntry = $this->timeTrackingService->rejectTimeEntry(
-                $timeEntry,
-                $request->user()->id,
-                $request->input('notes')
-            );
+            if (!$timeEntry->canBeApproved()) {
+                return AdminResponse::error(trans_message('time_tracking.already_approved'), 400);
+            }
+
+            $reason = $request->input('notes') ?? $request->input('reason') ?? '';
+
+            if (empty($reason)) {
+                return AdminResponse::error('Необходимо указать причину отклонения', 400);
+            }
+
+            $rejected = $this->timeTrackingService->rejectTimeEntry($id, $request->user(), $reason);
+
+            if (!$rejected) {
+                return AdminResponse::error(trans_message('time_tracking.approve_failed'), 400);
+            }
+
+            $timeEntry->refresh();
 
             return AdminResponse::success(
-                new TimeEntryResource($rejectedEntry),
+                new TimeEntryResource($timeEntry->load(['user', 'project', 'workType', 'task', 'approvedBy'])),
                 trans_message('time_tracking.entry_rejected')
             );
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return AdminResponse::error(trans_message('time_tracking.entry_not_found'), 404);
-        } catch (BusinessLogicException $e) {
-            return AdminResponse::error($e->getMessage(), $e->getCode());
         } catch (\Throwable $e) {
-            Log::error('[TimeTrackingController] Error rejecting time entry', [
+            Log::error('[TimeTrackingController] Ошибка отклонения записи времени', [
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
                 'id' => $id,
             ]);
             return AdminResponse::error(trans_message('time_tracking.approve_failed'), 500);
         }
     }
 
-    /**
-     * Отправить запись времени на утверждение
-     * 
-     * POST /api/v1/admin/time-tracking/{id}/submit
-     */
     public function submit(Request $request, int $id): JsonResponse
     {
         try {
             $organizationId = $this->getCurrentOrganizationId($request);
             
             $timeEntry = TimeEntry::where('organization_id', $organizationId)
-                ->where('user_id', $request->user()->id)
                 ->findOrFail($id);
 
-            $submittedEntry = $this->timeTrackingService->submitTimeEntry($timeEntry);
+            if (!$timeEntry->canBeEdited()) {
+                return AdminResponse::error(trans_message('time_tracking.cannot_edit_approved'), 400);
+            }
+
+            $submitted = $this->timeTrackingService->submitTimeEntry($id);
+
+            if (!$submitted) {
+                return AdminResponse::error(trans_message('time_tracking.update_failed'), 400);
+            }
+
+            $timeEntry->refresh();
 
             return AdminResponse::success(
-                new TimeEntryResource($submittedEntry),
+                new TimeEntryResource($timeEntry),
                 trans_message('time_tracking.entry_updated')
             );
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return AdminResponse::error(trans_message('time_tracking.entry_not_found'), 404);
-        } catch (BusinessLogicException $e) {
-            return AdminResponse::error($e->getMessage(), $e->getCode());
         } catch (\Throwable $e) {
+            Log::error('[TimeTrackingController] Ошибка отправки на утверждение', [
+                'error' => $e->getMessage(),
+                'id' => $id,
+            ]);
             return AdminResponse::error(trans_message('time_tracking.update_failed'), 500);
         }
     }
 
-    /**
-     * Получить статистику по времени
-     * 
-     * GET /api/v1/admin/time-tracking/statistics
-     */
     public function statistics(Request $request): JsonResponse
     {
         try {
             $organizationId = $this->getCurrentOrganizationId($request);
             
-            $stats = $this->timeTrackingService->getStatistics(
+            $stats = $this->timeTrackingService->getTimeStatistics(
                 organizationId: $organizationId,
                 userId: $request->query('user_id') ? (int)$request->query('user_id') : null,
                 projectId: $request->query('project_id') ? (int)$request->query('project_id') : null,
@@ -306,83 +298,78 @@ class TimeTrackingController extends Controller
             );
 
             return AdminResponse::success($stats, trans_message('time_tracking.stats_loaded'));
-        } catch (BusinessLogicException $e) {
-            return AdminResponse::error($e->getMessage(), $e->getCode());
         } catch (\Throwable $e) {
-            Log::error('[TimeTrackingController] Error fetching statistics', [
+            Log::error('[TimeTrackingController] Ошибка получения статистики', [
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
             return AdminResponse::error(trans_message('time_tracking.stats_failed'), 500);
         }
     }
 
-    /**
-     * Получить данные для календаря
-     * 
-     * GET /api/v1/admin/time-tracking/calendar
-     */
     public function calendar(Request $request): JsonResponse
     {
         try {
             $organizationId = $this->getCurrentOrganizationId($request);
             
-            $calendarData = $this->timeTrackingService->getCalendarData(
+            $startDate = $request->query('start_date') ?? now()->startOfMonth()->format('Y-m-d');
+            $endDate = $request->query('end_date') ?? now()->endOfMonth()->format('Y-m-d');
+            
+            $calendarData = $this->timeTrackingService->getTimeEntriesByDays(
                 organizationId: $organizationId,
                 userId: $request->query('user_id') ? (int)$request->query('user_id') : null,
-                month: $request->query('month'),
-                year: $request->query('year') ? (int)$request->query('year') : null
+                projectId: $request->query('project_id') ? (int)$request->query('project_id') : null,
+                startDate: $startDate,
+                endDate: $endDate
             );
 
             return AdminResponse::success($calendarData);
-        } catch (BusinessLogicException $e) {
-            return AdminResponse::error($e->getMessage(), $e->getCode());
         } catch (\Throwable $e) {
+            Log::error('[TimeTrackingController] Ошибка получения календаря', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
             return AdminResponse::error(trans_message('time_tracking.fetch_failed'), 500);
         }
     }
 
-    /**
-     * Получить отчёт по времени
-     * 
-     * GET /api/v1/admin/time-tracking/report
-     */
     public function report(Request $request): JsonResponse
     {
         try {
             $organizationId = $this->getCurrentOrganizationId($request);
             
-            $report = $this->timeTrackingService->generateReport(
+            $startDate = $request->query('start_date');
+            $endDate = $request->query('end_date');
+            
+            if (!$startDate || !$endDate) {
+                return AdminResponse::error('Необходимо указать период для отчета', 400);
+            }
+            
+            $report = $this->timeTrackingService->getTimeReport(
                 organizationId: $organizationId,
                 userId: $request->query('user_id') ? (int)$request->query('user_id') : null,
                 projectId: $request->query('project_id') ? (int)$request->query('project_id') : null,
-                startDate: $request->query('start_date'),
-                endDate: $request->query('end_date'),
+                startDate: $startDate,
+                endDate: $endDate,
                 groupBy: $request->query('group_by', 'user')
             );
 
             return AdminResponse::success($report, trans_message('time_tracking.summary_loaded'));
-        } catch (BusinessLogicException $e) {
-            return AdminResponse::error($e->getMessage(), $e->getCode());
         } catch (\Throwable $e) {
-            Log::error('[TimeTrackingController] Error generating report', [
+            Log::error('[TimeTrackingController] Ошибка генерации отчета', [
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
-            return AdminResponse::error(trans_message('reports.generation_failed'), 500);
+            return AdminResponse::error('Ошибка при генерации отчета', 500);
         }
     }
 
-    /**
-     * Получить ID текущей организации
-     */
     protected function getCurrentOrganizationId(Request $request): int
     {
         $organizationId = $request->user()->current_organization_id;
 
         if (!$organizationId) {
-            throw new BusinessLogicException(
-                trans_message('errors.organization_not_found'),
-                400
-            );
+            throw new \Exception('Организация не найдена');
         }
 
         return $organizationId;
