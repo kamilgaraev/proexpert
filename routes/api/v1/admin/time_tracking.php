@@ -18,6 +18,8 @@ Route::prefix('time-tracking')->name('timeTracking.')->group(function () {
     Route::get('/statistics', [TimeTrackingController::class, 'statistics'])->name('statistics');
     Route::get('/calendar', [TimeTrackingController::class, 'calendar'])->name('calendar');
     Route::get('/reports', [TimeTrackingController::class, 'report'])->name('report');
+    Route::get('/export', [TimeTrackingController::class, 'export'])->name('export');
+    Route::get('/workers', [TimeTrackingController::class, 'workers'])->name('workers');
 
     // Основные CRUD операции
     Route::get('/', [TimeTrackingController::class, 'index'])->name('index');

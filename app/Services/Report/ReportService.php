@@ -1263,6 +1263,12 @@ class ReportService
         if ($request->filled('status')) {
             $query->where('time_entries.status', $request->query('status'));
         }
+        if ($request->filled('worker_type')) {
+            $query->where('time_entries.worker_type', $request->query('worker_type'));
+        }
+        if ($request->filled('worker_name')) {
+            $query->where('time_entries.worker_name', $request->query('worker_name'));
+        }
         if ($request->has('is_billable')) {
             $query->where('time_entries.is_billable', $request->boolean('is_billable'));
         }
@@ -1297,14 +1303,15 @@ class ReportService
                 'id' => $entry->id,
                 'date' => $entry->work_date,
                 'user' => $entry->worker_display_name,
+                'type' => $entry->worker_type,
                 'project' => $entry->project_name,
                 'work_type' => $entry->work_type_name,
                 'title' => $entry->title,
                 'hours' => (float)$entry->hours_worked,
-                'hourly_rate' => (float)$entry->hourly_rate,
+                'rate' => (float)$entry->hourly_rate,
                 'total_cost' => (float)$entry->total_cost,
                 'status' => $entry->status,
-                'is_billable' => (bool)$entry->is_billable,
+                'billable' => (bool)$entry->is_billable,
             ];
         });
 
@@ -1312,7 +1319,7 @@ class ReportService
             'total_entries' => $data->count(),
             'total_hours' => $data->sum('hours'),
             'total_cost' => $data->sum('total_cost'),
-            'billable_hours' => $data->where('is_billable', true)->sum('hours'),
+            'billable_hours' => $data->where('billable', true)->sum('hours'),
             'approved_hours' => $data->where('status', 'approved')->sum('hours'),
         ];
 
@@ -1320,35 +1327,36 @@ class ReportService
             $columns = [
                 'Дата' => 'date',
                 'Сотрудник' => 'user',
+                'Тип' => 'type',
                 'Проект' => 'project',
-                'Тип работ' => 'work_type',
+                'Вид работ' => 'work_type',
                 'Описание' => 'title',
                 'Часов' => 'hours',
-                'Ставка' => 'hourly_rate',
+                'Ставка' => 'rate',
                 'Стоимость' => 'total_cost',
                 'Статус' => 'status',
-                'Оплачиваемо' => 'is_billable',
+                'Оплачиваемо' => 'billable',
             ];
             $exportable = $this->excelExporter->prepareDataForExport($data->toArray(), $columns);
             return $this->excelExporter->streamDownload('time_tracking_report_' . now()->format('d-m-Y_H-i') . '.xlsx', $exportable['headers'], $exportable['data']);
         }
 
         if ($format === 'pdf') {
-            return $this->pdfExporter->streamDownload(
+            return $this->pdfExporter->download(
                 'reports.time-tracking-pdf',
                 [
-                    'title' => 'Отчет по учету рабочего времени',
-                    'data' => $data->values(),
-                    'totals' => $totals,
-                    'filters' => [
-                        'date_from' => $dateFrom->format('d.m.Y'),
-                        'date_to' => $dateTo->format('d.m.Y'),
+                    'title' => 'Отчет по учету времени',
+                    'date_from' => $dateFrom->format('d.m.Y'),
+                    'date_to' => $dateTo->format('d.m.Y'),
+                    'entries' => $data,
+                    'summary' => [
+                        'total_hours' => $data->sum('hours'),
+                        'total_cost' => $data->sum('total_cost'),
+                        'total_entries' => $data->count()
                     ],
-                    'generated_at' => Carbon::now()->format('d.m.Y H:i'),
+                    'generated_at' => Carbon::now()->format('d.m.Y H:i')
                 ],
-                'time_tracking_report_' . now()->format('d-m-Y_H-i') . '.pdf',
-                'a4',
-                'landscape'
+                'time_tracking_report.pdf'
             );
         }
 
@@ -1357,7 +1365,7 @@ class ReportService
             'data' => $data->values(),
             'grouped_data' => $grouped,
             'totals' => $totals,
-            'filters' => $request->only(['user_id', 'project_id', 'work_type_id', 'status', 'date_from', 'date_to']),
+            'filters' => $request->only(['user_id', 'project_id', 'work_type_id', 'status', 'date_from', 'date_to', 'worker_type', 'worker_name']),
             'generated_at' => Carbon::now(),
         ];
     }
