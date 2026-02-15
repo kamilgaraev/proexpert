@@ -181,21 +181,12 @@ class EstimateItemProcessor
             
             $context->currentSectionId = $currentSectionId;
 
-            // Process Item Strategies
-            $processed = false;
             foreach ($this->strategies as $strategy) {
                 if ($strategy->canHandle($dto)) {
-                    try {
-                        $strategy->process($dto, $context);
-                        $context->incrementStat($dto->itemType);
-                        $context->importedCount++;
-                        $processed = true;
-                    } catch (\Exception $e) {
-                         Log::error('[EstimateItemProcessor] Strategy error', [
-                            'strategy' => get_class($strategy),
-                            'error' => $e->getMessage()
-                        ]);
-                    }
+                    $strategy->process($dto, $context);
+                    $context->incrementStat($dto->itemType);
+                    $context->importedCount++;
+                    $processed = true;
                     break;
                 }
             }
@@ -211,34 +202,29 @@ class EstimateItemProcessor
         // Создаем раздел
         $parentSectionId = $this->sectionStack->getParentSectionId($dto->level);
         
-        try {
-            $section = $this->sectionService->createSection([
-                'estimate_id' => $estimate->id,
-                'section_number' => $dto->sectionNumber,
-                'name' => $dto->itemName,
-                'parent_section_id' => $parentSectionId,
-            ]);
-            
-            // Push to stack
-            $this->sectionStack->pushSection($section->id, $dto->level);
-            
-            // Увеличиваем счетчик созданных разделов
-            $context->sectionsCreatedCount++;
-            
-            Log::debug('[EstimateItemProcessor] Section created', [
-                'id' => $section->id,
-                'number' => $dto->sectionNumber,
-                'level' => $dto->level,
-                'path' => $dto->sectionPath
-            ]);
-            
-            // Save to map for Path Mode lookups
-            if ($dto->sectionPath) {
-                $context->sectionsMap[$dto->sectionPath] = $section->id;
-            }
-            
-        } catch (\Exception $e) {
-            Log::error('[EstimateItemProcessor] Failed to create section', ['error' => $e->getMessage()]);
+        $section = $this->sectionService->createSection([
+            'estimate_id' => $estimate->id,
+            'section_number' => $dto->sectionNumber,
+            'name' => $dto->itemName,
+            'parent_section_id' => $parentSectionId,
+        ]);
+        
+        // Push to stack
+        $this->sectionStack->pushSection($section->id, $dto->level);
+        
+        // Увеличиваем счетчик созданных разделов
+        $context->sectionsCreatedCount++;
+        
+        Log::debug('[EstimateItemProcessor] Section created', [
+            'id' => $section->id,
+            'number' => $dto->sectionNumber,
+            'level' => $dto->level,
+            'path' => $dto->sectionPath
+        ]);
+        
+        // Save to map for Path Mode lookups
+        if ($dto->sectionPath) {
+            $context->sectionsMap[$dto->sectionPath] = $section->id;
         }
     }
 }
