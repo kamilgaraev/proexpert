@@ -28,7 +28,10 @@ class TimeTrackingController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $organizationId = $this->getCurrentOrganizationId($request);
+            $organizationId = $request->user()?->current_organization_id;
+            if (!$organizationId) {
+                return AdminResponse::error('Организация не найдена', 400);
+            }
             
             $timeEntries = $this->timeTrackingService->getTimeEntries(
                 organizationId: $organizationId,
@@ -41,26 +44,18 @@ class TimeTrackingController extends Controller
                 perPage: min((int)$request->query('per_page', 15), 100)
             );
 
-            return AdminResponse::success(
-                [
-                    'items' => TimeEntryResource::collection($timeEntries->items()),
-                    'pagination' => [
-                        'current_page' => $timeEntries->currentPage(),
-                        'last_page' => $timeEntries->lastPage(),
-                        'per_page' => $timeEntries->perPage(),
-                        'total' => $timeEntries->total(),
-                    ]
-                ],
-                null,
-                200
-            );
+            return AdminResponse::success([
+                'items' => TimeEntryResource::collection($timeEntries->items()),
+                'pagination' => [
+                    'current_page' => $timeEntries->currentPage(),
+                    'last_page' => $timeEntries->lastPage(),
+                    'per_page' => $timeEntries->perPage(),
+                    'total' => $timeEntries->total(),
+                ]
+            ]);
         } catch (\Throwable $e) {
-            Log::error('[TimeTrackingController] Ошибка получения записей времени', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-                'user_id' => $request->user()?->id,
-                'organization_id' => $this->getCurrentOrganizationId($request),
-                'query_params' => $request->query(),
+            Log::error('[TimeTrackingController] Ошибка получения записей времени: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
             ]);
             return AdminResponse::error(trans_message('time_tracking.fetch_failed'), 500);
         }

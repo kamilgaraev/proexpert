@@ -34,7 +34,7 @@ class TimeEntryResource extends JsonResource
             'title' => $this->title,
             'description' => $this->description,
             'status' => $this->status,
-            'status_label' => $this->status_label,
+            'status_label' => $this->status_label ?? $this->status,
             'approved_by_user_id' => $this->approved_by_user_id,
             'approved_at' => $this->approved_at,
             'rejection_reason' => $this->rejection_reason,

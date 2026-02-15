@@ -165,7 +165,7 @@ class PermissionResolver
      */
     public function hasModulePermission(UserRoleAssignment $assignment, string $permission, ?array $context = null): bool
     {
-        $this->logging->technical('permission.module.check.start', [
+        Log::debug('permission.module.check.start', [
             'permission' => $permission,
             'role_slug' => $assignment->role_slug,
             'role_type' => $assignment->role_type,
@@ -198,6 +198,7 @@ class PermissionResolver
             'construction-journal' => 'budget-estimates',
             'estimates' => 'budget-estimates',
             'ai_estimates' => 'ai-estimates',
+            'time_tracking' => 'time-tracking',
         ];
         
         // Обратный маппинг: budget-estimates.* -> estimates.* (для обратной совместимости)
@@ -230,7 +231,7 @@ class PermissionResolver
                 return $this->moduleChecker->isModuleActive($moduleToCheck, $organizationId);
             });
             
-            $this->logging->technical('permission.module.active_check', [
+            Log::debug('permission.module.active_check', [
                 'module' => $moduleToCheck,
                 'is_active' => $isActive,
             ]);
@@ -385,7 +386,7 @@ class PermissionResolver
             }
         }
 
-        $this->logging->technical('permission.module.denied.no_match', [
+        Log::debug('permission.module.denied.no_match', [
             'module' => $module,
             'action' => $action,
         ]);

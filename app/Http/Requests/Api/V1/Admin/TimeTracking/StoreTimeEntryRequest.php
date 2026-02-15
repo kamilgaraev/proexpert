@@ -13,7 +13,7 @@ class StoreTimeEntryRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return Auth::check() && Auth::user()->hasPermissionTo('time_tracking.create');
+        return \Illuminate\Support\Facades\Auth::check();
     }
 
     /**
@@ -122,6 +122,11 @@ class StoreTimeEntryRequest extends FormRequest
                 'nullable',
                 'string',
                 Rule::in(['draft', 'submitted', 'approved', 'rejected'])
+            ],
+            'status_label' => [
+                'nullable',
+                'string',
+                'max:255'
             ],
             'is_billable' => [
                 'nullable',
