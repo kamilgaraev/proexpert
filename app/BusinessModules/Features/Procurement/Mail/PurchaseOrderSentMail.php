@@ -34,6 +34,7 @@ class PurchaseOrderSentMail extends Mailable
                 'order' => $this->order,
                 'organization' => $this->order->organization,
                 'supplier' => $this->order->supplier,
+                'items' => $this->order->items,
             ],
         );
     }

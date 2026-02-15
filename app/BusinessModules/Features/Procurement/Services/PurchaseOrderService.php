@@ -44,13 +44,26 @@ class PurchaseOrderService
                 'metadata' => $data['metadata'] ?? null,
             ]);
 
+            // Копируем позиции из заявки с объекта
+            $siteRequest = $request->siteRequest;
+            if ($siteRequest && ($siteRequest->material_id || $siteRequest->material_name)) {
+                $order->items()->create([
+                    'material_id' => $siteRequest->material_id,
+                    'material_name' => $siteRequest->material_name,
+                    'quantity' => $siteRequest->material_quantity ?? 1,
+                    'unit' => $siteRequest->material_unit ?? 'шт.',
+                    'unit_price' => 0,
+                    'total_price' => 0,
+                ]);
+            }
+
             DB::commit();
 
             $this->invalidateCache($request->organization_id);
 
             event(new \App\BusinessModules\Features\Procurement\Events\PurchaseOrderCreated($order));
 
-            return $order->fresh(['supplier', 'purchaseRequest']);
+            return $order->fresh(['supplier', 'purchaseRequest', 'items']);
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;
@@ -96,7 +109,7 @@ class PurchaseOrderService
 
             event(new \App\BusinessModules\Features\Procurement\Events\PurchaseOrderSent($order));
 
-            return $order->fresh();
+            return $order->fresh(['items', 'supplier', 'purchaseRequest', 'contract']);
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;
@@ -130,7 +143,7 @@ class PurchaseOrderService
 
             $this->invalidateCache($order->organization_id);
 
-            return $order->fresh(['supplier', 'proposals']);
+            return $order->fresh(['supplier', 'proposals', 'items', 'purchaseRequest']);
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;
@@ -219,7 +232,7 @@ class PurchaseOrderService
                 'purchase_order_id' => $order->id,
             ]);
 
-            return $order->fresh();
+            return $order->fresh(['items', 'supplier', 'purchaseRequest']);
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;

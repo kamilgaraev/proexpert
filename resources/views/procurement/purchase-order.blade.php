@@ -230,11 +230,11 @@
                 @foreach($items as $index => $item)
                 <tr>
                     <td style="text-align: center;">{{ $index + 1 }}</td>
-                    <td>{{ $item->name ?? $item->description ?? 'Не указано' }}</td>
-                    <td style="text-align: center;">{{ $item->unit ?? 'шт' }}</td>
+                    <td>{{ $item->material_name ?? 'Не указано' }}</td>
+                    <td style="text-align: center;">{{ $item->unit ?? 'шт.' }}</td>
                     <td style="text-align: right;">{{ number_format($item->quantity ?? 0, 2, ',', ' ') }}</td>
-                    <td style="text-align: right;">{{ number_format($item->price ?? 0, 2, ',', ' ') }}</td>
-                    <td style="text-align: right;">{{ number_format(($item->quantity ?? 0) * ($item->price ?? 0), 2, ',', ' ') }}</td>
+                    <td style="text-align: right;">{{ number_format($item->unit_price ?? 0, 2, ',', ' ') }}</td>
+                    <td style="text-align: right;">{{ number_format($item->total_price ?? 0, 2, ',', ' ') }}</td>
                 </tr>
                 @endforeach
             </tbody>
