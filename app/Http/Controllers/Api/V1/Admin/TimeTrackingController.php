@@ -317,10 +317,10 @@ class TimeTrackingController extends Controller
             
             $calendarData = $this->timeTrackingService->getTimeEntriesByDays(
                 organizationId: $organizationId,
-                userId: $request->query('user_id') ? (int)$request->query('user_id') : null,
-                projectId: $request->query('project_id') ? (int)$request->query('project_id') : null,
                 startDate: $startDate,
-                endDate: $endDate
+                endDate: $endDate,
+                userId: $request->query('user_id') ? (int)$request->query('user_id') : null,
+                projectId: $request->query('project_id') ? (int)$request->query('project_id') : null
             );
 
             return AdminResponse::success($calendarData);
@@ -347,10 +347,10 @@ class TimeTrackingController extends Controller
             
             $report = $this->timeTrackingService->getTimeReport(
                 organizationId: $organizationId,
-                userId: $request->query('user_id') ? (int)$request->query('user_id') : null,
-                projectId: $request->query('project_id') ? (int)$request->query('project_id') : null,
                 startDate: $startDate,
                 endDate: $endDate,
+                userId: $request->query('user_id') ? (int)$request->query('user_id') : null,
+                projectId: $request->query('project_id') ? (int)$request->query('project_id') : null,
                 groupBy: $request->query('group_by', 'user')
             );
 
