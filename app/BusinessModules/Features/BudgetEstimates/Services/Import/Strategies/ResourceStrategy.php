@@ -79,11 +79,12 @@ class ResourceStrategy extends BaseItemStrategy
                 };
                 
             } catch (\Exception $e) {
-                Log::warning('resource_strategy.resource_failed', [
+                Log::error('resource_strategy.resource_failed', [
                     'type' => $row->itemType,
                     'code' => $row->code,
                     'error' => $e->getMessage(),
                 ]);
+                throw $e;
             }
         }
 
