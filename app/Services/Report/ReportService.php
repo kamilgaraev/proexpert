@@ -7,6 +7,7 @@ use App\Repositories\Interfaces\ProjectRepositoryInterface;
 use App\Repositories\Interfaces\UserRepositoryInterface;
 use App\Services\Export\CsvExporterService;
 use App\Services\Export\ExcelExporterService;
+use App\Services\Export\PdfExporterService;
 use App\Services\Logging\LoggingService;
 use App\Models\User;
 use App\Models\Role;
@@ -31,6 +32,7 @@ class ReportService
     protected UserRepositoryInterface $userRepo;
     protected CsvExporterService $csvExporter;
     protected ExcelExporterService $excelExporter;
+    protected PdfExporterService $pdfExporter;
     protected ReportTemplateService $reportTemplateService;
     protected MaterialReportService $materialReportService;
     protected RateCoefficientService $rateCoefficientService;
@@ -42,6 +44,7 @@ class ReportService
         UserRepositoryInterface $userRepo,
         CsvExporterService $csvExporter,
         ExcelExporterService $excelExporter,
+        PdfExporterService $pdfExporter,
         ReportTemplateService $reportTemplateService,
         MaterialReportService $materialReportService,
         RateCoefficientService $rateCoefficientService,
@@ -52,6 +55,7 @@ class ReportService
         $this->userRepo = $userRepo;
         $this->csvExporter = $csvExporter;
         $this->excelExporter = $excelExporter;
+        $this->pdfExporter = $pdfExporter;
         $this->reportTemplateService = $reportTemplateService;
         $this->materialReportService = $materialReportService;
         $this->rateCoefficientService = $rateCoefficientService;
@@ -219,6 +223,23 @@ class ReportService
             $exportable = $this->excelExporter->prepareDataForExport($logEntries, $columnMapping);
             $filename = $reportTemplate && $reportTemplate->name ? str_replace(' ', '_', $reportTemplate->name) : 'work_completion_report';
             return $this->excelExporter->streamDownload($filename . '_' . now()->format('d-m-Y_H-i') . '.xlsx', $exportable['headers'], $exportable['data']);
+        }
+        
+        if ($request->query('format') === 'pdf') {
+            return $this->pdfExporter->streamDownload(
+                'reports.work-completion-pdf',
+                [
+                    'entries' => $logEntries->toArray(),
+                    'filters' => [
+                        'date_from' => $filters['date_from']?->format('d.m.Y'),
+                        'date_to' => $filters['date_to']?->format('d.m.Y'),
+                    ],
+                    'generated_at' => Carbon::now()->format('d.m.Y H:i'),
+                ],
+                'work_completion_report_' . now()->format('d-m-Y_H-i') . '.pdf',
+                'a4',
+                'landscape'
+            );
         }
         
         $aggregatedData = $this->workLogRepo->getAggregatedUsage($organizationId, $filters);
@@ -757,7 +778,7 @@ class ReportService
             'total_debt' => $contracts->sum('debt_amount'),
         ];
 
-        if ($format === 'excel') {
+        if ($format === 'excel' || $format === 'xlsx') {
             $columns = [
                 'Номер контракта' => 'number',
                 'Дата' => 'date',
@@ -775,7 +796,17 @@ class ReportService
         }
 
         if ($format === 'pdf') {
-            throw new BusinessLogicException('PDF экспорт для этого отчета пока не реализован. Используйте Excel.', 501);
+            return $this->pdfExporter->streamDownload(
+                'reports.contract-payments-pdf',
+                [
+                    'data' => $contracts->values(),
+                    'totals' => $totals,
+                    'generated_at' => Carbon::now()->format('d.m.Y H:i'),
+                ],
+                'contract_payments_report_' . now()->format('d-m-Y_H-i') . '.pdf',
+                'a4',
+                'landscape'
+            );
         }
 
         return [
@@ -892,7 +923,7 @@ class ReportService
             'total_debt' => $contractors->sum('debt_amount'),
         ];
 
-        if ($format === 'excel') {
+        if ($format === 'excel' || $format === 'xlsx') {
             $columns = [
                 'Подрядчик' => 'name',
                 'ИНН' => 'inn',
@@ -910,7 +941,17 @@ class ReportService
         }
 
         if ($format === 'pdf') {
-            throw new BusinessLogicException('PDF экспорт для этого отчета пока не реализован. Используйте Excel.', 501);
+            return $this->pdfExporter->streamDownload(
+                'reports.contractor-settlements-pdf',
+                [
+                    'data' => $contractors->values(),
+                    'totals' => $totals,
+                    'generated_at' => Carbon::now()->format('d.m.Y H:i'),
+                ],
+                'contractor_settlements_report_' . now()->format('d-m-Y_H-i') . '.pdf',
+                'a4',
+                'landscape'
+            );
         }
 
         return [
@@ -1012,7 +1053,7 @@ class ReportService
             'expired_items' => $stocks->filter(fn($s) => $s['is_expired'])->count(),
         ];
 
-        if ($format === 'excel') {
+        if ($format === 'excel' || $format === 'xlsx') {
             $columns = [
                 'Материал' => 'material_name',
                 'Код' => 'material_code',
@@ -1032,7 +1073,17 @@ class ReportService
         }
 
         if ($format === 'pdf') {
-            throw new BusinessLogicException('PDF экспорт для этого отчета пока не реализован. Используйте Excel.', 501);
+            return $this->pdfExporter->streamDownload(
+                'reports.warehouse-stock-pdf',
+                [
+                    'data' => $stocks->values(),
+                    'totals' => $totals,
+                    'generated_at' => Carbon::now()->format('d.m.Y H:i'),
+                ],
+                'warehouse_stock_report_' . now()->format('d-m-Y_H-i') . '.pdf',
+                'a4',
+                'landscape'
+            );
         }
 
         return [
@@ -1162,22 +1213,29 @@ class ReportService
     {
         $organizationId = $this->getCurrentOrgId($request);
         $format = $request->query('format', 'json');
-        $dateFrom = Carbon::parse($request->query('date_from'))->startOfDay();
-        $dateTo = Carbon::parse($request->query('date_to'))->endOfDay();
+        
+        // Безопасный парсинг дат
+        try {
+            $dateFrom = $request->query('date_from') ? Carbon::parse($request->query('date_from'))->startOfDay() : now()->startOfMonth();
+            $dateTo = $request->query('date_to') ? Carbon::parse($request->query('date_to'))->endOfDay() : now()->endOfDay();
+        } catch (\Throwable $e) {
+            $dateFrom = now()->startOfMonth();
+            $dateTo = now()->endOfDay();
+        }
         
         $this->logging->business('report.time_tracking.requested', [
             'organization_id' => $organizationId,
-            'date_from' => $dateFrom,
-            'date_to' => $dateTo,
+            'date_from' => $dateFrom->toDateTimeString(),
+            'date_to' => $dateTo->toDateTimeString(),
             'user_id' => $request->user()?->id
         ]);
 
         $query = DB::table('time_entries')
-            ->join('users', 'time_entries.user_id', '=', 'users.id')
+            ->leftJoin('users', 'time_entries.user_id', '=', 'users.id')
             ->leftJoin('projects', 'time_entries.project_id', '=', 'projects.id')
             ->leftJoin('work_types', 'time_entries.work_type_id', '=', 'work_types.id')
             ->where('time_entries.organization_id', $organizationId)
-            ->whereBetween('time_entries.work_date', [$dateFrom->toDateTimeString(), $dateTo->toDateTimeString()])
+            ->whereBetween('time_entries.work_date', [$dateFrom->toDateString(), $dateTo->toDateString()])
             ->select(
                 'time_entries.id',
                 'time_entries.work_date',
@@ -1186,7 +1244,8 @@ class ReportService
                 'time_entries.is_billable',
                 'time_entries.hourly_rate',
                 'time_entries.title',
-                'users.name as user_name',
+                'time_entries.worker_type',
+                DB::raw('COALESCE(users.name, time_entries.worker_name) as worker_display_name'),
                 'projects.name as project_name',
                 'work_types.name as work_type_name',
                 DB::raw('(time_entries.hours_worked * COALESCE(time_entries.hourly_rate, 0)) as total_cost')
@@ -1214,9 +1273,9 @@ class ReportService
         $grouped = null;
 
         if ($groupBy === 'user') {
-            $grouped = $entries->groupBy('user_name')->map(function ($group) {
+            $grouped = $entries->groupBy('worker_display_name')->map(function ($group) {
                 return [
-                    'user' => $group->first()->user_name,
+                    'user' => $group->first()->worker_display_name ?? 'Не указан',
                     'total_hours' => $group->sum('hours_worked'),
                     'total_cost' => $group->sum('total_cost'),
                     'entries_count' => $group->count(),
@@ -1237,7 +1296,7 @@ class ReportService
             return [
                 'id' => $entry->id,
                 'date' => $entry->work_date,
-                'user' => $entry->user_name,
+                'user' => $entry->worker_display_name,
                 'project' => $entry->project_name,
                 'work_type' => $entry->work_type_name,
                 'title' => $entry->title,
@@ -1275,7 +1334,22 @@ class ReportService
         }
 
         if ($format === 'pdf') {
-            throw new BusinessLogicException('PDF экспорт для этого отчета пока не реализован. Используйте Excel.', 501);
+            return $this->pdfExporter->streamDownload(
+                'reports.time-tracking-pdf',
+                [
+                    'title' => 'Отчет по учету рабочего времени',
+                    'data' => $data->values(),
+                    'totals' => $totals,
+                    'filters' => [
+                        'date_from' => $dateFrom->format('d.m.Y'),
+                        'date_to' => $dateTo->format('d.m.Y'),
+                    ],
+                    'generated_at' => Carbon::now()->format('d.m.Y H:i'),
+                ],
+                'time_tracking_report_' . now()->format('d-m-Y_H-i') . '.pdf',
+                'a4',
+                'landscape'
+            );
         }
 
         return [
@@ -1384,7 +1458,7 @@ class ReportService
             'loss_making_projects' => $projects->filter(fn($p) => $p['profit'] < 0)->count(),
         ];
 
-        if ($format === 'excel') {
+        if ($format === 'excel' || $format === 'xlsx') {
             $columns = [
                 'Проект' => 'name',
                 'Заказчик' => 'customer',
@@ -1402,7 +1476,17 @@ class ReportService
         }
 
         if ($format === 'pdf') {
-            throw new BusinessLogicException('PDF экспорт для этого отчета пока не реализован. Используйте Excel.', 501);
+            return $this->pdfExporter->streamDownload(
+                'reports.project-profitability-pdf',
+                [
+                    'data' => $projects->values(),
+                    'totals' => $totals,
+                    'generated_at' => Carbon::now()->format('d.m.Y H:i'),
+                ],
+                'project_profitability_report_' . now()->format('d-m-Y_H-i') . '.pdf',
+                'a4',
+                'landscape'
+            );
         }
 
         return [
