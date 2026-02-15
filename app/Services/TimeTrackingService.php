@@ -33,7 +33,9 @@ class TimeTrackingService
         ?string $startDate = null,
         ?string $endDate = null,
         ?bool $billable = null,
-        int $perPage = 15
+        int $perPage = 15,
+        ?string $workerType = null,
+        ?string $workerName = null
     ): LengthAwarePaginator {
         $query = TimeEntry::with(['user', 'project', 'workType', 'task', 'approvedBy'])
             ->orderBy('work_date', 'desc')
@@ -45,6 +47,14 @@ class TimeTrackingService
 
         if ($userId) {
             $query->forUser($userId);
+        }
+
+        if ($workerType) {
+            $query->where('worker_type', $workerType);
+        }
+
+        if ($workerName) {
+            $query->where('worker_name', $workerName);
         }
 
         if ($projectId) {
@@ -64,6 +74,47 @@ class TimeTrackingService
         }
 
         return $query->paginate($perPage);
+    }
+
+    /**
+     * Получить плоский список всех доступных исполнителей для фильтров
+     */
+    public function getWorkers(int $organizationId): Collection
+    {
+        // 1. Реальные пользователи организации
+        $users = User::whereHas('organizations', function ($query) use ($organizationId) {
+            $query->where('organizations.id', $organizationId);
+        })->get(['users.id', 'users.name'])->map(fn($u) => [
+            'id' => $u->id,
+            'name' => $u->name,
+            'type' => 'user'
+        ]);
+
+        // 2. Виртуальные работники из записей времени
+        $virtuals = TimeEntry::where('organization_id', $organizationId)
+            ->where('worker_type', 'virtual')
+            ->whereNotNull('worker_name')
+            ->distinct()
+            ->pluck('worker_name')
+            ->map(fn($name) => [
+                'id' => $name,
+                'name' => $name . ' (вирт.)',
+                'type' => 'virtual'
+            ]);
+
+        // 3. Бригады из записей времени
+        $brigades = TimeEntry::where('organization_id', $organizationId)
+            ->where('worker_type', 'brigade')
+            ->whereNotNull('worker_name')
+            ->distinct()
+            ->pluck('worker_name')
+            ->map(fn($name) => [
+                'id' => $name,
+                'name' => $name,
+                'type' => 'brigade'
+            ]);
+
+        return $users->concat($virtuals)->concat($brigades);
     }
 
     /**

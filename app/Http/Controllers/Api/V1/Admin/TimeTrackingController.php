@@ -11,18 +11,53 @@ use App\Http\Requests\Api\V1\Admin\TimeTracking\ApproveTimeEntryRequest;
 use App\Http\Resources\TimeEntryResource;
 use App\Http\Responses\AdminResponse;
 use App\Services\TimeTrackingService;
+use App\Services\Report\ReportService;
 use App\Models\TimeEntry;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 use function trans_message;
 
 class TimeTrackingController extends Controller
 {
     public function __construct(
-        protected TimeTrackingService $timeTrackingService
+        protected TimeTrackingService $timeTrackingService,
+        protected ReportService $reportService
     ) {
+    }
+
+    public function export(Request $request): StreamedResponse | JsonResponse
+    {
+        try {
+            $result = $this->reportService->getTimeTrackingReport($request);
+
+            if ($result instanceof StreamedResponse) {
+                return $result;
+            }
+
+            return AdminResponse::success($result);
+        } catch (\Throwable $e) {
+            Log::error('[TimeTrackingController] Ошибка экспорта: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
+            return AdminResponse::error('Ошибка при экспорте данных', 500);
+        }
+    }
+
+    public function workers(Request $request): JsonResponse
+    {
+        try {
+            $organizationId = $this->getCurrentOrganizationId($request);
+            $workers = $this->timeTrackingService->getWorkers($organizationId);
+            return AdminResponse::success($workers);
+        } catch (\Throwable $e) {
+            Log::error('[TimeTrackingController] Ошибка получения списка работников: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
+            return AdminResponse::error('Ошибка при получении списка работников', 500);
+        }
     }
 
     public function index(Request $request): JsonResponse
@@ -41,7 +76,9 @@ class TimeTrackingController extends Controller
                 startDate: $request->query('start_date'),
                 endDate: $request->query('end_date'),
                 billable: $request->query('billable') !== null ? filter_var($request->query('billable'), FILTER_VALIDATE_BOOLEAN) : null,
-                perPage: min((int)$request->query('per_page', 15), 100)
+                perPage: min((int)$request->query('per_page', 15), 100),
+                workerType: $request->query('worker_type'),
+                workerName: $request->query('worker_name')
             );
 
             return AdminResponse::success([
