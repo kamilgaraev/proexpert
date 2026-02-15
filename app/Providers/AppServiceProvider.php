@@ -127,7 +127,6 @@ class AppServiceProvider extends ServiceProvider
         
         // Регистрируем складские модули
         $this->app->register(\App\BusinessModules\Features\BasicWarehouse\BasicWarehouseServiceProvider::class);
-        $this->app->register(\App\BusinessModules\Features\AdvancedWarehouse\AdvancedWarehouseServiceProvider::class);
         
         // Error Tracking Services
         $this->app->singleton(\App\Services\ErrorTracking\ErrorTrackingService::class);
