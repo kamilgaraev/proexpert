@@ -1,6 +1,6 @@
 <?php
 
-namespace App\BusinessModules\Features\AdvancedWarehouse\Models;
+namespace App\BusinessModules\Features\BasicWarehouse\Models;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * Модель зоны хранения на складе (только AdvancedWarehouse)
+ * Модель зоны хранения на складе
  */
 class WarehouseZone extends Model
 {
@@ -78,4 +78,3 @@ class WarehouseZone extends Model
         return $query->where('zone_type', $type);
     }
 }
-

@@ -1,6 +1,6 @@
 <?php
 
-namespace App\BusinessModules\Features\AdvancedWarehouse\Models;
+namespace App\BusinessModules\Features\BasicWarehouse\Models;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\Models\Material;
@@ -100,4 +100,3 @@ class AssetReservation extends Model
         return $this->status === self::STATUS_ACTIVE && $this->expires_at->isPast();
     }
 }
-

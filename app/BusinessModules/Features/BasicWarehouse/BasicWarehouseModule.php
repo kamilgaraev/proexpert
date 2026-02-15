@@ -11,7 +11,7 @@ class BasicWarehouseModule implements ModuleInterface, ConfigurableInterface
 {
     public function getName(): string
     {
-        return 'Базовое управление складом';
+        return 'Универсальный складской модуль';
     }
 
     public function getSlug(): string
@@ -26,7 +26,7 @@ class BasicWarehouseModule implements ModuleInterface, ConfigurableInterface
 
     public function getDescription(): string
     {
-        return 'Базовое складское управление с учетом всех типов активов';
+        return 'Универсальный модуль складского учета: от простых операций до продвинутой аналитики, адресного хранения и автоматизации';
     }
 
     public function getType(): ModuleType
@@ -87,57 +87,86 @@ class BasicWarehouseModule implements ModuleInterface, ConfigurableInterface
     public function getPermissions(): array
     {
         return [
+            // Базовые права
             'warehouse.view',
             'warehouse.manage_stock',
             'warehouse.receipts',
             'warehouse.write_offs',
             'warehouse.transfers',
             'warehouse.inventory',
-            'warehouse.reports'
+            'warehouse.reports',
+            
+            // Продвинутые права (перенесены из AdvancedWarehouse)
+            'warehouse.advanced.view',
+            'warehouse.advanced.multiple_warehouses',
+            'warehouse.advanced.zones',
+            'warehouse.advanced.barcode',
+            'warehouse.advanced.rfid',
+            'warehouse.advanced.reservations',
+            'warehouse.advanced.auto_reorder',
+            'warehouse.advanced.analytics',
+            'warehouse.advanced.forecasts',
         ];
     }
 
     public function getFeatures(): array
     {
         return [
-            'Управление всеми типами активов (материалы, оборудование, инструменты, мебель, расходники)',
-            'Один центральный склад организации',
-            'Приход материалов от поставщиков',
-            'Списание материалов на проекты',
-            'Перемещение активов между проектами',
-            'Возврат активов с проектов',
-            'Простая инвентаризация с актами',
-            'Базовые отчеты через модуль BasicReports',
-            'Учет остатков по активам',
-            'История всех операций'
+            'Управление всеми типами активов (материалы, оборудование, инструменты)',
+            'Поддержка множества складов',
+            'Адресное хранение (зоны, стеллажи, полки)',
+            'Полный цикл операций: приход, списание, перемещение, возврат',
+            'Резервирование активов под проекты',
+            'Автоматическое пополнение запасов (правила min/max)',
+            'Инвентаризация с поддержкой сканеров штрихкодов',
+            'Продвинутая аналитика: оборачиваемость, ABC/XYZ анализ',
+            'Прогнозирование потребности в материалах',
+            'Штрихкодирование и поддержка RFID',
+            'История всех операций и аудит'
         ];
     }
 
     public function getLimits(): array
     {
         return [
-            'max_warehouses' => 1,
-            'max_zones_per_warehouse' => 0,
-            'barcode_support' => false,
-            'rfid_support' => false,
-            'batch_tracking' => false,
-            'serial_tracking' => false,
-            'auto_reorder' => false,
-            'analytics' => false,
-            'max_inventory_acts_per_month' => 10
+            'max_warehouses' => 20,
+            'max_zones_per_warehouse' => 50,
+            'barcode_support' => true,
+            'rfid_support' => true,
+            'batch_tracking' => true,
+            'serial_tracking' => true,
+            'auto_reorder' => true,
+            'analytics' => true,
+            'max_inventory_acts_per_month' => -1,
+            'max_reservations' => 1000,
         ];
     }
 
     public function getDefaultSettings(): array
     {
         return [
+            // Общие настройки
             'enable_stock_alerts' => true,
             'low_stock_threshold' => 10,
             'enable_auto_calculation' => true,
             'enable_project_transfers' => true,
             'enable_returns' => true,
             'default_measurement_unit' => 'шт',
+            
+            // Продвинутые настройки
+            'enable_multiple_warehouses' => true,
+            'enable_zones' => true,
+            'enable_barcode' => true,
+            'enable_reservations' => true,
+            'reservation_timeout_hours' => 24,
+            'enable_auto_reorder' => true,
+            'enable_analytics' => true,
+            'enable_forecasting' => true,
+            'forecast_horizon_days' => 90,
+            
+            // Кэширование
             'cache_balances' => true,
+            'cache_analytics' => true,
             'cache_ttl' => 300,
         ];
     }

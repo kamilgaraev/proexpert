@@ -5,13 +5,11 @@
   "context": "project",
   "interface": "mobile",
   "description": "Руководство строительным процессом на объекте",
-  
   "system_permissions": [
     "profile.view",
     "profile.edit",
     "admin.access"
   ],
-  
   "module_permissions": {
     "projects": [
       "projects.view",
@@ -35,35 +33,49 @@
       "personnel.track_attendance"
     ],
     "project-management": [
-      "projects.view", "projects.materials.view", "projects.work_types.view"
+      "projects.view",
+      "projects.materials.view",
+      "projects.work_types.view"
     ],
     "contract-management": [
-      "contracts.view", "contracts.completed_works.view"
+      "contracts.view",
+      "contracts.completed_works.view"
     ],
     "catalog-management": [
-      "materials.view", "work_types.view"
+      "materials.view",
+      "work_types.view"
     ],
     "workflow-management": [
-      "completed_works.view", "completed_works.create", "completed_works.materials.sync"
+      "completed_works.view",
+      "completed_works.create",
+      "completed_works.materials.sync"
     ],
     "advance-accounting": [
-      "advance_transactions.view", "advance_transactions.create", "advance_transactions.report",
+      "advance_transactions.view",
+      "advance_transactions.create",
+      "advance_transactions.report",
       "users.advance_balance.view"
     ],
     "act-reporting": [
-      "act_reports.view", "act_reports.works.view"
+      "act_reports.view",
+      "act_reports.works.view"
     ],
     "time-tracking": [
-      "time_tracking.view", "time_tracking.create", "time_tracking.edit", "time_tracking.submit"
+      "time_tracking.view",
+      "time_tracking.create",
+      "time_tracking.edit",
+      "time_tracking.submit"
     ],
     "material-analytics": [
-      "materials.analytics.low_stock", "materials.analytics.most_used"
+      "materials.analytics.low_stock",
+      "materials.analytics.most_used"
     ],
     "contractor-portal": [
       "contractor_invitations.view"
     ],
     "file-management": [
-      "personal_files.view", "personal_files.upload"
+      "personal_files.view",
+      "personal_files.upload"
     ],
     "system-logs": [
       "system-logs.work_completion.view"
@@ -75,18 +87,24 @@
       "report_templates.view"
     ],
     "data-filters": [
-      "filters.completed_works.view", "filters.quick_stats.view"
+      "filters.completed_works.view",
+      "filters.quick_stats.view"
     ],
     "dashboard-widgets": [
-      "dashboard.view", "dashboard.recent_activity.view"
+      "dashboard.view",
+      "dashboard.recent_activity.view"
     ],
     "schedule-management": [
-      "schedule.view", "schedule.notifications"
+      "schedule.view",
+      "schedule.notifications"
     ],
     "basic-warehouse": [
       "warehouse.view",
       "warehouse.receipts",
-      "warehouse.write_offs"
+      "warehouse.write_offs",
+      "warehouse.transfers",
+      "warehouse.advanced.barcode",
+      "warehouse.advanced.view"
     ],
     "site-requests": [
       "site_requests.view",
@@ -104,11 +122,14 @@
       "construction-journal.export"
     ]
   },
-  
-  "interface_access": ["mobile", "admin"],
-  
+  "interface_access": [
+    "mobile",
+    "admin"
+  ],
   "hierarchy": {
-    "can_manage_roles": ["worker"],
+    "can_manage_roles": [
+      "worker"
+    ],
     "cannot_manage": [
       "foreman",
       "project_manager",
@@ -116,7 +137,6 @@
       "organization_owner"
     ]
   },
-  
   "conditions": {
     "project_count": {
       "max_projects": 5

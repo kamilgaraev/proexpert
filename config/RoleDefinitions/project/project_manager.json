@@ -5,7 +5,6 @@
   "context": "project",
   "interface": "admin",
   "description": "Полное управление проектом и командой",
-  
   "system_permissions": [
     "admin.access",
     "admin.dashboard.view",
@@ -13,16 +12,19 @@
     "profile.view",
     "profile.edit"
   ],
-  
   "module_permissions": {
-    "projects": ["projects.*"],
+    "projects": [
+      "projects.*"
+    ],
     "materials": [
       "materials.view",
       "materials.edit",
       "materials.request",
       "materials.approve_requests"
     ],
-    "reports": ["reports.*"],
+    "reports": [
+      "reports.*"
+    ],
     "finance": [
       "finance.view_project_budget",
       "finance.manage_project_expenses"
@@ -37,71 +39,127 @@
       "personnel.manage_team"
     ],
     "project-management": [
-      "projects.view", "projects.edit", "projects.analytics",
-      "projects.foremen.assign", "projects.foremen.detach",
-      "projects.materials.view", "projects.work_types.view",
+      "projects.view",
+      "projects.edit",
+      "projects.analytics",
+      "projects.foremen.assign",
+      "projects.foremen.detach",
+      "projects.materials.view",
+      "projects.work_types.view",
       "projects.statistics"
     ],
     "contract-management": [
-      "contracts.view", "contracts.edit", "contracts.analytics",
-      "contracts.completed_works.view", "contracts.performance_acts.view",
-      "contracts.performance_acts.create", "contracts.performance_acts.edit",
-      "contracts.payments.view", "agreements.view", "specifications.view"
+      "contracts.view",
+      "contracts.edit",
+      "contracts.analytics",
+      "contracts.completed_works.view",
+      "contracts.performance_acts.view",
+      "contracts.performance_acts.create",
+      "contracts.performance_acts.edit",
+      "contracts.payments.view",
+      "agreements.view",
+      "specifications.view"
     ],
     "catalog-management": [
-      "materials.view", "materials.edit", "suppliers.view", "contractors.view",
-      "work_types.view", "measurement_units.view"
+      "materials.view",
+      "materials.edit",
+      "suppliers.view",
+      "contractors.view",
+      "work_types.view",
+      "measurement_units.view"
     ],
     "workflow-management": [
-      "completed_works.view", "completed_works.create",
-      "completed_works.edit", "completed_works.materials.sync"
+      "completed_works.view",
+      "completed_works.create",
+      "completed_works.edit",
+      "completed_works.materials.sync"
     ],
     "advance-accounting": [
-      "advance_transactions.view", "advance_transactions.create", "advance_transactions.report",
-      "users.advance_balance.view", "users.advance_transactions.view", "users.funds.issue",
+      "advance_transactions.view",
+      "advance_transactions.create",
+      "advance_transactions.report",
+      "users.advance_balance.view",
+      "users.advance_transactions.view",
+      "users.funds.issue",
       "reports.advance_accounts.view"
     ],
     "act-reporting": [
-      "act_reports.view", "act_reports.create", "act_reports.edit",
-      "act_reports.contracts.view", "act_reports.works.view", "act_reports.works.update",
-      "act_reports.export.pdf", "act_reports.export.excel"
+      "act_reports.view",
+      "act_reports.create",
+      "act_reports.edit",
+      "act_reports.contracts.view",
+      "act_reports.works.view",
+      "act_reports.works.update",
+      "act_reports.export.pdf",
+      "act_reports.export.excel"
     ],
     "time-tracking": [
-      "time_tracking.view", "time_tracking.create", "time_tracking.edit",
-      "time_tracking.approve", "time_tracking.statistics", "time_tracking.reports"
+      "time_tracking.view",
+      "time_tracking.create",
+      "time_tracking.edit",
+      "time_tracking.approve",
+      "time_tracking.statistics",
+      "time_tracking.reports"
     ],
     "material-analytics": [
-      "materials.analytics.summary", "materials.analytics.usage_by_projects",
-      "materials.analytics.low_stock", "materials.analytics.most_used"
+      "materials.analytics.summary",
+      "materials.analytics.usage_by_projects",
+      "materials.analytics.low_stock",
+      "materials.analytics.most_used"
     ],
     "contractor-portal": [
-      "contractor_invitations.view", "contractor_invitations.create", "contractor_invitations.edit",
-      "contractor_invitations.stats", "organizations.search", "organizations.suggestions"
+      "contractor_invitations.view",
+      "contractor_invitations.create",
+      "contractor_invitations.edit",
+      "contractor_invitations.stats",
+      "organizations.search",
+      "organizations.suggestions"
     ],
     "file-management": [
-      "personal_files.view", "personal_files.create_folder", "personal_files.upload", 
-      "personal_files.delete", "report_files.view"
+      "personal_files.view",
+      "personal_files.create_folder",
+      "personal_files.upload",
+      "personal_files.delete",
+      "report_files.view"
     ],
     "system-logs": [
-      "system-logs.material_usage.view", "system-logs.work_completion.view", "system-logs.filter", "system-logs.search"
+      "system-logs.material_usage.view",
+      "system-logs.work_completion.view",
+      "system-logs.filter",
+      "system-logs.search"
     ],
     "rate-management": [
-      "rate_coefficients.view", "rate_coefficients.apply", "rate_coefficients.export"
+      "rate_coefficients.view",
+      "rate_coefficients.apply",
+      "rate_coefficients.export"
     ],
     "report-templates": [
-      "report_templates.view", "report_templates.create", "report_templates.edit"
+      "report_templates.view",
+      "report_templates.create",
+      "report_templates.edit"
     ],
     "data-filters": [
-      "filters.contracts.view", "filters.completed_works.view", "filters.quick_stats.view",
-      "filters.custom.create", "filters.custom.save", "filters.export"
+      "filters.contracts.view",
+      "filters.completed_works.view",
+      "filters.quick_stats.view",
+      "filters.custom.create",
+      "filters.custom.save",
+      "filters.export"
     ],
     "dashboard-widgets": [
-      "dashboard.view", "dashboard.timeseries.view", "dashboard.contracts.statistics",
-      "dashboard.recent_activity.view", "dashboard.widgets.customize"
+      "dashboard.view",
+      "dashboard.timeseries.view",
+      "dashboard.contracts.statistics",
+      "dashboard.recent_activity.view",
+      "dashboard.widgets.customize"
     ],
     "schedule-management": [
-      "schedule.view", "schedule.create", "schedule.edit", "schedule.assign",
-      "schedule.approve", "schedule.notifications"
+      "schedule.view",
+      "schedule.create",
+      "schedule.edit",
+      "schedule.assign",
+      "schedule.approve",
+      "schedule.notifications"
     ],
     "budget-estimates": [
       "budget-estimates.view",
@@ -147,11 +205,25 @@
       "admin.ai_assistant.system_analysis.view",
       "admin.ai_assistant.system_analysis.analyze",
       "admin.ai_assistant.system_analysis.export"
+    ],
+    "basic-warehouse": [
+      "warehouse.view",
+      "warehouse.manage_stock",
+      "warehouse.receipts",
+      "warehouse.write_offs",
+      "warehouse.transfers",
+      "warehouse.inventory",
+      "warehouse.reports",
+      "warehouse.advanced.view",
+      "warehouse.advanced.analytics",
+      "warehouse.advanced.forecasts",
+      "warehouse.advanced.reservations"
     ]
   },
-  
-  "interface_access": ["admin", "mobile"],
-  
+  "interface_access": [
+    "admin",
+    "mobile"
+  ],
   "hierarchy": {
     "can_manage_roles": [
       "site_engineer",
@@ -165,7 +237,6 @@
       "organization_owner"
     ]
   },
-  
   "conditions": {
     "project_count": {
       "max_projects": 10

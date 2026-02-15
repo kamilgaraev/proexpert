@@ -5,7 +5,6 @@
   "context": "organization",
   "interface": "admin",
   "description": "Полное управление организацией, включая биллинг",
-  
   "system_permissions": [
     "organization.view",
     "organization.edit",
@@ -25,54 +24,120 @@
     "profile.edit",
     "admin.*"
   ],
-  
   "module_permissions": {
-    "projects": ["*"],
-    "materials": ["*"],
-    "reports": ["*"],
-    "finance": ["*"],
-    "contracts": ["*"],
-    "personnel": ["*"],
-    "multi-organization": ["*"],
-    "project-management": ["*"],
-    "contract-management": ["*"],
-    "catalog-management": ["*"],
-    "workflow-management": ["*"],
-    "advance-accounting": ["*"],
-    "act-reporting": ["*"],
-    "time-tracking": ["*"],
-    "material-analytics": ["*"],
-    "contractor-portal": ["*"],
-    "file-management": ["*"],
-    "system-logs": ["*"],
-    "rate-management": ["*"],
-    "report-templates": ["*"],
-    "data-filters": ["*"],
-    "dashboard-widgets": ["*"],
-    "schedule-management": ["*"],
-    "advanced-dashboard": ["*"],
-    "ai-assistant": ["*"],
-    "basic-warehouse": ["*"],
-    "advanced-warehouse": ["*"],
-    "budget-estimates": ["*"],
-    "payments": ["*"],
-    "site-requests": ["*"],
-    "ai-estimates": ["*"],
-    "procurement": ["*"]
+    "projects": [
+      "*"
+    ],
+    "materials": [
+      "*"
+    ],
+    "reports": [
+      "*"
+    ],
+    "finance": [
+      "*"
+    ],
+    "contracts": [
+      "*"
+    ],
+    "personnel": [
+      "*"
+    ],
+    "multi-organization": [
+      "*"
+    ],
+    "project-management": [
+      "*"
+    ],
+    "contract-management": [
+      "*"
+    ],
+    "catalog-management": [
+      "*"
+    ],
+    "workflow-management": [
+      "*"
+    ],
+    "advance-accounting": [
+      "*"
+    ],
+    "act-reporting": [
+      "*"
+    ],
+    "time-tracking": [
+      "*"
+    ],
+    "material-analytics": [
+      "*"
+    ],
+    "contractor-portal": [
+      "*"
+    ],
+    "file-management": [
+      "*"
+    ],
+    "system-logs": [
+      "*"
+    ],
+    "rate-management": [
+      "*"
+    ],
+    "report-templates": [
+      "*"
+    ],
+    "data-filters": [
+      "*"
+    ],
+    "dashboard-widgets": [
+      "*"
+    ],
+    "schedule-management": [
+      "*"
+    ],
+    "advanced-dashboard": [
+      "*"
+    ],
+    "ai-assistant": [
+      "*"
+    ],
+    "basic-warehouse": [
+      "*"
+    ],
+    "budget-estimates": [
+      "*"
+    ],
+    "payments": [
+      "*"
+    ],
+    "site-requests": [
+      "*"
+    ],
+    "ai-estimates": [
+      "*"
+    ],
+    "procurement": [
+      "*"
+    ]
   },
-  
-  "interface_access": ["lk", "admin", "mobile"],
-  
+  "interface_access": [
+    "lk",
+    "admin",
+    "mobile"
+  ],
   "hierarchy": {
     "can_manage_roles": [
       "organization_admin",
-      "accountant", 
+      "accountant",
       "supplier",
       "viewer",
       "project_manager",
       "foreman",
       "worker"
     ],
-    "cannot_manage": ["organization_owner", "system_admin", "super_admin"]
+    "cannot_manage": [
+      "organization_owner",
+      "system_admin",
+      "super_admin"
+    ]
   }
 }
