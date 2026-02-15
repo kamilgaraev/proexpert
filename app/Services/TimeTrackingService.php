@@ -149,7 +149,7 @@ class TimeTrackingService
                 'worker_type' => $timeEntry->worker_type,
                 'worker_name' => $timeEntry->worker_name,
                 'project_id' => $timeEntry->project_id,
-                'work_date' => $timeEntry->work_date->format('Y-m-d'),
+                'work_date' => $timeEntry->work_date instanceof \Carbon\Carbon ? $timeEntry->work_date->format('Y-m-d') : (string)$timeEntry->work_date,
                 'hours_worked' => $timeEntry->hours_worked,
                 'volume_completed' => $timeEntry->volume_completed,
                 'is_billable' => $timeEntry->is_billable,
