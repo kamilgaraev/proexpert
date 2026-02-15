@@ -29,7 +29,7 @@ class PurchaseOrderController extends Controller
 
             // TODO: Добавить сервис для пагинации заказов
             $orders = \App\BusinessModules\Features\Procurement\Models\PurchaseOrder::forOrganization($organizationId)
-                ->with(['supplier', 'purchaseRequest', 'contract'])
+                ->with(['supplier', 'purchaseRequest', 'contract', 'items'])
                 ->orderBy('created_at', 'desc')
                 ->paginate($perPage);
 
@@ -63,7 +63,7 @@ class PurchaseOrderController extends Controller
         try {
             $organizationId = $request->attributes->get('current_organization_id');
             $order = \App\BusinessModules\Features\Procurement\Models\PurchaseOrder::forOrganization($organizationId)
-                ->with(['supplier', 'purchaseRequest', 'contract', 'proposals'])
+                ->with(['supplier', 'purchaseRequest', 'contract', 'proposals', 'items'])
                 ->find($id);
 
             if (!$order) {
@@ -132,6 +132,7 @@ class PurchaseOrderController extends Controller
         try {
             $organizationId = $request->attributes->get('current_organization_id');
             $order = \App\BusinessModules\Features\Procurement\Models\PurchaseOrder::forOrganization($organizationId)
+                ->with(['items', 'supplier', 'purchaseRequest'])
                 ->findOrFail($id);
 
             $sent = $this->service->sendToSupplier($order);
@@ -167,6 +168,7 @@ class PurchaseOrderController extends Controller
         try {
             $organizationId = $request->attributes->get('current_organization_id');
             $order = \App\BusinessModules\Features\Procurement\Models\PurchaseOrder::forOrganization($organizationId)
+                ->with(['items', 'supplier'])
                 ->findOrFail($id);
 
             $request->validate([
@@ -293,6 +295,7 @@ class PurchaseOrderController extends Controller
         try {
             $organizationId = $request->attributes->get('current_organization_id');
             $order = \App\BusinessModules\Features\Procurement\Models\PurchaseOrder::forOrganization($organizationId)
+                ->with(['items', 'supplier'])
                 ->findOrFail($id);
 
             $updated = $this->service->markInDelivery($order);

@@ -27,6 +27,30 @@
             </ul>
         </div>
         
+        @if(count($items) > 0)
+        <div style="margin: 20px 0;">
+            <h3 style="color: #495057;">Список материалов:</h3>
+            <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
+                <thead>
+                    <tr style="background-color: #f8f9fa;">
+                        <th style="border: 1px solid #dee2e6; padding: 10px; text-align: left; font-size: 14px;">Материал</th>
+                        <th style="border: 1px solid #dee2e6; padding: 10px; text-align: center; font-size: 14px; width: 100px;">Кол-во</th>
+                        <th style="border: 1px solid #dee2e6; padding: 10px; text-align: center; font-size: 14px; width: 60px;">Ед.</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach($items as $item)
+                    <tr>
+                        <td style="border: 1px solid #dee2e6; padding: 10px; font-size: 14px;">{{ $item->material_name }}</td>
+                        <td style="border: 1px solid #dee2e6; padding: 10px; text-align: center; font-size: 14px;">{{ number_format($item->quantity, 2, ',', ' ') }}</td>
+                        <td style="border: 1px solid #dee2e6; padding: 10px; text-align: center; font-size: 14px;">{{ $item->unit }}</td>
+                    </tr>
+                    @endforeach
+                </tbody>
+            </table>
+        </div>
+        @endif
+        
         @if($order->notes)
         <div style="margin: 20px 0;">
             <h4 style="color: #495057;">Примечания:</h4>
