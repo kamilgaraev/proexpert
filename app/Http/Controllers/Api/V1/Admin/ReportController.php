@@ -266,10 +266,15 @@ class ReportController extends Controller
                 trans_message('reports.generated')
             );
         } catch (\Throwable $e) {
-            return AdminResponse::error(
-                trans_message('reports.generation_failed'),
-                500
-            );
+        Log::error('[ReportController] Ошибка генерации отчёта', [
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ]);
+        
+        return AdminResponse::error(
+            trans_message('reports.generation_failed'),
+            500
+        );
         }
     }
 }

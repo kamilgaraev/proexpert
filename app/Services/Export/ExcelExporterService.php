@@ -14,6 +14,8 @@ use Exception;
 use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Style\Color;
+use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use Illuminate\Support\Str;
 
 class ExcelExporterService
@@ -70,7 +72,7 @@ class ExcelExporterService
                     // Явно записываем заголовки колонок
                     $colIndex = 0;
                     foreach ($headers as $header) {
-                        $cell = chr(65 + $colIndex) . '1';
+                        $cell = Coordinate::stringFromColumnIndex($colIndex + 1) . '1';
                         $sheet->setCellValue($cell, $header);
                         $colIndex++;
                     }
@@ -98,7 +100,7 @@ class ExcelExporterService
                         ],
                     ];
                     $colCount = count($headers);
-                    $sheet->getStyle('A1:' . chr(65 + $colCount - 1) . '1')->applyFromArray($headerStyle);
+                    $sheet->getStyle('A1:' . Coordinate::stringFromColumnIndex($colCount) . '1')->applyFromArray($headerStyle);
                     $sheet->getRowDimension(1)->setRowHeight(28);
 
                     // Запись данных и стилизация строк
@@ -107,7 +109,7 @@ class ExcelExporterService
                     foreach ($data as $rowArray) {
                         $colIndex = 0;
                         foreach ($rowArray as $value) {
-                            $cell = chr(65 + $colIndex) . $rowIndex;
+                            $cell = Coordinate::stringFromColumnIndex($colIndex + 1) . $rowIndex;
                             $sheet->setCellValue($cell, $value);
                             // Форматирование чисел и дат
                             if (is_numeric($value) && $colIndex > 0) {
@@ -125,14 +127,14 @@ class ExcelExporterService
                             $colIndex++;
                         }
                         // Границы для всей строки
-                        $sheet->getStyle('A' . $rowIndex . ':' . chr(65 + $colCount - 1) . $rowIndex)
-                            ->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN)->setColor(new \PhpOffice\PhpSpreadsheet\Style\Color('AAB2BD'));
+                        $sheet->getStyle('A' . $rowIndex . ':' . Coordinate::stringFromColumnIndex($colCount) . $rowIndex)
+                            ->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN)->setColor(new Color('AAB2BD'));
                         $rowIndex++;
                     }
 
                     // Автоширина для всех колонок
                     for ($c = 0; $c < $colCount; $c++) {
-                        $sheet->getColumnDimension(chr(65 + $c))->setAutoSize(true);
+                        $sheet->getColumnDimension(Coordinate::stringFromColumnIndex($c + 1))->setAutoSize(true);
                     }
 
                     // Заморозка заголовка
@@ -229,7 +231,7 @@ class ExcelExporterService
             // Записываем заголовки
             $colIndex = 0;
             foreach ($headers as $header) {
-                $cell = chr(65 + $colIndex) . '1';
+                $cell = Coordinate::stringFromColumnIndex($colIndex + 1) . '1';
                 $sheet->setCellValue($cell, $header);
                 $colIndex++;
             }
@@ -240,7 +242,7 @@ class ExcelExporterService
             foreach ($preparedData['data'] as $rowArray) {
                 $colIndex = 0;
                 foreach ($rowArray as $value) {
-                    $cell = chr(65 + $colIndex) . $rowIndex;
+                    $cell = Coordinate::stringFromColumnIndex($colIndex + 1) . $rowIndex;
                     $sheet->setCellValue($cell, $value);
                     $colIndex++;
                 }
