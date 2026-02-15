@@ -73,11 +73,14 @@ class TimeTrackingService
     {
         $startTime = microtime(true);
         $organizationId = $data['organization_id'] ?? Auth::user()?->current_organization_id;
-        $userId = $data['user_id'] ?? Auth::id();
+        $userId = $data['user_id'] ?? null;
+        $workerType = $data['worker_type'] ?? 'user';
         
         $this->logging->business('time_tracking.entry.creation.started', [
             'organization_id' => $organizationId,
             'user_id' => $userId,
+            'worker_type' => $workerType,
+            'worker_name' => $data['worker_name'] ?? null,
             'project_id' => $data['project_id'] ?? null,
             'work_date' => $data['work_date'] ?? null,
             'hours_worked' => $data['hours_worked'] ?? null,
@@ -87,7 +90,6 @@ class TimeTrackingService
         DB::beginTransaction();
         
         try {
-            // Валидация данных
             $validationStart = microtime(true);
             $this->validateTimeEntryData($data);
             $validationDuration = (microtime(true) - $validationStart) * 1000;
@@ -95,21 +97,24 @@ class TimeTrackingService
             $this->logging->technical('time_tracking.validation.completed', [
                 'validation_duration_ms' => $validationDuration,
                 'organization_id' => $organizationId,
-                'user_id' => $userId
+                'worker_type' => $workerType
             ]);
             
-            // Создание записи
             $timeEntry = TimeEntry::create([
                 'organization_id' => $organizationId,
-                'user_id' => $userId,
+                'user_id' => $workerType === 'user' ? $userId : null,
+                'worker_type' => $workerType,
+                'worker_name' => $data['worker_name'] ?? null,
+                'worker_count' => $data['worker_count'] ?? null,
                 'project_id' => $data['project_id'],
                 'work_type_id' => $data['work_type_id'] ?? null,
                 'task_id' => $data['task_id'] ?? null,
                 'work_date' => $data['work_date'],
                 'start_time' => $data['start_time'] ?? null,
                 'end_time' => $data['end_time'] ?? null,
-                'hours_worked' => $data['hours_worked'],
+                'hours_worked' => $data['hours_worked'] ?? null,
                 'break_time' => $data['break_time'] ?? 0,
+                'volume_completed' => $data['volume_completed'] ?? null,
                 'title' => $data['title'],
                 'description' => $data['description'] ?? null,
                 'status' => $data['status'] ?? 'draft',
@@ -120,8 +125,7 @@ class TimeTrackingService
                 'notes' => $data['notes'] ?? null,
             ]);
 
-            // Автоматический расчет часов, если указано время начала и окончания
-            if (isset($data['start_time']) && isset($data['end_time']) && !isset($data['hours_worked'])) {
+            if (!isset($data['hours_worked']) && isset($data['start_time']) && isset($data['end_time'])) {
                 $timeEntry->calculateHoursFromTimes();
                 $timeEntry->save();
                 
@@ -129,7 +133,8 @@ class TimeTrackingService
                     'time_entry_id' => $timeEntry->id,
                     'calculated_hours' => $timeEntry->hours_worked,
                     'start_time' => $data['start_time'],
-                    'end_time' => $data['end_time']
+                    'end_time' => $data['end_time'],
+                    'break_time' => $timeEntry->break_time
                 ]);
             }
 
@@ -141,9 +146,12 @@ class TimeTrackingService
                 'time_entry_id' => $timeEntry->id,
                 'organization_id' => $timeEntry->organization_id,
                 'user_id' => $timeEntry->user_id,
+                'worker_type' => $timeEntry->worker_type,
+                'worker_name' => $timeEntry->worker_name,
                 'project_id' => $timeEntry->project_id,
-                'work_date' => $timeEntry->work_date,
+                'work_date' => $timeEntry->work_date->format('Y-m-d'),
                 'hours_worked' => $timeEntry->hours_worked,
+                'volume_completed' => $timeEntry->volume_completed,
                 'is_billable' => $timeEntry->is_billable,
                 'status' => $timeEntry->status,
                 'duration_ms' => $duration
@@ -153,10 +161,11 @@ class TimeTrackingService
                 'time_entry_id' => $timeEntry->id,
                 'organization_id' => $timeEntry->organization_id,
                 'user_id' => $timeEntry->user_id,
+                'worker_type' => $timeEntry->worker_type,
                 'project_id' => $timeEntry->project_id,
                 'hours_worked' => $timeEntry->hours_worked,
                 'is_billable' => $timeEntry->is_billable,
-                'performed_by' => $userId
+                'performed_by' => Auth::id()
             ]);
             
             return $timeEntry->load(['user', 'project', 'workType', 'task']);
@@ -169,6 +178,7 @@ class TimeTrackingService
             $this->logging->technical('time_tracking.entry.creation.failed', [
                 'organization_id' => $organizationId,
                 'user_id' => $userId,
+                'worker_type' => $workerType,
                 'project_id' => $data['project_id'] ?? null,
                 'error' => $e->getMessage(),
                 'duration_ms' => $duration
@@ -415,41 +425,40 @@ class TimeTrackingService
         ]);
 
         try {
-            $query = TimeEntry::query();
+            $baseQuery = TimeEntry::query();
 
             if ($organizationId) {
-                $query->forOrganization($organizationId);
+                $baseQuery->forOrganization($organizationId);
             }
 
             if ($userId) {
-                $query->forUser($userId);
+                $baseQuery->forUser($userId);
             }
 
             if ($projectId) {
-                $query->forProject($projectId);
+                $baseQuery->forProject($projectId);
             }
 
             if ($startDate && $endDate) {
-                $query->forDateRange($startDate, $endDate);
+                $baseQuery->forDateRange($startDate, $endDate);
             }
 
-            // ДИАГНОСТИКА: Измеряем время каждого запроса
             $queryTimes = [];
             
             $queryStart = microtime(true);
-            $totalHours = $query->sum('hours_worked');
+            $totalHours = (clone $baseQuery)->sum('hours_worked');
             $queryTimes['total_hours'] = (microtime(true) - $queryStart) * 1000;
             
             $queryStart = microtime(true);
-            $billableHours = $query->billable(true)->sum('hours_worked');
+            $billableHours = (clone $baseQuery)->billable(true)->sum('hours_worked');
             $queryTimes['billable_hours'] = (microtime(true) - $queryStart) * 1000;
             
             $queryStart = microtime(true);
-            $nonBillableHours = $query->billable(false)->sum('hours_worked');
+            $nonBillableHours = (clone $baseQuery)->billable(false)->sum('hours_worked');
             $queryTimes['non_billable_hours'] = (microtime(true) - $queryStart) * 1000;
             
             $queryStart = microtime(true);
-            $totalCost = $query->billable(true)->whereNotNull('hourly_rate')
+            $totalCost = (clone $baseQuery)->billable(true)->whereNotNull('hourly_rate')
                 ->get()
                 ->sum(function ($entry) {
                     return $entry->hours_worked * $entry->hourly_rate;
@@ -457,19 +466,19 @@ class TimeTrackingService
             $queryTimes['total_cost'] = (microtime(true) - $queryStart) * 1000;
 
             $queryStart = microtime(true);
-            $entriesCount = $query->count();
+            $entriesCount = (clone $baseQuery)->count();
             $queryTimes['entries_count'] = (microtime(true) - $queryStart) * 1000;
             
             $queryStart = microtime(true);
-            $approvedEntries = $query->byStatus('approved')->count();
+            $approvedEntries = (clone $baseQuery)->byStatus('approved')->count();
             $queryTimes['approved_entries'] = (microtime(true) - $queryStart) * 1000;
             
             $queryStart = microtime(true);
-            $pendingEntries = $query->byStatus('submitted')->count();
+            $pendingEntries = (clone $baseQuery)->byStatus('submitted')->count();
             $queryTimes['pending_entries'] = (microtime(true) - $queryStart) * 1000;
             
             $queryStart = microtime(true);
-            $rejectedEntries = $query->byStatus('rejected')->count();
+            $rejectedEntries = (clone $baseQuery)->byStatus('rejected')->count();
             $queryTimes['rejected_entries'] = (microtime(true) - $queryStart) * 1000;
 
             $duration = (microtime(true) - $startTime) * 1000;

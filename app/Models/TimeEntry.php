@@ -15,6 +15,9 @@ class TimeEntry extends Model
     protected $fillable = [
         'organization_id',
         'user_id',
+        'worker_type',
+        'worker_name',
+        'worker_count',
         'project_id',
         'work_type_id',
         'task_id',
@@ -23,6 +26,7 @@ class TimeEntry extends Model
         'end_time',
         'hours_worked',
         'break_time',
+        'volume_completed',
         'title',
         'description',
         'status',
@@ -42,8 +46,10 @@ class TimeEntry extends Model
         'end_time' => 'datetime:H:i',
         'hours_worked' => 'decimal:2',
         'break_time' => 'decimal:2',
+        'volume_completed' => 'decimal:2',
         'hourly_rate' => 'decimal:2',
         'is_billable' => 'boolean',
+        'worker_count' => 'integer',
         'custom_fields' => 'array',
         'approved_at' => 'datetime',
     ];
@@ -248,5 +254,44 @@ class TimeEntry extends Model
             'rejected' => 'Отклонено',
             default => 'Неизвестно'
         };
+    }
+
+    public function isVirtualWorker(): bool
+    {
+        return $this->worker_type === 'virtual';
+    }
+
+    public function isBrigade(): bool
+    {
+        return $this->worker_type === 'brigade';
+    }
+
+    public function isRegisteredUser(): bool
+    {
+        return $this->worker_type === 'user';
+    }
+
+    public function getWorkerDisplayNameAttribute(): string
+    {
+        if ($this->isRegisteredUser() && $this->user) {
+            return $this->user->name;
+        }
+        
+        if ($this->isBrigade()) {
+            $count = $this->worker_count ? " ({$this->worker_count} чел.)" : '';
+            return ($this->worker_name ?? 'Бригада') . $count;
+        }
+        
+        return $this->worker_name ?? 'Не указан';
+    }
+
+    public function scopeForWorkerType($query, string $workerType)
+    {
+        return $query->where('worker_type', $workerType);
+    }
+
+    public function scopeForWorkerName($query, string $workerName)
+    {
+        return $query->where('worker_name', $workerName);
     }
 }
