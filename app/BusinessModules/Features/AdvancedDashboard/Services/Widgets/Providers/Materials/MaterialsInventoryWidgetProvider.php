@@ -27,7 +27,7 @@ class MaterialsInventoryWidgetProvider extends AbstractWidgetProvider
                 'materials.name',
                 'materials.measurement_unit_id',
                 DB::raw('SUM(warehouse_balances.available_quantity) as total_quantity'),
-                DB::raw('AVG(warehouse_balances.average_price) as avg_price'),
+                DB::raw('SUM(warehouse_balances.available_quantity * warehouse_balances.unit_price) as total_value_calc'),
                 'materials.default_price'
             )
             ->groupBy('materials.id', 'materials.name', 'materials.measurement_unit_id', 'materials.default_price')
@@ -37,16 +37,25 @@ class MaterialsInventoryWidgetProvider extends AbstractWidgetProvider
         $totalValue = 0;
 
         $inventory = $balances->map(function($b) use (&$totalValue) {
-            $price = (float)($b->avg_price ?? $b->default_price ?? 0);
-            $value = (float)($b->total_quantity * $price);
-            $totalValue += $value;
+            $totalQty = (float)$b->total_quantity;
+            $calcValue = (float)$b->total_value_calc;
+            
+            // Если остатка нет, цену берем из default_price
+            if ($totalQty > 0) {
+                $avgPrice = $calcValue / $totalQty;
+            } else {
+                $avgPrice = (float)$b->default_price;
+                $calcValue = 0;
+            }
+            
+            $totalValue += $calcValue;
 
             return [
                 'material_id' => $b->id,
                 'material_name' => $b->name,
-                'quantity' => (float)$b->total_quantity,
-                'unit_price' => $price,
-                'total_value' => $value,
+                'quantity' => $totalQty,
+                'unit_price' => $avgPrice,
+                'total_value' => $calcValue,
             ];
         })->toArray();
 

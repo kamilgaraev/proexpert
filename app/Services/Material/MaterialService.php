@@ -262,7 +262,7 @@ class MaterialService
                     'w.warehouse_type',
                     'wb.available_quantity',
                     'wb.reserved_quantity',
-                    'wb.average_price',
+                    'wb.unit_price',
                     'wb.last_movement_at as last_update_date',
                     'mu.short_name as unit',
                     DB::raw('wb.available_quantity as free_quantity')
@@ -270,7 +270,7 @@ class MaterialService
 
             // Удалена фильтрация по project_id, так как теперь используем склады
 
-            $allowedSortBy = ['warehouse_name', 'available_quantity', 'reserved_quantity', 'free_quantity', 'average_price', 'last_update_date'];
+            $allowedSortBy = ['warehouse_name', 'available_quantity', 'reserved_quantity', 'free_quantity', 'unit_price', 'last_update_date'];
             if (!in_array($sortBy, $allowedSortBy)) {
                 $sortBy = 'last_update_date';
             }

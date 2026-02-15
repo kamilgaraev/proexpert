@@ -197,7 +197,7 @@ class AssetService
                         ->where('materials.is_active', true)
                         ->ofType($type)
                         ->join('warehouse_balances', 'materials.id', '=', 'warehouse_balances.material_id')
-                        ->selectRaw('SUM(warehouse_balances.available_quantity * warehouse_balances.average_price) as total')
+                        ->selectRaw('SUM(warehouse_balances.available_quantity * warehouse_balances.unit_price) as total')
                         ->value('total') ?? 0;
                     
                     $stats[$type] = [

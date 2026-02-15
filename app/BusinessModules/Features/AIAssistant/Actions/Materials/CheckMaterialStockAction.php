@@ -28,7 +28,7 @@ class CheckMaterialStockAction
                 'measurement_units.short_name as unit',
                 DB::raw('COALESCE(SUM(warehouse_balances.available_quantity), 0) as total_quantity'),
                 DB::raw('COALESCE(SUM(warehouse_balances.reserved_quantity), 0) as reserved_quantity'),
-                DB::raw('COALESCE(AVG(warehouse_balances.average_price), materials.default_price, 0) as avg_price')
+                DB::raw('COALESCE(SUM(warehouse_balances.available_quantity * warehouse_balances.unit_price), 0) as total_value_calc')
             )
             ->groupBy(
                 'materials.id',
@@ -48,8 +48,16 @@ class CheckMaterialStockAction
             $quantity = (float)$material->total_quantity;
             $reserved = (float)$material->reserved_quantity;
             $available = $quantity;  // available_quantity уже не включает зарезервированное
-            $price = (float)($material->avg_price ?? $material->default_price ?? 0);
-            $value = $available * $price;
+            $calcValue = (float)$material->total_value_calc;
+            
+            if ($quantity > 0) {
+                $price = $calcValue / $quantity;
+            } else {
+                $price = (float)$material->default_price ?? 0;
+                $calcValue = 0;
+            }
+            
+            $value = $calcValue;
             
             $totalValue += $value;
 

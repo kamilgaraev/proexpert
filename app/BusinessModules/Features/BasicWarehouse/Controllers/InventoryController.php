@@ -86,7 +86,7 @@ class InventoryController extends Controller
                     'inventory_act_id' => $act->id,
                     'material_id' => $balance->material_id,
                     'expected_quantity' => $balance->available_quantity,
-                    'unit_price' => $balance->average_price,
+                    'unit_price' => $balance->unit_price,
                     'location_code' => $balance->location_code,
                     'batch_number' => $balance->batch_number,
                 ]);
@@ -237,10 +237,26 @@ class InventoryController extends Controller
             // Применяем корректировки к остаткам
             foreach ($act->items as $item) {
                 if ($item->hasDiscrepancy()) {
-                    $balance = WarehouseBalance::where('organization_id', $act->organization_id)
+                    $query = WarehouseBalance::where('organization_id', $act->organization_id)
                         ->where('warehouse_id', $act->warehouse_id)
                         ->where('material_id', $item->material_id)
-                        ->first();
+                        ->where('unit_price', $item->unit_price);
+
+                    if ($item->batch_number) {
+                        $query->where('batch_number', $item->batch_number);
+                    } else {
+                        $query->whereNull('batch_number');
+                    }
+
+                    if ($item->location_code) {
+                        $query->where('location_code', $item->location_code);
+                    } else {
+                        // Если локация не указана, ищем без локации или любую?
+                        // Лучше строго: null
+                        $query->whereNull('location_code');
+                    }
+                    
+                    $balance = $query->first();
                     
                     if ($balance) {
                         $balance->available_quantity = $item->actual_quantity;

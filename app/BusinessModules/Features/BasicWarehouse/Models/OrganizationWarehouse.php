@@ -104,7 +104,7 @@ class OrganizationWarehouse extends Model
     {
         return $this->balances()
             ->join('materials', 'warehouse_balances.material_id', '=', 'materials.id')
-            ->selectRaw('SUM(warehouse_balances.available_quantity * warehouse_balances.average_price) as total')
+            ->selectRaw('SUM(warehouse_balances.available_quantity * warehouse_balances.unit_price) as total')
             ->value('total') ?? 0.0;
     }
 

@@ -946,14 +946,14 @@ class ReportService
                 'organization_warehouses.name as warehouse_name',
                 'warehouse_balances.available_quantity',
                 'warehouse_balances.reserved_quantity',
-                'warehouse_balances.average_price',
+                'warehouse_balances.unit_price',
                 'warehouse_balances.min_stock_level',
                 'warehouse_balances.max_stock_level',
                 'warehouse_balances.expiry_date',
                 'warehouse_balances.location_code',
                 'measurement_units.short_name as unit',
                 DB::raw('(warehouse_balances.available_quantity + warehouse_balances.reserved_quantity) as total_quantity'),
-                DB::raw('(warehouse_balances.available_quantity * warehouse_balances.average_price) as total_value')
+                DB::raw('(warehouse_balances.available_quantity * warehouse_balances.unit_price) as total_value')
             );
 
         if ($request->filled('warehouse_id')) {
@@ -993,7 +993,7 @@ class ReportService
                 'reserved_quantity' => (float)$stock->reserved_quantity,
                 'total_quantity' => (float)$stock->total_quantity,
                 'unit' => $stock->unit,
-                'average_price' => (float)$stock->average_price,
+                'unit_price' => (float)$stock->unit_price,
                 'total_value' => (float)$stock->total_value,
                 'min_stock_level' => (float)$stock->min_stock_level,
                 'max_stock_level' => (float)$stock->max_stock_level,
@@ -1022,7 +1022,7 @@ class ReportService
                 'Зарезервировано' => 'reserved_quantity',
                 'Всего' => 'total_quantity',
                 'Ед.изм.' => 'unit',
-                'Средняя цена' => 'average_price',
+                'Цена за ед.' => 'unit_price',
                 'Общая стоимость' => 'total_value',
                 'Мин. уровень' => 'min_stock_level',
                 'Критично' => 'is_critical',
