@@ -301,11 +301,12 @@ class TimeTrackingService
 
             return $result;
             
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             $this->logging->technical('time_tracking.entry.approval.error', [
                 'time_entry_id' => $id,
                 'approver_id' => $approver->id,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ], 'error');
             
             return false;
@@ -520,16 +521,10 @@ class TimeTrackingService
 
             return $statistics;
             
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             $duration = (microtime(true) - $startTime) * 1000;
             
-            $this->logging->technical('time_tracking.statistics.failed', [
-                'organization_id' => $organizationId,
-                'user_id' => $userId,
-                'project_id' => $projectId,
-                'error' => $e->getMessage(),
-                'duration_ms' => $duration
-            ], 'error');
+            Log::error('[TimeTrackingService] Ошибка статистики: ' . $e->getMessage());
             
             throw $e;
         }

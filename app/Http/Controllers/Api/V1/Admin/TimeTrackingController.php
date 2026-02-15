@@ -298,8 +298,7 @@ class TimeTrackingController extends Controller
 
             return AdminResponse::success($stats, trans_message('time_tracking.stats_loaded'));
         } catch (\Throwable $e) {
-            Log::error('[TimeTrackingController] Ошибка получения статистики', [
-                'error' => $e->getMessage(),
+            Log::error('[TimeTrackingController] Ошибка получения статистики: ' . $e->getMessage(), [
                 'trace' => $e->getTraceAsString(),
             ]);
             return AdminResponse::error(trans_message('time_tracking.stats_failed'), 500);
