@@ -20,7 +20,18 @@ class BasicWarehouseServiceProvider extends ServiceProvider
         
         $this->loadRoutes();
         
+        $this->loadTranslations();
+        
         $this->registerMiddleware();
+    }
+
+    protected function loadTranslations(): void
+    {
+        $langPath = __DIR__ . '/lang';
+        
+        if (is_dir($langPath)) {
+            $this->loadTranslationsFrom($langPath, 'warehouse');
+        }
     }
 
     protected function registerServices(): void

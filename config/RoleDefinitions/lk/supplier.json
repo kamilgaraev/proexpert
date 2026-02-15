@@ -5,13 +5,11 @@
   "context": "organization",
   "interface": "lk",
   "description": "Управление складом, закупками и снабжением",
-  
   "system_permissions": [
     "organization.view",
     "profile.view",
     "profile.edit"
   ],
-  
   "module_permissions": {
     "materials": [
       "materials.view",
@@ -72,27 +70,21 @@
       "warehouse.write_offs",
       "warehouse.transfers",
       "warehouse.inventory",
-      "warehouse.reports"
-    ],
-    "advanced-warehouse": [
-      "advanced_warehouse.view",
-      "advanced_warehouse.multiple_warehouses",
-      "advanced_warehouse.zones",
-      "advanced_warehouse.barcode",
-      "advanced_warehouse.rfid",
-      "advanced_warehouse.qr_codes",
-      "advanced_warehouse.batch_tracking",
-      "advanced_warehouse.serial_tracking",
-      "advanced_warehouse.reservations",
-      "advanced_warehouse.auto_reorder",
-      "advanced_warehouse.analytics",
-      "advanced_warehouse.forecasts",
-      "advanced_warehouse.mobile_scanner"
+      "warehouse.reports",
+      "warehouse.advanced.view",
+      "warehouse.advanced.multiple_warehouses",
+      "warehouse.advanced.zones",
+      "warehouse.advanced.barcode",
+      "warehouse.advanced.rfid",
+      "warehouse.advanced.reservations",
+      "warehouse.advanced.auto_reorder",
+      "warehouse.advanced.analytics",
+      "warehouse.advanced.forecasts"
     ]
   },
-  
-  "interface_access": ["lk"],
-  
+  "interface_access": [
+    "lk"
+  ],
   "hierarchy": {
     "can_manage_roles": [],
     "cannot_manage": [
@@ -104,4 +96,3 @@
     ]
   }
 }
-

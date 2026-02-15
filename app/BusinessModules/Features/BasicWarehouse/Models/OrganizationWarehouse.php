@@ -66,11 +66,11 @@ class OrganizationWarehouse extends Model
     }
 
     /**
-     * Получить зоны хранения (только для AdvancedWarehouse)
+     * Получить зоны хранения
      */
     public function zones(): HasMany
     {
-        return $this->hasMany(\App\BusinessModules\Features\AdvancedWarehouse\Models\WarehouseZone::class, 'warehouse_id');
+        return $this->hasMany(\App\BusinessModules\Features\BasicWarehouse\Models\WarehouseZone::class, 'warehouse_id');
     }
 
     /**
