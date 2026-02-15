@@ -18,6 +18,13 @@ class PurchaseOrderPdfService
      */
     public function generate(PurchaseOrder $order): string
     {
+        if (!$order->relationLoaded('organization')) {
+            $order->load('organization');
+        }
+        if (!$order->relationLoaded('supplier')) {
+            $order->load('supplier');
+        }
+        
         $organization = $order->organization;
         $supplier = $order->supplier;
 

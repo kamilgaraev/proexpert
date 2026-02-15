@@ -29,7 +29,7 @@ class PurchaseOrderController extends Controller
 
             // TODO: Добавить сервис для пагинации заказов
             $orders = \App\BusinessModules\Features\Procurement\Models\PurchaseOrder::forOrganization($organizationId)
-                ->with(['supplier', 'purchaseRequest', 'contract', 'items'])
+                ->with(['supplier', 'purchaseRequest', 'contract', 'items', 'organization'])
                 ->orderBy('created_at', 'desc')
                 ->paginate($perPage);
 
@@ -63,7 +63,7 @@ class PurchaseOrderController extends Controller
         try {
             $organizationId = $request->attributes->get('current_organization_id');
             $order = \App\BusinessModules\Features\Procurement\Models\PurchaseOrder::forOrganization($organizationId)
-                ->with(['supplier', 'purchaseRequest', 'contract', 'proposals', 'items'])
+                ->with(['supplier', 'purchaseRequest', 'contract', 'proposals', 'items', 'organization'])
                 ->find($id);
 
             if (!$order) {
@@ -132,7 +132,7 @@ class PurchaseOrderController extends Controller
         try {
             $organizationId = $request->attributes->get('current_organization_id');
             $order = \App\BusinessModules\Features\Procurement\Models\PurchaseOrder::forOrganization($organizationId)
-                ->with(['items', 'supplier', 'purchaseRequest'])
+                ->with(['items', 'supplier', 'purchaseRequest', 'organization'])
                 ->findOrFail($id);
 
             $sent = $this->service->sendToSupplier($order);
@@ -168,7 +168,7 @@ class PurchaseOrderController extends Controller
         try {
             $organizationId = $request->attributes->get('current_organization_id');
             $order = \App\BusinessModules\Features\Procurement\Models\PurchaseOrder::forOrganization($organizationId)
-                ->with(['items', 'supplier'])
+                ->with(['items', 'supplier', 'organization'])
                 ->findOrFail($id);
 
             $request->validate([
@@ -295,7 +295,7 @@ class PurchaseOrderController extends Controller
         try {
             $organizationId = $request->attributes->get('current_organization_id');
             $order = \App\BusinessModules\Features\Procurement\Models\PurchaseOrder::forOrganization($organizationId)
-                ->with(['items', 'supplier'])
+                ->with(['items', 'supplier', 'organization'])
                 ->findOrFail($id);
 
             $updated = $this->service->markInDelivery($order);
