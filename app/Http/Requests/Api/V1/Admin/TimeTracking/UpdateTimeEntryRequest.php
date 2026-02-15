@@ -71,11 +71,11 @@ class UpdateTimeEntryRequest extends FormRequest
             'start_time' => [
                 'sometimes',
                 'nullable',
-                'date_format:H:i:s,H:i'
+                'date_format:H:i'
             ],
             'end_time' => [
                 'nullable',
-                'date_format:H:i:s,H:i',
+                'date_format:H:i',
                 'after:start_time'
             ],
             'hours_worked' => [

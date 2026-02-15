@@ -52,6 +52,7 @@ class TimeEntryResource extends JsonResource
             
             // Связанные модели
             'user' => $this->whenLoaded('user', function () {
+                if (!$this->user) return null;
                 return [
                     'id' => $this->user->id,
                     'name' => $this->user->name,
@@ -60,6 +61,7 @@ class TimeEntryResource extends JsonResource
             }),
             
             'project' => $this->whenLoaded('project', function () {
+                if (!$this->project) return null;
                 return [
                     'id' => $this->project->id,
                     'name' => $this->project->name,
@@ -68,6 +70,7 @@ class TimeEntryResource extends JsonResource
             }),
             
             'work_type' => $this->whenLoaded('workType', function () {
+                if (!$this->workType) return null;
                 return [
                     'id' => $this->workType->id,
                     'name' => $this->workType->name,
@@ -76,6 +79,7 @@ class TimeEntryResource extends JsonResource
             }),
             
             'task' => $this->whenLoaded('task', function () {
+                if (!$this->task) return null;
                 return [
                     'id' => $this->task->id,
                     'name' => $this->task->name,
@@ -84,6 +88,7 @@ class TimeEntryResource extends JsonResource
             }),
             
             'approved_by' => $this->whenLoaded('approvedBy', function () {
+                if (!$this->approvedBy) return null;
                 return [
                     'id' => $this->approvedBy->id,
                     'name' => $this->approvedBy->name,

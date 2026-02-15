@@ -42,21 +42,25 @@ class TimeTrackingController extends Controller
             );
 
             return AdminResponse::success(
-                TimeEntryResource::collection($timeEntries->items()),
-                null,
-                200,
                 [
-                    'current_page' => $timeEntries->currentPage(),
-                    'last_page' => $timeEntries->lastPage(),
-                    'per_page' => $timeEntries->perPage(),
-                    'total' => $timeEntries->total(),
-                ]
+                    'items' => TimeEntryResource::collection($timeEntries->items()),
+                    'pagination' => [
+                        'current_page' => $timeEntries->currentPage(),
+                        'last_page' => $timeEntries->lastPage(),
+                        'per_page' => $timeEntries->perPage(),
+                        'total' => $timeEntries->total(),
+                    ]
+                ],
+                null,
+                200
             );
         } catch (\Throwable $e) {
             Log::error('[TimeTrackingController] Ошибка получения записей времени', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
                 'user_id' => $request->user()?->id,
+                'organization_id' => $this->getCurrentOrganizationId($request),
+                'query_params' => $request->query(),
             ]);
             return AdminResponse::error(trans_message('time_tracking.fetch_failed'), 500);
         }
