@@ -11,6 +11,8 @@ class ModuleScanner
 {
     public function scanAndRegister(): Collection 
     {
+        $modules = $this->loadFromConfigFiles();
+
         // Получаем список слагов из конфигурации
         $configSlugs = collect($modules)->pluck('slug')->toArray();
 
