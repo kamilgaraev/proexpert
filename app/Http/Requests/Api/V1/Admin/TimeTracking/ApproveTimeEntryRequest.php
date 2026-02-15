@@ -12,7 +12,7 @@ class ApproveTimeEntryRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return Auth::check() && Auth::user()->hasPermissionTo('time_tracking.approve');
+        return Auth::check();
     }
 
     /**
