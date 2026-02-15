@@ -42,6 +42,12 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
                 ->name('operations.write-off');
             Route::post('/operations/transfer', [WarehouseOperationsController::class, 'transfer'])
                 ->name('operations.transfer');
+            Route::post('/operations/reserve', [WarehouseOperationsController::class, 'reserve'])
+                ->name('operations.reserve');
+            Route::post('/operations/unreserve', [WarehouseOperationsController::class, 'unreserve'])
+                ->name('operations.unreserve');
+            Route::post('/operations/transfer-to-contractor', [WarehouseOperationsController::class, 'transferToContractor'])
+                ->name('operations.transfer-to-contractor');
             
             // Инвентаризация
             Route::prefix('inventory')->name('inventory.')->group(function () {
