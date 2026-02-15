@@ -14,6 +14,7 @@ use App\BusinessModules\Core\Payments\Http\Controllers\PaymentReportsController;
 use App\BusinessModules\Core\Payments\Http\Controllers\OffsetController;
 use App\BusinessModules\Core\Payments\Http\Controllers\ExportController;
 use App\BusinessModules\Core\Payments\Http\Controllers\PaymentTemplatesController;
+use App\BusinessModules\Core\Payments\Http\Controllers\PaymentCalendarController;
 use Illuminate\Support\Facades\Route;
 
 /*
