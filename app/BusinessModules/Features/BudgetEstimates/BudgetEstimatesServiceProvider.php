@@ -282,12 +282,8 @@ class BudgetEstimatesServiceProvider extends ServiceProvider
      */
     protected function loadMigrations(): void
     {
-        $migrationsPath = database_path('migrations');
-
-        // Миграции модуля находятся в основной папке migrations
-        // Они уже загружаются автоматически Laravel
-        // Если нужно, можно добавить свою папку:
-        // $this->loadMigrationsFrom(__DIR__ . '/migrations');
+        // Миграции модуля теперь загружаются из локальной папки модуля
+        $this->loadMigrationsFrom(__DIR__ . '/Database/Migrations');
     }
 
     /**
