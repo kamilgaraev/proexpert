@@ -200,21 +200,24 @@ class WarehouseBalance extends Model
     /**
      * Увеличить доступное количество
      */
+    /**
+     * Увеличить доступное количество
+     */
     public function increaseQuantity(float $quantity, ?float $price = null): void
     {
-        $this->available_quantity += $quantity;
-
         // Пересчет средней цены при поступлении
         if ($price !== null && $price > 0) {
-            $oldValue = $this->available_quantity * $this->average_price;
+            $oldQuantity = $this->available_quantity;
+            $oldValue = $oldQuantity * $this->average_price;
             $newValue = $quantity * $price;
-            $totalQuantity = $this->available_quantity + $quantity;
+            $totalQuantity = $oldQuantity + $quantity;
 
             if ($totalQuantity > 0) {
                 $this->average_price = ($oldValue + $newValue) / $totalQuantity;
             }
         }
 
+        $this->available_quantity += $quantity;
         $this->last_movement_at = now();
         $this->save();
     }
