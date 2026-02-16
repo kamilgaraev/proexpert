@@ -27,7 +27,8 @@ use function trans_message;
 class EstimateImportController extends Controller
 {
     public function __construct(
-        private EstimateImportService $importService
+        private EstimateImportService $importService,
+        private \App\Services\Logging\LoggingService $loggingService
     ) {}
 
     public function upload(UploadEstimateImportRequest $request): JsonResponse
@@ -291,11 +292,11 @@ class EstimateImportController extends Controller
             return AdminResponse::success($result);
             
         } catch (\Exception $e) {
-            Log::error('[EstimateImport] Execute failed', [
+            $this->loggingService->technical('estimate.import.execute_failed', [
                 'file_id' => $fileId,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
-            ]);
+            ], 'error');
             
             return AdminResponse::error(
                 trans_message('estimate.import_execute_error'),
