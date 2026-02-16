@@ -58,18 +58,16 @@ class SubscriptionPlanResource extends Resource
                             ->numeric()
                             ->prefix('₽')
                             ->required(),
-                        Forms\Components\Select::make('period')
+                        Forms\Components\Select::make('duration_in_days')
                             ->label(__('widgets.subscription_plans.period'))
                             ->options([
-                                'monthly' => 'Ежемесячно',
-                                'yearly' => 'Ежегодно',
+                                30 => 'Ежемесячно',
+                                365 => 'Ежегодно',
                             ])
                             ->required(),
                         Forms\Components\Toggle::make('is_active')
                             ->label(__('widgets.subscription_plans.is_active'))
                             ->default(true),
-                        Forms\Components\Toggle::make('is_default')
-                            ->label(__('widgets.subscription_plans.is_default')),
                     ])->columns(2),
 
                 Forms\Components\Section::make(__('widgets.subscription_plans.section_features'))
@@ -100,20 +98,16 @@ class SubscriptionPlanResource extends Resource
                     ->label(__('widgets.subscription_plans.price'))
                     ->money('RUB')
                     ->sortable(),
-                Tables\Columns\TextColumn::make('period')
+                Tables\Columns\TextColumn::make('duration_in_days')
                     ->label(__('widgets.subscription_plans.period'))
                     ->formatStateUsing(fn (string $state): string => match ($state) {
-                        'monthly' => 'Ежемесячно',
-                        'yearly' => 'Ежегодно',
-                        default => $state,
+                        '30' => 'Ежемесячно',
+                        '365' => 'Ежегодно',
+                        default => $state . ' дн.',
                     })
                     ->sortable(),
                 Tables\Columns\IconColumn::make('is_active')
                     ->label(__('widgets.subscription_plans.is_active'))
-                    ->boolean()
-                    ->sortable(),
-                Tables\Columns\IconColumn::make('is_default')
-                    ->label(__('widgets.subscription_plans.is_default'))
                     ->boolean()
                     ->sortable(),
             ])
