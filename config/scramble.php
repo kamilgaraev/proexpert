@@ -129,6 +129,7 @@ return [
 
     'middleware' => [
         'web',
+        'auth:system_admin',
         RestrictedDocsAccess::class,
     ],
 
