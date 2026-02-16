@@ -12,11 +12,11 @@ use Filament\Tables\Table;
 
 class UserResource extends Resource
 {
-    protected static $model = User::class;
+    protected static ?string $model = User::class;
 
-    protected static $navigationIcon = 'heroicon-o-users';
+    protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-users';
 
-    protected static $navigationGroup = 'System';
+    protected static string | \UnitEnum | null $navigationGroup = 'System';
 
     public static function form(Form $form): Form
     {
