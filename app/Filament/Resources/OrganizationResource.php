@@ -39,7 +39,7 @@ class OrganizationResource extends Resource
     {
         return $schema
             ->components([
-                Forms\Components\Section::make(__('widgets.organizations.section_main') ?? 'Основная информация')
+                Forms\Components\Section::make('Основная информация')
                     ->schema([
                         Forms\Components\TextInput::make('name')
                             ->label(__('widgets.organizations.name') ?? 'Название')
@@ -71,9 +71,7 @@ class OrganizationResource extends Resource
                         Forms\Components\Toggle::make('is_active')
                             ->label('Активна')
                             ->default(true),
-                        Forms\Components\Toggle::make('is_verified')
-                            ->label('Верифицирована'),
-                    ])->columns(2),
+                    ]),
             ]);
     }
 
@@ -88,6 +86,15 @@ class OrganizationResource extends Resource
                 Tables\Columns\TextColumn::make('tax_number')
                     ->label(__('widgets.organizations.inn') ?? 'ИНН')
                     ->searchable(),
+                Tables\Columns\IconColumn::make('is_active')
+                    ->label('Активна')
+                    ->boolean()
+                    ->sortable(),
+                Tables\Columns\TextColumn::make('created_at')
+                    ->label('Создана')
+                    ->dateTime()
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
                 //

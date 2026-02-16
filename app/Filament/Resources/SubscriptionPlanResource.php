@@ -54,11 +54,12 @@ class SubscriptionPlanResource extends Resource
                             ->numeric()
                             ->prefix('₽')
                             ->required(),
-                        Forms\Components\Select::make('duration_in_days')
+                        Forms\Components\Select::make('billing_cycle')
                             ->label(__('widgets.subscription_plans.period'))
                             ->options([
-                                30 => 'Ежемесячно',
-                                365 => 'Ежегодно',
+                                'monthly' => 'Ежемесячно',
+                                'quarterly' => 'Ежеквартально',
+                                'yearly' => 'Ежегодно',
                             ])
                             ->required(),
                         Forms\Components\Toggle::make('is_active')
@@ -78,13 +79,15 @@ class SubscriptionPlanResource extends Resource
                     ->sortable(),
                 Tables\Columns\TextColumn::make('price')
                     ->label(__('widgets.subscription_plans.price'))
+                    ->money('RUB')
                     ->sortable(),
-                Tables\Columns\TextColumn::make('duration_in_days')
+                Tables\Columns\TextColumn::make('billing_cycle')
                     ->label(__('widgets.subscription_plans.period'))
                     ->formatStateUsing(fn ($state) => match ((string)$state) {
-                        '30' => 'Ежемесячно',
-                        '365' => 'Ежегодно',
-                        default => $state . ' дн.',
+                        'monthly' => 'Ежемесячно',
+                        'quarterly' => 'Ежеквартально',
+                        'yearly' => 'Ежегодно',
+                        default => $state,
                     })
                     ->sortable(),
                 Tables\Columns\IconColumn::make('is_active')
