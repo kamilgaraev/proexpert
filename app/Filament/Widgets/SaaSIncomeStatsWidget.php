@@ -24,13 +24,13 @@ class SaaSIncomeStatsWidget extends BaseWidget
             ->sum('amount') ?? 0;
 
         return [
-            Stat::make('Total SaaS Income', Number::currency($totalIncome, 'RUB', 'ru'))
-                ->description('All time successful payments')
+            Stat::make(__('widgets.saas_income_stats.total_income'), Number::currency($totalIncome, 'RUB', 'ru'))
+                ->description(__('widgets.saas_income_stats.all_time_description'))
                 ->descriptionIcon('heroicon-m-arrow-trending-up')
                 ->color('success'),
                 
-            Stat::make('Monthly Income', Number::currency($monthIncome, 'RUB', 'ru'))
-                ->description('Income for ' . now()->format('F Y'))
+            Stat::make(__('widgets.saas_income_stats.monthly_income'), Number::currency($monthIncome, 'RUB', 'ru'))
+                ->description(__('widgets.saas_income_stats.monthly_description', ['date' => now()->translatedFormat('F Y')]))
                 ->descriptionIcon('heroicon-m-calendar')
                 ->color('info'),
         ];
