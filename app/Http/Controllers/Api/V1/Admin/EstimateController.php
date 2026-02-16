@@ -83,13 +83,17 @@ class EstimateController extends Controller
     {
         $organizationId = $request->attributes->get('current_organization_id');
         
+        if (!$organizationId) {
+            $organizationId = $request->user()?->current_organization_id;
+        }
+
         $estimateModel = Estimate::where('id', $estimate)
-            ->where('organization_id', $organizationId)
+            ->where('organization_id', (int)$organizationId)
             ->firstOrFail();
         
         $this->authorize('view', $estimateModel);
         
-        // Загружаем ВСЕ разделы и позиции одним запросом для построения иерархии
+        // Загружаем ВСЕ разделы одним запросом
         $allSections = \App\Models\EstimateSection::where('estimate_id', $estimateModel->id)
             ->with([
                 'items.workType',
@@ -104,31 +108,35 @@ class EstimateController extends Controller
             ->orderBy('sort_order')
             ->get();
         
-        // Строим иерархическую структуру разделов (неограниченная вложенность)
-        $buildTree = function($sections, $parentId = null) use (&$buildTree) {
-            return $sections
-                ->where('parent_section_id', $parentId)
-                ->map(function($section) use ($sections, $buildTree) {
-                    // Строим иерархию позиций внутри раздела
-                    $allItems = $section->items;
-                    $buildItemsTree = function($items, $parentItemId = null) use (&$buildItemsTree) {
-                        return $items
-                            ->where('parent_work_id', $parentItemId)
-                            ->map(function($item) use ($items, $buildItemsTree) {
-                                $item->setRelation('childItems', $buildItemsTree($items, $item->id));
-                                return $item;
-                            })
-                            ->values();
-                    };
-                    $section->setRelation('items', $buildItemsTree($allItems));
-                    $section->setRelation('children', $buildTree($sections, $section->id));
-                    return $section;
-                })
-                ->values();
+        // Группируем разделы по родителю для O(1) поиска (всего O(N))
+        $sectionsByParent = $allSections->groupBy('parent_section_id');
+
+        // Оптимизированное построение дерева разделов
+        $buildTree = function($parentId = null) use (&$buildTree, $sectionsByParent) {
+            $currentLevelSections = $sectionsByParent->get($parentId, collect());
+            
+            return $currentLevelSections->map(function($section) use ($buildTree) {
+                // Внутри раздела группируем позиции для оптимизации
+                $allItems = $section->items;
+                $itemsByParent = $allItems->groupBy('parent_work_id');
+
+                $buildItemsTree = function($parentItemId = null) use (&$buildItemsTree, $itemsByParent) {
+                    $currentLevelItems = $itemsByParent->get($parentItemId, collect());
+                    
+                    return $currentLevelItems->map(function($item) use ($buildItemsTree) {
+                        $item->setRelation('childItems', $buildItemsTree($item->id));
+                        return $item;
+                    })->values();
+                };
+
+                $section->setRelation('items', $buildItemsTree(null));
+                $section->setRelation('children', $buildTree($section->id));
+                return $section;
+            })->values();
         };
         
         // Устанавливаем корневые разделы с построенной иерархией
-        $estimateModel->setRelation('sections', $buildTree($allSections));
+        $estimateModel->setRelation('sections', $buildTree(null));
         
         // Загружаем позиции без разделов и другие связи
         $itemsWithoutSection = \App\Models\EstimateItem::where('estimate_id', $estimateModel->id)
@@ -146,18 +154,20 @@ class EstimateController extends Controller
             ->orderBy('position_number')
             ->get();
         
+        // Группируем для оптимизации
+        $itemsWithoutSectionByParent = $itemsWithoutSection->groupBy('parent_work_id');
+
         // Строим иерархию позиций без разделов
-        $buildItemsTree = function($items, $parentItemId = null) use (&$buildItemsTree) {
-            return $items
-                ->where('parent_work_id', $parentItemId)
-                ->map(function($item) use ($items, $buildItemsTree) {
-                    $item->setRelation('childItems', $buildItemsTree($items, $item->id));
-                    return $item;
-                })
-                ->values();
+        $buildItemsTreeWithoutSection = function($parentItemId = null) use (&$buildItemsTreeWithoutSection, $itemsWithoutSectionByParent) {
+            $currentLevelItems = $itemsWithoutSectionByParent->get($parentItemId, collect());
+
+            return $currentLevelItems->map(function($item) use ($buildItemsTreeWithoutSection) {
+                $item->setRelation('childItems', $buildItemsTreeWithoutSection($item->id));
+                return $item;
+            })->values();
         };
         
-        $estimateModel->setRelation('items', $buildItemsTree($itemsWithoutSection));
+        $estimateModel->setRelation('items', $buildItemsTreeWithoutSection(null));
         
         $estimateModel->load([
             'project',

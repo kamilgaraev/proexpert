@@ -70,7 +70,7 @@ class ProjectContextMiddleware
         // Проверка доступа организации к проекту
         if (!$this->projectContextService->canOrganizationAccessProject($project, $organization)) {
             Log::warning('Unauthorized project access attempt', [
-                'project_id' => $projectId,
+                'project_id' => $project->id,
                 'organization_id' => $organization->id,
                 'user_id' => $user->id,
             ]);
@@ -86,7 +86,7 @@ class ProjectContextMiddleware
             $projectContext = $this->projectContextService->getContext($project, $organization);
         } catch (\Exception $e) {
             Log::error('Failed to build project context', [
-                'project_id' => $projectId,
+                'project_id' => $project->id,
                 'organization_id' => $organization->id,
                 'error' => $e->getMessage(),
             ]);
