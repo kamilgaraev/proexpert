@@ -5,11 +5,10 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\OrganizationResource\Pages;
 use App\Models\Organization;
 use Filament\Forms;
-use Filament\Forms\Form;
 use Filament\Resources\Resource;
+use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
-use Filament\Schemas\Schema;
 
 class OrganizationResource extends Resource
 {
@@ -23,63 +22,15 @@ class OrganizationResource extends Resource
 
     public static function getNavigationLabel(): string
     {
-        return __('widgets.organizations.navigation_label');
-    }
-
-    public static function getModelLabel(): string
-    {
-        return __('widgets.organizations.model_label');
-    }
-
-    public static function getPluralModelLabel(): string
-    {
-        return __('widgets.organizations.plural_model_label');
+        return 'Организации-тест';
     }
 
     public static function form(Schema $schema): Schema
     {
         return $schema
             ->components([
-                Forms\Components\Section::make('Основная информация')
-                    ->schema([
-                        Forms\Components\TextInput::make('name')
-                            ->label(__('widgets.organizations.name') ?? 'Название')
-                            ->required()
-                            ->maxLength(255),
-                        Forms\Components\TextInput::make('tax_number')
-                            ->label(__('widgets.organizations.inn') ?? 'ИНН')
-                            ->maxLength(12),
-                        Forms\Components\TextInput::make('registration_number')
-                            ->label(__('widgets.organizations.ogrn') ?? 'ОГРН')
-                            ->maxLength(15),
-                    ])->columns(2),
-
-                Forms\Components\Section::make('Контакты')
-                    ->schema([
-                        Forms\Components\TextInput::make('email')
-                            ->label('Email')
-                            ->email()
-                            ->maxLength(255),
-                        Forms\Components\TextInput::make('phone')
-                            ->label('Телефон')
-                            ->tel()
-                            ->maxLength(255),
-                        Forms\Components\Textarea::make('address')
-                            ->label('Адрес')
-                            ->maxLength(500)
-                            ->columnSpanFull(),
-                    ])->columns(2),
-
-                Forms\Components\Section::make('Настройки')
-                    ->schema([
-                        Forms\Components\Select::make('parent_organization_id')
-                            ->label('Головная организация')
-                            ->relationship('parentOrganization', 'name')
-                            ->searchable()
-                            ->preload(),
-                        Forms\Components\Toggle::make('is_verified')
-                            ->label('Верифицирована'),
-                    ])->columns(2),
+                Forms\Components\TextInput::make('name')
+                    ->required(),
             ]);
     }
 
@@ -87,45 +38,13 @@ class OrganizationResource extends Resource
     {
         return $table
             ->columns([
-                Tables\Columns\TextColumn::make('name')
-                    ->label(__('widgets.organizations.name') ?? 'Название')
-                    ->searchable()
-                    ->sortable(),
-                Tables\Columns\TextColumn::make('tax_number')
-                    ->label(__('widgets.organizations.inn') ?? 'ИНН')
-                    ->searchable(),
-                Tables\Columns\TextColumn::make('parentOrganization.name')
-                    ->label('Головная организация')
-                    ->searchable()
-                    ->sortable(),
-                Tables\Columns\IconColumn::make('is_verified')
-                    ->label('Верифицирована')
-                    ->boolean()
-                    ->sortable(),
-                Tables\Columns\TextColumn::make('created_at')
-                    ->label('Дата создания')
-                    ->dateTime()
-                    ->sortable()
-                    ->toggleable(isToggledHiddenByDefault: true),
-            ])
-            ->filters([
-                //
-            ])
-            ->actions([
-                Tables\Actions\EditAction::make(),
-            ])
-            ->bulkActions([
-                Tables\Actions\BulkActionGroup::make([
-                    Tables\Actions\DeleteBulkAction::make(),
-                ]),
+                Tables\Columns\TextColumn::make('name'),
             ]);
     }
 
     public static function getRelations(): array
     {
-        return [
-            //
-        ];
+        return [];
     }
 
     public static function getPages(): array
