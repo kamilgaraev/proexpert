@@ -10,6 +10,7 @@
         "aws/aws-sdk-php": "^3.339",
         "barryvdh/laravel-dompdf": "^3.1",
         "dedoc/scramble": "^0.13.13",
+        "filament/filament": "^5.2",
         "intervention/image": "^3.11",
         "laravel/framework": "^11.31",
         "laravel/horizon": "^5.34",
@@ -57,7 +58,8 @@
     "scripts": {
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
-            "@php artisan package:discover --ansi"
+            "@php artisan package:discover --ansi",
+            "@php artisan filament:upgrade"
         ],
         "post-update-cmd": [
             "@php artisan vendor:publish --tag=laravel-assets --ansi --force"
