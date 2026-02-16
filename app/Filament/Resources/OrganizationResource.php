@@ -16,6 +16,8 @@ class OrganizationResource extends Resource
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-building-office-2';
 
+    protected static bool $shouldSkipAuthorization = true;
+
     public static function form(Schema $schema): Schema
     {
         return $schema
