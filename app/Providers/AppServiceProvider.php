@@ -190,7 +190,8 @@ class AppServiceProvider extends ServiceProvider
     protected function syncReportTemplatesOnBoot(): void
     {
         // Проверяем, нужна ли синхронизация (только в production/local, не в тестах)
-        if (app()->runningInConsole() && !app()->runningUnitTests()) {
+        // Проверяем, нужна ли синхронизация (только в production/local, не в тестах)
+        if (app()->runningInConsole()) {
             return; // Пропускаем в консольных командах (запустят вручную если нужно)
         }
 
@@ -205,9 +206,12 @@ class AppServiceProvider extends ServiceProvider
             if (!$hasSystemTemplates) {
                 $this->syncReportTemplatesFromJson();
             }
-        } catch (\Exception $e) {
+
+        } catch (\Illuminate\Database\QueryException $e) {
             // Если таблицы еще нет (миграции не запущены) - просто пропускаем
-            Log::debug('Skip report templates sync: ' . $e->getMessage());
+            // Log::debug('Skip report templates sync: ' . $e->getMessage());
+        } catch (\Exception $e) {
+            Log::warning('Failed to sync report templates: ' . $e->getMessage());
         }
     }
 

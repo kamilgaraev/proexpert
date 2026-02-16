@@ -60,6 +60,11 @@ return [
             'driver' => 'jwt',
             'provider' => 'landing_admins',
         ],
+
+        'system_admin' => [
+            'driver' => 'session',
+            'provider' => 'system_admins',
+        ],
     ],
 
     /*
@@ -93,6 +98,11 @@ return [
         'landing_admins' => [
             'driver' => 'eloquent',
             'model' => App\Models\LandingAdmin::class,
+        ],
+
+        'system_admins' => [
+            'driver' => 'eloquent',
+            'model' => App\Models\SystemAdmin::class,
         ],
     ],
 
