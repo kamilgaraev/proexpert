@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\App;
+use Illuminate\Support\Facades\Gate;
 use App\Services\Organization\OrganizationContext;
 use App\Services\FileService;
 use App\Services\Export\ExcelExporterService;
@@ -139,6 +140,11 @@ class AppServiceProvider extends ServiceProvider
     {
         // Автоматическая синхронизация системных шаблонов отчетов при первом запуске
         $this->syncReportTemplatesOnBoot();
+
+        Gate::define('viewApiDocs', function ($user = null) {
+            return true;
+        });
+
         
         // ОТКЛЮЧЕНЫ: переключились на warehouse_balances вместо material_balances
         // MaterialUsageLog::observe(MaterialUsageLogObserver::class);
