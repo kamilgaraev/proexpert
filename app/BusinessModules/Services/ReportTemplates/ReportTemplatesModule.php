@@ -65,12 +65,12 @@ class ReportTemplatesModule implements ModuleInterface, ConfigurableInterface
         $accessController = app(\App\Modules\Core\AccessController::class);
         return $accessController->hasModuleAccess($organizationId, 'organizations') &&
                $accessController->hasModuleAccess($organizationId, 'users') &&
-               $accessController->hasModuleAccess($organizationId, 'basic-reports');
+               $accessController->hasModuleAccess($organizationId, 'reports');
     }
 
     public function getDependencies(): array
     {
-        return ['organizations', 'users', 'basic-reports'];
+        return ['organizations', 'users', 'reports'];
     }
 
     public function getConflicts(): array

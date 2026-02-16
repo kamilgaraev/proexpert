@@ -41,29 +41,36 @@ class ReportController extends Controller
     }
 
     /**
-     * Проверка доступности модуля базовых отчётов
+     * Проверка доступности модуля отчётов
      * 
-     * GET /api/v1/admin/reports/check-basic-availability
+     * GET /api/v1/admin/reports/check-availability
      */
-    public function checkBasicReportsAvailability(Request $request): JsonResponse
+    public function checkReportsAvailability(Request $request): JsonResponse
     {
         try {
             $user = $request->user();
             $organizationId = $user->current_organization_id;
 
-            $hasAccess = $this->moduleService->hasModuleAccess($organizationId, 'basic_reports');
+            $hasAccess = $this->moduleService->hasModuleAccess($organizationId, 'reports');
 
             $data = [
                 'has_access' => $hasAccess,
-                'module' => 'basic_reports',
+                'module' => 'reports',
                 'features' => $hasAccess 
-                    ? ['Отчет по материалам', 'Отчет по работам', 'Сводный отчет', 'Экспорт в PDF'] 
+                    ? [
+                        'Базовые отчеты (материалы, работы, проекты)',
+                        'Конструктор произвольных отчетов',
+                        'Финансовая аналитика и KPI',
+                        'Официальные формы (М-29 и др.)',
+                        'Прогнозная аналитика',
+                        'Автоматическая рассылка'
+                    ] 
                     : []
             ];
 
             return AdminResponse::success(
                 $data,
-                $hasAccess ? trans_message('reports.basic_reports_available') : trans_message('reports.module_not_available')
+                $hasAccess ? trans_message('reports.available') : trans_message('reports.module_not_available')
             );
         } catch (\Throwable $e) {
             return AdminResponse::error(trans_message('reports.generation_failed'), 500);
@@ -71,33 +78,19 @@ class ReportController extends Controller
     }
 
     /**
-     * Проверка доступности модуля продвинутых отчётов
-     * 
-     * GET /api/v1/admin/reports/check-advanced-availability
+     * Проверка доступности модуля базовых отчётов (Legacy alias)
+     */
+    public function checkBasicReportsAvailability(Request $request): JsonResponse
+    {
+        return $this->checkReportsAvailability($request);
+    }
+
+    /**
+     * Проверка доступности модуля продвинутых отчётов (Legacy alias)
      */
     public function checkAdvancedReportsAvailability(Request $request): JsonResponse
     {
-        try {
-            $user = $request->user();
-            $organizationId = $user->current_organization_id;
-
-            $hasAccess = $this->moduleService->hasModuleAccess($organizationId, 'advanced_reports');
-
-            $data = [
-                'has_access' => $hasAccess,
-                'module' => 'advanced_reports',
-                'features' => $hasAccess 
-                    ? ['Активность прорабов', 'Официальные отчеты', 'Конструктор отчетов', 'Автоматизация'] 
-                    : []
-            ];
-
-            return AdminResponse::success(
-                $data,
-                $hasAccess ? trans_message('reports.advanced_reports_available') : trans_message('reports.module_not_available')
-            );
-        } catch (\Throwable $e) {
-            return AdminResponse::error(trans_message('reports.generation_failed'), 500);
-        }
+        return $this->checkReportsAvailability($request);
     }
 
     /**

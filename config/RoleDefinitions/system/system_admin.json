@@ -5,7 +5,6 @@
   "context": "system",
   "interface": "admin",
   "description": "Администрирование системы без доступа к биллингу",
-  
   "system_permissions": [
     "admin.access",
     "admin.dashboard.view",
@@ -31,24 +30,66 @@
     "profile.view",
     "profile.edit"
   ],
-  
   "module_permissions": {
-    "users": ["users.view", "users.edit", "users.block"],
-    "organizations": ["organizations.view", "organizations.edit"],
-    "projects": ["projects.view", "projects.edit", "projects.analytics"],
-    "materials": ["materials.view", "materials.edit", "materials.import"],
-    "contracts": ["contracts.view", "contracts.edit"],
-    "reports": ["reports.view", "reports.export"],
-    "finance": ["finance.view"],
-    "time-tracking": ["time-tracking.view", "time-tracking.manage"],
-    "contractor-portal": ["contractor_invitations.*", "organizations.*"],
-    "file-management": ["personal_files.*", "report_files.*"],
-    "system-logs": ["logs.*"],
-    "rate-management": ["rate_coefficients.*"],
-    "report-templates": ["report_templates.*"],
-    "data-filters": ["filters.*"],
-    "dashboard-widgets": ["dashboard.*"],
-    "schedule-management": ["schedule.*"],
+    "users": [
+      "users.view",
+      "users.edit",
+      "users.block"
+    ],
+    "organizations": [
+      "organizations.view",
+      "organizations.edit"
+    ],
+    "projects": [
+      "projects.view",
+      "projects.edit",
+      "projects.analytics"
+    ],
+    "materials": [
+      "materials.view",
+      "materials.edit",
+      "materials.import"
+    ],
+    "contracts": [
+      "contracts.view",
+      "contracts.edit"
+    ],
+    "reports": [
+      "reports.*"
+    ],
+    "finance": [
+      "finance.view"
+    ],
+    "time-tracking": [
+      "time-tracking.view",
+      "time-tracking.manage"
+    ],
+    "contractor-portal": [
+      "contractor_invitations.*",
+      "organizations.*"
+    ],
+    "file-management": [
+      "personal_files.*",
+      "report_files.*"
+    ],
+    "system-logs": [
+      "logs.*"
+    ],
+    "rate-management": [
+      "rate_coefficients.*"
+    ],
+    "report-templates": [
+      "report_templates.*"
+    ],
+    "data-filters": [
+      "filters.*"
+    ],
+    "dashboard-widgets": [
+      "dashboard.*"
+    ],
+    "schedule-management": [
+      "schedule.*"
+    ],
     "advanced-dashboard": [
       "advanced-dashboard.dashboards.*",
       "advanced-dashboard.analytics.*",
@@ -67,18 +108,21 @@
       "admin.ai_assistant.system_analysis.delete"
     ]
   },
-  
-  "interface_access": ["admin"],
-  
+  "interface_access": [
+    "admin"
+  ],
   "hierarchy": {
     "can_manage_roles": [
-      "organization_owner", 
-      "organization_admin", 
+      "organization_owner",
+      "organization_admin",
       "accountant",
       "project_manager",
       "foreman",
       "worker"
     ],
-    "cannot_manage": ["super_admin", "system_admin"]
+    "cannot_manage": [
+      "super_admin",
+      "system_admin"
+    ]
   }
 }

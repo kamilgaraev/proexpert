@@ -5,7 +5,7 @@ use App\Http\Controllers\Api\V1\Admin\CustomReportController;
 use App\Http\Controllers\Api\V1\Admin\CustomReportBuilderController;
 use App\Http\Controllers\Api\V1\Admin\CustomReportScheduleController;
 
-Route::prefix('custom-reports')->name('custom_reports.')->middleware(['module.access:advanced-reports'])->group(function () {
+Route::prefix('custom-reports')->name('custom_reports.')->middleware(['module.access:reports'])->group(function () {
     
     Route::prefix('builder')->name('builder.')->group(function () {
         Route::get('/data-sources', [CustomReportBuilderController::class, 'getDataSources'])

@@ -73,13 +73,14 @@ return [
                 'default_price' => ['type' => 'decimal', 'label' => 'Цена', 'aggregatable' => true, 'sortable' => true, 'format' => 'currency'],
                 'category' => ['type' => 'string', 'label' => 'Категория', 'filterable' => true, 'sortable' => true],
                 'organization_id' => ['type' => 'integer', 'label' => 'ID организации', 'filterable' => true, 'hidden' => true],
+                'measurement_unit_id' => ['type' => 'integer', 'label' => 'ID ед. изм.', 'filterable' => true],
                 'is_active' => ['type' => 'boolean', 'label' => 'Активен', 'filterable' => true],
                 'created_at' => ['type' => 'datetime', 'label' => 'Дата создания', 'filterable' => true, 'sortable' => true],
             ],
             'relations' => [
                 'organization' => ['type' => 'belongsTo', 'target' => 'organizations', 'foreign_key' => 'organization_id', 'owner_key' => 'id'],
                 'measurementUnit' => ['type' => 'belongsTo', 'target' => 'measurement_units', 'foreign_key' => 'measurement_unit_id', 'owner_key' => 'id'],
-                'receipts' => ['type' => 'hasMany', 'target' => 'material_receipts', 'foreign_key' => 'material_id', 'local_key' => 'id'],
+                'receipts' => ['type' => 'hasMany', 'target' => 'material_movements', 'foreign_key' => 'material_id', 'local_key' => 'id'],
             ],
             'default_filters' => [
                 ['field' => 'organization_id', 'operator' => '=', 'value' => ':current_organization_id'],
@@ -153,20 +154,22 @@ return [
             ],
         ],
         
-        'material_receipts' => [
-            'table' => 'material_usage_logs',
-            'model' => \App\Models\Models\Log\MaterialUsageLog::class,
-            'label' => 'Приемки материалов',
+        'material_movements' => [
+            'table' => 'warehouse_movements',
+            'model' => \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::class,
+            'label' => 'Движение материалов',
             'category' => 'materials',
             'fields' => [
                 'id' => ['type' => 'integer', 'label' => 'ID', 'filterable' => true, 'sortable' => true],
-                'usage_date' => ['type' => 'date', 'label' => 'Дата приемки', 'filterable' => true, 'sortable' => true],
+                'movement_date' => ['type' => 'date', 'label' => 'Дата', 'filterable' => true, 'sortable' => true],
                 'quantity' => ['type' => 'decimal', 'label' => 'Количество', 'aggregatable' => true, 'sortable' => true, 'format' => 'number'],
                 'unit_price' => ['type' => 'decimal', 'label' => 'Цена за единицу', 'aggregatable' => true, 'format' => 'currency'],
                 'total_price' => ['type' => 'decimal', 'label' => 'Общая стоимость', 'aggregatable' => true, 'sortable' => true, 'format' => 'currency'],
                 'project_id' => ['type' => 'integer', 'label' => 'ID проекта', 'filterable' => true],
                 'material_id' => ['type' => 'integer', 'label' => 'ID материала', 'filterable' => true],
                 'organization_id' => ['type' => 'integer', 'label' => 'ID организации', 'filterable' => true, 'hidden' => true],
+                'type' => ['type' => 'string', 'label' => 'Тип операции', 'filterable' => true],
+                'movement_type' => ['type' => 'string', 'label' => 'Вид движения', 'filterable' => true],
                 'created_at' => ['type' => 'datetime', 'label' => 'Дата создания', 'filterable' => true, 'sortable' => true],
             ],
             'relations' => [
@@ -176,8 +179,66 @@ return [
             ],
             'default_filters' => [
                 ['field' => 'organization_id', 'operator' => '=', 'value' => ':current_organization_id'],
-                ['field' => 'operation_type', 'operator' => '=', 'value' => 'receipt'],
             ],
+        ],
+
+        'organizations' => [
+            'table' => 'organizations',
+            'model' => \App\Models\Organization::class,
+            'label' => 'Организации',
+            'category' => 'core',
+            'fields' => [
+                'id' => ['type' => 'integer', 'label' => 'ID', 'filterable' => true, 'sortable' => true],
+                'name' => ['type' => 'string', 'label' => 'Название', 'filterable' => true, 'sortable' => true],
+                'inn' => ['type' => 'string', 'label' => 'ИНН', 'filterable' => true, 'sortable' => true],
+                'created_at' => ['type' => 'datetime', 'label' => 'Дата регистрации', 'filterable' => true, 'sortable' => true],
+            ],
+            'relations' => [],
+            'default_filters' => [],
+        ],
+
+        'work_types' => [
+            'table' => 'work_types',
+            'model' => \App\Models\WorkType::class,
+            'label' => 'Виды работ',
+            'category' => 'works',
+            'fields' => [
+                'id' => ['type' => 'integer', 'label' => 'ID', 'filterable' => true, 'sortable' => true],
+                'name' => ['type' => 'string', 'label' => 'Название', 'filterable' => true, 'sortable' => true],
+                'code' => ['type' => 'string', 'label' => 'Код', 'filterable' => true, 'sortable' => true],
+            ],
+            'relations' => [],
+            'default_filters' => [],
+        ],
+
+        'measurement_units' => [
+            'table' => 'measurement_units',
+            'model' => \App\Models\MeasurementUnit::class,
+            'label' => 'Единицы измерения',
+            'category' => 'core',
+            'fields' => [
+                'id' => ['type' => 'integer', 'label' => 'ID', 'filterable' => true, 'sortable' => true],
+                'name' => ['type' => 'string', 'label' => 'Название', 'filterable' => true, 'sortable' => true],
+                'short_name' => ['type' => 'string', 'label' => 'Сокращение', 'filterable' => true],
+            ],
+            'relations' => [],
+            'default_filters' => [],
+        ],
+
+        'suppliers' => [
+            'table' => 'suppliers',
+            'model' => \App\Models\Supplier::class,
+            'label' => 'Поставщики',
+            'category' => 'finances',
+            'fields' => [
+                'id' => ['type' => 'integer', 'label' => 'ID', 'filterable' => true, 'sortable' => true],
+                'name' => ['type' => 'string', 'label' => 'Название', 'filterable' => true, 'sortable' => true],
+                'inn' => ['type' => 'string', 'label' => 'ИНН', 'filterable' => true, 'sortable' => true],
+            ],
+            'relations' => [
+                'movements' => ['type' => 'hasMany', 'target' => 'material_movements', 'foreign_key' => 'supplier_id', 'local_key' => 'id'],
+            ],
+            'default_filters' => [],
         ],
         
         'time_entries' => [

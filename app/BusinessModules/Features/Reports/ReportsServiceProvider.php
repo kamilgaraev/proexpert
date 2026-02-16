@@ -1,6 +1,6 @@
 <?php
 
-namespace App\BusinessModules\Features\AdvancedReports;
+namespace App\BusinessModules\Features\Reports;
 
 use Illuminate\Support\ServiceProvider;
 use App\Services\Report\ReportDataSourceRegistry;
@@ -11,7 +11,7 @@ use App\Services\Report\Builders\ReportFilterBuilder;
 use App\Services\Report\Builders\ReportAggregationBuilder;
 use App\Services\Export\CsvExporterService;
 
-class AdvancedReportsServiceProvider extends ServiceProvider
+class ReportsServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
