@@ -75,12 +75,20 @@ class DictionaryStrategy implements ClassificationStrategyInterface
     {
         $text = trim($code . ' ' . $name);
         
+        // 1. Сначала проверяем на Summary (самые частые ложные срабатывания для разделов)
+        foreach ($this->patterns['summary'] as $keyword) {
+            if (mb_stripos($text, $keyword) !== false) {
+                return new ClassificationResult('summary', $this->calculateConfidence($text, $keyword), 'dictionary_summary');
+            }
+        }
+
+        // 2. Затем все остальные паттерны
         foreach ($this->patterns as $type => $keywords) {
+            if ($type === 'summary') continue;
+            
             foreach ($keywords as $keyword) {
                 if (mb_stripos($text, $keyword) !== false) {
-                    // Рассчитываем confidence в зависимости от позиции и длины совпадения
                     $confidence = $this->calculateConfidence($text, $keyword);
-                    
                     return new ClassificationResult($type, $confidence, 'dictionary');
                 }
             }

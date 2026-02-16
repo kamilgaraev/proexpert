@@ -381,9 +381,12 @@ class EstimateImportService
         ]);
         
         // Объединяем разделы и позиции для передачи в процессор, если данные берутся из кэша (превью)
-        // В превью они разделены, но процессор ожидает единый поток.
+        // ВАЖНО: Для Excel-смет (где важен порядок строк) лучше НЕ использовать прелоад, 
+        // а стримить заново, чтобы сохранить иерархию.
         $preloadedData = null;
-        if (!empty($previewData)) {
+        $extension = strtolower(pathinfo($fileData['file_path'], PATHINFO_EXTENSION));
+        
+        if (!empty($previewData) && !in_array($extension, ['xlsx', 'xls'])) {
             $sections = $previewData['sections'] ?? [];
             $items = $previewData['items'] ?? [];
             $preloadedData = array_merge($sections, $items);
