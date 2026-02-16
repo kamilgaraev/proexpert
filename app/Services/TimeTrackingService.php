@@ -7,7 +7,7 @@ use App\Models\User;
 use App\Models\Project;
 use App\Models\Organization;
 use App\Services\Logging\LoggingService;
-use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -84,7 +84,7 @@ class TimeTrackingService
         // 1. Реальные пользователи организации
         $users = User::whereHas('organizations', function ($query) use ($organizationId) {
             $query->where('organizations.id', $organizationId);
-        })->get(['users.id', 'users.name'])->map(fn($u) => [
+        })->get(['id', 'name'])->map(fn($u) => [
             'id' => $u->id,
             'name' => $u->name,
             'type' => 'user'
