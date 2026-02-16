@@ -21,9 +21,9 @@ class YandexGPTClient
 
     public function __construct()
     {
-        $this->apiKey = config('services.yandexgpt.api_key', env('YANDEX_API_KEY'));
-        $this->folderId = config('services.yandexgpt.folder_id', env('YANDEX_FOLDER_ID'));
-        $this->modelUri = config('services.yandexgpt.model_uri', env('YANDEX_MODEL_URI'));
+        $this->apiKey = config('services.yandexgpt.api_key', env('YANDEX_API_KEY')) ?? '';
+        $this->folderId = config('services.yandexgpt.folder_id', env('YANDEX_FOLDER_ID')) ?? '';
+        $this->modelUri = config('services.yandexgpt.model_uri', env('YANDEX_MODEL_URI')) ?? '';
         $this->temperature = config('ai-estimates.ai.temperature', 0.3);
         $this->maxTokens = config('ai-estimates.ai.max_tokens', 2000);
     }

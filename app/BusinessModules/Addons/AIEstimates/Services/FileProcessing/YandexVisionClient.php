@@ -19,8 +19,8 @@ class YandexVisionClient
 
     public function __construct()
     {
-        $this->apiKey = config('services.yandex_vision.api_key', env('YANDEX_VISION_API_KEY'));
-        $this->folderId = config('services.yandex_vision.folder_id', env('YANDEX_VISION_FOLDER_ID'));
+        $this->apiKey = config('services.yandex_vision.api_key', env('YANDEX_VISION_API_KEY')) ?? '';
+        $this->folderId = config('services.yandex_vision.folder_id', env('YANDEX_VISION_FOLDER_ID')) ?? '';
     }
 
     public function extractText(UploadedFile $file): string

@@ -191,14 +191,19 @@ class ImportValidationService
     {
         $cacheKey = 'standard_measurement_units';
         
-        $this->standardUnits = Cache::remember($cacheKey, now()->addHours(24), function () {
-            return MeasurementUnit::pluck('name')->map(function ($name) {
-                return mb_strtolower(trim($name));
-            })->toArray();
-        });
-        
-        $this->standardUnits = array_merge($this->standardUnits, [
-            'шт', 'м', 'м2', 'м3', 'кг', 'т', 'л', 'компл', 'п.м', 'кв.м', 'куб.м',
+        try {
+            $this->standardUnits = Cache::remember($cacheKey, now()->addHours(24), function () {
+                return MeasurementUnit::pluck('name')->map(function ($name) {
+                    return mb_strtolower(trim($name));
+                })->toArray();
+            });
+        } catch (\Throwable $e) {
+            // Log::warning('Failed to load standard units: ' . $e->getMessage());
+            $this->standardUnits = [];
+        }
+
+        $this->standardUnits = array_merge($this->standardUnits ?? [], [
+            'шт', 'м', 'м2', 'м3', 'кг', 'т', 'л', 'компл', 'п.м', 'кв.м', 'куб.m',
             'шт.', 'м.', 'кг.', 'т.', 'л.', 'компл.',
         ]);
     }
