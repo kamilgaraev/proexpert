@@ -8,6 +8,7 @@ use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Services\Logging\LoggingService;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Сервис для резолвинга прав (системных и модульных)
