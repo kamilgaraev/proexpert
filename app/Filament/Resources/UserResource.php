@@ -18,9 +18,9 @@ class UserResource extends Resource
 
     protected static string | \UnitEnum | null $navigationGroup = 'System';
 
-    public static function form(Form $form): Form
+    public static function form(\Filament\Schemas\Schema $schema): \Filament\Schemas\Schema
     {
-        return $form
+        return $schema
             ->schema([
                 Forms\Components\TextInput::make('name')
                     ->required()
