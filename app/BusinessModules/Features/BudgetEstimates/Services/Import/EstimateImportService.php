@@ -777,8 +777,11 @@ class EstimateImportService
                                 }
                             }
                             
-                            // Пропускаем пустые строки
-                            if (empty($mappedRow) || (empty($mappedRow['item_name']) && empty($mappedRow['code']))) {
+                            // Пропускаем пустые строки (должно быть либо имя, либо код)
+                            $hasName = !empty($mappedRow['item_name']) || !empty($mappedRow['name']);
+                            $hasCode = !empty($mappedRow['code']);
+                            
+                            if (!$hasName && !$hasCode) {
                                 continue;
                             }
                             
