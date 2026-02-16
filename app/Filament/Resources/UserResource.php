@@ -5,7 +5,6 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\UserResource\Pages;
 use App\Models\User;
 use Filament\Forms;
-use Filament\Forms\Form;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
@@ -21,7 +20,7 @@ class UserResource extends Resource
     public static function form(\Filament\Schemas\Schema $schema): \Filament\Schemas\Schema
     {
         return $schema
-            ->schema([
+            ->components([
                 Forms\Components\TextInput::make('name')
                     ->required()
                     ->maxLength(255),
