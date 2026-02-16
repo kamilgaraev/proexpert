@@ -31,11 +31,11 @@ class TechnicalLogger
         $technicalEntry = $this->createTechnicalEntry($event, $context, $level);
         
         match(strtolower($level)) {
-            'critical' => Log::critical("[TECHNICAL] {$event}", $technicalEntry),
-            'error' => Log::error("[TECHNICAL] {$event}", $technicalEntry),
-            'warning' => Log::warning("[TECHNICAL] {$event}", $technicalEntry),
-            'debug' => Log::debug("[TECHNICAL] {$event}", $technicalEntry),
-            // default => Log::info("[TECHNICAL] {$event}", $technicalEntry)
+            'critical' => Log::channel('technical')->critical("[TECHNICAL] {$event}", $technicalEntry),
+            'error' => Log::channel('technical')->error("[TECHNICAL] {$event}", $technicalEntry),
+            'warning' => Log::channel('technical')->warning("[TECHNICAL] {$event}", $technicalEntry),
+            'debug' => Log::channel('technical')->debug("[TECHNICAL] {$event}", $technicalEntry),
+            // default => Log::channel('technical')->info("[TECHNICAL] {$event}", $technicalEntry)
             default => null // Disable info level logs
         };
 

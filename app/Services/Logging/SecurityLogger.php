@@ -33,10 +33,10 @@ class SecurityLogger
         
         // Логировать с соответствующим уровнем
         match(strtolower($level)) {
-            'critical' => Log::critical("[SECURITY] {$event}", $securityEntry),
-            'error' => Log::error("[SECURITY] {$event}", $securityEntry),
-            'warning' => Log::warning("[SECURITY] {$event}", $securityEntry),
-            // default => Log::info("[SECURITY] {$event}", $securityEntry)
+            'critical' => Log::channel('security')->critical("[SECURITY] {$event}", $securityEntry),
+            'error' => Log::channel('security')->error("[SECURITY] {$event}", $securityEntry),
+            'warning' => Log::channel('security')->warning("[SECURITY] {$event}", $securityEntry),
+            // default => Log::channel('security')->info("[SECURITY] {$event}", $securityEntry)
             default => null // Disable info level logs
         };
 
