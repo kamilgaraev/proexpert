@@ -12,11 +12,11 @@ use Filament\Tables\Table;
 
 class OrganizationResource extends Resource
 {
-    protected static $model = Organization::class;
+    protected static ?string $model = Organization::class;
 
-    protected static $navigationIcon = 'heroicon-o-building-office-2';
+    protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-building-office-2';
 
-    protected static $navigationGroup = 'System';
+    protected static string | \UnitEnum | null $navigationGroup = 'System';
 
     public static function form(Form $form): Form
     {
