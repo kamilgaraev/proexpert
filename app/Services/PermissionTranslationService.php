@@ -83,13 +83,15 @@ class PermissionTranslationService
     public function getModulePermissionsWithTranslations(): array
     {
         $modulePermissions = [
-            'basic_reports' => [
-                'basic_reports.view',
-                'basic_reports.material_usage',
-                'basic_reports.work_completion',
-                'basic_reports.project_summary',
-                'basic_reports.export_excel',
-                'basic_reports.export_pdf'
+            'reports' => [
+                'reports.view',
+                'reports.export',
+                'reports.manage_templates',
+                'reports.custom_reports',
+                'reports.share',
+                'reports.schedule',
+                'reports.official_reports',
+                'reports.predictive'
             ],
             'users' => [
                 'users.view',

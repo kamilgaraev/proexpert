@@ -24,7 +24,10 @@
       "materials.view_costs"
     ],
     "reports": [
-      "reports.*"
+      "reports.view",
+      "reports.export",
+      "reports.official_reports",
+      "reports.schedule"
     ],
     "finance": [
       "finance.*"

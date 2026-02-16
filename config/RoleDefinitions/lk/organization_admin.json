@@ -32,8 +32,7 @@
       "materials.create"
     ],
     "reports": [
-      "reports.view",
-      "reports.create"
+      "reports.*"
     ],
     "finance": [
       "finance.view"

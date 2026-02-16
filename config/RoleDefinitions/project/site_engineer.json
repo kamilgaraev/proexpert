@@ -5,7 +5,6 @@
   "context": "project",
   "interface": "admin",
   "description": "Техническое руководство строительными работами",
-  
   "system_permissions": [
     "admin.access",
     "admin.dashboard.view",
@@ -13,7 +12,6 @@
     "profile.view",
     "profile.edit"
   ],
-  
   "module_permissions": {
     "projects": [
       "projects.view",
@@ -28,61 +26,88 @@
     ],
     "reports": [
       "reports.view",
-      "reports.create_technical",
-      "reports.create_quality_control"
+      "reports.official_reports"
     ],
     "finance": [
       "finance.view_project_budget"
     ],
     "project-management": [
-      "projects.view", "projects.materials.view", "projects.work_types.view",
+      "projects.view",
+      "projects.materials.view",
+      "projects.work_types.view",
       "projects.statistics"
     ],
     "contract-management": [
-      "contracts.view", "contracts.completed_works.view",
-      "contracts.performance_acts.view", "specifications.view", "specifications.create", "specifications.edit"
+      "contracts.view",
+      "contracts.completed_works.view",
+      "contracts.performance_acts.view",
+      "specifications.view",
+      "specifications.create",
+      "specifications.edit"
     ],
     "catalog-management": [
-      "materials.view", "work_types.view", "measurement_units.view"
+      "materials.view",
+      "work_types.view",
+      "measurement_units.view"
     ],
     "workflow-management": [
-      "completed_works.view", "completed_works.create", "completed_works.edit"
+      "completed_works.view",
+      "completed_works.create",
+      "completed_works.edit"
     ],
     "advance-accounting": [
-      "advance_transactions.view", "users.advance_balance.view"
+      "advance_transactions.view",
+      "users.advance_balance.view"
     ],
     "act-reporting": [
-      "act_reports.view", "act_reports.create", "act_reports.works.view"
+      "act_reports.view",
+      "act_reports.create",
+      "act_reports.works.view"
     ],
     "time-tracking": [
-      "time_tracking.view", "time_tracking.create", "time_tracking.edit"
+      "time_tracking.view",
+      "time_tracking.create",
+      "time_tracking.edit"
     ],
     "material-analytics": [
-      "materials.analytics.usage_by_projects", "materials.analytics.low_stock"
+      "materials.analytics.usage_by_projects",
+      "materials.analytics.low_stock"
     ],
     "contractor-portal": [
-      "contractor_invitations.view", "contractor_invitations.create", "organizations.search"
+      "contractor_invitations.view",
+      "contractor_invitations.create",
+      "organizations.search"
     ],
     "file-management": [
-      "personal_files.view", "personal_files.create_folder", "personal_files.upload"
+      "personal_files.view",
+      "personal_files.create_folder",
+      "personal_files.upload"
     ],
     "system-logs": [
-      "system-logs.material_usage.view", "system-logs.work_completion.view"
+      "system-logs.material_usage.view",
+      "system-logs.work_completion.view"
     ],
     "rate-management": [
-      "rate_coefficients.view", "rate_coefficients.apply"
+      "rate_coefficients.view",
+      "rate_coefficients.apply"
     ],
     "report-templates": [
-      "report_templates.view", "report_templates.create"
+      "report_templates.view",
+      "report_templates.create"
     ],
     "data-filters": [
-      "filters.contracts.view", "filters.completed_works.view", "filters.custom.create"
+      "filters.contracts.view",
+      "filters.completed_works.view",
+      "filters.custom.create"
     ],
     "dashboard-widgets": [
-      "dashboard.view", "dashboard.recent_activity.view"
+      "dashboard.view",
+      "dashboard.recent_activity.view"
     ],
     "schedule-management": [
-      "schedule.view", "schedule.create", "schedule.edit"
+      "schedule.view",
+      "schedule.create",
+      "schedule.edit"
     ],
     "budget-estimates": [
       "budget-estimates.view",
@@ -106,18 +131,20 @@
       "site_requests.calendar.view"
     ]
   },
-  
-  "interface_access": ["admin", "mobile"],
-  
+  "interface_access": [
+    "admin",
+    "mobile"
+  ],
   "hierarchy": {
-    "can_manage_roles": ["worker"],
+    "can_manage_roles": [
+      "worker"
+    ],
     "cannot_manage": [
       "site_engineer",
-      "foreman", 
+      "foreman",
       "project_manager"
     ]
   },
-  
   "conditions": {
     "project_count": {
       "max_projects": 3

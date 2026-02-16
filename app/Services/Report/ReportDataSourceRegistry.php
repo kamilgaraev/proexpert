@@ -98,7 +98,17 @@ class ReportDataSourceRegistry
 
     public function validateDataSource(string $dataSourceKey): bool
     {
-        return isset($this->dataSources[$dataSourceKey]);
+        $source = $this->getDataSource($dataSourceKey);
+        return $source && $this->validateDataSourceStructure($source);
+    }
+
+    protected function validateDataSourceStructure(array $source): bool
+    {
+        return isset($source['table']) && 
+               isset($source['model']) && 
+               isset($source['fields']) && 
+               is_array($source['fields']) &&
+               !empty($source['fields']);
     }
 
     public function validateRelation(string $fromSource, string $relationKey): bool

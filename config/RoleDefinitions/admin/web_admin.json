@@ -5,7 +5,6 @@
   "context": "organization",
   "interface": "admin",
   "description": "Администратор веб-панели с полными правами в рамках организации",
-  
   "system_permissions": [
     "admin.access",
     "admin.dashboard.view",
@@ -28,14 +27,28 @@
     "profile.view",
     "profile.edit"
   ],
-  
   "module_permissions": {
-    "projects": ["projects.view", "projects.edit", "projects.analytics"],
-    "materials": ["materials.view", "materials.edit", "materials.import"],
-    "contracts": ["contracts.view", "contracts.edit"],
-    "reports": ["reports.view", "reports.export"],
-    "personnel": ["personnel.view", "personnel.manage"],
-    "time-tracking": ["time-tracking.view", "time-tracking.manage"],
+    "projects": [
+      "projects.view",
+      "projects.edit",
+      "projects.analytics"
+    ],
+    "materials": [
+      "materials.view",
+      "materials.edit",
+      "materials.import"
+    ],
+    "contracts": [
+      "contracts.view",
+      "contracts.edit"
+    ],
+    "reports": [
+      "reports.*"
+    ],
+    "personnel": [
+      "personnel.view",
+      "personnel.manage"
+    ],
     "site-requests": [
       "site_requests.view",
       "site_requests.create",
@@ -52,112 +65,213 @@
       "site_requests.calendar.view"
     ],
     "project-management": [
-      "projects.view", "projects.create", "projects.edit", "projects.delete", 
-      "projects.analytics", "projects.foremen.assign", "projects.foremen.detach",
-      "projects.materials.view", "projects.work_types.view", 
-      "projects.organizations.manage", "projects.statistics"
+      "projects.view",
+      "projects.create",
+      "projects.edit",
+      "projects.delete",
+      "projects.analytics",
+      "projects.foremen.assign",
+      "projects.foremen.detach",
+      "projects.materials.view",
+      "projects.work_types.view",
+      "projects.organizations.manage",
+      "projects.statistics"
     ],
     "contract-management": [
-      "contracts.view", "contracts.create", "contracts.edit", "contracts.delete",
-      "contracts.analytics", "contracts.completed_works.view", 
-      "contracts.performance_acts.view", "contracts.performance_acts.create",
-      "contracts.performance_acts.edit", "contracts.performance_acts.export",
-      "contracts.payments.view", "contracts.payments.create", "contracts.payments.edit",
-      "agreements.view", "agreements.create", "agreements.edit", "agreements.delete",
-      "specifications.view", "specifications.create", "specifications.edit", "specifications.delete"
+      "contracts.view",
+      "contracts.create",
+      "contracts.edit",
+      "contracts.delete",
+      "contracts.analytics",
+      "contracts.completed_works.view",
+      "contracts.performance_acts.view",
+      "contracts.performance_acts.create",
+      "contracts.performance_acts.edit",
+      "contracts.performance_acts.export",
+      "contracts.payments.view",
+      "contracts.payments.create",
+      "contracts.payments.edit",
+      "agreements.view",
+      "agreements.create",
+      "agreements.edit",
+      "agreements.delete",
+      "specifications.view",
+      "specifications.create",
+      "specifications.edit",
+      "specifications.delete"
     ],
     "catalog-management": [
-      "materials.view", "materials.create", "materials.edit", "materials.delete",
-      "materials.import", "materials.export", "materials.balances.view",
-      "suppliers.view", "suppliers.create", "suppliers.edit", "suppliers.delete",
-      "contractors.view", "contractors.create", "contractors.edit", "contractors.delete",
-      "work_types.view", "work_types.create", "work_types.edit", "work_types.delete",
-      "work_types.materials.manage", "measurement_units.view", "cost_categories.view"
+      "materials.view",
+      "materials.create",
+      "materials.edit",
+      "materials.delete",
+      "materials.import",
+      "materials.export",
+      "materials.balances.view",
+      "suppliers.view",
+      "suppliers.create",
+      "suppliers.edit",
+      "suppliers.delete",
+      "contractors.view",
+      "contractors.create",
+      "contractors.edit",
+      "contractors.delete",
+      "work_types.view",
+      "work_types.create",
+      "work_types.edit",
+      "work_types.delete",
+      "work_types.materials.manage",
+      "measurement_units.view",
+      "cost_categories.view"
     ],
     "workflow-management": [
-      "completed_works.view", "completed_works.create", "completed_works.edit", "completed_works.delete",
-      "completed_works.materials.sync", "completed_works.work_type_defaults.view"
+      "completed_works.view",
+      "completed_works.create",
+      "completed_works.edit",
+      "completed_works.delete",
+      "completed_works.materials.sync",
+      "completed_works.work_type_defaults.view"
     ],
     "advance-accounting": [
-      "advance_transactions.view", "advance_transactions.create", "advance_transactions.edit", "advance_transactions.approve",
-      "advance_settings.view", "advance_settings.edit", "users.advance_balance.view", "users.advance_transactions.view",
-      "users.funds.issue", "users.funds.return", "reports.advance_accounts.view", "reports.advance_accounts.export"
+      "advance_transactions.view",
+      "advance_transactions.create",
+      "advance_transactions.edit",
+      "advance_transactions.approve",
+      "advance_settings.view",
+      "advance_settings.edit",
+      "users.advance_balance.view",
+      "users.advance_transactions.view",
+      "users.funds.issue",
+      "users.funds.return",
+      "reports.advance_accounts.view",
+      "reports.advance_accounts.export"
     ],
     "act-reporting": [
-      "act_reports.view", "act_reports.create", "act_reports.edit", "act_reports.delete",
-      "act_reports.contracts.view", "act_reports.works.view", "act_reports.works.update",
-      "act_reports.export.pdf", "act_reports.export.excel", "act_reports.bulk_export.excel"
+      "act_reports.view",
+      "act_reports.create",
+      "act_reports.edit",
+      "act_reports.delete",
+      "act_reports.contracts.view",
+      "act_reports.works.view",
+      "act_reports.works.update",
+      "act_reports.export.pdf",
+      "act_reports.export.excel",
+      "act_reports.bulk_export.excel"
     ],
     "time-tracking": [
-      "time_tracking.view", "time_tracking.create", "time_tracking.edit", "time_tracking.delete",
-      "time_tracking.approve", "time_tracking.reject", "time_tracking.statistics", "time_tracking.reports"
+      "time_tracking.view",
+      "time_tracking.create",
+      "time_tracking.edit",
+      "time_tracking.delete",
+      "time_tracking.approve",
+      "time_tracking.reject",
+      "time_tracking.statistics",
+      "time_tracking.reports"
     ],
     "material-analytics": [
-      "materials.analytics.summary", "materials.analytics.usage_by_projects", "materials.analytics.usage_by_suppliers",
-      "materials.analytics.low_stock", "materials.analytics.most_used", "materials.analytics.cost_history",
-      "materials.analytics.movement_report", "materials.analytics.inventory_report"
+      "materials.analytics.summary",
+      "materials.analytics.usage_by_projects",
+      "materials.analytics.usage_by_suppliers",
+      "materials.analytics.low_stock",
+      "materials.analytics.most_used",
+      "materials.analytics.cost_history",
+      "materials.analytics.movement_report",
+      "materials.analytics.inventory_report"
     ],
     "contractor-portal": [
-      "contractor_invitations.view", "contractor_invitations.create", "contractor_invitations.edit", "contractor_invitations.delete",
-      "contractor_invitations.stats", "contractor_invitations.cancel", "organizations.search", "organizations.suggestions"
+      "contractor_invitations.view",
+      "contractor_invitations.create",
+      "contractor_invitations.edit",
+      "contractor_invitations.delete",
+      "contractor_invitations.stats",
+      "contractor_invitations.cancel",
+      "organizations.search",
+      "organizations.suggestions"
     ],
     "file-management": [
-      "personal_files.view", "personal_files.create_folder", "personal_files.upload", "personal_files.delete",
-      "report_files.view", "report_files.delete", "report_files.update"
+      "personal_files.view",
+      "personal_files.create_folder",
+      "personal_files.upload",
+      "personal_files.delete",
+      "report_files.view",
+      "report_files.delete",
+      "report_files.update"
     ],
     "system-logs": [
-      "system-logs.material_usage.view", "system-logs.work_completion.view", "system-logs.system.view", "system-logs.export", "system-logs.filter", "system-logs.search"
+      "system-logs.material_usage.view",
+      "system-logs.work_completion.view",
+      "system-logs.system.view",
+      "system-logs.export",
+      "system-logs.filter",
+      "system-logs.search"
     ],
     "rate-management": [
-      "rate_coefficients.view", "rate_coefficients.create", "rate_coefficients.edit", "rate_coefficients.delete",
-      "rate_coefficients.apply", "rate_coefficients.export", "rate_coefficients.import"
+      "rate_coefficients.view",
+      "rate_coefficients.create",
+      "rate_coefficients.edit",
+      "rate_coefficients.delete",
+      "rate_coefficients.apply",
+      "rate_coefficients.export",
+      "rate_coefficients.import"
     ],
     "report-templates": [
-      "report_templates.view", "report_templates.create", "report_templates.edit", "report_templates.delete",
-      "report_templates.set_default", "report_templates.export", "report_templates.import"
+      "report_templates.view",
+      "report_templates.create",
+      "report_templates.edit",
+      "report_templates.delete",
+      "report_templates.set_default",
+      "report_templates.export",
+      "report_templates.import"
     ],
     "data-filters": [
-      "filters.contracts.view", "filters.completed_works.view", "filters.quick_stats.view", 
-      "filters.custom.create", "filters.custom.save", "filters.export"
+      "filters.contracts.view",
+      "filters.completed_works.view",
+      "filters.quick_stats.view",
+      "filters.custom.create",
+      "filters.custom.save",
+      "filters.export"
     ],
     "dashboard-widgets": [
-      "dashboard.view", "dashboard.timeseries.view", "dashboard.top_entities.view", "dashboard.history.view",
-      "dashboard.limits.view", "dashboard.contracts.statistics", "dashboard.recent_activity.view",
-      "dashboard.widgets.customize", "dashboard.settings.manage"
+      "dashboard.view",
+      "dashboard.timeseries.view",
+      "dashboard.top_entities.view",
+      "dashboard.history.view",
+      "dashboard.limits.view",
+      "dashboard.contracts.statistics",
+      "dashboard.recent_activity.view",
+      "dashboard.widgets.customize",
+      "dashboard.settings.manage"
     ],
     "schedule-management": [
-      "schedule.view", "schedule.create", "schedule.edit", "schedule.delete", "schedule.assign",
-      "schedule.approve", "schedule.export", "schedule.notifications"
-    ],
-    "advanced-dashboard": [
-      "advanced-dashboard.dashboards.view",
-      "advanced-dashboard.dashboards.create",
-      "advanced-dashboard.dashboards.edit",
-      "advanced-dashboard.dashboards.delete",
-      "advanced-dashboard.dashboards.share",
-      "advanced-dashboard.analytics.financial.view",
-      "advanced-dashboard.analytics.predictive.view",
-      "advanced-dashboard.analytics.hr.view",
-      "advanced-dashboard.alerts.view",
-      "advanced-dashboard.alerts.create",
-      "advanced-dashboard.alerts.manage",
-      "advanced-dashboard.export.pdf",
-      "advanced-dashboard.export.excel",
-      "advanced-dashboard.export.scheduled_reports"
+      "schedule.view",
+      "schedule.create",
+      "schedule.edit",
+      "schedule.delete",
+      "schedule.assign",
+      "schedule.approve",
+      "schedule.export",
+      "schedule.notifications"
     ]
   },
-  
-  "interface_access": ["admin"],
-  
+  "interface_access": [
+    "admin"
+  ],
   "hierarchy": {
     "can_manage_roles": [],
-    "cannot_manage": ["*"]
+    "cannot_manage": [
+      "*"
+    ]
   },
-  
   "conditions": {
     "time": {
       "working_hours": "09:00-18:00",
-      "working_days": ["monday", "tuesday", "wednesday", "thursday", "friday"]
+      "working_days": [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday"
+      ]
     }
   }
 }
