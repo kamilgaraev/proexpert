@@ -903,6 +903,29 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                         }
                     }
                     
+                    // 🔧 FIX: Очистка названия от метаданных (ИНДЕКС, НР, СП и т.д.)
+                    if ($field === 'name' && $val) {
+                         $pruningPatterns = [
+                             '/ИНДЕКС К ПОЗИЦИИ/ui',
+                             '/НР\s*\(/ui',
+                             '/СП\s*\(/ui',
+                             '/ПЗ\s*=/ui',
+                             '/ЭМ\s*=/ui',
+                             '/ЗПм\s*=/ui',
+                             '/ОТм\s*=/ui',
+                             '/МАТ\s*=/ui',
+                         ];
+
+                         foreach ($pruningPatterns as $pattern) {
+                             if (preg_match($pattern, $val, $matches, PREG_OFFSET_CAPTURE)) {
+                                 $val = trim(mb_substr($val, 0, $matches[0][1]));
+                             }
+                         }
+                         
+                         // Также если в названии много строк, и после первой идет пустая или системная
+                         // Но пока ограничимся паттернами.
+                    }
+                    
                     $data[$field] = $val;
                 }
             }
@@ -1277,11 +1300,29 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
     
     private function extractFloat($value): ?float
     {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
         if (is_numeric($value)) {
             return (float)$value;
         }
+
+        $str = (string)$value;
+
+        // 1. Если multiline - берем только первую строку (актуально для Сметы, где 1,69 \n 1690/1000)
+        if (str_contains($str, "\n")) {
+            $lines = explode("\n", $str);
+            $str = trim($lines[0]);
+        }
         
-        $cleaned = preg_replace('/[^\d.,\-]/', '', (string)$value);
+        // 2. Если содержит слеш / - берем первую часть (1690/1000 -> 1690, но если была первая строка 1.69, то досюда не дойдет)
+        if (str_contains($str, '/')) {
+            $parts = explode('/', $str);
+            $str = trim($parts[0]);
+        }
+        
+        $cleaned = preg_replace('/[^\d.,\-]/', '', $str);
         $cleaned = str_replace(',', '.', $cleaned);
         
         if (is_numeric($cleaned)) {
