@@ -21,10 +21,14 @@ class RealSmetaImportTest extends TestCase
      */
     public function test_real_smeta_import_hierarchy()
     {
-        $filePath = 'c:\Users\kamilgaraev\Desktop\prohelper\smeta-stroitelstvo-skladskogo-zdaniya.xlsx';
+        $fileName = 'smeta-stroitelstvo-skladskogo-zdaniya.xlsx';
+        $filePath = base_path($fileName);
         
         if (!file_exists($filePath)) {
-            $this->markTestSkipped("Файл не найден по пути: {$filePath}");
+            // Пробуем также путь в корне /var/www/prohelper если base_path не помог (хотя обычно это он и есть)
+            if (!file_exists($filePath)) {
+                $this->markTestSkipped("Файл не найден по пути: {$filePath}. Пожалуйста, убедись, что файл лежит в корне проекта (рядом с artisan)");
+            }
         }
 
         // 1. Подготовка контекста (замените ID на реальные если нужно, или тест создаст временные)
