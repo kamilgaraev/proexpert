@@ -18,6 +18,7 @@ class RegexStrategy implements ClassificationStrategyInterface
     private const TYPE_MATERIAL = 'material';
     private const TYPE_EQUIPMENT = 'equipment';
     private const TYPE_LABOR = 'labor';
+    private const TYPE_SECTION = 'section';
 
     // Уровни уверенности
     private const CONF_STRICT = 1.0;
@@ -106,7 +107,17 @@ class RegexStrategy implements ClassificationStrategyInterface
     {
         $this->rules = [
             // ---------------------------------------------------------
-            // 1. ЖЕЛЕЗОБЕТОННЫЕ ПРАВИЛА (Strict, Confidence 1.0)
+            // 1. СТРУКТУРНЫЕ ЭЛЕМЕНТЫ (Sections)
+            // ---------------------------------------------------------
+            [
+                'pattern' => '/^(Раздел|Глава|Подраздел|Этап|Блок|Корпус|Здание|Сооружение)\s+\d+/ui',
+                'type' => self::TYPE_SECTION,
+                'confidence' => self::CONF_STRICT,
+                'source' => 'explicit_section_title'
+            ],
+
+            // ---------------------------------------------------------
+            // 2. ЖЕЛЕЗОБЕТОННЫЕ ПРАВИЛА (Strict, Confidence 1.0)
             // ---------------------------------------------------------
 
             // Трудозатраты (Техническая часть ГЭСН: 1-100-20)

@@ -136,6 +136,12 @@ class EstimateItemProcessor
                 $dto->itemType = $result->type;
                 $dto->confidenceScore = $result->confidenceScore;
                 $dto->classificationSource = $result->source;
+
+                // ⭐ КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Если классификатор уверен, что это раздел,
+                // мы должны пометить DTO как раздел, чтобы сработал handleSection
+                if ($result->type === 'section' && $result->confidenceScore >= 0.8) {
+                    $dto->isSection = true;
+                }
             }
 
             // Apply normalization
