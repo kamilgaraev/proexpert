@@ -1,0 +1,66 @@
+{
+    "name": "Отчеты",
+    "slug": "reports",
+    "version": "2.0.0",
+    "type": "core",
+    "billing_model": "free",
+    "category": "analytics",
+    "description": "Унифицированный модуль отчетности, включающий базовые отчеты и расширенную аналитику.",
+    "class_name": "App\\BusinessModules\\Core\\Reports\\ReportsModule",
+    "service_provider": "App\\BusinessModules\\Core\\Reports\\ReportsServiceProvider",
+    "auto_activate": true,
+    "is_system_module": true,
+    "can_deactivate": false,
+    "pricing": {
+        "base_price": 0,
+        "currency": "RUB",
+        "duration_days": 30
+    },
+    "permissions": [
+        "reports.view",
+        "reports.export",
+        "reports.manage_templates",
+        "reports.custom_reports",
+        "reports.share",
+        "reports.schedule",
+        "reports.official_reports",
+        "reports.predictive"
+    ],
+    "features": [
+        "Базовые отчеты (материалы, работы, проекты)",
+        "Конструктор произвольных отчетов",
+        "Финансовая аналитика и KPI",
+        "Генерация официальных форм (М-29 и др.)",
+        "Прогнозирование и ML-аналитика",
+        "Автоматическая рассылка отчетов"
+    ],
+    "dependencies": [
+        "organizations",
+        "users",
+        "projects"
+    ],
+    "conflicts": [
+        "basic-reports",
+        "advanced-reports"
+    ],
+    "limits": {
+        "max_custom_reports": 50,
+        "max_scheduled_reports": 10
+    },
+    "routes": [
+        "routes/api/v1/admin/reports.php",
+        "routes/api/v1/admin/custom-reports.php"
+    ],
+    "settings": [
+        {
+            "key": "default_export_format",
+            "type": "select",
+            "options": [
+                "pdf",
+                "xlsx",
+                "csv"
+            ],
+            "default": "pdf"
+        }
+    ]
+}

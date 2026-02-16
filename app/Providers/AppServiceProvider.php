@@ -118,7 +118,7 @@ class AppServiceProvider extends ServiceProvider
         $this->app->register(\App\BusinessModules\Core\Organizations\OrganizationsServiceProvider::class);
         $this->app->register(\App\BusinessModules\Core\Users\UsersServiceProvider::class);
         $this->app->register(\App\BusinessModules\Core\MultiOrganization\MultiOrganizationServiceProvider::class);
-        $this->app->register(\App\BusinessModules\Features\Reports\ReportsServiceProvider::class);
+        $this->app->register(\App\BusinessModules\Core\Reports\ReportsServiceProvider::class);
         $this->app->register(\App\BusinessModules\Features\AdvancedDashboard\AdvancedDashboardServiceProvider::class);
         $this->app->register(\App\BusinessModules\Enterprise\MultiOrganization\Reporting\ReportingServiceProvider::class);
         $this->app->register(\App\BusinessModules\Enterprise\MultiOrganization\Core\MultiOrganizationEventServiceProvider::class);

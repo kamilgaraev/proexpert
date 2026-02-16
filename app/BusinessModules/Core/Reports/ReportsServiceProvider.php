@@ -1,6 +1,6 @@
 <?php
 
-namespace App\BusinessModules\Features\Reports;
+namespace App\BusinessModules\Core\Reports;
 
 use Illuminate\Support\ServiceProvider;
 use App\Services\Report\ReportDataSourceRegistry;
