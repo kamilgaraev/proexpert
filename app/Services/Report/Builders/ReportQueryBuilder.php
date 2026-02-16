@@ -106,17 +106,23 @@ class ReportQueryBuilder
 
         foreach ($columnsConfig as $column) {
             $field = $column['field'] ?? null;
+            $formula = $column['formula'] ?? null;
+            $alias = $column['alias'] ?? ($field ? str_replace('.', '_', $field) : null);
             
-            if (!$field) {
-                continue;
-            }
-
             if (isset($column['aggregation'])) {
                 $hasAggregations = true;
                 continue;
             }
 
-            $selects[] = $field;
+            if ($formula) {
+                $rawSql = $this->parseFormula($formula);
+                $query->addSelect(DB::raw("{$rawSql} as " . ($alias ?? 'calc_field')));
+                continue;
+            }
+
+            if ($field) {
+                $selects[] = $field . ($alias ? " as {$alias}" : "");
+            }
         }
 
         if (!$hasAggregations && !empty($selects)) {
@@ -124,6 +130,16 @@ class ReportQueryBuilder
         }
 
         return $query;
+    }
+
+    protected function parseFormula(string $formula): string
+    {
+        // Простая замена плейсхолдеров {table.field} или {field} на имена колонок
+        return preg_replace_callback('/\{([\w\.]+)\}/', function ($matches) {
+            $fieldName = $matches[1];
+            // Здесь можно добавить дополнительную валидацию через реестр
+            return $fieldName;
+        }, $formula);
     }
 
     protected function applyJoins(Builder $query, array $joins, string $primarySource): Builder

@@ -71,18 +71,20 @@ class CustomReportExecutionService
                 'limit' => $limit
             ], 'debug');
 
-            $results = $this->executeQueryWithTimeout($query, $limit);
-
-            $executionTime = (microtime(true) - $startTime) * 1000;
-
-            $report->incrementExecutionCount();
-
             if ($exportFormat) {
-                $filePath = $this->exportResults($results, $report, $exportFormat);
+                // Применяем лимит к запросу для экспорта
+                $query->limit($limit);
                 
+                $filePath = $this->exportResults($query, $report, $exportFormat);
+                
+                // Получаем количество строк (приблизительно или через счетчик в чанке, но для простоты в метаданных)
+                // Для точности можно сделать count(), но это доп. запрос
+                $rowsCount = $execution->rows_count ?? 0; 
+                
+                $executionTime = (microtime(true) - $startTime) * 1000;
                 $execution->markAsCompleted(
                     (int) $executionTime,
-                    $results->count(),
+                    $rowsCount,
                     $filePath
                 );
 
@@ -92,12 +94,17 @@ class CustomReportExecutionService
                     'organization_id' => $organizationId,
                     'user_id' => $userId,
                     'execution_time_ms' => $executionTime,
-                    'rows_count' => $results->count(),
                     'export_format' => $exportFormat,
                 ]);
 
                 return $this->streamExport($filePath, $report->name, $exportFormat);
             }
+
+            $results = $this->executeQueryWithTimeout($query, $limit);
+
+            $executionTime = (microtime(true) - $startTime) * 1000;
+
+            $report->incrementExecutionCount();
 
             $formattedResults = $this->formatResults($results, $report->columns_config);
 
@@ -271,29 +278,71 @@ class CustomReportExecutionService
         };
     }
 
-    protected function exportResults(Collection $results, CustomReport $report, string $format): string
+    protected function exportResults($query, CustomReport $report, string $format): string
     {
         $fileName = $this->generateFileName($report, $format);
+        $filePath = storage_path("app/exports/{$fileName}");
         $columns = array_column($report->columns_config, 'label');
         
-        $data = $results->map(function ($row) use ($report) {
-            $formatted = [];
-            
-            foreach ($report->columns_config as $column) {
-                $fieldName = $this->extractFieldName($column['field']);
-                $formatted[] = $row->{$fieldName} ?? null;
-            }
-            
-            return $formatted;
-        })->toArray();
+        if ($format === 'csv') {
+            return $this->exportToCsvStreaming($query, $report, $columns, $filePath);
+        }
 
-        $filePath = storage_path("app/exports/{$fileName}");
+        if ($format === 'excel') {
+            return $this->exportToExcelChunked($query, $report, $columns, $filePath);
+        }
+
+        throw new \InvalidArgumentException("Неподдерживаемый формат: {$format}");
+    }
+
+    protected function exportToCsvStreaming($query, CustomReport $report, array $columns, string $filePath): string
+    {
+        $handle = fopen($filePath, 'w');
+        fwrite($handle, "\xEF\xBB\xBF"); // UTF-8 BOM
+        fputcsv($handle, $columns, ';');
+
+        $query->chunk(1000, function ($rows) use ($handle, $report) {
+            foreach ($rows as $row) {
+                $formatted = [];
+                foreach ($report->columns_config as $column) {
+                    $fieldName = $this->extractFieldName($column['field']);
+                    $formatted[] = $row->{$fieldName} ?? null;
+                }
+                fputcsv($handle, $formatted, ';');
+            }
+        });
+
+        fclose($handle);
+        return $filePath;
+    }
+
+    protected function exportToExcelChunked($query, CustomReport $report, array $columns, string $filePath): string
+    {
+        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
         
-        match($format) {
-            'csv' => $this->csvExporter->saveToFile($data, $columns, $filePath),
-            'excel' => $this->excelExporter->saveToFile($data, $columns, $filePath),
-            default => throw new \InvalidArgumentException("Неподдерживаемый формат: {$format}"),
-        };
+        // Заголовки
+        foreach ($columns as $idx => $label) {
+            $cell = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($idx + 1) . '1';
+            $sheet->setCellValue($cell, $label);
+        }
+
+        $rowIndex = 2;
+        $query->chunk(500, function ($rows) use ($sheet, $report, &$rowIndex) {
+            foreach ($rows as $row) {
+                $colIndex = 1;
+                foreach ($report->columns_config as $column) {
+                    $fieldName = $this->extractFieldName($column['field']);
+                    $cell = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colIndex) . $rowIndex;
+                    $sheet->setCellValue($cell, $row->{$fieldName} ?? null);
+                    $colIndex++;
+                }
+                $rowIndex++;
+            }
+        });
+
+        $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
+        $writer->save($filePath);
         
         return $filePath;
     }
