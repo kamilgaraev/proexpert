@@ -31,9 +31,15 @@ class RealSmetaImportTest extends TestCase
             }
         }
 
-        // 1. Подготовка контекста (замените ID на реальные если нужно, или тест создаст временные)
+        // 1. Подготовка контекста (используем существующие или создаем новые)
         $user = User::first() ?: User::factory()->create();
         $organization = Organization::first() ?: Organization::factory()->create();
+        
+        // Смете ТРЕБУЕТСЯ проект по ограничениям БД
+        $project = \App\Models\Project::first() ?: \App\Models\Project::factory()->create([
+            'organization_id' => $organization->id,
+            'name' => 'Тестовый проект для импорта'
+        ]);
         
         /** @var EstimateImportService $importService */
         $importService = app(EstimateImportService::class);
@@ -51,7 +57,7 @@ class RealSmetaImportTest extends TestCase
             'name' => 'Тест реальной сметы ' . now()->toDateTimeString(),
             'type' => 'estimate',
             'organization_id' => $organization->id,
-            'project_id' => null,
+            'project_id' => $project->id,
         ];
 
         echo "\nНачинаю импорт файла: " . basename($filePath) . "\n";
