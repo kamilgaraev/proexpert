@@ -78,11 +78,10 @@ class SubscriptionPlanResource extends Resource
                     ->sortable(),
                 Tables\Columns\TextColumn::make('price')
                     ->label(__('widgets.subscription_plans.price'))
-                    ->money('RUB')
                     ->sortable(),
                 Tables\Columns\TextColumn::make('duration_in_days')
                     ->label(__('widgets.subscription_plans.period'))
-                    ->formatStateUsing(fn (string $state): string => match ($state) {
+                    ->formatStateUsing(fn ($state) => match ((string)$state) {
                         '30' => 'Ежемесячно',
                         '365' => 'Ежегодно',
                         default => $state . ' дн.',

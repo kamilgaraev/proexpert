@@ -88,19 +88,6 @@ class OrganizationResource extends Resource
                 Tables\Columns\TextColumn::make('tax_number')
                     ->label(__('widgets.organizations.inn') ?? 'ИНН')
                     ->searchable(),
-                Tables\Columns\IconColumn::make('is_active')
-                    ->label('Активна')
-                    ->boolean()
-                    ->sortable(),
-                Tables\Columns\IconColumn::make('is_verified')
-                    ->label('Верифицирована')
-                    ->boolean()
-                    ->sortable(),
-                Tables\Columns\TextColumn::make('created_at')
-                    ->label('Создана')
-                    ->dateTime()
-                    ->sortable()
-                    ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
                 //
