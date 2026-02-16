@@ -2,12 +2,12 @@
 
 namespace App\BusinessModules\Features\Reports;
 
-use App\BusinessModules\Core\BaseModule;
-use App\BusinessModules\Interfaces\ModuleInterface;
-use App\BusinessModules\Interfaces\BillableInterface;
-use App\BusinessModules\Interfaces\ConfigurableInterface;
+use App\Modules\Contracts\ModuleInterface;
+use App\Modules\Contracts\ConfigurableInterface;
+use App\Enums\ModuleType;
+use App\Enums\BillingModel;
 
-class ReportsModule extends BaseModule implements ModuleInterface, BillableInterface, ConfigurableInterface
+class ReportsModule implements ModuleInterface, ConfigurableInterface
 {
     public function getName(): string
     {
@@ -29,14 +29,42 @@ class ReportsModule extends BaseModule implements ModuleInterface, BillableInter
         return 'Унифицированный модуль отчетности, включающий базовые отчеты и расширенную аналитику.';
     }
 
-    public function getType(): string
+    public function getType(): ModuleType
     {
-        return 'feature';
+        return ModuleType::FEATURE;
     }
 
-    public function getCategory(): string
+    public function getBillingModel(): BillingModel
     {
-        return 'analytics';
+        return BillingModel::SUBSCRIPTION;
+    }
+
+    public function getManifest(): array
+    {
+        return json_decode(file_get_contents(config_path('ModuleList/features/reports.json')), true);
+    }
+
+    public function install(): void
+    {
+        // Модуль использует существующие миграции
+    }
+
+    public function uninstall(): void
+    {
+        // Сохраняем данные при деактивации
+    }
+
+    public function upgrade(string $fromVersion): void
+    {
+        // Логика обновления модуля
+    }
+
+    public function canActivate(int $organizationId): bool
+    {
+        $accessController = app(\App\Modules\Core\AccessController::class);
+        return $accessController->hasModuleAccess($organizationId, 'organizations') &&
+               $accessController->hasModuleAccess($organizationId, 'users') &&
+               $accessController->hasModuleAccess($organizationId, 'projects');
     }
 
     public function getDependencies(): array
@@ -48,67 +76,98 @@ class ReportsModule extends BaseModule implements ModuleInterface, BillableInter
         ];
     }
 
+    public function getConflicts(): array
+    {
+        return [];
+    }
+
     public function getPermissions(): array
     {
         return [
-            'reports.view' => 'Просмотр отчетов',
-            'reports.export' => 'Экспорт отчетов',
-            'reports.manage_templates' => 'Управление шаблонами',
-            'reports.custom_reports' => 'Конструктор отчетов',
-            'reports.share' => 'Возможность делиться отчетами',
-            'reports.schedule' => 'Расписание отчетов',
-            'reports.official_reports' => 'Официальные отчеты',
-            'reports.predictive' => 'Прогнозная аналитика',
+            'reports.view',
+            'reports.export',
+            'reports.manage_templates',
+            'reports.custom_reports',
+            'reports.share',
+            'reports.schedule',
+            'reports.official_reports',
+            'reports.predictive',
         ];
     }
 
     public function getFeatures(): array
     {
         return [
-            'basic_reports' => 'Базовые отчеты (материалы, работы, проекты)',
-            'custom_builder' => 'Конструктор произвольных отчетов',
-            'financial_analytics' => 'Финансовая аналитика и KPI',
-            'official_forms' => 'Генерация официальных форм (М-29 и др.)',
-            'predictive_analytics' => 'Прогнозирование и ML-аналитика',
-            'scheduled_reports' => 'Автоматическая рассылка отчетов',
+            'Базовые отчеты (материалы, работы, проекты)',
+            'Конструктор произвольных отчетов',
+            'Финансовая аналитика и KPI',
+            'Генерация официальных форм (М-29 и др.)',
+            'Прогнозирование и ML-аналитика',
+            'Автоматическая рассылка отчетов',
         ];
-    }
-
-    public function getBillingModel(): string
-    {
-        return 'subscription';
     }
 
     public function getLimits(): array
     {
         return [
-            'max_custom_reports' => [
-                'label' => 'Макс. количество своих отчетов',
-                'type' => 'numeric',
-                'default' => 5,
-            ],
-            'max_scheduled_reports' => [
-                'label' => 'Макс. количество активных расписаний',
-                'type' => 'numeric',
-                'default' => 1,
-            ],
+            'max_custom_reports' => 10,
+            'max_scheduled_reports' => 5,
         ];
     }
 
-    public function getSettings(): array
+    public function getDefaultSettings(): array
     {
         return [
-            'default_export_format' => [
-                'type' => 'select',
-                'label' => 'Формат экспорта по умолчанию',
-                'options' => ['pdf', 'xlsx', 'csv'],
-                'default' => 'pdf',
-            ],
-            'enable_external_data_sources' => [
-                'type' => 'boolean',
-                'label' => 'Разрешить внешние источники данных',
-                'default' => false,
-            ],
+            'default_export_format' => 'pdf',
+            'enable_external_data_sources' => false,
+            'report_retention_days' => 30,
         ];
+    }
+
+    public function validateSettings(array $settings): bool
+    {
+        if (isset($settings['default_export_format']) && !in_array($settings['default_export_format'], ['pdf', 'xlsx', 'csv'])) {
+            return false;
+        }
+
+        return true;
+    }
+
+    public function applySettings(int $organizationId, array $settings): void
+    {
+        if (!$this->validateSettings($settings)) {
+            throw new \InvalidArgumentException('Некорректные настройки модуля отчетов');
+        }
+
+        $activation = \App\Models\OrganizationModuleActivation::where('organization_id', $organizationId)
+            ->whereHas('module', function ($query) {
+                $query->where('slug', $this->getSlug());
+            })
+            ->first();
+
+        if ($activation) {
+            $currentSettings = $activation->module_settings ?? [];
+            $activation->update([
+                'module_settings' => array_merge($currentSettings, $settings)
+            ]);
+        }
+    }
+
+    public function getSettings(int $organizationId): array
+    {
+        $activation = \App\Models\OrganizationModuleActivation::where('organization_id', $organizationId)
+            ->whereHas('module', function ($query) {
+                $query->where('slug', $this->getSlug());
+            })
+            ->first();
+
+        if (!$activation) {
+            return $this->getDefaultSettings();
+        }
+
+        return array_merge(
+            $this->getDefaultSettings(),
+            $activation->module_settings ?? []
+        );
     }
 }
