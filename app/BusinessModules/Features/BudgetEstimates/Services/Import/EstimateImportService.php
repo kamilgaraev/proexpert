@@ -623,7 +623,7 @@ class EstimateImportService
                     if ($value !== null && trim((string)$value) !== '') {
                         $hasData = true;
                     }
-                    $rowData[] = $value;
+                    $rowData[$col] = $value;
                 }
                 
                 if ($hasData) {
@@ -642,11 +642,14 @@ class EstimateImportService
 
     private function columnIndexFromString(?string $columnLetter): ?int
     {
-        if (empty($columnLetter)) {
+        if ($columnLetter === null || $columnLetter === '') {
             return null;
         }
 
-        \Illuminate\Support\Facades\Log::debug('[EstimateImport] Mapping column', ['letter' => $columnLetter]);
+        // 🔧 Если уже передано число (или строка-число), возвращаем как есть (0-based индекс)
+        if (is_numeric($columnLetter)) {
+            return (int)$columnLetter;
+        }
         
         $columnLetter = strtoupper($columnLetter);
         $length = strlen($columnLetter);
@@ -767,7 +770,7 @@ class EstimateImportService
                     $columnMapping = $matchingConfig ?? [];
 
                     \Illuminate\Support\Facades\Log::info('[EstimateImport] Starting stream import', [
-                        'config_keys' => array_keys($columnMapping),
+                        'mapping' => $columnMapping,
                         'file' => basename($fileData['file_path'])
                     ]);
                     
@@ -805,11 +808,13 @@ class EstimateImportService
                                 continue;
                             }
                             
-                            \Illuminate\Support\Facades\Log::debug('[EstimateImport] Yielding row', [
-                                'mapped' => $mappedRow,
-                                'valName' => $valName,
-                                'valCode' => $valCode
-                            ]);
+                            // Log only interesting rows to avoid bloat
+                            if (!empty($valName)) {
+                                \Illuminate\Support\Facades\Log::debug('[EstimateImport] Row processed', [
+                                    'name' => mb_substr($valName, 0, 50),
+                                    'type' => $mappedRow['item_type'] ?? 'unknown'
+                                ]);
+                            }
 
                             yield $mappedRow;
                         }
