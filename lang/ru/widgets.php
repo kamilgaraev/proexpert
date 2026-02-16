@@ -32,9 +32,23 @@ return [
         'price' => 'Цена',
         'period' => 'Период оплаты',
         'is_active' => 'Активен',
-        'is_default' => 'По умолчанию',
+        'is_default' => 'По умолчанию', // Можно удалить, но оставим для совместимости ключей
         'features' => 'Список возможностей',
         'feature_name' => 'Название функции',
         'feature_value' => 'Значение (опционально)',
+    ],
+    'users' => [
+        'navigation_label' => 'Пользователи',
+        'model_label' => 'Пользователь',
+        'plural_model_label' => 'Пользователи',
+    ],
+    'organizations' => [
+        'navigation_label' => 'Организации',
+        'model_label' => 'Организация',
+        'plural_model_label' => 'Организации',
+        'name' => 'Название',
+        'inn' => 'ИНН (Tax Number)',
+        'ogrn' => 'ОГРН (Reg Number)',
+        'parent_organization' => 'Головная организация',
     ],
 ];

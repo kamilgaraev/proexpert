@@ -21,6 +21,21 @@ class OrganizationResource extends Resource
     
     protected static bool $shouldSkipAuthorization = true;
 
+    public static function getNavigationLabel(): string
+    {
+        return __('widgets.organizations.navigation_label');
+    }
+
+    public static function getModelLabel(): string
+    {
+        return __('widgets.organizations.model_label');
+    }
+
+    public static function getPluralModelLabel(): string
+    {
+        return __('widgets.organizations.plural_model_label');
+    }
+
     public static function form(Schema $schema): Schema
     {
         return $schema
@@ -28,17 +43,14 @@ class OrganizationResource extends Resource
                 Forms\Components\Section::make('Основная информация')
                     ->schema([
                         Forms\Components\TextInput::make('name')
-                            ->label('Название')
+                            ->label(__('widgets.organizations.name') ?? 'Название')
                             ->required()
                             ->maxLength(255),
-                        Forms\Components\TextInput::make('inn')
-                            ->label('ИНН')
+                        Forms\Components\TextInput::make('tax_number')
+                            ->label(__('widgets.organizations.inn') ?? 'ИНН')
                             ->maxLength(12),
-                        Forms\Components\TextInput::make('kpp')
-                            ->label('КПП')
-                            ->maxLength(9),
-                        Forms\Components\TextInput::make('ogrn')
-                            ->label('ОГРН')
+                        Forms\Components\TextInput::make('registration_number')
+                            ->label(__('widgets.organizations.ogrn') ?? 'ОГРН')
                             ->maxLength(15),
                     ])->columns(2),
 
@@ -76,11 +88,11 @@ class OrganizationResource extends Resource
         return $table
             ->columns([
                 Tables\Columns\TextColumn::make('name')
-                    ->label('Название')
+                    ->label(__('widgets.organizations.name') ?? 'Название')
                     ->searchable()
                     ->sortable(),
-                Tables\Columns\TextColumn::make('inn')
-                    ->label('ИНН')
+                Tables\Columns\TextColumn::make('tax_number')
+                    ->label(__('widgets.organizations.inn') ?? 'ИНН')
                     ->searchable(),
                 Tables\Columns\TextColumn::make('parentOrganization.name')
                     ->label('Головная организация')

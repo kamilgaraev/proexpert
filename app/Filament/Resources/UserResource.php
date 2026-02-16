@@ -20,6 +20,21 @@ class UserResource extends Resource
 
     protected static string | \UnitEnum | null $navigationGroup = 'System';
 
+    public static function getNavigationLabel(): string
+    {
+        return __('widgets.users.navigation_label');
+    }
+
+    public static function getModelLabel(): string
+    {
+        return __('widgets.users.model_label');
+    }
+
+    public static function getPluralModelLabel(): string
+    {
+        return __('widgets.users.plural_model_label');
+    }
+
     public static function form(Schema $schema): Schema
     {
         return $schema
