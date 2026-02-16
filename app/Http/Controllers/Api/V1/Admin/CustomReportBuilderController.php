@@ -8,6 +8,7 @@ use App\Services\Report\CustomReportBuilderService;
 use App\Services\Logging\LoggingService;
 use App\Http\Requests\Api\V1\Admin\CustomReport\ValidateConfigRequest;
 use App\Http\Requests\Api\V1\Admin\CustomReport\PreviewReportRequest;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -28,10 +29,7 @@ class CustomReportBuilderController extends Controller
                 'count' => count($dataSources)
             ], 'debug');
 
-            return response()->json([
-                'success' => true,
-                'data' => $dataSources,
-            ]);
+            return AdminResponse::success($dataSources);
         } catch (\Throwable $e) {
             $this->logging->technical('report_builder.get_data_sources_failed', [
                 'error' => $e->getMessage(),
@@ -39,10 +37,7 @@ class CustomReportBuilderController extends Controller
                 'line' => $e->getLine()
             ], 'error');
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка получения источников данных'
-            ], 500);
+            return AdminResponse::error(trans_message('reports.builder.data_sources_failed'), 500);
         }
     }
 
@@ -60,16 +55,10 @@ class CustomReportBuilderController extends Controller
                     'data_source' => $dataSource
                 ], 'warning');
 
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Источник данных не найден',
-                ], 404);
+                return AdminResponse::error(trans_message('reports.builder.data_source_not_found'), 404);
             }
 
-            return response()->json([
-                'success' => true,
-                'data' => $fields,
-            ]);
+            return AdminResponse::success($fields);
         } catch (\Throwable $e) {
             $this->logging->technical('report_builder.get_fields_failed', [
                 'data_source' => $dataSource,
@@ -78,10 +67,7 @@ class CustomReportBuilderController extends Controller
                 'line' => $e->getLine()
             ], 'error');
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка получения полей источника данных'
-            ], 500);
+            return AdminResponse::error(trans_message('reports.builder.fields_failed'), 500);
         }
     }
 
@@ -90,10 +76,7 @@ class CustomReportBuilderController extends Controller
         try {
             $relations = $this->builderService->getDataSourceRelations($dataSource);
 
-            return response()->json([
-                'success' => true,
-                'data' => $relations,
-            ]);
+            return AdminResponse::success($relations);
         } catch (\Throwable $e) {
             $this->logging->technical('report_builder.get_relations_failed', [
                 'data_source' => $dataSource,
@@ -102,10 +85,7 @@ class CustomReportBuilderController extends Controller
                 'line' => $e->getLine()
             ], 'error');
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка получения связей источника данных'
-            ], 500);
+            return AdminResponse::error(trans_message('reports.builder.relations_failed'), 500);
         }
     }
 
@@ -149,11 +129,7 @@ class CustomReportBuilderController extends Controller
                     'errors' => $errors
                 ], 'info');
 
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Конфигурация содержит ошибки',
-                    'errors' => $errors,
-                ], 422);
+                return AdminResponse::error(trans_message('reports.custom.config_invalid'), 422, $errors);
             }
 
             $this->logging->technical('report_builder.validation_success', [
@@ -161,10 +137,7 @@ class CustomReportBuilderController extends Controller
                 'organization_id' => $user->current_organization_id
             ], 'debug');
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Конфигурация валидна',
-            ]);
+            return AdminResponse::success(null, trans_message('reports.builder.config_valid'));
         } catch (\Throwable $e) {
             $this->logging->technical('report_builder.validate_config_failed', [
                 'user_id' => $user->id,
@@ -173,10 +146,7 @@ class CustomReportBuilderController extends Controller
                 'line' => $e->getLine()
             ], 'error');
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка при валидации'
-            ], 500);
+            return AdminResponse::error(trans_message('reports.builder.validation_failed'), 500);
         }
     }
 
@@ -202,11 +172,7 @@ class CustomReportBuilderController extends Controller
                     'errors' => $errors
                 ], 'warning');
 
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Конфигурация содержит ошибки',
-                    'errors' => $errors,
-                ], 422);
+                return AdminResponse::error(trans_message('reports.custom.config_invalid'), 422, $errors);
             }
 
             $tempReport = new CustomReport($config);
@@ -222,7 +188,7 @@ class CustomReportBuilderController extends Controller
                 'execution_time_ms' => $result['execution_time_ms'] ?? 0
             ]);
 
-            return response()->json($result);
+            return AdminResponse::success($result);
         } catch (\Throwable $e) {
             $this->logging->technical('report_builder.preview_failed', [
                 'user_id' => $user->id,
@@ -232,10 +198,7 @@ class CustomReportBuilderController extends Controller
                 'line' => $e->getLine()
             ], 'error');
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка при предпросмотре отчета'
-            ], 500);
+            return AdminResponse::error(trans_message('reports.builder.preview_failed'), 500);
         }
     }
 
@@ -244,10 +207,7 @@ class CustomReportBuilderController extends Controller
         try {
             $operators = $this->builderService->getAllowedOperators();
 
-            return response()->json([
-                'success' => true,
-                'data' => $operators,
-            ]);
+            return AdminResponse::success($operators);
         } catch (\Throwable $e) {
             $this->logging->technical('report_builder.get_operators_failed', [
                 'error' => $e->getMessage(),
@@ -255,10 +215,7 @@ class CustomReportBuilderController extends Controller
                 'line' => $e->getLine()
             ], 'error');
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка получения операторов: ' . $e->getMessage()
-            ], 500);
+            return AdminResponse::error(trans_message('reports.builder.operators_failed') . ': ' . $e->getMessage(), 500);
         }
     }
 
@@ -267,10 +224,7 @@ class CustomReportBuilderController extends Controller
         try {
             $aggregations = $this->builderService->getAggregationFunctions();
 
-            return response()->json([
-                'success' => true,
-                'data' => $aggregations,
-            ]);
+            return AdminResponse::success($aggregations);
         } catch (\Throwable $e) {
             $this->logging->technical('report_builder.get_aggregations_failed', [
                 'error' => $e->getMessage(),
@@ -278,10 +232,7 @@ class CustomReportBuilderController extends Controller
                 'line' => $e->getLine()
             ], 'error');
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка получения агрегаций: ' . $e->getMessage()
-            ], 500);
+            return AdminResponse::error(trans_message('reports.builder.aggregations_failed') . ': ' . $e->getMessage(), 500);
         }
     }
 
@@ -290,10 +241,7 @@ class CustomReportBuilderController extends Controller
         try {
             $formats = $this->builderService->getExportFormats();
 
-            return response()->json([
-                'success' => true,
-                'data' => $formats,
-            ]);
+            return AdminResponse::success($formats);
         } catch (\Throwable $e) {
             $this->logging->technical('report_builder.get_export_formats_failed', [
                 'error' => $e->getMessage(),
@@ -301,10 +249,7 @@ class CustomReportBuilderController extends Controller
                 'line' => $e->getLine()
             ], 'error');
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка получения форматов экспорта: ' . $e->getMessage()
-            ], 500);
+            return AdminResponse::error(trans_message('reports.builder.export_formats_failed') . ': ' . $e->getMessage(), 500);
         }
     }
 
@@ -313,10 +258,7 @@ class CustomReportBuilderController extends Controller
         try {
             $categories = $this->builderService->getCategories();
 
-            return response()->json([
-                'success' => true,
-                'data' => $categories,
-            ]);
+            return AdminResponse::success($categories);
         } catch (\Throwable $e) {
             $this->logging->technical('report_builder.get_categories_failed', [
                 'error' => $e->getMessage(),
@@ -324,10 +266,7 @@ class CustomReportBuilderController extends Controller
                 'line' => $e->getLine()
             ], 'error');
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка получения категорий: ' . $e->getMessage()
-            ], 500);
+            return AdminResponse::error(trans_message('reports.builder.categories_failed') . ': ' . $e->getMessage(), 500);
         }
     }
 }
