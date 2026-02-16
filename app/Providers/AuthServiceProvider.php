@@ -36,7 +36,13 @@ class AuthServiceProvider extends ServiceProvider
     {
         $this->registerPolicies();
 
-        Gate::before(function (\App\Models\User $user, string $ability, $arguments = null) {
+        Gate::before(function ($user, string $ability, $arguments = null) {
+            // Если пользователь - SystemAdmin, даем ему полные права (superuser)
+            // Это решает проблему доступа к админке и предотвращает ошибки при обращении к свойствам User модели
+            if ($user instanceof \App\Models\SystemAdmin) {
+                return true;
+            }
+
             $userAgent = request()->userAgent() ?? '';
             if (str_contains($userAgent, 'Prometheus')) {
                 return null;
@@ -119,7 +125,7 @@ class AuthServiceProvider extends ServiceProvider
                     $organizationId = (int) $context;
                 } elseif ($arguments && is_array($arguments) && isset($arguments['organization_id'])) {
                     $organizationId = $arguments['organization_id'];
-                } elseif ($user->current_organization_id) {
+                } elseif (isset($user->current_organization_id) && $user->current_organization_id) {
                     $organizationId = $user->current_organization_id;
                 }
                 
@@ -130,7 +136,7 @@ class AuthServiceProvider extends ServiceProvider
             
             if (str_starts_with($ability, 'admin.')) {
                 $organizationAccess = false;
-                if ($user->current_organization_id) {
+                if (isset($user->current_organization_id) && $user->current_organization_id) {
                     $organizationAccess = $authorizationService->can($user, $ability, [
                         'context_type' => 'organization', 
                         'organization_id' => $user->current_organization_id
@@ -146,7 +152,12 @@ class AuthServiceProvider extends ServiceProvider
         });
         
         // Перехватываем результат Policy, чтобы не проверять право в системном контексте, если Policy уже вернул результат
-        Gate::after(function (\App\Models\User $user, string $ability, $result, $arguments = null) {
+        Gate::after(function ($user, string $ability, $result, $arguments = null) {
+            // Если SystemAdmin, то он уже обработан в Gate::before (вернул true), но на всякий случай
+            if ($user instanceof \App\Models\SystemAdmin) {
+                return $result ?? true;
+            }
+
             $userAgent = request()->userAgent() ?? '';
             if (str_contains($userAgent, 'Prometheus')) {
                 return null;
