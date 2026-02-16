@@ -1,6 +1,6 @@
 <?php
 
-namespace App\BusinessModules\Features\Reports;
+namespace App\BusinessModules\Core\Reports;
 
 use App\Modules\Contracts\ModuleInterface;
 use App\Modules\Contracts\ConfigurableInterface;
@@ -31,17 +31,17 @@ class ReportsModule implements ModuleInterface, ConfigurableInterface
 
     public function getType(): ModuleType
     {
-        return ModuleType::FEATURE;
+        return ModuleType::CORE;
     }
 
     public function getBillingModel(): BillingModel
     {
-        return BillingModel::SUBSCRIPTION;
+        return BillingModel::FREE;
     }
 
     public function getManifest(): array
     {
-        return json_decode(file_get_contents(config_path('ModuleList/features/reports.json')), true);
+        return json_decode(file_get_contents(config_path('ModuleList/core/reports.json')), true);
     }
 
     public function install(): void
@@ -51,7 +51,7 @@ class ReportsModule implements ModuleInterface, ConfigurableInterface
 
     public function uninstall(): void
     {
-        // Сохраняем данные при деактивации
+        // Системный модуль не может быть удален
     }
 
     public function upgrade(string $fromVersion): void
@@ -61,10 +61,7 @@ class ReportsModule implements ModuleInterface, ConfigurableInterface
 
     public function canActivate(int $organizationId): bool
     {
-        $accessController = app(\App\Modules\Core\AccessController::class);
-        return $accessController->hasModuleAccess($organizationId, 'organizations') &&
-               $accessController->hasModuleAccess($organizationId, 'users') &&
-               $accessController->hasModuleAccess($organizationId, 'projects');
+        return true;
     }
 
     public function getDependencies(): array
