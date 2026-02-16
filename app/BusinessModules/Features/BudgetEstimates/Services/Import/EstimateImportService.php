@@ -750,6 +750,10 @@ class EstimateImportService
                     // Обертка для маппинга "на лету"
                     // Нам нужно передать mapping из конфига
                     $columnMapping = $matchingConfig ?? [];
+                    \Illuminate\Support\Facades\Log::info('[EstimateImport] Starting stream import', [
+                        'config' => $columnMapping,
+                        'file' => basename($fileData['file_path'])
+                    ]);
                     
                     $iterator = (function() use ($rawIterator, $columnMapping) {
                         foreach ($rawIterator as $row) {
@@ -777,14 +781,20 @@ class EstimateImportService
                                 }
                             }
                             
-                            // Пропускаем пустые строки (должно быть либо имя, либо код)
-                            $hasName = !empty($mappedRow['item_name']) || !empty($mappedRow['name']);
-                            $hasCode = !empty($mappedRow['code']);
+                            // 🔧 Улучшенная проверка: ищем ЛЮБОЕ поле, похожее на имя или код
+                            $valName = $mappedRow['item_name'] ?? $mappedRow['itemName'] ?? $mappedRow['name'] ?? null;
+                            $valCode = $mappedRow['code'] ?? null;
                             
-                            if (!$hasName && !$hasCode) {
+                            if (empty($valName) && empty($valCode)) {
                                 continue;
                             }
                             
+                            \Illuminate\Support\Facades\Log::debug('[EstimateImport] Yielding row', [
+                                'mapped' => $mappedRow,
+                                'valName' => $valName,
+                                'valCode' => $valCode
+                            ]);
+
                             yield $mappedRow;
                         }
                     })();
