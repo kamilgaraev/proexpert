@@ -89,7 +89,7 @@ Route::get('/docs/{type}', function (string $type) {
     }
 
     abort(404, 'Документация не найдена');
-});
+})->where('type', '^(?!api$).*$');
 
 // Сервисный роут для отдачи YAML-спецификаций из репозитория
 Route::get('/docs-src/{type}/openapi.yaml', function (string $type) {
