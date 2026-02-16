@@ -55,7 +55,7 @@ class RealSmetaImportTest extends TestCase
         // 4. Выполнение импорта (синхронно для теста)
         $settings = [
             'name' => 'Тест реальной сметы ' . now()->toDateTimeString(),
-            'type' => 'estimate',
+            'type' => 'local',
             'organization_id' => $organization->id,
             'project_id' => $project->id,
         ];
