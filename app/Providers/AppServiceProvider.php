@@ -141,6 +141,10 @@ class AppServiceProvider extends ServiceProvider
         // Автоматическая синхронизация системных шаблонов отчетов при первом запуске
         $this->syncReportTemplatesOnBoot();
 
+        if (App::isProduction()) {
+            \Illuminate\Support\Facades\URL::forceScheme('https');
+        }
+
         Gate::define('viewApiDocs', function ($user = null) {
             return true;
         });
