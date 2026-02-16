@@ -187,6 +187,13 @@ class EstimateItemProcessor
             
             $context->currentSectionId = $currentSectionId;
 
+            Log::debug('[EstimateItemProcessor] Processing item', [
+                'name' => mb_substr($dto->itemName, 0, 50),
+                'type' => $dto->itemType,
+                'section_id' => $currentSectionId,
+                'is_section' => $dto->isSection
+            ]);
+
             foreach ($this->strategies as $strategy) {
                 if ($strategy->canHandle($dto)) {
                     $strategy->process($dto, $context);
