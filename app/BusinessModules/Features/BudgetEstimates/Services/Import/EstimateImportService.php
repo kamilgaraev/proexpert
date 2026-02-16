@@ -645,6 +645,8 @@ class EstimateImportService
         if (empty($columnLetter)) {
             return null;
         }
+
+        \Illuminate\Support\Facades\Log::debug('[EstimateImport] Mapping column', ['letter' => $columnLetter]);
         
         $columnLetter = strtoupper($columnLetter);
         $length = strlen($columnLetter);
@@ -712,6 +714,19 @@ class EstimateImportService
         try {
             $progressTracker->update(10, 100, 0, 10);
             
+            // 🔧 FIX: Если в конфиге нет маппинга колонок (только флаги), пробуем взять из кэша
+            // На этапе EXECUTE фронт может прислать только настройки, ожидая что маппинг уже в кэше после PREVIEW
+            if ($fileId) {
+                $cachedMapping = Cache::get("estimate_import_mapping:{$fileId}");
+                if ($cachedMapping) {
+                    // Объединяем, приоритет у пришедшего конфига (если там вдруг что-то есть)
+                    $matchingConfig = array_merge($cachedMapping, $matchingConfig);
+                    \Illuminate\Support\Facades\Log::info('[EstimateImport] Mapping restored from cache at start', [
+                        'mapping_keys' => array_keys($cachedMapping)
+                    ]);
+                }
+            }
+            
             // Если validateOnly, мы все равно создаем смету, но потом откатим транзакцию
             // Это нужно, чтобы работали внешние ключи (section.estimate_id и т.д.)
             $estimate = $this->estimateService->create([
@@ -750,8 +765,9 @@ class EstimateImportService
                     // Обертка для маппинга "на лету"
                     // Нам нужно передать mapping из конфига
                     $columnMapping = $matchingConfig ?? [];
+
                     \Illuminate\Support\Facades\Log::info('[EstimateImport] Starting stream import', [
-                        'config' => $columnMapping,
+                        'config_keys' => array_keys($columnMapping),
                         'file' => basename($fileData['file_path'])
                     ]);
                     
