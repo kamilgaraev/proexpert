@@ -10,6 +10,7 @@ use App\Services\Logging\LoggingService;
 use App\Http\Requests\Api\V1\Admin\CustomReport\CreateCustomReportRequest;
 use App\Http\Requests\Api\V1\Admin\CustomReport\UpdateCustomReportRequest;
 use App\Http\Requests\Api\V1\Admin\CustomReport\ExecuteCustomReportRequest;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -59,8 +60,7 @@ class CustomReportController extends Controller
             ->orderBy('created_at', 'desc')
             ->paginate($request->input('per_page', 15));
 
-        return response()->json([
-            'success' => true,
+        return AdminResponse::success([
             'data' => $reports->items(),
             'meta' => [
                 'current_page' => $reports->currentPage(),
@@ -93,11 +93,7 @@ class CustomReportController extends Controller
                     'errors' => $errors
                 ], 'warning');
 
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Ошибка валидации конфигурации отчета',
-                    'errors' => $errors,
-                ], 422);
+                return AdminResponse::error(trans_message('reports.custom.config_invalid'), 422, $errors);
             }
 
             $report = CustomReport::create([
@@ -121,11 +117,7 @@ class CustomReportController extends Controller
                 'has_joins' => !empty($report->data_sources['joins'] ?? [])
             ]);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Отчет успешно создан',
-                'data' => $report->load('user'),
-            ], 201);
+            return AdminResponse::success($report->load('user'), trans_message('reports.custom.created'), 201);
         } catch (\Throwable $e) {
             $this->logging->technical('custom_report.create_failed', [
                 'user_id' => $user->id,
@@ -142,10 +134,7 @@ class CustomReportController extends Controller
                 'trace' => $e->getTraceAsString()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка при создании отчета'
-            ], 500);
+            return AdminResponse::error(trans_message('reports.custom.internal_error'), 500);
         }
     }
 
@@ -157,16 +146,10 @@ class CustomReportController extends Controller
         $report = CustomReport::find($id);
 
         if (!$report || !$report->canBeViewedBy($user->id, $organizationId)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Отчет не найден',
-            ], 404);
+            return AdminResponse::error(trans_message('reports.custom.not_found'), 404);
         }
 
-        return response()->json([
-            'success' => true,
-            'data' => $report->load(['user', 'executions' => fn($q) => $q->recent()->limit(10)]),
-        ]);
+        return AdminResponse::success($report->load(['user', 'executions' => fn($q) => $q->recent()->limit(10)]));
     }
 
     public function update(UpdateCustomReportRequest $request, int $id): JsonResponse
@@ -177,10 +160,7 @@ class CustomReportController extends Controller
         $report = CustomReport::find($id);
 
         if (!$report || !$report->canBeEditedBy($user->id)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Отчет не найден или у вас нет прав на редактирование',
-            ], 403);
+            return AdminResponse::error(trans_message('reports.custom.no_permission_edit'), 403);
         }
 
         $data = $request->validated();
@@ -190,21 +170,13 @@ class CustomReportController extends Controller
             $errors = $this->builderService->validateReportConfig($configToValidate);
             
             if (!empty($errors)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Ошибка валидации конфигурации отчета',
-                    'errors' => $errors,
-                ], 422);
+                return AdminResponse::error(trans_message('reports.custom.config_invalid'), 422, $errors);
             }
         }
 
         $report->update($data);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Отчет успешно обновлен',
-            'data' => $report->fresh(['user']),
-        ]);
+        return AdminResponse::success($report->fresh(['user']), trans_message('reports.custom.updated'));
     }
 
     public function destroy(Request $request, int $id): JsonResponse
@@ -214,18 +186,12 @@ class CustomReportController extends Controller
         $report = CustomReport::find($id);
 
         if (!$report || !$report->canBeEditedBy($user->id)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Отчет не найден или у вас нет прав на удаление',
-            ], 403);
+            return AdminResponse::error(trans_message('reports.custom.no_permission_delete'), 403);
         }
 
         $report->delete();
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Отчет успешно удален',
-        ]);
+        return AdminResponse::success(null, trans_message('reports.custom.deleted'));
     }
 
     public function clone(Request $request, int $id): JsonResponse
@@ -236,19 +202,12 @@ class CustomReportController extends Controller
         $report = CustomReport::find($id);
 
         if (!$report || !$report->canBeViewedBy($user->id, $organizationId)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Отчет не найден',
-            ], 404);
+            return AdminResponse::error(trans_message('reports.custom.not_found'), 404);
         }
 
         $newReport = $this->builderService->cloneReport($report, $user->id, $organizationId);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Отчет успешно склонирован',
-            'data' => $newReport->load('user'),
-        ], 201);
+        return AdminResponse::success($newReport->load('user'), trans_message('reports.custom.cloned'), 201);
     }
 
     public function toggleFavorite(Request $request, int $id): JsonResponse
@@ -259,25 +218,16 @@ class CustomReportController extends Controller
         $report = CustomReport::find($id);
 
         if (!$report || !$report->canBeViewedBy($user->id, $organizationId)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Отчет не найден',
-            ], 404);
+            return AdminResponse::error(trans_message('reports.custom.not_found'), 404);
         }
 
         if ($report->user_id !== $user->id) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Только владелец может изменять статус избранного',
-            ], 403);
+            return AdminResponse::error(trans_message('reports.custom.no_permission_favorite'), 403);
         }
 
         $report->update(['is_favorite' => !$report->is_favorite]);
 
-        return response()->json([
-            'success' => true,
-            'data' => ['is_favorite' => $report->is_favorite],
-        ]);
+        return AdminResponse::success(['is_favorite' => $report->is_favorite]);
     }
 
     public function updateSharing(Request $request, int $id): JsonResponse
@@ -287,23 +237,16 @@ class CustomReportController extends Controller
         $report = CustomReport::find($id);
 
         if (!$report || !$report->canBeEditedBy($user->id)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Отчет не найден или у вас нет прав',
-            ], 403);
+            return AdminResponse::error(trans_message('reports.custom.no_permission_edit'), 403);
         }
 
         $request->validate(['is_shared' => 'required|boolean']);
 
         $report->update(['is_shared' => $request->is_shared]);
 
-        return response()->json([
-            'success' => true,
-            'message' => $request->is_shared 
-                ? 'Отчет теперь доступен всей организации' 
-                : 'Отчет теперь приватный',
-            'data' => ['is_shared' => $report->is_shared],
-        ]);
+        return AdminResponse::success(['is_shared' => $report->is_shared], $request->is_shared 
+                ? trans_message('reports.custom.shared_organization') 
+                : trans_message('reports.custom.shared_private'));
     }
 
     public function execute(ExecuteCustomReportRequest $request, int $id): JsonResponse|StreamedResponse
@@ -329,10 +272,7 @@ class CustomReportController extends Controller
                     'organization_id' => $organizationId
                 ], 'warning');
 
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Отчет не найден',
-                ], 404);
+                return AdminResponse::error(trans_message('reports.custom.not_found'), 404);
             }
 
             $filters = $request->input('filters', []);
@@ -369,10 +309,7 @@ class CustomReportController extends Controller
                 'trace' => $e->getTraceAsString()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка при выполнении отчета'
-            ], 500);
+            return AdminResponse::error(trans_message('reports.custom.execution_failed'), 500);
         }
     }
 
@@ -384,10 +321,7 @@ class CustomReportController extends Controller
         $report = CustomReport::find($id);
 
         if (!$report || !$report->canBeViewedBy($user->id, $organizationId)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Отчет не найден',
-            ], 404);
+            return AdminResponse::error(trans_message('reports.custom.not_found'), 404);
         }
 
         $executions = $this->executionService->getExecutionHistory(
@@ -395,10 +329,7 @@ class CustomReportController extends Controller
             $request->input('limit', 50)
         );
 
-        return response()->json([
-            'success' => true,
-            'data' => $executions,
-        ]);
+        return AdminResponse::success($executions);
     }
 }
 
