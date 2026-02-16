@@ -756,22 +756,32 @@ class EstimateImportService
                             // Преобразуем индексированный массив (строку excel) в именованный массив через маппинг
                             $mappedRow = [];
                             foreach ($columnMapping as $field => $columnIndex) {
-                                // Преобразуем букву колонки в индекс (A -> 0, B -> 1) если нужно
-                                // SimpleXLSX возвращает индексированный массив [0 => 'Val', 1 => 'Val']
-                                // А маппинг у нас может быть ['name' => 'A', 'price' => 'F']
+                                // 🔧 Исправление: $columnIndex может быть массивом ['column' => 'A', ...]
+                                $columnLetter = is_array($columnIndex) ? ($columnIndex['column'] ?? null) : $columnIndex;
                                 
-                                $idx = $this->columnIndexFromString($columnIndex);
+                                $idx = $this->columnIndexFromString($columnLetter);
                                 if ($idx !== null && isset($row[$idx])) {
-                                    $mappedRow[$field] = $row[$idx];
+                                    $val = $row[$idx];
+                                    
+                                    // 🔧 Очистка числовых значений
+                                    if (in_array($field, ['quantity', 'unit_price', 'current_total_amount'])) {
+                                        $val = $this->cleanNumericValue($val);
+                                    }
+                                    
+                                    // 🔧 Очистка названий
+                                    if ($field === 'item_name' || $field === 'name') {
+                                        $val = $this->cleanItemName($val);
+                                    }
+
+                                    $mappedRow[$field] = $val;
                                 }
                             }
                             
                             // Пропускаем пустые строки
-                            if (empty($mappedRow)) {
+                            if (empty($mappedRow) || (empty($mappedRow['item_name']) && empty($mappedRow['code']))) {
                                 continue;
                             }
                             
-                            // Добавляем метаданные если нужны (например номер строки, если SimpleXLSX его не дает)
                             yield $mappedRow;
                         }
                     })();
@@ -920,5 +930,57 @@ class EstimateImportService
             DB::rollBack();
             throw $e;
         }
+    }
+    private function cleanNumericValue($value)
+    {
+        if ($value === null || $value === '' || is_numeric($value)) {
+            return $value;
+        }
+
+        $str = (string)$value;
+
+        // 1. Если multiline - берем только первую строку
+        if (str_contains($str, "\n")) {
+            $lines = explode("\n", $str);
+            $str = trim($lines[0]);
+        }
+        
+        // 2. Если содержит слеш / - берем первую часть
+        if (str_contains($str, '/')) {
+            $parts = explode('/', $str);
+            $str = trim($parts[0]);
+        }
+        
+        // 3. Очистка от мусора
+        $cleaned = preg_replace('/[^\d.,\-]/', '', $str);
+        $cleaned = str_replace(',', '.', $cleaned);
+        
+        return is_numeric($cleaned) ? (float)$cleaned : $value;
+    }
+
+    private function cleanItemName($value): string
+    {
+        if (!$value) return '';
+        
+        $val = (string)$value;
+        
+        $pruningPatterns = [
+            '/ИНДЕКС К ПОЗИЦИИ/ui',
+            '/НР\s*\(/ui',
+            '/СП\s*\(/ui',
+            '/ПЗ\s*=/ui',
+            '/ЭМ\s*=/ui',
+            '/ЗПм\s*=/ui',
+            '/ОТм\s*=/ui',
+            '/МАТ\s*=/ui',
+        ];
+
+        foreach ($pruningPatterns as $pattern) {
+            if (preg_match($pattern, $val, $matches, PREG_OFFSET_CAPTURE)) {
+                $val = trim(mb_substr($val, 0, $matches[0][1]));
+            }
+        }
+        
+        return $val;
     }
 }
