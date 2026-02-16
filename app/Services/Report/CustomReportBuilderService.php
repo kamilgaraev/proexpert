@@ -378,6 +378,38 @@ class CustomReportBuilderService
         return $newReport;
     }
 
+    public function getFilterValues(string $dataSourceKey, string $fieldKey, ?string $search = null): array
+    {
+        $this->logging->technical('report_builder.get_filter_values_requested', [
+            'data_source' => $dataSourceKey,
+            'field' => $fieldKey,
+            'search' => $search
+        ], 'debug');
+
+        if (!$this->registry->validateDataSource($dataSourceKey)) {
+            throw new \InvalidArgumentException("Некорректный источник данных: {$dataSourceKey}");
+        }
+
+        if (!$this->registry->validateField($dataSourceKey, $fieldKey)) {
+            throw new \InvalidArgumentException("Некорректное поле: {$fieldKey} для источника {$dataSourceKey}");
+        }
+
+        $tableName = $this->registry->getTableName($dataSourceKey);
+        
+        $query = DB::table($tableName)
+            ->select($fieldKey)
+            ->distinct()
+            ->whereNotNull($fieldKey);
+
+        if ($search) {
+            $query->where($fieldKey, 'LIKE', "%{$search}%");
+        }
+
+        return $query->limit(100)
+            ->pluck($fieldKey)
+            ->toArray();
+    }
+
     public function getAvailableDataSources(): array
     {
         return $this->registry->getAllDataSources();

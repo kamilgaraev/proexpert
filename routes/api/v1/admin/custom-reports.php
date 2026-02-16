@@ -34,6 +34,9 @@ Route::prefix('custom-reports')->name('custom_reports.')->middleware(['module.ac
         
         Route::get('/categories', [CustomReportBuilderController::class, 'getCategories'])
             ->name('categories');
+
+        Route::get('/data-sources/{dataSource}/fields/{field}/values', [\App\Http\Controllers\Api\V1\Admin\ReportMetadataController::class, 'getFilterValues'])
+            ->name('field_values');
     });
 
     Route::get('/', [CustomReportController::class, 'index'])->name('index');

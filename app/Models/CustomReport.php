@@ -12,6 +12,11 @@ class CustomReport extends Model
 {
     use HasFactory, SoftDeletes;
 
+    public const CHART_TYPE_TABLE = 'table';
+    public const CHART_TYPE_BAR = 'bar';
+    public const CHART_TYPE_LINE = 'line';
+    public const CHART_TYPE_PIE = 'pie';
+
     protected $fillable = [
         'name',
         'description',
