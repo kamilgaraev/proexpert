@@ -360,17 +360,17 @@ class ImportPipelineService
     {
         $totals = EstimateItem::where('estimate_id', $estimate->id)
             ->selectRaw('
-                -- Current Totals
+                -- Current Totals (already rounded per row usually, but SUM needs careful sum)
                 SUM(direct_costs) as direct_costs,
                 SUM(overhead_amount) as overhead_amount,
                 SUM(profit_amount) as profit_amount,
                 
-                -- Base Totals
-                SUM(base_unit_price * quantity) as base_direct_costs,
-                SUM(base_materials_cost * quantity) as base_materials_cost,
-                SUM(base_machinery_cost * quantity) as base_machinery_cost,
-                SUM(base_labor_cost * quantity) as base_labor_cost,
-                SUM(base_machinery_labor_cost * quantity) as base_machinery_labor_cost,
+                -- Base Totals (Calculated as sum of rounded row totals)
+                SUM(ROUND(CAST(base_unit_price AS NUMERIC) * CAST(quantity AS NUMERIC), 2)) as base_direct_costs,
+                SUM(ROUND(CAST(base_materials_cost AS NUMERIC) * CAST(quantity AS NUMERIC), 2)) as base_materials_cost,
+                SUM(ROUND(CAST(base_machinery_cost AS NUMERIC) * CAST(quantity AS NUMERIC), 2)) as base_machinery_cost,
+                SUM(ROUND(CAST(base_labor_cost AS NUMERIC) * CAST(quantity AS NUMERIC), 2)) as base_labor_cost,
+                SUM(ROUND(CAST(base_machinery_labor_cost AS NUMERIC) * CAST(quantity AS NUMERIC), 2)) as base_machinery_labor_cost,
                 
                 SUM(base_overhead_amount) as base_overhead_total,
                 SUM(base_profit_amount) as base_profit_total
@@ -386,7 +386,7 @@ class ImportPipelineService
             $totalWithoutVat = round($totalDirect + $totalOverhead + $totalProfit, 2);
             
             $vatRate = (float)($estimate->vat_rate ?? 18);
-            $totalWithVat = round($totalWithoutVat * (1 + ($vatRate / 100)), 2);
+            $totalWithVat = round(round($totalWithoutVat, 2) * (1 + ($vatRate / 100)), 2);
 
             $estimate->update([
                 'total_amount' => $totalWithoutVat,

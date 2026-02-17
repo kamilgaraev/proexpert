@@ -43,4 +43,33 @@ class ImportRowMapperTest extends TestCase
         $this->assertArrayNotHasKey('profit_rate', $attributes, 'Should not detect profit rate from supravochno');
         $this->assertArrayNotHasKey('profit_amount', $attributes, 'Should not detect profit amount from supravochno');
     }
+
+    public function testParseMultiLineValue()
+    {
+        $mapper = new ImportRowMapper();
+        
+        $value = "100.00\n20.00\n30.00\n5.00"; // Всего, ЗП, ЭМ, ЗПМ
+        $result = $mapper->parseMultiLineValue($value);
+        
+        $this->assertEquals(100.00, $result['total']);
+        $this->assertEquals(20.00, $result['labor']);
+        $this->assertEquals(30.00, $result['machinery']);
+        $this->assertEquals(5.00, $result['machinery_labor']);
+        // Materials = 100 - 20 - 30 = 50
+        $this->assertEquals(50.00, $result['materials']);
+    }
+
+    public function testParseMultiLineValueWithMaterials()
+    {
+        $mapper = new ImportRowMapper();
+        
+        $value = "150.00\n30.00\n40.00\n10.00\n80.00"; // Всего, ЗП, ЭМ, ЗПМ, Материалы
+        $result = $mapper->parseMultiLineValue($value);
+        
+        $this->assertEquals(150.00, $result['total']);
+        $this->assertEquals(30.00, $result['labor']);
+        $this->assertEquals(40.00, $result['machinery']);
+        $this->assertEquals(10.00, $result['machinery_labor']);
+        $this->assertEquals(80.00, $result['materials']);
+    }
 }
