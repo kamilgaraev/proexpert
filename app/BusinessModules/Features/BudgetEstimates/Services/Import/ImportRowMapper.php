@@ -289,6 +289,8 @@ class ImportRowMapper
             priceIndex: $mappedData['priceIndex'] ?? null,
             currentUnitPrice: $mappedData['currentUnitPrice'] ?? null,
             priceCoefficient: $mappedData['priceCoefficient'] ?? null,
+            overheadAmount: $attributes['overhead_amount'] ?? null,
+            profitAmount: $attributes['profit_amount'] ?? null,
             overheadRate: $mappedData['overheadRate'] ?? null,
             profitRate: $mappedData['profitRate'] ?? null
         );
