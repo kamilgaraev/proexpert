@@ -20,7 +20,7 @@ class EstimateImportService
     public function __construct(
         private FileStorageService $fileStorage,
         private ImportRowMapper $rowMapper,
-        // Dependencies reserved for future Phases (2 & 3)
+        private AiMappingService $aiMappingService,
         private ?\App\BusinessModules\Features\BudgetEstimates\Services\EstimateService $estimateService = null,
         private ?\App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\Factory\ParserFactory $parserFactory = null
     ) {}
@@ -103,6 +103,16 @@ class EstimateImportService
             // Get Raw Sample Rows for UI
             $sampleRows = $this->getRawSampleRows($fullPath, $structure);
 
+            // 3. Strategic Upgrade: AI-Powered Column Detection
+            $aiMapping = $this->aiMappingService->detectMapping($structure['raw_headers'] ?? [], $sampleRows);
+            if ($aiMapping) {
+                Log::info('[EstimateImportService] Applying AI mapping results');
+                $structure['column_mapping'] = $aiMapping;
+                // Update session again with enriched mapping
+                $options['structure'] = $structure;
+                $session->update(['options' => $options]);
+            }
+
             return [
                 'format' => 'excel_simple', 
                 'detected_columns' => $structure['detected_columns'],
@@ -110,6 +120,7 @@ class EstimateImportService
                 'header_row' => $structure['header_row'],
                 'header_candidates' => $parser->getHeaderCandidates(),
                 'sample_rows' => $sampleRows,
+                'ai_mapping_applied' => (bool)$aiMapping,
             ];
         } catch (\Throwable $e) {
             Log::error("[EstimateImportService] Detect format failed for session {$sessionId}", [

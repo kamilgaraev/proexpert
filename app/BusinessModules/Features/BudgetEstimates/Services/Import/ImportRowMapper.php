@@ -18,6 +18,13 @@ class ImportRowMapper
             return $rowDTO;
         }
 
+        // 1. Handle duplicate column mapping (Name and Unit pointing to same column)
+        $nameCol = $mapping['name'] ?? $mapping['item_name'] ?? null;
+        $unitCol = $mapping['unit'] ?? null;
+        if ($nameCol !== null && $nameCol === $unitCol) {
+            unset($mapping['unit']);
+        }
+
         // 1. Check if it's a "technical" row (e.g., 1, 2, 3, 4, 5... guide row)
         if ($this->isTechnicalRow($rawData)) {
             // Signal to skip this row by returning a special DTO or marking it
@@ -262,21 +269,44 @@ class ImportRowMapper
 
     private function splitNameAndUnit(string $name): array
     {
-        // 1. Try to find unit in brackets within the first two lines
         $lines = explode("\n", $name);
-        foreach (array_slice($lines, 0, 2) as $line) {
-            if (preg_match('/[\(\[]([^0-9\(\)\[\]]{1,15})[\)\]]/u', $line, $matches)) {
+        
+        // 1. Try to find unit in brackets within the first few lines
+        // Revised: allow numbers (e.g. 1000 м3, 100 м)
+        foreach (array_slice($lines, 0, 3) as $line) {
+            if (preg_match('/[\(\[]([^\\(\\)\\[\\]]{1,20})[\)\]]/u', $line, $matches)) {
+                $unitFound = trim($matches[1]);
+                // Heuristic: units usually contain at least one letter
+                if (preg_match('/[а-яёa-z]/ui', $unitFound)) {
+                    return [
+                        'name' => $name,
+                        'unit' => $unitFound
+                    ];
+                }
+            }
+        }
+
+        // 2. Try to find unit at the end of the first line (e.g. "Name, м2")
+        $firstLine = trim($lines[0]);
+        if (preg_match('/,\s*([а-яёa-z0-9\/ ]{1,15})$/ui', $firstLine, $matches)) {
+            $unitFound = trim($matches[1]);
+            // Avoid splitting if it looks like part of a sentence
+            if (!empty($unitFound) && !preg_match('/[0-9]{5,}/', $unitFound)) {
                 return [
                     'name' => $name,
-                    'unit' => trim($matches[1])
+                    'unit' => $unitFound
                 ];
             }
         }
 
-        // 2. Try multi-line split if last line is short (typical unit position)
+        // 3. Try multi-line split if last line is short (typical unit position)
         if (count($lines) >= 2) {
             $lastLine = trim(end($lines));
-            if (mb_strlen($lastLine) > 1 && mb_strlen($lastLine) < 15 && !preg_match('/[0-9]{3,}/', $lastLine)) {
+            // Heuristic for units: short, no terminal punctuation, contains letters
+            if (mb_strlen($lastLine) > 0 && mb_strlen($lastLine) < 15 
+                && !preg_match('/[\.\?\!]$/', $lastLine)
+                && preg_match('/[а-яёa-z]/ui', $lastLine)) {
+                
                 array_pop($lines);
                 return [
                     'name' => trim(implode("\n", $lines)),
