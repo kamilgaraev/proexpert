@@ -53,13 +53,19 @@ jobs:
             git reset --hard HEAD
             git clean -fd -e public/docs -e public/docs/**
             git fetch --all --prune
-            git reset --hard origin/main
+            
+            # Входим в режим обслуживания перед обновлением кода
             php artisan down || true
             
-            # Полная очистка vendor для предотвращения конфликтов
-            rm -rf vendor/
+            git reset --hard origin/main
             
-            composer install --no-interaction --prefer-dist --optimize-autoloader
+            # Установка зависимостей (без удаления vendor)
+            # --no-dev: не ставить dev-пакеты на проде
+            composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+            
+            # Пересборка автозагрузчика (важно для устранения ошибок "file not found")
+            composer dump-autoload --optimize
+            
             php artisan storage:link || true
             if [ ! -f /usr/local/bin/rr ]; then vendor/bin/rr get-binary --location=/usr/local/bin --no-config --stability=stable; fi
             
@@ -73,18 +79,23 @@ jobs:
             php artisan modules:scan --clear-cache
             echo "✅ Modules scan completed successfully"
             
-            # Оптимизация: очистка и кэширование в одной команде
+            # Оптимизация: сначала чистим, потом кешируем
             echo "🔄 Optimizing application..."
+            php artisan optimize:clear
             php artisan optimize
             echo "✅ Optimization completed successfully"
+            
+            # Перезапуск сервера приложений (RoadRunner/Octane)
+            echo "🔄 Reloading Application Server..."
+            php artisan octane:reload || sudo systemctl reload prohelper-octane || sudo systemctl restart prohelper-octane || true
             
             # Перезапуск queue workers
             echo "🔄 Restarting queue workers..."
             supervisorctl restart laravel-worker:* || true
             echo "✅ Queue workers restarted"
             
+            # Выход из режима обслуживания (сайт снова доступен)
             php artisan up || true
-            php artisan octane:reload || sudo systemctl reload prohelper-octane || sudo systemctl restart prohelper-octane
 
       - name: Copy docs to server (appleboy)
         uses: appleboy/scp-action@v0.1.7
