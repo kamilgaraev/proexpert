@@ -99,7 +99,7 @@ class EnrichEstimateJob implements ShouldQueue
                     $result = $results[$index] ?? null;
                     if ($result) {
                         EstimateItem::where('id', $candidate['id'])->update([
-                            'item_type' => $result->itemType,
+                            'item_type' => $result->type,
                             // 'work_type_id' => ... if classifier returned it
                         ]);
                     }
