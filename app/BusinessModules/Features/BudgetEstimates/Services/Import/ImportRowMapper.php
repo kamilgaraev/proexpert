@@ -285,10 +285,8 @@ class ImportRowMapper
             isFooter: $mappedData['isFooter'] ?? false,
             quantityCoefficient: $mappedData['quantityCoefficient'] ?? null,
             quantityTotal: $mappedData['quantityTotal'] ?? null,
-            baseUnitPrice: $mappedData['baseUnitPrice'] ?? null,
+            baseUnitPrice: $mappedData['baseUnitPrice'] ?? $mappedData['unitPrice'] ?? null,
             priceIndex: $mappedData['priceIndex'] ?? null,
-            currentUnitPrice: $mappedData['currentUnitPrice'] ?? null,
-            priceCoefficient: $mappedData['priceCoefficient'] ?? null,
             currentUnitPrice: $mappedData['currentUnitPrice'] ?? null,
             priceCoefficient: $mappedData['priceCoefficient'] ?? null,
             overheadAmount: $attributes['overhead_amount'] ?? null,
@@ -297,8 +295,7 @@ class ImportRowMapper
             profitRate: $mappedData['profitRate'] ?? null,
             baseLaborCost: $mappedData['baseLaborCost'] ?? null,
             baseMachineryCost: $mappedData['baseMachineryCost'] ?? null,
-            baseMaterialsCost: $mappedData['baseMaterialsCost'] ?? null,
-            baseUnitPrice: $mappedData['baseUnitPrice'] ?? $mappedData['unitPrice'] ?? null
+            baseMaterialsCost: $mappedData['baseMaterialsCost'] ?? null
         );
     }
 
