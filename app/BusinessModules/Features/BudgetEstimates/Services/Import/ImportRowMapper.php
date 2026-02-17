@@ -82,6 +82,9 @@ class ImportRowMapper
             
             $value = $this->getValueFromRaw($rawData, $column);
             
+            // Если ячейка пустая, не обрабатываем её, чтобы не затереть данные из других колонок
+            if ($value === null || trim((string)$value) === '') continue;
+            
             switch ($field) {
                 case 'name':
                 case 'item_name':
@@ -145,6 +148,10 @@ class ImportRowMapper
                     break;
                 case 'current_unit_price':
                     $mappedData['currentUnitPrice'] = $this->parseFloat($value);
+                    break;
+                case 'base_machinery_labor_price':
+                case 'machinery_labor_price':
+                    $mappedData['baseMachineryLaborCost'] = $this->parseFloat($value);
                     break;
                 case 'price_coefficient':
                     $mappedData['priceCoefficient'] = $this->parseFloat($value);
@@ -293,6 +300,15 @@ class ImportRowMapper
             }
         }
 
+        // Финальный расчет материалов для ФЕР: Мат = ПЗ - ОЗП - ЭМ
+        // Делаем это только если материалы явно не были заданы или они равны ПЗ (что бывает при авторасчете из single-line)
+        if ($mappedData['baseUnitPrice'] > 0) {
+            $calcMaterials = round($mappedData['baseUnitPrice'] - $mappedData['baseLaborCost'] - $mappedData['baseMachineryCost'], 2);
+            if ($calcMaterials > 0 && ($mappedData['baseMaterialsCost'] <= 0 || abs($mappedData['baseMaterialsCost'] - $mappedData['baseUnitPrice']) < 0.01)) {
+                $mappedData['baseMaterialsCost'] = $calcMaterials;
+            }
+        }
+
         $attributes = $this->parseItemAttributes($rawNameForParsing);
 
         return new EstimateImportRowDTO(
@@ -310,9 +326,9 @@ class ImportRowMapper
             rawData: $rawData,
             quantityCoefficient: $mappedData['quantityCoefficient'] ?? null,
             quantityTotal: $mappedData['quantityTotal'] ?? null,
-            baseUnitPrice: round($mappedData['baseUnitPrice'] ?? 0, 2),
+            baseUnitPrice: $mappedData['baseUnitPrice'] ?? 0,
             priceIndex: $mappedData['priceIndex'] ?? null,
-            currentUnitPrice: round($mappedData['currentUnitPrice'] ?? $mappedData['unitPrice'] ?? 0, 2),
+            currentUnitPrice: $mappedData['currentUnitPrice'] ?? $mappedData['unitPrice'] ?? 0,
             priceCoefficient: $mappedData['priceCoefficient'] ?? null,
             currentTotalAmount: $mappedData['currentTotalAmount'] ?? null,
             overheadAmount: round($attributes['overhead_amount'] ?? 0, 2),
@@ -364,18 +380,9 @@ class ImportRowMapper
         $result['machinery'] = round($this->parseFloat($lines[2] ?? null) ?? 0, 2);
         $result['machinery_labor'] = round($this->parseFloat($lines[3] ?? null) ?? 0, 2);
         
-        // Попытка взять материалы из 5-й строки, если она есть
-        $matCandidate = round($this->parseFloat($lines[4] ?? null) ?? 0, 2);
-        if ($matCandidate > 0) {
-            $result['materials'] = $matCandidate;
-        } else {
-            // Расчет материалов: ПЗ - ОЗП - ЭМ
-            // Важно: в FER "ЭМ" обычно УЖЕ включает в себя "ЗПМ".
-            $result['materials'] = round($result['total'] - $result['labor'] - $result['machinery'], 2);
-            if ($result['materials'] < 0.01) {
-                $result['materials'] = 0;
-            }
-        }
+        // ВАЖНО: Мы НЕ рассчитываем материалы здесь автоматом, 
+        // чтобы не затереть данные в цикле маппинга. Расчет вынесен в конец map().
+        $result['materials'] = round($this->parseFloat($lines[4] ?? null) ?? 0, 2);
 
         return $result;
     }
