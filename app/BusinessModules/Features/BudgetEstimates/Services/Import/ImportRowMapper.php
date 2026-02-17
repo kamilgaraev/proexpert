@@ -8,9 +8,16 @@ use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportRowDTO;
 
 class ImportRowMapper
 {
+    private array $sectionHints = [];
+
     private const COMMON_UNITS = [
         'шт', 'м', 'кг', 'т', 'м3', 'м2', 'км', 'чел.-ч', 'маш.-час', 'компл', 'компл.', 'ед', 'пог. м', 'пог.м', '100 м', '1000 м3', '100 м2', '100 м3', 'тн', 'усл. ед', 'уп'
     ];
+
+    public function setSectionHints(array $hints): void
+    {
+        $this->sectionHints = $hints;
+    }
 
     /**
      * Map raw row data to EstimateImportRowDTO based on column mapping.
@@ -111,16 +118,24 @@ class ImportRowMapper
             $mappedData['unit'] = $split['unit'];
         }
 
-        // 3. Section detection heuristic
-        // If name exists but no quantity/price, it's likely a section or a comment
-        if (!empty($mappedData['itemName']) && $mappedData['quantity'] === null && $mappedData['unitPrice'] === null) {
-            // Check if it looks like "Раздел..." or just a header
-            if ($this->isSection($mappedData['itemName'], $rawData)) {
-                $mappedData['isSection'] = true;
-                // Clear numeric fields for sections to avoid "Раздел 1" grabbing "1" as price
-                $mappedData['quantity'] = null;
-                $mappedData['unitPrice'] = null;
-                $mappedData['currentTotalAmount'] = null;
+        // 3. Robust Section Detection
+        $mappedData['isSection'] = $this->isSection($mappedData['itemName'] ?? null, $rawData);
+
+        if ($mappedData['isSection']) {
+            // Force clear numeric fields for sections
+            $mappedData['quantity'] = null;
+            $mappedData['unitPrice'] = null;
+            $mappedData['currentTotalAmount'] = null;
+
+            // Fallback for itemName if mapped one is too short or empty
+            if (empty($mappedData['itemName']) || mb_strlen($mappedData['itemName']) < 4) {
+                foreach ($rawData as $val) {
+                    $v = trim((string)$val);
+                    if (mb_strlen($v) > 5 && !is_numeric($v)) {
+                         $mappedData['itemName'] = $v;
+                         break;
+                    }
+                }
             }
         }
 
@@ -164,6 +179,8 @@ class ImportRowMapper
             'МАТ=',
             'ФОТ=',
             'Приказ Минстроя',
+            'Перевод цен',
+            'Коэффициент',
         ];
 
         foreach ($lines as $line) {
@@ -174,7 +191,7 @@ class ImportRowMapper
             foreach ($trashKeywords as $kw) {
                 if (mb_stripos($trimmed, $kw) !== false) {
                     // Use more strict regex to avoid stripping real names containing these words accidentally
-                    if (preg_match('/(НР|СП)\s*\(|ИНДЕКС\s+К\s+ПОЗИЦИИ|ФОТ\s*=|ЗП\s*=|МАТ\s*=|^Приказ\s/ui', $trimmed)) {
+                    if (preg_match('/(НР|СП)\s*\(|ИНДЕКС\s+К\s+ПОЗИЦИИ|ФОТ\s*=|ЗП\s*=|МАТ\s*=|^Приказ\s|Перевод\s+цен|Коэффициент(?:\/|\s*=)/ui', $trimmed)) {
                         $isTrash = true;
                         break;
                     }
@@ -220,26 +237,60 @@ class ImportRowMapper
 
     private function isSection(?string $itemName, array $rawData): bool
     {
-        $text = $itemName ?? '';
+        // 1. Prioritize AI Hints
+        $aiKeywords = $this->sectionHints['section_keywords'] ?? [];
+        $aiCols = $this->sectionHints['section_columns'] ?? [];
+
+        if (!empty($aiKeywords) || !empty($aiCols)) {
+            // Check specific columns if AI pointed to them
+            foreach ($aiCols as $colIdx) {
+                if (isset($rawData[$colIdx])) {
+                    $v = (string)$rawData[$colIdx];
+                    foreach ($aiKeywords as $kw) {
+                        if (mb_stripos($v, $kw) !== false) return true;
+                    }
+                }
+            }
+            
+            // Or just check if any AI keyword appears in itemName
+            $text = mb_strtolower($itemName ?? '');
+            foreach ($aiKeywords as $kw) {
+                if (mb_stripos($text, mb_strtolower($kw)) !== false) return true;
+            }
+        }
+
+        // 2. Fallback to standard heuristics
+        // Check all early columns for keywords
+        foreach (array_slice($rawData, 0, 8) as $val) {
+            $v = (string)$val;
+            if (mb_stripos($v, 'раздел') !== false || mb_stripos($v, 'этап') !== false) {
+                return true;
+            }
+        }
+
+        $text = trim($itemName ?? '');
         
-        // 1. Explicit keywords
+        // 2. Explicit keywords in itemName
         if (mb_stripos($text, 'раздел') !== false || mb_stripos($text, 'этап') !== false) {
             return true;
         }
 
-        // 2. If it's a long string and almost all other data cells are empty
-        // We exclude the first few columns which might be sequence numbers
-        $dataCells = array_slice($rawData, 2); // Assume first 2 cols might be technical
-        $nonEmptyDataCells = array_filter($dataCells, fn($v) => $v !== null && trim((string)$v) !== '');
-        
-        if (count($nonEmptyDataCells) === 1) {
-            $val = reset($nonEmptyDataCells);
-            if (mb_strlen((string)$val) > 15) return true;
+        // 3. Pattern "1.1.2. Section Name"
+        if (preg_match('/^[0-9]+(\.[0-9]+)+\s+[А-ЯA-Z]/u', $text)) {
+            return true;
         }
 
-        // 3. If it looks like a section header "1.1.2. Section Name"
-        if (preg_match('/^[0-9]+(\.[0-9]+)+\s+[А-ЯA-Z]/u', trim($text))) {
-            return true;
+        // 4. Heuristic: Check if row has only one long non-numeric string (likely a floating section title)
+        $nonEmptyValues = array_filter($rawData, fn($v) => !empty(trim((string)$v)));
+        if (count($nonEmptyValues) <= 3) {
+            foreach ($nonEmptyValues as $val) {
+                $v = (string)$val;
+                if (mb_strlen($v) > 20 && !is_numeric($v)) {
+                   // Ensure it's not a name column in a regular row by checking if quantity exists
+                   // But since it's a count <= 3, it's very likely a technical or section row.
+                   return true;
+                }
+            }
         }
 
         return false;

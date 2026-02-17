@@ -38,10 +38,16 @@ class ImportPipelineService
         $parser = $this->parserFactory->getParser($filePath);
         
         // Prepare Parser Options
+        $structure = $session->options['structure'] ?? [];
         $options = [
-            'header_row' => $session->options['structure']['header_row'] ?? null,
-            'column_mapping' => $session->options['structure']['column_mapping'] ?? [],
+            'header_row' => $structure['header_row'] ?? null,
+            'column_mapping' => $structure['column_mapping'] ?? [],
         ];
+
+        // 0. Initialize RowMapper with AI hints if available
+        if (!empty($structure['ai_section_hints'])) {
+             $this->rowMapper->setSectionHints($structure['ai_section_hints']);
+        }
 
         // 1. Create or Get Estimate
         $estimate = $this->resolveEstimate($session);

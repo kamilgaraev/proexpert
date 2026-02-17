@@ -104,10 +104,12 @@ class EstimateImportService
             $sampleRows = $this->getRawSampleRows($fullPath, $structure);
 
             // 3. Strategic Upgrade: AI-Powered Column Detection
-            $aiMapping = $this->aiMappingService->detectMapping($structure['raw_headers'] ?? [], $sampleRows);
-            if ($aiMapping) {
+            $aiResponse = $this->aiMappingService->detectMapping($structure['raw_headers'] ?? [], $sampleRows);
+            if ($aiResponse && isset($aiResponse['mapping'])) {
                 Log::info('[EstimateImportService] Applying AI mapping results');
-                $structure['column_mapping'] = $aiMapping;
+                $structure['column_mapping'] = $aiResponse['mapping'];
+                $structure['ai_section_hints'] = $aiResponse['section_hints'] ?? [];
+                
                 // Update session again with enriched mapping
                 $options['structure'] = $structure;
                 $session->update(['options' => $options]);
@@ -120,7 +122,7 @@ class EstimateImportService
                 'header_row' => $structure['header_row'],
                 'header_candidates' => $parser->getHeaderCandidates(),
                 'sample_rows' => $sampleRows,
-                'ai_mapping_applied' => (bool)$aiMapping,
+                'ai_mapping_applied' => (bool)$aiResponse,
             ];
         } catch (\Throwable $e) {
             Log::error("[EstimateImportService] Detect format failed for session {$sessionId}", [
