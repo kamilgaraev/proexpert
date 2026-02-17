@@ -124,12 +124,11 @@ class ImportRowMapper
                 case 'base_unit_price':
                     $parsed = $this->parseMultiLineValue($value);
                     $mappedData['baseUnitPrice'] = $parsed['total'];
-                    if ($parsed['labor'] > 0 || $parsed['machinery'] > 0) {
-                        $mappedData['baseLaborCost'] = $parsed['labor'];
-                        $mappedData['baseMachineryCost'] = $parsed['machinery'];
-                        $mappedData['baseMachineryLaborCost'] = $parsed['machinery_labor'];
-                        $mappedData['baseMaterialsCost'] = $parsed['materials'];
-                    }
+                    // Заполняем компоненты ТОЛЬКО если они реально найдены в этой ячейке
+                    if ($parsed['labor'] > 0) $mappedData['baseLaborCost'] = $parsed['labor'];
+                    if ($parsed['machinery'] > 0) $mappedData['baseMachineryCost'] = $parsed['machinery'];
+                    if ($parsed['machinery_labor'] > 0) $mappedData['baseMachineryLaborCost'] = $parsed['machinery_labor'];
+                    if ($parsed['materials'] > 0) $mappedData['baseMaterialsCost'] = $parsed['materials'];
                     break;
                 case 'base_labor_price':
                 case 'labor_price':
@@ -390,6 +389,14 @@ class ImportRowMapper
         $result['machinery'] = $this->parseFloat($lines[2] ?? null) ?? 0.0;
         $result['machinery_labor'] = $this->parseFloat($lines[3] ?? null) ?? 0.0;
         
+        // ЗАЩИТА: В ФЕР компоненты (ЗП, ЭМ) не могут быть больше Прямых Затрат (ПЗ).
+        // Если ЗП > ПЗ, значит это не базисные компоненты, а утечка текущих цен.
+        if ($result['labor'] > $result['total'] * 1.1 || $result['machinery'] > $result['total'] * 1.1) {
+            $result['labor'] = 0.0;
+            $result['machinery'] = 0.0;
+            $result['machinery_labor'] = 0.0;
+        }
+
         $matCandidate = $this->parseFloat($lines[4] ?? null);
         if ($matCandidate !== null && $matCandidate > 0) {
             $result['materials'] = $matCandidate;
