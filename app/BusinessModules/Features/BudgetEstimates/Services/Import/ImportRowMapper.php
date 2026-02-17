@@ -115,11 +115,28 @@ class ImportRowMapper
         if (empty($mappedData['unit']) && !empty($mappedData['itemName'])) {
             $split = $this->splitNameAndUnit($mappedData['itemName']);
             $mappedData['itemName'] = $split['name'];
-            $mappedData['unit'] = $split['unit'];
+            $mappedData['unit'] = $mappedData['unit'] ?: $split['unit'];
         }
 
         // 3. Robust Section Detection
-        $mappedData['isSection'] = $this->isSection($mappedData['itemName'] ?? null, $rawData);
+        $mappedData['isFooter'] = $this->isFooter(
+            $mappedData['itemName'] ?? null, 
+            $rawData,
+            $mappedData['quantity'] ?? null,
+            $mappedData['unitPrice'] ?? null,
+            $mappedData['unit'] ?? null
+        );
+
+        $mappedData['isSection'] = false;
+        if (!$mappedData['isFooter']) {
+            $mappedData['isSection'] = $this->isSection(
+                $mappedData['itemName'] ?? null, 
+                $rawData,
+                $mappedData['quantity'] ?? null,
+                $mappedData['unitPrice'] ?? null,
+                $mappedData['unit'] ?? null
+            );
+        }
 
         if ($mappedData['isSection']) {
             // Force clear numeric fields for sections
@@ -236,19 +253,23 @@ class ImportRowMapper
         return ($sequentialCount >= 2 && $numericCount / count($nonEmpty) > 0.7);
     }
 
-    private function isSection(?string $itemName, array $rawData): bool
+    private function isSection(?string $itemName, array $rawData, ?float $quantity = null, ?float $unitPrice = null, ?string $unit = null): bool
     {
-        // 0. If it's a footer, it's definitely not a section
+        // 0. Safety: items with quantity, price or unit are NOT sections
+        if (($quantity !== null && $quantity > 0) || ($unitPrice !== null && $unitPrice > 0) || !empty($unit)) {
+            return false;
+        }
+
+        // 1. If it's a footer, it's definitely not a section
         if ($this->isFooter($itemName, $rawData)) {
             return false;
         }
 
-        // 1. Prioritize AI Hints
+        // 2. Prioritize AI Hints
         $aiKeywords = $this->sectionHints['section_keywords'] ?? [];
         $aiCols = $this->sectionHints['section_columns'] ?? [];
 
         if (!empty($aiKeywords) || !empty($aiCols)) {
-            // Check specific columns if AI pointed to them
             foreach ($aiCols as $colIdx) {
                 if (isset($rawData[$colIdx])) {
                     $v = (string)$rawData[$colIdx];
@@ -258,42 +279,38 @@ class ImportRowMapper
                 }
             }
             
-            // Or just check if any AI keyword appears in itemName
             $text = mb_strtolower($itemName ?? '');
             foreach ($aiKeywords as $kw) {
                 if (mb_stripos($text, mb_strtolower($kw)) !== false) return true;
             }
         }
 
-        // 2. Fallback to standard heuristics
-        // Check all early columns for keywords
+        // 3. Fallback to standard heuristics
         foreach (array_slice($rawData, 0, 8) as $val) {
-            $v = (string)$val;
-            if (mb_stripos($v, 'раздел') !== false || mb_stripos($v, 'этап') !== false) {
+            $v = trim((string)$val);
+            if (empty($v)) continue;
+            // Only match at start of string for "Раздел" or "Этап"
+            if (preg_match('/^(раздел|этап|глава|пп|п\.п\.)\s*[0-9]*/ui', $v)) {
                 return true;
             }
         }
 
         $text = trim($itemName ?? '');
-        
-        // 2. Explicit keywords in itemName
-        if (mb_stripos($text, 'раздел') !== false || mb_stripos($text, 'этап') !== false) {
+        if (preg_match('/^(раздел|этап|глава|пп|п\.п\.)\s*[0-9]*/ui', $text)) {
             return true;
         }
 
-        // 3. Pattern "1.1.2. Section Name"
+        // 4. Pattern "1.1.2. Section Name"
         if (preg_match('/^[0-9]+(\.[0-9]+)+\s+[А-ЯA-Z]/u', $text)) {
             return true;
         }
 
-        // 4. Heuristic: Check if row has only one long non-numeric string (likely a floating section title)
+        // 5. Technical row check: if row has only one long non-numeric string and NO numeric data
         $nonEmptyValues = array_filter($rawData, fn($v) => !empty(trim((string)$v)));
-        if (count($nonEmptyValues) <= 3) {
+        if (count($nonEmptyValues) <= 2) {
             foreach ($nonEmptyValues as $val) {
                 $v = (string)$val;
-                if (mb_strlen($v) > 20 && !is_numeric($v)) {
-                   // Ensure it's not a name column in a regular row by checking if quantity exists
-                   // But since it's a count <= 3, it's very likely a technical or section row.
+                if (mb_strlen($v) > 25 && !is_numeric($v)) {
                    return true;
                 }
             }
@@ -338,18 +355,13 @@ class ImportRowMapper
         }
 
         $str = (string)$value;
-        // Take FIRST line for multi-line cells (e.g., 1,69 \n 1690/1000)
         $lines = explode("\n", $str);
         $firstLine = trim($lines[0]);
 
-        // Basic cleaning
         $clean = str_replace([' ', "\xc2\xa0", "\xA0"], '', $firstLine);
         $clean = str_replace(',', '.', $clean);
 
-        // If the line is mostly numeric, extract the number
-        // This avoids extracting "1" from "Раздел 1"
         if (preg_match('/^-?[0-9]*\.?[0-9]+/', $clean, $matches)) {
-            // Check if there are too many non-numeric chars in the first line
             $numericChars = preg_replace('/[^0-9\.]/', '', $clean);
             if (mb_strlen($numericChars) / mb_strlen($clean) > 0.5) {
                 return (float)$matches[0];
@@ -363,7 +375,6 @@ class ImportRowMapper
     {
         if (empty($value)) return null;
         $str = (string)$value;
-        // Take first line, ignore "Приказ Минстроя..." etc.
         $lines = explode("\n", $str);
         return trim($lines[0]);
     }
@@ -374,28 +385,21 @@ class ImportRowMapper
         $bestUnit = null;
         $unitLineIndex = -1;
 
-        // 1. Search for brackets in all lines
         foreach ($lines as $idx => $line) {
             if (preg_match_all('/[\(\[]([^\\(\\)\\[\\]]{1,30})[\)\]]/u', $line, $matches)) {
                 foreach ($matches[1] as $candidate) {
                     $candidate = trim($candidate);
-                    
-                    // Priority 1: Exact match with common units
                     if (in_array(mb_strtolower($candidate), self::COMMON_UNITS)) {
                         $bestUnit = $candidate;
                         $unitLineIndex = $idx;
                         break 2;
                     }
-                    
-                    // Priority 2: Contains common unit (e.g. "100 м3")
                     foreach (self::COMMON_UNITS as $common) {
                         if (mb_stripos($candidate, $common) !== false) {
                             $bestUnit = $candidate;
                             $unitLineIndex = $idx;
                         }
                     }
-                    
-                    // Priority 3: First bracketed item that looks like a unit (short, contains letters)
                     if (!$bestUnit && mb_strlen($candidate) < 10 && preg_match('/[а-яёa-z]/ui', $candidate)) {
                         $bestUnit = $candidate;
                         $unitLineIndex = $idx;
@@ -405,7 +409,6 @@ class ImportRowMapper
         }
 
         if ($bestUnit) {
-            // Remove the line if it contained only the unit (often GrandSmeta format)
             if ($unitLineIndex !== -1 && trim(preg_replace('/[\(\[]' . preg_quote($bestUnit, '/') . '[\)\]]/u', '', $lines[$unitLineIndex])) === '') {
                  unset($lines[$unitLineIndex]);
             }
@@ -415,7 +418,6 @@ class ImportRowMapper
             ];
         }
 
-        // 2. Try to find unit at the end of the first line (e.g. "Name, м2")
         $firstLine = trim($lines[0]);
         if (preg_match('/,\s*([а-яёa-z0-9\/ ]{1,15})$/ui', $firstLine, $matches)) {
             $unitFound = trim($matches[1]);
@@ -430,34 +432,33 @@ class ImportRowMapper
         return ['name' => $name, 'unit' => null];
     }
 
-    private function isFooter(?string $itemName, array $rawData): bool
+    private function isFooter(?string $itemName, array $rawData, ?float $quantity = null, ?float $unitPrice = null, ?string $unit = null): bool
     {
+        // 0. Safety: items with quantity, price or unit are NOT footers
+        if (($quantity !== null && $quantity > 0) || ($unitPrice !== null && $unitPrice > 0) || !empty($unit)) {
+            return false;
+        }
+
         $footers = [
-            'итого', 'всего', 'накладные', 'сметная прибыль', 'справочно', 
-            'в базисных ценах', 'перевод цен', 'смете', 'затраты', 'итоги по', 
-            'выполняемые', 'мат=', 'эм=', 'зп=', 'пз=', 'фод=', 'нр (', 'сп ('
+            'итого по', 'всего по', 'накладные расходы', 'сметная прибыль', 'справочно', 
+            'в базисных ценах', 'перевод цен', ' в смете', 'итоги по', 
+            'ндс ', 'составил', 'проверил', 'утверждаю'
         ];
         
         $aiFooterKeywords = $this->sectionHints['footer_keywords'] ?? [];
         $allKeywords = array_merge($footers, array_map('mb_strtolower', $aiFooterKeywords));
 
-        // 1. Check all values in the raw row
         foreach ($rawData as $val) {
-            $v = mb_strtolower((string)$val);
+            $v = mb_strtolower(trim((string)$val));
             if (empty($v)) continue;
             
             foreach ($allKeywords as $kw) {
-                if (mb_stripos($v, $kw) !== false) {
-                    return true;
+                // More precise matching for short keywords
+                if (mb_strlen($kw) < 4) {
+                    if ($v === $kw) return true;
+                } else {
+                    if (mb_stripos($v, $kw) !== false) return true;
                 }
-            }
-        }
-
-        // 2. Check mapped itemName specifically (if not already caught)
-        $text = mb_strtolower($itemName ?? '');
-        if (!empty($text)) {
-            foreach ($allKeywords as $kw) {
-                if (mb_stripos($text, $kw) !== false) return true;
             }
         }
 
