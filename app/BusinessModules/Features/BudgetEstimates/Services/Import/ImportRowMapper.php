@@ -372,9 +372,9 @@ class ImportRowMapper
         }
 
         $str = (string)$value;
-        // Нормализуем переносы строк и сплитим. НЕ используем фильтрацию, чтобы не сместить индексы строк.
-        $normalized = str_replace(["\r\n", "\r"], "\n", $str);
-        $lines = array_map('trim', explode("\n", $normalized));
+        // Сплитим по всем видам переносов строк, табам или двойным пробелам
+        $lines = preg_split('/[\n\r\t]+|\s{2,}/u', $str);
+        $lines = array_values(array_filter(array_map('trim', $lines)));
         
         $result['total'] = $this->parseFloat($lines[0] ?? null) ?? 0.0;
         
@@ -773,10 +773,11 @@ class ImportRowMapper
         return false;
     }
 
-    private function truncate(?string $value, int $limit): ?string
+    private function truncate(mixed $value, int $limit): ?string
     {
         if ($value === null) return null;
-        if (mb_strlen($value) <= $limit) return $value;
-        return mb_substr($value, 0, $limit);
+        $strValue = (string)$value;
+        if (mb_strlen($strValue) <= $limit) return $strValue;
+        return mb_substr($strValue, 0, $limit);
     }
 }
