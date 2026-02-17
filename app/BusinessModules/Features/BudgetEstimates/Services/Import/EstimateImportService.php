@@ -194,10 +194,18 @@ class EstimateImportService
             }
         }
         
-        // Helper to calculate totals
+        // Calculate real totals from items
+        $totalAmount = 0;
+        foreach ($items as $item) {
+            // If it's a DTO array, it has these keys
+            $q = $item['quantity'] ?? 0;
+            $p = $item['unit_price'] ?? 0;
+            $itemTotal = $item['current_total_amount'] ?? ($q * $p);
+            $totalAmount += $itemTotal;
+        }
+
         $totals = [
-            // Basic totals
-            'total_amount' => 0, // Placeholder
+            'total_amount' => $totalAmount,
             'items_count' => count($items),
         ];
         

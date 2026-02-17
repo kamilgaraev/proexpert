@@ -448,16 +448,16 @@ class ImportRowMapper
 
     private function isFooter(?string $itemName, array $rawData, ?float $quantity = null, ?float $unitPrice = null, ?string $unit = null, ?float $totalAmount = null): bool
     {
-        // 0. Safety: items with ANY numeric data or ANY unit are NOT footers
+        // 0. Safety: real items MUST have quantity/price/unit. 
+        // Footers can have totalAmount but usually DON'T have a unit, quantity or unit price.
         if (($quantity !== null && $quantity > 0) || 
             ($unitPrice !== null && $unitPrice > 0) || 
-            ($totalAmount !== null && $totalAmount > 0) ||
             !empty($unit)) {
             return false;
         }
 
         $footers = [
-            'итого по', 'всего по', 'накладные расходы', 'сметная прибыль', 
+            'итого', 'всего', 'накладные расходы', 'сметная прибыль', 'материалы', 'машины и механизмы',
             'в базисных ценах', 'перевод цен', ' в смете', 'итоги по', 
             'ндс ', 'подпись', 'составил', 'проверил', 'утверждаю'
         ];
