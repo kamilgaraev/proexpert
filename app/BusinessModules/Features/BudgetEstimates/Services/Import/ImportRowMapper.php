@@ -107,13 +107,29 @@ class ImportRowMapper
                     // in some mappings, it might be base. 
                     // But we prioritize calculations later.
                     break;
-                case 'base_unit_price':
-                    $parsed = $this->parseMultiLineValue($value);
-                    $mappedData['baseUnitPrice'] = $parsed['total'];
-                    $mappedData['baseLaborCost'] = $parsed['labor'];
-                    $mappedData['baseMachineryCost'] = $parsed['machinery'];
-                    $mappedData['baseMachineryLaborCost'] = $parsed['machinery_labor'];
-                    break;
+            case 'base_unit_price':
+                $parsed = $this->parseMultiLineValue($value);
+                $mappedData['baseUnitPrice'] = $parsed['total'];
+                // Only overwrite if we found something in this cell
+                if ($parsed['labor'] > 0) $mappedData['baseLaborCost'] = $parsed['labor'];
+                if ($parsed['machinery'] > 0) $mappedData['baseMachineryCost'] = $parsed['machinery'];
+                if ($parsed['machinery_labor'] > 0) $mappedData['baseMachineryLaborCost'] = $parsed['machinery_labor'];
+                break;
+            case 'base_labor_price':
+            case 'labor_price':
+                $parsed = $this->parseMultiLineValue($value);
+                $mappedData['baseLaborCost'] = $parsed['total'];
+                break;
+            case 'base_machinery_price':
+            case 'machinery_price':
+                $parsed = $this->parseMultiLineValue($value);
+                $mappedData['baseMachineryCost'] = $parsed['total'];
+                $mappedData['baseMachineryLaborCost'] = $parsed['labor']; // In machinery column, 2nd line is often ZPM
+                break;
+            case 'base_materials_price':
+            case 'materials_price':
+                $mappedData['baseMaterialsCost'] = $this->parseFloat($value);
+                break;
                 case 'quantity_total':
                     $mappedData['quantityTotal'] = $this->parseFloat($value);
                     break;
@@ -311,13 +327,14 @@ class ImportRowMapper
      * Line 3: Machinery (ЭМ)
      * Line 4: Labor of Machinery (ЗПМ)
      */
-    private function parseMultiLineValue(mixed $value): array
+    public function parseMultiLineValue($value): array
     {
         $result = [
-            'total' => null,
-            'labor' => null,
-            'machinery' => null,
-            'materials' => null,
+            'total' => 0.0,
+            'labor' => 0.0,
+            'machinery' => 0.0,
+            'machinery_labor' => 0.0,
+            'materials' => 0.0,
         ];
 
         if ($value === null || $value === '') {
