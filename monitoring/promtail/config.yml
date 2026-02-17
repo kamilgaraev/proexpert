@@ -9,47 +9,49 @@ clients:
   - url: http://loki:3100/loki/api/v1/push
 
 scrape_configs:
-  # Удалено job_name: laravel_api - теперь всё собирает laravel_logs
-  # Удалено job_name: laravel_telemetry - теперь всё собирает laravel_logs
-
-
-  # Laravel основные логи (УНИВЕРСАЛЬНЫЙ СБОРЩИК ВСЕХ ФАЙЛОВ)
+  # -----------------------------------------------------------------
+  # Laravel Logs
+  # Все логи из папки storage/logs будут иметь лейбл filename
+  # Например: filename="laravel.log", filename="worker.log"
+  # -----------------------------------------------------------------
   - job_name: laravel_logs
     static_configs:
       - targets:
           - localhost
         labels:
-          job: laravel_logs
-          # Читаем рекурсивно все .log файлы из папки laravel (storage/logs)
-          __path__: /var/log/laravel/**/*.log
+          job: laravel
+          __path__: /var/log/laravel/*.log
     pipeline_stages:
-      # 1. Извлекаем имя файла (filename) из пути
+      # 1. Извлекаем имя файла из пути
       - regex:
-          source: __path__
-          # Извлекает последнее имя файла после слеша
-          expression: ".*/(?P<filename>.*\\.log)"
-      - labels:
-          filename: 
+          source: filename
+          expression: "^(?:.*\\/)(?P<filename>[^\\/]+)$"
+      
+      # 2. Если regex выше не сработал (иногда бывает), пробуем простой вариант
+      - regex:
+          source: filename
+          expression: "(?P<filename>[^\\/]+\\.log)$"
 
-      # 2. Пытаемся распарсить стандартный формат Laravel логов
-      # [2024-01-01 12:00:00] local.ERROR: message...
+      # 3. Присваиваем имя файла как лейбл
+      - labels:
+          filename:
+
+      # 4. Парсим стандартный лог Laravel
       - regex:
           expression: '^\[(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (?P<env>\w+)\.(?P<level>\w+): (?P<message>.*)'
       
-      # 3. Устанавливаем timestamp если распарсили
       - timestamp:
           source: timestamp
           format: "2006-01-02 15:04:05"
-          # Если формат не подошел (например json), берем время получения лога
           fallback_formats: ["2006-01-02T15:04:05"]
           
-      # 4. Создаем лейблы для фильтрации
       - labels:
           level:
           env:
 
-
-  # Системные логи Ubuntu
+  # -----------------------------------------------------------------
+  # System Logs (syslog)
+  # -----------------------------------------------------------------
   - job_name: system_logs
     static_configs:
       - targets:
@@ -67,13 +69,16 @@ scrape_configs:
           hostname:
           service:
 
-  # Nginx логи (если используется)
+  # -----------------------------------------------------------------
+  # Nginx Access Logs
+  # -----------------------------------------------------------------
   - job_name: nginx_access
     static_configs:
       - targets:
           - localhost
         labels:
-          job: nginx_access
+          job: nginx
+          log_type: access
           __path__: /var/log/host/nginx/access.log
     pipeline_stages:
       - regex:
@@ -84,12 +89,15 @@ scrape_configs:
       - labels:
           method:
           status:
-          remote_addr:
 
+  # -----------------------------------------------------------------
+  # Nginx Error Logs
+  # -----------------------------------------------------------------
   - job_name: nginx_error
     static_configs:
       - targets:
           - localhost
         labels:
-          job: nginx_error
-          __path__: /var/log/host/nginx/error.log 
+          job: nginx
+          log_type: error
+          __path__: /var/log/host/nginx/error.log
