@@ -21,7 +21,7 @@ class EnrichEstimateJob implements ShouldQueue
 
     public int $timeout = 1200; // 20 minutes for AI/Matching
     public int $tries = 3;
-    public string $queue = 'imports';
+    public $queue = 'imports';
 
     public function __construct(
         public int $estimateId,
