@@ -2,13 +2,15 @@
 
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers;
 
-use App\BusinessModules\Features\BudgetEstimates\Contracts\StreamParserInterface;
+
+use App\BusinessModules\Features\BudgetEstimates\Contracts\EstimateImportParserInterface;
 use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportDTO;
 use Shuchkin\SimpleXLSX;
 use Generator;
 use RuntimeException;
+use Illuminate\Support\Facades\Log;
 
-class ExcelStreamParser implements StreamParserInterface
+class ExcelStreamParser implements EstimateImportParserInterface
 {
     public function getStream(string $filePath, array $options = []): Generator
     {
@@ -31,7 +33,7 @@ class ExcelStreamParser implements StreamParserInterface
                     rawData: $row
                 );
             }
-            \Illuminate\Support\Facades\Log::info('[ExcelStreamParser] Finished reading stream');
+            Log::info('[ExcelStreamParser] Finished reading stream');
         } else {
             throw new RuntimeException("Failed to parse file: " . SimpleXLSX::parseError());
         }
@@ -59,5 +61,65 @@ class ExcelStreamParser implements StreamParserInterface
     public function supports(string $extension): bool
     {
         return in_array(strtolower($extension), ['xlsx', 'xls']);
+    }
+
+    public function detectStructure(string $filePath): array
+    {
+        // Simple fallback: assume first row is header
+        if (!file_exists($filePath)) {
+             return [
+                'format' => 'excel_simple',
+                'detected_columns' => [],
+                'raw_headers' => [],
+                'header_row' => null,
+                'column_mapping' => [],
+            ];
+        }
+
+        $headers = [];
+        if ($xlsx = SimpleXLSX::parse($filePath)) {
+            foreach ($xlsx->readRows() as $row) {
+                $headers = $row;
+                break; // First row only
+            }
+        }
+
+        return [
+            'format' => 'excel_simple',
+            'detected_columns' => [],
+            'raw_headers' => $headers,
+            'header_row' => 0, // 0-based index for logic, though rowNumber usually 1-based
+            'column_mapping' => [],
+        ];
+    }
+
+    public function validateFile(string $filePath): bool
+    {
+        if (!file_exists($filePath)) {
+            return false;
+        }
+        return (bool) SimpleXLSX::parse($filePath);
+    }
+
+    public function getHeaderCandidates(): array
+    {
+        // Not supporting header detection selection for stream parser fallback
+        return [];
+    }
+
+    public function detectStructureFromRow(string $filePath, int $headerRow): array
+    {
+        return $this->detectStructure($filePath);
+    }
+
+    public function getSupportedExtensions(): array
+    {
+        return ['xlsx', 'xls'];
+    }
+
+    public function readContent(string $filePath, int $maxRows = 100)
+    {
+        // Not implemented for stream parser, return null
+        return null;
     }
 }
