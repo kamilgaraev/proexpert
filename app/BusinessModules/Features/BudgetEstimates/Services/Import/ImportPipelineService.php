@@ -360,17 +360,17 @@ class ImportPipelineService
     {
         $totals = EstimateItem::where('estimate_id', $estimate->id)
             ->selectRaw('
-                -- Current Totals (already rounded per row usually, but SUM needs careful sum)
-                SUM(ROUND(CAST(direct_costs AS NUMERIC), 2)) as direct_costs,
-                SUM(ROUND(CAST(overhead_amount AS NUMERIC), 2)) as overhead_amount,
-                SUM(ROUND(CAST(profit_amount AS NUMERIC), 2)) as profit_amount,
+                -- Current Totals: sum first, round at the end in PHP for max precision
+                SUM(CAST(direct_costs AS NUMERIC)) as direct_costs,
+                SUM(CAST(overhead_amount AS NUMERIC)) as overhead_amount,
+                SUM(CAST(profit_amount AS NUMERIC)) as profit_amount,
                 
-                -- Base Totals (Calculated as sum of rounded row totals)
-                SUM(ROUND(CAST(base_unit_price AS NUMERIC) * CAST(quantity AS NUMERIC), 2)) as base_direct_costs,
-                SUM(ROUND(CAST(base_materials_cost AS NUMERIC) * CAST(quantity AS NUMERIC), 2)) as base_materials_cost,
-                SUM(ROUND(CAST(base_machinery_cost AS NUMERIC) * CAST(quantity AS NUMERIC), 2)) as base_machinery_cost,
-                SUM(ROUND(CAST(base_labor_cost AS NUMERIC) * CAST(quantity AS NUMERIC), 2)) as base_labor_cost,
-                SUM(ROUND(CAST(base_machinery_labor_cost AS NUMERIC) * CAST(quantity AS NUMERIC), 2)) as base_machinery_labor_cost,
+                -- Base Totals: sum first to match Excel floating point behavior
+                SUM(CAST(base_unit_price AS NUMERIC) * CAST(quantity AS NUMERIC)) as base_direct_costs,
+                SUM(CAST(base_materials_cost AS NUMERIC) * CAST(quantity AS NUMERIC)) as base_materials_cost,
+                SUM(CAST(base_machinery_cost AS NUMERIC) * CAST(quantity AS NUMERIC)) as base_machinery_cost,
+                SUM(CAST(base_labor_cost AS NUMERIC) * CAST(quantity AS NUMERIC)) as base_labor_cost,
+                SUM(CAST(base_machinery_labor_cost AS NUMERIC) * CAST(quantity AS NUMERIC)) as base_machinery_labor_cost,
                 
                 SUM(base_overhead_amount) as base_overhead_total,
                 SUM(base_profit_amount) as base_profit_total
