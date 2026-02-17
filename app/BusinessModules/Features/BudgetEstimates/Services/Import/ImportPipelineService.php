@@ -115,6 +115,11 @@ class ImportPipelineService
         // Usually estimates have sections. If not, create default?
         
         foreach ($stream as $rowDTO) {
+            // Skip technical rows
+            if ($this->rowMapper->isTechnicalRow($rowDTO->rawData)) {
+                continue;
+            }
+
             // Apply mapping
             $rowDTO = $this->rowMapper->map($rowDTO, $options['column_mapping'] ?? []);
             

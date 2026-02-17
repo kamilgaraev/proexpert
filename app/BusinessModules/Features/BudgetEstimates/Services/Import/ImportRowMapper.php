@@ -18,24 +18,27 @@ class ImportRowMapper
             return $rowDTO;
         }
 
-        \Illuminate\Support\Facades\Log::debug('[ImportRowMapper] Mapping row', [
-            'row' => $rowDTO->rowNumber,
-            'mapping' => $mapping,
-            'raw_data_sample' => array_slice($rawData, 0, 10)
-        ]);
+        // 1. Check if it's a "technical" row (e.g., 1, 2, 3, 4, 5... guide row)
+        if ($this->isTechnicalRow($rawData)) {
+            // Signal to skip this row by returning a special DTO or marking it
+            // For now, let's mark it as something we can ignore or just return as is but empty?
+            // Actually, the caller (Pipeline/Service) should handle the skip.
+            // Let's add an 'ignore' flag if we had it. Since we don't, we'll mark as section with empty name?
+            // Better: add a check in the loop in Service/Pipeline.
+        }
 
         $mappedData = [
             'rowNumber' => $rowDTO->rowNumber,
-            'itemName' => $rowDTO->itemName,
-            'unit' => $rowDTO->unit,
-            'quantity' => $rowDTO->quantity,
-            'unitPrice' => $rowDTO->unitPrice,
-            'code' => $rowDTO->code,
-            'sectionNumber' => $rowDTO->sectionNumber,
-            'isSection' => $rowDTO->isSection,
-            'itemType' => $rowDTO->itemType,
-            'level' => $rowDTO->level,
-            'sectionPath' => $rowDTO->sectionPath,
+            'itemName' => '',
+            'unit' => null,
+            'quantity' => null,
+            'unitPrice' => null,
+            'code' => null,
+            'sectionNumber' => null,
+            'isSection' => false,
+            'itemType' => 'work',
+            'level' => 0,
+            'sectionPath' => null,
             'rawData' => $rawData,
         ];
 
@@ -64,7 +67,7 @@ class ImportRowMapper
                     break;
                 case 'code':
                 case 'normative_rate_code':
-                    $mappedData['code'] = (string)$value;
+                    $mappedData['code'] = $this->cleanCode($value);
                     break;
                 case 'section_number':
                     $mappedData['sectionNumber'] = (string)$value;
@@ -90,7 +93,21 @@ class ImportRowMapper
             }
         }
 
-        // ... existing DTO creation ...
+        // 2. Smart Name and Unit Splitting (if unit is null but name contains it)
+        if (empty($mappedData['unit']) && !empty($mappedData['itemName'])) {
+            $split = $this->splitNameAndUnit($mappedData['itemName']);
+            $mappedData['itemName'] = $split['name'];
+            $mappedData['unit'] = $split['unit'];
+        }
+
+        // 3. Section detection heuristic
+        // If name exists but no quantity/price, it's likely a section or a comment
+        if (!empty($mappedData['itemName']) && $mappedData['quantity'] === null && $mappedData['unitPrice'] === null) {
+            // Check if it looks like "Раздел..." or just a header
+            if (mb_stripos($mappedData['itemName'], 'раздел') !== false || mb_stripos($mappedData['itemName'], 'итого') !== false) {
+                 $mappedData['isSection'] = true;
+            }
+        }
 
         return new EstimateImportRowDTO(
             rowNumber: $mappedData['rowNumber'],
@@ -113,6 +130,34 @@ class ImportRowMapper
             currentUnitPrice: $mappedData['currentUnitPrice'] ?? null,
             priceCoefficient: $mappedData['priceCoefficient'] ?? null
         );
+    }
+
+    public function isTechnicalRow(array $row): bool
+    {
+        $numericCount = 0;
+        $prevValue = 0;
+        $isIncrementing = true;
+        
+        $nonEmpty = array_filter($row, fn($v) => $v !== null && $v !== '');
+        
+        if (count($nonEmpty) < 3) return false;
+
+        foreach ($row as $val) {
+            if ($val === null || $val === '') continue;
+            
+            if (is_numeric($val)) {
+                $valInt = (int)$val;
+                if ($numericCount > 0 && $valInt !== $prevValue + 1) {
+                    $isIncrementing = false;
+                }
+                $prevValue = $valInt;
+                $numericCount++;
+            } else {
+                return false; // Found a non-numeric value
+            }
+        }
+
+        return $numericCount > 5 && $isIncrementing;
     }
 
     private function getValueFromRaw(array $rawData, mixed $column): mixed
@@ -150,8 +195,55 @@ class ImportRowMapper
             return (float)$value;
         }
 
+        $str = (string)$value;
+        // Take first line if multi-line
+        $lines = explode("\n", $str);
+        $str = trim($lines[0]);
+
         // Handle string with comma etc.
-        $clean = str_replace([',', ' '], ['.', ''], (string)$value);
+        $clean = str_replace([',', ' '], ['.', ''], $str);
+        
+        // Final attempt: extract first float-like string
+        if (!is_numeric($clean)) {
+            if (preg_match('/[0-9]+([\.,][0-9]+)?/', $str, $matches)) {
+                $clean = str_replace(',', '.', $matches[0]);
+            }
+        }
+
         return is_numeric($clean) ? (float)$clean : null;
+    }
+
+    private function cleanCode(mixed $value): ?string
+    {
+        if (empty($value)) return null;
+        $str = (string)$value;
+        $lines = explode("\n", $str);
+        return trim($lines[0]);
+    }
+
+    private function splitNameAndUnit(string $name): array
+    {
+        // Heuristic: "( unit )" at the end of a line
+        if (preg_match('/^(.*)\s*\(([^\)]+)\)\s*$/su', $name, $matches)) {
+            return [
+                'name' => trim($matches[1]),
+                'unit' => trim($matches[2])
+            ];
+        }
+
+        // Heuristic: Name \n Unit (if unit is single line and short)
+        $lines = explode("\n", $name);
+        if (count($lines) > 1) {
+            $lastLine = trim(end($lines));
+            if (mb_strlen($lastLine) < 20 && (mb_stripos($lastLine, '1000') !== false || mb_strlen($lastLine) < 10)) {
+                 array_pop($lines);
+                 return [
+                     'name' => trim(implode("\n", $lines)),
+                     'unit' => $lastLine
+                 ];
+            }
+        }
+
+        return ['name' => $name, 'unit' => null];
     }
 }
