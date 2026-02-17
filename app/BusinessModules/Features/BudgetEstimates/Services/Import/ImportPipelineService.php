@@ -16,7 +16,8 @@ class ImportPipelineService
 
     public function __construct(
         private ParserFactory $parserFactory,
-        private FileStorageService $fileStorage
+        private FileStorageService $fileStorage,
+        private ImportRowMapper $rowMapper
     ) {}
 
     public function run(ImportSession $session, array $config = []): void
@@ -114,6 +115,9 @@ class ImportPipelineService
         // Usually estimates have sections. If not, create default?
         
         foreach ($stream as $rowDTO) {
+            // Apply mapping
+            $rowDTO = $this->rowMapper->map($rowDTO, $options['column_mapping'] ?? []);
+            
             $stats['processed_rows']++;
             
             // Progress update every 100 rows
