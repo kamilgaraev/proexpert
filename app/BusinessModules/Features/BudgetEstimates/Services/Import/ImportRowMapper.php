@@ -310,26 +310,27 @@ class ImportRowMapper
         }
 
         // 2. Parse Overhead (НР)
-        // Try to match Amount specifically: "НР (28,38 руб)"
-        if (preg_match('/(?:нр|накладные)[^\d]*?\((\d+[.,]?\d*)\s*(?:руб|р)\.?\)/ui', $text, $matches)) {
+        // STRICTER REGEX: Use boundaries to avoid matching inside other words
+        // Match "НР" or "Накладные" only if not surrounded by letters.
+        // Amount: "НР ... ( 123,45 руб )"
+        if (preg_match('/(?:^|[^а-яёa-z])(?:нр|накладные)(?![а-яёa-z]).*?\(\s*(\d+[.,]?\d*)\s*(?:руб|р)/ui', $text, $matches)) {
              $attributes['overhead_amount'] = (float)str_replace(',', '.', $matches[1]);
         }
         
-        // Try to match Rate: "130% от ФОТ" or just "130%" or "НР-95%"
-        // We look for % sign and number before it, but be careful not to match random percentages in text
-        // Ideally, close to "НР" word.
-        if (preg_match('/(?:нр|накладные)[^%]*?(\d+[.,]?\d*)\s*%/ui', $text, $matches)) {
+        // Rate: "НР ... 130%"
+        if (preg_match('/(?:^|[^а-яёa-z])(?:нр|накладные)(?![а-яёa-z]).*?(\d+[.,]?\d*)\s*%/ui', $text, $matches)) {
              $attributes['overhead_rate'] = (float)str_replace(',', '.', $matches[1]);
         }
 
         // 3. Parse Profit (СП)
-        // Try to match Amount: "СП (19,43 руб)"
-        if (preg_match('/(?:сп|сметная)[^\d]*?\((\d+[.,]?\d*)\s*(?:руб|р)\.?\)/ui', $text, $matches)) {
+        // Fix for "справочно" matching "сп": Ensure SP is a whole word.
+        // Amount: "СП ... ( 123,45 руб )"
+        if (preg_match('/(?:^|[^а-яёa-z])(?:сп|сметная)(?![а-яёa-z]).*?\(\s*(\d+[.,]?\d*)\s*(?:руб|р)/ui', $text, $matches)) {
              $attributes['profit_amount'] = (float)str_replace(',', '.', $matches[1]);
         }
         
-        // Try to match Rate: "89% от ФОТ"
-        if (preg_match('/(?:сп|сметная)[^%]*?(\d+[.,]?\d*)\s*%/ui', $text, $matches)) {
+        // Rate: "СП ... 89%"
+        if (preg_match('/(?:^|[^а-яёa-z])(?:сп|сметная)(?![а-яёa-z]).*?(\d+[.,]?\d*)\s*%/ui', $text, $matches)) {
              $attributes['profit_rate'] = (float)str_replace(',', '.', $matches[1]);
         }
 
