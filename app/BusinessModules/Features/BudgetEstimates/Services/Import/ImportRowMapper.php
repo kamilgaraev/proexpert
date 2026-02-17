@@ -280,9 +280,12 @@ class ImportRowMapper
         $numericCount = 0;
         $sequentialCount = 0;
         $prevVal = null;
+        $stringValues = [];
 
         foreach ($nonEmpty as $val) {
             $valStr = trim((string)$val);
+            if (empty($valStr)) continue;
+
             if (is_numeric($valStr)) {
                 $numericCount++;
                 $current = (float)$valStr;
@@ -293,12 +296,17 @@ class ImportRowMapper
             } else {
                 // Technical row usually doesn't have many non-numeric strings
                 // If we hit a substantial string, it's likely a real data row
+                $stringValues[] = $valStr;
                 if (mb_strlen($valStr) > 10) return false;
             }
         }
 
         // If high percentage of row is numeric and we found sequential numbers like 1, 2, 3...
-        return ($sequentialCount >= 2 && $numericCount / count($nonEmpty) > 0.7);
+        $isTechnical = ($sequentialCount >= 2 && $numericCount / count($nonEmpty) > 0.7);
+        if ($isTechnical) {
+             Log::info("[ImportDebug] Row detected as Technical (sequential numbers). Content: " . json_encode($nonEmpty, JSON_UNESCAPED_UNICODE));
+        }
+        return $isTechnical;
     }
 
     private function isSection(?string $itemName, array $rawData, ?float $quantity = null, ?float $unitPrice = null, ?string $unit = null, ?float $totalAmount = null): bool
@@ -330,14 +338,25 @@ class ImportRowMapper
         foreach (array_slice($rawData, 0, 8) as $val) {
             $v = trim((string)$val);
             if (empty($v)) continue;
-            // Removed check for 'раздел' etc. here because they are valid sections, not technical rows to skip.
+            
+            // RESTORED: This was missing, causing "Missing Section 1"
+            if (preg_match('/^(раздел|этап|глава|площадка|объект)\s*[0-9]*/ui', $v)) {
+                Log::info("[ImportDebug] Row detected as Section by pattern in column value: '{$v}'");
+                return true; 
+            }
         }
 
         $text = trim($itemName ?? '');
-        // Removed check for 'раздел' etc. here too.
+        
+        // RESTORED: Logic for item name check
+        if (preg_match('/^(раздел|этап|глава|площадка|объект)\s*[0-9]*/ui', $text)) {
+             Log::info("[ImportDebug] Row detected as Section by pattern in itemName: '{$text}'");
+             return true;
+        }
 
         // 4. Pattern "1.1.2. Section Name"
         if (preg_match('/^[0-9]+(\.[0-9]+)+\s+[А-ЯA-Z]/u', $text)) {
+            Log::info("[ImportDebug] Row detected as Section by numbering pattern: '{$text}'");
             return true;
         }
 
@@ -488,11 +507,15 @@ class ImportRowMapper
             
             // Check for signature lines with many underscores
             if (mb_substr_count($v, '_') > 5) {
+                Log::info("[ImportDebug] Row detected as Footer (signature line). Value: '{$v}'");
                 return true;
             }
 
             foreach ($allKeywords as $kw) {
-                if (mb_stripos($v, $kw) !== false) return true;
+                if (mb_stripos($v, $kw) !== false) {
+                    Log::info("[ImportDebug] Row detected as Footer (keyword '{$kw}'). Value: '{$v}'");
+                    return true;
+                }
             }
         }
         
@@ -510,12 +533,14 @@ class ImportRowMapper
         
         foreach ($footerPhrases as $phrase) {
             if (mb_stripos($textLower, $phrase) !== false) {
+                 Log::info("[ImportDebug] Row detected as Footer (phrase '{$phrase}'). ItemName: '{$itemName}'");
                  return true;
             }
         }
         
         // Check for signature lines with underscores or dates in name
         if (mb_substr_count($textLower, '_') > 5) {
+            Log::info("[ImportDebug] Row detected as Footer (signature underscores). ItemName: '{$itemName}'");
             return true;
         }
 
