@@ -285,17 +285,17 @@ class ImportRowMapper
             isFooter: $mappedData['isFooter'] ?? false,
             quantityCoefficient: $mappedData['quantityCoefficient'] ?? null,
             quantityTotal: $mappedData['quantityTotal'] ?? null,
-            baseUnitPrice: $mappedData['baseUnitPrice'] ?? $mappedData['unitPrice'] ?? null,
+            baseUnitPrice: round($mappedData['baseUnitPrice'] ?? $mappedData['unitPrice'] ?? 0, 2),
             priceIndex: $mappedData['priceIndex'] ?? null,
-            currentUnitPrice: $mappedData['currentUnitPrice'] ?? null,
+            currentUnitPrice: round($mappedData['currentUnitPrice'] ?? $mappedData['unitPrice'] ?? 0, 2),
             priceCoefficient: $mappedData['priceCoefficient'] ?? null,
-            overheadAmount: $attributes['overhead_amount'] ?? null,
-            profitAmount: $attributes['profit_amount'] ?? null,
+            overheadAmount: round($attributes['overhead_amount'] ?? 0, 2),
+            profitAmount: round($attributes['profit_amount'] ?? 0, 2),
             overheadRate: $mappedData['overheadRate'] ?? null,
             profitRate: $mappedData['profitRate'] ?? null,
-            baseLaborCost: $mappedData['baseLaborCost'] ?? null,
-            baseMachineryCost: $mappedData['baseMachineryCost'] ?? null,
-            baseMaterialsCost: $mappedData['baseMaterialsCost'] ?? null
+            baseLaborCost: round($mappedData['baseLaborCost'] ?? 0, 2),
+            baseMachineryCost: round($mappedData['baseMachineryCost'] ?? 0, 2),
+            baseMaterialsCost: round($mappedData['baseMaterialsCost'] ?? 0, 2)
         );
     }
 
