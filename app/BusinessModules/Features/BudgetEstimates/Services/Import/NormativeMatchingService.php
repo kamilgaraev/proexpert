@@ -191,21 +191,30 @@ class NormativeMatchingService
             // Единица измерения из норматива (если не указана)
             'unit' => $itemData['unit'] ?? $normativeData['measurement_unit'],
             
-            // Базовые цены из норматива (если не указаны)
-            'base_unit_price' => $itemData['base_unit_price'] ?? $normativeData['base_unit_price'],
+            // Базовые цены: ПРИОРИТЕТ EXCEL (если > 0), иначе норматив
+            'base_unit_price' => (isset($itemData['base_unit_price']) && $itemData['base_unit_price'] > 0) 
+                ? $itemData['base_unit_price'] 
+                : $normativeData['base_unit_price'],
             
-            // Ресурсные составляющие
-            'base_materials_cost' => $normativeData['materials_cost'],
-            'base_machinery_cost' => $normativeData['machinery_cost'],
-            'base_labor_cost' => $normativeData['labor_cost'],
+            'base_materials_cost' => (isset($itemData['base_materials_cost']) && $itemData['base_materials_cost'] > 0)
+                ? $itemData['base_materials_cost']
+                : $normativeData['materials_cost'],
+                
+            'base_machinery_cost' => (isset($itemData['base_machinery_cost']) && $itemData['base_machinery_cost'] > 0)
+                ? $itemData['base_machinery_cost']
+                : $normativeData['machinery_cost'],
+                
+            'base_labor_cost' => (isset($itemData['base_labor_cost']) && $itemData['base_labor_cost'] > 0)
+                ? $itemData['base_labor_cost']
+                : $normativeData['labor_cost'],
             
-            // Трудозатраты
-            'labor_hours' => $normativeData['labor_hours'],
-            'machinery_hours' => $normativeData['machinery_hours'],
+            // Трудозатраты (обычно в Excel их нет, поэтому берем из норматива)
+            'labor_hours' => $itemData['labor_hours'] ?? $normativeData['labor_hours'],
+            'machinery_hours' => $itemData['machinery_hours'] ?? $normativeData['machinery_hours'],
             
             // Метаданные
             'metadata' => array_merge($itemData['metadata'] ?? [], [
-                'normative_source' => 'auto_filled',
+                'normative_source' => 'matched_and_enriched',
                 'normative_collection' => $normativeData['collection_name'],
                 'base_price_year' => $normativeData['base_price_year'],
             ]),

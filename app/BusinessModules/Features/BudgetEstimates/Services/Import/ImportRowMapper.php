@@ -103,10 +103,14 @@ class ImportRowMapper
                     $parsed = $this->parseMultiLineValue($value);
                     $mappedData['unitPrice'] = $parsed['total'];
                     // unit_price в контексте ФЕР - это ТЕКУЩАЯ цена. 
-                    // Мы НЕ должны заполнять базу из неё, иначе будет каша.
                     if ($mappedData['currentUnitPrice'] === null) {
                         $mappedData['currentUnitPrice'] = $parsed['total'];
                     }
+                    // Если это многострочная ячейка и там есть компоненты - НЕ затираем их нулями
+                    if ($parsed['labor'] > 0) $mappedData['baseLaborCost'] = $parsed['labor'];
+                    if ($parsed['machinery'] > 0) $mappedData['baseMachineryCost'] = $parsed['machinery'];
+                    if ($parsed['machinery_labor'] > 0) $mappedData['baseMachineryLaborCost'] = $parsed['machinery_labor'];
+                    if ($parsed['materials'] > 0) $mappedData['baseMaterialsCost'] = $parsed['materials'];
                     break;
                 case 'current_total_amount':
                 case 'total_amount':
@@ -116,11 +120,11 @@ class ImportRowMapper
                 case 'base_unit_price':
                     $parsed = $this->parseMultiLineValue($value);
                     $mappedData['baseUnitPrice'] = $parsed['total'];
-                    // Базисные компоненты берем ТОЛЬКО из базисной колонки
-                    $mappedData['baseLaborCost'] = $parsed['labor'];
-                    $mappedData['baseMachineryCost'] = $parsed['machinery'];
-                    $mappedData['baseMachineryLaborCost'] = $parsed['machinery_labor'];
-                    $mappedData['baseMaterialsCost'] = $parsed['materials'];
+                    // Заменяем только если в этой колонке ДЕЙСТВИТЕЛЬНО есть многострочные данные
+                    if ($parsed['labor'] > 0) $mappedData['baseLaborCost'] = $parsed['labor'];
+                    if ($parsed['machinery'] > 0) $mappedData['baseMachineryCost'] = $parsed['machinery'];
+                    if ($parsed['machinery_labor'] > 0) $mappedData['baseMachineryLaborCost'] = $parsed['machinery_labor'];
+                    if ($parsed['materials'] > 0) $mappedData['baseMaterialsCost'] = $parsed['materials'];
                     break;
                 case 'base_labor_price':
                 case 'labor_price':
@@ -365,9 +369,10 @@ class ImportRowMapper
         }
 
         $str = (string)$value;
-        $lines = array_map('trim', explode("\n", $str));
+        // Сплит по всем видам переносов строк: \r\n, \n, \r
+        $lines = array_values(array_filter(array_map('trim', preg_split('/\R/u', $str))));
         
-        $result['total'] = round($this->parseFloat($lines[0] ?? null) ?? 0, 2);
+        $result['total'] = $this->parseFloat($lines[0] ?? null) ?? 0.0;
         
         // В ФЕР (Гранд-Смета и др.) часто такой порядок в многострочной ячейке:
         // 1. Всего (Прямые затраты)
