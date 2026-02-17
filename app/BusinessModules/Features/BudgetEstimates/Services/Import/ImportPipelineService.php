@@ -2,7 +2,7 @@
 
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Import;
 
-use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\Factory\ParserFactory;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateService;
 use App\Models\Estimate;
 use App\Models\EstimateSection;
 use App\Models\EstimateItem;
@@ -17,7 +17,8 @@ class ImportPipelineService
     public function __construct(
         private ParserFactory $parserFactory,
         private FileStorageService $fileStorage,
-        private ImportRowMapper $rowMapper
+        private ImportRowMapper $rowMapper,
+        private EstimateService $estimateService
     ) {}
 
     public function run(ImportSession $session, array $config = []): void
@@ -83,20 +84,16 @@ class ImportPipelineService
 
     private function resolveEstimate(ImportSession $session): Estimate
     {
-        // For now, always create new. Later adapt for updating existing if needed.
-        // Or if session already has estimate_id from previous attempt?
-        // Assuming fresh import.
+        $settings = $session->options['estimate_settings'] ?? [];
         
-        return Estimate::create([
+        return $this->estimateService->create([
             'organization_id' => $session->organization_id,
-            'user_id' => $session->user_id,
-            'name' => $session->file_name,
-            'status' => 'draft',
-            'key_date' => now(), // Default date
-            'contractor_id' => $session->options['contractor_id'] ?? null,
-            'region_id' => 1, // Default region?
+            'project_id' => $settings['project_id'] ?? null,
+            'name' => $settings['name'] ?? $session->file_name,
+            'type' => $settings['type'] ?? 'local',
+            'estimate_date' => $settings['estimate_date'] ?? now()->format('Y-m-d'),
+            'contract_id' => $settings['contract_id'] ?? null,
         ]);
-        // Note: Make sure to fill required fields.
     }
 
     private function processStream(\Generator $stream, Estimate $estimate, array &$stats, ImportSession $session): void
