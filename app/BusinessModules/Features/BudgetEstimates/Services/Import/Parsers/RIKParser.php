@@ -142,6 +142,32 @@ class RIKParser implements EstimateImportParserInterface
         return in_array($ext, ['txt', 'rik']);
     }
 
+    public function getStream(string $filePath, array $options = []): \Generator
+    {
+        if ($this->isTextFile($filePath)) {
+            // Text file parsing (legacy) doesn't support streaming well, so we parse all and yield
+            $dto = $this->parseTextFile($filePath);
+            foreach ($dto->items as $item) {
+                yield new EstimateImportRowDTO(...$item);
+            }
+        } else {
+            // Delegate to Excel parser
+            // Note: ExcelSimpleTableParser might not have getStream, so we should check or rely on parse()
+            // Update: ExcelSimpleTableParser DOES have getStream according to grep
+            yield from $this->excelParser->getStream($filePath, $options);
+        }
+    }
+
+    public function getPreview(string $filePath, int $limit = 20, array $options = []): array
+    {
+        if ($this->isTextFile($filePath)) {
+            $dto = $this->parseTextFile($filePath);
+            return array_slice($dto->items, 0, $limit);
+        }
+        
+        return $this->excelParser->getPreview($filePath, $limit, $options);
+    }
+
     private function parseTextFile(string $filePath): EstimateImportDTO
     {
         // Implementation for legacy RIK text exports (rare but possible)

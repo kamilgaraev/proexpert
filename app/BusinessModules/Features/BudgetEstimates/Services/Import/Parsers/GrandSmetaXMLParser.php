@@ -129,6 +129,45 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface, StreamParser
         return $this->detectStructure($filePath);
     }
 
+    public function getStream(string $filePath, array $options = []): Generator
+    {
+        Log::info("[GrandSmeta] Stream Parsing started: {$filePath}");
+        $xml = $this->loadXML($filePath);
+        
+        $sections = [];
+        $items = [];
+        $this->processedSysIds = [];
+        
+        $estimateNode = $this->findEstimateNode($xml);
+        
+        // Use generator to yield items one by one
+        // Note: For XML, we still need to parse recursively, but we can buffer and yield
+        $this->parseNodeRecursively($estimateNode, $sections, $items);
+        
+        foreach ($sections as $section) {
+             yield new EstimateImportRowDTO(...$section);
+        }
+        
+        foreach ($items as $item) {
+             yield new EstimateImportRowDTO(...$item);
+        }
+    }
+
+    public function getPreview(string $filePath, int $limit = 20, array $options = []): array
+    {
+        $stream = $this->getStream($filePath, $options);
+        $preview = [];
+        
+        foreach ($stream as $dto) {
+            $preview[] = $dto;
+            if (count($preview) >= $limit) {
+                break;
+            }
+        }
+        
+        return $preview;
+    }
+
     private function loadXML(string $filePath): \SimpleXMLElement
     {
         libxml_use_internal_errors(true);
