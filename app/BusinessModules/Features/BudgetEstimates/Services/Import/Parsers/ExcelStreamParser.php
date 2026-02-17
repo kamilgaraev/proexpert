@@ -10,7 +10,7 @@ use Generator;
 use RuntimeException;
 use Illuminate\Support\Facades\Log;
 
-class ExcelStreamParser implements EstimateImportParserInterface
+class ExcelStreamParser implements EstimateImportParserInterface, StreamParserInterface
 {
     public function getStream(string $filePath, array $options = []): Generator
     {
