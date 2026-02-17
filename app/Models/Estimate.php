@@ -40,6 +40,10 @@ class Estimate extends Model
         'metadata',
         'import_diagnostics',
         'is_onboarding_demo',
+        'total_base_direct_costs',
+        'total_base_materials_cost',
+        'total_base_machinery_cost',
+        'total_base_labor_cost',
     ];
 
     protected $casts = [
@@ -50,6 +54,10 @@ class Estimate extends Model
         'total_estimated_profit' => 'decimal:2',
         'total_amount' => 'decimal:2',
         'total_amount_with_vat' => 'decimal:2',
+        'total_base_direct_costs' => 'decimal:2',
+        'total_base_materials_cost' => 'decimal:2',
+        'total_base_machinery_cost' => 'decimal:2',
+        'total_base_labor_cost' => 'decimal:2',
         'vat_rate' => 'decimal:2',
         'overhead_rate' => 'decimal:2',
         'profit_rate' => 'decimal:2',

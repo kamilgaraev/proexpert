@@ -305,6 +305,12 @@ class ImportPipelineService
             
             'quantity' => $dto->quantity ?? 0,
             'unit_price' => $dto->unitPrice ?? 0,
+            
+            // Base & Index fields
+            'base_unit_price' => $dto->baseUnitPrice ?? null,
+            'price_index' => $dto->priceIndex ?? null,
+            'current_unit_price' => $dto->currentUnitPrice ?? ($dto->unitPrice ?? 0),
+            
             'direct_costs' => $dto->currentTotalAmount ?? ($dto->quantity ?? 0) * ($dto->unitPrice ?? 0),
             'total_amount' => $dto->currentTotalAmount ?? ($dto->quantity ?? 0) * ($dto->unitPrice ?? 0),
             'normative_rate_code' => $dto->code,
@@ -343,7 +349,13 @@ class ImportPipelineService
                 SUM(machinery_cost) as machinery_cost,
                 SUM(labor_cost) as labor_cost,
                 SUM(overhead_amount) as overhead_amount,
-                SUM(profit_amount) as profit_amount
+                SUM(profit_amount) as profit_amount,
+                
+                -- Base Totals
+                SUM(CASE WHEN base_unit_price > 0 THEN base_unit_price * quantity ELSE 0 END) as base_direct_costs,
+                SUM(CASE WHEN base_materials_cost > 0 THEN base_materials_cost * quantity ELSE 0 END) as base_materials_cost,
+                SUM(CASE WHEN base_machinery_cost > 0 THEN base_machinery_cost * quantity ELSE 0 END) as base_machinery_cost,
+                SUM(CASE WHEN base_labor_cost > 0 THEN base_labor_cost * quantity ELSE 0 END) as base_labor_cost
             ')
             ->first();
 
@@ -354,6 +366,12 @@ class ImportPipelineService
                 'total_overhead_costs' => $totals->overhead_amount ?? 0,
                 'total_estimated_profit' => $totals->profit_amount ?? 0,
                 'total_amount_with_vat' => ($totals->total_amount ?? 0) * (1 + ($estimate->vat_rate / 100)),
+                
+                // Base fields
+                'total_base_direct_costs' => $totals->base_direct_costs ?? 0,
+                'total_base_materials_cost' => $totals->base_materials_cost ?? 0,
+                'total_base_machinery_cost' => $totals->base_machinery_cost ?? 0,
+                'total_base_labor_cost' => $totals->base_labor_cost ?? 0,
             ]);
         }
 

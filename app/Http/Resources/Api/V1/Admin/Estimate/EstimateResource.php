@@ -43,6 +43,31 @@ class EstimateResource extends JsonResource
             'approved_by' => $this->whenLoaded('approvedBy'),
             'sections' => EstimateSectionResource::collection($this->whenLoaded('sections')),
             'items' => EstimateItemResource::collection($this->whenLoaded('items')),
+
+            // Detailed Totals for UI
+            'totals' => [
+                'base' => [
+                    'direct_costs' => (float) $this->total_base_direct_costs,
+                    'materials' => (float) $this->total_base_materials_cost,
+                    'machinery' => (float) $this->total_base_machinery_cost,
+                    'labor' => (float) $this->total_base_labor_cost,
+                ],
+                // For now, Current Base Costs (materials/machinery/labor) are not strictly tracked as separate columns in Estimate Table
+                // but we have total_direct_costs.
+                // If we want detailed breakdown for CURRENT prices, we'd need to aggregate them too.
+                // Let's assume standard logic:
+                'current' => [
+                    'direct_costs' => (float) $this->total_direct_costs,
+                    'overhead_rate' => (float) $this->overhead_rate, // %
+                    'overhead_amount' => (float) $this->total_overhead_costs,
+                    'profit_rate' => (float) $this->profit_rate, // %
+                    'profit_amount' => (float) $this->total_estimated_profit,
+                    'total_without_vat' => (float) $this->total_amount,
+                    'vat_rate' => (float) $this->vat_rate,
+                    'vat_amount' => (float) ($this->total_amount_with_vat - $this->total_amount),
+                    'total_with_vat' => (float) $this->total_amount_with_vat,
+                ]
+            ],
         ];
     }
 }
