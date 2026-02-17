@@ -77,40 +77,49 @@ class AiMappingService
         foreach ($headers as $index => $text) {
             $headersList[] = "Column $index: " . ($text ?: "(empty)");
         }
-
+    
         $samplesData = [];
-        foreach (array_slice($sampleRows, 0, 10) as $rowIndex => $row) {
+        // Increase to 20 rows as requested to find sections/subsections
+        foreach (array_slice($sampleRows, 0, 20) as $rowIndex => $row) {
             $rowStr = [];
             foreach ($row as $colIndex => $val) {
                 $rowStr[] = "C$colIndex: " . ($val ?? 'null');
             }
             $samplesData[] = "Row $rowIndex: " . implode(" | ", $rowStr);
         }
-
-        return "Analyze the following Excel headers and sample data from a construction estimate file.\n\n" .
+    
+        return "Analyze the following Excel headers and first 20 rows from a construction estimate file.\n\n" .
                "HEADERS:\n" . implode("\n", $headersList) . "\n\n" .
-               "SAMPLE DATA (10 rows):\n" . implode("\n", $samplesData) . "\n\n" .
-               "MAP to these target fields (use null if not found):\n" .
+               "DATA ROWS (first 20):\n" . implode("\n", $samplesData) . "\n\n" .
+               "TASK 1: Map columns to target fields (use null if not found):\n" .
                "- 'code': Normative code (e.g. ФЕР01-01-001, шифр)\n" .
                "- 'name': Item description/name\n" .
                "- 'unit': Unit of measurement (e.g. м3, шт, т)\n" .
                "- 'quantity': Amount/Volume\n" .
-               "- 'unit_price': Price per unit (e.g. стоимость единицы)\n" .
-               "- 'current_total_amount': Total price for row (e.g. всего, общая стоимость)\n" .
+               "- 'unit_price': Price per unit\n" .
+               "- 'current_total_amount': Total price for row\n" .
                "- 'section_number': Row number or numbering in the estimate\n\n" .
+               "TASK 2: Identify Section/Subsection pattern:\n" .
+               "- 'section_columns': Array of column indices that contain section titles (e.g. [0, 1])\n" .
+               "- 'section_keywords': Array of words indicating a section (e.g. [\"Раздел\", \"Глава\", \"ИТОГО по\"]) or null if generic\n\n" .
                "RULES:\n" .
-               "1. Return ONLY a valid JSON object where keys are field names and values are column indices (integers).\n" .
-               "2. If 'name' and 'unit' are in the same column, map both to that column index.\n" .
-               "3. Be careful with 'code' vs 'section_number'. 'code' usually contains letters and dashes.\n\n" .
+               "1. Return ONLY a valid JSON object.\n" .
+               "2. Be extremely precise with column indices.\n\n" .
                "RESPONSE FORMAT (JSON only):\n" .
                "{\n" .
-               "  \"code\": 1,\n" .
-               "  \"name\": 2,\n" .
-               "  \"unit\": 2,\n" .
-               "  \"quantity\": 3,\n" .
-               "  \"unit_price\": 4,\n" .
-               "  \"current_total_amount\": 7,\n" .
-               "  \"section_number\": 0\n" .
+               "  \"mapping\": {\n" .
+               "    \"code\": 1,\n" .
+               "    \"name\": 2,\n" .
+               "    \"unit\": 3,\n" .
+               "    \"quantity\": 4,\n" .
+               "    \"unit_price\": 5,\n" .
+               "    \"current_total_amount\": 8,\n" .
+               "    \"section_number\": 0\n" .
+               "  },\n" .
+               "  \"section_hints\": {\n" .
+               "    \"section_columns\": [0, 2],\n" .
+               "    \"section_keywords\": [\"Раздел\", \"Подраздел\", \"ЭТАП\"]\n" .
+               "  }\n" .
                "}";
     }
 
