@@ -310,30 +310,26 @@ class ImportRowMapper
         }
 
         // 2. Parse Overhead (НР)
-        // Pattern A: "НР (1204,9 руб.): 95% от ФОТ" -> capture 1204.9 AND 95
-        // Pattern B: "НР-95%"
-        if (preg_match('/(?:нр|накладные).*?(?:\(\s*(\d+[.,]?\d*)\s*(?:руб|р)\.?\s*\))?.*?(\d+[.,]?\d*)\s*%/ui', $text, $matches)) {
-             // If group 1 exists, it is the amount. Group 2 is the rate.
-             if (!empty($matches[1])) {
-                 $attributes['overhead_amount'] = (float)str_replace(',', '.', $matches[1]);
-             }
-             if (!empty($matches[2])) {
-                 $attributes['overhead_rate'] = (float)str_replace(',', '.', $matches[2]);
-             }
-        } elseif (preg_match('/(?:нр|накладные)\D{0,20}?(\d+[.,]?\d*)\s*%/ui', $text, $matches)) {
-             // Fallback for just rate
+        // Try to match Amount specifically: "НР (28,38 руб)"
+        if (preg_match('/(?:нр|накладные)[^\d]*?\((\d+[.,]?\d*)\s*(?:руб|р)\.?\)/ui', $text, $matches)) {
+             $attributes['overhead_amount'] = (float)str_replace(',', '.', $matches[1]);
+        }
+        
+        // Try to match Rate: "130% от ФОТ" or just "130%" or "НР-95%"
+        // We look for % sign and number before it, but be careful not to match random percentages in text
+        // Ideally, close to "НР" word.
+        if (preg_match('/(?:нр|накладные)[^%]*?(\d+[.,]?\d*)\s*%/ui', $text, $matches)) {
              $attributes['overhead_rate'] = (float)str_replace(',', '.', $matches[1]);
         }
 
         // 3. Parse Profit (СП)
-        if (preg_match('/(?:сп|сметная).*?(?:\(\s*(\d+[.,]?\d*)\s*(?:руб|р)\.?\s*\))?.*?(\d+[.,]?\d*)\s*%/ui', $text, $matches)) {
-             if (!empty($matches[1])) {
-                 $attributes['profit_amount'] = (float)str_replace(',', '.', $matches[1]);
-             }
-             if (!empty($matches[2])) {
-                 $attributes['profit_rate'] = (float)str_replace(',', '.', $matches[2]);
-             }
-        } elseif (preg_match('/(?:сп|сметная)\D{0,20}?(\d+[.,]?\d*)\s*%/ui', $text, $matches)) {
+        // Try to match Amount: "СП (19,43 руб)"
+        if (preg_match('/(?:сп|сметная)[^\d]*?\((\d+[.,]?\d*)\s*(?:руб|р)\.?\)/ui', $text, $matches)) {
+             $attributes['profit_amount'] = (float)str_replace(',', '.', $matches[1]);
+        }
+        
+        // Try to match Rate: "89% от ФОТ"
+        if (preg_match('/(?:сп|сметная)[^%]*?(\d+[.,]?\d*)\s*%/ui', $text, $matches)) {
              $attributes['profit_rate'] = (float)str_replace(',', '.', $matches[1]);
         }
 
