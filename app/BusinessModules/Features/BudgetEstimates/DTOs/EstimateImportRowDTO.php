@@ -36,6 +36,7 @@ class EstimateImportRowDTO
         // Detailed Costs
         public ?float $baseLaborCost = null,
         public ?float $baseMachineryCost = null,
+        public ?float $baseMachineryLaborCost = null,
         public ?float $baseMaterialsCost = null,
         public ?float $laborCost = null,
         public ?float $machineryCost = null,
@@ -83,6 +84,7 @@ class EstimateImportRowDTO
             'profit_rate' => $this->profitRate,
             'base_labor_cost' => $this->baseLaborCost,
             'base_machinery_cost' => $this->baseMachineryCost,
+            'base_machinery_labor_cost' => $this->baseMachineryLaborCost,
             'base_materials_cost' => $this->baseMaterialsCost,
             'labor_cost' => $this->laborCost,
             'machinery_cost' => $this->machineryCost,
@@ -149,6 +151,7 @@ class EstimateImportRowDTO
             profitRate: $data['profit_rate'] ?? $rawData['profit_rate'] ?? null,
             baseLaborCost: $data['base_labor_cost'] ?? $rawData['base_labor_cost'] ?? null,
             baseMachineryCost: $data['base_machinery_cost'] ?? $rawData['base_machinery_cost'] ?? null,
+            baseMachineryLaborCost: $data['base_machinery_labor_cost'] ?? $rawData['base_machinery_labor_cost'] ?? null,
             baseMaterialsCost: $data['base_materials_cost'] ?? $rawData['base_materials_cost'] ?? null,
             laborCost: $data['labor_cost'] ?? $rawData['labor_cost'] ?? null,
             machineryCost: $data['machinery_cost'] ?? $rawData['machinery_cost'] ?? null,
