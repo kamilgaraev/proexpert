@@ -91,12 +91,22 @@ return [
                 'tries' => 2,
                 'timeout' => 600,
             ],
+            'supervisor-imports' => [
+                'connection' => 'redis',
+                'queue' => ['imports'],
+                'balance' => 'auto',
+                'autoScalingStrategy' => 'time',
+                'minProcesses' => 1,
+                'maxProcesses' => 5,
+                'tries' => 1,
+                'timeout' => 1200,
+            ],
         ],
 
         'local' => [
             'supervisor-1' => [
                 'connection' => 'redis',
-                'queue' => ['notifications-critical', 'notifications-high', 'notifications', 'notifications-low', 'default'],
+                'queue' => ['imports', 'notifications-critical', 'notifications-high', 'notifications', 'notifications-low', 'default'],
                 'balance' => 'simple',
                 'processes' => 3,
                 'tries' => 3,

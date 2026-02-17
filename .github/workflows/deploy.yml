@@ -89,7 +89,12 @@ jobs:
             echo "🔄 Reloading Application Server..."
             php artisan octane:reload || sudo systemctl reload prohelper-octane || sudo systemctl restart prohelper-octane || true
             
-            # Перезапуск queue workers
+            # Перезапуск Horizon
+            echo "🔄 Restarting Horizon..."
+            php artisan horizon:terminate || true
+            echo "✅ Horizon restarted"
+            
+            # Перезапуск queue workers (если они еще используются вне Horizon)
             echo "🔄 Restarting queue workers..."
             supervisorctl restart laravel-worker:* || true
             echo "✅ Queue workers restarted"
