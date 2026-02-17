@@ -289,13 +289,16 @@ class ImportRowMapper
             priceIndex: $mappedData['priceIndex'] ?? null,
             currentUnitPrice: $mappedData['currentUnitPrice'] ?? null,
             priceCoefficient: $mappedData['priceCoefficient'] ?? null,
+            currentUnitPrice: $mappedData['currentUnitPrice'] ?? null,
+            priceCoefficient: $mappedData['priceCoefficient'] ?? null,
             overheadAmount: $attributes['overhead_amount'] ?? null,
             profitAmount: $attributes['profit_amount'] ?? null,
             overheadRate: $mappedData['overheadRate'] ?? null,
             profitRate: $mappedData['profitRate'] ?? null,
             baseLaborCost: $mappedData['baseLaborCost'] ?? null,
             baseMachineryCost: $mappedData['baseMachineryCost'] ?? null,
-            baseMaterialsCost: $mappedData['baseMaterialsCost'] ?? null
+            baseMaterialsCost: $mappedData['baseMaterialsCost'] ?? null,
+            baseUnitPrice: $mappedData['baseUnitPrice'] ?? $mappedData['unitPrice'] ?? null
         );
     }
 
@@ -320,16 +323,18 @@ class ImportRowMapper
         }
 
         $str = (string)$value;
-        $lines = explode("\n", $str);
+        $lines = array_map('trim', explode("\n", $str));
         
-        $result['total'] = $this->parseFloat($lines[0] ?? null);
-        $result['labor'] = $this->parseFloat($lines[1] ?? null);
-        $result['machinery'] = $this->parseFloat($lines[2] ?? null);
+        $result['total'] = round($this->parseFloat($lines[0] ?? null) ?? 0, 2);
+        
+        // In FER multi-line: Line 2 is Labor (ЗП), Line 3 is Machinery (ЭМ)
+        $result['labor'] = round($this->parseFloat($lines[1] ?? null) ?? 0, 2);
+        $result['machinery'] = round($this->parseFloat($lines[2] ?? null) ?? 0, 2);
         
         // Materials is often Total - Labor - Machinery in FER unit prices
-        if ($result['total'] !== null) {
-            $result['materials'] = $result['total'] - ($result['labor'] ?? 0) - ($result['machinery'] ?? 0);
-            if ($result['materials'] < 0) $result['materials'] = 0;
+        if ($result['total'] > 0) {
+            $result['materials'] = round($result['total'] - ($result['labor'] ?? 0) - ($result['machinery'] ?? 0), 2);
+            if ($result['materials'] < 0.01) $result['materials'] = 0;
         }
 
         return $result;

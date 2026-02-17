@@ -319,15 +319,15 @@ class ImportPipelineService
             // Base Overhead & Profit (from text, e.g. "НР (28,38 руб)...")
             // These are already row totals in typical FER export, so we don't multiply by quantity again here
             // to avoid double-counting if quantity > 1.
-            'base_overhead_amount' => $dto->overheadAmount ?? 0,
-            'base_profit_amount' => $dto->profitAmount ?? 0,
+            'base_overhead_amount' => round($dto->overheadAmount ?? 0, 2),
+            'base_profit_amount' => round($dto->profitAmount ?? 0, 2),
             
             // Current Overhead & Profit (Base * Index)
-            'overhead_amount' => ($dto->overheadAmount ?? 0) * ($dto->priceIndex ?? 1),
-            'profit_amount' => ($dto->profitAmount ?? 0) * ($dto->priceIndex ?? 1),
+            'overhead_amount' => round(($dto->overheadAmount ?? 0) * ($dto->priceIndex ?? 1), 2),
+            'profit_amount' => round(($dto->profitAmount ?? 0) * ($dto->priceIndex ?? 1), 2),
             
-            'direct_costs' => $dto->currentTotalAmount ?? ($dto->quantity ?? 0) * ($dto->unitPrice ?? 0),
-            'total_amount' => $dto->currentTotalAmount ?? ($dto->quantity ?? 0) * ($dto->unitPrice ?? 0),
+            'direct_costs' => round($dto->currentTotalAmount ?? ($dto->quantity ?? 0) * ($dto->unitPrice ?? 0), 2),
+            'total_amount' => round($dto->currentTotalAmount ?? ($dto->quantity ?? 0) * ($dto->unitPrice ?? 0), 2),
             'normative_rate_code' => $dto->code,
             'position_number' => (string)$dto->rowNumber,
             'item_type' => $this->mapItemType($dto->itemType),
