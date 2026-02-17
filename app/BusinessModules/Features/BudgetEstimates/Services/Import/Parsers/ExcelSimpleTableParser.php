@@ -73,120 +73,13 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
     }
 
     /**
-     * Читать содержимое файла для детекции типа (без полного парсинга)
+     * Get generator for streaming items.
      * 
-     * @param string $filePath Путь к файлу
-     * @param int $maxRows Максимальное количество строк для чтения
-     * @return mixed Worksheet для Excel
+     * @param string $filePath
+     * @param array $options ['header_row' => int, 'column_mapping' => array]
+     * @return \Generator yielding EstimateImportRowDTO
      */
-    public function readContent(string $filePath, int $maxRows = 100)
-    {
-        $spreadsheet = IOFactory::load($filePath);
-        $worksheet = $spreadsheet->getActiveSheet();
-        
-        return $worksheet; // Возвращаем Worksheet для детекторов
-    }
-    
-    private array $columnKeywords = [
-        'name' => [
-            'наименование', 
-            'название', 
-            'работа', 
-            'позиция', 
-            'наименование работ',
-            'наименование работ и затрат',
-            'наименование работ затрат',
-            'работ и затрат'
-        ],
-        'unit' => [
-            'ед.изм', 
-            'единица', 
-            'ед', 
-            'измерение', 
-            'ед. изм',
-            'единица измерения',
-            'ед.изм.',
-            'е д и н и ц а', // Разрядка
-        ],
-        'quantity' => [
-            'количество на единицу',
-            'количество', 
-            'кол-во', 
-            'объем', 
-            'кол', 
-            'объём',
-            'кол.'
-        ],
-        'quantity_coefficient' => [
-            'коэффициенты',
-            'коэф.',
-            'к-т',
-        ],
-        'quantity_total' => [
-            'всего с учетом коэффициентов',
-            'количество всего',
-            'итого количество',
-        ],
-        'base_unit_price' => [
-            'базисном уровне цен на единицу',
-            'на единицу измерения в базисном',
-            'в базисном уровне',
-            'базисный уровень',
-        ],
-        'price_index' => [
-            'индекс',
-            'индекс пересчета',
-        ],
-        'current_unit_price' => [
-            'текущем уровне цен на единицу',
-            'на единицу измерения в текущем',
-            'в текущем уровне',
-            'текущий уровень',
-        ],
-        'price_coefficient' => [
-            'коэффициенты стоимость',
-            'коэф. стоимость',
-        ],
-        'current_total_amount' => [
-            'всего в текущем уровне',
-            'всего текущий',
-            'сметная стоимость всего',
-        ],
-        'unit_price' => [
-            'сметная стоимость',
-            'цена', 
-            'стоимость', 
-            'расценка', 
-            'цена за ед', 
-            'стоимость единицы',
-        ],
-        'code' => [
-            'код', 
-            'шифр', 
-            'обоснование', 
-            'гэсн', 
-            'фер',
-            'тер',
-            'фсбц',
-            'фсбцс',
-            'шифр расценки',
-            'шифр нормы',
-            'код нормы',
-            'нормативы',
-            'код норматива',
-            'расценка'
-        ],
-        'section_number' => [
-            '№', 
-            'номер', 
-            '№ п/п', 
-            'п/п', 
-            'n',
-            '№п/п'
-        ],
-    ];
-
-    public function parse(string $filePath): EstimateImportDTO
+    public function getStream(string $filePath, array $options = []): \Generator
     {
         $spreadsheet = IOFactory::load($filePath);
         $sheet = $spreadsheet->getActiveSheet();
@@ -195,66 +88,104 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         $spreadsheet->getActiveSheet()->setShowGridlines(false);
         \PhpOffice\PhpSpreadsheet\Calculation\Calculation::getInstance($spreadsheet)->disableBranchPruning();
         
-        $structure = $this->detectStructure($filePath);
-        $headerRow = $structure['header_row'];
-        $columnMapping = $structure['column_mapping'];
+        // 1. Determine Structure
+        $headerRow = $options['header_row'] ?? null;
+        $columnMapping = $options['column_mapping'] ?? null;
         
-        // 🧠 AI PRICE CALIBRATION
-        // Определяем стратегию извлечения цен перед парсингом строк
+        if ($headerRow === null || $columnMapping === null) {
+            $structure = $this->detectStructure($filePath);
+            $headerRow = $structure['header_row'];
+            $columnMapping = $structure['column_mapping'];
+        }
+        
+        if ($headerRow === null) {
+             // No header found, cannot parse
+             return;
+        }
+
+        // 2. AI Price Calibration (if needed, but usually once per file)
+        // We can skip this or run it on first N rows if it's cheap
         $this->detectPriceStrategy($sheet, $headerRow, $columnMapping);
         
-        // 🧠 AI ROW CLASSIFICATION (PRE-PROCESS)
-        // Запускаем пакетную классификацию строк через AI
+        // 3. AI Row Classification (Pre-process)
+        // Warning: This scans the whole file. For streaming huge files, we might want to skip or chunk this.
+        // For now, we assume simple table parser is for files that fit in memory.
         if ($this->useAI && $this->rowClassifierService) {
             $this->classifyRowsWithAI($sheet, $headerRow + 1, $columnMapping);
         }
 
-        $rows = $this->extractRows($sheet, $headerRow + 1, $columnMapping);
+        // 4. Yield Rows
+        // We reuse the logic from extractRows but yield instead of collecting
+        yield from $this->yieldRows($sheet, $headerRow + 1, $columnMapping);
+    }
+    
+    /**
+     * Get first N rows for preview.
+     */
+    public function getPreview(string $filePath, int $limit = 20, array $options = []): array
+    {
+        // For preview, we just take the first N items from the stream
+        $stream = $this->getStream($filePath, $options);
+        $items = [];
+        foreach ($stream as $item) {
+            $items[] = $item;
+            if (count($items) >= $limit) {
+                break;
+            }
+        }
+        return $items;
+    }
+
+    /**
+     * Legacy parse method
+     */
+    public function parse(string $filePath): EstimateImportDTO
+    {
+        // ... (Original parse logic, but maybe reuse getStream?)
+        // Keeping original logic for now to avoid breaking too much logic one go
+        // Or better: Re-implement using getStream to reduce duplication?
+        
+        // Let's reuse getStream components but we need Sections/Items separation for DTO
+        // extractRows returns array, so we can use that.
+        
+        $spreadsheet = IOFactory::load($filePath);
+        $sheet = $spreadsheet->getActiveSheet();
+        
+        // ... (Original setup)
+        $spreadsheet->getActiveSheet()->setShowGridlines(false);
+        \PhpOffice\PhpSpreadsheet\Calculation\Calculation::getInstance($spreadsheet)->disableBranchPruning();
+        
+        $structure = $this->detectStructure($filePath);
+        $headerRow = $structure['header_row'];
+        $columnMapping = $structure['column_mapping'];
+        
+        $this->detectPriceStrategy($sheet, $headerRow, $columnMapping);
+        
+        if ($this->useAI && $this->rowClassifierService) {
+            $this->classifyRowsWithAI($sheet, $headerRow + 1, $columnMapping);
+        }
+
+        // Use new yieldRows internally to get rows
+        $rows = iterator_to_array($this->yieldRows($sheet, $headerRow + 1, $columnMapping));
         
         $sections = [];
         $items = [];
-        $currentSectionPath = [];
         
         foreach ($rows as $row) {
             if ($row->isSection) {
                 $sections[] = $row->toArray();
-                $level = $row->level;
-                $currentSectionPath = array_slice($currentSectionPath, 0, $level);
-                $currentSectionPath[] = $row->sectionNumber;
-                
-                Log::info('[ExcelParser] Раздел обнаружен', [
-                    'row' => $row->rowNumber,
-                    'section_number' => $row->sectionNumber,
-                    'name' => substr($row->itemName, 0, 100),
-                    'level' => $level,
-                ]);
             } else {
-                $row->sectionPath = !empty($currentSectionPath) 
-                    ? implode('.', $currentSectionPath) 
-                    : null;
                 $items[] = $row->toArray();
             }
         }
         
-        Log::info('[ExcelParser] Parsing completed', [
-            'total_rows_processed' => count($rows),
-            'sections_count' => count($sections),
-            'items_count' => count($items),
-        ]);
-        
-        // ⭐ АВТОМАТИЧЕСКОЕ СОЗДАНИЕ РАЗДЕЛОВ (если их нет)
+        // ... (Auto create sections logic - duplicate from original)
         $autoGeneratedSections = false;
         if (empty($sections) && !empty($items)) {
-            Log::info('[ExcelParser] Разделов нет - создаем автоматически');
             $autoSections = $this->createDefaultSections($items);
             $sections = $autoSections['sections'];
             $items = $autoSections['items'];
             $autoGeneratedSections = $autoSections['auto_generated_sections'] ?? true;
-            
-            Log::info('[ExcelParser] Автоматические разделы созданы', [
-                'sections_count' => count($sections),
-                'items_with_sections' => count(array_filter($items, fn($i) => !empty($i['section_path']))),
-            ]);
         }
         
         $totals = $this->calculateTotals($items);
@@ -276,6 +207,7 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             rawHeaders: $structure['raw_headers']
         );
     }
+
 
     public function detectStructure(string $filePath): array
     {
@@ -668,9 +600,11 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         return $importance;
     }
 
-    private function extractRows(Worksheet $sheet, int $startRow, array $columnMapping): array
+    /**
+     * Generator for rows
+     */
+    private function yieldRows(Worksheet $sheet, int $startRow, array $columnMapping): \Generator
     {
-        $rows = [];
         $maxRow = $sheet->getHighestRow();
         $consecutiveEmptyRows = 0;
         $maxConsecutiveEmptyRows = 20; 
@@ -680,6 +614,7 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         // ==========================================
         $currentState = self::STATE_SEARCHING;
         $currentSectionNumber = null;
+        $currentSectionPath = [];
         
         for ($rowNum = $startRow; $rowNum <= $maxRow; $rowNum++) {
             $rowData = $this->extractRowData($sheet, $rowNum, $columnMapping);
@@ -706,14 +641,11 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             // 🤖 CLASSIFICATION
             $rowType = $this->classifyRow($rowData, $rowNum);
             
-            Log::debug("[ExcelParser] Row {$rowNum} classified as {$rowType}", [
-                'name' => substr($rowData['name'] ?? '', 0, 30),
-                'state_before' => $currentState
-            ]);
-            
             // ==========================================
             // STATE MACHINE LOGIC
             // ==========================================
+            
+            $isSection = false;
             
             switch ($rowType) {
                 case self::ROW_TYPE_IGNORE:
@@ -731,16 +663,12 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                     // Enter summary mode
                     $currentState = self::STATE_SUMMARY_MODE;
                     $isSection = true; // Summaries are stored as sections/markers in current structure
-                    // In current DTO, summary rows are treated as sections with item_type=summary
-                    // This matches the previous logic but with better detection
                     break;
                     
                 case self::ROW_TYPE_ITEM:
                     // If we were in SUMMARY_MODE and found an item -> assume we are back in section
-                    // (e.g. sometimes summaries are in the middle, or we missed a section header)
                     if ($currentState === self::STATE_SUMMARY_MODE) {
                         $currentState = self::STATE_IN_SECTION;
-                        Log::info("[ExcelParser] Auto-transition from SUMMARY to IN_SECTION at row {$rowNum}");
                     }
                     $isSection = false;
                     break;
@@ -751,11 +679,17 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             
             $level = $this->calculateSectionLevel($rowData['section_number']);
             
+            // Update Section Path if Section
+            if ($isSection) {
+                 $currentSectionPath = array_slice($currentSectionPath, 0, $level);
+                 $currentSectionPath[] = $rowData['section_number'];
+            }
+            
             // Determine Item Type
             if ($rowType === self::ROW_TYPE_SUMMARY) {
                 $itemType = 'summary';
             } elseif ($rowType === self::ROW_TYPE_SECTION) {
-                $itemType = 'section'; // Or null? The DTO expects 'work'/'material' etc.
+                $itemType = 'section'; 
             } else {
                 $itemType = $this->typeDetector->detectType(
                     $rowData['code'],
@@ -772,7 +706,7 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                 $itemName = '[Без наименования]';
             }
             
-            $rows[] = new EstimateImportRowDTO(
+            yield new EstimateImportRowDTO(
                 rowNumber: $rowNum,
                 sectionNumber: $rowData['section_number'],
                 itemName: $itemName,
@@ -783,7 +717,7 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                 isSection: $isSection,
                 itemType: $itemType,
                 level: $level,
-                sectionPath: null,
+                sectionPath: $isSection ? implode('.', $currentSectionPath) : implode('.', $currentSectionPath), // Use current context
                 rawData: $rowData,
                 quantityCoefficient: $rowData['quantity_coefficient'] ?? null,
                 quantityTotal: $rowData['quantity_total'] ?? null,
@@ -795,9 +729,14 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                 isNotAccounted: $rowData['is_not_accounted'] ?? false
             );
         }
-        
-        return $rows;
     }
+
+    private function extractRows(Worksheet $sheet, int $startRow, array $columnMapping): array
+    {
+        // Wrapper for compatibility with old code that calls extractRows internally
+        return iterator_to_array($this->yieldRows($sheet, $startRow, $columnMapping));
+    }
+
 
     /**
      * Проверка на "мусорные" строки (номера колонок, обрывки)

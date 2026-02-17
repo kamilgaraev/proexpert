@@ -108,7 +108,10 @@ class ProhelperEstimateParser implements EstimateImportParserInterface
     /**
      * Парсить файл Prohelper формата
      */
-    public function parse(string $filePath): \Generator
+    /**
+     * Парсить файл Prohelper формата
+     */
+    public function getStream(string $filePath, array $options = []): \Generator
     {
         if (!$this->isProhelperFormat) {
             // Try to detect again
@@ -133,6 +136,22 @@ class ProhelperEstimateParser implements EstimateImportParserInterface
         Log::info('prohelper_parser.parsing_completed', [
             'total_items' => count($items),
         ]);
+    }
+
+    public function getPreview(string $filePath, int $limit = 20, array $options = []): array
+    {
+        $stream = $this->getStream($filePath, $options);
+        $preview = [];
+        foreach ($stream as $item) {
+             $preview[] = $item;
+             if (count($preview) >= $limit) break;
+        }
+        return $preview;
+    }
+
+    public function parse(string $filePath): \Generator
+    {
+        return $this->getStream($filePath);
     }
 
     /**
