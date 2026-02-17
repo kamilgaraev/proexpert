@@ -98,10 +98,10 @@ class AiMappingService
                "- 'quantity': Amount/Volume\n" .
                "- 'unit_price': Price per unit\n" .
                "- 'current_total_amount': Total price for row\n" .
-               "- 'section_number': Row number or numbering in the estimate\n\n" .
-               "TASK 2: Identify Section/Subsection pattern:\n" .
+               "TASK 2: Identify Section/Subsection and Footer patterns:\n" .
                "- 'section_columns': Array of column indices that contain section titles (e.g. [0, 1])\n" .
-               "- 'section_keywords': Array of words indicating a section (e.g. [\"Раздел\", \"Глава\", \"ИТОГО по\"]) or null if generic\n\n" .
+               "- 'section_keywords': Array of words indicating a section (e.g. [\"Раздел\", \"Глава\"])\n" .
+               "- 'footer_keywords': Array of words indicating summary/footer rows to IGNORE (e.g. [\"Итого\", \"Всего\", \"Накладные\", \"Прибыль\", \"Справочно\"])\n\n" .
                "RULES:\n" .
                "1. Return ONLY a valid JSON object.\n" .
                "2. Be extremely precise with column indices.\n\n" .
@@ -118,7 +118,8 @@ class AiMappingService
                "  },\n" .
                "  \"section_hints\": {\n" .
                "    \"section_columns\": [0, 2],\n" .
-               "    \"section_keywords\": [\"Раздел\", \"Подраздел\", \"ЭТАП\"]\n" .
+               "    \"section_keywords\": [\"Раздел\", \"Подраздел\"],\n" .
+               "    \"footer_keywords\": [\"Итого\", \"Всего\", \"Накладные\", \"Прибыль\", \"Справочно\", \"Перевод цен\", \"смете\"]\n" .
                "  }\n" .
                "}";
     }

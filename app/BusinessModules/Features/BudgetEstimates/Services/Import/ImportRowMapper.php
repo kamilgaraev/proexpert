@@ -153,6 +153,7 @@ class ImportRowMapper
             sectionPath: $mappedData['sectionPath'] ?? null,
             rawData: $rawData,
             currentTotalAmount: $mappedData['currentTotalAmount'] ?? null,
+            isFooter: $this->isFooter($mappedData['itemName'] ?? null, $rawData),
             quantityCoefficient: $mappedData['quantityCoefficient'] ?? null,
             quantityTotal: $mappedData['quantityTotal'] ?? null,
             baseUnitPrice: $mappedData['baseUnitPrice'] ?? null,
@@ -237,6 +238,11 @@ class ImportRowMapper
 
     private function isSection(?string $itemName, array $rawData): bool
     {
+        // 0. If it's a footer, it's definitely not a section
+        if ($this->isFooter($itemName, $rawData)) {
+            return false;
+        }
+
         // 1. Prioritize AI Hints
         $aiKeywords = $this->sectionHints['section_keywords'] ?? [];
         $aiCols = $this->sectionHints['section_columns'] ?? [];
@@ -422,5 +428,28 @@ class ImportRowMapper
         }
 
         return ['name' => $name, 'unit' => null];
+    }
+
+    private function isFooter(?string $itemName, array $rawData): bool
+    {
+        $text = mb_strtolower($itemName ?? '');
+        
+        $aiFooterKeywords = $this->sectionHints['footer_keywords'] ?? [];
+        if (!empty($aiFooterKeywords)) {
+            foreach ($aiFooterKeywords as $kw) {
+                if (mb_stripos($text, mb_strtolower($kw)) !== false) return true;
+            }
+        }
+
+        // Standard heuristics for footers
+        $footers = ['итого', 'всего', 'накладные', 'сметная прибыль', 'справочно', 'в базисных ценах', 'перевод цен', 'смете'];
+        foreach ($footers as $f) {
+            if (mb_stripos($text, $f) !== false) return true;
+        }
+
+        // Additional check: if itemName looks like a long footer without keywords but it's high column
+        // but let's stick to keywords for now to avoid false positives.
+
+        return false;
     }
 }

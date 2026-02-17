@@ -39,7 +39,8 @@ class EstimateImportRowDTO
         
         // Вложенные данные из XML
         public ?array $worksList = null,
-        public ?array $totals = null
+        public ?array $totals = null,
+        public bool $isFooter = false
     ) {}
     
     public function toArray(): array
@@ -74,6 +75,7 @@ class EstimateImportRowDTO
             'has_math_mismatch' => $this->hasMathMismatch,
             'works_list' => $this->worksList,
             'totals' => $this->totals,
+            'is_footer' => $this->isFooter,
         ];
     }
     
@@ -130,7 +132,8 @@ class EstimateImportRowDTO
             warnings: $data['warnings'] ?? [],
             hasMathMismatch: $data['has_math_mismatch'] ?? false,
             worksList: $data['works_list'] ?? ($data['raw_data']['works_list'] ?? null),
-            totals: $data['totals'] ?? ($data['raw_data']['totals'] ?? null)
+            totals: $data['totals'] ?? ($data['raw_data']['totals'] ?? null),
+            isFooter: $data['is_footer'] ?? false
         );
     }
 }

@@ -118,6 +118,11 @@ class ImportPipelineService
             // Apply mapping
             $rowDTO = $this->rowMapper->map($rowDTO, $session->options['structure']['column_mapping'] ?? []);
             
+            // Skip rows that are identified as footers (totals, summaries, etc.)
+            if ($rowDTO->isFooter) {
+                continue;
+            }
+
             // Skip rows that have no name and no numeric data
             if (!$rowDTO->isSection && empty($rowDTO->itemName) && $rowDTO->quantity === null && $rowDTO->unitPrice === null) {
                 continue;

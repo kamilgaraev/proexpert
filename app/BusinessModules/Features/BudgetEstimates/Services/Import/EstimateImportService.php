@@ -161,6 +161,11 @@ class EstimateImportService
         $items = [];
         $sections = [];
         
+        // Initialize RowMapper with AI hints if available
+        if (!empty($structure['ai_section_hints'])) {
+             $this->rowMapper->setSectionHints($structure['ai_section_hints']);
+        }
+
         // Using getStream allows us to inject mapping options which legacy parse() didn't support well externally
         foreach ($parser->getStream($fullPath, $parseOptions) as $rowDTO) {
             // Skip technical rows (like 1, 2, 3... guide rows)
@@ -171,9 +176,14 @@ class EstimateImportService
 
             // Apply mapping if it's a raw stream
             $mappedDTO = $this->rowMapper->map($rowDTO, $columnMapping);
+            
+            // Skip rows that are identified as footers (totals, summaries, etc.)
+            if ($mappedDTO->isFooter) {
+                continue;
+            }
              
             // Skip rows that have no name and no numeric data (likely spacing or sub-headers we don't handle)
-            if (!$mappedDTO->isSection && empty($mappedDTO->name) && $mappedDTO->quantity === null && $mappedDTO->unitPrice === null) {
+            if (!$mappedDTO->isSection && empty($mappedDTO->itemName) && $mappedDTO->quantity === null && $mappedDTO->unitPrice === null) {
                 continue;
             }
 
