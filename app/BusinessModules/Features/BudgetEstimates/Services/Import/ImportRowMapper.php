@@ -432,23 +432,34 @@ class ImportRowMapper
 
     private function isFooter(?string $itemName, array $rawData): bool
     {
-        $text = mb_strtolower($itemName ?? '');
+        $footers = [
+            'итого', 'всего', 'накладные', 'сметная прибыль', 'справочно', 
+            'в базисных ценах', 'перевод цен', 'смете', 'затраты', 'итоги по', 
+            'выполняемые', 'мат=', 'эм=', 'зп=', 'пз=', 'фод=', 'нр (', 'сп ('
+        ];
         
         $aiFooterKeywords = $this->sectionHints['footer_keywords'] ?? [];
-        if (!empty($aiFooterKeywords)) {
-            foreach ($aiFooterKeywords as $kw) {
-                if (mb_stripos($text, mb_strtolower($kw)) !== false) return true;
+        $allKeywords = array_merge($footers, array_map('mb_strtolower', $aiFooterKeywords));
+
+        // 1. Check all values in the raw row
+        foreach ($rawData as $val) {
+            $v = mb_strtolower((string)$val);
+            if (empty($v)) continue;
+            
+            foreach ($allKeywords as $kw) {
+                if (mb_stripos($v, $kw) !== false) {
+                    return true;
+                }
             }
         }
 
-        // Standard heuristics for footers
-        $footers = ['итого', 'всего', 'накладные', 'сметная прибыль', 'справочно', 'в базисных ценах', 'перевод цен', 'смете'];
-        foreach ($footers as $f) {
-            if (mb_stripos($text, $f) !== false) return true;
+        // 2. Check mapped itemName specifically (if not already caught)
+        $text = mb_strtolower($itemName ?? '');
+        if (!empty($text)) {
+            foreach ($allKeywords as $kw) {
+                if (mb_stripos($text, $kw) !== false) return true;
+            }
         }
-
-        // Additional check: if itemName looks like a long footer without keywords but it's high column
-        // but let's stick to keywords for now to avoid false positives.
 
         return false;
     }
