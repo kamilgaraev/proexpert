@@ -166,6 +166,39 @@ class ImportRowMapper
             }
         }
 
+        // 2.5. Smart Parsing of Indices and Rates from Item Name
+        // Only if we have a valid item name and it's not a section/footer
+        if (!empty($mappedData['itemName']) && !$mappedData['isSection'] && !$mappedData['isFooter']) {
+            $attributes = $this->parseItemAttributes($mappedData['itemName']);
+            
+            if ($attributes['price_index'] > 0) {
+                // Store detected index
+                $mappedData['priceIndex'] = $attributes['price_index'];
+                
+                // If we have a unit price (which is Base Price), we move it to baseUnitPrice
+                // and calculate new Unit Price (Current Price)
+                if (!empty($mappedData['unitPrice'])) {
+                    $mappedData['baseUnitPrice'] = $mappedData['unitPrice'];
+                    $mappedData['unitPrice'] = round($mappedData['baseUnitPrice'] * $mappedData['priceIndex'], 2);
+                    
+                    // Recalculate Current Total Amount if we have quantity
+                    if (!empty($mappedData['quantity'])) {
+                        $mappedData['currentTotalAmount'] = round($mappedData['unitPrice'] * $mappedData['quantity'], 2);
+                    }
+                    
+                    Log::info("[ImportRowMapper] Smart Parsing applied: BasePrice={$mappedData['baseUnitPrice']} * Index={$mappedData['priceIndex']} = NewPrice={$mappedData['unitPrice']}");
+                }
+            }
+            
+            // Note: We don't have overhead_rate/profit_rate in DTO yet, 
+            // but we can pass them in rawData extra fields if needed, 
+            // or we'll need to extend DTO in the future. 
+            // For now, let's just Log them to verify parsing works.
+            if ($attributes['overhead_rate'] || $attributes['profit_rate']) {
+                 Log::info("[ImportRowMapper] Rates detected: NR={$attributes['overhead_rate']}%, SP={$attributes['profit_rate']}%");
+            }
+        }
+
         // 3. Robust Section & Footer Detection
         $mappedData['isFooter'] = $this->isFooter(
             $mappedData['itemName'], 
@@ -227,6 +260,35 @@ class ImportRowMapper
             currentUnitPrice: $mappedData['currentUnitPrice'] ?? null,
             priceCoefficient: $mappedData['priceCoefficient'] ?? null
         );
+    }
+
+    private function parseItemAttributes(string $text): array
+    {
+        $attributes = [
+            'price_index' => null,
+            'overhead_rate' => null,
+            'profit_rate' => null,
+        ];
+
+        // 1. Parse Price Index (СМР / Индекс)
+        // Pattern: "ИНДЕКС... СМР=7,83" or "К=1,2"
+        if (preg_match('/(?:индекс|смр|к\s*=|к\s*pos)\D{0,20}?(\d+[.,]\d+)/ui', $text, $matches)) {
+            $attributes['price_index'] = (float)str_replace(',', '.', $matches[1]);
+        }
+
+        // 2. Parse Overhead Rate (НР)
+        // Pattern: "НР (1204 руб.): 95% от ФОТ" or "НР-95%"
+        if (preg_match('/(?:нр|накладные)\D{0,20}?(\d+[.,]?\d*)\s*%/ui', $text, $matches)) {
+            $attributes['overhead_rate'] = (float)str_replace(',', '.', $matches[1]);
+        }
+
+        // 3. Parse Profit Rate (СП)
+        // Pattern: "СП (634 руб.): 50% от ФОТ" or "СП-50%"
+        if (preg_match('/(?:сп|сметная)\D{0,20}?(\d+[.,]?\d*)\s*%/ui', $text, $matches)) {
+            $attributes['profit_rate'] = (float)str_replace(',', '.', $matches[1]);
+        }
+
+        return $attributes;
     }
 
     private function cleanName(string $name): string
