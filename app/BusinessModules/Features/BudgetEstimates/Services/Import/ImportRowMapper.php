@@ -186,7 +186,7 @@ class ImportRowMapper
                         $mappedData['currentTotalAmount'] = round($mappedData['unitPrice'] * $mappedData['quantity'], 2);
                     }
                     
-                    Log::info("[ImportRowMapper] Smart Parsing applied: BasePrice={$mappedData['baseUnitPrice']} * Index={$mappedData['priceIndex']} = NewPrice={$mappedData['unitPrice']}");
+                    \Illuminate\Support\Facades\Log::info("[ImportRowMapper] Smart Parsing applied: BasePrice={$mappedData['baseUnitPrice']} * Index={$mappedData['priceIndex']} = NewPrice={$mappedData['unitPrice']}");
                 }
             }
             
@@ -195,7 +195,7 @@ class ImportRowMapper
             // or we'll need to extend DTO in the future. 
             // For now, let's just Log them to verify parsing works.
             if ($attributes['overhead_rate'] || $attributes['profit_rate']) {
-                 Log::info("[ImportRowMapper] Rates detected: NR={$attributes['overhead_rate']}%, SP={$attributes['profit_rate']}%");
+                 \Illuminate\Support\Facades\Log::info("[ImportRowMapper] Rates detected: NR={$attributes['overhead_rate']}%, SP={$attributes['profit_rate']}%");
             }
         }
 
@@ -367,7 +367,7 @@ class ImportRowMapper
         // If high percentage of row is numeric and we found sequential numbers like 1, 2, 3...
         $isTechnical = ($sequentialCount >= 2 && $numericCount / count($nonEmpty) > 0.7);
         if ($isTechnical) {
-             Log::info("[ImportDebug] Row detected as Technical (sequential numbers). Content: " . json_encode($nonEmpty, JSON_UNESCAPED_UNICODE));
+             \Illuminate\Support\Facades\Log::info("[ImportDebug] Row detected as Technical (sequential numbers). Content: " . json_encode($nonEmpty, JSON_UNESCAPED_UNICODE));
         }
         return $isTechnical;
     }
@@ -404,7 +404,7 @@ class ImportRowMapper
             
             // RESTORED: This was missing, causing "Missing Section 1"
             if (preg_match('/^(раздел|этап|глава|площадка|объект)\s*[0-9]*/ui', $v)) {
-                Log::info("[ImportDebug] Row detected as Section by pattern in column value: '{$v}'");
+                \Illuminate\Support\Facades\Log::info("[ImportDebug] Row detected as Section by pattern in column value: '{$v}'");
                 return true; 
             }
         }
@@ -413,13 +413,13 @@ class ImportRowMapper
         
         // RESTORED: Logic for item name check
         if (preg_match('/^(раздел|этап|глава|площадка|объект)\s*[0-9]*/ui', $text)) {
-             Log::info("[ImportDebug] Row detected as Section by pattern in itemName: '{$text}'");
+             \Illuminate\Support\Facades\Log::info("[ImportDebug] Row detected as Section by pattern in itemName: '{$text}'");
              return true;
         }
 
         // 4. Pattern "1.1.2. Section Name"
         if (preg_match('/^[0-9]+(\.[0-9]+)+\s+[А-ЯA-Z]/u', $text)) {
-            Log::info("[ImportDebug] Row detected as Section by numbering pattern: '{$text}'");
+            \Illuminate\Support\Facades\Log::info("[ImportDebug] Row detected as Section by numbering pattern: '{$text}'");
             return true;
         }
 
@@ -551,7 +551,7 @@ class ImportRowMapper
         // Real items (even lump sum) should have Qty=1 or Price calculated.
         // Summary rows (like "Material Cost: 5000") matches this pattern: Q=0, P=0, Total=5000.
         if ($totalAmount !== null && $totalAmount > 0) {
-            Log::info("[ImportDebug] Row detected as Footer (Summary detection: Total>0, Q=0, P=0). ItemName: '{$itemName}'");
+            \Illuminate\Support\Facades\Log::info("[ImportDebug] Row detected as Footer (Summary detection: Total>0, Q=0, P=0). ItemName: '{$itemName}'");
             return true;
         }
 
@@ -576,13 +576,13 @@ class ImportRowMapper
             
             // Check for signature lines with many underscores
             if (mb_substr_count($v, '_') > 5) {
-                Log::info("[ImportDebug] Row detected as Footer (signature line). Value: '{$v}'");
+                \Illuminate\Support\Facades\Log::info("[ImportDebug] Row detected as Footer (signature line). Value: '{$v}'");
                 return true;
             }
 
             foreach ($allKeywords as $kw) {
                 if (mb_stripos($v, $kw) !== false) {
-                    Log::info("[ImportDebug] Row detected as Footer (keyword '{$kw}'). Value: '{$v}'");
+                    \Illuminate\Support\Facades\Log::info("[ImportDebug] Row detected as Footer (keyword '{$kw}'). Value: '{$v}'");
                     return true;
                 }
             }
@@ -602,14 +602,14 @@ class ImportRowMapper
         
         foreach ($footerPhrases as $phrase) {
             if (mb_stripos($textLower, $phrase) !== false) {
-                 Log::info("[ImportDebug] Row detected as Footer (phrase '{$phrase}'). ItemName: '{$itemName}'");
+                 \Illuminate\Support\Facades\Log::info("[ImportDebug] Row detected as Footer (phrase '{$phrase}'). ItemName: '{$itemName}'");
                  return true;
             }
         }
         
         // Check for signature lines with underscores or dates in name
         if (mb_substr_count($textLower, '_') > 5) {
-            Log::info("[ImportDebug] Row detected as Footer (signature underscores). ItemName: '{$itemName}'");
+            \Illuminate\Support\Facades\Log::info("[ImportDebug] Row detected as Footer (signature underscores). ItemName: '{$itemName}'");
             return true;
         }
 
