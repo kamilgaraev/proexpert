@@ -85,30 +85,38 @@ class EstimateImportService
         $session = ImportSession::findOrFail($sessionId);
         $fullPath = $this->fileStorage->getAbsolutePath($session);
         
-        $parser = $this->parserFactory->getParser($fullPath);
-        
-        if ($suggestedHeaderRow !== null) {
-            $structure = $parser->detectStructureFromRow($fullPath, $suggestedHeaderRow);
-        } else {
-            $structure = $parser->detectStructure($fullPath);
+        try {
+            $parser = $this->parserFactory->getParser($fullPath);
+            
+            if ($suggestedHeaderRow !== null) {
+                $structure = $parser->detectStructureFromRow($fullPath, $suggestedHeaderRow);
+            } else {
+                $structure = $parser->detectStructure($fullPath);
+            }
+
+            // Update session options with detected structure
+            $options = $session->options ?? [];
+            $options['structure'] = $structure;
+            $session->update(['options' => $options]);
+            
+            // Get Raw Sample Rows for UI
+            $sampleRows = $this->getRawSampleRows($fullPath, $structure);
+
+            return [
+                'format' => 'excel_simple', 
+                'detected_columns' => $structure['detected_columns'],
+                'raw_headers' => $structure['raw_headers'],
+                'header_row' => $structure['header_row'],
+                'header_candidates' => $parser->getHeaderCandidates(),
+                'sample_rows' => $sampleRows,
+            ];
+        } catch (\Throwable $e) {
+            Log::error("[EstimateImportService] Detect format failed for session {$sessionId}", [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            throw new \RuntimeException("Detection failed: " . $e->getMessage(), 0, $e);
         }
-
-        // Update session options with detected structure
-        $options = $session->options ?? [];
-        $options['structure'] = $structure;
-        $session->update(['options' => $options]);
-        
-        // Get Raw Sample Rows for UI
-        $sampleRows = $this->getRawSampleRows($fullPath, $structure);
-
-        return [
-            'format' => 'excel_simple', 
-            'detected_columns' => $structure['detected_columns'],
-            'raw_headers' => $structure['raw_headers'],
-            'header_row' => $structure['header_row'],
-            'header_candidates' => $parser->getHeaderCandidates(),
-            'sample_rows' => $sampleRows,
-        ];
     }
 
     public function preview(string $sessionId, ?array $columnMapping = null): EstimateImportDTO
