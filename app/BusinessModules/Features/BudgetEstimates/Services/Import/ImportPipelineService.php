@@ -311,18 +311,23 @@ class ImportPipelineService
             'price_index' => $dto->priceIndex ?? null,
             'current_unit_price' => $dto->currentUnitPrice ?? ($dto->unitPrice ?? 0),
             
+            // Base Overhead & Profit (captured from text like "НР (1204 руб)...")
+            'base_overhead_amount' => $dto->overheadAmount ?? 0,
+            'base_profit_amount' => $dto->profitAmount ?? 0,
+            
             'direct_costs' => $dto->currentTotalAmount ?? ($dto->quantity ?? 0) * ($dto->unitPrice ?? 0),
             'total_amount' => $dto->currentTotalAmount ?? ($dto->quantity ?? 0) * ($dto->unitPrice ?? 0),
             'normative_rate_code' => $dto->code,
             'position_number' => (string)$dto->rowNumber,
             'item_type' => $this->mapItemType($dto->itemType),
-            'is_manual' => true, // Imported are often manual? Or false? 
-            // Usually imported items are manual until linked to normative base.
+            'is_manual' => true, 
             'created_at' => now(),
             'updated_at' => now(),
             'metadata' => json_encode([
                 'original_unit' => $dto->unit,
-                'raw_data' => $dto->rawData
+                'raw_data' => $dto->rawData,
+                'overhead_rate' => $dto->overheadRate,
+                'profit_rate' => $dto->profitRate,
             ])
         ];
     }
@@ -355,7 +360,14 @@ class ImportPipelineService
                 SUM(CASE WHEN base_unit_price > 0 THEN base_unit_price * quantity ELSE 0 END) as base_direct_costs,
                 SUM(CASE WHEN base_materials_cost > 0 THEN base_materials_cost * quantity ELSE 0 END) as base_materials_cost,
                 SUM(CASE WHEN base_machinery_cost > 0 THEN base_machinery_cost * quantity ELSE 0 END) as base_machinery_cost,
-                SUM(CASE WHEN base_labor_cost > 0 THEN base_labor_cost * quantity ELSE 0 END) as base_labor_cost
+                SUM(CASE WHEN base_labor_cost > 0 THEN base_labor_cost * quantity ELSE 0 END) as base_labor_cost,
+                
+                SUM(base_overhead_amount * quantity) as base_overhead_total,
+                SUM(base_profit_amount * quantity) as base_profit_total,
+                
+                -- Calculate Current Overhead/Profit from Base * Index
+                SUM(CASE WHEN base_overhead_amount > 0 AND price_index > 0 THEN base_overhead_amount * quantity * price_index ELSE overhead_amount END) as calculated_overhead_costs,
+                SUM(CASE WHEN base_profit_amount > 0 AND price_index > 0 THEN base_profit_amount * quantity * price_index ELSE profit_amount END) as calculated_profit_costs
             ')
             ->first();
 
@@ -363,8 +375,27 @@ class ImportPipelineService
             $estimate->update([
                 'total_amount' => $totals->total_amount ?? 0,
                 'total_direct_costs' => $totals->direct_costs ?? 0,
-                'total_overhead_costs' => $totals->overhead_amount ?? 0,
-                'total_estimated_profit' => $totals->profit_amount ?? 0,
+                
+                // New logic: Total Overhead/Profit = Base * Index (aggregated)
+                // However, we just summed 'overhead_amount' which is supposedly current in standard schema.
+                // But wait, if we are in Base Method, standard 'overhead_amount' column might be empty or 0 if we didn't calculate it yet.
+                // We need to calculate Current Overhead/Profit here if they are not stored on item level.
+                // Actually, best practice: calculate them on Item Level during insert or update?
+                // But we are in Pipeline.
+                // Let's assume for now we sum what we have. 
+                // BUT: We need to calculate Current OH/Profit from Base if available.
+                // Let's rely on Calculator Service later? 
+                // Or do it here via SQL?
+                // SQL: SUM(base_overhead * quantity * price_index)
+                
+                // For MVP, if we have base_overhead, let's use it for totals.
+                // But we need to update the Estimate Model columns 'total_overhead_costs' etc.
+                
+                // Let's update aggregation query to calculate current from base if current is 0
+                
+                'total_overhead_costs' => $totals->calculated_overhead_costs ?? $totals->overhead_amount ?? 0,
+                'total_estimated_profit' => $totals->calculated_profit_costs ?? $totals->profit_amount ?? 0,
+                
                 'total_amount_with_vat' => ($totals->total_amount ?? 0) * (1 + ($estimate->vat_rate / 100)),
                 
                 // Base fields
@@ -372,6 +403,8 @@ class ImportPipelineService
                 'total_base_materials_cost' => $totals->base_materials_cost ?? 0,
                 'total_base_machinery_cost' => $totals->base_machinery_cost ?? 0,
                 'total_base_labor_cost' => $totals->base_labor_cost ?? 0,
+                'total_base_overhead_amount' => $totals->base_overhead_total ?? 0,
+                'total_base_profit_amount' => $totals->base_profit_total ?? 0,
             ]);
         }
 

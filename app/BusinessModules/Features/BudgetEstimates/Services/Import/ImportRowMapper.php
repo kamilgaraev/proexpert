@@ -216,12 +216,16 @@ class ImportRowMapper
                 }
             }
             
-            // Note: We don't have overhead_rate/profit_rate in DTO yet, 
-            // but we can pass them in rawData extra fields if needed, 
-            // or we'll need to extend DTO in the future. 
-            // For now, let's just Log them to verify parsing works.
+            // Store detected rates
+            if ($attributes['overhead_rate'] !== null) {
+                $mappedData['overheadRate'] = $attributes['overhead_rate'];
+            }
+            if ($attributes['profit_rate'] !== null) {
+                $mappedData['profitRate'] = $attributes['profit_rate'];
+            }
+            
             if ($attributes['overhead_rate'] || $attributes['profit_rate']) {
-                 \Illuminate\Support\Facades\Log::info("[ImportRowMapper] Rates detected: NR={$attributes['overhead_rate']}%, SP={$attributes['profit_rate']}%");
+                 \Illuminate\Support\Facades\Log::info("[ImportRowMapper] Rates detected and stored: NR={$attributes['overhead_rate']}%, SP={$attributes['profit_rate']}%");
             }
         }
 
@@ -284,7 +288,9 @@ class ImportRowMapper
             baseUnitPrice: $mappedData['baseUnitPrice'] ?? null,
             priceIndex: $mappedData['priceIndex'] ?? null,
             currentUnitPrice: $mappedData['currentUnitPrice'] ?? null,
-            priceCoefficient: $mappedData['priceCoefficient'] ?? null
+            priceCoefficient: $mappedData['priceCoefficient'] ?? null,
+            overheadRate: $mappedData['overheadRate'] ?? null,
+            profitRate: $mappedData['profitRate'] ?? null
         );
     }
 
@@ -294,25 +300,41 @@ class ImportRowMapper
             'price_index' => null,
             'overhead_rate' => null,
             'profit_rate' => null,
+            'overhead_amount' => null, // Base amount per unit
+            'profit_amount' => null,   // Base amount per unit
         ];
 
         // 1. Parse Price Index (СМР / Индекс)
-        // Pattern: "ИНДЕКС... СМР=7,83" or "К=1,2"
-        // Pattern: "ИНДЕКС... СМР=7,83" or "К=1,2" or "СМР=12"
         if (preg_match('/(?:индекс|смр|к\s*=|к\s*pos)\D{0,20}?(\d+[.,]?\d*)/ui', $text, $matches)) {
             $attributes['price_index'] = (float)str_replace(',', '.', $matches[1]);
         }
 
-        // 2. Parse Overhead Rate (НР)
-        // Pattern: "НР (1204 руб.): 95% от ФОТ" or "НР-95%"
-        if (preg_match('/(?:нр|накладные)\D{0,20}?(\d+[.,]?\d*)\s*%/ui', $text, $matches)) {
-            $attributes['overhead_rate'] = (float)str_replace(',', '.', $matches[1]);
+        // 2. Parse Overhead (НР)
+        // Pattern A: "НР (1204,9 руб.): 95% от ФОТ" -> capture 1204.9 AND 95
+        // Pattern B: "НР-95%"
+        if (preg_match('/(?:нр|накладные).*?(?:\(\s*(\d+[.,]?\d*)\s*(?:руб|р)\.?\s*\))?.*?(\d+[.,]?\d*)\s*%/ui', $text, $matches)) {
+             // If group 1 exists, it is the amount. Group 2 is the rate.
+             if (!empty($matches[1])) {
+                 $attributes['overhead_amount'] = (float)str_replace(',', '.', $matches[1]);
+             }
+             if (!empty($matches[2])) {
+                 $attributes['overhead_rate'] = (float)str_replace(',', '.', $matches[2]);
+             }
+        } elseif (preg_match('/(?:нр|накладные)\D{0,20}?(\d+[.,]?\d*)\s*%/ui', $text, $matches)) {
+             // Fallback for just rate
+             $attributes['overhead_rate'] = (float)str_replace(',', '.', $matches[1]);
         }
 
-        // 3. Parse Profit Rate (СП)
-        // Pattern: "СП (634 руб.): 50% от ФОТ" or "СП-50%"
-        if (preg_match('/(?:сп|сметная)\D{0,20}?(\d+[.,]?\d*)\s*%/ui', $text, $matches)) {
-            $attributes['profit_rate'] = (float)str_replace(',', '.', $matches[1]);
+        // 3. Parse Profit (СП)
+        if (preg_match('/(?:сп|сметная).*?(?:\(\s*(\d+[.,]?\d*)\s*(?:руб|р)\.?\s*\))?.*?(\d+[.,]?\d*)\s*%/ui', $text, $matches)) {
+             if (!empty($matches[1])) {
+                 $attributes['profit_amount'] = (float)str_replace(',', '.', $matches[1]);
+             }
+             if (!empty($matches[2])) {
+                 $attributes['profit_rate'] = (float)str_replace(',', '.', $matches[2]);
+             }
+        } elseif (preg_match('/(?:сп|сметная)\D{0,20}?(\d+[.,]?\d*)\s*%/ui', $text, $matches)) {
+             $attributes['profit_rate'] = (float)str_replace(',', '.', $matches[1]);
         }
 
         return $attributes;
