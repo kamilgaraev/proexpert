@@ -17,12 +17,12 @@ class ProcessEstimateImportJob implements ShouldQueue
 
     public int $timeout = 600; // Increased timeout for parsing large files
     public int $tries = 1; // Don't retry parsing automatically if it fails logic
-    public $queue = 'imports';
-
     public function __construct(
         public string $sessionId,
         public array $config = []
-    ) {}
+    ) {
+        $this->queue = 'imports';
+    }
 
     public function handle(ImportPipelineService $pipeline): void
     {

@@ -21,12 +21,12 @@ class EnrichEstimateJob implements ShouldQueue
 
     public int $timeout = 1200; // 20 minutes for AI/Matching
     public int $tries = 3;
-    public $queue = 'imports';
-
     public function __construct(
         public int $estimateId,
         public ?string $sessionId = null
-    ) {}
+    ) {
+        $this->queue = 'imports';
+    }
 
     public function handle(
         ItemClassificationService $classifier,
