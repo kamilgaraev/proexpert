@@ -53,8 +53,11 @@ class AiMappingService
 
             $mapping = $this->extractJson($content);
             if (!$mapping) {
+                Log::warning('[AiMappingService] Failed to extract JSON from AI response', ['content' => $content]);
                 return null;
             }
+
+            Log::info('[AiMappingService] AI Mapping detected', ['mapping' => $mapping]);
 
             Cache::put($cacheKey, $mapping, self::CACHE_TTL);
             return $mapping;

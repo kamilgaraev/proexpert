@@ -237,10 +237,11 @@ class ImportPipelineService
 
         $section = EstimateSection::create([
             'estimate_id' => $estimateId,
-            'parent_id' => $parentId,
+            'parent_section_id' => $parentId,
+            'section_number' => (string)$dto->sectionNumber,
+            'full_section_number' => (string)$currentPath,
             'name' => $dto->itemName,
-            'order_column' => $dto->rowNumber, 
-            'full_section_number' => $currentPath, 
+            'sort_order' => $dto->rowNumber, 
         ]);
         
         $sectionMap[$currentPath] = $section->id;
@@ -250,8 +251,9 @@ class ImportPipelineService
 
     private function resolveSectionId($dto, array $sectionMap, ?int $lastSectionId): ?int
     {
-        if ($dto->sectionPath && isset($sectionMap[$dto->sectionPath])) {
-            return $sectionMap[$dto->sectionPath];
+        $path = $dto->sectionPath ?: $dto->sectionNumber;
+        if ($path && isset($sectionMap[$path])) {
+            return $sectionMap[$path];
         }
         return $lastSectionId;
     }
@@ -282,10 +284,11 @@ class ImportPipelineService
             
             'quantity' => $dto->quantity ?? 0,
             'unit_price' => $dto->unitPrice ?? 0,
-            'total_amount' => ($dto->quantity ?? 0) * ($dto->unitPrice ?? 0), // total_amount in model
-            'normative_rate_code' => $dto->code, // normative_rate_code in model
+            'direct_costs' => $dto->currentTotalAmount ?? ($dto->quantity ?? 0) * ($dto->unitPrice ?? 0),
+            'total_amount' => $dto->currentTotalAmount ?? ($dto->quantity ?? 0) * ($dto->unitPrice ?? 0),
+            'normative_rate_code' => $dto->code,
             'position_number' => (string)$dto->rowNumber,
-            'item_type' => $this->mapItemType($dto->itemType), // Need mapper
+            'item_type' => $this->mapItemType($dto->itemType),
             'is_manual' => true, // Imported are often manual? Or false? 
             // Usually imported items are manual until linked to normative base.
             'created_at' => now(),
@@ -311,14 +314,28 @@ class ImportPipelineService
     
     private function updateEstimateTotals(Estimate $estimate): void
     {
-        // Simple aggregation query
-        $total = EstimateItem::where('estimate_id', $estimate->id)->sum('total_amount');
-        // 'clean_cost' field? Model doesn't show it in this file but previous Service snippet used it.
-        // Estimate model likely has 'total' or similar. 
-        // I'll stick to 'total' if available or leave it for now.
-        // Let's assume 'total' or 'total_amount'.
-        // Actually, Estimate model view wasn't requested. 
-        // I'll skip generic update for now or just log it.
-        Log::info("Estimate {$estimate->id} total calculated: $total");
+        $totals = EstimateItem::where('estimate_id', $estimate->id)
+            ->selectRaw('
+                SUM(total_amount) as total_amount,
+                SUM(direct_costs) as direct_costs,
+                SUM(materials_cost) as materials_cost,
+                SUM(machinery_cost) as machinery_cost,
+                SUM(labor_cost) as labor_cost,
+                SUM(overhead_amount) as overhead_amount,
+                SUM(profit_amount) as profit_amount
+            ')
+            ->first();
+
+        if ($totals) {
+            $estimate->update([
+                'total_amount' => $totals->total_amount ?? 0,
+                'total_direct_costs' => $totals->direct_costs ?? 0,
+                'total_overhead_costs' => $totals->overhead_amount ?? 0,
+                'total_estimated_profit' => $totals->profit_amount ?? 0,
+                'total_amount_with_vat' => ($totals->total_amount ?? 0) * (1 + ($estimate->vat_rate / 100)),
+            ]);
+        }
+
+        Log::info("Estimate {$estimate->id} totals updated", ['totals' => $estimate->only(['total_amount', 'total_direct_costs'])]);
     }
 }
