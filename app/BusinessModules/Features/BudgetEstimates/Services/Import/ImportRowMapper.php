@@ -95,9 +95,22 @@ class ImportRowMapper
                 case 'price':
                     $parsed = $this->parseMultiLineValue($value);
                     $mappedData['unitPrice'] = $parsed['total'];
-                    $mappedData['baseLaborCost'] = $parsed['labor'];
-                    $mappedData['baseMachineryCost'] = $parsed['machinery'];
-                    $mappedData['baseMachineryLaborCost'] = $parsed['machinery_labor'];
+                    
+                    // ВАЖНО: unit_price может быть как базовой, так и текущей ценой.
+                    // Если это FER, то многострочные данные обычно ПЕРЕЧИСЛЯЮТ базовые компоненты.
+                    // Но мы должны быть осторожны, чтобы не затереть baseLaborCost, если он уже был или будет поставлен из base_unit_price.
+                    if (!isset($mappedData['baseLaborCost']) || $mappedData['baseLaborCost'] == 0) {
+                        $mappedData['baseLaborCost'] = $parsed['labor'];
+                    }
+                    if (!isset($mappedData['baseMachineryCost']) || $mappedData['baseMachineryCost'] == 0) {
+                        $mappedData['baseMachineryCost'] = $parsed['machinery'];
+                    }
+                    if (!isset($mappedData['baseMachineryLaborCost']) || $mappedData['baseMachineryLaborCost'] == 0) {
+                        $mappedData['baseMachineryLaborCost'] = $parsed['machinery_labor'];
+                    }
+                    if (!isset($mappedData['baseMaterialsCost']) || $mappedData['baseMaterialsCost'] == 0) {
+                        $mappedData['baseMaterialsCost'] = $parsed['materials'];
+                    }
                     break;
                 case 'current_total_amount':
                 case 'total_amount':
@@ -110,10 +123,11 @@ class ImportRowMapper
             case 'base_unit_price':
                 $parsed = $this->parseMultiLineValue($value);
                 $mappedData['baseUnitPrice'] = $parsed['total'];
-                // Only overwrite if we found something in this cell
+                // Приоритетная установка базисных компонент из специальной колонки
                 if ($parsed['labor'] > 0) $mappedData['baseLaborCost'] = $parsed['labor'];
                 if ($parsed['machinery'] > 0) $mappedData['baseMachineryCost'] = $parsed['machinery'];
                 if ($parsed['machinery_labor'] > 0) $mappedData['baseMachineryLaborCost'] = $parsed['machinery_labor'];
+                if ($parsed['materials'] > 0) $mappedData['baseMaterialsCost'] = $parsed['materials'];
                 break;
             case 'base_labor_price':
             case 'labor_price':
@@ -346,19 +360,28 @@ class ImportRowMapper
         
         $result['total'] = round($this->parseFloat($lines[0] ?? null) ?? 0, 2);
         
-        // In FER multi-line Unit Price:
-        // Line 1: Total
-        // Line 2: Labor (ЗП)
-        // Line 3: Machinery (ЭМ)
-        // Line 4: Labor of Machinery (ЗПМ)
+        // В ФЕР (Гранд-Смета и др.) часто такой порядок в многострочной ячейке:
+        // 1. Всего (Прямые затраты)
+        // 2. ОЗП (Заработная плата рабочих)
+        // 3. ЭМ (Эксплуатация машин)
+        // 4. ЗПМ (Заработная плата машинистов) - входит в ЭМ
+        // 5. [Иногда] Материалы - если не 5-й, то вычисляется: Всего - ОЗП - ЭМ
+        
         $result['labor'] = round($this->parseFloat($lines[1] ?? null) ?? 0, 2);
         $result['machinery'] = round($this->parseFloat($lines[2] ?? null) ?? 0, 2);
         $result['machinery_labor'] = round($this->parseFloat($lines[3] ?? null) ?? 0, 2);
         
-        // Materials is Total - Labor - Machinery
-        if ($result['total'] > 0) {
-            $result['materials'] = round($result['total'] - ($result['labor'] ?? 0) - ($result['machinery'] ?? 0), 2);
-            if ($result['materials'] < 0.01) $result['materials'] = 0;
+        // Попытка взять материалы из 5-й строки, если она есть
+        $matCandidate = round($this->parseFloat($lines[4] ?? null) ?? 0, 2);
+        if ($matCandidate > 0) {
+            $result['materials'] = $matCandidate;
+        } else {
+            // Расчет материалов: ПЗ - ОЗП - ЭМ
+            // Важно: в FER "ЭМ" обычно УЖЕ включает в себя "ЗПМ".
+            $result['materials'] = round($result['total'] - $result['labor'] - $result['machinery'], 2);
+            if ($result['materials'] < 0.01) {
+                $result['materials'] = 0;
+            }
         }
 
         return $result;
