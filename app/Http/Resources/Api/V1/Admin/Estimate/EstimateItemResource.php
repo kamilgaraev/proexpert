@@ -46,6 +46,22 @@ class EstimateItemResource extends JsonResource
             'labor_hours' => $this->labor_hours ? (float) $this->labor_hours : null,
             'machinery_hours' => $this->machinery_hours ? (float) $this->machinery_hours : null,
             
+            // Базовая стоимость (для базисно-индексного метода)
+            'base_costs' => $this->base_materials_cost || $this->base_machinery_cost || $this->base_labor_cost ? [
+                'materials' => (float) $this->base_materials_cost,
+                'machinery' => (float) $this->base_machinery_cost,
+                'labor' => (float) $this->base_labor_cost,
+                'unit_price' => (float) $this->base_unit_price,
+            ] : null,
+            
+            // Индексы (детализация)
+            'indices' => $this->price_index || $this->materials_index ? [
+                'general' => $this->price_index ? (float) $this->price_index : null,
+                'materials' => $this->materials_index ? (float) $this->materials_index : null,
+                'machinery' => $this->machinery_index ? (float) $this->machinery_index : null,
+                'labor' => $this->labor_index ? (float) $this->labor_index : null,
+            ] : null,
+            
             // Нормативная база
             'normative_rate_id' => $this->normative_rate_id,
             'normative_rate_code' => $this->normative_rate_code,
