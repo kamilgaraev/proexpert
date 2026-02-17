@@ -10,6 +10,7 @@ use App\Models\EstimateItem;
 use App\Models\ImportSession;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Classification\ItemClassificationService;
 
 class ImportPipelineService
 {
@@ -19,7 +20,9 @@ class ImportPipelineService
         private ParserFactory $parserFactory,
         private FileStorageService $fileStorage,
         private ImportRowMapper $rowMapper,
-        private EstimateService $estimateService
+        private EstimateService $estimateService,
+        private ItemClassificationService $classifier,
+        private NormativeMatchingService $matcher
     ) {}
 
     public function run(ImportSession $session, array $config = []): void
@@ -61,20 +64,17 @@ class ImportPipelineService
             
             DB::commit();
             
-            Log::info("[ImportPipeline] Finished parsing for session {$session->id}", $stats);
+            Log::info("[ImportPipeline] Finished for session {$session->id}", $stats);
             
-            // Dispatch Enrichment Job
             $session->update([
-                'status' => 'enriching',
+                'status' => 'completed',
                 'stats' => array_merge($session->stats ?? [], [
                     'progress' => 100, 
                     'result' => $stats, 
                     'estimate_id' => $estimate->id,
-                    'message' => 'Starting enrichment...'
+                    'message' => 'Import successfully completed.'
                 ])
             ]);
-            
-            \App\Jobs\EnrichEstimateJob::dispatch($estimate->id, $session->id);
 
         } catch (\Throwable $e) {
             DB::rollBack();
@@ -99,18 +99,9 @@ class ImportPipelineService
 
     private function processStream(\Generator $stream, Estimate $estimate, array &$stats, ImportSession $session): void
     {
-        $batchWorks = [];
-        $batchSections = []; // We might need to save sections immediately to get IDs for hierarchy?
-        
-        // Strategy: 
-        // Sections must be saved immediately to resolve parent_id for subsequent items/sections.
-        // Works can be batched.
-        
+        $batchDTOs = [];
         $sectionMap = []; // path -> section_id (e.g. "1" -> 101, "1.1" -> 102)
         $lastSectionId = null; // For items without explicit section path?
-        
-        // Get root section if exists or create a default root? 
-        // Usually estimates have sections. If not, create default?
         
         foreach ($stream as $rowDTO) {
             // Skip technical rows
@@ -122,41 +113,114 @@ class ImportPipelineService
             $rowDTO = $this->rowMapper->map($rowDTO, $session->options['structure']['column_mapping'] ?? []);
             
             // Skip rows that have no name and no numeric data
-            if (!$rowDTO->isSection && empty($rowDTO->name) && $rowDTO->quantity === null && $rowDTO->unitPrice === null) {
+            if (!$rowDTO->isSection && empty($rowDTO->itemName) && $rowDTO->quantity === null && $rowDTO->unitPrice === null) {
                 continue;
             }
 
-            $stats['processed_rows']++;
-            
-            // Progress update every 100 rows
-            if ($stats['processed_rows'] % 100 === 0) {
-                 $session->update(['stats' => array_merge($session->stats ?? [], ['progress' => 10 + ($stats['processed_rows'] / 100)])]); // Fake progress logic
-            }
-
             if ($rowDTO->isSection) {
-                // Save Section
+                // If we have items in batch, process and save them first to maintain order
+                if (!empty($batchDTOs)) {
+                    $this->processAndInsertBatch($batchDTOs, $estimate, $stats, $session);
+                    $batchDTOs = [];
+                }
+
+                // Save Section immediately (needed for ID)
                 $section = $this->saveSection($rowDTO, $estimate->id, $sectionMap);
                 $lastSectionId = $section->id;
                 $stats['sections_created']++;
             } else {
-                // Buffer Work
-                $sectionId = $this->resolveSectionId($rowDTO, $sectionMap, $lastSectionId);
+                // Collect row but assign closest section
+                $rowDTO->sectionPath = $rowDTO->sectionPath ?: null; 
+                $batchDTOs[] = [
+                    'dto' => $rowDTO,
+                    'section_id' => $this->resolveSectionId($rowDTO, $sectionMap, $lastSectionId)
+                ];
                 
-                $batchWorks[] = $this->prepareWorkData($rowDTO, $estimate->id, $sectionId);
-                
-                if (count($batchWorks) >= self::BATCH_SIZE) {
-                    EstimateItem::insert($batchWorks);
-                    $stats['items_created'] += count($batchWorks);
-                    $batchWorks = [];
+                if (count($batchDTOs) >= self::BATCH_SIZE) {
+                    $this->processAndInsertBatch($batchDTOs, $estimate, $stats, $session);
+                    $batchDTOs = [];
                 }
+            }
+
+            $stats['processed_rows']++;
+            
+            // Progress update for the user
+            if ($stats['processed_rows'] % 50 === 0) {
+                 $session->update(['stats' => array_merge($session->stats ?? [], [
+                     'message' => "Processed {$stats['processed_rows']} rows...",
+                     'processed_rows' => $stats['processed_rows']
+                 ])]); 
             }
         }
         
-        // Flush remaining works
-        // Flush remaining works
-        if (!empty($batchWorks)) {
-            EstimateItem::insert($batchWorks);
-            $stats['items_created'] += count($batchWorks);
+        // Final batch
+        if (!empty($batchDTOs)) {
+            $this->processAndInsertBatch($batchDTOs, $estimate, $stats, $session);
+        }
+    }
+
+    private function processAndInsertBatch(array $batch, Estimate $estimate, array &$stats, ImportSession $session): void
+    {
+        $itemsToInsert = [];
+        $aiBatch = [];
+
+        // Step 1: Normative Matching
+        foreach ($batch as $index => $item) {
+            $dto = $item['dto'];
+            $itemData = $this->prepareWorkData($dto, $estimate->id, $item['section_id']);
+            
+            $matched = false;
+            if ($dto->code) {
+                $match = $this->matcher->findByCode($dto->code, ['fallback_to_name' => true, 'name' => $dto->itemName]);
+                if ($match && isset($match['normative'])) {
+                    $itemData = $this->matcher->fillFromNormative($match['normative'], $itemData);
+                    $matched = true;
+                }
+            }
+            
+            if (!$matched) {
+                $aiBatch[$index] = [
+                    'code' => $dto->code ?? '',
+                    'name' => $dto->itemName,
+                    'unit' => $dto->unit,
+                    'price' => (float)$dto->unitPrice
+                ];
+            }
+            
+            $batch[$index]['prepared_data'] = $itemData;
+        }
+
+        // Step 2: AI Classification
+        if (!empty($aiBatch)) {
+            try {
+                // aiResults usually matches the batch order if implementation is correct
+                $aiResults = $this->classifier->classifyBatch(array_values($aiBatch));
+                $aiKeys = array_keys($aiBatch);
+                
+                foreach ($aiResults as $subIndex => $result) {
+                    $origIndex = $aiKeys[$subIndex];
+                    if (isset($batch[$origIndex])) {
+                        $batch[$origIndex]['prepared_data']['item_type'] = $result->type;
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::warning("[ImportPipeline] AI Batch Classification failed: " . $e->getMessage());
+            }
+        }
+
+        // Step 3: Global Insert
+        foreach ($batch as $item) {
+            $data = $item['prepared_data'];
+            // Cleanup for bulk insert: ensure metadata is JSON string
+            if (isset($data['metadata']) && is_array($data['metadata'])) {
+                $data['metadata'] = json_encode($data['metadata']);
+            }
+            $itemsToInsert[] = $data;
+        }
+
+        if (!empty($itemsToInsert)) {
+            EstimateItem::insert($itemsToInsert);
+            $stats['items_created'] += count($itemsToInsert);
         }
     }
 
