@@ -150,8 +150,14 @@ class EstimateImportService
         
         // Using getStream allows us to inject mapping options which legacy parse() didn't support well externally
         foreach ($parser->getStream($fullPath, $parseOptions) as $rowDTO) {
-             // Apply mapping if it's a raw stream
-             $mappedDTO = $this->rowMapper->map($rowDTO, $columnMapping);
+            // Skip technical rows (like 1, 2, 3... guide rows)
+            if ($this->rowMapper->isTechnicalRow($rowDTO->rawData)) {
+                Log::info("[EstimateImportService] Skipping technical row", ['row' => $rowDTO->rowNumber]);
+                continue;
+            }
+
+            // Apply mapping if it's a raw stream
+            $mappedDTO = $this->rowMapper->map($rowDTO, $columnMapping);
              
              if ($mappedDTO->isSection) {
                  $sections[] = $mappedDTO->toArray();
