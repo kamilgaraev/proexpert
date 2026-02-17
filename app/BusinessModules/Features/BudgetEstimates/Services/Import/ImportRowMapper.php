@@ -448,22 +448,28 @@ class ImportRowMapper
 
     private function isFooter(?string $itemName, array $rawData, ?float $quantity = null, ?float $unitPrice = null, ?string $unit = null, ?float $totalAmount = null): bool
     {
-        // 0. Safety: real items MUST have quantity/price/unit. 
-        // Footers can have totalAmount but usually DON'T have a unit, quantity or unit price.
+        // 0. Safety: real items MUST have quantity > 0 or price > 0. 
+        // Summary rows often have totalAmount but NO quantity or unitPrice.
+        // We ignore unit here because summary rows sometimes carry a "fake" unit or "ед" from mapping.
         if (($quantity !== null && $quantity > 0) || 
-            ($unitPrice !== null && $unitPrice > 0) || 
-            !empty($unit)) {
+            ($unitPrice !== null && $unitPrice > 0)) {
             return false;
         }
 
         $footers = [
-            'итого', 'всего', 'накладные расходы', 'сметная прибыль', 'материалы', 'машины и механизмы',
-            'в базисных ценах', 'перевод цен', ' в смете', 'итоги по', 
+            'итого', 'всего', 'накладные расходы', 'сметная прибыль', 
+            'материалы', 'машины и механизмы', 'земляные работы', 'перевозка грузов',
+            ' в базисных ценах', 'перевод цен', ' в смете', 'итоги по', 
             'ндс ', 'подпись', 'составил', 'проверил', 'утверждаю'
         ];
         
         $aiFooterKeywords = $this->sectionHints['footer_keywords'] ?? [];
         $allKeywords = array_merge($footers, array_map('mb_strtolower', $aiFooterKeywords));
+
+        $text = mb_strtolower($itemName ?? '');
+        if (preg_match('/(выполняемые|способом|по разделу|по позиции)/ui', $text) && $totalAmount > 0) {
+            return true;
+        }
 
         foreach ($rawData as $val) {
             $v = mb_strtolower(trim((string)$val));
