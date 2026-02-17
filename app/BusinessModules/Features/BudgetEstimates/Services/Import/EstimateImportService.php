@@ -160,7 +160,7 @@ class EstimateImportService
         $totals = [
             // Basic totals
             'total_amount' => 0, // Placeholder
-            'total_items' => count($items),
+            'items_count' => count($items),
         ];
         
         return new EstimateImportDTO(

@@ -54,8 +54,8 @@ class EstimateImportPreviewResource extends JsonResource
                 ];
             }, array_slice($this->items, 0, 10)),
             'totals' => [
-                'total_amount' => $this->totals['total_amount'],
-                'items_count' => $this->totals['items_count'],
+                'total_amount' => $this->totals['total_amount'] ?? 0,
+                'items_count' => $this->totals['items_count'] ?? $this->totals['total_items'] ?? count($this->items),
             ],
             'summary' => [
                 'items_count' => $this->getItemsCount(),
