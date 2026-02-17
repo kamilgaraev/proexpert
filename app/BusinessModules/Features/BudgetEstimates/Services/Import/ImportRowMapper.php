@@ -8,6 +8,10 @@ use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportRowDTO;
 
 class ImportRowMapper
 {
+    private const COMMON_UNITS = [
+        'шт', 'м', 'кг', 'т', 'м3', 'м2', 'км', 'чел.-ч', 'маш.-час', 'компл', 'компл.', 'ед', 'пог. м', 'пог.м', '100 м', '1000 м3', '100 м2', '100 м3', 'тн', 'усл. ед', 'уп'
+    ];
+
     /**
      * Map raw row data to EstimateImportRowDTO based on column mapping.
      */
@@ -55,7 +59,7 @@ class ImportRowMapper
             switch ($field) {
                 case 'name':
                 case 'item_name':
-                    $mappedData['itemName'] = (string)$value;
+                    $mappedData['itemName'] = $this->cleanName((string)$value);
                     break;
                 case 'unit':
                     $mappedData['unit'] = (string)$value;
@@ -143,6 +147,48 @@ class ImportRowMapper
         );
     }
 
+    private function cleanName(string $name): string
+    {
+        if (empty($name)) return '';
+        
+        $lines = explode("\n", $name);
+        $cleanLines = [];
+        
+        $trashKeywords = [
+            'ИНДЕКС К ПОЗИЦИИ', 
+            'НР (', 
+            'СП (', 
+            'ПЗ=', 
+            'ЭМ=', 
+            'ЗП=', 
+            'МАТ=',
+            'ФОТ=',
+            'Приказ Минстроя',
+        ];
+
+        foreach ($lines as $line) {
+            $trimmed = trim($line);
+            if (empty($trimmed)) continue;
+
+            $isTrash = false;
+            foreach ($trashKeywords as $kw) {
+                if (mb_stripos($trimmed, $kw) !== false) {
+                    // Use more strict regex to avoid stripping real names containing these words accidentally
+                    if (preg_match('/(НР|СП)\s*\(|ИНДЕКС\s+К\s+ПОЗИЦИИ|ФОТ\s*=|ЗП\s*=|МАТ\s*=|^Приказ\s/ui', $trimmed)) {
+                        $isTrash = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!$isTrash) {
+                $cleanLines[] = $trimmed;
+            }
+        }
+
+        return trim(implode("\n", $cleanLines));
+    }
+
     public function isTechnicalRow(array $row): bool
     {
         $nonEmpty = array_filter($row, fn($v) => $v !== null && $v !== '');
@@ -176,26 +222,24 @@ class ImportRowMapper
     {
         $text = $itemName ?? '';
         
-        // If itemName is empty (mapping points to wrong column for sections),
-        // check if any early column has the word "Раздел" or "Итого"
-        if (empty($text)) {
-            foreach (array_slice($rawData, 0, 5) as $val) {
-                if ($val && mb_stripos((string)$val, 'раздел') !== false) {
-                    return true;
-                }
-            }
-        }
-
-        // Check if it looks like "Раздел..." or "ИТОГО..."
-        if (mb_stripos($text, 'раздел') !== false || mb_stripos($text, 'итого') !== false) {
+        // 1. Explicit keywords
+        if (mb_stripos($text, 'раздел') !== false || mb_stripos($text, 'этап') !== false) {
             return true;
         }
 
-        // Heuristic: If the first non-empty cell is a long string, and other cells are empty
-        $nonEmptyCells = array_filter($rawData, fn($v) => $v !== null && $v !== '');
-        if (count($nonEmptyCells) === 1) {
-            $val = reset($nonEmptyCells);
+        // 2. If it's a long string and almost all other data cells are empty
+        // We exclude the first few columns which might be sequence numbers
+        $dataCells = array_slice($rawData, 2); // Assume first 2 cols might be technical
+        $nonEmptyDataCells = array_filter($dataCells, fn($v) => $v !== null && trim((string)$v) !== '');
+        
+        if (count($nonEmptyDataCells) === 1) {
+            $val = reset($nonEmptyDataCells);
             if (mb_strlen((string)$val) > 15) return true;
+        }
+
+        // 3. If it looks like a section header "1.1.2. Section Name"
+        if (preg_match('/^[0-9]+(\.[0-9]+)+\s+[А-ЯA-Z]/u', trim($text))) {
+            return true;
         }
 
         return false;
@@ -270,47 +314,58 @@ class ImportRowMapper
     private function splitNameAndUnit(string $name): array
     {
         $lines = explode("\n", $name);
-        
-        // 1. Try to find unit in brackets within the first few lines
-        // Revised: allow numbers (e.g. 1000 м3, 100 м)
-        foreach (array_slice($lines, 0, 3) as $line) {
-            if (preg_match('/[\(\[]([^\\(\\)\\[\\]]{1,20})[\)\]]/u', $line, $matches)) {
-                $unitFound = trim($matches[1]);
-                // Heuristic: units usually contain at least one letter
-                if (preg_match('/[а-яёa-z]/ui', $unitFound)) {
-                    return [
-                        'name' => $name,
-                        'unit' => $unitFound
-                    ];
+        $bestUnit = null;
+        $unitLineIndex = -1;
+
+        // 1. Search for brackets in all lines
+        foreach ($lines as $idx => $line) {
+            if (preg_match_all('/[\(\[]([^\\(\\)\\[\\]]{1,30})[\)\]]/u', $line, $matches)) {
+                foreach ($matches[1] as $candidate) {
+                    $candidate = trim($candidate);
+                    
+                    // Priority 1: Exact match with common units
+                    if (in_array(mb_strtolower($candidate), self::COMMON_UNITS)) {
+                        $bestUnit = $candidate;
+                        $unitLineIndex = $idx;
+                        break 2;
+                    }
+                    
+                    // Priority 2: Contains common unit (e.g. "100 м3")
+                    foreach (self::COMMON_UNITS as $common) {
+                        if (mb_stripos($candidate, $common) !== false) {
+                            $bestUnit = $candidate;
+                            $unitLineIndex = $idx;
+                        }
+                    }
+                    
+                    // Priority 3: First bracketed item that looks like a unit (short, contains letters)
+                    if (!$bestUnit && mb_strlen($candidate) < 10 && preg_match('/[а-яёa-z]/ui', $candidate)) {
+                        $bestUnit = $candidate;
+                        $unitLineIndex = $idx;
+                    }
                 }
             }
+        }
+
+        if ($bestUnit) {
+            // Remove the line if it contained only the unit (often GrandSmeta format)
+            if ($unitLineIndex !== -1 && trim(preg_replace('/[\(\[]' . preg_quote($bestUnit, '/') . '[\)\]]/u', '', $lines[$unitLineIndex])) === '') {
+                 unset($lines[$unitLineIndex]);
+            }
+            return [
+                'name' => trim(implode("\n", $lines)),
+                'unit' => $bestUnit
+            ];
         }
 
         // 2. Try to find unit at the end of the first line (e.g. "Name, м2")
         $firstLine = trim($lines[0]);
         if (preg_match('/,\s*([а-яёa-z0-9\/ ]{1,15})$/ui', $firstLine, $matches)) {
             $unitFound = trim($matches[1]);
-            // Avoid splitting if it looks like part of a sentence
             if (!empty($unitFound) && !preg_match('/[0-9]{5,}/', $unitFound)) {
                 return [
                     'name' => $name,
                     'unit' => $unitFound
-                ];
-            }
-        }
-
-        // 3. Try multi-line split if last line is short (typical unit position)
-        if (count($lines) >= 2) {
-            $lastLine = trim(end($lines));
-            // Heuristic for units: short, no terminal punctuation, contains letters
-            if (mb_strlen($lastLine) > 0 && mb_strlen($lastLine) < 15 
-                && !preg_match('/[\.\?\!]$/', $lastLine)
-                && preg_match('/[а-яёa-z]/ui', $lastLine)) {
-                
-                array_pop($lines);
-                return [
-                    'name' => trim(implode("\n", $lines)),
-                    'unit' => $lastLine
                 ];
             }
         }
