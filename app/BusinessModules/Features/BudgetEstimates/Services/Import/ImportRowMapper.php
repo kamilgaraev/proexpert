@@ -283,14 +283,13 @@ class ImportRowMapper
             level: $mappedData['level'] ?? 0,
             sectionPath: $mappedData['sectionPath'] ?? null,
             rawData: $rawData,
-            currentTotalAmount: $mappedData['currentTotalAmount'] ?? null,
-            isFooter: $mappedData['isFooter'] ?? false,
             quantityCoefficient: $mappedData['quantityCoefficient'] ?? null,
             quantityTotal: $mappedData['quantityTotal'] ?? null,
             baseUnitPrice: round($mappedData['baseUnitPrice'] ?? $mappedData['unitPrice'] ?? 0, 2),
             priceIndex: $mappedData['priceIndex'] ?? null,
             currentUnitPrice: round($mappedData['currentUnitPrice'] ?? $mappedData['unitPrice'] ?? 0, 2),
             priceCoefficient: $mappedData['priceCoefficient'] ?? null,
+            currentTotalAmount: $mappedData['currentTotalAmount'] ?? null,
             overheadAmount: round($attributes['overhead_amount'] ?? 0, 2),
             profitAmount: round($attributes['profit_amount'] ?? 0, 2),
             overheadRate: $mappedData['overheadRate'] ?? null,
@@ -298,7 +297,8 @@ class ImportRowMapper
             baseLaborCost: round($mappedData['baseLaborCost'] ?? 0, 2),
             baseMachineryCost: round($mappedData['baseMachineryCost'] ?? 0, 2),
             baseMachineryLaborCost: round($mappedData['baseMachineryLaborCost'] ?? 0, 2),
-            baseMaterialsCost: round($mappedData['baseMaterialsCost'] ?? 0, 2)
+            baseMaterialsCost: round($mappedData['baseMaterialsCost'] ?? 0, 2),
+            isFooter: $mappedData['isFooter'] ?? false
         );
     }
 
