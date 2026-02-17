@@ -479,17 +479,23 @@ class ImportRowMapper
 
     private function isFooter(?string $itemName, array $rawData, ?float $quantity = null, ?float $unitPrice = null, ?string $unit = null, ?float $totalAmount = null): bool
     {
-        // 0. Safety: real items MUST have quantity > 0 or price > 0. 
-        // Summary rows often have totalAmount but NO quantity or unitPrice.
-        // We ignore unit here because summary rows sometimes carry a "fake" unit or "ед" from mapping.
+        // 0. Safety: real items MUST have quantity > 0 OR unit price > 0. 
         if (($quantity !== null && $quantity > 0) || 
             ($unitPrice !== null && $unitPrice > 0)) {
             return false;
         }
+        
+        // 1. Heuristic: If we have Total Amount but NO Quantity and NO Unit Price, it's a Summary/Footer row.
+        // Real items (even lump sum) should have Qty=1 or Price calculated.
+        // Summary rows (like "Material Cost: 5000") matches this pattern: Q=0, P=0, Total=5000.
+        if ($totalAmount !== null && $totalAmount > 0) {
+            Log::info("[ImportDebug] Row detected as Footer (Summary detection: Total>0, Q=0, P=0). ItemName: '{$itemName}'");
+            return true;
+        }
 
         $footers = [
             'итого', 'всего', 'накладные расходы', 'сметная прибыль', 
-            'материалы', 'машины и механизмы', 'земляные работы', 'перевозка грузов',
+            'материалы', 'машины и механизмы', // 'земляные работы', 'перевозка грузов' - REMOVED (they are valid sections)
             ' в базисных ценах', 'перевод цен', ' в смете', 'итоги по', 
             'ндс ', 'подпись', 'составил', 'проверил', 'утверждаю'
         ];
