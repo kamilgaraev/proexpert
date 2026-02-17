@@ -106,11 +106,7 @@ class ImportRowMapper
                     if ($mappedData['currentUnitPrice'] === null) {
                         $mappedData['currentUnitPrice'] = $parsed['total'];
                     }
-                    // Если это многострочная ячейка и там есть компоненты - НЕ затираем их нулями
-                    if ($parsed['labor'] > 0) $mappedData['baseLaborCost'] = $parsed['labor'];
-                    if ($parsed['machinery'] > 0) $mappedData['baseMachineryCost'] = $parsed['machinery'];
-                    if ($parsed['machinery_labor'] > 0) $mappedData['baseMachineryLaborCost'] = $parsed['machinery_labor'];
-                    if ($parsed['materials'] > 0) $mappedData['baseMaterialsCost'] = $parsed['materials'];
+                    // МЫ БОЛЬШЕ НЕ БЕРЕМ БАЗОВЫЕ КОМПОНЕНТЫ ИЗ ТЕКУЩЕЙ ЦЕНЫ
                     break;
                 case 'current_total_amount':
                 case 'total_amount':
@@ -120,11 +116,12 @@ class ImportRowMapper
                 case 'base_unit_price':
                     $parsed = $this->parseMultiLineValue($value);
                     $mappedData['baseUnitPrice'] = $parsed['total'];
-                    // Заменяем только если в этой колонке ДЕЙСТВИТЕЛЬНО есть многострочные данные
-                    if ($parsed['labor'] > 0) $mappedData['baseLaborCost'] = $parsed['labor'];
-                    if ($parsed['machinery'] > 0) $mappedData['baseMachineryCost'] = $parsed['machinery'];
-                    if ($parsed['machinery_labor'] > 0) $mappedData['baseMachineryLaborCost'] = $parsed['machinery_labor'];
-                    if ($parsed['materials'] > 0) $mappedData['baseMaterialsCost'] = $parsed['materials'];
+                    if ($parsed['labor'] > 0 || $parsed['machinery'] > 0) {
+                        $mappedData['baseLaborCost'] = $parsed['labor'];
+                        $mappedData['baseMachineryCost'] = $parsed['machinery'];
+                        $mappedData['baseMachineryLaborCost'] = $parsed['machinery_labor'];
+                        $mappedData['baseMaterialsCost'] = $parsed['materials'];
+                    }
                     break;
                 case 'base_labor_price':
                 case 'labor_price':
@@ -135,7 +132,6 @@ class ImportRowMapper
                 case 'machinery_price':
                     $parsed = $this->parseMultiLineValue($value);
                     $mappedData['baseMachineryCost'] = $parsed['total'];
-                    // 2-я строка в колонке механизмов обычно ЗПМ
                     if ($parsed['labor'] > 0) {
                         $mappedData['baseMachineryLaborCost'] = $parsed['labor'];
                     }
@@ -302,6 +298,15 @@ class ImportRowMapper
                     }
                 }
             }
+        }
+
+        // Валидация: предотвращаем утечку текущих цен в базу
+        // Если сумма ЗП и ЭМ (база) больше ПЗ (база), значит мы ошибочно взяли компоненты из текущей цены
+        if ($mappedData['baseLaborCost'] + $mappedData['baseMachineryCost'] > $mappedData['baseUnitPrice'] + 0.01) {
+            $mappedData['baseLaborCost'] = 0.0;
+            $mappedData['baseMachineryCost'] = 0.0;
+            $mappedData['baseMachineryLaborCost'] = 0.0;
+            $mappedData['baseMaterialsCost'] = 0.0;
         }
 
         // Финальный расчет материалов для ФЕР: Мат = ПЗ - ОЗП - ЭМ
