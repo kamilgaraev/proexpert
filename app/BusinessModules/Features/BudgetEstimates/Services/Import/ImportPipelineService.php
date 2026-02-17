@@ -386,6 +386,7 @@ class ImportPipelineService
             $totalWithoutVat = round($totalDirect + $totalOverhead + $totalProfit, 2);
             
             $vatRate = (float)($estimate->vat_rate ?? 18);
+            // НДС считается от уже округленной суммы без НДС
             $totalWithVat = round(round($totalWithoutVat, 2) * (1 + ($vatRate / 100)), 2);
 
             $estimate->update([
