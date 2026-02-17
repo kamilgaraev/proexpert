@@ -113,6 +113,7 @@ class GrandSmetaDetector implements EstimateTypeDetectorInterface
                 for ($colIdx = 1; $colIdx <= $highestColIndex; $colIdx++) {
                     $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colIdx);
                     $cell = $content->getCell($col . $row);
+                    $value = $cell->getValue();
                     if ($value && str_contains(mb_strtolower((string)$value), mb_strtolower($keyword))) {
                         return true;
                     }
