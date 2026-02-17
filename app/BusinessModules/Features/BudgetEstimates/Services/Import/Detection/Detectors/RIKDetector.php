@@ -102,7 +102,10 @@ class RIKDetector implements EstimateTypeDetectorInterface
             $highestCol = $content->getHighestColumn();
             
             for ($row = 1; $row <= $maxRow; $row++) {
-                foreach (range('A', $highestCol) as $col) {
+                $highestColIndex = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($highestCol);
+                
+                for ($colIdx = 1; $colIdx <= $highestColIndex; $colIdx++) {
+                    $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colIdx);
                     $value = (string)$content->getCell($col . $row)->getValue();
                     if (preg_match($pattern, $value, $matches)) {
                         $codes[] = $matches[0];
@@ -127,7 +130,10 @@ class RIKDetector implements EstimateTypeDetectorInterface
             $highestCol = $content->getHighestColumn();
             
             for ($row = 1; $row <= $maxRow; $row++) {
-                foreach (range('A', $highestCol) as $col) {
+                $highestColIndex = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($highestCol);
+                
+                for ($colIdx = 1; $colIdx <= $highestColIndex; $colIdx++) {
+                    $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colIdx);
                     $value = $content->getCell($col . $row)->getValue();
                     if ($value && str_contains(mb_strtolower((string)$value), mb_strtolower($keyword))) {
                         return true;

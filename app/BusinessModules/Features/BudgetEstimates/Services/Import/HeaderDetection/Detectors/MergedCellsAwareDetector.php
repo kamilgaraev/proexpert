@@ -95,8 +95,10 @@ class MergedCellsAwareDetector extends AbstractHeaderDetector
     {
         $count = 0;
         $highestColumn = $sheet->getHighestColumn();
+        $highestColumnIndex = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($highestColumn);
 
-        foreach (range('A', $highestColumn) as $col) {
+        for ($colIdx = 1; $colIdx <= $highestColumnIndex; $colIdx++) {
+            $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colIdx);
             $cell = $sheet->getCell($col . $row);
             $value = $cell->getValue();
 
@@ -120,8 +122,10 @@ class MergedCellsAwareDetector extends AbstractHeaderDetector
         $mergedCount = 0;
         $hasMerged = false;
         $highestColumn = $sheet->getHighestColumn();
+        $highestColumnIndex = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($highestColumn);
 
-        foreach (range('A', $highestColumn) as $col) {
+        for ($colIdx = 1; $colIdx <= $highestColumnIndex; $colIdx++) {
+            $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colIdx);
             $cell = $sheet->getCell($col . $row);
             
             if ($cell->isInMergeRange()) {

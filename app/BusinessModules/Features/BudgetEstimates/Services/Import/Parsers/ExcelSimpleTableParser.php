@@ -427,7 +427,10 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             $cellsWithData = 0;
             $serviceCells = 0;
             
-            foreach (range('A', $highestCol) as $col) {
+            $highestColIndex = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($highestCol);
+            
+            for ($colIdx = 1; $colIdx <= $highestColIndex; $colIdx++) {
+                $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colIdx);
                 $cell = $sheet->getCell($col . $currentRow);
                 
                 // ✅ Вычисляем формулы
@@ -1711,7 +1714,10 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             $rowData = [];
             $hasData = false;
             
-            foreach (range('A', $highestCol) as $col) {
+            $highestColIndex = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($highestCol);
+            
+            for ($colIdx = 1; $colIdx <= $highestColIndex; $colIdx++) {
+                $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colIdx);
                 $cell = $sheet->getCell($col . $row);
                 try {
                     $value = $cell->getCalculatedValue();

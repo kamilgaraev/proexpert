@@ -252,7 +252,10 @@ class HeaderScoringService
             $hasTextData = false;
             $cellsWithData = 0;
             
-            foreach (range('A', $highestCol) as $col) {
+            $highestColIndex = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($highestCol);
+            
+            for ($colIdx = 1; $colIdx <= $highestColIndex; $colIdx++) {
+                $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colIdx);
                 $value = $sheet->getCell($col . $currentRow)->getValue();
                 
                 if ($value === null || trim((string)$value) === '') {
