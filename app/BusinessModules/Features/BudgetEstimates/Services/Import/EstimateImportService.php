@@ -19,6 +19,7 @@ class EstimateImportService
 {
     public function __construct(
         private FileStorageService $fileStorage,
+        private ImportRowMapper $rowMapper,
         // Dependencies reserved for future Phases (2 & 3)
         private ?\App\BusinessModules\Features\BudgetEstimates\Services\EstimateService $estimateService = null,
         private ?\App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\Factory\ParserFactory $parserFactory = null
@@ -149,10 +150,13 @@ class EstimateImportService
         
         // Using getStream allows us to inject mapping options which legacy parse() didn't support well externally
         foreach ($parser->getStream($fullPath, $parseOptions) as $rowDTO) {
-             if ($rowDTO->isSection) {
-                 $sections[] = $rowDTO->toArray();
+             // Apply mapping if it's a raw stream
+             $mappedDTO = $this->rowMapper->map($rowDTO, $columnMapping);
+             
+             if ($mappedDTO->isSection) {
+                 $sections[] = $mappedDTO->toArray();
              } else {
-                 $items[] = $rowDTO->toArray();
+                 $items[] = $mappedDTO->toArray();
              }
         }
         
