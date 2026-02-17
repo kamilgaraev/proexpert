@@ -102,17 +102,19 @@ class ImportRowMapper
                 case 'price':
                     $parsed = $this->parseMultiLineValue($value);
                     $mappedData['unitPrice'] = $parsed['total'];
-                    // unit_price в контексте ФЕР - это ТЕКУЩАЯ цена, 
-                    // но часто там же перечислены БАЗИСНЫЕ компоненты.
+                    // unit_price в контексте ФЕР - это ТЕКУЩАЯ цена.
                     if ($mappedData['currentUnitPrice'] === null) {
                         $mappedData['currentUnitPrice'] = $parsed['total'];
                     }
                     
-                    // Если базисные компоненты еще не установлены - берем их отсюда
-                    if ($mappedData['baseLaborCost'] == 0) $mappedData['baseLaborCost'] = $parsed['labor'];
-                    if ($mappedData['baseMachineryCost'] == 0) $mappedData['baseMachineryCost'] = $parsed['machinery'];
-                    if ($mappedData['baseMachineryLaborCost'] == 0) $mappedData['baseMachineryLaborCost'] = $parsed['machinery_labor'];
-                    if ($mappedData['baseMaterialsCost'] == 0) $mappedData['baseMaterialsCost'] = $parsed['materials'];
+                    // БЕРЕМ БАЗИСНЫЕ КОМПОНЕНТЫ ИЗ ТЕКУЩЕЙ КОЛОНКИ ТОЛЬКО ЕСЛИ НЕТ СПЕЦИАЛЬНОЙ БАЗОВОЙ КОЛОНКИ
+                    $hasSeparateBaseColumn = isset($mapping['base_unit_price']);
+                    if (!$hasSeparateBaseColumn) {
+                        if ($mappedData['baseLaborCost'] == 0) $mappedData['baseLaborCost'] = $parsed['labor'];
+                        if ($mappedData['baseMachineryCost'] == 0) $mappedData['baseMachineryCost'] = $parsed['machinery'];
+                        if ($mappedData['baseMachineryLaborCost'] == 0) $mappedData['baseMachineryLaborCost'] = $parsed['machinery_labor'];
+                        if ($mappedData['baseMaterialsCost'] == 0) $mappedData['baseMaterialsCost'] = $parsed['materials'];
+                    }
                     break;
                 case 'current_total_amount':
                 case 'total_amount':
@@ -371,8 +373,9 @@ class ImportRowMapper
         }
 
         $str = (string)$value;
-        // Сплит по всем видам переносов строк: \r\n, \n, \r
-        $lines = array_values(array_filter(array_map('trim', preg_split('/\R/u', $str))));
+        // Нормализуем переносы строк и сплитим. НЕ используем фильтрацию, чтобы не сместить индексы строк.
+        $normalized = str_replace(["\r\n", "\r"], "\n", $str);
+        $lines = array_map('trim', explode("\n", $normalized));
         
         $result['total'] = $this->parseFloat($lines[0] ?? null) ?? 0.0;
         
@@ -383,17 +386,13 @@ class ImportRowMapper
         // 4. ЗПМ (Заработная плата машинистов) - входит в ЭМ
         // 5. [Иногда] Материалы - если не 5-й, то вычисляется: Всего - ОЗП - ЭМ
         
-        $result['labor'] = round($this->parseFloat($lines[1] ?? null) ?? 0, 2);
-        $result['machinery'] = round($this->parseFloat($lines[2] ?? null) ?? 0, 2);
-        $result['machinery_labor'] = round($this->parseFloat($lines[3] ?? null) ?? 0, 2);
+        $result['labor'] = $this->parseFloat($lines[1] ?? null) ?? 0.0;
+        $result['machinery'] = $this->parseFloat($lines[2] ?? null) ?? 0.0;
+        $result['machinery_labor'] = $this->parseFloat($lines[3] ?? null) ?? 0.0;
         
-        $matCandidate = round($this->parseFloat($lines[4] ?? null) ?? 0, 2);
-        if ($matCandidate > 0) {
+        $matCandidate = $this->parseFloat($lines[4] ?? null);
+        if ($matCandidate !== null && $matCandidate > 0) {
             $result['materials'] = $matCandidate;
-        } else {
-            // Фолбек расчет материалов: ПЗ - ОЗП - ЭМ
-            $result['materials'] = round($result['total'] - $result['labor'] - $result['machinery'], 2);
-            if ($result['materials'] < 0.01) $result['materials'] = 0;
         }
 
         return $result;
