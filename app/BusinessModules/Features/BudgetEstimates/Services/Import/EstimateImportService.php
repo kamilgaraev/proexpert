@@ -606,12 +606,17 @@ class EstimateImportService
             $currentRow = $headerRow + 1;
             $maxRow = min($headerRow + 20, $sheet->getHighestRow()); 
             
+            $highestColumnIndex = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($sheet->getHighestColumn());
+
             while (count($samples) < $maxSamples && $currentRow <= $maxRow) {
                 $rowData = [];
                 $hasData = false;
                 
-                foreach (range('A', $sheet->getHighestColumn()) as $col) {
-                    $cell = $sheet->getCell($col . $currentRow);
+                // Use 1-based index loop for columns
+                for ($colIdx = 1; $colIdx <= $highestColumnIndex; $colIdx++) {
+                    // Get column letter for getCell (or use getCellByColumnAndRow)
+                    $colLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colIdx);
+                    $cell = $sheet->getCell($colLetter . $currentRow);
                     
                     // ✅ Вычисляем формулы
                     try {
@@ -623,7 +628,8 @@ class EstimateImportService
                     if ($value !== null && trim((string)$value) !== '') {
                         $hasData = true;
                     }
-                    $rowData[$col] = $value;
+                    // IMPORTANT: We must push to indexed array to ensure JSON array, NOT object
+                    $rowData[] = $value; 
                 }
                 
                 if ($hasData) {

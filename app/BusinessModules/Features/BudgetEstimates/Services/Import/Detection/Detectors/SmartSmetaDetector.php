@@ -91,8 +91,11 @@ class SmartSmetaDetector implements EstimateTypeDetectorInterface
             $highestCol = $content->getHighestColumn();
             
             for ($row = 1; $row <= $maxRow; $row++) {
-                foreach (range('A', $highestCol) as $col) {
-                    $value = $content->getCell($col . $row)->getValue();
+                $highestColIndex = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($highestCol);
+                
+                for ($colIdx = 1; $colIdx <= $highestColIndex; $colIdx++) {
+                    $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colIdx);
+                    $cell = $content->getCell($col . $row);
                     if ($value && str_contains(mb_strtolower((string)$value), mb_strtolower($keyword))) {
                         return true;
                     }

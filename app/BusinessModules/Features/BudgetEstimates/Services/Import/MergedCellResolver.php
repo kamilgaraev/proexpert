@@ -36,7 +36,10 @@ class MergedCellResolver
             'has_subheaders_row2' => $hasSubheaders2,
         ]);
 
-        foreach (range('A', $highestColumn) as $col) {
+        $highestColumnIndex = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($highestColumn);
+
+        for ($colIdx = 1; $colIdx <= $highestColumnIndex; $colIdx++) {
+            $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colIdx);
             $currentValue = $sheet->getCell($col . $headerRow)->getValue();
             $headerText = '';
 
@@ -121,6 +124,7 @@ class MergedCellResolver
     public function getActualHighestColumn(Worksheet $sheet, int $startRow): string
     {
         $sheetHighest = $sheet->getHighestColumn();
+        $sheetHighestIndex = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($sheetHighest);
         
         Log::debug('[MergedCellResolver] Starting column detection', [
             'sheet_highest' => $sheetHighest,
@@ -130,48 +134,44 @@ class MergedCellResolver
         // КРИТИЧНО: PhpSpreadsheet->getHighestColumn() может ошибаться из-за merged cells
         // Нужно сканировать ВСЕ строки файла для поиска максимальной колонки
         
-        $maxFilledColumn = 'A';
+        $maxFilledColumnIndex = 1;
         $highestRow = $sheet->getHighestRow();
         
         // Сканируем ВСЕ строки (или максимум 500 для производительности)
         $rowsToCheck = min(500, $highestRow);
         
-        // ВАЖНО: Сканируем до колонки Z (не только до sheetHighest)
-        // Потому что sheetHighest может быть неправильным
-        $maxColumnToCheck = 'Z';
+        // ВАЖНО: Сканируем до колонки Z (26) или sheetHighest, что больше
+        // Но не перебарщиваем, скажем до 100 колонок (CV) если sheetHighest маленький
+        $maxColumnIndexToCheck = max(26, $sheetHighestIndex, 50); // Scan at least 50 columns
         
         for ($row = 1; $row <= $rowsToCheck; $row++) {
-            foreach (range('A', $maxColumnToCheck) as $col) {
+            for ($colIdx = 1; $colIdx <= $maxColumnIndexToCheck; $colIdx++) {
+                $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colIdx);
                 try {
                     $cell = $sheet->getCell($col . $row);
                     $value = $cell->getValue();
                     
                     if ($value !== null && trim((string)$value) !== '') {
-                        if ($col > $maxFilledColumn) {
-                            $maxFilledColumn = $col;
-                            
-                            Log::debug('[MergedCellResolver] Found new max column', [
-                                'column' => $col,
-                                'row' => $row,
-                                'value' => mb_substr((string)$value, 0, 50),
-                            ]);
+                        if ($colIdx > $maxFilledColumnIndex) {
+                            $maxFilledColumnIndex = $colIdx;
                         }
                     }
                 } catch (\Exception $e) {
-                    // Колонка не существует, останавливаем поиск в этой строке
-                    break;
+                    continue;
                 }
             }
         }
 
+        $finalHighestIndex = max($sheetHighestIndex, $maxFilledColumnIndex);
+        $finalHighest = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($finalHighestIndex);
+
         Log::info('[MergedCellResolver] Actual highest column detected', [
             'sheet_highest' => $sheetHighest,
-            'actual_highest' => $maxFilledColumn,
+            'actual_highest' => $finalHighest,
             'rows_scanned' => $rowsToCheck,
         ]);
 
-        // Возвращаем максимум между определенным PhpSpreadsheet и найденным нами
-        return max($sheetHighest, $maxFilledColumn);
+        return $finalHighest;
     }
 
     /**
@@ -219,7 +219,10 @@ class MergedCellResolver
         $expanded = [];
         $actualHighest = $this->getActualHighestColumn($sheet, 1);
 
-        foreach (range('A', $actualHighest) as $col) {
+        $actualHighestIndex = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($actualHighest);
+
+        for ($colIdx = 1; $colIdx <= $actualHighestIndex; $colIdx++) {
+            $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colIdx);
             $expanded[$col] = $headers[$col] ?? '';
         }
 
@@ -240,7 +243,10 @@ class MergedCellResolver
         
         $highestColumn = $sheet->getHighestColumn();
         
-        foreach (range('A', $highestColumn) as $col) {
+        $highestColumnIndex = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($highestColumn);
+        
+        for ($colIdx = 1; $colIdx <= $highestColumnIndex; $colIdx++) {
+            $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colIdx);
             $value = $sheet->getCell($col . $row)->getValue();
             
             if ($value !== null && trim((string)$value) !== '') {
