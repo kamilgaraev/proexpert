@@ -104,8 +104,12 @@ class ImportRowMapper
         // If name exists but no quantity/price, it's likely a section or a comment
         if (!empty($mappedData['itemName']) && $mappedData['quantity'] === null && $mappedData['unitPrice'] === null) {
             // Check if it looks like "Раздел..." or just a header
-            if (mb_stripos($mappedData['itemName'], 'раздел') !== false || mb_stripos($mappedData['itemName'], 'итого') !== false) {
-                 $mappedData['isSection'] = true;
+            if ($this->isSection($mappedData['itemName'], $rawData)) {
+                $mappedData['isSection'] = true;
+                // Clear numeric fields for sections to avoid "Раздел 1" grabbing "1" as price
+                $mappedData['quantity'] = null;
+                $mappedData['unitPrice'] = null;
+                $mappedData['currentTotalAmount'] = null;
             }
         }
 
@@ -134,30 +138,47 @@ class ImportRowMapper
 
     public function isTechnicalRow(array $row): bool
     {
-        $numericCount = 0;
-        $prevValue = 0;
-        $isIncrementing = true;
-        
         $nonEmpty = array_filter($row, fn($v) => $v !== null && $v !== '');
-        
         if (count($nonEmpty) < 3) return false;
 
-        foreach ($row as $val) {
-            if ($val === null || $val === '') continue;
-            
-            if (is_numeric($val)) {
-                $valInt = (int)$val;
-                if ($numericCount > 0 && $valInt !== $prevValue + 1) {
-                    $isIncrementing = false;
-                }
-                $prevValue = $valInt;
+        $numericCount = 0;
+        $sequentialCount = 0;
+        $prevVal = null;
+
+        foreach ($nonEmpty as $val) {
+            $valStr = trim((string)$val);
+            if (is_numeric($valStr)) {
                 $numericCount++;
+                $current = (float)$valStr;
+                if ($prevVal !== null && $current === $prevVal + 1) {
+                    $sequentialCount++;
+                }
+                $prevVal = $current;
             } else {
-                return false; // Found a non-numeric value
+                // Technical row usually doesn't have many non-numeric strings
+                // If we hit a substantial string, it's likely a real data row
+                if (mb_strlen($valStr) > 10) return false;
             }
         }
 
-        return $numericCount > 5 && $isIncrementing;
+        // If high percentage of row is numeric and we found sequential numbers like 1, 2, 3...
+        return ($sequentialCount >= 2 && $numericCount / count($nonEmpty) > 0.7);
+    }
+
+    private function isSection(string $itemName, array $rawData): bool
+    {
+        // Check if it looks like "Раздел..." or "ИТОГО..."
+        if (mb_stripos($itemName, 'раздел') !== false || mb_stripos($itemName, 'итого') !== false) {
+            return true;
+        }
+
+        // Heuristic: If the first non-empty cell is a long string, and other cells are empty
+        $nonEmptyCells = array_filter($rawData, fn($v) => $v !== null && $v !== '');
+        if (count($nonEmptyCells) === 1 && mb_strlen($itemName) > 15) {
+            return true;
+        }
+
+        return false;
     }
 
     private function getValueFromRaw(array $rawData, mixed $column): mixed
@@ -196,51 +217,56 @@ class ImportRowMapper
         }
 
         $str = (string)$value;
-        // Take first line if multi-line
+        // Take FIRST line for multi-line cells (e.g., 1,69 \n 1690/1000)
         $lines = explode("\n", $str);
-        $str = trim($lines[0]);
+        $firstLine = trim($lines[0]);
 
-        // Handle string with comma etc.
-        $clean = str_replace([',', ' '], ['.', ''], $str);
-        
-        // Final attempt: extract first float-like string
-        if (!is_numeric($clean)) {
-            if (preg_match('/[0-9]+([\.,][0-9]+)?/', $str, $matches)) {
-                $clean = str_replace(',', '.', $matches[0]);
+        // Basic cleaning
+        $clean = str_replace([' ', "\xc2\xa0", "\xA0"], '', $firstLine);
+        $clean = str_replace(',', '.', $clean);
+
+        // If the line is mostly numeric, extract the number
+        // This avoids extracting "1" from "Раздел 1"
+        if (preg_match('/^-?[0-9]*\.?[0-9]+/', $clean, $matches)) {
+            // Check if there are too many non-numeric chars in the first line
+            $numericChars = preg_replace('/[^0-9\.]/', '', $clean);
+            if (mb_strlen($numericChars) / mb_strlen($clean) > 0.5) {
+                return (float)$matches[0];
             }
         }
 
-        return is_numeric($clean) ? (float)$clean : null;
+        return null;
     }
 
     private function cleanCode(mixed $value): ?string
     {
         if (empty($value)) return null;
         $str = (string)$value;
+        // Take first line, ignore "Приказ Минстроя..." etc.
         $lines = explode("\n", $str);
         return trim($lines[0]);
     }
 
     private function splitNameAndUnit(string $name): array
     {
-        // Heuristic: "( unit )" at the end of a line
-        if (preg_match('/^(.*)\s*\(([^\)]+)\)\s*$/su', $name, $matches)) {
+        // 1. Try to find unit in brackets at the end: "Name (unit)"
+        if (preg_match('/^(.*?)\s*[\(\[]([^0-9\(\)\[\]]{1,20})[\)\]]\s*$/u', $name, $matches)) {
             return [
                 'name' => trim($matches[1]),
                 'unit' => trim($matches[2])
             ];
         }
 
-        // Heuristic: Name \n Unit (if unit is single line and short)
+        // 2. Try multi-line split if last line is short (typical unit position)
         $lines = explode("\n", $name);
-        if (count($lines) > 1) {
+        if (count($lines) >= 2) {
             $lastLine = trim(end($lines));
-            if (mb_strlen($lastLine) < 20 && (mb_stripos($lastLine, '1000') !== false || mb_strlen($lastLine) < 10)) {
-                 array_pop($lines);
-                 return [
-                     'name' => trim(implode("\n", $lines)),
-                     'unit' => $lastLine
-                 ];
+            if (mb_strlen($lastLine) > 1 && mb_strlen($lastLine) < 15 && !preg_match('/[0-9]{3,}/', $lastLine)) {
+                array_pop($lines);
+                return [
+                    'name' => trim(implode("\n", $lines)),
+                    'unit' => $lastLine
+                ];
             }
         }
 

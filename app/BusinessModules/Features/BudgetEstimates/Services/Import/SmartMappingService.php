@@ -65,35 +65,28 @@ class SmartMappingService
         ];
         
         $detectedColumns = [];
-        $usedInFields = []; // Map field => columnLetter
 
         foreach ($headers as $columnLetter => $headerText) {
             $normalized = mb_strtolower(trim((string)$headerText));
-            
-            // Find ALL matches for this column that meet threshold
+            if (empty($normalized)) continue;
+
+            $bestMatch = null;
+            $bestConfidence = 0.0;
+
             foreach ($this->columnKeywords as $field => $keywords) {
                 $confidence = $this->calculateColumnConfidence($normalized, $keywords);
                 
-                if ($confidence > 0.5) {
-                    // If field not yet mapped, or mapped with lower confidence (not tracked here but could be)
-                    if ($mapping[$field] === null) {
-                        $mapping[$field] = $columnLetter;
-                        $usedInFields[$field] = $columnLetter;
-                    }
-                }
-            }
-            
-            // For the detected_columns report, we still pick the "best" for simplicity in UI
-            $bestMatch = null;
-            $bestConfidence = 0.0;
-            foreach ($this->columnKeywords as $field => $keywords) {
-                $confidence = $this->calculateColumnConfidence($normalized, $keywords);
                 if ($confidence > $bestConfidence) {
                     $bestConfidence = $confidence;
                     $bestMatch = $field;
                 }
-            }
 
+                // Auto-map if high confidence and not yet mapped
+                if ($confidence > 0.45 && $mapping[$field] === null) {
+                    $mapping[$field] = $columnLetter;
+                }
+            }
+            
             $detectedColumns[$columnLetter] = [
                 'field' => $bestMatch,
                 'header' => $headerText,
@@ -115,16 +108,22 @@ class SmartMappingService
         }
         
         foreach ($keywords as $keyword) {
-            if ($normalized === $keyword) {
+            $kwNormalized = mb_strtolower($keyword);
+            
+            // Exact match
+            if ($normalized === $kwNormalized) {
                 return 1.0;
             }
             
-            if (str_contains($normalized, $keyword)) {
-                $lengthRatio = mb_strlen($keyword) / max(mb_strlen($normalized), 1);
-                $position = mb_strpos($normalized, $keyword);
-                $positionBonus = ($position === 0) ? 0.2 : 0;
-                
-                return min($lengthRatio + $positionBonus, 0.95);
+            // Whole word match (important for "наименование ... единица измерения")
+            if (preg_match('/\b' . preg_quote($kwNormalized, '/') . '\b/u', $normalized)) {
+                $lengthRatio = mb_strlen($kwNormalized) / mb_strlen($normalized);
+                return min(0.6 + ($lengthRatio * 0.35), 0.95);
+            }
+
+            // Substring match
+            if (str_contains($normalized, $kwNormalized)) {
+                return 0.5;
             }
         }
         
