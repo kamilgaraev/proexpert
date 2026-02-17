@@ -18,6 +18,12 @@ class ImportRowMapper
             return $rowDTO;
         }
 
+        \Illuminate\Support\Facades\Log::debug('[ImportRowMapper] Mapping row', [
+            'row' => $rowDTO->rowNumber,
+            'mapping' => $mapping,
+            'raw_data_sample' => array_slice($rawData, 0, 10)
+        ]);
+
         $mappedData = [
             'rowNumber' => $rowDTO->rowNumber,
             'itemName' => $rowDTO->itemName,

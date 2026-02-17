@@ -14,26 +14,45 @@ use Illuminate\Support\Facades\Log;
 
 class ExcelStreamParser implements EstimateImportParserInterface, StreamParserInterface
 {
+    private array $headerCandidates = [];
+
+    public function __construct(
+        private \App\BusinessModules\Features\BudgetEstimates\Services\Import\SmartMappingService $smartMappingService
+    ) {}
+
     public function getStream(string $filePath, array $options = []): Generator
     {
         if (!file_exists($filePath)) {
             throw new RuntimeException("File not found: {$filePath}");
         }
         
-        // SimpleXLSX supports stream reading
+        $headerRow = $options['header_row'] ?? null;
+        
         if ($xlsx = SimpleXLSX::parse($filePath)) {
-            $rowIndex = 1;
+            $rowIndex = 0; // SimpleXLSX rows are 0-indexed
             foreach ($xlsx->readRows() as $row) {
-                // Since this is a raw stream parser, we wrap raw items in DTO
-                // Mapping should be handled by the pipeline/processor if using this parser
+                // Skip rows before header_row + 1 (data usually starts after header)
+                // If header_row is 5, we skip 0, 1, 2, 3, 4, 5. Data starts at 6.
+                if ($headerRow !== null && $rowIndex <= $headerRow) {
+                    $rowIndex++;
+                    continue;
+                }
+
+                // Skip completely empty rows
+                if (empty(array_filter($row, fn($v) => $v !== null && $v !== ''))) {
+                    $rowIndex++;
+                    continue;
+                }
+
                 yield new \App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportRowDTO(
-                    rowNumber: $rowIndex++,
+                    rowNumber: $rowIndex + 1, // 1-indexed for the user
                     sectionNumber: null,
                     itemName: '', // Placeholder
                     unit: null, quantity: null, unitPrice: null, code: null,
                     isSection: false, itemType: 'work', level: 0, sectionPath: null,
                     rawData: $row
                 );
+                $rowIndex++;
             }
             Log::info('[ExcelStreamParser] Finished reading stream');
         } else {
@@ -52,9 +71,6 @@ class ExcelStreamParser implements EstimateImportParserInterface, StreamParserIn
         return $preview;
     }
 
-    /**
-     * Legacy parse wrapper (if needed)
-     */
     public function parse(string $filePath): Generator|EstimateImportDTO
     {
         return $this->getStream($filePath);
@@ -67,7 +83,6 @@ class ExcelStreamParser implements EstimateImportParserInterface, StreamParserIn
 
     public function detectStructure(string $filePath): array
     {
-        // Simple fallback: assume first row is header
         if (!file_exists($filePath)) {
              return [
                 'format' => 'excel_simple',
@@ -78,21 +93,73 @@ class ExcelStreamParser implements EstimateImportParserInterface, StreamParserIn
             ];
         }
 
-        $headers = [];
+        $this->headerCandidates = [];
+        $bestRow = 0;
+        $bestScore = 0;
+        $bestMapping = [];
+        $bestHeaders = [];
+
         if ($xlsx = SimpleXLSX::parse($filePath)) {
-            foreach ($xlsx->readRows() as $row) {
-                $headers = $row;
-                break; // First row only
+            $rows = $xlsx->readRows();
+            $maxRowsToScan = 50;
+            $rowIndex = 0;
+
+            foreach ($rows as $row) {
+                if ($rowIndex >= $maxRowsToScan) break;
+
+                $detection = $this->smartMappingService->detectMapping($row);
+                $score = $this->calculateHeaderScore($detection);
+
+                if ($score > 0) {
+                    $this->headerCandidates[] = [
+                        'row_index' => $rowIndex,
+                        'score' => $score,
+                        'headers' => $row,
+                        'mapping' => $detection['mapping'],
+                        'detected_columns' => $detection['detected_columns']
+                    ];
+                }
+
+                if ($score > $bestScore) {
+                    $bestScore = $score;
+                    $bestRow = $rowIndex;
+                    $bestMapping = $detection['mapping'];
+                    $bestHeaders = $row;
+                    $bestDetectedColumns = $detection['detected_columns'];
+                }
+
+                $rowIndex++;
             }
         }
 
+        // Sort candidates by score
+        usort($this->headerCandidates, fn($a, $b) => $b['score'] <=> $a['score']);
+
         return [
             'format' => 'excel_simple',
-            'detected_columns' => [],
-            'raw_headers' => $headers,
-            'header_row' => 0, // 0-based index for logic, though rowNumber usually 1-based
-            'column_mapping' => [],
+            'detected_columns' => $bestDetectedColumns ?? [],
+            'raw_headers' => $bestHeaders,
+            'header_row' => $bestRow,
+            'column_mapping' => $bestMapping,
         ];
+    }
+
+    private function calculateHeaderScore(array $detection): float
+    {
+        $mapping = $detection['mapping'];
+        $mappedCount = count(array_filter($mapping));
+        
+        // Critical fields give more score
+        $criticalFields = ['name', 'quantity', 'unit_price'];
+        $score = 0;
+        
+        foreach ($mapping as $field => $col) {
+            if ($col !== null) {
+                $score += in_array($field, $criticalFields) ? 2 : 1;
+            }
+        }
+
+        return (float) $score;
     }
 
     public function validateFile(string $filePath): bool
@@ -105,12 +172,27 @@ class ExcelStreamParser implements EstimateImportParserInterface, StreamParserIn
 
     public function getHeaderCandidates(): array
     {
-        // Not supporting header detection selection for stream parser fallback
-        return [];
+        return array_slice($this->headerCandidates, 0, 5);
     }
 
     public function detectStructureFromRow(string $filePath, int $headerRow): array
     {
+        if ($xlsx = SimpleXLSX::parse($filePath)) {
+            $rowIndex = 0;
+            foreach ($xlsx->readRows() as $row) {
+                if ($rowIndex === $headerRow) {
+                    $detection = $this->smartMappingService->detectMapping($row);
+                    return [
+                        'format' => 'excel_simple',
+                        'detected_columns' => $detection['detected_columns'],
+                        'raw_headers' => $row,
+                        'header_row' => $rowIndex,
+                        'column_mapping' => $detection['mapping'],
+                    ];
+                }
+                $rowIndex++;
+            }
+        }
         return $this->detectStructure($filePath);
     }
 
