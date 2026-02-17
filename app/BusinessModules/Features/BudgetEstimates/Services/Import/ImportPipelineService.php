@@ -314,6 +314,7 @@ class ImportPipelineService
             // Detailed Base Costs
             'base_materials_cost' => $dto->baseMaterialsCost ?? 0,
             'base_machinery_cost' => $dto->baseMachineryCost ?? 0,
+            'base_machinery_labor_cost' => $dto->baseMachineryLaborCost ?? 0,
             'base_labor_cost' => $dto->baseLaborCost ?? 0,
             
             // Base Overhead & Profit (from text, e.g. "НР (28,38 руб)...")
@@ -359,19 +360,17 @@ class ImportPipelineService
     {
         $totals = EstimateItem::where('estimate_id', $estimate->id)
             ->selectRaw('
-                SUM(total_amount) as total_amount,
+                -- Current Totals
                 SUM(direct_costs) as direct_costs,
-                SUM(materials_cost) as materials_cost,
-                SUM(machinery_cost) as machinery_cost,
-                SUM(labor_cost) as labor_cost,
                 SUM(overhead_amount) as overhead_amount,
                 SUM(profit_amount) as profit_amount,
                 
                 -- Base Totals
-                SUM(CASE WHEN base_unit_price > 0 THEN base_unit_price * quantity ELSE 0 END) as base_direct_costs,
-                SUM(CASE WHEN base_materials_cost > 0 THEN base_materials_cost * quantity ELSE 0 END) as base_materials_cost,
-                SUM(CASE WHEN base_machinery_cost > 0 THEN base_machinery_cost * quantity ELSE 0 END) as base_machinery_cost,
-                SUM(CASE WHEN base_labor_cost > 0 THEN base_labor_cost * quantity ELSE 0 END) as base_labor_cost,
+                SUM(base_unit_price * quantity) as base_direct_costs,
+                SUM(base_materials_cost * quantity) as base_materials_cost,
+                SUM(base_machinery_cost * quantity) as base_machinery_cost,
+                SUM(base_labor_cost * quantity) as base_labor_cost,
+                SUM(base_machinery_labor_cost * quantity) as base_machinery_labor_cost,
                 
                 SUM(base_overhead_amount) as base_overhead_total,
                 SUM(base_profit_amount) as base_profit_total
@@ -379,29 +378,32 @@ class ImportPipelineService
             ->first();
 
         if ($totals) {
-            $totalDirect = $totals->direct_costs ?? 0;
-            $totalOverhead = $totals->calculated_overhead_costs ?? $totals->overhead_amount ?? 0;
-            $totalProfit = $totals->calculated_profit_costs ?? $totals->profit_amount ?? 0;
-            $totalWithoutVat = $totalDirect + $totalOverhead + $totalProfit;
+            $totalDirect = round((float)($totals->direct_costs ?? 0), 2);
+            $totalOverhead = round((float)($totals->overhead_amount ?? 0), 2);
+            $totalProfit = round((float)($totals->profit_amount ?? 0), 2);
+            $totalWithoutVat = round($totalDirect + $totalOverhead + $totalProfit, 2);
+            
+            $vatRate = (float)($estimate->vat_rate ?? 18);
+            $totalWithVat = round($totalWithoutVat * (1 + ($vatRate / 100)), 2);
 
             $estimate->update([
                 'total_amount' => $totalWithoutVat,
                 'total_direct_costs' => $totalDirect,
                 'total_overhead_costs' => $totalOverhead,
                 'total_estimated_profit' => $totalProfit,
-                'total_amount' => $totalWithoutVat,
-                'total_amount_with_vat' => $totalWithoutVat * (1 + ($estimate->vat_rate / 100)),
+                'total_amount_with_vat' => $totalWithVat,
                 
                 // Base fields
-                'total_base_direct_costs' => $totals->base_direct_costs ?? 0,
-                'total_base_materials_cost' => $totals->base_materials_cost ?? 0,
-                'total_base_machinery_cost' => $totals->base_machinery_cost ?? 0,
-                'total_base_labor_cost' => $totals->base_labor_cost ?? 0,
-                'total_base_overhead_amount' => $totals->base_overhead_total ?? 0,
-                'total_base_profit_amount' => $totals->base_profit_total ?? 0,
+                'total_base_direct_costs' => round((float)($totals->base_direct_costs ?? 0), 2),
+                'total_base_materials_cost' => round((float)($totals->base_materials_cost ?? 0), 2),
+                'total_base_machinery_cost' => round((float)($totals->base_machinery_cost ?? 0), 2),
+                // ФОТ (Base) = Labor + Labor of Machinery
+                'total_base_labor_cost' => round((float)(($totals->base_labor_cost ?? 0) + ($totals->base_machinery_labor_cost ?? 0)), 2),
+                'total_base_overhead_amount' => round((float)($totals->base_overhead_total ?? 0), 2),
+                'total_base_profit_amount' => round((float)($totals->base_profit_total ?? 0), 2),
             ]);
         }
 
-        Log::info("Estimate {$estimate->id} totals updated", ['totals' => $estimate->only(['total_amount', 'total_direct_costs'])]);
+        Log::info("Estimate {$estimate->id} totals updated", ['total' => $estimate->total_amount_with_vat]);
     }
 }

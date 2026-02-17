@@ -97,6 +97,7 @@ class ImportRowMapper
                     $mappedData['unitPrice'] = $parsed['total'];
                     $mappedData['baseLaborCost'] = $parsed['labor'];
                     $mappedData['baseMachineryCost'] = $parsed['machinery'];
+                    $mappedData['baseMachineryLaborCost'] = $parsed['machinery_labor'];
                     break;
                 case 'current_total_amount':
                 case 'total_amount':
@@ -111,6 +112,7 @@ class ImportRowMapper
                     $mappedData['baseUnitPrice'] = $parsed['total'];
                     $mappedData['baseLaborCost'] = $parsed['labor'];
                     $mappedData['baseMachineryCost'] = $parsed['machinery'];
+                    $mappedData['baseMachineryLaborCost'] = $parsed['machinery_labor'];
                     break;
                 case 'quantity_total':
                     $mappedData['quantityTotal'] = $this->parseFloat($value);
@@ -295,6 +297,7 @@ class ImportRowMapper
             profitRate: $mappedData['profitRate'] ?? null,
             baseLaborCost: round($mappedData['baseLaborCost'] ?? 0, 2),
             baseMachineryCost: round($mappedData['baseMachineryCost'] ?? 0, 2),
+            baseMachineryLaborCost: round($mappedData['baseMachineryLaborCost'] ?? 0, 2),
             baseMaterialsCost: round($mappedData['baseMaterialsCost'] ?? 0, 2)
         );
     }
@@ -324,11 +327,16 @@ class ImportRowMapper
         
         $result['total'] = round($this->parseFloat($lines[0] ?? null) ?? 0, 2);
         
-        // In FER multi-line: Line 2 is Labor (ЗП), Line 3 is Machinery (ЭМ)
+        // In FER multi-line Unit Price:
+        // Line 1: Total
+        // Line 2: Labor (ЗП)
+        // Line 3: Machinery (ЭМ)
+        // Line 4: Labor of Machinery (ЗПМ)
         $result['labor'] = round($this->parseFloat($lines[1] ?? null) ?? 0, 2);
         $result['machinery'] = round($this->parseFloat($lines[2] ?? null) ?? 0, 2);
+        $result['machinery_labor'] = round($this->parseFloat($lines[3] ?? null) ?? 0, 2);
         
-        // Materials is often Total - Labor - Machinery in FER unit prices
+        // Materials is Total - Labor - Machinery
         if ($result['total'] > 0) {
             $result['materials'] = round($result['total'] - ($result['labor'] ?? 0) - ($result['machinery'] ?? 0), 2);
             if ($result['materials'] < 0.01) $result['materials'] = 0;
