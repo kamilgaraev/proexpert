@@ -207,11 +207,11 @@ class ImportRowMapper
         return new EstimateImportRowDTO(
             rowNumber: $mappedData['rowNumber'],
             sectionNumber: $mappedData['sectionNumber'] ?? null,
-            itemName: $mappedData['itemName'] ?? '',
-            unit: $mappedData['unit'] ?? null,
+            itemName: $this->truncate($mappedData['itemName'] ?? '', 255) ?? '',
+            unit: $this->truncate($mappedData['unit'] ?? null, 100),
             quantity: $mappedData['quantity'] ?? null,
             unitPrice: $mappedData['unitPrice'] ?? null,
-            code: $mappedData['code'] ?? null,
+            code: $this->truncate($mappedData['code'] ?? null, 100),
             isSection: $mappedData['isSection'] ?? false,
             itemType: $mappedData['itemType'] ?? 'work',
             level: $mappedData['level'] ?? 0,
@@ -486,11 +486,46 @@ class ImportRowMapper
             $v = mb_strtolower(trim((string)$val));
             if (empty($v)) continue;
             
+            // Check for signature lines with many underscores
+            if (mb_substr_count($v, '_') > 5) {
+                return true;
+            }
+
             foreach ($allKeywords as $kw) {
                 if (mb_stripos($v, $kw) !== false) return true;
             }
         }
+        
+        // Extra check for "Smetnaya stoimost" and other specific footer phrases in the item name itself
+        $textLower = mb_strtolower($itemName ?? '');
+        $footerPhrases = [
+            'сметная стоимость', 
+            'составлен', 
+            'проверил', 
+            'сдал', 
+            'принял',
+            'локальный сметный расчет',
+            'наименование работ и затрат'
+        ];
+        
+        foreach ($footerPhrases as $phrase) {
+            if (mb_stripos($textLower, $phrase) !== false) {
+                 return true;
+            }
+        }
+        
+        // Check for signature lines with underscores or dates in name
+        if (mb_substr_count($textLower, '_') > 5) {
+            return true;
+        }
 
         return false;
+    }
+
+    private function truncate(?string $value, int $limit): ?string
+    {
+        if ($value === null) return null;
+        if (mb_strlen($value) <= $limit) return $value;
+        return mb_substr($value, 0, $limit);
     }
 }
