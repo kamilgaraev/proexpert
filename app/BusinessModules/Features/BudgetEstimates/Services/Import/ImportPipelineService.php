@@ -307,14 +307,14 @@ class ImportPipelineService
             'unit_price' => $dto->unitPrice ?? 0,
             
             // Base & Index fields
-            'base_unit_price' => $dto->baseUnitPrice ?? null,
-            'price_index' => $dto->priceIndex ?? null,
+            'base_unit_price' => $dto->baseUnitPrice ?? 0,
+            'price_index' => $dto->priceIndex ?? 1,
             'current_unit_price' => $dto->currentUnitPrice ?? ($dto->unitPrice ?? 0),
             
             // Detailed Base Costs
-            'base_materials_cost' => $dto->baseMaterialsCost ?? null,
-            'base_machinery_cost' => $dto->baseMachineryCost ?? null,
-            'base_labor_cost' => $dto->baseLaborCost ?? null,
+            'base_materials_cost' => $dto->baseMaterialsCost ?? 0,
+            'base_machinery_cost' => $dto->baseMachineryCost ?? 0,
+            'base_labor_cost' => $dto->baseLaborCost ?? 0,
             
             // Base Overhead & Profit (from text, e.g. "НР (28,38 руб)...")
             // These are already row totals in typical FER export, so we don't multiply by quantity again here
