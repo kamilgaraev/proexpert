@@ -58,6 +58,10 @@ class ImportRowMapper
             'quantityCoefficient' => null,
             'quantityTotal' => null,
             'baseUnitPrice' => null,
+            'baseLaborCost' => 0.0,
+            'baseMachineryCost' => 0.0,
+            'baseMachineryLaborCost' => 0.0,
+            'baseMaterialsCost' => 0.0,
             'priceIndex' => null,
             'currentUnitPrice' => null,
             'priceCoefficient' => null,
@@ -95,55 +99,44 @@ class ImportRowMapper
                 case 'price':
                     $parsed = $this->parseMultiLineValue($value);
                     $mappedData['unitPrice'] = $parsed['total'];
-                    
-                    // ВАЖНО: unit_price может быть как базовой, так и текущей ценой.
-                    // Если это FER, то многострочные данные обычно ПЕРЕЧИСЛЯЮТ базовые компоненты.
-                    // Но мы должны быть осторожны, чтобы не затереть baseLaborCost, если он уже был или будет поставлен из base_unit_price.
-                    if (!isset($mappedData['baseLaborCost']) || $mappedData['baseLaborCost'] == 0) {
-                        $mappedData['baseLaborCost'] = $parsed['labor'];
-                    }
-                    if (!isset($mappedData['baseMachineryCost']) || $mappedData['baseMachineryCost'] == 0) {
-                        $mappedData['baseMachineryCost'] = $parsed['machinery'];
-                    }
-                    if (!isset($mappedData['baseMachineryLaborCost']) || $mappedData['baseMachineryLaborCost'] == 0) {
-                        $mappedData['baseMachineryLaborCost'] = $parsed['machinery_labor'];
-                    }
-                    if (!isset($mappedData['baseMaterialsCost']) || $mappedData['baseMaterialsCost'] == 0) {
-                        $mappedData['baseMaterialsCost'] = $parsed['materials'];
+                    // unit_price в контексте ФЕР - это ТЕКУЩАЯ цена. 
+                    // Мы НЕ должны заполнять базу из неё, иначе будет каша.
+                    if ($mappedData['currentUnitPrice'] === null) {
+                        $mappedData['currentUnitPrice'] = $parsed['total'];
                     }
                     break;
                 case 'current_total_amount':
                 case 'total_amount':
                     $parsed = $this->parseMultiLineValue($value);
                     $mappedData['currentTotalAmount'] = $parsed['total'];
-                    // Note: currentTotalAmount usually refers to full row current price
-                    // in some mappings, it might be base. 
-                    // But we prioritize calculations later.
                     break;
-            case 'base_unit_price':
-                $parsed = $this->parseMultiLineValue($value);
-                $mappedData['baseUnitPrice'] = $parsed['total'];
-                // Приоритетная установка базисных компонент из специальной колонки
-                if ($parsed['labor'] > 0) $mappedData['baseLaborCost'] = $parsed['labor'];
-                if ($parsed['machinery'] > 0) $mappedData['baseMachineryCost'] = $parsed['machinery'];
-                if ($parsed['machinery_labor'] > 0) $mappedData['baseMachineryLaborCost'] = $parsed['machinery_labor'];
-                if ($parsed['materials'] > 0) $mappedData['baseMaterialsCost'] = $parsed['materials'];
-                break;
-            case 'base_labor_price':
-            case 'labor_price':
-                $parsed = $this->parseMultiLineValue($value);
-                $mappedData['baseLaborCost'] = $parsed['total'];
-                break;
-            case 'base_machinery_price':
-            case 'machinery_price':
-                $parsed = $this->parseMultiLineValue($value);
-                $mappedData['baseMachineryCost'] = $parsed['total'];
-                $mappedData['baseMachineryLaborCost'] = $parsed['labor']; // In machinery column, 2nd line is often ZPM
-                break;
-            case 'base_materials_price':
-            case 'materials_price':
-                $mappedData['baseMaterialsCost'] = $this->parseFloat($value);
-                break;
+                case 'base_unit_price':
+                    $parsed = $this->parseMultiLineValue($value);
+                    $mappedData['baseUnitPrice'] = $parsed['total'];
+                    // Базисные компоненты берем ТОЛЬКО из базисной колонки
+                    $mappedData['baseLaborCost'] = $parsed['labor'];
+                    $mappedData['baseMachineryCost'] = $parsed['machinery'];
+                    $mappedData['baseMachineryLaborCost'] = $parsed['machinery_labor'];
+                    $mappedData['baseMaterialsCost'] = $parsed['materials'];
+                    break;
+                case 'base_labor_price':
+                case 'labor_price':
+                    $parsed = $this->parseMultiLineValue($value);
+                    $mappedData['baseLaborCost'] = $parsed['total'];
+                    break;
+                case 'base_machinery_price':
+                case 'machinery_price':
+                    $parsed = $this->parseMultiLineValue($value);
+                    $mappedData['baseMachineryCost'] = $parsed['total'];
+                    // 2-я строка в колонке механизмов обычно ЗПМ
+                    if ($parsed['labor'] > 0) {
+                        $mappedData['baseMachineryLaborCost'] = $parsed['labor'];
+                    }
+                    break;
+                case 'base_materials_price':
+                case 'materials_price':
+                    $mappedData['baseMaterialsCost'] = $this->parseFloat($value);
+                    break;
                 case 'quantity_total':
                     $mappedData['quantityTotal'] = $this->parseFloat($value);
                     break;
@@ -317,7 +310,7 @@ class ImportRowMapper
             rawData: $rawData,
             quantityCoefficient: $mappedData['quantityCoefficient'] ?? null,
             quantityTotal: $mappedData['quantityTotal'] ?? null,
-            baseUnitPrice: round($mappedData['baseUnitPrice'] ?? $mappedData['unitPrice'] ?? 0, 2),
+            baseUnitPrice: round($mappedData['baseUnitPrice'] ?? 0, 2),
             priceIndex: $mappedData['priceIndex'] ?? null,
             currentUnitPrice: round($mappedData['currentUnitPrice'] ?? $mappedData['unitPrice'] ?? 0, 2),
             priceCoefficient: $mappedData['priceCoefficient'] ?? null,
