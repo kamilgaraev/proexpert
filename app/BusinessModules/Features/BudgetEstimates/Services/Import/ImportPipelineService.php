@@ -381,6 +381,8 @@ class ImportPipelineService
             $totalDirect = round((float)($totals->direct_costs ?? 0), 2);
             $totalOverhead = round((float)($totals->overhead_amount ?? 0), 2);
             $totalProfit = round((float)($totals->profit_amount ?? 0), 2);
+            
+            // Excel Total = Direct + OH + Profit
             $totalWithoutVat = round($totalDirect + $totalOverhead + $totalProfit, 2);
             
             $vatRate = (float)($estimate->vat_rate ?? 18);
@@ -392,12 +394,13 @@ class ImportPipelineService
                 'total_overhead_costs' => $totalOverhead,
                 'total_estimated_profit' => $totalProfit,
                 'total_amount_with_vat' => $totalWithVat,
+                'vat_rate' => $vatRate,
                 
                 // Base fields
                 'total_base_direct_costs' => round((float)($totals->base_direct_costs ?? 0), 2),
                 'total_base_materials_cost' => round((float)($totals->base_materials_cost ?? 0), 2),
                 'total_base_machinery_cost' => round((float)($totals->base_machinery_cost ?? 0), 2),
-                // ФОТ (Base) = Labor + Labor of Machinery
+                // ФОТ (Base) = ЗП + ЗПМ
                 'total_base_labor_cost' => round((float)(($totals->base_labor_cost ?? 0) + ($totals->base_machinery_labor_cost ?? 0)), 2),
                 'total_base_overhead_amount' => round((float)($totals->base_overhead_total ?? 0), 2),
                 'total_base_profit_amount' => round((float)($totals->base_profit_total ?? 0), 2),
