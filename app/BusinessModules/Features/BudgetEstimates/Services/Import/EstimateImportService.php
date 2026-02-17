@@ -221,7 +221,7 @@ class EstimateImportService
             $headerRow = $structure['header_row'] ?? 0;
             $samples = [];
             $maxSamples = 5;
-            $currentRow = $headerRow + 1;
+            $currentRow = $headerRow + 2; // Data row starts after header. Spreadsheet is 1-indexed, so 0-indexed headerRow 0 means data is row 2.
             $maxRow = min($headerRow + 20, $sheet->getHighestRow()); 
             
             $highestColumnIndex = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($sheet->getHighestColumn());
