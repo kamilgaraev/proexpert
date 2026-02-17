@@ -46,6 +46,24 @@ class LocalEstimateCSVParser implements EstimateImportParserInterface
         );
     }
 
+    public function getStream(string $filePath, array $options = []): \Generator
+    {
+        $structure = $this->detectStructure($filePath);
+        $rows = $this->extractRows($filePath, $structure);
+        
+        foreach ($rows as $row) {
+            yield $row;
+        }
+    }
+
+    public function getPreview(string $filePath, int $limit = 20, array $options = []): array
+    {
+        $structure = $this->detectStructure($filePath);
+        $rows = $this->extractRows($filePath, $structure);
+        
+        return array_slice($rows, 0, $limit);
+    }
+
     public function detectStructure(string $filePath): array
     {
         $this->detectedEncoding = $this->detectEncoding($filePath);
