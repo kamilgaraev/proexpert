@@ -102,11 +102,17 @@ class ImportRowMapper
                 case 'price':
                     $parsed = $this->parseMultiLineValue($value);
                     $mappedData['unitPrice'] = $parsed['total'];
-                    // unit_price в контексте ФЕР - это ТЕКУЩАЯ цена. 
+                    // unit_price в контексте ФЕР - это ТЕКУЩАЯ цена, 
+                    // но часто там же перечислены БАЗИСНЫЕ компоненты.
                     if ($mappedData['currentUnitPrice'] === null) {
                         $mappedData['currentUnitPrice'] = $parsed['total'];
                     }
-                    // МЫ БОЛЬШЕ НЕ БЕРЕМ БАЗОВЫЕ КОМПОНЕНТЫ ИЗ ТЕКУЩЕЙ ЦЕНЫ
+                    
+                    // Если базисные компоненты еще не установлены - берем их отсюда
+                    if ($mappedData['baseLaborCost'] == 0) $mappedData['baseLaborCost'] = $parsed['labor'];
+                    if ($mappedData['baseMachineryCost'] == 0) $mappedData['baseMachineryCost'] = $parsed['machinery'];
+                    if ($mappedData['baseMachineryLaborCost'] == 0) $mappedData['baseMachineryLaborCost'] = $parsed['machinery_labor'];
+                    if ($mappedData['baseMaterialsCost'] == 0) $mappedData['baseMaterialsCost'] = $parsed['materials'];
                     break;
                 case 'current_total_amount':
                 case 'total_amount':
@@ -300,15 +306,6 @@ class ImportRowMapper
             }
         }
 
-        // Валидация: предотвращаем утечку текущих цен в базу
-        // Если сумма ЗП и ЭМ (база) больше ПЗ (база), значит мы ошибочно взяли компоненты из текущей цены
-        if ($mappedData['baseLaborCost'] + $mappedData['baseMachineryCost'] > $mappedData['baseUnitPrice'] + 0.01) {
-            $mappedData['baseLaborCost'] = 0.0;
-            $mappedData['baseMachineryCost'] = 0.0;
-            $mappedData['baseMachineryLaborCost'] = 0.0;
-            $mappedData['baseMaterialsCost'] = 0.0;
-        }
-
         // Финальный расчет материалов для ФЕР: Мат = ПЗ - ОЗП - ЭМ
         // Делаем это только если материалы явно не были заданы или они равны ПЗ (что бывает при авторасчете из single-line)
         if ($mappedData['baseUnitPrice'] > 0) {
@@ -390,9 +387,14 @@ class ImportRowMapper
         $result['machinery'] = round($this->parseFloat($lines[2] ?? null) ?? 0, 2);
         $result['machinery_labor'] = round($this->parseFloat($lines[3] ?? null) ?? 0, 2);
         
-        // ВАЖНО: Мы НЕ рассчитываем материалы здесь автоматом, 
-        // чтобы не затереть данные в цикле маппинга. Расчет вынесен в конец map().
-        $result['materials'] = round($this->parseFloat($lines[4] ?? null) ?? 0, 2);
+        $matCandidate = round($this->parseFloat($lines[4] ?? null) ?? 0, 2);
+        if ($matCandidate > 0) {
+            $result['materials'] = $matCandidate;
+        } else {
+            // Фолбек расчет материалов: ПЗ - ОЗП - ЭМ
+            $result['materials'] = round($result['total'] - $result['labor'] - $result['machinery'], 2);
+            if ($result['materials'] < 0.01) $result['materials'] = 0;
+        }
 
         return $result;
     }
