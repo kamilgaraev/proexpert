@@ -270,6 +270,8 @@ class ImportRowMapper
             }
         }
 
+        $attributes = $this->parseItemAttributes($rawNameForParsing);
+
         return new EstimateImportRowDTO(
             rowNumber: $mappedData['rowNumber'],
             sectionNumber: $mappedData['sectionNumber'] ?? null,
