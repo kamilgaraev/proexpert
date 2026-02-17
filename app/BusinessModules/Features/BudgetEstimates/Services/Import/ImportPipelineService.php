@@ -361,9 +361,9 @@ class ImportPipelineService
         $totals = EstimateItem::where('estimate_id', $estimate->id)
             ->selectRaw('
                 -- Current Totals (already rounded per row usually, but SUM needs careful sum)
-                SUM(direct_costs) as direct_costs,
-                SUM(overhead_amount) as overhead_amount,
-                SUM(profit_amount) as profit_amount,
+                SUM(ROUND(CAST(direct_costs AS NUMERIC), 2)) as direct_costs,
+                SUM(ROUND(CAST(overhead_amount AS NUMERIC), 2)) as overhead_amount,
+                SUM(ROUND(CAST(profit_amount AS NUMERIC), 2)) as profit_amount,
                 
                 -- Base Totals (Calculated as sum of rounded row totals)
                 SUM(ROUND(CAST(base_unit_price AS NUMERIC) * CAST(quantity AS NUMERIC), 2)) as base_direct_costs,
