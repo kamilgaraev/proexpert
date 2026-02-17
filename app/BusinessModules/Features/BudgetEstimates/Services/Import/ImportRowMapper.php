@@ -69,6 +69,9 @@ class ImportRowMapper
             'isSection' => false,
         ];
 
+        // 0. Capture Raw Name for attribute parsing (before cleaning)
+        $rawNameForParsing = '';
+
         // 1. Fill from Mapping
         foreach ($mapping as $field => $column) {
             if ($column === null && $field !== 'name' && $field !== 'item_name') continue;
@@ -78,7 +81,8 @@ class ImportRowMapper
             switch ($field) {
                 case 'name':
                 case 'item_name':
-                    $mappedData['itemName'] = $this->cleanName((string)$value);
+                    $rawNameForParsing = (string)$value;
+                    $mappedData['itemName'] = $this->cleanName($rawNameForParsing);
                     break;
                 case 'unit':
                     $mappedData['unit'] = trim((string)$value) ?: null;
@@ -133,10 +137,25 @@ class ImportRowMapper
         if (empty($mappedData['itemName'])) {
             foreach ($rawData as $val) {
                 $v = trim((string)$val);
-                if (mb_strlen($v) > 5 && !is_numeric($v)) {
-                    $mappedData['itemName'] = $v;
-                    break;
+                // Skip numeric values
+                if (is_numeric($v)) continue;
+                
+                // Skip short strings
+                if (mb_strlen($v) <= 5) continue;
+                
+                // Skip Codes (e.g. "ФЕРм08-02-142-01" or "1.1-1-11")
+                // Heuristic: Codes usually don't have spaces or Cyrillic words (except prefix)
+                // If it looks like a code (mostly latin/digits/dashes/dots), skip it
+                // But be careful: "Кабель ВВГнг..." has latin too.
+                // Better heuristic: Codes usually don't have spaces. Names usually do.
+                if (strpos($v, ' ') === false) {
+                    // It's a single word/token. Likely a code.
+                    continue;
                 }
+
+                $rawNameForParsing = $v;
+                $mappedData['itemName'] = $v; // Usually fallback finds clean names, but we can clean it if needed
+                break;
             }
         }
 
@@ -166,10 +185,17 @@ class ImportRowMapper
             }
         }
 
-        // 2.5. Smart Parsing of Indices and Rates from Item Name
-        // Only if we have a valid item name and it's not a section/footer
         if (!empty($mappedData['itemName']) && !$mappedData['isSection'] && !$mappedData['isFooter']) {
-            $attributes = $this->parseItemAttributes($mappedData['itemName']);
+             // Debug log to check what name we picked
+             // \Illuminate\Support\Facades\Log::debug("[ImportRowMapper] Item Name detected: '{$mappedData['itemName']}'");
+        }
+
+        // 2.5. Smart Parsing of Indices and Rates from Item Name
+        // Use rawNameForParsing because itemName is already cleaned from 'Trash' keywords like 'INDEX...'
+        $textToParse = !empty($rawNameForParsing) ? $rawNameForParsing : ($mappedData['itemName'] ?? '');
+
+        if (!empty($textToParse) && !$mappedData['isSection'] && !$mappedData['isFooter']) {
+            $attributes = $this->parseItemAttributes($textToParse);
             
             if ($attributes['price_index'] > 0) {
                 // Store detected index
@@ -272,7 +298,8 @@ class ImportRowMapper
 
         // 1. Parse Price Index (СМР / Индекс)
         // Pattern: "ИНДЕКС... СМР=7,83" or "К=1,2"
-        if (preg_match('/(?:индекс|смр|к\s*=|к\s*pos)\D{0,20}?(\d+[.,]\d+)/ui', $text, $matches)) {
+        // Pattern: "ИНДЕКС... СМР=7,83" or "К=1,2" or "СМР=12"
+        if (preg_match('/(?:индекс|смр|к\s*=|к\s*pos)\D{0,20}?(\d+[.,]?\d*)/ui', $text, $matches)) {
             $attributes['price_index'] = (float)str_replace(',', '.', $matches[1]);
         }
 
