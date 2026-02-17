@@ -15,7 +15,7 @@ class ProcessEstimateImportJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $timeout = 600; // Increased timeout for parsing large files
+    public int $timeout = 1200; // Increased timeout for parsing and enrichment
     public int $tries = 1; // Don't retry parsing automatically if it fails logic
     public function __construct(
         public string $sessionId,
