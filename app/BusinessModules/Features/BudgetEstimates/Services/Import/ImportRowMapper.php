@@ -51,16 +51,27 @@ class ImportRowMapper
             'unit' => null,
             'quantity' => null,
             'unitPrice' => null,
+            'currentTotalAmount' => null,
             'code' => null,
             'sectionNumber' => null,
-            'isSection' => false,
+            'quantityCoefficient' => null,
+            'quantityTotal' => null,
+            'baseUnitPrice' => null,
+            'priceIndex' => null,
+            'currentUnitPrice' => null,
+            'priceCoefficient' => null,
             'itemType' => 'work',
             'level' => 0,
             'sectionPath' => null,
             'rawData' => $rawData,
+            'isFooter' => false,
+            'isSection' => false,
         ];
 
+        // 1. Fill from Mapping
         foreach ($mapping as $field => $column) {
+            if ($column === null && $field !== 'name' && $field !== 'item_name') continue;
+            
             $value = $this->getValueFromRaw($rawData, $column);
             
             switch ($field) {
@@ -69,7 +80,7 @@ class ImportRowMapper
                     $mappedData['itemName'] = $this->cleanName((string)$value);
                     break;
                 case 'unit':
-                    $mappedData['unit'] = (string)$value;
+                    $mappedData['unit'] = trim((string)$value) ?: null;
                     break;
                 case 'quantity':
                 case 'amount':
@@ -108,33 +119,55 @@ class ImportRowMapper
                 case 'price_coefficient':
                     $mappedData['priceCoefficient'] = $this->parseFloat($value);
                     break;
+                default:
+                    if (array_key_exists($field, $mappedData)) {
+                        $mappedData[$field] = $this->parseFloat($value);
+                    }
+                    break;
             }
         }
 
-        // 2. Smart Name and Unit Splitting (if unit is null but name contains it)
-        if (empty($mappedData['unit']) && !empty($mappedData['itemName'])) {
-            $split = $this->splitNameAndUnit($mappedData['itemName']);
-            $mappedData['itemName'] = $split['name'];
-            $mappedData['unit'] = $mappedData['unit'] ?: $split['unit'];
+        // 2. Item Name Fallback & Unit Splitting
+        // If name is empty, try to find it in the row (context for sections)
+        if (empty($mappedData['itemName'])) {
+            foreach ($rawData as $val) {
+                $v = trim((string)$val);
+                if (mb_strlen($v) > 5 && !is_numeric($v)) {
+                    $mappedData['itemName'] = $v;
+                    break;
+                }
+            }
         }
 
-        // 3. Robust Section Detection
+        // Smart Unit Splitting
+        $nameCol = $mapping['name'] ?? $mapping['item_name'] ?? null;
+        $unitCol = $mapping['unit'] ?? null;
+        if (!empty($mappedData['itemName']) && (empty($mappedData['unit']) || $nameCol === $unitCol)) {
+            $split = $this->splitNameAndUnit($mappedData['itemName']);
+            $mappedData['itemName'] = $split['name'];
+            if (empty($mappedData['unit']) || $nameCol === $unitCol) {
+                $mappedData['unit'] = $mappedData['unit'] ?: $split['unit'];
+            }
+        }
+
+        // 3. Robust Section & Footer Detection
         $mappedData['isFooter'] = $this->isFooter(
-            $mappedData['itemName'] ?? null, 
+            $mappedData['itemName'], 
             $rawData,
-            $mappedData['quantity'] ?? null,
-            $mappedData['unitPrice'] ?? null,
-            $mappedData['unit'] ?? null
+            $mappedData['quantity'],
+            $mappedData['unitPrice'],
+            $mappedData['unit'],
+            $mappedData['currentTotalAmount']
         );
 
-        $mappedData['isSection'] = false;
         if (!$mappedData['isFooter']) {
             $mappedData['isSection'] = $this->isSection(
-                $mappedData['itemName'] ?? null, 
+                $mappedData['itemName'], 
                 $rawData,
-                $mappedData['quantity'] ?? null,
-                $mappedData['unitPrice'] ?? null,
-                $mappedData['unit'] ?? null
+                $mappedData['quantity'],
+                $mappedData['unitPrice'],
+                $mappedData['unit'],
+                $mappedData['currentTotalAmount']
             );
         }
 
@@ -170,7 +203,7 @@ class ImportRowMapper
             sectionPath: $mappedData['sectionPath'] ?? null,
             rawData: $rawData,
             currentTotalAmount: $mappedData['currentTotalAmount'] ?? null,
-            isFooter: $this->isFooter($mappedData['itemName'] ?? null, $rawData),
+            isFooter: $mappedData['isFooter'] ?? false,
             quantityCoefficient: $mappedData['quantityCoefficient'] ?? null,
             quantityTotal: $mappedData['quantityTotal'] ?? null,
             baseUnitPrice: $mappedData['baseUnitPrice'] ?? null,
@@ -253,32 +286,24 @@ class ImportRowMapper
         return ($sequentialCount >= 2 && $numericCount / count($nonEmpty) > 0.7);
     }
 
-    private function isSection(?string $itemName, array $rawData, ?float $quantity = null, ?float $unitPrice = null, ?string $unit = null): bool
+    private function isSection(?string $itemName, array $rawData, ?float $quantity = null, ?float $unitPrice = null, ?string $unit = null, ?float $totalAmount = null): bool
     {
-        // 0. Safety: items with quantity, price or unit are NOT sections
-        if (($quantity !== null && $quantity > 0) || ($unitPrice !== null && $unitPrice > 0) || !empty($unit)) {
+        // 0. Safety: items with ANY numeric data or ANY unit are NOT sections
+        if (($quantity !== null && $quantity > 0) || 
+            ($unitPrice !== null && $unitPrice > 0) || 
+            ($totalAmount !== null && $totalAmount > 0) ||
+            !empty($unit)) {
             return false;
         }
 
-        // 1. If it's a footer, it's definitely not a section
-        if ($this->isFooter($itemName, $rawData)) {
+        // 1. If it's a footer, it's definitely not a section (recursive call with context is fine)
+        if ($this->isFooter($itemName, $rawData, $quantity, $unitPrice, $unit, $totalAmount)) {
             return false;
         }
 
-        // 2. Prioritize AI Hints
+        // 2. Prioritize AI Hints (only if we have no clear data above)
         $aiKeywords = $this->sectionHints['section_keywords'] ?? [];
-        $aiCols = $this->sectionHints['section_columns'] ?? [];
-
-        if (!empty($aiKeywords) || !empty($aiCols)) {
-            foreach ($aiCols as $colIdx) {
-                if (isset($rawData[$colIdx])) {
-                    $v = (string)$rawData[$colIdx];
-                    foreach ($aiKeywords as $kw) {
-                        if (mb_stripos($v, $kw) !== false) return true;
-                    }
-                }
-            }
-            
+        if (!empty($aiKeywords)) {
             $text = mb_strtolower($itemName ?? '');
             foreach ($aiKeywords as $kw) {
                 if (mb_stripos($text, mb_strtolower($kw)) !== false) return true;
@@ -286,34 +311,23 @@ class ImportRowMapper
         }
 
         // 3. Fallback to standard heuristics
+        // Check for "Раздел", "Этап" etc at the start of ANY column in the first 8
         foreach (array_slice($rawData, 0, 8) as $val) {
             $v = trim((string)$val);
             if (empty($v)) continue;
-            // Only match at start of string for "Раздел" or "Этап"
-            if (preg_match('/^(раздел|этап|глава|пп|п\.п\.)\s*[0-9]*/ui', $v)) {
+            if (preg_match('/^(раздел|этап|глава|площадка|объект)\s*[0-9]*/ui', $v)) {
                 return true;
             }
         }
 
         $text = trim($itemName ?? '');
-        if (preg_match('/^(раздел|этап|глава|пп|п\.п\.)\s*[0-9]*/ui', $text)) {
+        if (preg_match('/^(раздел|этап|глава|площадка|объект)\s*[0-9]*/ui', $text)) {
             return true;
         }
 
         // 4. Pattern "1.1.2. Section Name"
         if (preg_match('/^[0-9]+(\.[0-9]+)+\s+[А-ЯA-Z]/u', $text)) {
             return true;
-        }
-
-        // 5. Technical row check: if row has only one long non-numeric string and NO numeric data
-        $nonEmptyValues = array_filter($rawData, fn($v) => !empty(trim((string)$v)));
-        if (count($nonEmptyValues) <= 2) {
-            foreach ($nonEmptyValues as $val) {
-                $v = (string)$val;
-                if (mb_strlen($v) > 25 && !is_numeric($v)) {
-                   return true;
-                }
-            }
         }
 
         return false;
@@ -432,17 +446,20 @@ class ImportRowMapper
         return ['name' => $name, 'unit' => null];
     }
 
-    private function isFooter(?string $itemName, array $rawData, ?float $quantity = null, ?float $unitPrice = null, ?string $unit = null): bool
+    private function isFooter(?string $itemName, array $rawData, ?float $quantity = null, ?float $unitPrice = null, ?string $unit = null, ?float $totalAmount = null): bool
     {
-        // 0. Safety: items with quantity, price or unit are NOT footers
-        if (($quantity !== null && $quantity > 0) || ($unitPrice !== null && $unitPrice > 0) || !empty($unit)) {
+        // 0. Safety: items with ANY numeric data or ANY unit are NOT footers
+        if (($quantity !== null && $quantity > 0) || 
+            ($unitPrice !== null && $unitPrice > 0) || 
+            ($totalAmount !== null && $totalAmount > 0) ||
+            !empty($unit)) {
             return false;
         }
 
         $footers = [
-            'итого по', 'всего по', 'накладные расходы', 'сметная прибыль', 'справочно', 
+            'итого по', 'всего по', 'накладные расходы', 'сметная прибыль', 
             'в базисных ценах', 'перевод цен', ' в смете', 'итоги по', 
-            'ндс ', 'составил', 'проверил', 'утверждаю'
+            'ндс ', 'подпись', 'составил', 'проверил', 'утверждаю'
         ];
         
         $aiFooterKeywords = $this->sectionHints['footer_keywords'] ?? [];
@@ -453,12 +470,7 @@ class ImportRowMapper
             if (empty($v)) continue;
             
             foreach ($allKeywords as $kw) {
-                // More precise matching for short keywords
-                if (mb_strlen($kw) < 4) {
-                    if ($v === $kw) return true;
-                } else {
-                    if (mb_stripos($v, $kw) !== false) return true;
-                }
+                if (mb_stripos($v, $kw) !== false) return true;
             }
         }
 
