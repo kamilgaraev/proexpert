@@ -32,22 +32,18 @@ class EstimateService
         $defaults = $settings['estimate_settings'] ?? [];
 
         // Обработка overhead_rate (Накладные расходы)
-        // Если значение не передано или null, используем настройку по умолчанию
-        // Если передано 0, используем 0
         if (!array_key_exists('overhead_rate', $data) || is_null($data['overhead_rate'])) {
-            $data['overhead_rate'] = $defaults['default_overhead_rate'] ?? 15;
+            $data['overhead_rate'] = $defaults['default_overhead_rate'] ?? 0;
         }
 
         // Обработка profit_rate (Сметная прибыль)
-        // Если значение не передано или null, используем настройку по умолчанию
-        // Если передано 0, используем 0
         if (!array_key_exists('profit_rate', $data) || is_null($data['profit_rate'])) {
-            $data['profit_rate'] = $defaults['default_profit_rate'] ?? 12;
+            $data['profit_rate'] = $defaults['default_profit_rate'] ?? 0;
         }
 
         // Обработка vat_rate (НДС)
         if (!array_key_exists('vat_rate', $data) || is_null($data['vat_rate'])) {
-            $data['vat_rate'] = $defaults['default_vat_rate'] ?? 20;
+            $data['vat_rate'] = $defaults['default_vat_rate'] ?? 0;
         }
         
         while ($attempt < $maxAttempts) {
