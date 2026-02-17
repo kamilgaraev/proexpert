@@ -51,6 +51,8 @@ class EstimateResource extends JsonResource
                     'materials' => (float) $this->total_base_materials_cost,
                     'machinery' => (float) $this->total_base_machinery_cost,
                     'labor' => (float) $this->total_base_labor_cost,
+                    'overhead_amount' => (float) $this->total_base_overhead_amount,
+                    'profit_amount' => (float) $this->total_base_profit_amount,
                 ],
                 // For now, Current Base Costs (materials/machinery/labor) are not strictly tracked as separate columns in Estimate Table
                 // but we have total_direct_costs.
