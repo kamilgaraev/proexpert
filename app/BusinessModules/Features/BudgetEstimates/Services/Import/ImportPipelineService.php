@@ -121,8 +121,13 @@ class ImportPipelineService
             }
 
             // Apply mapping
-            $rowDTO = $this->rowMapper->map($rowDTO, $options['column_mapping'] ?? []);
+            $rowDTO = $this->rowMapper->map($rowDTO, $session->options['structure']['column_mapping'] ?? []);
             
+            // Skip rows that have no name and no numeric data
+            if (!$rowDTO->isSection && empty($rowDTO->name) && $rowDTO->quantity === null && $rowDTO->unitPrice === null) {
+                continue;
+            }
+
             $stats['processed_rows']++;
             
             // Progress update every 100 rows

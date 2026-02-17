@@ -159,11 +159,16 @@ class EstimateImportService
             // Apply mapping if it's a raw stream
             $mappedDTO = $this->rowMapper->map($rowDTO, $columnMapping);
              
-             if ($mappedDTO->isSection) {
+            // Skip rows that have no name and no numeric data (likely spacing or sub-headers we don't handle)
+            if (!$mappedDTO->isSection && empty($mappedDTO->name) && $mappedDTO->quantity === null && $mappedDTO->unitPrice === null) {
+                continue;
+            }
+
+            if ($mappedDTO->isSection) {
                  $sections[] = $mappedDTO->toArray();
-             } else {
+            } else {
                  $items[] = $mappedDTO->toArray();
-             }
+            }
         }
         
         // Helper to calculate totals

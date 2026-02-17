@@ -165,17 +165,30 @@ class ImportRowMapper
         return ($sequentialCount >= 2 && $numericCount / count($nonEmpty) > 0.7);
     }
 
-    private function isSection(string $itemName, array $rawData): bool
+    private function isSection(?string $itemName, array $rawData): bool
     {
+        $text = $itemName ?? '';
+        
+        // If itemName is empty (mapping points to wrong column for sections),
+        // check if any early column has the word "Раздел" or "Итого"
+        if (empty($text)) {
+            foreach (array_slice($rawData, 0, 5) as $val) {
+                if ($val && mb_stripos((string)$val, 'раздел') !== false) {
+                    return true;
+                }
+            }
+        }
+
         // Check if it looks like "Раздел..." or "ИТОГО..."
-        if (mb_stripos($itemName, 'раздел') !== false || mb_stripos($itemName, 'итого') !== false) {
+        if (mb_stripos($text, 'раздел') !== false || mb_stripos($text, 'итого') !== false) {
             return true;
         }
 
         // Heuristic: If the first non-empty cell is a long string, and other cells are empty
         $nonEmptyCells = array_filter($rawData, fn($v) => $v !== null && $v !== '');
-        if (count($nonEmptyCells) === 1 && mb_strlen($itemName) > 15) {
-            return true;
+        if (count($nonEmptyCells) === 1) {
+            $val = reset($nonEmptyCells);
+            if (mb_strlen((string)$val) > 15) return true;
         }
 
         return false;
@@ -249,16 +262,18 @@ class ImportRowMapper
 
     private function splitNameAndUnit(string $name): array
     {
-        // 1. Try to find unit in brackets at the end: "Name (unit)"
-        if (preg_match('/^(.*?)\s*[\(\[]([^0-9\(\)\[\]]{1,20})[\)\]]\s*$/u', $name, $matches)) {
-            return [
-                'name' => trim($matches[1]),
-                'unit' => trim($matches[2])
-            ];
+        // 1. Try to find unit in brackets within the first two lines
+        $lines = explode("\n", $name);
+        foreach (array_slice($lines, 0, 2) as $line) {
+            if (preg_match('/[\(\[]([^0-9\(\)\[\]]{1,15})[\)\]]/u', $line, $matches)) {
+                return [
+                    'name' => $name,
+                    'unit' => trim($matches[1])
+                ];
+            }
         }
 
         // 2. Try multi-line split if last line is short (typical unit position)
-        $lines = explode("\n", $name);
         if (count($lines) >= 2) {
             $lastLine = trim(end($lines));
             if (mb_strlen($lastLine) > 1 && mb_strlen($lastLine) < 15 && !preg_match('/[0-9]{3,}/', $lastLine)) {
