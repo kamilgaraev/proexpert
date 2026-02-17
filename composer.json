@@ -29,7 +29,9 @@
         "shuchkin/simplexlsx": "^1.1",
         "symfony/http-client": "^7.3",
         "symfony/yaml": "^7.2",
-        "tymon/jwt-auth": "^2.1"
+        "tymon/jwt-auth": "^2.1",
+        "spiral/roadrunner-cli": "2.6",
+        "spiral/roadrunner-http": "3.3"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",
@@ -38,9 +40,7 @@
         "laravel/sail": "^1.26",
         "mockery/mockery": "^1.6",
         "nunomaduro/collision": "^8.1",
-        "phpunit/phpunit": "^11.0.1",
-        "spiral/roadrunner-cli": "2.6",
-        "spiral/roadrunner-http": "3.3"
+        "phpunit/phpunit": "^11.0.1"
     },
     "autoload": {
         "psr-4": {
