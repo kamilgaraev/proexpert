@@ -31,12 +31,8 @@ class ExcelStreamParser implements EstimateImportParserInterface, StreamParserIn
         if ($xlsx = SimpleXLSX::parse($filePath)) {
             $rowIndex = 0; // SimpleXLSX rows are 0-indexed
             foreach ($xlsx->readRows() as $row) {
-                // Skip rows before header_row + 1 (data usually starts after header)
-                // If header_row is 5, we skip 0, 1, 2, 3, 4, 5. Data starts at 6.
-                if ($headerRow !== null && $rowIndex <= $headerRow) {
-                    $rowIndex++;
-                    continue;
-                }
+                // We no longer skip rows before header_row. 
+                // The RowMapper and Logic will handle identifying headers/sections/items.
 
                 // Skip completely empty rows
                 if (empty(array_filter($row, fn($v) => $v !== null && $v !== ''))) {

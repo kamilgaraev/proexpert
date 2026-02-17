@@ -145,8 +145,23 @@ class ImportRowMapper
         if (!empty($mappedData['itemName']) && (empty($mappedData['unit']) || $nameCol === $unitCol)) {
             $split = $this->splitNameAndUnit($mappedData['itemName']);
             $mappedData['itemName'] = $split['name'];
-            if (empty($mappedData['unit']) || $nameCol === $unitCol) {
-                $mappedData['unit'] = $mappedData['unit'] ?: $split['unit'];
+            // 6a. If we found a unit in the name (e.g. "100 m3"), but the mapped unit is generic "ед" or "шт", or empty, 
+            // prefer the extracted unit.
+            // Also cleanup generic "ед" if it comes from mapping but looks suspicious.
+            $mappedUnit = $mappedData['unit'] ?? null;
+            $extractedUnit = $split['unit'];
+
+            if (!empty($extractedUnit)) {
+                // If mapped unit is empty or generic, use extracted
+                if (empty($mappedUnit) || in_array(mb_strtolower($mappedUnit), ['ед', 'ед.', 'шт', 'шт.'])) {
+                    $mappedData['unit'] = $extractedUnit;
+                }
+            } elseif (!empty($mappedUnit) && in_array(mb_strtolower($mappedUnit), ['ед', 'ед.'])) {
+                // If mapped unit is "ед" and we didn't extract anything better, 
+                // check if it's really a unit or just garbage. 
+                // For now, let's nullify "ед" if it's the ONLY thing we have and it looks like a default.
+                // But be careful, some items might actually be "units". 
+                // Let's NOT nullify it blindly, but the above logic handles the override.
             }
         }
 
@@ -315,15 +330,11 @@ class ImportRowMapper
         foreach (array_slice($rawData, 0, 8) as $val) {
             $v = trim((string)$val);
             if (empty($v)) continue;
-            if (preg_match('/^(раздел|этап|глава|площадка|объект)\s*[0-9]*/ui', $v)) {
-                return true;
-            }
+            // Removed check for 'раздел' etc. here because they are valid sections, not technical rows to skip.
         }
 
         $text = trim($itemName ?? '');
-        if (preg_match('/^(раздел|этап|глава|площадка|объект)\s*[0-9]*/ui', $text)) {
-            return true;
-        }
+        // Removed check for 'раздел' etc. here too.
 
         // 4. Pattern "1.1.2. Section Name"
         if (preg_match('/^[0-9]+(\.[0-9]+)+\s+[А-ЯA-Z]/u', $text)) {
