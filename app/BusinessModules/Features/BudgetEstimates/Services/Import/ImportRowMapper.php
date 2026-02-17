@@ -93,27 +93,27 @@ class ImportRowMapper
                     break;
                 case 'unit_price':
                 case 'price':
-                    $mappedData['unitPrice'] = $this->parseFloat($value);
+                    $parsed = $this->parseMultiLineValue($value);
+                    $mappedData['unitPrice'] = $parsed['total'];
+                    $mappedData['baseLaborCost'] = $parsed['labor'];
+                    $mappedData['baseMachineryCost'] = $parsed['machinery'];
                     break;
                 case 'current_total_amount':
                 case 'total_amount':
-                    $mappedData['currentTotalAmount'] = $this->parseFloat($value);
+                    $parsed = $this->parseMultiLineValue($value);
+                    $mappedData['currentTotalAmount'] = $parsed['total'];
+                    // Note: currentTotalAmount usually refers to full row current price
+                    // in some mappings, it might be base. 
+                    // But we prioritize calculations later.
                     break;
-                case 'code':
-                case 'normative_rate_code':
-                    $mappedData['code'] = $this->cleanCode($value);
-                    break;
-                case 'section_number':
-                    $mappedData['sectionNumber'] = (string)$value;
-                    break;
-                case 'quantity_coefficient':
-                    $mappedData['quantityCoefficient'] = $this->parseFloat($value);
+                case 'base_unit_price':
+                    $parsed = $this->parseMultiLineValue($value);
+                    $mappedData['baseUnitPrice'] = $parsed['total'];
+                    $mappedData['baseLaborCost'] = $parsed['labor'];
+                    $mappedData['baseMachineryCost'] = $parsed['machinery'];
                     break;
                 case 'quantity_total':
                     $mappedData['quantityTotal'] = $this->parseFloat($value);
-                    break;
-                case 'base_unit_price':
-                    $mappedData['baseUnitPrice'] = $this->parseFloat($value);
                     break;
                 case 'price_index':
                     $mappedData['priceIndex'] = $this->parseFloat($value);
@@ -292,8 +292,47 @@ class ImportRowMapper
             overheadAmount: $attributes['overhead_amount'] ?? null,
             profitAmount: $attributes['profit_amount'] ?? null,
             overheadRate: $mappedData['overheadRate'] ?? null,
-            profitRate: $mappedData['profitRate'] ?? null
+            profitRate: $mappedData['profitRate'] ?? null,
+            baseLaborCost: $mappedData['baseLaborCost'] ?? null,
+            baseMachineryCost: $mappedData['baseMachineryCost'] ?? null,
+            baseMaterialsCost: $mappedData['baseMaterialsCost'] ?? null
         );
+    }
+
+    /**
+     * Parse multi-line cell value (common in FER).
+     * Line 1: Total
+     * Line 2: Labor (ЗП)
+     * Line 3: Machinery (ЭМ)
+     * Line 4: Labor of Machinery (ЗПМ)
+     */
+    private function parseMultiLineValue(mixed $value): array
+    {
+        $result = [
+            'total' => null,
+            'labor' => null,
+            'machinery' => null,
+            'materials' => null,
+        ];
+
+        if ($value === null || $value === '') {
+            return $result;
+        }
+
+        $str = (string)$value;
+        $lines = explode("\n", $str);
+        
+        $result['total'] = $this->parseFloat($lines[0] ?? null);
+        $result['labor'] = $this->parseFloat($lines[1] ?? null);
+        $result['machinery'] = $this->parseFloat($lines[2] ?? null);
+        
+        // Materials is often Total - Labor - Machinery in FER unit prices
+        if ($result['total'] !== null) {
+            $result['materials'] = $result['total'] - ($result['labor'] ?? 0) - ($result['machinery'] ?? 0);
+            if ($result['materials'] < 0) $result['materials'] = 0;
+        }
+
+        return $result;
     }
 
     private function parseItemAttributes(string $text): array

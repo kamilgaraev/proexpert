@@ -311,14 +311,20 @@ class ImportPipelineService
             'price_index' => $dto->priceIndex ?? null,
             'current_unit_price' => $dto->currentUnitPrice ?? ($dto->unitPrice ?? 0),
             
-            // Base Overhead & Profit (captured from text like "НР (1204 руб)...")
-            // These are usually per unit in FER, so we multiply by quantity.
-            'base_overhead_amount' => ($dto->overheadAmount ?? 0) * ($dto->quantity ?? 1),
-            'base_profit_amount' => ($dto->profitAmount ?? 0) * ($dto->quantity ?? 1),
+            // Detailed Base Costs
+            'base_materials_cost' => $dto->baseMaterialsCost ?? null,
+            'base_machinery_cost' => $dto->baseMachineryCost ?? null,
+            'base_labor_cost' => $dto->baseLaborCost ?? null,
             
-            // Current Overhead & Profit
-            'overhead_amount' => ($dto->overheadAmount ?? 0) * ($dto->quantity ?? 1) * ($dto->priceIndex ?? 1),
-            'profit_amount' => ($dto->profitAmount ?? 0) * ($dto->quantity ?? 1) * ($dto->priceIndex ?? 1),
+            // Base Overhead & Profit (from text, e.g. "НР (28,38 руб)...")
+            // These are already row totals in typical FER export, so we don't multiply by quantity again here
+            // to avoid double-counting if quantity > 1.
+            'base_overhead_amount' => $dto->overheadAmount ?? 0,
+            'base_profit_amount' => $dto->profitAmount ?? 0,
+            
+            // Current Overhead & Profit (Base * Index)
+            'overhead_amount' => ($dto->overheadAmount ?? 0) * ($dto->priceIndex ?? 1),
+            'profit_amount' => ($dto->profitAmount ?? 0) * ($dto->priceIndex ?? 1),
             
             'direct_costs' => $dto->currentTotalAmount ?? ($dto->quantity ?? 0) * ($dto->unitPrice ?? 0),
             'total_amount' => $dto->currentTotalAmount ?? ($dto->quantity ?? 0) * ($dto->unitPrice ?? 0),
@@ -383,6 +389,7 @@ class ImportPipelineService
                 'total_direct_costs' => $totalDirect,
                 'total_overhead_costs' => $totalOverhead,
                 'total_estimated_profit' => $totalProfit,
+                'total_amount' => $totalWithoutVat,
                 'total_amount_with_vat' => $totalWithoutVat * (1 + ($estimate->vat_rate / 100)),
                 
                 // Base fields
