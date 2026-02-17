@@ -186,9 +186,14 @@ class EstimateImportService
                 continue;
             }
              
-            // Skip rows that have no name and no numeric data (likely spacing or sub-headers we don't handle)
-            if (!$mappedDTO->isSection && empty($mappedDTO->itemName) && $mappedDTO->quantity === null && $mappedDTO->unitPrice === null) {
-                Log::info("[ImportPreview] Row #{$rowDTO->rowNumber} SKIPPED as Empty/Invalid");
+            // Skip rows that have no numeric value (Quantity=0 AND Price=0 AND Total=0)
+            // This filters out headers that were technically mapped but contain no data.
+            if (!$mappedDTO->isSection && 
+                ($mappedDTO->quantity === null || $mappedDTO->quantity <= 0) && 
+                ($mappedDTO->unitPrice === null || $mappedDTO->unitPrice <= 0) &&
+                ($mappedDTO->currentTotalAmount === null || $mappedDTO->currentTotalAmount <= 0)
+            ) {
+                Log::info("[ImportPreview] Row #{$rowDTO->rowNumber} SKIPPED as Empty/Invalid (No numeric data)");
                 continue;
             }
 

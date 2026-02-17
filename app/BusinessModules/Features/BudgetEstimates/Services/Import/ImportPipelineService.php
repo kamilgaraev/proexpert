@@ -100,6 +100,10 @@ class ImportPipelineService
             'type' => $settings['type'] ?? 'local',
             'estimate_date' => $settings['estimate_date'] ?? now()->format('Y-m-d'),
             'contract_id' => $settings['contract_id'] ?? null,
+            // Force 0 for imported estimates to avoid organization defaults
+            'vat_rate' => 0,
+            'overhead_rate' => 0,
+            'profit_rate' => 0,
         ]);
     }
 
@@ -123,8 +127,14 @@ class ImportPipelineService
                 continue;
             }
 
-            // Skip rows that have no name and no numeric data
-            if (!$rowDTO->isSection && empty($rowDTO->itemName) && $rowDTO->quantity === null && $rowDTO->unitPrice === null) {
+            // Skip rows that have no numeric value (Quantity=0 AND Price=0 AND Total=0)
+            // This filters out headers that were technically mapped but contain no data.
+            if (!$rowDTO->isSection && 
+                ($rowDTO->quantity === null || $rowDTO->quantity <= 0) && 
+                ($rowDTO->unitPrice === null || $rowDTO->unitPrice <= 0) &&
+                ($rowDTO->currentTotalAmount === null || $rowDTO->currentTotalAmount <= 0)
+            ) {
+                Log::info("[ImportPipeline] Skipping empty/garbage item: '{$rowDTO->itemName}'");
                 continue;
             }
 
