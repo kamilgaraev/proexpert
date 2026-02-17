@@ -97,7 +97,7 @@ class EstimateImportController extends Controller
                 'file_size' => $fileSize,
                 'expires_at' => now()->addHours(24)->toIso8601String(),
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('[EstimateImport] Upload failed', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
@@ -133,10 +133,11 @@ class EstimateImportController extends Controller
                 'indicators' => $detectionDTO->indicators,
                 'candidates' => $detectionDTO->candidates,
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('[EstimateImport] detectType failed', [
                 'file_id' => $fileId,
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
             
             return AdminResponse::error(
@@ -173,7 +174,7 @@ class EstimateImportController extends Controller
                 'sample_rows' => $detection['sample_rows'],
             ]);
             
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('[EstimateImport] Detect failed', [
                 'file_id' => $fileId,
                 'error' => $e->getMessage(),
@@ -204,7 +205,7 @@ class EstimateImportController extends Controller
                 ],
             ]);
             
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('[EstimateImport] Preview failed', [
                 'file_id' => $fileId,
                 'error' => $e->getMessage(),
@@ -256,7 +257,7 @@ class EstimateImportController extends Controller
             
             return AdminResponse::success($matchResult);
             
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             return AdminResponse::error(
                 trans_message('estimate.import_match_error'),
                 Response::HTTP_UNPROCESSABLE_ENTITY
@@ -291,7 +292,7 @@ class EstimateImportController extends Controller
             
             return AdminResponse::success($result);
             
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             $this->loggingService->technical('estimate.import.execute_failed', [
                 'file_id' => $fileId,
                 'error' => $e->getMessage(),
@@ -349,7 +350,7 @@ class EstimateImportController extends Controller
                 trans_message('estimate.import_status_not_found'),
                 Response::HTTP_NOT_FOUND
             );
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('[EstimateImport] Status check failed', [
                 'job_id' => $jobId,
                 'error' => $e->getMessage(),
