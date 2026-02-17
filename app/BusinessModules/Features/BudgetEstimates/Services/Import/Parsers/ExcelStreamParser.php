@@ -31,7 +31,7 @@ class ExcelStreamParser implements EstimateImportParserInterface, StreamParserIn
                     sectionNumber: null,
                     itemName: '', // Placeholder
                     unit: null, quantity: null, unitPrice: null, code: null,
-                    isSection: false, itemType: null, level: 0, sectionPath: null,
+                    isSection: false, itemType: 'work', level: 0, sectionPath: null,
                     rawData: $row
                 );
             }
