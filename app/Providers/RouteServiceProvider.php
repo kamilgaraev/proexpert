@@ -205,9 +205,9 @@ class RouteServiceProvider extends ServiceProvider
                 ->as('api.v1.mobile.')
                 ->group(function() {
                      require base_path('routes/api/v1/mobile/auth.php');
-                     require base_path('routes/api/v1/mobile/log.php');
-                     require base_path('routes/api/v1/mobile/projects.php');
-                     require base_path('routes/api/v1/mobile/catalogs.php');
+                     // require base_path('routes/api/v1/mobile/log.php'); // Removed
+                     // require base_path('routes/api/v1/mobile/projects.php'); // Removed
+                     // require base_path('routes/api/v1/mobile/catalogs.php'); // Removed
                 });
 
             // Landing API Routes
