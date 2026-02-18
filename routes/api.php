@@ -256,23 +256,7 @@ Route::prefix('mobile')->name('mobile.')->group(function () {
                 require __DIR__ . '/api/v1/permissions.php';
             }
         });
-        if (file_exists(__DIR__ . '/api/v1/mobile/projects.php')) {
-            require __DIR__ . '/api/v1/mobile/projects.php';
-        }
-        if (file_exists(__DIR__ . '/api/v1/mobile/log.php')) {
-            require __DIR__ . '/api/v1/mobile/log.php';
-        }
-        if (file_exists(__DIR__ . '/api/v1/mobile/catalogs.php')) {
-            require __DIR__ . '/api/v1/mobile/catalogs.php';
-        }
-        // Подключаем маршруты выполненных работ для мобильного приложения
-        if (file_exists(__DIR__ . '/api/v1/mobile/completed_works.php')) {
-            require __DIR__ . '/api/v1/mobile/completed_works.php';
-        }
-        // Подключаем маршруты для учета времени
-        if (file_exists(__DIR__ . '/api/v1/mobile/time_tracking.php')) {
-            require __DIR__ . '/api/v1/mobile/time_tracking.php';
-        }
+        
         // Добавить другие защищенные маршруты мобильного приложения
     });
 });
