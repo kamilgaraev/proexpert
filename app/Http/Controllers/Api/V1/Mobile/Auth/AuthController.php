@@ -1,32 +1,27 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1\Mobile\Auth;
 
 use App\DTOs\Auth\LoginDTO;
-use App\DTOs\Auth\RegisterDTO;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Mobile\Auth\LoginRequest;
-use App\Http\Responses\Auth\LoginResponse;
-use App\Http\Responses\Auth\ProfileResponse;
-use App\Http\Responses\Auth\TokenResponse;
+use App\Http\Responses\MobileResponse;
+use App\Http\Resources\Api\V1\Mobile\Auth\MobileUserResource;
 use App\Services\Auth\JwtAuthService;
 use App\Services\LogService;
 use App\Services\PerformanceMonitor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Auth;
+use Illuminate\Http\JsonResponse;
 
 class AuthController extends Controller
 {
-    protected $authService;
-    protected $guard = 'api_mobile';
+    protected JwtAuthService $authService;
+    protected string $guard = 'api_mobile';
 
-    /**
-     * Создание нового экземпляра контроллера.
-     *
-     * @param JwtAuthService $authService
-     */
     public function __construct(JwtAuthService $authService)
     {
         $this->authService = $authService;
@@ -34,114 +29,140 @@ class AuthController extends Controller
 
     /**
      * Вход пользователя.
-     *
-     * @param LoginRequest $request
-     * @return \Illuminate\Http\JsonResponse
      */
-    public function login(LoginRequest $request)
+    public function login(LoginRequest $request): JsonResponse
     {
-        Log::info('[MobileAuthController] Login attempt', [/*...*/]);
         try {
+            Log::info('[MobileAuthController] Login attempt', ['email' => $request->email]);
+            
             $loginDTO = LoginDTO::fromRequest($request->only('email', 'password'));
             $result = $this->authService->authenticate($loginDTO, $this->guard);
-            Log::info('[MobileAuthController] Authentication result', ['success' => $result['success'] ?? 'N/A']);
 
             if ($result['success']) {
                 /** @var \App\Models\User $user */
                 $user = $result['user'];
                 $organizationId = $user->current_organization_id;
 
-                Log::info('[MobileAuthController] Auth successful, checking Mobile App access via Gate...', ['user_id' => $user->id, 'org_id' => $organizationId]);
-                // Используем Gate для проверки прав доступа к Мобильному приложению
-                // Явно указываем пользователя для Gate
-                if (Gate::forUser($user)->denies('access-mobile-app', [$organizationId])) { // Передаем $organizationId в Gate
-                    LogService::authLog('mobile_login_forbidden', [/*...*/]);
-                    Log::warning('[MobileAuthController] Gate \'access-mobile-app\' denied access.', ['user_id' => $user->id, 'org_id' => $organizationId]);
-                    // Используем наш сервис для инвалидации JWT токена без логирования стандартного logout
+                if (Gate::forUser($user)->denies('access-mobile-app', [$organizationId])) {
                     $this->authService->logout($this->guard, false);
-                    return LoginResponse::forbidden('У вас нет доступа к мобильному приложению');
+                    return MobileResponse::error('У вас нет доступа к мобильному приложению', 403);
                 }
 
-                Log::info('[MobileAuthController] Gate \'access-mobile-app\' allowed access.');
                 LogService::authLog('mobile_login_success', [
                     'user_id' => $user->id,
-                    'email' => $user->email,
                     'device_info' => $request->header('User-Agent'),
                     'app_version' => $request->header('X-App-Version', 'unknown')
                 ]);
-                return LoginResponse::loginSuccess($user, $result['token']);
-            } else {
-                Log::warning('[MobileAuthController] Authentication failed.');
-                LogService::authLog('mobile_login_failed', [
-                    'email' => $request->email,
-                    'device_info' => $request->header('User-Agent'),
-                    'app_version' => $request->header('X-App-Version', 'unknown')
-                ]);
-                return LoginResponse::unauthorized($result['message']);
+
+                // Загружаем организации для MobileUserResource
+                $user->load('organizations');
+
+                return MobileResponse::success([
+                    'token' => $result['token'],
+                    'user' => new MobileUserResource($user)
+                ], 'Вход выполнен успешно');
             }
+
+            LogService::authLog('mobile_login_failed', [
+                'email' => $request->email,
+                'reason' => $result['message'] ?? 'auth_failed'
+            ]);
+
+            return MobileResponse::error($result['message'] ?? 'Неверные данные для входа', 401);
         } catch (\Throwable $e) {
-            Log::error('[MobileAuthController] Unexpected exception', [/*...*/]);
-            return response()->json(['success' => false, 'message' => 'Internal Server Error'], 500);
+            Log::error('[MobileAuthController] Login error', ['exception' => $e->getMessage()]);
+            return MobileResponse::error('Внутренняя ошибка сервера', 500);
         }
     }
 
     /**
      * Получение информации о текущем пользователе.
-     *
-     * @return \Illuminate\Http\JsonResponse
      */
-    public function me()
+    public function me(): JsonResponse
     {
         return PerformanceMonitor::measure('mobile.me', function() {
             $result = $this->authService->me($this->guard);
 
             if (!$result['success']) {
-                return ProfileResponse::notFound($result['message']);
+                return MobileResponse::error($result['message'], 404);
             }
 
-            return ProfileResponse::userProfile($result['user']);
+            /** @var \App\Models\User $user */
+            $user = $result['user'];
+            $user->load('organizations');
+
+            return MobileResponse::success(new MobileUserResource($user));
         });
     }
 
     /**
      * Обновление токена.
-     *
-     * @return \Illuminate\Http\JsonResponse
      */
-    public function refresh()
+    public function refresh(): JsonResponse
     {
         return PerformanceMonitor::measure('mobile.refresh_token', function() {
             $result = $this->authService->refresh($this->guard);
 
             if (!$result['success']) {
-                return TokenResponse::tokenError($result['message'], $result['status_code']);
+                return MobileResponse::error($result['message'], $result['status_code'] ?? 401);
             }
 
-            return TokenResponse::refreshed($result['token']);
+            return MobileResponse::success(['token' => $result['token']], 'Токен успешно обновлен');
         });
     }
 
     /**
      * Выход пользователя.
-     *
-     * @return \Illuminate\Http\JsonResponse
      */
-    public function logout()
+    public function logout(): JsonResponse
     {
         return PerformanceMonitor::measure('mobile.logout', function() {
             $result = $this->authService->logout($this->guard);
 
             if (!$result['success']) {
-                return TokenResponse::tokenError($result['message'], $result['status_code']);
+                return MobileResponse::error($result['message'], $result['status_code'] ?? 401);
             }
 
             LogService::authLog('mobile_logout', [
                 'user_id' => auth()->id(),
-                'ip' => request()->ip(),
-                'app_version' => request()->header('X-App-Version', 'unknown')
+                'ip' => request()->ip()
             ]);
 
-            return TokenResponse::invalidated();
+            return MobileResponse::success(null, 'Выход выполнен успешно');
         });
+    }
+
+    /**
+     * Переключение текущей организации.
+     */
+    public function switchOrganization(Request $request): JsonResponse
+    {
+        $request->validate(['organization_id' => 'required|integer']);
+        $organizationId = (int) $request->organization_id;
+
+        /** @var \App\Models\User $user */
+        $user = Auth($this->guard)->user();
+
+        if (!$user->belongsToOrganization($organizationId)) {
+            return MobileResponse::error('Вы не состоите в данной организации или доступ заблокирован', 403);
+        }
+
+        // Обновляем текущую организацию
+        $user->current_organization_id = $organizationId;
+        $user->save();
+
+        // Генерируем новый токен с новым claim
+        $customClaims = ['organization_id' => $organizationId];
+        $token = \Tymon\JWTAuth\Facades\JWTAuth::claims($customClaims)->fromUser($user);
+
+        Log::info('[MobileAuthController] Organization switched', [
+            'user_id' => $user->id,
+            'new_org_id' => $organizationId
+        ]);
+
+        return MobileResponse::success([
+            'token' => $token,
+            'user' => new MobileUserResource($user->load('organizations'))
+        ], 'Организация успешно переключена');
     }
 }
