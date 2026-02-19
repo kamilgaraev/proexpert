@@ -121,10 +121,9 @@ class StatefulGrandSmetaProcessor
             return false;
         }
 
-        // Numbers like "1", "2", "15А", "4О". 
-        // We already cleaned posNo in processRow to take the first part.
-        if (preg_match('/^\d+[А-ЯA-Z]?$/ui', $posNo)) {
-            return true; // Even with empty code, if it has a number in column A, it's a position
+        // Numbers like "1", "2", "15А", "4О", "1.1", "15-2"
+        if (preg_match('/^[\d\.\-]+[А-ЯA-Zа-яa-z]*$/ui', $posNo)) {
+            return true;
         }
 
         return false;
@@ -209,8 +208,9 @@ class StatefulGrandSmetaProcessor
         }
 
         return str_starts_with($nameLower, 'итоги по смете') || 
-               str_contains($nameLower, 'сметная стоимость') ||
-               $nameLower === 'итого';
+               str_starts_with($nameLower, 'итоги по акту') ||
+               str_starts_with($nameLower, 'согласовано') ||
+               $nameLower === 'всего по смете';
     }
 
     private function mapToDTO(array $data, array $mapping, int $rowNumber, bool $isSection): EstimateImportRowDTO
