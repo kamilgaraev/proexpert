@@ -827,14 +827,21 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                     // Если не получилось (формула с ошибкой), берем обычное значение
                     $value = $cell->getValue();
                 }
+
+                // Алиасы для полей
+                $targetField = match($field) {
+                    'item_name' => 'name',
+                    'total_amount' => 'current_total_amount',
+                    default => $field
+                };
                 
-                if (in_array($field, $numericFields)) {
-                    $data[$field] = $this->parseNumericValue($value);
+                if (in_array($targetField, $numericFields)) {
+                    $data[$targetField] = $this->parseNumericValue($value);
                 } else {
                     $val = $value !== null ? trim((string)$value) : null;
                     
                     // 🔧 FIX: Если поле 'unit', но значение похоже на число (цена/трудозатраты) или слишком длинное -> игнорируем
-                    if ($field === 'unit' && $val) {
+                    if ($targetField === 'unit' && $val) {
                         // Если значение содержит только цифры, точки, запятые и переносы строк - это скорее всего число
                         if (preg_match('/^[\d\s\.,\n]+$/', $val)) {
                             $val = null; 
@@ -846,7 +853,7 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                     }
                     
                     // 🔧 FIX: Очистка названия от метаданных (ИНДЕКС, НР, СП и т.д.)
-                    if ($field === 'name' && $val) {
+                    if ($targetField === 'name' && $val) {
                          $pruningPatterns = [
                              '/ИНДЕКС К ПОЗИЦИИ/ui',
                              '/НР\s*\(/ui',

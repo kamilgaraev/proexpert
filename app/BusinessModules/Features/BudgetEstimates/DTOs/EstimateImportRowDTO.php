@@ -63,6 +63,7 @@ class EstimateImportRowDTO
             'unit' => $this->unit,
             'quantity' => $this->quantity,
             'unit_price' => $this->unitPrice,
+            'total_amount' => $this->currentTotalAmount,
             'code' => $this->code,
             'is_section' => $this->isSection,
             'item_type' => $this->itemType,
