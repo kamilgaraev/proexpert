@@ -30,7 +30,7 @@ class AnomalyDetectionService
         }
 
         foreach ($unitGroups as $unit => $indices) {
-            $stats = $this->getPriceStats($unit, $organizationId);
+            $stats = $this->getPriceStats((string)$unit, $organizationId);
             if ($stats === null) {
                 continue;
             }
@@ -66,9 +66,9 @@ class AnomalyDetectionService
 
         $result = DB::table('estimate_items as ei')
             ->join('estimates as e', 'e.id', '=', 'ei.estimate_id')
+            ->leftJoin('measurement_units as m', 'm.id', '=', 'ei.measurement_unit_id')
             ->where('e.organization_id', $organizationId)
             ->whereRaw('LOWER(m.name) = ?', [$unit])
-            ->leftJoin('measurement_units as m', 'm.id', '=', 'ei.measurement_unit_id')
             ->whereNotNull('ei.unit_price')
             ->where('ei.unit_price', '>', 0)
             ->selectRaw('AVG(ei.unit_price) as avg, STDDEV(ei.unit_price) as stddev, COUNT(*) as cnt')
