@@ -43,7 +43,8 @@ class SubItemGroupingService
                     $row['_parent_index'] = $lastWorkIndex;
                     $row['item_type']     = $this->resolveSubItemType($row);
                     $row['is_sub_item']   = true;
-                    Log::info("[SubItemGrouper] Row '{$row['item_name']}' grouped under parent idx={$lastWorkIndex} as {$row['item_type']}");
+                    $itemNameLog = $row['name'] ?? $row['item_name'] ?? 'unknown';
+                    Log::info("[SubItemGrouper] Row '{$itemNameLog}' grouped under parent idx={$lastWorkIndex} as {$row['item_type']}");
                 }
             } else {
                 $lastWorkIndex = count($result);
@@ -67,8 +68,8 @@ class SubItemGroupingService
             return true;
         }
 
-        $name = mb_strtolower(trim((string)($row['item_name'] ?? '')));
-        $code = mb_strtolower(trim((string)($row['code'] ?? '')));
+        $name = mb_strtolower(trim((string)($row['name'] ?? $row['item_name'] ?? '')));
+        $code = mb_strtolower(trim((string)($row['normative_rate_code'] ?? $row['code'] ?? '')));
 
         foreach (self::SUB_ITEM_KEYWORDS as $keywords) {
             foreach ($keywords as $kw) {
@@ -89,8 +90,8 @@ class SubItemGroupingService
 
     private function resolveSubItemType(array $row): string
     {
-        $name = mb_strtolower(trim((string)($row['item_name'] ?? '')));
-        $code = (string)($row['code'] ?? '');
+        $name = mb_strtolower(trim((string)($row['name'] ?? $row['item_name'] ?? '')));
+        $code = (string)($row['normative_rate_code'] ?? $row['code'] ?? '');
 
         foreach (self::RESOURCE_CODE_PATTERNS as $type => $pattern) {
             if ($code !== '' && preg_match($pattern, $code)) {

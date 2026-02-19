@@ -61,12 +61,13 @@ class StagingAreaService
         $this->anomalyDetector->annotateFromImport($grouped, $organizationId);
 
         $stats = $this->buildStats($grouped);
+        $treeRows = $this->buildFrontendTree($grouped);
 
         Log::info("[StagingArea] Preview built for session {$sessionId}", $stats);
 
         return [
             'session_id' => $sessionId,
-            'rows'       => $grouped,
+            'rows'       => $treeRows,
             'stats'      => $stats,
         ];
     }
@@ -99,5 +100,36 @@ class StagingAreaService
             'anomalies'  => $anomalies,
             'mismatches' => $mismatches,
         ];
+    }
+
+    private function buildFrontendTree(array $flatRows): array
+    {
+        $tree = [];
+        $insertedParents = []; // map of flat index -> reference to tree node
+
+        foreach ($flatRows as $idx => $row) {
+            if ($row['is_section'] ?? false) {
+                $tree[] = $row;
+                continue;
+            }
+
+            if (!empty($row['is_sub_item'])) {
+                $parentIdx = $row['_parent_index'] ?? null;
+                if ($parentIdx !== null && isset($insertedParents[$parentIdx])) {
+                    if (!isset($insertedParents[$parentIdx]['sub_items'])) {
+                        $insertedParents[$parentIdx]['sub_items'] = [];
+                    }
+                    $insertedParents[$parentIdx]['sub_items'][] = $row;
+                } else {
+                    $tree[] = $row; // Fallback if parent missing
+                }
+            } else {
+                // Add parent to tree and keep a reference
+                $tree[] = $row;
+                $insertedParents[$idx] = &$tree[count($tree) - 1]; // Store reference to last added element
+            }
+        }
+
+        return $tree;
     }
 }
