@@ -74,9 +74,13 @@ class GrandSmetaParser implements EstimateImportParserInterface, StreamParserInt
         }
 
         $result = $this->processor->getResult();
+        
+        // Merge items and sections, then sort by row number to maintain sequence
+        $allRows = array_merge($result['items'], $result['sections']);
+        usort($allRows, fn($a, $b) => $a->rowNumber <=> $b->rowNumber);
 
-        foreach ($result['items'] as $item) {
-            yield $item;
+        foreach ($allRows as $row) {
+            yield $row;
         }
     }
 
@@ -97,7 +101,44 @@ class GrandSmetaParser implements EstimateImportParserInterface, StreamParserInt
 
     public function getRawSampleRows(string $filePath, array $options = [], int $limit = 5): array
     {
-        return $this->getPreview($filePath, $limit, $options);
+        try {
+            $spreadsheet = IOFactory::load($filePath);
+            $sheet = $spreadsheet->getActiveSheet();
+            
+            $headerRow = $options['header_row'] ?? 0;
+            $samples = [];
+            $currentRow = $headerRow + 1; // Show numbering row and actual data
+            $maxRow = min($headerRow + 20, $sheet->getHighestRow()); 
+            
+            $highestColumn = $sheet->getHighestColumn();
+            $highestColumnIndex = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($highestColumn);
+
+            while (count($samples) < $limit && $currentRow <= $maxRow) {
+                $rowData = [];
+                $hasData = false;
+                
+                for ($colIdx = 1; $colIdx <= $highestColumnIndex; $colIdx++) {
+                    $colLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colIdx);
+                    $cell = $sheet->getCell($colLetter . $currentRow);
+                    $value = $cell->getCalculatedValue();
+                    
+                    if ($value !== null && trim((string)$value) !== '') {
+                        $hasData = true;
+                    }
+                    $rowData[] = $value; 
+                }
+                
+                if ($hasData) {
+                    $samples[] = $rowData;
+                }
+                $currentRow++;
+            }
+            
+            return $samples;
+        } catch (\Exception $e) {
+            Log::error('[GrandSmetaParser] Failed to get sample rows', ['error' => $e->getMessage()]);
+            return [];
+        }
     }
 
     public function parse(string $filePath): \App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportDTO|\Generator

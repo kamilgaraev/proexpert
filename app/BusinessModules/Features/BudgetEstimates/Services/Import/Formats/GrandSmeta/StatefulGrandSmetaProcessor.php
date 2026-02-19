@@ -85,8 +85,8 @@ class StatefulGrandSmetaProcessor
         $this->closeCurrentPosition();
         
         return [
-            'items' => array_map(fn($item) => $item->toArray(), $this->items),
-            'sections' => array_map(fn($section) => $section->toArray(), $this->sections),
+            'items' => $this->items,
+            'sections' => $this->sections,
             'footer' => $this->footerData
         ];
     }
