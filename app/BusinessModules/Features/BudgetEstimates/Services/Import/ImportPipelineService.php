@@ -266,6 +266,16 @@ class ImportPipelineService
             if (isset($data['metadata']) && is_array($data['metadata'])) {
                 $data['metadata'] = json_encode($data['metadata']);
             }
+            
+            // 🔧 ИСПРАВЛЕНИЕ: Удаляем технические поля, которых нет в БД
+            unset(
+                $data['is_sub_item'], 
+                $data['_parent_index'], 
+                $data['warnings'], 
+                $data['has_math_mismatch'],
+                $data['anomaly']
+            );
+            
             $itemsToInsert[] = $data;
         }
 
