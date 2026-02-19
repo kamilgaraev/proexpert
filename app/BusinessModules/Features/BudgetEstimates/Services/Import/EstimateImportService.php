@@ -295,9 +295,15 @@ class EstimateImportService
             // Calculate totals
             $totalAmount = 0;
             foreach ($items as $item) {
-                $q = $item['quantity'] ?? 0;
-                $p = $item['unit_price'] ?? 0;
-                $totalAmount += $item['current_total_amount'] ?? ($q * $p);
+                if (is_array($item)) {
+                    $q = $item['quantity'] ?? 0;
+                    $p = $item['unit_price'] ?? 0;
+                    $totalAmount += $item['current_total_amount'] ?? ($q * $p);
+                } else {
+                    $q = $item->quantity ?? 0;
+                    $p = $item->unitPrice ?? 0;
+                    $totalAmount += $item->currentTotalAmount ?? ($q * $p);
+                }
             }
 
             return new EstimateImportDTO(
