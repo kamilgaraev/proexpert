@@ -182,6 +182,7 @@ class StatefulGrandSmetaProcessor
     {
         $name = mb_strtolower(trim((string)($data[$mapping['name'] ?? ''] ?? '')));
         $unit = mb_strtolower(trim((string)($data[$mapping['unit'] ?? ''] ?? '')));
+        $code = mb_strtolower(trim((string)($data[$mapping['code'] ?? ''] ?? '')));
         
         // "Вспомогательные материальные ресурсы" и т.д.
         if (str_contains($name, 'вспомогательные') && str_contains($name, 'ресурсы')) {
@@ -193,9 +194,15 @@ class StatefulGrandSmetaProcessor
             return true;
         }
 
+        // Codes starting with specific resource markers
+        if (preg_match('/^(01\.|С|ТСЦ|ФССЦ|ОТ|ЗП)/u', $code)) {
+            return true;
+        }
+
         if (empty($unit)) return false;
 
-        $resourceUnits = ['чел.-ч', 'чел-ч', 'маш.-ч', 'кг', 'т', 'м3', 'шт', 'компл', 'м', 'м2', 'квт-ч', '%'];
+        // Specific resource-only units. We exclude 'шт', 'м', 'м3' because positions use them too.
+        $resourceUnits = ['чел.-ч', 'чел-ч', 'маш.-ч', 'квт-ч', '%'];
         
         foreach ($resourceUnits as $ru) {
             if ($unit === $ru || str_starts_with($unit, $ru)) return true;
@@ -209,16 +216,35 @@ class StatefulGrandSmetaProcessor
         $posNo = trim($posNo);
         if (empty($posNo)) return false;
 
+        // If it looks like a resource marker, it's NOT a new position
+        $lowerName = mb_strtolower($name);
+        if (in_array($lowerName, ['м', 'от', 'зп', 'эм', 'зт', 'от(зт)'], true)) {
+            return false;
+        }
+
         // Позиции в ГрандСмете (ЛСР 421) обычно:
         // 1. Просто число ("1", "2")
         // 2. Число с буквой ("2О", "15А", "4О")
-        // 3. НО НЕ дробное число типа "1.1" (это обычно вложенные ресурсы)
         if (preg_match('/^\d+[А-ЯA-Z]?$/ui', $posNo)) {
-            // Если код пустой, это вряд ли полноценная позиция, скорее заголовок
+            // Если есть код, это позиция. Если кода нет, это может быть заголовок.
             return !empty(trim($code));
         }
 
         return false;
+    }
+
+    private function isFooterMarker(string $name): bool
+    {
+        $nameLower = mb_strtolower(trim($name));
+        
+        // "Всего по позиции" is NOT a global footer marker
+        if (str_contains($nameLower, 'всего по позиции')) {
+            return false;
+        }
+
+        return str_starts_with($nameLower, 'итоги по смете') || 
+               str_contains($nameLower, 'сметная стоимость') ||
+               $nameLower === 'итого';
     }
 
     private function mapToDTO(array $data, array $mapping, int $rowNumber, bool $isSection): EstimateImportRowDTO
@@ -226,21 +252,37 @@ class StatefulGrandSmetaProcessor
         $qty = $this->parseFloat($data[$mapping['quantity'] ?? ''] ?? 0);
         $price = $this->parseFloat($data[$mapping['unit_price'] ?? ''] ?? 0);
         $total = $this->parseFloat($data[$mapping['total_price'] ?? ''] ?? 0);
+        $name = trim((string)($data[$mapping['name'] ?? ''] ?? ''));
+        $code = trim((string)($data[$mapping['code'] ?? ''] ?? ''));
 
         // In GrandSmeta unit price column might be empty if price is only in total
         if ($price <= 0 && $qty > 0 && $total > 0) {
             $price = $total / $qty;
         }
 
+        // Detect Item Type
+        $itemType = 'work';
+        $lowerName = mb_strtolower($name);
+        $lowerCode = mb_strtolower($code);
+
+        if (str_contains($lowerName, 'труд') || str_contains($lowerName, 'от(') || str_starts_with($lowerCode, 'от')) {
+            $itemType = 'labor';
+        } elseif (str_contains($lowerName, 'маш.') || str_contains($lowerName, 'механизм') || str_starts_with($lowerCode, 'эм')) {
+            $itemType = 'machinery';
+        } elseif (str_contains($lowerName, 'материал') || preg_match('/^(01\.|с|тсц|фссц)/u', $lowerCode)) {
+            $itemType = 'material';
+        }
+
         return new EstimateImportRowDTO(
             rowNumber: $rowNumber,
             sectionNumber: (string)($data[$mapping['position_number'] ?? ''] ?? ''),
-            itemName: trim((string)($data[$mapping['name'] ?? ''] ?? '')),
+            itemName: $name,
             unit: (string)($data[$mapping['unit'] ?? ''] ?? ''),
             quantity: $qty > 0 ? $qty : null,
             unitPrice: $price > 0 ? $price : null,
-            code: (string)($data[$mapping['code'] ?? ''] ?? ''),
+            code: $code,
             isSection: $isSection,
+            itemType: $itemType,
             currentTotalAmount: $total > 0 ? $total : null,
             rawData: $data
         );
