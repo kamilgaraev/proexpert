@@ -69,6 +69,8 @@ class EstimateSection extends Model
             $relations[] = $childPath . '.items';
             $relations[] = $childPath . '.items.workType';
             $relations[] = $childPath . '.items.measurementUnit';
+            $relations[] = $childPath . '.items.childItems';
+            $relations[] = $childPath . '.items.childItems.measurementUnit';
             $childPath .= '.children';
         }
         

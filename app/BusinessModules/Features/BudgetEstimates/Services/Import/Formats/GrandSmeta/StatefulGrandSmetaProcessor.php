@@ -55,7 +55,7 @@ class StatefulGrandSmetaProcessor
         }
 
         // 2. Identify Row Type
-        $isSection = $this->isSection($name);
+        $isSection = $this->isSection($rowData, $name);
         $isPosition = !$isSection && $this->isPosition($posNo, $name, $code);
         $isResource = !$isSection && !$isPosition && $this->isResource($rowData, $mapping);
 
@@ -193,15 +193,32 @@ class StatefulGrandSmetaProcessor
         }
     }
 
-    private function isSection(string $name): bool
+    private function isSection(array $rowData, string $name): bool
     {
-        $name = trim($name);
-        if (empty($name)) return false;
-
         $sectionPattern = '/^(Раздел|Смета|Объект|Глава|Этап|Комплекс|Локальный|I+|V+|X+)\b/iu';
         
-        return (bool)preg_match($sectionPattern, $name) || 
-               (bool)preg_match('/^\d+(\.\d+)*\.?\s+[А-ЯA-Z]/u', $name);
+        // Сначала проверяем классическое имя (из маппинга)
+        $cleanName = trim($name);
+        if (!empty($cleanName)) {
+            if (preg_match($sectionPattern, $cleanName) || preg_match('/^\d+(\.\d+)*\.?\s+[А-ЯA-Z]/u', $cleanName)) {
+                return true;
+            }
+        }
+
+        // В GrandSmeta заголовки разделов могут быть в объединенных ячейках (A или B)
+        // Пройдемся по первым 3 колонкам, чтобы найти "Раздел ..."
+        $count = 0;
+        foreach ($rowData as $val) {
+            $val = trim((string)$val);
+            if (!empty($val)) {
+                if (preg_match($sectionPattern, $val) || preg_match('/^\d+(\.\d+)*\.?\s+[А-ЯA-Z]/u', $val)) {
+                    return true;
+                }
+            }
+            if (++$count > 3) break;
+        }
+
+        return false;
     }
 
     private function isFooterMarker(string $name): bool
@@ -225,6 +242,36 @@ class StatefulGrandSmetaProcessor
         $total = $this->parseFloat($data[$mapping['total_price'] ?? ''] ?? 0);
         $name = trim((string)($data[$mapping['name'] ?? ''] ?? ''));
         $code = trim((string)($data[$mapping['code'] ?? ''] ?? ''));
+        $sectionNum = trim((string)($data[$mapping['position_number'] ?? ''] ?? ''));
+
+        if ($isSection) {
+            $sectionFullText = '';
+            if (empty($name)) {
+                $count = 0;
+                foreach ($data as $val) {
+                    $val = trim((string)$val);
+                    if (!empty($val) && (preg_match('/^(Раздел|Смета|Объект|Глава|Этап|Комплекс|Локальный|I+|V+|X+)\b/iu', $val) || preg_match('/^\d+(\.\d+)*\.?\s+[А-ЯA-Z]/u', $val))) {
+                        $sectionFullText = $val;
+                        break;
+                    }
+                    if (++$count > 3) break;
+                }
+            } else {
+                $sectionFullText = $name;
+            }
+            
+            if (!empty($sectionFullText)) {
+                if (preg_match('/^(?:Раздел|Смета)\s+(\d+(?:\.\d+)*)[.\s]+(.*)$/ui', $sectionFullText, $m)) {
+                    $sectionNum = $m[1];
+                    $name = trim($m[2]) ?: $sectionFullText;
+                } else {
+                    $name = $sectionFullText;
+                    if ($sectionNum === $sectionFullText) {
+                        $sectionNum = ''; 
+                    }
+                }
+            }
+        }
 
         // In GrandSmeta unit price column might be empty if price is only in total
         if ($price <= 0 && $qty > 0 && $total > 0) {
@@ -246,7 +293,7 @@ class StatefulGrandSmetaProcessor
 
         return new EstimateImportRowDTO(
             rowNumber: $rowNumber,
-            sectionNumber: (string)($data[$mapping['position_number'] ?? ''] ?? ''),
+            sectionNumber: $sectionNum,
             itemName: $name,
             unit: (string)($data[$mapping['unit'] ?? ''] ?? ''),
             quantity: $qty > 0 ? $qty : null,
