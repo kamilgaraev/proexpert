@@ -20,17 +20,18 @@ class SubItemGroupingService
         'labor'     => '/^(ОТ|оплата|зарплата|ФОТ)/iu',
     ];
 
-    public function groupItems(array $flatRows): array
+    public function groupItems(array $flatRows, array &$state = []): array
     {
         $result           = [];
-        $lastWorkIndex    = null;
-        $lastWorkLevel    = null;
+        $lastWorkIndex    = ($state['carry_over'] ?? false) ? 'prev' : null;
+        $lastWorkLevel    = $state['last_work_level'] ?? null;
 
         foreach ($flatRows as $idx => $row) {
             if ($row['is_section'] ?? false) {
                 $result[]      = $row;
                 $lastWorkIndex = null;
                 $lastWorkLevel = null;
+                $state['carry_over'] = false;
                 continue;
             }
 
@@ -48,6 +49,8 @@ class SubItemGroupingService
                 $lastWorkIndex = count($result);
                 $lastWorkLevel = $level;
                 $row['is_sub_item'] = false;
+                $state['carry_over'] = true;
+                $state['last_work_level'] = $level;
             }
 
             $result[] = $row;

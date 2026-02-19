@@ -117,6 +117,8 @@ class ImportPipelineService
         ]);
     }
 
+    private array $subItemState = [];
+
     private function processStream(\Generator $stream, Estimate $estimate, array &$stats, ImportSession $session): void
     {
         $batchDTOs = [];
@@ -256,16 +258,22 @@ class ImportPipelineService
 
         // Step 3: Sub-item Grouping (XML Parity)
         $preparedRows = array_column($batch, 'prepared_data');
-        $groupedRows  = $this->subItemGrouper->groupItems($preparedRows);
+        $groupedRows  = $this->subItemGrouper->groupItems($preparedRows, $this->subItemState);
 
         // Step 4: Formula Validation
         $this->formulaAwareness->annotate($groupedRows);
 
-        // Step 5: Global Insert
-        foreach ($groupedRows as $data) {
+        // Step 5: Global Insert with Hierarchy Awareness
+        $childrenBatch = [];
+        $insertedParents = [];
+
+        foreach ($groupedRows as $idx => $data) {
             if (isset($data['metadata']) && is_array($data['metadata'])) {
                 $data['metadata'] = json_encode($data['metadata']);
             }
+            
+            $isSubItem = !empty($data['is_sub_item']);
+            $parentIndex = $data['_parent_index'] ?? null;
             
             // 🔧 ИСПРАВЛЕНИЕ: Удаляем технические поля, которых нет в БД
             unset(
@@ -276,12 +284,35 @@ class ImportPipelineService
                 $data['anomaly']
             );
             
-            $itemsToInsert[] = $data;
+            if (!$isSubItem) {
+                // Если накопились дочерние элементы, вставляем их перед родителем, чтобы сохранить относительный порядок БД
+                if (!empty($childrenBatch)) {
+                    EstimateItem::insert($childrenBatch);
+                    $stats['items_created'] += count($childrenBatch);
+                    $childrenBatch = [];
+                }
+                
+                // Вставляем родителя отдельно, чтобы получить его ID для связей
+                $id = DB::table('estimate_items')->insertGetId($data);
+                $insertedParents[$idx] = $id;
+                $this->subItemState['last_parent_id'] = $id; // для кросс-батч связей
+                $stats['items_created']++;
+            } else {
+                // Это подпункт, привязываем его к родителю
+                if ($parentIndex !== null && isset($insertedParents[$parentIndex])) {
+                    $data['parent_work_id'] = $insertedParents[$parentIndex];
+                } elseif ($parentIndex === 'prev' && isset($this->subItemState['last_parent_id'])) {
+                    // Родитель был в предыдущем батче
+                    $data['parent_work_id'] = $this->subItemState['last_parent_id'];
+                }
+                
+                $childrenBatch[] = $data;
+            }
         }
 
-        if (!empty($itemsToInsert)) {
-            EstimateItem::insert($itemsToInsert);
-            $stats['items_created'] += count($itemsToInsert);
+        if (!empty($childrenBatch)) {
+            EstimateItem::insert($childrenBatch);
+            $stats['items_created'] += count($childrenBatch);
         }
     }
 
