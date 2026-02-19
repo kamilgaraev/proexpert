@@ -28,8 +28,19 @@ class StatefulGrandSmetaProcessor
         $code = (string)($rowData[$mapping['code'] ?? ''] ?? '');
         $posNo = trim((string)($rowData[$mapping['position_number'] ?? ''] ?? ''));
         
+        // Fallback for Name: sections often start in the first column
+        if (empty(trim($name))) {
+            $firstCol = array_key_first($rowData);
+            $potentialName = (string)($rowData[$firstCol] ?? '');
+            if (!empty(trim($potentialName)) && $this->isSection($potentialName)) {
+                $name = $potentialName;
+            }
+        }
+
+        $nameLower = mb_strtolower(trim($name));
+
         // --- Footer Detection ---
-        if (str_starts_with(mb_strtolower(trim($name)), 'итоги по смете')) {
+        if (str_starts_with($nameLower, 'итоги по смете')) {
             $this->closeCurrentPosition();
             $this->inFooter = true;
             return;
@@ -40,13 +51,25 @@ class StatefulGrandSmetaProcessor
             return;
         }
 
-        // 0. Skip summary rows
-        if (str_contains(mb_strtolower($name), 'всего по') || mb_strtolower(trim($name)) === 'итого') {
+        // 0. Special Handling for "Total per Position" (Всего по позиции)
+        // GrandSmeta often puts money in this row instead of the main row.
+        if (str_contains($nameLower, 'всего по позиции')) {
+            if ($this->currentPosition) {
+                $money = $this->extractMoney($rowData, $mapping);
+                $this->currentPosition->unitPrice = $money['unit_price'] ?: $this->currentPosition->unitPrice;
+                $this->currentPosition->currentTotalAmount = $money['total_price'] ?: $this->currentPosition->currentTotalAmount;
+            }
             $this->closeCurrentPosition();
             return;
         }
 
-        // 1. Identify Row Type
+        // 1. Skip other summary rows but capture their context if needed
+        if (str_contains($nameLower, 'всего по') || $nameLower === 'итого') {
+            $this->closeCurrentPosition();
+            return;
+        }
+
+        // 2. Identify Row Type
         $isSection = $this->isSection($name);
         // Positions usually have an integer in the № п/п column
         $isPosition = !empty($posNo) && preg_match('/^\d+$/', $posNo); 
@@ -70,6 +93,14 @@ class StatefulGrandSmetaProcessor
             $this->items[] = $resourceDTO;
             return;
         }
+    }
+
+    private function extractMoney(array $data, array $mapping): array
+    {
+        return [
+            'unit_price' => $this->parseFloat($data[$mapping['unit_price'] ?? ''] ?? 0),
+            'total_price' => $this->parseFloat($data[$mapping['total_price'] ?? ''] ?? 0)
+        ];
     }
 
     private function closeCurrentPosition(): void
@@ -137,8 +168,11 @@ class StatefulGrandSmetaProcessor
         $name = trim($name);
         if (empty($name)) return false;
 
-        // "Раздел 1", "Глава 2", "1. ОБЩЕСТРОИТЕЛЬНЫЕ РАБОТЫ", "I. ПОДЗЕМНАЯ ЧАСТЬ"
-        return (bool)preg_match('/^(Раздел|Смета|Объект|Глава|Этап|Комплекс|Локальный|I+|V+|X+)\s*(\d+|\w+)?/iu', $name) || 
+        // "Раздел 1", "Глава 2", but NOT "Объектовая станция"
+        // Use word boundaries \b to match exact words
+        $sectionPattern = '/^(Раздел|Смета|Объект|Глава|Этап|Комплекс|Локальный|I+|V+|X+)\b/iu';
+        
+        return (bool)preg_match($sectionPattern, $name) || 
                (bool)preg_match('/^\d+(\.\d+)*\.?\s+[А-ЯA-Z]/u', $name);
     }
 
