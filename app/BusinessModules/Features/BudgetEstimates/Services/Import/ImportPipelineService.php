@@ -412,6 +412,7 @@ class ImportPipelineService
             'position_number' => (string)($dto->sectionNumber ?: ''),
             'item_type' => $this->mapItemType($dto->itemType),
             'is_manual' => true, 
+            'is_sub_item' => $dto->isSubItem ?? false, // ⭐ Передаем флаг для группировщика
             'created_at' => now(),
             'updated_at' => now(),
             'metadata' => json_encode([

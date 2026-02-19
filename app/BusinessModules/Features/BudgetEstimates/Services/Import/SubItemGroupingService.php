@@ -62,6 +62,11 @@ class SubItemGroupingService
 
     private function isSubItem(array $row, ?int $parentLevel): bool
     {
+        // ⭐ If already flagged as sub-item (e.g. by specialized parser), trust it.
+        if (!empty($row['is_sub_item'])) {
+            return true;
+        }
+
         // Если у позиции есть явный номер (например "10", "15О", но НЕ "1.1"), 
         // то это 100% самостоятельная (Main) позиция, даже если это материал.
         $position = trim((string)($row['position_number'] ?? ''));
