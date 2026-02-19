@@ -71,8 +71,8 @@ class StatefulGrandSmetaProcessor
 
         // 2. Identify Row Type
         $isSection = $this->isSection($name);
-        $isPosition = $this->isPosition($posNo, $name, $code);
-        $isResource = !$isSection && !$isPosition && $this->isResource($rowData, $mapping);
+        $isResource = !$isSection && $this->isResource($rowData, $mapping);
+        $isPosition = !$isSection && !$isResource && $this->isPosition($posNo, $name, $code);
 
         if ($isSection) {
             $this->closeCurrentPosition();
@@ -83,6 +83,8 @@ class StatefulGrandSmetaProcessor
         if ($isPosition) {
             $this->closeCurrentPosition();
             $this->currentPosition = $this->mapToDTO($rowData, $mapping, $rowNumber, false);
+            // ⭐ Add position immediately to maintain Parent -> Children order
+            $this->items[] = $this->currentPosition;
             return;
         }
 
@@ -106,10 +108,9 @@ class StatefulGrandSmetaProcessor
 
     private function closeCurrentPosition(): void
     {
-        if ($this->currentPosition) {
-            $this->items[] = $this->currentPosition;
-            $this->currentPosition = null;
-        }
+        // Now it's just a cleanup, since the item is already in $this->items.
+        // We might want to "lock" it or just reset the pointer.
+        $this->currentPosition = null;
     }
 
     public function getResult(): array
@@ -184,6 +185,11 @@ class StatefulGrandSmetaProcessor
         
         // "Вспомогательные материальные ресурсы" и т.д.
         if (str_contains($name, 'вспомогательные') && str_contains($name, 'ресурсы')) {
+            return true;
+        }
+
+        // GrandSmeta markers like "М", "ОТ", "ЗП"...
+        if (in_array($name, ['м', 'от', 'зп', 'эм', 'зт', 'от(зт)'], true)) {
             return true;
         }
 
