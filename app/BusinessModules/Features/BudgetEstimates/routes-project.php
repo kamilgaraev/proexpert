@@ -28,6 +28,7 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
         Route::prefix('estimates')->group(function () {
             // Импорт смет
             Route::prefix('import')->name('import.')->group(function () {
+                Route::get('/template', [EstimateImportController::class, 'downloadTemplate'])->name('template');
                 Route::post('/upload', [EstimateImportController::class, 'upload'])->name('upload');
                 Route::post('/detect-type', [EstimateImportController::class, 'detectType'])->name('detect_type');
                 Route::post('/detect', [EstimateImportController::class, 'detect'])->name('detect');
