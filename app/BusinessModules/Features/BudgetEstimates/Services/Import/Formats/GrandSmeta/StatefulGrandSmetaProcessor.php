@@ -40,9 +40,10 @@ class StatefulGrandSmetaProcessor
         }
 
         if ($isResource && $this->currentPosition) {
-            // Attach as resource to current position
+            // Add as sub-item to the flat list
             $resourceDTO = $this->mapToDTO($rowData, $mapping, $rowNumber, false);
-            $this->currentPosition->subItems[] = $resourceDTO;
+            $resourceDTO->isSubItem = true;
+            $this->items[] = $resourceDTO;
             return;
         }
         
@@ -90,16 +91,17 @@ class StatefulGrandSmetaProcessor
 
     private function mapToDTO(array $data, array $mapping, int $rowNumber, bool $isSection): EstimateImportRowDTO
     {
-        $dto = new EstimateImportRowDTO();
-        $dto->rowNumber = $rowNumber;
-        $dto->isSection = $isSection;
-        $dto->itemName = (string)($data[$mapping['name'] ?? ''] ?? '');
-        $dto->code = (string)($data[$mapping['code'] ?? ''] ?? '');
-        $dto->unit = (string)($data[$mapping['unit'] ?? ''] ?? '');
-        $dto->quantity = $this->parseFloat($data[$mapping['quantity'] ?? ''] ?? 0);
-        $dto->unitPrice = $this->parseFloat($data[$mapping['unit_price'] ?? ''] ?? 0);
-        
-        return $dto;
+        return new EstimateImportRowDTO(
+            rowNumber: $rowNumber,
+            sectionNumber: null, // GrandSmeta handles sections via row logic
+            itemName: (string)($data[$mapping['name'] ?? ''] ?? ''),
+            unit: (string)($data[$mapping['unit'] ?? ''] ?? ''),
+            quantity: $this->parseFloat($data[$mapping['quantity'] ?? ''] ?? 0),
+            unitPrice: $this->parseFloat($data[$mapping['unit_price'] ?? ''] ?? 0),
+            code: (string)($data[$mapping['code'] ?? ''] ?? ''),
+            isSection: $isSection,
+            rawData: $data
+        );
     }
 
     private function parseFloat(mixed $value): float
