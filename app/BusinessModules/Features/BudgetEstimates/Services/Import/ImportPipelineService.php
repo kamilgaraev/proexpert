@@ -8,6 +8,8 @@ use App\Models\Estimate;
 use App\Models\EstimateSection;
 use App\Models\EstimateItem;
 use App\Models\ImportSession;
+use App\Models\MeasurementUnit;
+use App\Models\NormativeRate;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Classification\ItemClassificationService;
@@ -15,6 +17,9 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\Classification\
 class ImportPipelineService
 {
     private const BATCH_SIZE = 100;
+    private const DEFAULT_VAT_RATE = 20;
+
+    private array $unitCache = [];
 
     public function __construct(
         private ParserFactory $parserFactory,
@@ -22,7 +27,10 @@ class ImportPipelineService
         private ImportRowMapper $rowMapper,
         private EstimateService $estimateService,
         private ItemClassificationService $classifier,
-        private NormativeMatchingService $matcher
+        private NormativeMatchingService $matcher,
+        private SemanticMatchingService $semanticMatcher,
+        private SubItemGroupingService $subItemGrouper,
+        private FormulaAwarenessService $formulaAwareness
     ) {}
 
     public function run(ImportSession $session, array $config = []): void
@@ -44,9 +52,12 @@ class ImportPipelineService
             'column_mapping' => $structure['column_mapping'] ?? [],
         ];
 
-        // 0. Initialize RowMapper with AI hints if available
         if (!empty($structure['ai_section_hints'])) {
              $this->rowMapper->setSectionHints($structure['ai_section_hints']);
+        }
+
+        if (!empty($structure['row_styles'])) {
+             $this->rowMapper->setRowStyles($structure['row_styles']);
         }
 
         // 1. Create or Get Estimate
@@ -100,8 +111,7 @@ class ImportPipelineService
             'type' => $settings['type'] ?? 'local',
             'estimate_date' => $settings['estimate_date'] ?? now()->format('Y-m-d'),
             'contract_id' => $settings['contract_id'] ?? null,
-            // Use 18% for this project by default if not specified
-            'vat_rate' => $settings['vat_rate'] ?? 18,
+            'vat_rate' => $settings['vat_rate'] ?? self::DEFAULT_VAT_RATE,
             'overhead_rate' => 0,
             'profit_rate' => 0,
         ]);
@@ -188,7 +198,7 @@ class ImportPipelineService
         // Step 1: Normative Matching
         foreach ($batch as $index => $item) {
             $dto = $item['dto'];
-            $itemData = $this->prepareWorkData($dto, $estimate->id, $item['section_id']);
+            $itemData = $this->prepareWorkData($dto, $estimate->id, $item['section_id'], $estimate->organization_id);
             
             $matched = false;
             if ($dto->code) {
@@ -196,6 +206,22 @@ class ImportPipelineService
                 if ($match && isset($match['normative'])) {
                     $itemData = $this->matcher->fillFromNormative($match['normative'], $itemData);
                     $matched = true;
+                }
+            }
+
+            if (!$matched && !empty($dto->itemName)) {
+                $semanticHit = $this->semanticMatcher->getBestNormativeMatch($dto->itemName, $dto->unit);
+                if ($semanticHit && $semanticHit['similarity'] >= 0.5) {
+                    $norm = \App\Models\NormativeRate::find($semanticHit['id']);
+                    if ($norm) {
+                        $itemData = $this->matcher->fillFromNormative($norm, $itemData);
+                        $itemData['metadata']['semantic_match'] = [
+                            'similarity' => $semanticHit['similarity'],
+                            'matched_name' => $semanticHit['name'],
+                        ];
+                        $matched = true;
+                        Log::info("[ImportPipeline] SemanticMatch hit for '{$dto->itemName}' → '{$semanticHit['name']}' (sim={$semanticHit['similarity']})");
+                    }
                 }
             }
             
@@ -214,7 +240,6 @@ class ImportPipelineService
         // Step 2: AI Classification
         if (!empty($aiBatch)) {
             try {
-                // aiResults usually matches the batch order if implementation is correct
                 $aiResults = $this->classifier->classifyBatch(array_values($aiBatch));
                 $aiKeys = array_keys($aiBatch);
                 
@@ -229,10 +254,15 @@ class ImportPipelineService
             }
         }
 
-        // Step 3: Global Insert
-        foreach ($batch as $item) {
-            $data = $item['prepared_data'];
-            // Cleanup for bulk insert: ensure metadata is JSON string
+        // Step 3: Sub-item Grouping (XML Parity)
+        $preparedRows = array_column($batch, 'prepared_data');
+        $groupedRows  = $this->subItemGrouper->groupItems($preparedRows);
+
+        // Step 4: Formula Validation
+        $this->formulaAwareness->annotate($groupedRows);
+
+        // Step 5: Global Insert
+        foreach ($groupedRows as $data) {
             if (isset($data['metadata']) && is_array($data['metadata'])) {
                 $data['metadata'] = json_encode($data['metadata']);
             }
@@ -279,29 +309,13 @@ class ImportPipelineService
         return $lastSectionId;
     }
 
-    private function prepareWorkData($dto, int $estimateId, ?int $sectionId): array
+    private function prepareWorkData($dto, int $estimateId, ?int $sectionId, int $organizationId): array
     {
         return [
             'estimate_id' => $estimateId,
             'estimate_section_id' => $sectionId,
             'name' => $dto->itemName,
-            'measurement_unit_id' => null, // Needs resolving or string storage? EstimateItem has measurement_unit_id relation, but maybe we need to find/create it? 
-            // For now, let's assuming we might not be able to fill unit_id immediately without lookup.
-            // But EstimateItem seems to have 'unit' field implicitly or via relation.
-            // Looking at EstimateItem model: 'measurement_unit_id' is fillable.
-            // Does it have a string 'unit' field? No.
-            // It has 'measurement_unit_id'.
-            // OLD IMPORT LOGIC likely looked up the unit.
-            // For MVP Phase 3 Pipeline, we can skip unit lookup or do a quick lookup if desired.
-            // Or add 'unit_name' to metadata if model doesn't support string unit.
-            // Wait, I should check EstimateItem columns again or look for 'unit' field.
-            // I saw 'measurement_unit_id' and 'unit_price'.
-            // I don't see 'unit' string field in fillable.
-            // This suggests I MUST resolve unit to ID.
-            // OR I can store it in metadata for now.
-            // Let's check `EstimateImportService` original code to see how it handled units.
-            // Actually, for now, to avoid blocking on Unit Lookup Service (which might be complex),
-            // I will leave measurement_unit_id null and store unit in metadata["original_unit"].
+            'measurement_unit_id' => $this->resolveUnitId($dto->unit, $organizationId),
             
             'quantity' => $dto->quantity ?? 0,
             'unit_price' => $dto->unitPrice ?? 0,
@@ -385,7 +399,7 @@ class ImportPipelineService
             // Excel Total = Direct + OH + Profit
             $totalWithoutVat = round($totalDirect + $totalOverhead + $totalProfit, 2);
             
-            $vatRate = (float)($estimate->vat_rate ?? 18);
+            $vatRate = (float)($estimate->vat_rate ?? self::DEFAULT_VAT_RATE);
             // НДС считается от уже округленной суммы без НДС
             $totalWithVat = round(round($totalWithoutVat, 2) * (1 + ($vatRate / 100)), 2);
 
@@ -409,5 +423,40 @@ class ImportPipelineService
         }
 
         Log::info("Estimate {$estimate->id} totals updated", ['total' => $estimate->total_amount_with_vat]);
+    }
+
+    private function resolveUnitId(?string $unitName, int $organizationId): ?int
+    {
+        if (empty($unitName)) {
+            return null;
+        }
+
+        $normalized = mb_strtolower(trim($unitName));
+        $cacheKey = "{$organizationId}:{$normalized}";
+
+        if (array_key_exists($cacheKey, $this->unitCache)) {
+            return $this->unitCache[$cacheKey];
+        }
+
+        $unit = MeasurementUnit::where('organization_id', $organizationId)
+            ->where(function ($q) use ($normalized) {
+                $q->whereRaw('LOWER(short_name) = ?', [$normalized])
+                  ->orWhereRaw('LOWER(name) = ?', [$normalized]);
+            })
+            ->first();
+
+        if (!$unit) {
+            $unit = MeasurementUnit::create([
+                'organization_id' => $organizationId,
+                'name'            => $unitName,
+                'short_name'      => $unitName,
+                'type'            => 'material',
+                'is_system'       => false,
+            ]);
+        }
+
+        $this->unitCache[$cacheKey] = $unit->id;
+
+        return $unit->id;
     }
 }

@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Log;
 class ImportRowMapper
 {
     private array $sectionHints = [];
+    private array $rowStyles = [];
 
     private const COMMON_UNITS = [
         'шт', 'м', 'кг', 'т', 'м3', 'м2', 'км', 'чел.-ч', 'маш.-час', 'компл', 'компл.', 'ед', 'пог. м', 'пог.м', '100 м', '1000 м3', '100 м2', '100 м3', 'тн', 'усл. ед', 'уп'
@@ -18,6 +19,11 @@ class ImportRowMapper
     public function setSectionHints(array $hints): void
     {
         $this->sectionHints = $hints;
+    }
+
+    public function setRowStyles(array $styles): void
+    {
+        $this->rowStyles = $styles;
     }
 
     /**
@@ -237,36 +243,33 @@ class ImportRowMapper
             $attributes = $this->parseItemAttributes($textToParse);
             
             if ($attributes['price_index'] > 0) {
-                // Store detected index
                 $mappedData['priceIndex'] = $attributes['price_index'];
-                
-                // If we have a unit price (which is Base Price), we move it to baseUnitPrice
-                // and calculate new Unit Price (Current Price)
+
                 if (!empty($mappedData['unitPrice'])) {
                     $mappedData['baseUnitPrice'] = $mappedData['unitPrice'];
                     $mappedData['unitPrice'] = round($mappedData['baseUnitPrice'] * $mappedData['priceIndex'], 2);
-                    
-                    // Recalculate Current Total Amount if we have quantity
+
                     if (!empty($mappedData['quantity'])) {
                         $mappedData['currentTotalAmount'] = round($mappedData['unitPrice'] * $mappedData['quantity'], 2);
                     }
-                    
-                    \Illuminate\Support\Facades\Log::info("[ImportRowMapper] Smart Parsing applied: BasePrice={$mappedData['baseUnitPrice']} * Index={$mappedData['priceIndex']} = NewPrice={$mappedData['unitPrice']}");
+
+                    Log::info("[ImportRowMapper] Smart Parsing applied: BasePrice={$mappedData['baseUnitPrice']} * Index={$mappedData['priceIndex']} = NewPrice={$mappedData['unitPrice']}");
                 }
             }
-            
-            // Store detected rates
+
             if ($attributes['overhead_rate'] !== null) {
                 $mappedData['overheadRate'] = $attributes['overhead_rate'];
             }
             if ($attributes['profit_rate'] !== null) {
                 $mappedData['profitRate'] = $attributes['profit_rate'];
             }
-            
+
             if ($attributes['overhead_rate'] || $attributes['profit_rate']) {
-                 \Illuminate\Support\Facades\Log::info("[ImportRowMapper] Rates detected and stored: NR={$attributes['overhead_rate']}%, SP={$attributes['profit_rate']}%");
+                Log::info("[ImportRowMapper] Rates detected and stored: NR={$attributes['overhead_rate']}%, SP={$attributes['profit_rate']}%");
             }
         }
+
+        $this->applyInversePricing($mappedData);
 
         // 3. Robust Section & Footer Detection
         $mappedData['isFooter'] = $this->isFooter(
@@ -285,7 +288,8 @@ class ImportRowMapper
                 $mappedData['quantity'],
                 $mappedData['unitPrice'],
                 $mappedData['unit'],
-                $mappedData['currentTotalAmount']
+                $mappedData['currentTotalAmount'],
+                $mappedData['rowNumber']
             );
         }
 
@@ -529,9 +533,8 @@ class ImportRowMapper
         return $isTechnical;
     }
 
-    private function isSection(?string $itemName, array $rawData, ?float $quantity = null, ?float $unitPrice = null, ?string $unit = null, ?float $totalAmount = null): bool
+    private function isSection(?string $itemName, array $rawData, ?float $quantity = null, ?float $unitPrice = null, ?string $unit = null, ?float $totalAmount = null, int $rowNumber = 0): bool
     {
-        // 0. Safety: items with ANY numeric data or ANY unit are NOT sections
         if (($quantity !== null && $quantity > 0) || 
             ($unitPrice !== null && $unitPrice > 0) || 
             ($totalAmount !== null && $totalAmount > 0) ||
@@ -539,12 +542,18 @@ class ImportRowMapper
             return false;
         }
 
-        // 1. If it's a footer, it's definitely not a section (recursive call with context is fine)
         if ($this->isFooter($itemName, $rawData, $quantity, $unitPrice, $unit, $totalAmount)) {
             return false;
         }
 
-        // 2. Prioritize AI Hints (only if we have no clear data above)
+        if ($rowNumber > 0 && isset($this->rowStyles[$rowNumber])) {
+            $style = $this->rowStyles[$rowNumber];
+            if ($style['is_bold_dominant'] || $style['has_background']) {
+                Log::info("[ImportRowMapper] Row #{$rowNumber} detected as Section by visual style (bold={$style['is_bold_dominant']}, bg={$style['has_background']})");
+                return true;
+            }
+        }
+
         $aiKeywords = $this->sectionHints['section_keywords'] ?? [];
         if (!empty($aiKeywords)) {
             $text = mb_strtolower($itemName ?? '');
@@ -779,5 +788,31 @@ class ImportRowMapper
         $strValue = (string)$value;
         if (mb_strlen($strValue) <= $limit) return $strValue;
         return mb_substr($strValue, 0, $limit);
+    }
+
+    private function applyInversePricing(array &$data): void
+    {
+        if (($data['baseUnitPrice'] ?? 0) > 0) {
+            return;
+        }
+
+        $index    = $data['priceIndex'] ?? null;
+        $total    = $data['currentTotalAmount'] ?? null;
+        $qty      = $data['quantity'] ?? null;
+        $current  = $data['currentUnitPrice'] ?? $data['unitPrice'] ?? null;
+
+        if ($index !== null && $index > 0) {
+            if ($current !== null && $current > 0) {
+                $data['baseUnitPrice'] = round($current / $index, 4);
+                Log::info("[ImportRowMapper] InversePricing: base={$data['baseUnitPrice']} from current={$current} / index={$index}");
+                return;
+            }
+
+            if ($total !== null && $total > 0 && $qty !== null && $qty > 0) {
+                $currentUnit = round($total / $qty, 4);
+                $data['baseUnitPrice'] = round($currentUnit / $index, 4);
+                Log::info("[ImportRowMapper] InversePricing: base={$data['baseUnitPrice']} from total={$total} / qty={$qty} / index={$index}");
+            }
+        }
     }
 }

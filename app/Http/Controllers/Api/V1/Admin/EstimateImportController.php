@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateImportService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\StagingAreaService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\VoiceCommandService;
 use App\Http\Requests\Admin\Estimate\UploadEstimateImportRequest;
 use App\Http\Requests\Admin\Estimate\DetectEstimateTypeRequest;
 use App\Http\Requests\Admin\Estimate\DetectEstimateImportRequest;
@@ -28,6 +30,8 @@ class EstimateImportController extends Controller
 {
     public function __construct(
         private EstimateImportService $importService,
+        private StagingAreaService $stagingArea,
+        private VoiceCommandService $voiceCommandService,
         private \App\Services\Logging\LoggingService $loggingService
     ) {}
 
@@ -373,5 +377,72 @@ class EstimateImportController extends Controller
         return AdminResponse::success(
             EstimateImportHistoryResource::collection($history)
         );
+    }
+
+    public function staging(Request $request): JsonResponse
+    {
+        $request->validate([
+            'session_id' => ['required', 'string'],
+        ]);
+
+        $organization = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
+
+        try {
+            $preview = $this->stagingArea->buildPreview(
+                $request->input('session_id'),
+                $organization->id
+            );
+
+            return AdminResponse::success($preview);
+        } catch (\Throwable $e) {
+            Log::error('[EstimateImport] Staging failed', [
+                'session_id' => $request->input('session_id'),
+                'error'      => $e->getMessage(),
+                'trace'      => $e->getTraceAsString(),
+            ]);
+
+            return AdminResponse::error('Ошибка получения превью', Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    public function voiceCommand(Request $request): JsonResponse
+    {
+        $request->validate([
+            'text'  => ['required', 'string', 'max:1000'],
+            'rows'  => ['sometimes', 'array'],
+        ]);
+
+        $voiceText = $request->input('text');
+        $rows      = $request->input('rows', []);
+
+        try {
+            $parsed = $this->voiceCommandService->parseCommand($voiceText, $rows);
+
+            if (!$parsed['success']) {
+                return AdminResponse::error($parsed['message'] ?? 'Команда не распознана', Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+
+            $updatedRows = $this->voiceCommandService->executeCommand(
+                $parsed['command'],
+                $parsed['params'],
+                $rows
+            );
+
+            return AdminResponse::success([
+                'command'      => $parsed['command'],
+                'description'  => $parsed['description'],
+                'params'       => $parsed['params'],
+                'rows'         => $updatedRows,
+                'rows_before'  => count($rows),
+                'rows_after'   => count($updatedRows),
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('[EstimateImport] VoiceCommand failed', [
+                'text'  => $voiceText,
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error('Ошибка обработки голосовой команды', Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
     }
 }

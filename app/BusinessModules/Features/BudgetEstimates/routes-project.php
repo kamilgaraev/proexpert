@@ -29,13 +29,15 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
             // Импорт смет
             Route::prefix('import')->name('import.')->group(function () {
                 Route::post('/upload', [EstimateImportController::class, 'upload'])->name('upload');
-                Route::post('/detect-type', [EstimateImportController::class, 'detectType'])->name('detect_type'); // Определение типа сметы
+                Route::post('/detect-type', [EstimateImportController::class, 'detectType'])->name('detect_type');
                 Route::post('/detect', [EstimateImportController::class, 'detect'])->name('detect');
                 Route::post('/map', [EstimateImportController::class, 'map'])->name('map');
                 Route::post('/match', [EstimateImportController::class, 'match'])->name('match');
                 Route::post('/execute', [EstimateImportController::class, 'execute'])->name('execute');
                 Route::get('/status/{jobId?}', [EstimateImportController::class, 'status'])->name('status');
                 Route::get('/history', [EstimateImportController::class, 'history'])->name('history');
+                Route::post('/staging', [EstimateImportController::class, 'staging'])->name('staging');
+                Route::post('/voice-command', [EstimateImportController::class, 'voiceCommand'])->name('voice_command');
             });
 
             // CRUD операции над сметами
@@ -53,6 +55,9 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
             Route::post('/{estimate}/recalculate', [EstimateController::class, 'recalculate'])->name('recalculate');
             Route::get('/{estimate}/dashboard', [EstimateController::class, 'dashboard'])->name('dashboard');
             Route::get('/{estimate}/structure', [EstimateController::class, 'structure'])->name('structure');
+
+            Route::post('/{estimate}/what-if', [EstimateVersionController::class, 'whatIf'])->name('what_if');
+            Route::post('/{estimate}/schedule', [EstimateVersionController::class, 'schedule'])->name('schedule');
             
             // Разделы сметы
             Route::prefix('{estimate}/sections')->name('sections.')->group(function () {
