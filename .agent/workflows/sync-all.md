@@ -9,10 +9,18 @@ description: Synchronize all active repositories by committing and pushing chang
 2.  **For Each Repository**:
     *   **Check Status**: Run `git status --porcelain` to see if there are any changes.
     *   **If Changes Exist**:
+        *   **Smart QA (Pre-check)**: 
+            *   Run `git diff --cached` (or `git diff` if not staged) to analyze changes.
+            *   **Strict Blockers**: If `console.log`, `print_r`, `var_dump`, or `dd()` are found in the diff, **STOP IMMEDIATELY**. These are never allowed in production.
+            *   **Other common issues**: syntax errors or obvious logic flaws.
+            *   **Run Linter (Optional)**: If the environment supports it, run a quick lint command.
+        *   **Decision**:
+            *   If **Strict Blockers** or critical issues are found, **ABORT SYNC** and report to the user.
+            *   If only minor issues or no issues, proceed.
         *   **Stage**: Run `git add .`
-        *   **Commit**: Generate a concise, conventional commit message based on the changes (e.g., `fix: ...`, `feat: ...`). Run `git commit -m "your_message"`.
-        *   **Push**: Run `git push`. Handle any upstream errors if necessary (e.g., `git push --set-upstream origin current_branch`).
-        *   **Log**: Output a message indicating success for this repository (e.g., "✅ `prohelper`: Pushed changes").
+        *   **Commit**: Generate a concise, conventional commit message based on the changes.
+        *   **Push**: Run `git push`.
+        *   **Log**: "✅ `{repo_name}`: QA passed and pushed".
     *   **If No Changes**:
         *   **Log**: Output a message indicating already up-to-date (e.g., "✨ `prohelper_admin`: No changes to sync").
 
