@@ -134,6 +134,7 @@ class EstimateImportController extends Controller
                 'type_description' => $detectionDTO->getTypeDescription(),
                 'confidence' => $detectionDTO->confidence,
                 'is_high_confidence' => $detectionDTO->isHighConfidence(),
+                'is_template' => $detectionDTO->indicators['is_template'] ?? false,
                 'indicators' => $detectionDTO->indicators,
                 'candidates' => $detectionDTO->candidates,
             ]);
@@ -444,5 +445,10 @@ class EstimateImportController extends Controller
 
             return AdminResponse::error('Ошибка обработки голосовой команды', Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    public function downloadTemplate(): \Symfony\Component\HttpFoundation\StreamedResponse
+    {
+        return $this->importService->downloadTemplate();
     }
 }

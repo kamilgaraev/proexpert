@@ -23,6 +23,7 @@ class EstimateImportService
         private ImportRowMapper $rowMapper,
         private AiMappingService $aiMappingService,
         private StyleExtractor $styleExtractor,
+        private TemplateService $templateService,
         private ?\App\BusinessModules\Features\BudgetEstimates\Services\EstimateService $estimateService = null,
         private ?\App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\Factory\ParserFactory $parserFactory = null
     ) {}
@@ -63,19 +64,34 @@ class EstimateImportService
     {
         $session = ImportSession::findOrFail($sessionId);
         $fullPath = $this->fileStorage->getAbsolutePath($session);
-        
         $detector = new EstimateTypeDetector();
         
         try {
             if ($session->file_format === 'xml') {
                 $content = file_get_contents($fullPath);
             } else {
-                // Try allow loading
                 $content = IOFactory::load($fullPath);
             }
             
             $result = $detector->detectAll($content);
-            return EstimateTypeDetectionDTO::fromDetectorResult($result);
+            $dto = EstimateTypeDetectionDTO::fromDetectorResult($result);
+ 
+             // Template Detection
+            if ($content instanceof \PhpOffice\PhpSpreadsheet\Spreadsheet) {
+                $description = $content->getProperties()->getDescription();
+                if (str_contains($description, 'PROHELPER_TEMPLATE')) {
+                     $dto->indicators['is_template'] = true;
+                     $dto->confidence = 1.0;
+                     $dto->detectedType = \App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateType::PROHELPER;
+                     
+                     // Store template flag in session for detectFormat
+                     $options = $session->options ?? [];
+                     $options['is_template'] = true;
+                     $session->update(['options' => $options]);
+                }
+            }
+ 
+             return $dto;
             
         } catch (\Exception $e) {
             Log::error("Detection failed for session {$sessionId}: " . $e->getMessage());
@@ -105,8 +121,18 @@ class EstimateImportService
             // Get Raw Sample Rows for UI
             $sampleRows = $this->getRawSampleRows($fullPath, $structure);
 
-            // 3. Strategic Upgrade: AI-Powered Column Detection
-            $aiResponse = $this->aiMappingService->detectMapping($structure['raw_headers'] ?? [], $sampleRows);
+            // 3. Strategic Upgrade: AI-Powered Column Detection or Template Mapping
+            $options = $session->options ?? [];
+            $isTemplate = $options['is_template'] ?? false;
+            
+            if ($isTemplate) {
+                 Log::info('[EstimateImportService] Applying fixed template mapping');
+                 $structure['column_mapping'] = $this->parserFactory->getSmartMappingService()->applyTemplateMapping();
+                 $aiResponse = true; // Mark as applied
+            } else {
+                 $aiResponse = $this->aiMappingService->detectMapping($structure['raw_headers'] ?? [], $sampleRows);
+            }
+
             if ($aiResponse && isset($aiResponse['mapping'])) {
                 Log::info('[EstimateImportService] Applying AI mapping results');
                 $structure['column_mapping'] = $aiResponse['mapping'];
@@ -361,6 +387,11 @@ class EstimateImportService
             ->get();
     }
     
+    public function downloadTemplate(): \Symfony\Component\HttpFoundation\StreamedResponse
+    {
+        return $this->templateService->generate();
+    }
+
     private function mapSessionStatusToOldStatus(string $status): string
     {
         return match($status) {

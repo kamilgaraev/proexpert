@@ -131,4 +131,19 @@ class SmartMappingService
         
         return 0.0;
     }
+    public function applyTemplateMapping(): array
+    {
+        return [
+            'item_type' => 'A',
+            'section_number' => 'B',
+            'name' => 'C',
+            'code' => 'D',
+            'unit' => 'E',
+            'quantity' => 'F',
+            'unit_price' => 'G',
+            'overhead_rate' => 'H',
+            'profit_rate' => 'I',
+            'comment' => 'J'
+        ];
+    }
 }
