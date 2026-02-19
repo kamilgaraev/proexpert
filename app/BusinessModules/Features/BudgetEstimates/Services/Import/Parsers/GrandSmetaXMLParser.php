@@ -140,17 +140,136 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface, StreamParser
         
         $estimateNode = $this->findEstimateNode($xml);
         
-        // Use generator to yield items one by one
-        // Note: For XML, we still need to parse recursively, but we can buffer and yield
-        $this->parseNodeRecursively($estimateNode, $sections, $items);
+        // В XML ГрандСметы структура вложенная. 
+        // Нам нужно выдать поток строк (секций и позиций) в том порядке, в котором они идут в файле.
+        $allRows = [];
+        $this->collectNodesRecursively($estimateNode, $allRows);
         
-        foreach ($sections as $section) {
-             yield EstimateImportRowDTO::fromArray($section);
+        foreach ($allRows as $row) {
+             yield EstimateImportRowDTO::fromArray($row);
         }
+    }
+
+    private function collectNodesRecursively(\SimpleXMLElement $node, array &$allRows, string $parentPath = '', int $level = 0): void
+    {
+        // Перебираем детей в том порядке, в котором они идут в XML
+        foreach ($node->children() as $child) {
+            $name = strtolower($child->getName());
+            
+            if (in_array($name, ['itog', 'itogres', 'reportoptions', 'properties', 'header', 'signature'])) {
+                continue;
+            }
+
+            if (in_array($name, ['section', 'razdel', 'chapter'])) {
+                $this->processSectionNode($child, $allRows, $parentPath, $level);
+            } elseif (in_array($name, ['position', 'item', 'poz'])) {
+                $this->processItemNode($child, $allRows, $parentPath, $level);
+            } else {
+                // Идем глубage если это контейнеры типа Sections, Positions
+                $this->collectNodesRecursively($child, $allRows, $parentPath, $level);
+            }
+        }
+    }
+
+    private function processSectionNode(\SimpleXMLElement $section, array &$allRows, string $parentPath, int $level): void
+    {
+        $num = (string)($section['Number'] ?? $section['Num'] ?? $section->Number ?? '');
+        $name = (string)($section['Name'] ?? $section['Caption'] ?? $section->Name ?? $section->Caption ?? '');
         
-        foreach ($items as $item) {
-             yield EstimateImportRowDTO::fromArray($item);
+        if (in_array(mb_strtolower(trim($name)), self::IGNORED_SECTIONS)) {
+            return;
         }
+
+        $currentPath = $parentPath ? "$parentPath.$num" : $num;
+        
+        $allRows[] = (new EstimateImportRowDTO(
+            rowNumber: count($allRows) + 1, 
+            sectionNumber: $num,
+            itemName: $name ?: "Раздел $num",
+            isSection: true,
+            level: $level + 1,
+            sectionPath: $currentPath
+        ))->toArray();
+
+        $this->collectNodesRecursively($section, $allRows, $currentPath, $level + 1);
+    }
+
+    private function processItemNode(\SimpleXMLElement $item, array &$allRows, string $parentPath, int $level): void
+    {
+        $sysId = (string)($item['SysID'] ?? $item->attributes()->SysID ?? '');
+        $code = (string)($item['Justification'] ?? $item['Code'] ?? $item->Code ?? $item->Justification ?? '');
+        
+        if (!empty($sysId)) {
+            if (in_array($sysId, $this->processedSysIds)) {
+                return; 
+            }
+            $this->processedSysIds[] = $sysId;
+        }
+
+        $num = (string)($item['Number'] ?? $item['Num'] ?? $item->Number ?? '');
+        $name = (string)($item['Name'] ?? $item['Caption'] ?? $item->Name ?? $item->Caption ?? '');
+        $unit = (string)($item['Measure'] ?? $item['Unit'] ?? $item->Measure ?? $item->Unit ?? '');
+        $qty = (float)($item['Quant'] ?? $item['Quantity'] ?? $item->Quant ?? $item->Quantity ?? 0);
+        
+        $dbFlags = (string)($item['DBFlags'] ?? $item->attributes()->DBFlags ?? '');
+        if (str_contains($dbFlags, 'TechK')) {
+            return;
+        }
+
+        $price = 0.0;
+        if (isset($item->Price)) {
+            $price = (float)($item->Price['Value'] ?? $item->Price);
+        } elseif (isset($item->UnitCost)) {
+            $price = (float)($item->UnitCost['Value'] ?? $item->UnitCost);
+        }
+
+        $total = (float)($item->Cost['Value'] ?? $item->Cost ?? ($qty * $price));
+
+        $allRows[] = (new EstimateImportRowDTO(
+            rowNumber: count($allRows) + 1,
+            sectionNumber: $num,
+            itemName: $name,
+            unit: $unit,
+            quantity: $qty,
+            unitPrice: $price,
+            code: $code,
+            isSection: false,
+            level: $level,
+            sectionPath: $parentPath,
+            currentTotalAmount: $total,
+            rawData: (array)$item
+        ))->toArray();
+        
+        if (isset($item->Resources->Resource)) {
+            foreach ($item->Resources->Resource as $res) {
+                $this->processResourceNode($res, $allRows, $parentPath, $level);
+            }
+        }
+    }
+
+    private function processResourceNode(\SimpleXMLElement $res, array &$allRows, string $parentPath, int $level): void
+    {
+        $code = (string)($res['Code'] ?? $res->Code ?? '');
+        $name = (string)($res['Name'] ?? $res->Name ?? '');
+        $unit = (string)($res['Measure'] ?? $res->Measure ?? '');
+        $qty = (float)($res['Quant'] ?? $res->Quantity ?? 0);
+        $price = (float)($res['Price'] ?? $res->Price ?? 0);
+        
+        $allRows[] = (new EstimateImportRowDTO(
+            rowNumber: count($allRows) + 1,
+            sectionNumber: null,
+            itemName: $name,
+            unit: $unit,
+            quantity: $qty,
+            unitPrice: $price,
+            code: $code,
+            isSection: false,
+            isSubItem: true,
+            level: $level + 1,
+            sectionPath: $parentPath,
+            isNotAccounted: true,
+            itemType: 'material'
+        ))->toArray();
     }
 
     public function getPreview(string $filePath, int $limit = 20, array $options = []): array
@@ -220,198 +339,7 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface, StreamParser
         ];
     }
 
-    private function parseNodeRecursively(\SimpleXMLElement $node, array &$sections, array &$items, string $parentPath = '', int $level = 0): void
-    {
-        // Игнорируем узлы Itog, которые могут попасться при рекурсивном обходе
-        if (in_array(strtolower($node->getName()), ['itog', 'itogres'])) {
-            return;
-        }
-
-        // Обработка Разделов (Section, Razdel, Chapter)
-        $sectionNodes = [];
-        if (isset($node->Sections->Section)) $sectionNodes = $node->Sections->Section;
-        elseif (isset($node->Razdel)) $sectionNodes = $node->Razdel;
-        elseif (isset($node->Chapter)) $sectionNodes = $node->Chapter;
-        
-        foreach ($sectionNodes as $section) {
-            $this->processSection($section, $sections, $items, $parentPath, $level);
-        }
-
-        // Обработка Позиций (Positions, Items, Item)
-        $itemNodes = [];
-        if (isset($node->Positions->Position)) $itemNodes = $node->Positions->Position;
-        elseif (isset($node->Items->Item)) $itemNodes = $node->Items->Item;
-        elseif (isset($node->Poz)) $itemNodes = $node->Poz; // GGE style sometimes
-        
-        foreach ($itemNodes as $item) {
-            $this->processItem($item, $items, $parentPath, $level);
-        }
-        
-        // Если это плоский список и нет явных коллекций, перебираем детей
-        if (empty($sectionNodes) && empty($itemNodes)) {
-             foreach ($node->children() as $child) {
-                 $name = strtolower($child->getName());
-                 
-                 // Явно игнорируем Itog и прочие служебные теги
-                 if (in_array($name, ['itog', 'itogres', 'reportoptions', 'properties', 'header', 'signature'])) {
-                     continue;
-                 }
-
-                 if (in_array($name, ['section', 'razdel', 'chapter'])) {
-                     $this->processSection($child, $sections, $items, $parentPath, $level);
-                 } elseif (in_array($name, ['position', 'item', 'poz'])) {
-                     $this->processItem($child, $items, $parentPath, $level);
-                 }
-             }
-        }
-    }
-
-    private function processSection(\SimpleXMLElement $section, array &$sections, array &$items, string $parentPath, int $level): void
-    {
-        // Извлечение атрибутов раздела
-        $num = (string)($section['Number'] ?? $section['Num'] ?? $section->Number ?? '');
-        $name = (string)($section['Name'] ?? $section['Caption'] ?? $section->Name ?? $section->Caption ?? '');
-        
-        // Filter out ignored sections (case-insensitive)
-        if (in_array(mb_strtolower(trim($name)), self::IGNORED_SECTIONS)) {
-            Log::info("[GrandSmeta] Ignoring section: '{$name}' (Number: {$num})");
-            return;
-        }
-
-        $currentPath = $parentPath ? "$parentPath.$num" : $num;
-        
-        $sections[] = (new EstimateImportRowDTO(
-            rowNumber: 0, 
-            sectionNumber: $num,
-            itemName: $name ?: "Раздел $num",
-            unit: null, 
-            quantity: null, 
-            unitPrice: null, 
-            code: null,
-            isSection: true,
-            level: $level + 1,
-            sectionPath: $currentPath,
-            isNotAccounted: false
-        ))->toArray();
-
-        // Рекурсия
-        $this->parseNodeRecursively($section, $sections, $items, $currentPath, $level + 1);
-    }
-
-    private function processItem(\SimpleXMLElement $item, array &$items, string $parentPath, int $level): void
-    {
-        // Проверка на дубликаты по SysID
-        $sysId = (string)($item['SysID'] ?? $item->attributes()->SysID ?? '');
-        $code = (string)($item['Justification'] ?? $item['Code'] ?? $item->Code ?? $item->Justification ?? '');
-        
-        // Log::error("[GrandSmeta] Processing Item. SysID: '{$sysId}', Code: '{$code}'");
-
-        if (!empty($sysId)) {
-            if (in_array($sysId, $this->processedSysIds)) {
-                Log::info("[GrandSmeta] Skipping duplicate SysID: {$sysId} (Code: {$code})");
-                return; // Пропускаем дубликат
-            }
-            $this->processedSysIds[] = $sysId;
-        }
-
-        // Извлечение основных полей
-        $num = (string)($item['Number'] ?? $item['Num'] ?? $item->Number ?? '');
-        // $code is already extracted above
-        $name = (string)($item['Name'] ?? $item['Caption'] ?? $item->Name ?? $item->Caption ?? '');
-        $unit = (string)($item['Measure'] ?? $item['Unit'] ?? $item->Measure ?? $item->Unit ?? '');
-        
-        // Количество
-        $qty = (float)($item['Quant'] ?? $item['Quantity'] ?? $item->Quant ?? $item->Quantity ?? 0);
-        
-        // Дополнительная проверка на служебные позиции (DBFlags="TechK")
-        // Проверяем атрибут DBFlags различными способами доступа к SimpleXML
-        $dbFlags = (string)($item['DBFlags'] ?? $item->attributes()->DBFlags ?? '');
-        
-        // Log::info("[GrandSmeta] Item: {$code}, DBFlags: '{$dbFlags}'");
-
-        if (str_contains($dbFlags, 'TechK')) {
-            Log::info("[GrandSmeta] Skipping TechK position: {$code} (DBFlags: {$dbFlags})");
-            return; // Пропускаем технологические карты/ресурсы, чтобы не дублировать суммы
-        }
-
-        // Цена за единицу (прямые затраты)
-        $price = 0.0;
-        if (isset($item->Price)) {
-            $price = (float)($item->Price['Value'] ?? $item->Price);
-        } elseif (isset($item->UnitCost)) {
-            $price = (float)($item->UnitCost['Value'] ?? $item->UnitCost);
-        } elseif (isset($item->Direct)) {
-            $price = (float)$item->Direct;
-        }
-
-        // Общая стоимость
-        $total = 0.0;
-        if (isset($item->Cost)) {
-            $total = (float)($item->Cost['Value'] ?? $item->Cost);
-        } elseif (isset($item->TotalCost)) {
-            $total = (float)$item->TotalCost;
-        } else {
-            $total = $qty * $price;
-        }
-        
-        // Проверка на неучтенные ресурсы (часто в тегах <Resource> внутри <Resources>)
-        // Но здесь мы парсим саму позицию. Если это ресурс внутри позиции - он может быть отдельной строкой.
-        // Для простоты, если позиция имеет тип "Material" или "Resource", ставим флаг.
-        // ГрандСмета обычно помечает неучтенные материалы отдельно.
-        
-        $isNotAccounted = false;
-        // Эвристика: если в обосновании есть "ЦЕНА" или текст в скобках (прим), возможно это неучтенка
-        if (mb_stripos($code, 'цена') !== false) {
-             $isNotAccounted = true;
-        }
-
-        $items[] = (new EstimateImportRowDTO(
-            rowNumber: 0,
-            sectionNumber: $num,
-            itemName: $name,
-            unit: $unit,
-            quantity: $qty,
-            unitPrice: $price,
-            code: $code,
-            isSection: false,
-            level: $level,
-            sectionPath: $parentPath,
-            currentTotalAmount: $total,
-            isNotAccounted: $isNotAccounted,
-            rawData: (array)$item
-        ))->toArray();
-        
-        // Обработка вложенных ресурсов (часто ГрандСмета показывает их как подпункты)
-        if (isset($item->Resources->Resource)) {
-            foreach ($item->Resources->Resource as $res) {
-                $this->processResource($res, $items, $parentPath, $level);
-            }
-        }
-    }
-
-    private function processResource(\SimpleXMLElement $res, array &$items, string $parentPath, int $level): void
-    {
-        $code = (string)($res['Code'] ?? $res->Code ?? '');
-        $name = (string)($res['Name'] ?? $res->Name ?? '');
-        $unit = (string)($res['Measure'] ?? $res->Measure ?? '');
-        $qty = (float)($res['Quant'] ?? $res->Quantity ?? 0);
-        $price = (float)($res['Price'] ?? $res->Price ?? 0);
-        
-        $items[] = (new EstimateImportRowDTO(
-            rowNumber: 0,
-            sectionNumber: null,
-            itemName: $name,
-            unit: $unit,
-            quantity: $qty,
-            unitPrice: $price,
-            code: $code,
-            isSection: false,
-            level: $level + 1, // Вложенный уровень
-            sectionPath: $parentPath,
-            isNotAccounted: true, // Ресурсы под позицией часто являются материалами
-            itemType: 'material'
-        ))->toArray();
-    }
+    // Metods parseNodeRecursively, processSection, processItem, processResource are replaced by collectNodesRecursively etc. above
     
     private function calculateTotals(array $items): array
     {

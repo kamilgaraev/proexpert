@@ -71,8 +71,7 @@ class StatefulGrandSmetaProcessor
 
         // 2. Identify Row Type
         $isSection = $this->isSection($name);
-        // Positions usually have an integer in the № п/п column
-        $isPosition = !empty($posNo) && preg_match('/^\d+$/', $posNo); 
+        $isPosition = $this->isPosition($posNo, $name, $code);
         $isResource = !$isSection && !$isPosition && $this->isResource($rowData, $mapping);
 
         if ($isSection) {
@@ -87,10 +86,12 @@ class StatefulGrandSmetaProcessor
             return;
         }
 
-        if ($isResource && $this->currentPosition) {
-            $resourceDTO = $this->mapToDTO($rowData, $mapping, $rowNumber, false);
-            $resourceDTO->isSubItem = true;
-            $this->items[] = $resourceDTO;
+        // Catch-all for anything inside a position: if we have a current position, everything else is a sub-item
+        // unless it's a section or a new position.
+        if ($this->currentPosition && !$isSection && !$isPosition) {
+            $subItemDTO = $this->mapToDTO($rowData, $mapping, $rowNumber, false);
+            $subItemDTO->isSubItem = true;
+            $this->items[] = $subItemDTO;
             return;
         }
     }
@@ -168,7 +169,7 @@ class StatefulGrandSmetaProcessor
         $name = trim($name);
         if (empty($name)) return false;
 
-        // "Раздел 1", "Глава 2", but NOT "Объектовая станция"
+        // "Раздел 1", "Глава 2", но NOT "Объектовая станция"
         // Use word boundaries \b to match exact words
         $sectionPattern = '/^(Раздел|Смета|Объект|Глава|Этап|Комплекс|Локальный|I+|V+|X+)\b/iu';
         
@@ -178,13 +179,37 @@ class StatefulGrandSmetaProcessor
 
     private function isResource(array $data, array $mapping): bool
     {
+        $name = mb_strtolower(trim((string)($data[$mapping['name'] ?? ''] ?? '')));
         $unit = mb_strtolower(trim((string)($data[$mapping['unit'] ?? ''] ?? '')));
+        
+        // "Вспомогательные материальные ресурсы" и т.д.
+        if (str_contains($name, 'вспомогательные') && str_contains($name, 'ресурсы')) {
+            return true;
+        }
+
         if (empty($unit)) return false;
 
-        $resourceUnits = ['чел.-ч', 'маш.-ч', 'кг', 'т', 'м3', 'шт', 'компл', 'м', 'м2', 'квт-ч'];
+        $resourceUnits = ['чел.-ч', 'чел-ч', 'маш.-ч', 'кг', 'т', 'м3', 'шт', 'компл', 'м', 'м2', 'квт-ч', '%'];
         
         foreach ($resourceUnits as $ru) {
-            if (str_contains($unit, $ru)) return true;
+            if ($unit === $ru || str_starts_with($unit, $ru)) return true;
+        }
+
+        return false;
+    }
+
+    private function isPosition(string $posNo, string $name, string $code): bool
+    {
+        $posNo = trim($posNo);
+        if (empty($posNo)) return false;
+
+        // Позиции в ГрандСмете (ЛСР 421) обычно:
+        // 1. Просто число ("1", "2")
+        // 2. Число с буквой ("2О", "15А", "4О")
+        // 3. НО НЕ дробное число типа "1.1" (это обычно вложенные ресурсы)
+        if (preg_match('/^\d+[А-ЯA-Z]?$/ui', $posNo)) {
+            // Если код пустой, это вряд ли полноценная позиция, скорее заголовок
+            return !empty(trim($code));
         }
 
         return false;
