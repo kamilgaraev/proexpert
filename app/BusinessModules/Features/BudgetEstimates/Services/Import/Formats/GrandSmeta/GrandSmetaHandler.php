@@ -84,8 +84,8 @@ class GrandSmetaHandler extends AbstractFormatHandler
         $result = $processor->getResult();
         
         return collect([
-            'items' => $result['items'],
-            'sections' => $result['sections']
+            'items' => array_map(fn($item) => $item->toArray(), $result['items']),
+            'sections' => array_map(fn($section) => $section->toArray(), $result['sections'])
         ]);
     }
 
