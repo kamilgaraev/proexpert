@@ -22,6 +22,7 @@ use App\Http\Controllers\Api\V1\Admin\EstimatePaymentController;
 
 Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'authorize:admin.access', 'interface:admin', 'project.context', 'budget-estimates.active'])
     ->prefix('api/v1/admin/projects/{project}')
+    ->where(['project' => '[0-9]+'])
     ->name('admin.projects.estimates.')
     ->group(function () {
         
