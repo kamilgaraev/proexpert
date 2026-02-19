@@ -24,6 +24,8 @@ class EstimateImportService
         private AiMappingService $aiMappingService,
         private StyleExtractor $styleExtractor,
         private TemplateService $templateService,
+        private ImportFormatOrchestrator $orchestrator,
+        private SignatureGenerator $signatureGenerator,
         private ?\App\BusinessModules\Features\BudgetEstimates\Services\EstimateService $estimateService = null,
         private ?\App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\Factory\ParserFactory $parserFactory = null
     ) {}
@@ -64,29 +66,85 @@ class EstimateImportService
     {
         $session = ImportSession::findOrFail($sessionId);
         $fullPath = $this->fileStorage->getAbsolutePath($session);
-        $detector = new EstimateTypeDetector();
+        $extension = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
         
         try {
-            if ($session->file_format === 'xml') {
+            if ($extension === 'xml') {
                 $content = file_get_contents($fullPath);
             } else {
                 $content = IOFactory::load($fullPath);
             }
+
+            // 🧠 Memory Lookup (Signature-based)
+            $dto = new EstimateTypeDetectionDTO();
+            if ($content instanceof \PhpOffice\PhpSpreadsheet\Spreadsheet) {
+                try {
+                    $sheet = $content->getActiveSheet();
+                    $firstRow = [];
+                    foreach ($sheet->getRowIterator(1, 1) as $row) {
+                        foreach ($row->getCellIterator() as $cell) {
+                            $firstRow[] = $cell->getValue();
+                        }
+                    }
+                    
+                    $signature = $this->signatureGenerator->generate($firstRow);
+                    $memory = \App\Models\ImportMemory::where('organization_id', $session->organization_id)
+                        ->where('signature', $signature)
+                        ->orderByDesc('success_count')
+                        ->first();
+
+                    if ($memory) {
+                        Log::info("[EstimateImport] Memory match found for signature: {$signature}");
+                        $dto->confidence = 0.95;
+                        $dto->detectedType = 'prohelper'; // Or specialized memory type if added
+                        $dto->indicators['memory_id'] = $memory->id;
+                        
+                        // Store memory info in session
+                        $options = $session->options ?? [];
+                        $options['memory_id'] = $memory->id;
+                        $options['column_mapping'] = $memory->column_mapping;
+                        $session->update(['options' => $options]);
+                    }
+                } catch (\Throwable $e) {
+                    Log::warning("[EstimateImport] Memory lookup failed (non-critical): " . $e->getMessage());
+                }
+            }
             
-            $result = $detector->detectAll($content);
-            $dto = EstimateTypeDetectionDTO::fromDetectorResult($result);
+            // 🏗️ If no high-confidence memory, Use Modular Orchestrator
+            if ($dto->confidence < 0.9) {
+                $handler = $this->orchestrator->detectHandler($content, $extension);
+                
+                if ($handler) {
+                    Log::info("[EstimateImport] Handler detected: {$handler->getSlug()}");
+                    $handlerDto = $handler->canHandle($content, $extension);
+                    
+                    if ($handlerDto->confidence > $dto->confidence) {
+                        $dto = $handlerDto;
+                    }
+                    
+                    // Store format in session
+                    $options = $session->options ?? [];
+                    $options['format_handler'] = $handler->getSlug();
+                    $session->update(['options' => $options]);
+                }
+            }
+
+            if (!$dto->detectedType) {
+                Log::warning("[EstimateImport] No specific handler or memory detected for session {$sessionId}");
+                $dto->confidence = 0.0;
+            }
  
-             // Template Detection
+             // Template Detection (Highest priority)
             if ($content instanceof \PhpOffice\PhpSpreadsheet\Spreadsheet) {
                 $description = $content->getProperties()->getDescription();
                 if (str_contains($description, 'PROHELPER_TEMPLATE')) {
                      $dto->indicators['is_template'] = true;
                      $dto->confidence = 1.0;
-                     $dto->detectedType = \App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateType::PROHELPER;
+                     $dto->detectedType = 'prohelper';
                      
-                     // Store template flag in session for detectFormat
                      $options = $session->options ?? [];
                      $options['is_template'] = true;
+                     $options['format_handler'] = 'generic'; // Template is generic but fixed mapping
                      $session->update(['options' => $options]);
                 }
             }
@@ -104,6 +162,29 @@ class EstimateImportService
         $session = ImportSession::findOrFail($sessionId);
         $fullPath = $this->fileStorage->getAbsolutePath($session);
         
+        // 🏗 Check for handler
+        $options = $session->options ?? [];
+        $handlerSlug = $options['format_handler'] ?? 'generic';
+
+        if ($handlerSlug === 'grandsmeta') {
+            Log::info("[EstimateImport] Using GrandSmeta fixed format detection");
+            $structure = [
+                'header_row' => 42, // Typical for GrandSmeta LSR 421
+                'detected_columns' => ['B' => 'code', 'C' => 'name', 'D' => 'unit', 'G' => 'quantity', 'H' => 'unit_price', 'J' => 'total_price'],
+                'raw_headers' => ['№ п/п', 'Обоснование', 'Наименование работ и затрат', 'Единица измерения', 'Кол-во', 'Цена на ед.', 'Всего'],
+                'column_mapping' => ['code' => 'B', 'name' => 'C', 'unit' => 'D', 'quantity' => 'G', 'unit_price' => 'H', 'total_price' => 'J']
+            ];
+            
+            $options['structure'] = $structure;
+            $session->update(['options' => $options]);
+            
+            return array_merge(['format' => 'grandsmeta'], $structure, [
+                 'header_candidates' => [42],
+                 'sample_rows' => $this->getRawSampleRows($fullPath, $structure),
+                 'ai_mapping_applied' => false
+            ]);
+        }
+
         try {
             $parser = $this->parserFactory->getParser($fullPath);
             
@@ -174,107 +255,110 @@ class EstimateImportService
             throw new \RuntimeException("Detection failed: " . $e->getMessage(), 0, $e);
         }
     }
-
     public function preview(string $sessionId, ?array $columnMapping = null): EstimateImportDTO
     {
         $session = ImportSession::findOrFail($sessionId);
         $fullPath = $this->fileStorage->getAbsolutePath($session);
         
-        $parser = $this->parserFactory->getParser($fullPath);
-        
-        // Update mapping in options if provided
+        // 🏗️ Handlers are now the primary way to parse
         $optionsBucket = $session->options ?? [];
-        $structure = $optionsBucket['structure'] ?? [];
+        $handlerSlug = $optionsBucket['format_handler'] ?? 'generic';
         
-        if ($columnMapping) {
-             $structure['column_mapping'] = $columnMapping;
-             $optionsBucket['structure'] = $structure;
-             $session->update(['options' => $optionsBucket]);
-        } else {
-             $columnMapping = $structure['column_mapping'] ?? [];
-        }
-
-        $parseOptions = [
-            'column_mapping' => $columnMapping, 
-            'header_row' => $structure['header_row'] ?? null
-        ];
-        
-        // Collect items from stream to build full DTO
-        $items = [];
-        $sections = [];
-        
-        // Initialize RowMapper with AI hints if available
-        if (!empty($structure['ai_section_hints'])) {
-             $this->rowMapper->setSectionHints($structure['ai_section_hints']);
-        }
-
-        // Using getStream allows us to inject mapping options which legacy parse() didn't support well externally
-        foreach ($parser->getStream($fullPath, $parseOptions) as $rowDTO) {
-            // Log raw processing start
-            // Log::debug("[ImportPreview] Processing Row #{$rowDTO->rowNumber}");
-
-            // Skip technical rows (like 1, 2, 3... guide rows)
-            if ($this->rowMapper->isTechnicalRow($rowDTO->rawData)) {
-                Log::info("[ImportPreview] Row #{$rowDTO->rowNumber} SKIPPED as Technical");
-                continue;
-            }
-
-            // Apply mapping if it's a raw stream
-            $mappedDTO = $this->rowMapper->map($rowDTO, $columnMapping);
+        try {
+            $handler = $this->orchestrator->getHandler($handlerSlug);
+            Log::info("[EstimateImport] Delegating preview to handler: {$handlerSlug}");
             
-            // Skip rows that are identified as footers (totals, summaries, etc.)
-            if ($mappedDTO->isFooter) {
-                Log::info("[ImportPreview] Row #{$rowDTO->rowNumber} SKIPPED as Footer. ItemName: '{$mappedDTO->itemName}'");
-                continue;
+            // Apply column mapping override if provided
+            if ($columnMapping) {
+                $handler->applyMapping($session, $columnMapping);
+                $optionsBucket = $session->fresh()->options; // Refresh options
             }
-             
-            // Skip rows that have no numeric value (Quantity=0 AND Price=0 AND Total=0)
-            // This filters out headers that were technically mapped but contain no data.
-            if (!$mappedDTO->isSection && 
-                ($mappedDTO->quantity === null || $mappedDTO->quantity <= 0) && 
-                ($mappedDTO->unitPrice === null || $mappedDTO->unitPrice <= 0) &&
-                ($mappedDTO->currentTotalAmount === null || $mappedDTO->currentTotalAmount <= 0)
-            ) {
-                Log::info("[ImportPreview] Row #{$rowDTO->rowNumber} SKIPPED as Empty/Invalid (No numeric data)");
-                continue;
+            
+            $extension = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
+            $content = ($extension === 'xml') ? file_get_contents($fullPath) : IOFactory::load($fullPath);
+            
+            $result = $handler->parse($session, $content);
+            $items = $result['items'] ?? [];
+            $sections = $result['sections'] ?? [];
+
+            // Calculate totals
+            $totalAmount = 0;
+            foreach ($items as $item) {
+                $q = $item['quantity'] ?? 0;
+                $p = $item['unit_price'] ?? 0;
+                $totalAmount += $item['current_total_amount'] ?? ($q * $p);
             }
 
-            if ($mappedDTO->isSection) {
-                 Log::info("[ImportPreview] Row #{$rowDTO->rowNumber} MATCHED as SECTION: '{$mappedDTO->itemName}'");
-                 $sections[] = $mappedDTO->toArray();
-            } else {
-                 Log::info("[ImportPreview] Row #{$rowDTO->rowNumber} MATCHED as ITEM: '{$mappedDTO->itemName}'");
-                 $items[] = $mappedDTO->toArray();
-            }
+            return new EstimateImportDTO(
+                 fileName: $session->file_name,
+                 fileSize: $session->file_size,
+                 fileFormat: $session->file_format,
+                 sections: $sections,
+                 items: $items,
+                 totals: [
+                     'total_amount' => $totalAmount,
+                     'items_count' => count($items),
+                 ],
+                 metadata: [
+                     'handler' => $handlerSlug,
+                     'header_row' => $optionsBucket['structure']['header_row'] ?? null,
+                     'total_rows' => count($items) + count($sections)
+                 ]
+            );
+        } catch (\Throwable $e) {
+            Log::error("[EstimateImport] Handler delegation failed: " . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
+            throw new \RuntimeException("Preview failed: " . $e->getMessage());
         }
-        
-        // Calculate real totals from items
-        $totalAmount = 0;
-        foreach ($items as $item) {
-            // If it's a DTO array, it has these keys
-            $q = $item['quantity'] ?? 0;
-            $p = $item['unit_price'] ?? 0;
-            $itemTotal = $item['current_total_amount'] ?? ($q * $p);
-            $totalAmount += $itemTotal;
-        }
+    }
 
-        $totals = [
-            'total_amount' => $totalAmount,
-            'items_count' => count($items),
-        ];
-        
-        return new EstimateImportDTO(
-             fileName: $session->file_name,
-             fileSize: $session->file_size,
-             fileFormat: $session->file_format,
-             sections: $sections,
-             items: $items,
-             totals: $totals,
-             metadata: [
-                 'header_row' => $structure['header_row'] ?? null,
-                 'total_rows' => count($items) + count($sections)
-             ]
-        );
+    /**
+     * Capture the current successful state into memory for future use.
+     */
+    public function learnFromSession(ImportSession $session): void
+    {
+        try {
+            $fullPath = $this->fileStorage->getAbsolutePath($session);
+            $extension = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
+            
+            if ($extension === 'xml') return; // XML memory not implemented yet
+
+            $content = IOFactory::load($fullPath);
+            $sheet = $content->getActiveSheet();
+            
+            $firstRow = [];
+            foreach ($sheet->getRowIterator(1, 1) as $row) {
+                foreach ($row->getCellIterator() as $cell) {
+                    $firstRow[] = $cell->getValue();
+                }
+            }
+            
+            $signature = $this->signatureGenerator->generate($firstRow);
+            $mapping = $session->options['column_mapping'] ?? ($session->options['structure']['column_mapping'] ?? []);
+            
+            if (empty($mapping)) return;
+
+            \App\Models\ImportMemory::updateOrCreate(
+                [
+                    'organization_id' => $session->organization_id,
+                    'signature' => $signature,
+                ],
+                [
+                    'user_id' => $session->user_id,
+                    'file_format' => $extension,
+                    'original_headers' => $firstRow,
+                    'column_mapping' => $mapping,
+                    'header_row' => $session->options['structure']['header_row'] ?? null,
+                    'last_used_at' => now(),
+                    'usage_count' => \Illuminate\Support\Facades\DB::raw('usage_count + 1'),
+                ]
+            );
+            
+            Log::info("[EstimateImport] Learned new structure signature: {$signature}");
+        } catch (\Throwable $e) {
+            Log::warning("[EstimateImport] Learning failed: " . $e->getMessage());
+        }
     }
     
     public function analyzeMatches(string $sessionId, int $organizationId): array

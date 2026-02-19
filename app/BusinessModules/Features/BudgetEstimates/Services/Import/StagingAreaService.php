@@ -33,35 +33,26 @@ class StagingAreaService
 
         $fullPath = app(FileStorageService::class)->getAbsolutePath($session);
 
-        $parser  = app(\App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\Factory\ParserFactory::class)->getParser($fullPath);
-        $options = [
-            'header_row'     => $structure['header_row'] ?? null,
-            'column_mapping' => $columnMapping,
-        ];
+        $extension = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
+        $orchestrator = app(ImportFormatOrchestrator::class);
+        $handler = $orchestrator->getHandler($session->options['format_handler'] ?? 'generic');
+
+        Log::info("[StagingArea] Using handler: {$handler->getSlug()}");
+
+        $content = ($extension === 'xml') ? file_get_contents($fullPath) : \PhpOffice\PhpSpreadsheet\IOFactory::load($fullPath);
+        $result = $handler->parse($session, $content);
+        
+        $rows = $result['items'] ?? [];
+        
+        // If handler already returned segments/sections, we might need to merge them 
+        // OR just rely on the fact that items might have 'is_section' flag
+        if (!empty($result['sections'])) {
+            $rows = array_merge($result['sections'], $rows);
+            // Sort by row_number if available
+            usort($rows, fn($a, $b) => ($a['row_number'] ?? 0) <=> ($b['row_number'] ?? 0));
+        }
 
         $mapper = app(ImportRowMapper::class);
-
-        if (!empty($structure['ai_section_hints'])) {
-            $mapper->setSectionHints($structure['ai_section_hints']);
-        }
-
-        if (!empty($structure['row_styles'])) {
-            $mapper->setRowStyles($structure['row_styles']);
-        }
-
-        $rows    = [];
-        $stream  = $parser->getStream($fullPath, $options);
-
-        foreach ($stream as $dto) {
-            if ($dto->isFooter) {
-                continue;
-            }
-            
-            // 🔧 ИСПРАВЛЕНИЕ: Прогоняем через маппер, чтобы заполнить поля из rawData
-            $dto = $mapper->map($dto, $columnMapping);
-            
-            $rows[] = $dto->toArray();
-        }
 
         $grouped = $this->subItemGrouper->groupItems($rows);
 

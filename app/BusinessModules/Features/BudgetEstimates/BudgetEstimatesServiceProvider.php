@@ -26,6 +26,11 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\{
     NormativeCodeService,
     NormativeMatchingService,
     ResourceMatchingService,
+    ImportFormatOrchestrator,
+};
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\{
+    Generic\GenericFormatHandler,
+    GrandSmeta\GrandSmetaHandler,
 };
 use App\Repositories\{
     EstimateRepository,
@@ -137,6 +142,19 @@ class BudgetEstimatesServiceProvider extends ServiceProvider
                 return new \App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\ExcelSimpleTableParser();
             }
         });
+
+        // 🏗️ Modular Import Orchestration
+        $this->app->singleton(ImportFormatOrchestrator::class, function ($app) {
+            $handlers = [
+                $app->make(GrandSmetaHandler::class),
+                $app->make(GenericFormatHandler::class),
+            ];
+            return new ImportFormatOrchestrator($handlers);
+        });
+
+        $this->app->singleton(GenericFormatHandler::class);
+        $this->app->singleton(GrandSmetaHandler::class);
+        $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\SignatureGenerator::class);
     }
 
     /**
