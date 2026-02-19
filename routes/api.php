@@ -173,9 +173,6 @@ Route::prefix('v1')->group(function () {
 
 // --- Admin Panel API ---
 Route::prefix('v1/admin')->name('admin.')->group(function () {
-    // Ping Test Route
-    Route::get('/ping', [\App\Http\Controllers\Api\V1\Admin\PingController::class, 'ping']);
-
     // Публичные маршруты аутентификации админки
     require __DIR__ . '/api/v1/admin/auth.php';
     
