@@ -191,7 +191,7 @@ class EstimateImportService
             
             return array_merge(['format' => 'grandsmeta'], $structure, [
                  'header_candidates' => [$headerRow],
-                 'sample_rows' => $parser->getRawSampleRows($fullPath, $structure),
+                 'sample_rows' => $parser->getRawSampleRows($fullPath, $options['structure'] ?? [], 5),
                  'ai_mapping_applied' => false
             ]);
         }

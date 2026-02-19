@@ -47,13 +47,13 @@ class GrandSmetaParser implements EstimateImportParserInterface, StreamParserInt
         return [];
     }
 
-    public function getStream(string $filePath, array $structure): \Generator
+    public function getStream(string $filePath, array $options = []): \Generator
     {
         $spreadsheet = IOFactory::load($filePath);
         $sheet = $spreadsheet->getActiveSheet();
         
-        $mapping = $structure['column_mapping'] ?? [];
-        $headerRow = $structure['header_row'] ?? 1;
+        $mapping = $options['column_mapping'] ?? [];
+        $headerRow = $options['header_row'] ?? 1;
 
         Log::info('[GrandSmetaParser] Starting parsing', [
             'header_row' => $headerRow,
@@ -80,9 +80,9 @@ class GrandSmetaParser implements EstimateImportParserInterface, StreamParserInt
         }
     }
 
-    public function getPreview(string $filePath, array $structure, int $limit = 5): array
+    public function getPreview(string $filePath, int $limit = 5, array $options = []): array
     {
-        $generator = $this->getStream($filePath, $structure);
+        $generator = $this->getStream($filePath, $options);
         $result = [];
         $count = 0;
 
@@ -95,9 +95,24 @@ class GrandSmetaParser implements EstimateImportParserInterface, StreamParserInt
         return $result;
     }
 
-    public function getRawSampleRows(string $filePath, array $structure, int $limit = 5): array
+    public function getRawSampleRows(string $filePath, array $options = [], int $limit = 5): array
     {
-        return $this->getPreview($filePath, $structure, $limit);
+        return $this->getPreview($filePath, $limit, $options);
+    }
+
+    public function parse(string $filePath): \App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportDTO|\Generator
+    {
+        return $this->getStream($filePath);
+    }
+
+    public function getSupportedExtensions(): array
+    {
+        return ['xls', 'xlsx', 'xlsm', 'xml'];
+    }
+
+    public function readContent(string $filePath, int $maxRows = 100)
+    {
+        return IOFactory::load($filePath);
     }
 
     public function getFooterData(): array
