@@ -168,18 +168,27 @@ class EstimateImportService
 
         if ($handlerSlug === 'grandsmeta') {
             Log::info("[EstimateImport] Using GrandSmeta fixed format detection");
+            
+            $content = IOFactory::load($fullPath);
+            $sheet = $content->getActiveSheet();
+            
+            $handler = new \App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\GrandSmeta\GrandSmetaHandler();
+            $detection = $handler->findHeaderAndMapping($sheet);
+            $headerRow = $detection['header_row'];
+            $mapping = $detection['mapping'];
+            
             $structure = [
-                'header_row' => 42, // Typical for GrandSmeta LSR 421
-                'detected_columns' => ['B' => 'code', 'C' => 'name', 'D' => 'unit', 'G' => 'quantity', 'H' => 'unit_price', 'J' => 'total_price'],
-                'raw_headers' => ['№ п/п', 'Обоснование', 'Наименование работ и затрат', 'Единица измерения', 'Кол-во', 'Цена на ед.', 'Всего'],
-                'column_mapping' => ['code' => 'B', 'name' => 'C', 'unit' => 'D', 'quantity' => 'G', 'unit_price' => 'H', 'total_price' => 'J']
+                'header_row' => $headerRow,
+                'detected_columns' => array_flip($mapping),
+                'raw_headers' => [], // Text headers are not strictly needed when numeric mapping is used
+                'column_mapping' => $mapping
             ];
             
             $options['structure'] = $structure;
             $session->update(['options' => $options]);
             
-            return array_merge(['format' => 'grandsmeta'], $structure, [
-                 'header_candidates' => [42],
+            return array_merge(['format' => 'excel_simple'], $structure, [
+                 'header_candidates' => [$headerRow],
                  'sample_rows' => $this->getRawSampleRows($fullPath, $structure),
                  'ai_mapping_applied' => false
             ]);
