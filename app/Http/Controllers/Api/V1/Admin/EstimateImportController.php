@@ -457,7 +457,7 @@ class EstimateImportController extends Controller
                 'trace' => $e->getTraceAsString(),
             ]);
             
-            throw $e; // Or return AdminResponse::error if we want to bypass 500
+            return AdminResponse::error('Ошибка при генерации шаблона', 500);
         }
     }
 }
