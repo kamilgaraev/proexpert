@@ -145,11 +145,11 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface, StreamParser
         $this->parseNodeRecursively($estimateNode, $sections, $items);
         
         foreach ($sections as $section) {
-             yield new EstimateImportRowDTO(...$section);
+             yield EstimateImportRowDTO::fromArray($section);
         }
         
         foreach ($items as $item) {
-             yield new EstimateImportRowDTO(...$item);
+             yield EstimateImportRowDTO::fromArray($item);
         }
     }
 

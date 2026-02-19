@@ -148,7 +148,7 @@ class RIKParser implements EstimateImportParserInterface
             // Text file parsing (legacy) doesn't support streaming well, so we parse all and yield
             $dto = $this->parseTextFile($filePath);
             foreach ($dto->items as $item) {
-                yield new EstimateImportRowDTO(...$item);
+                yield EstimateImportRowDTO::fromArray($item);
             }
         } else {
             // Delegate to Excel parser

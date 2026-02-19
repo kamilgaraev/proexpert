@@ -52,26 +52,12 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
          
          // Сначала отдаем разделы, чтобы создать структуру
          foreach ($dto->sections as $section) {
-             yield $section; // This should be DTO or array? Interface says DTO.
-             // fullParse returns EstimateImportDTO which contains arrays in sections/items?
-             // Let's check fullParse. It creates EstimateImportDTO.
-             // EstimateImportRowDTO->toArray() is used in fullParse.
-             // So items are arrays.
-             // Adapter needed if interface demands DTO.
-             // Interface: "yields standardized row arrays or DTOs" -> currently arrays are acceptable via DTO definition?
-             // Actually my interface doc said "EstimateImportRowDTO". I should stick to DTOs or arrays universally.
-             // ExcelSimpleTableParser yields DTOs.
-             // UniversalXmlParser yields ARRAYS (from $dto->sections).
-             // I should probably cast them back to DTOs or update UniversalXmlParser to store DTOs.
-             // Updating UniversalXmlParser to full DTO storage is big.
-             // I will adhere to "arrays" for now if the interface allows "DTOs or arrays".
-             // But strictly speaking, strict typing `Generator` doesn't enforce inner type.
-             // I'll yield arrays for now to match current behavior.
+             yield EstimateImportRowDTO::fromArray($section);
          }
          
          // Затем позиции
          foreach ($dto->items as $item) {
-             yield $item;
+             yield EstimateImportRowDTO::fromArray($item);
          }
     }
 
