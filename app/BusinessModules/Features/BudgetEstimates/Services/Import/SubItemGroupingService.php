@@ -62,6 +62,11 @@ class SubItemGroupingService
 
     private function isSubItem(array $row, ?int $parentLevel): bool
     {
+        $position = trim((string)($row['position_number'] ?? ''));
+        if ($position !== '' && preg_match('/^\d/', $position)) {
+            return false;
+        }
+
         $level = (int)($row['level'] ?? 0);
 
         if ($parentLevel !== null && $level > $parentLevel) {
@@ -80,7 +85,7 @@ class SubItemGroupingService
         }
 
         foreach (self::RESOURCE_CODE_PATTERNS as $pattern) {
-            if ($code !== '' && preg_match($pattern, $row['code'] ?? '')) {
+            if ($code !== '' && preg_match($pattern, $code)) {
                 return true;
             }
         }
