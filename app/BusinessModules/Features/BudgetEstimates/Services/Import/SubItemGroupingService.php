@@ -67,10 +67,15 @@ class SubItemGroupingService
             return true;
         }
 
+        $type = $row['item_type'] ?? 'work';
+        if (in_array($type, ['material', 'machinery', 'equipment', 'labor'], true)) {
+            return true;
+        }
+
         // Если у позиции есть явный номер (например "10", "15О", но НЕ "1.1"), 
-        // то это 100% самостоятельная (Main) позиция, даже если это материал.
+        // то это 100% самостоятельная (Main) позиция, только если это ТИП work.
         $position = trim((string)($row['position_number'] ?? ''));
-        if ($position !== '') {
+        if ($position !== '' && ($row['item_type'] ?? 'work') === 'work') {
             // Пропускаем дробные номера (например 1.1, 10.5), так как они часто означают подпункты
             if (!preg_match('/^\d+\.\d+$/', $position)) {
                 // Если номер состоит из цифр, или цифр с буквой (как "10\nО" или "15А")
@@ -78,11 +83,6 @@ class SubItemGroupingService
                     return false;
                 }
             }
-        }
-
-        $type = $row['item_type'] ?? 'work';
-        if (in_array($type, ['material', 'machinery', 'equipment', 'labor'], true)) {
-            return true;
         }
 
         $level = (int)($row['level'] ?? 0);
