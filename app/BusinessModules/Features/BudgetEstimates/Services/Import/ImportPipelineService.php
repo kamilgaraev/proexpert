@@ -180,6 +180,9 @@ class ImportPipelineService
                     $this->processAndInsertBatch($batchDTOs, $estimate, $stats, $session);
                     $batchDTOs = [];
                 }
+                
+                // Сбрасываем подпункты, так как начался новый раздел
+                $this->subItemState = [];
 
                 // Save Section immediately (needed for ID)
                 $section = $this->saveSection($rowDTO, $estimate->id, $sectionMap);

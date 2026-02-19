@@ -67,14 +67,11 @@ class SubItemGroupingService
             return true;
         }
 
-        // Если у позиции есть явный номер (например "10", "15О", но НЕ "1.1"), 
+        // Если у позиции есть явный номер, 
         // то это 100% самостоятельная (Main) позиция.
         $position = trim((string)($row['position_number'] ?? ''));
         if ($position !== '') {
-            // Пропускаем дробные номера (например 1.1, 10.5), так как они часто означают подпункты
-            if (!preg_match('/^\d+\.\d+$/', $position)) {
-                return false;
-            }
+            return false;
         }
 
         $type = $row['item_type'] ?? 'work';
