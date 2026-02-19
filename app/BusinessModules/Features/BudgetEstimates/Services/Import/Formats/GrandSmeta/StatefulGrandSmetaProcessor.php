@@ -200,7 +200,7 @@ class StatefulGrandSmetaProcessor
         // Сначала проверяем классическое имя (из маппинга)
         $cleanName = trim($name);
         if (!empty($cleanName)) {
-            if (preg_match($sectionPattern, $cleanName) || preg_match('/^\d+(\.\d+)*\.?\s+[А-ЯA-Z]/u', $cleanName)) {
+            if (preg_match($sectionPattern, $cleanName)) {
                 return true;
             }
         }
@@ -211,7 +211,7 @@ class StatefulGrandSmetaProcessor
         foreach ($rowData as $val) {
             $val = trim((string)$val);
             if (!empty($val)) {
-                if (preg_match($sectionPattern, $val) || preg_match('/^\d+(\.\d+)*\.?\s+[А-ЯA-Z]/u', $val)) {
+                if (preg_match($sectionPattern, $val)) {
                     return true;
                 }
             }
@@ -250,7 +250,7 @@ class StatefulGrandSmetaProcessor
                 $count = 0;
                 foreach ($data as $val) {
                     $val = trim((string)$val);
-                    if (!empty($val) && (preg_match('/^(Раздел|Смета|Объект|Глава|Этап|Комплекс|Локальный|I+|V+|X+)\b/iu', $val) || preg_match('/^\d+(\.\d+)*\.?\s+[А-ЯA-Z]/u', $val))) {
+                    if (!empty($val) && preg_match('/^(Раздел|Смета|Объект|Глава|Этап|Комплекс|Локальный|I+|V+|X+)\b/iu', $val)) {
                         $sectionFullText = $val;
                         break;
                     }
