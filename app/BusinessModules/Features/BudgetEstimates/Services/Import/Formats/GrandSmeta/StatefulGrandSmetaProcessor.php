@@ -16,6 +16,8 @@ class StatefulGrandSmetaProcessor
     private ?EstimateImportRowDTO $currentPosition = null;
     private array $items = [];
     private array $sections = [];
+    private bool $inFooter = false;
+    private array $footerData = [];
 
     /**
      * Process a single row from GrandSmeta.
@@ -26,8 +28,20 @@ class StatefulGrandSmetaProcessor
         $code = (string)($rowData[$mapping['code'] ?? ''] ?? '');
         $posNo = trim((string)($rowData[$mapping['position_number'] ?? ''] ?? ''));
         
+        // --- Footer Detection ---
+        if (str_starts_with(mb_strtolower(trim($name)), 'итоги по смете')) {
+            $this->closeCurrentPosition();
+            $this->inFooter = true;
+            return;
+        }
+
+        if ($this->inFooter) {
+            $this->processFooterRow($name, $rowData, $mapping);
+            return;
+        }
+
         // 0. Skip summary rows
-        if (str_contains(mb_strtolower($name), 'всего по') || str_contains(mb_strtolower($name), 'итого')) {
+        if (str_contains(mb_strtolower($name), 'всего по') || mb_strtolower(trim($name)) === 'итого') {
             $this->closeCurrentPosition();
             return;
         }
@@ -72,8 +86,48 @@ class StatefulGrandSmetaProcessor
         
         return [
             'items' => array_map(fn($item) => $item->toArray(), $this->items),
-            'sections' => array_map(fn($section) => $section->toArray(), $this->sections)
+            'sections' => array_map(fn($section) => $section->toArray(), $this->sections),
+            'footer' => $this->footerData
         ];
+    }
+    
+    public function reset(): void
+    {
+        $this->currentPosition = null;
+        $this->items = [];
+        $this->sections = [];
+        $this->inFooter = false;
+        $this->footerData = [];
+    }
+
+    private function processFooterRow(string $name, array $rowData, array $mapping): void
+    {
+        if (empty(trim($name))) {
+            return;
+        }
+        
+        // Extract value from the last possible column (total_price usually)
+        $val = $this->parseFloat($rowData[$mapping['total_price'] ?? ''] ?? 0);
+        
+        $cleanName = mb_strtolower(trim($name));
+        
+        // Capture specific totals as per LSR/GrandSmeta standard
+        if (str_starts_with($cleanName, 'итого прямые затраты')) {
+            $this->footerData['direct_costs'] = $val;
+        } elseif (str_starts_with($cleanName, 'оплата труда рабочих') || $cleanName === 'оплата труда') {
+            // Aggregate if there are multiple parts
+            $this->footerData['labor_cost'] = ($this->footerData['labor_cost'] ?? 0) + $val;
+        } elseif (str_starts_with($cleanName, 'материалы')) {
+            $this->footerData['materials_cost'] = ($this->footerData['materials_cost'] ?? 0) + $val;
+        } elseif (str_starts_with($cleanName, 'накладные расходы') || str_starts_with($cleanName, 'итого накладные')) {
+            $this->footerData['overhead_cost'] = $val;
+        } elseif (str_starts_with($cleanName, 'сметная прибыль') || str_starts_with($cleanName, 'итого сметная')) {
+            $this->footerData['profit_cost'] = $val;
+        } elseif (str_starts_with($cleanName, 'оборудование')) {
+            $this->footerData['equipment_cost'] = ($this->footerData['equipment_cost'] ?? 0) + $val;
+        } elseif (str_starts_with($cleanName, 'всего по смете')) {
+            $this->footerData['total_estimate_cost'] = $val;
+        }
     }
 
     // --- Helper Detection Logic ---

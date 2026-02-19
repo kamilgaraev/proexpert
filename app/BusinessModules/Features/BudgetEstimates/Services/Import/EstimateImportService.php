@@ -187,9 +187,11 @@ class EstimateImportService
             $options['structure'] = $structure;
             $session->update(['options' => $options]);
             
-            return array_merge(['format' => 'excel_simple'], $structure, [
+            $parser = app(\App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\GrandSmeta\GrandSmetaParser::class);
+            
+            return array_merge(['format' => 'grandsmeta'], $structure, [
                  'header_candidates' => [$headerRow],
-                 'sample_rows' => $this->getRawSampleRows($fullPath, $structure),
+                 'sample_rows' => $parser->getRawSampleRows($fullPath, $structure),
                  'ai_mapping_applied' => false
             ]);
         }

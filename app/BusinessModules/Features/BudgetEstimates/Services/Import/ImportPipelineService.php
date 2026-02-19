@@ -43,7 +43,13 @@ class ImportPipelineService
         ]);
 
         $filePath = $this->fileStorage->getAbsolutePath($session);
-        $parser = $this->parserFactory->getParser($filePath);
+        
+        $formatHandler = $session->options['format_handler'] ?? null;
+        if ($formatHandler === 'grandsmeta') {
+            $parser = app(\App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\GrandSmeta\GrandSmetaParser::class);
+        } else {
+            $parser = $this->parserFactory->getParser($filePath);
+        }
         
         // Prepare Parser Options
         $structure = $session->options['structure'] ?? [];
@@ -76,6 +82,20 @@ class ImportPipelineService
         try {
             $this->processStream($stream, $estimate, $stats, $session);
             
+            // Extract and save footer data if the parser supports it
+            if (method_exists($parser, 'getFooterData')) {
+                $footerData = $parser->getFooterData();
+                if (!empty($footerData)) {
+                    Log::info("[ImportPipeline] Found footer data for session {$session->id}", $footerData);
+                    // Update estimate with footer values
+                    // Currently we store it in estimate's metadata
+                    $meta = $estimate->metadata ?? [];
+                    $meta['footer'] = $footerData;
+                    $estimate->metadata = $meta; 
+                    $estimate->save();
+                }
+            }
+
             // Update Totals
             $this->updateEstimateTotals($estimate);
             
