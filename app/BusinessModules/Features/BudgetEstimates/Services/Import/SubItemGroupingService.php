@@ -71,7 +71,10 @@ class SubItemGroupingService
         // то это 100% самостоятельная (Main) позиция.
         $position = trim((string)($row['position_number'] ?? ''));
         if ($position !== '') {
-            return false;
+            // Пропускаем дробные номера (например 1.1, 10.5), так как они часто означают подпункты
+            if (!preg_match('/^\d+\.\d+$/', $position)) {
+                return false;
+            }
         }
 
         $type = $row['item_type'] ?? 'work';

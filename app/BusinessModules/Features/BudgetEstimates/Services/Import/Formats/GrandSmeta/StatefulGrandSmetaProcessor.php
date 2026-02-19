@@ -121,8 +121,13 @@ class StatefulGrandSmetaProcessor
             return false;
         }
 
-        // Numbers like "1", "2", "15А", "4О", "1.1", "15-2"
-        if (preg_match('/^[\d\.\-]+[А-ЯA-Zа-яa-z]*$/ui', $posNo)) {
+        // Exclude fractional numbers like "1.1", "70.1" which are sub-items
+        if (preg_match('/^\d+\.\d+$/', $posNo)) {
+            return false;
+        }
+
+        // Numbers like "1", "2", "15А", "4О", "15-2"
+        if (preg_match('/^[\d\-]+[А-ЯA-Zа-яa-z]*$/ui', $posNo)) {
             return true;
         }
 
