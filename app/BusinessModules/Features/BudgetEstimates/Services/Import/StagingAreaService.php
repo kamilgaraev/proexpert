@@ -56,6 +56,10 @@ class StagingAreaService
             if ($dto->isFooter) {
                 continue;
             }
+            
+            // 🔧 ИСПРАВЛЕНИЕ: Прогоняем через маппер, чтобы заполнить поля из rawData
+            $dto = $mapper->map($dto, $columnMapping);
+            
             $rows[] = $dto->toArray();
         }
 
