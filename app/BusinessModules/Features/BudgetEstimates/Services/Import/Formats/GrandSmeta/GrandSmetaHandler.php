@@ -53,8 +53,18 @@ class GrandSmetaHandler extends AbstractFormatHandler
         }
 
         $sheet = $content->getActiveSheet();
-        $mapping = $session->options['structure']['column_mapping'] ?? $this->getDefaultMapping();
-        $headerRow = $session->options['structure']['header_row'] ?? 44; // Default starting for LSR 421
+        
+        // 1. Try to find the numbering row and dynamic mapping
+        $detection = $this->findHeaderAndMapping($sheet);
+        
+        $mapping = $session->options['column_mapping'] ?? $detection['mapping'];
+        $headerRow = $session->options['structure']['header_row'] ?? $detection['header_row'];
+
+        Log::info('[GrandSmetaHandler] Using mapping', [
+            'mapping' => $mapping,
+            'header_row' => $headerRow,
+            'source' => isset($session->options['column_mapping']) ? 'session' : 'detected'
+        ]);
 
         $processor = new StatefulGrandSmetaProcessor();
 
@@ -64,7 +74,6 @@ class GrandSmetaHandler extends AbstractFormatHandler
                 $rowData[$cell->getColumn()] = $cell->getCalculatedValue();
             }
 
-            // Check if row is empty
             if (empty(array_filter($rowData))) continue;
 
             $processor->processRow($rowData, $mapping, $row->getRowIndex());
@@ -78,21 +87,57 @@ class GrandSmetaHandler extends AbstractFormatHandler
         ]);
     }
 
+    private function findHeaderAndMapping($sheet): array
+    {
+        $maxScanRows = 60;
+        $mapping = $this->getDefaultMapping();
+        $headerRow = 44; // Fallback
+
+        foreach ($sheet->getRowIterator(1, $maxScanRows) as $row) {
+            $rowData = [];
+            $foundMarkers = 0;
+            $tempMapping = [];
+            
+            foreach ($row->getCellIterator() as $cell) {
+                $val = trim((string)$cell->getValue());
+                $col = $cell->getColumn();
+                
+                if ($val === '1') { $tempMapping['position_number'] = $col; $foundMarkers++; }
+                if ($val === '2') { $tempMapping['code'] = $col; $foundMarkers++; }
+                if ($val === '3') { $tempMapping['name'] = $col; $foundMarkers++; }
+                if ($val === '4') { $tempMapping['unit'] = $col; $foundMarkers++; }
+                if ($val === '7') { $tempMapping['quantity'] = $col; $foundMarkers++; }
+                if ($val === '8') { $tempMapping['unit_price'] = $col; $foundMarkers++; }
+                if ($val === '10') { $tempMapping['total_price'] = $col; $foundMarkers++; }
+            }
+
+            // If we found at least 4 key markers (including 1, 2, 3), this is our numbering row
+            if ($foundMarkers >= 4) {
+                return [
+                    'mapping' => array_merge($this->getDefaultMapping(), $tempMapping),
+                    'header_row' => $row->getRowIndex()
+                ];
+            }
+        }
+
+        return ['mapping' => $mapping, 'header_row' => $headerRow];
+    }
+
     private function getDefaultMapping(): array
     {
         return [
+            'position_number' => 'A',
             'code' => 'B',
             'name' => 'C',
             'unit' => 'D',
             'quantity' => 'G',
-            'unit_price' => 'H', // Assuming total current price as "unit price" for prohelper if resources are merged
+            'unit_price' => 'H',
             'total_price' => 'J'
         ];
     }
 
     public function applyMapping(ImportSession $session, array $mapping): void
     {
-        // GrandSmeta usually has a fixed or very predictable mapping
         $options = $session->options ?? [];
         $options['column_mapping'] = $mapping;
         $session->update(['options' => $options]);
