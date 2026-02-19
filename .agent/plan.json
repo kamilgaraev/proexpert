@@ -1,18 +1,18 @@
 {
-    "goal": "Verify Frontend Integration of Advanced Import Features (Phase 4)",
+    "goal": "Safe Orchestration Test - Ping Feature",
     "tasks": [
         {
             "id": "1",
-            "title": "Analyze Backend API for Advanced Import Features",
-            "description": "Analyze the new services and controllers in `commit 25e65b39` to determine the exposed API endpoints. Key areas: `AutoSchedulingService`, `EstimateVersioningService`, `AnomalyDetectionService`, `ImportPipelineService`, `VoiceCommandService`. Identify request/response structures.",
+            "title": "Backend: Create Ping Endpoint",
+            "description": "Create a simple `PingController` or route in `routes/api.php` (or `admin.php`) that returns `{\"pong\": true, \"timestamp\": ...}`. This validates the backend agent's ability to modify code.",
             "type": "backend",
             "priority": "P0",
             "dependencies": []
         },
         {
             "id": "2",
-            "title": "Verify Frontend Integration in Admin Panel",
-            "description": "Check `prohelper_admin` codebase for usage of the new API endpoints identified in task 1. Verify that features like 'Auto Scheduling', 'Versioning', and 'Anomaly Detection' are properly hooked up in the UI.",
+            "title": "Frontend: Integrate Ping",
+            "description": "In `prohelper_admin`, add a temporary button (e.g., in the footer or a debug page) that calls the new Ping endpoint and logs the result to console. This validates the frontend agent's ability to read the backend's new API and use it.",
             "type": "frontend",
             "priority": "P1",
             "dependencies": [

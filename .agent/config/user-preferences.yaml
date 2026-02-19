@@ -5,7 +5,7 @@
 # CLI priority: --vendor arg > agent_cli_mapping > default_cli > cli-config.yaml's active_vendor > gemini
 
 # Response language setting (ko, en, ja, zh, ...)
-language: ko
+language: ru
 
 # Date/time format
 date_format: ISO
@@ -22,3 +22,10 @@ agent_cli_mapping:
   qa: gemini
   debug: gemini
   pm: gemini
+
+# Project paths alias
+projects:
+  backend: c:\Users\kamilgaraev\Desktop\prohelper
+  admin: c:\Users\kamilgaraev\Desktop\prohelper_admin
+  mobile: c:\Users\kamilgaraev\Desktop\prohelpers_mobile
+  landing: c:\Users\kamilgaraev\Desktop\prohelper_land
