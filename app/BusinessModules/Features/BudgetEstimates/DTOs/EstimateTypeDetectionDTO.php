@@ -8,11 +8,11 @@ namespace App\BusinessModules\Features\BudgetEstimates\DTOs;
 class EstimateTypeDetectionDTO
 {
     public function __construct(
-        public string $detectedType,        // 'grandsmeta', 'rik', 'fer', 'smartsmeta', 'custom'
-        public float $confidence,           // 0-100
-        public array $indicators,           // ['title_grandsmeta', 'columns_match', ...]
-        public array $candidates,           // Альтернативные типы с их confidence
-        public array $metadata = []         // Дополнительные метаданные
+        public string $detectedType = 'custom', // 'grandsmeta', 'rik', 'fer', 'smartsmeta', 'custom'
+        public float $confidence = 0.0,         // 0-100
+        public array $indicators = [],          // ['title_grandsmeta', 'columns_match', ...]
+        public array $candidates = [],          // Альтернативные типы с их confidence
+        public array $metadata = []             // Дополнительные метаданные
     ) {}
     
     /**
