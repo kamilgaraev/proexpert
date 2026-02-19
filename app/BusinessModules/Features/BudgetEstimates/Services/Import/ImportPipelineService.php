@@ -151,8 +151,12 @@ class ImportPipelineService
                 continue;
             }
 
-            // Apply mapping
-            $rowDTO = $this->rowMapper->map($rowDTO, $session->options['structure']['column_mapping'] ?? []);
+            // Apply mapping ONLY if not using specialized handler like GrandSmeta
+            // Specialized handlers return already mapped DTOs.
+            $handler = $session->options['format_handler'] ?? 'generic';
+            if ($handler !== 'grandsmeta') {
+                $rowDTO = $this->rowMapper->map($rowDTO, $session->options['structure']['column_mapping'] ?? []);
+            }
             
             // Skip rows that are identified as footers (totals, summaries, etc.)
             if ($rowDTO->isFooter) {
