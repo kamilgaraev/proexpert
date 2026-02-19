@@ -134,7 +134,12 @@ class StatefulGrandSmetaProcessor
 
     private function isSection(string $name): bool
     {
-        return (bool)preg_match('/(Раздел|Смета|Объект)\s+(\d+|\w+)/iu', $name);
+        $name = trim($name);
+        if (empty($name)) return false;
+
+        // "Раздел 1", "Глава 2", "1. ОБЩЕСТРОИТЕЛЬНЫЕ РАБОТЫ", "I. ПОДЗЕМНАЯ ЧАСТЬ"
+        return (bool)preg_match('/^(Раздел|Смета|Объект|Глава|Этап|Комплекс|Локальный|I+|V+|X+)\s*(\d+|\w+)?/iu', $name) || 
+               (bool)preg_match('/^\d+(\.\d+)*\.?\s+[А-ЯA-Z]/u', $name);
     }
 
     private function isResource(array $data, array $mapping): bool
@@ -167,10 +172,11 @@ class StatefulGrandSmetaProcessor
             sectionNumber: (string)($data[$mapping['position_number'] ?? ''] ?? ''),
             itemName: trim((string)($data[$mapping['name'] ?? ''] ?? '')),
             unit: (string)($data[$mapping['unit'] ?? ''] ?? ''),
-            quantity: $qty,
-            unitPrice: $price,
+            quantity: $qty > 0 ? $qty : null,
+            unitPrice: $price > 0 ? $price : null,
             code: (string)($data[$mapping['code'] ?? ''] ?? ''),
             isSection: $isSection,
+            currentTotalAmount: $total > 0 ? $total : null,
             rawData: $data
         );
     }

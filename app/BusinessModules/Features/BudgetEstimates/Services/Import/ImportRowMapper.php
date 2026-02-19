@@ -594,6 +594,10 @@ class ImportRowMapper
 
     private function getValueFromRaw(array $rawData, mixed $column): mixed
     {
+        if (is_string($column) && isset($rawData[$column])) {
+            return $rawData[$column];
+        }
+
         $index = $this->columnIndex($column);
         return $rawData[$index] ?? null;
     }
