@@ -449,6 +449,15 @@ class EstimateImportController extends Controller
 
     public function downloadTemplate(): \Symfony\Component\HttpFoundation\StreamedResponse
     {
-        return $this->importService->downloadTemplate();
+        try {
+            return $this->importService->downloadTemplate();
+        } catch (\Throwable $e) {
+            Log::error('[EstimateImport] Template download failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            
+            throw $e; // Or return AdminResponse::error if we want to bypass 500
+        }
     }
 }
