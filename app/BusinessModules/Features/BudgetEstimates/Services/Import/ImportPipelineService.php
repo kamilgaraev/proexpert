@@ -385,7 +385,7 @@ class ImportPipelineService
             'direct_costs' => round($dto->currentTotalAmount ?? ($dto->quantity ?? 0) * ($dto->unitPrice ?? 0), 2),
             'total_amount' => round($dto->currentTotalAmount ?? ($dto->quantity ?? 0) * ($dto->unitPrice ?? 0), 2),
             'normative_rate_code' => $dto->code,
-            'position_number' => (string)$dto->rowNumber,
+            'position_number' => (string)($dto->sectionNumber ?: ''),
             'item_type' => $this->mapItemType($dto->itemType),
             'is_manual' => true, 
             'created_at' => now(),
