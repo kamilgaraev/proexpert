@@ -27,6 +27,7 @@ class EstimateImportPreviewResource extends JsonResource
                         'total' => ($item['quantity'] ?? 0) * ($item['unit_price'] ?? 0),
                         'code' => $item['code'] ?? null,
                         'sub_items' => $item['sub_items'] ?? [],
+                        'is_sub_item' => $item['is_sub_item'] ?? false,
                         // AI Classification fields
                         'item_type' => $item['item_type'] ?? 'work',
                         'confidence_score' => $item['confidence_score'] ?? null,
@@ -47,6 +48,7 @@ class EstimateImportPreviewResource extends JsonResource
                     'total' => ($item->quantity ?? 0) * ($item->unitPrice ?? 0),
                     'code' => $item->code ?? null,
                     'sub_items' => $item->subItems ?? [],
+                    'is_sub_item' => $item->isSubItem ?? false,
                     // AI Classification fields
                     'item_type' => $item->itemType ?? 'work',
                     'confidence_score' => $item->confidenceScore ?? null,

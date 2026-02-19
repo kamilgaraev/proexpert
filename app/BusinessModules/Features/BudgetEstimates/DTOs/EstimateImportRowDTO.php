@@ -4,15 +4,18 @@ namespace App\BusinessModules\Features\BudgetEstimates\DTOs;
 
 class EstimateImportRowDTO
 {
+    public array $subItems = [];
+
     public function __construct(
-        public int $rowNumber,
-        public ?string $sectionNumber,
-        public string $itemName,
-        public ?string $unit,
-        public ?float $quantity,
-        public ?float $unitPrice,
-        public ?string $code,
-        public bool $isSection,
+        public int $rowNumber = 0,
+        public ?string $sectionNumber = null,
+        public string $itemName = '',
+        public ?string $unit = null,
+        public ?float $quantity = null,
+        public ?float $unitPrice = null,
+        public ?string $code = null,
+        public bool $isSection = false,
+        public bool $isSubItem = false,
         public string $itemType = 'work',
         public int $level = 0,
         public ?string $sectionPath = null,
@@ -66,6 +69,7 @@ class EstimateImportRowDTO
             'total_amount' => $this->currentTotalAmount,
             'code' => $this->code,
             'is_section' => $this->isSection,
+            'is_sub_item' => $this->isSubItem,
             'item_type' => $this->itemType,
             'level' => $this->level,
             'section_path' => $this->sectionPath,
@@ -133,6 +137,7 @@ class EstimateImportRowDTO
             unitPrice: $data['unit_price'] ?? null,
             code: $data['code'] ?? null,
             isSection: $data['is_section'] ?? false,
+            isSubItem: $data['is_sub_item'] ?? false,
             itemType: $data['item_type'] ?? 'work',
             level: $data['level'] ?? 0,
             sectionPath: $data['section_path'] ?? null,
