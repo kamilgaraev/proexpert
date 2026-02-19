@@ -108,9 +108,9 @@ class GrandSmetaHandler extends AbstractFormatHandler
                 if ($val === '2') { $tempMapping['code'] = $col; $foundMarkers++; }
                 if ($val === '3') { $tempMapping['name'] = $col; $foundMarkers++; }
                 if ($val === '4') { $tempMapping['unit'] = $col; $foundMarkers++; }
-                if ($val === '5' || $val === '7') { $tempMapping['quantity'] = $col; $foundMarkers++; }
-                if ($val === '8' || $val === '11') { $tempMapping['unit_price'] = $col; $foundMarkers++; }
-                if ($val === '10' || $val === '12' || $val === '13' || $val === '14') { $tempMapping['total_price'] = $col; $foundMarkers++; }
+                if ($val === '7') { $tempMapping['quantity'] = $col; $foundMarkers++; }
+                if ($val === '8') { $tempMapping['unit_price'] = $col; $foundMarkers++; }
+                if ($val === '10') { $tempMapping['total_price'] = $col; $foundMarkers++; }
             }
 
             // If we found at least 4 key markers (including 1, 2, 3), this is our numbering row
@@ -133,8 +133,8 @@ class GrandSmetaHandler extends AbstractFormatHandler
             'name' => 'C',
             'unit' => 'D',
             'quantity' => 'G',
-            'unit_price' => 'H',
-            'total_price' => 'J'
+            'unit_price' => 'H', // Column 8
+            'total_price' => 'J'  // Column 10
         ];
     }
 
