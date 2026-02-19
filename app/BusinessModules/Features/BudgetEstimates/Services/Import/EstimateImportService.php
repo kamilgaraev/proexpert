@@ -10,6 +10,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Detection\EstimateTypeDetector;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\StyleExtractor;
 
 /**
  * New Implementation of EstimateImportService
@@ -21,6 +22,7 @@ class EstimateImportService
         private FileStorageService $fileStorage,
         private ImportRowMapper $rowMapper,
         private AiMappingService $aiMappingService,
+        private StyleExtractor $styleExtractor,
         private ?\App\BusinessModules\Features\BudgetEstimates\Services\EstimateService $estimateService = null,
         private ?\App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\Factory\ParserFactory $parserFactory = null
     ) {}
@@ -109,10 +111,24 @@ class EstimateImportService
                 Log::info('[EstimateImportService] Applying AI mapping results');
                 $structure['column_mapping'] = $aiResponse['mapping'];
                 $structure['ai_section_hints'] = $aiResponse['section_hints'] ?? [];
-                
-                // Update session again with enriched mapping
+
                 $options['structure'] = $structure;
                 $session->update(['options' => $options]);
+            }
+
+            $extension = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
+            if (in_array($extension, ['xlsx', 'xls', 'xlsm'], true)) {
+                try {
+                    $headerRow   = $structure['header_row'] ?? 1;
+                    $rawStyles   = $this->styleExtractor->extractStyles($fullPath, max(1, $headerRow), 300);
+                    $rowStyles   = $this->styleExtractor->summarizeRowStyles($rawStyles);
+                    $structure['row_styles'] = $rowStyles;
+                    $options['structure']    = $structure;
+                    $session->update(['options' => $options]);
+                    Log::info('[EstimateImportService] Row styles extracted', ['rows' => count($rowStyles)]);
+                } catch (\Throwable $e) {
+                    Log::warning('[EstimateImportService] StyleExtractor failed (non-critical): ' . $e->getMessage());
+                }
             }
 
             return [
