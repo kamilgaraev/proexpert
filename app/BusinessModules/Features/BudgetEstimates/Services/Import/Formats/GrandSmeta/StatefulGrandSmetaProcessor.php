@@ -19,31 +19,17 @@ class StatefulGrandSmetaProcessor
     private bool $inFooter = false;
     private array $footerData = [];
 
-    /**
-     * Process a single row from GrandSmeta.
-     */
     public function processRow(array $rowData, array $mapping, int $rowNumber): void
     {
-        $name = (string)($rowData[$mapping['name'] ?? ''] ?? '');
-        $code = (string)($rowData[$mapping['code'] ?? ''] ?? '');
+        $name = trim((string)($rowData[$mapping['name'] ?? ''] ?? ''));
         $posNo = trim((string)($rowData[$mapping['position_number'] ?? ''] ?? ''));
+        $code = trim((string)($rowData[$mapping['code'] ?? ''] ?? ''));
         
-        // Fallback for Name: sections often start in the first column
-        if (empty(trim($name))) {
-            $firstCol = array_key_first($rowData);
-            $potentialName = (string)($rowData[$firstCol] ?? '');
-            if (!empty(trim($potentialName)) && $this->isSection($potentialName)) {
-                $name = $potentialName;
-            }
-        }
-
-        $nameLower = mb_strtolower(trim($name));
-
-        // --- Footer Detection ---
-        if (str_starts_with($nameLower, 'итоги по смете')) {
-            $this->closeCurrentPosition();
-            $this->inFooter = true;
-            return;
+        // Clean multi-line posNo (common in some GS forms where "2 \n O" is in one cell)
+        $posNo = trim(str_replace(["\r", "\n", "\xc2\xa0"], ' ', $posNo));
+        if (!empty($posNo)) {
+            $parts = explode(' ', $posNo);
+            $posNo = trim($parts[0]);
         }
 
         if ($this->inFooter) {
@@ -51,8 +37,7 @@ class StatefulGrandSmetaProcessor
             return;
         }
 
-        // 0. Special Handling for "Total per Position" (Всего по позиции)
-        // GrandSmeta often puts money in this row instead of the main row.
+        $nameLower = mb_strtolower($name);
         if (str_contains($nameLower, 'всего по позиции')) {
             if ($this->currentPosition) {
                 $money = $this->extractMoney($rowData, $mapping);
@@ -63,16 +48,16 @@ class StatefulGrandSmetaProcessor
             return;
         }
 
-        // 1. Skip other summary rows but capture their context if needed
-        if (str_contains($nameLower, 'всего по') || $nameLower === 'итого') {
+        if ($this->isFooterMarker($name)) {
+            $this->inFooter = true;
             $this->closeCurrentPosition();
             return;
         }
 
         // 2. Identify Row Type
         $isSection = $this->isSection($name);
-        $isResource = !$isSection && $this->isResource($rowData, $mapping);
-        $isPosition = !$isSection && !$isResource && $this->isPosition($posNo, $name, $code);
+        $isPosition = !$isSection && $this->isPosition($posNo, $name, $code);
+        $isResource = !$isSection && !$isPosition && $this->isResource($rowData, $mapping);
 
         if ($isSection) {
             $this->closeCurrentPosition();
@@ -83,19 +68,66 @@ class StatefulGrandSmetaProcessor
         if ($isPosition) {
             $this->closeCurrentPosition();
             $this->currentPosition = $this->mapToDTO($rowData, $mapping, $rowNumber, false);
-            // ⭐ Add position immediately to maintain Parent -> Children order
+            // Ensure posNo is the cleaned one
+            $this->currentPosition->sectionNumber = $posNo;
             $this->items[] = $this->currentPosition;
             return;
         }
 
-        // Catch-all for anything inside a position: if we have a current position, everything else is a sub-item
-        // unless it's a section or a new position.
+        // 3. Handle Resource/SubItem
         if ($this->currentPosition && !$isSection && !$isPosition) {
             $subItemDTO = $this->mapToDTO($rowData, $mapping, $rowNumber, false);
             $subItemDTO->isSubItem = true;
             $this->items[] = $subItemDTO;
             return;
         }
+    }
+
+    private function isResource(array $data, array $mapping): bool
+    {
+        $name = mb_strtolower(trim((string)($data[$mapping['name'] ?? ''] ?? '')));
+        $unit = mb_strtolower(trim((string)($data[$mapping['unit'] ?? ''] ?? '')));
+        $code = mb_strtolower(trim((string)($data[$mapping['code'] ?? ''] ?? '')));
+        
+        if (str_contains($name, 'вспомогательные') && str_contains($name, 'ресурсы')) {
+            return true;
+        }
+
+        if (in_array($name, ['м', 'от', 'зп', 'эм', 'зт', 'от(зт)'], true)) {
+            return true;
+        }
+
+        // Specific GrandSmeta codes for materials and labor
+        if (preg_match('/^(01\.|ТСЦ|ФССЦ|ОТ|ЗП|ЗТ|ЭМ)/ui', $code)) {
+            return true;
+        }
+
+        if (empty($unit)) return false;
+
+        $resourceUnits = ['чел.-ч', 'чел-ч', 'маш.-ч', 'квт-ч', '%'];
+        foreach ($resourceUnits as $ru) {
+            if ($unit === $ru || str_starts_with($unit, $ru)) return true;
+        }
+
+        return false;
+    }
+
+    private function isPosition(string $posNo, string $name, string $code): bool
+    {
+        if (empty($posNo)) return false;
+
+        $lowerName = mb_strtolower($name);
+        if (in_array($lowerName, ['м', 'от', 'зп', 'эм', 'зт', 'от(зт)'], true)) {
+            return false;
+        }
+
+        // Numbers like "1", "2", "15А", "4О". 
+        // We already cleaned posNo in processRow to take the first part.
+        if (preg_match('/^\d+[А-ЯA-Z]?$/ui', $posNo)) {
+            return true; // Even with empty code, if it has a number in column A, it's a position
+        }
+
+        return false;
     }
 
     private function extractMoney(array $data, array $mapping): array
@@ -108,8 +140,6 @@ class StatefulGrandSmetaProcessor
 
     private function closeCurrentPosition(): void
     {
-        // Now it's just a cleanup, since the item is already in $this->items.
-        // We might want to "lock" it or just reset the pointer.
         $this->currentPosition = null;
     }
 
@@ -139,16 +169,12 @@ class StatefulGrandSmetaProcessor
             return;
         }
         
-        // Extract value from the last possible column (total_price usually)
         $val = $this->parseFloat($rowData[$mapping['total_price'] ?? ''] ?? 0);
-        
         $cleanName = mb_strtolower(trim($name));
         
-        // Capture specific totals as per LSR/GrandSmeta standard
         if (str_starts_with($cleanName, 'итого прямые затраты')) {
             $this->footerData['direct_costs'] = $val;
         } elseif (str_starts_with($cleanName, 'оплата труда рабочих') || $cleanName === 'оплата труда') {
-            // Aggregate if there are multiple parts
             $this->footerData['labor_cost'] = ($this->footerData['labor_cost'] ?? 0) + $val;
         } elseif (str_starts_with($cleanName, 'материалы')) {
             $this->footerData['materials_cost'] = ($this->footerData['materials_cost'] ?? 0) + $val;
@@ -163,81 +189,21 @@ class StatefulGrandSmetaProcessor
         }
     }
 
-    // --- Helper Detection Logic ---
-
     private function isSection(string $name): bool
     {
         $name = trim($name);
         if (empty($name)) return false;
 
-        // "Раздел 1", "Глава 2", но NOT "Объектовая станция"
-        // Use word boundaries \b to match exact words
         $sectionPattern = '/^(Раздел|Смета|Объект|Глава|Этап|Комплекс|Локальный|I+|V+|X+)\b/iu';
         
         return (bool)preg_match($sectionPattern, $name) || 
                (bool)preg_match('/^\d+(\.\d+)*\.?\s+[А-ЯA-Z]/u', $name);
     }
 
-    private function isResource(array $data, array $mapping): bool
-    {
-        $name = mb_strtolower(trim((string)($data[$mapping['name'] ?? ''] ?? '')));
-        $unit = mb_strtolower(trim((string)($data[$mapping['unit'] ?? ''] ?? '')));
-        $code = mb_strtolower(trim((string)($data[$mapping['code'] ?? ''] ?? '')));
-        
-        // "Вспомогательные материальные ресурсы" и т.д.
-        if (str_contains($name, 'вспомогательные') && str_contains($name, 'ресурсы')) {
-            return true;
-        }
-
-        // GrandSmeta markers like "М", "ОТ", "ЗП"...
-        if (in_array($name, ['м', 'от', 'зп', 'эм', 'зт', 'от(зт)'], true)) {
-            return true;
-        }
-
-        // Codes starting with specific resource markers
-        if (preg_match('/^(01\.|С|ТСЦ|ФССЦ|ОТ|ЗП)/u', $code)) {
-            return true;
-        }
-
-        if (empty($unit)) return false;
-
-        // Specific resource-only units. We exclude 'шт', 'м', 'м3' because positions use them too.
-        $resourceUnits = ['чел.-ч', 'чел-ч', 'маш.-ч', 'квт-ч', '%'];
-        
-        foreach ($resourceUnits as $ru) {
-            if ($unit === $ru || str_starts_with($unit, $ru)) return true;
-        }
-
-        return false;
-    }
-
-    private function isPosition(string $posNo, string $name, string $code): bool
-    {
-        $posNo = trim($posNo);
-        if (empty($posNo)) return false;
-
-        // If it looks like a resource marker, it's NOT a new position
-        $lowerName = mb_strtolower($name);
-        if (in_array($lowerName, ['м', 'от', 'зп', 'эм', 'зт', 'от(зт)'], true)) {
-            return false;
-        }
-
-        // Позиции в ГрандСмете (ЛСР 421) обычно:
-        // 1. Просто число ("1", "2")
-        // 2. Число с буквой ("2О", "15А", "4О")
-        if (preg_match('/^\d+[А-ЯA-Z]?$/ui', $posNo)) {
-            // Если есть код, это позиция. Если кода нет, это может быть заголовок.
-            return !empty(trim($code));
-        }
-
-        return false;
-    }
-
     private function isFooterMarker(string $name): bool
     {
         $nameLower = mb_strtolower(trim($name));
         
-        // "Всего по позиции" is NOT a global footer marker
         if (str_contains($nameLower, 'всего по позиции')) {
             return false;
         }
