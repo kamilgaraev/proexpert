@@ -88,10 +88,30 @@ class ImportPipelineService
                 $footerData = $parser->getFooterData();
                 if (!empty($footerData)) {
                     Log::info("[ImportPipeline] Found footer data for session {$session->id}", $footerData);
+                    
                     // Update estimate with footer values
-                    // Currently we store it in estimate's metadata
                     $meta = $estimate->metadata ?? [];
                     $meta['footer'] = $footerData;
+                    
+                    // Set global markup rates if they are not already set
+                    if (($estimate->overhead_rate ?? 0) <= 0 || ($estimate->profit_rate ?? 0) <= 0) {
+                        $directCosts = (float)($footerData['direct_costs'] ?? 0);
+                        $laborCost = (float)($footerData['labor_cost'] ?? 0); // ФОТ
+                        $overhead = (float)($footerData['overhead_cost'] ?? 0);
+                        $profit = (float)($footerData['profit_cost'] ?? 0);
+                        
+                        $baseForRate = $laborCost > 0 ? $laborCost : ($directCosts > 0 ? $directCosts : 0);
+                        
+                        if ($baseForRate > 0) {
+                            if ($overhead > 0) {
+                                $estimate->overhead_rate = round(($overhead / $baseForRate) * 100, 2);
+                            }
+                            if ($profit > 0) {
+                                $estimate->profit_rate = round(($profit / $baseForRate) * 100, 2);
+                            }
+                        }
+                    }
+                    
                     $estimate->metadata = $meta; 
                     $estimate->save();
                 }
@@ -152,12 +172,8 @@ class ImportPipelineService
                 continue;
             }
 
-            // Apply mapping ONLY if not using specialized handler like GrandSmeta
-            // Specialized handlers return already mapped DTOs.
-            $handler = $session->options['format_handler'] ?? 'generic';
-            if ($handler !== 'grandsmeta') {
-                $rowDTO = $this->rowMapper->map($rowDTO, $session->options['structure']['column_mapping'] ?? []);
-            }
+            // Apply mapping (Smart parsing for indices, attributes from name, etc.)
+            $rowDTO = $this->rowMapper->map($rowDTO, $session->options['structure']['column_mapping'] ?? []);
             
             // Skip rows that are identified as footers (totals, summaries, etc.)
             if ($rowDTO->isFooter) {
