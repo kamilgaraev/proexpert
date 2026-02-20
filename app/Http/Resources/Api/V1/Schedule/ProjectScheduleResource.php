@@ -110,6 +110,11 @@ class ProjectScheduleResource extends JsonResource
                         // Связь со сметой
                         'estimate_item_id' => $task->estimate_item_id,
                         'estimate_section_id' => $task->estimate_section_id,
+                        
+                        // Стоимость и объемы
+                        'estimated_cost' => (float) ($task->estimated_cost ?? 0),
+                        'quantity' => (float) ($task->quantity ?? 0),
+                        'measurement_unit_id' => $task->measurement_unit_id,
                     ];
                 })
             ),

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\ScheduleTask;
 use App\Models\ProjectSchedule;
 use App\Http\Requests\Api\V1\Schedule\UpdateScheduleTaskRequest;
+use App\Http\Resources\Api\V1\Schedule\ScheduleTaskResource;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -50,7 +51,7 @@ class ScheduleTaskController extends Controller
                 $scheduleModel->recalculateProgress();
             }
 
-            return AdminResponse::success($taskModel->fresh(), 'Задача успешно обновлена');
+            return AdminResponse::success(new ScheduleTaskResource($taskModel->fresh()), 'Задача успешно обновлена');
         } catch (\Exception $e) {
             Log::error('schedule.task.update.error', [
                 'project_id' => $project,
@@ -136,7 +137,7 @@ class ScheduleTaskController extends Controller
                 return AdminResponse::error('Задача не найдена', Response::HTTP_NOT_FOUND);
             }
 
-            return AdminResponse::success($taskModel);
+            return AdminResponse::success(new ScheduleTaskResource($taskModel));
         } catch (\Exception $e) {
             Log::error('schedule.task.show.error', [
                 'project_id' => $project,

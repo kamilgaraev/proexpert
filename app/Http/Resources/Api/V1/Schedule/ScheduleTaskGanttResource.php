@@ -80,6 +80,11 @@ class ScheduleTaskGanttResource extends JsonResource
             'is_critical' => $this->is_critical ?? false,
             'is_overdue' => $this->is_overdue ?? false,
             
+            // Стоимость и объемы
+            'estimated_cost' => (float) ($this->estimated_cost ?? 0),
+            'quantity' => (float) ($this->quantity ?? 0),
+            'measurement_unit_id' => $this->measurement_unit_id,
+            
             // Для визуализации в Gantt
             'gantt_bar' => [
                 // Плановый период (серая/фиолетовая полоса)
@@ -125,6 +130,11 @@ class ScheduleTaskGanttResource extends JsonResource
             'assigned_user' => $this->when($this->relationLoaded('assignedUser'), [
                 'id' => $this->assignedUser?->id,
                 'name' => $this->assignedUser?->name,
+            ]),
+            'measurement_unit' => $this->when($this->relationLoaded('measurementUnit'), [
+                'id' => $this->measurementUnit?->id,
+                'name' => $this->measurementUnit?->name,
+                'short_name' => $this->measurementUnit?->short_name,
             ]),
             'priority' => $this->priority->value ?? $this->priority,
             

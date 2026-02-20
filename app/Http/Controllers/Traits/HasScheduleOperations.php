@@ -11,6 +11,7 @@ use App\Http\Requests\Api\V1\Schedule\CreateTaskDependencyRequest;
 use App\Http\Requests\Api\V1\Schedule\UpdateTaskDependencyRequest;
 use App\Http\Resources\Api\V1\Schedule\ProjectScheduleResource;
 use App\Http\Resources\Api\V1\Schedule\ProjectScheduleCollection;
+use App\Http\Resources\Api\V1\Schedule\ScheduleTaskResource;
 use App\Models\ScheduleTask;
 use App\Models\TaskDependency;
 use App\Exceptions\Schedule\ScheduleNotFoundException;
@@ -255,7 +256,7 @@ trait HasScheduleOperations
                 'task_id' => $task->id,
             ]);
 
-            return AdminResponse::success($task, 'Задача успешно создана', 201);
+            return AdminResponse::success(new ScheduleTaskResource($task), 'Задача успешно создана', 201);
         } catch (ScheduleValidationException $e) {
             Log::warning('[ScheduleTask] Ошибка валидации задачи', [
                 'schedule_id' => $scheduleId,
