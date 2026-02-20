@@ -19,23 +19,41 @@ class EstimateCalculationService
 
     public function calculateItemTotal(EstimateItem $item, Estimate $estimate): float
     {
-        // Для ручных позиций используем current_total_amount (из XML) как прямые затраты
-        // Это гарантирует точность данных из исходной сметы
-        if ($item->is_manual && $item->current_total_amount !== null && $item->current_total_amount > 0) {
-            $directCosts = $item->current_total_amount;
-        } else {
-            $directCosts = $item->quantity * $item->unit_price;
+        // 1. Считаем фактические прямые затраты из дочерних ресурсов (для расценок)
+        $resourcesSum = 0;
+        if ($item->item_type === 'work' || $item->item_type === 'material') {
+             $resourcesSum = EstimateItem::where('parent_work_id', $item->id)
+                 ->where('is_not_accounted', false)
+                 ->sum('total_amount');
         }
-        
-        if ($item->is_manual) {
+
+        // 2. Для ручных позиций из свернутой сметы (GrandSmeta) current_total_amount - это "Итого", а не ПЗ
+        if ($item->is_manual && $item->current_total_amount !== null && $item->current_total_amount > 0) {
+            $totalAmount = $item->current_total_amount;
+            
+            // Если есть ресурсы, прямые затраты = стоимости ресурсов. Иначе берем из базы или считаем Q*P
+            $directCosts = $resourcesSum > 0 ? $resourcesSum : ($item->quantity * $item->unit_price);
+            
+            // Вся оставшаяся сумма (Total - ПЗ) - это Накладные и Прибыль
+            $remainingForOverheadAndProfit = max(0, $totalAmount - $directCosts);
+            
+            // Если мы спарсили НР и СП явно из файла (например, в BaseItemStrategy), используем их
             $overheadAmount = $item->overhead_amount ?? 0;
             $profitAmount = $item->profit_amount ?? 0;
+            
+            // Если в файле НР/СП не было или они нули, но остаток есть, делим его пропорционально 66/34 (стандартно НР больше СП)
+            if ($remainingForOverheadAndProfit > 0 && ($overheadAmount + $profitAmount) == 0) {
+                 $overheadAmount = $remainingForOverheadAndProfit * 0.66;
+                 $profitAmount = $remainingForOverheadAndProfit * 0.34;
+            }
+            
         } else {
+            // Стандартный расчет (снизу вверх)
+            $directCosts = $resourcesSum > 0 ? $resourcesSum : ($item->quantity * $item->unit_price);
             $overheadAmount = $directCosts * ($estimate->overhead_rate / 100);
             $profitAmount = $directCosts * ($estimate->profit_rate / 100);
+            $totalAmount = $directCosts + $overheadAmount + $profitAmount;
         }
-        
-        $totalAmount = $directCosts + $overheadAmount + $profitAmount;
         
         $item->update([
             'direct_costs' => round($directCosts, 2),
