@@ -8,6 +8,7 @@ use App\Http\Requests\Api\V1\Schedule\CreateProjectScheduleRequest;
 use App\Http\Requests\Api\V1\Schedule\UpdateProjectScheduleRequest;
 use App\Http\Requests\Api\V1\Schedule\CreateScheduleTaskRequest;
 use App\Http\Requests\Api\V1\Schedule\CreateTaskDependencyRequest;
+use App\Http\Requests\Api\V1\Schedule\UpdateTaskDependencyRequest;
 use App\Http\Resources\Api\V1\Schedule\ProjectScheduleResource;
 use App\Http\Resources\Api\V1\Schedule\ProjectScheduleCollection;
 use App\Models\ScheduleTask;
@@ -19,6 +20,7 @@ use App\Http\Responses\AdminResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 
 trait HasScheduleOperations
 {
