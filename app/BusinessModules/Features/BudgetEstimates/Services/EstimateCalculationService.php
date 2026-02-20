@@ -154,7 +154,7 @@ class EstimateCalculationService
             }
         } else {
             // Стандартный расчет снизу вверх
-            $isEquipment = $item->isEquipment() || ($item->unit_price > 50000) || ($this->isEquipmentName($item->name));
+            $isEquipment = $item->isEquipment() || ($item->unit_price > 50000);
             
             if ($isEquipment) {
                 $directCosts = $resourcesSum;
