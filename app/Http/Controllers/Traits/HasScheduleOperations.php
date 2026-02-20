@@ -391,6 +391,8 @@ trait HasScheduleOperations
         try {
             $dependency->update($data);
 
+            $schedule->update(['critical_path_calculated' => false]);
+
             $dependency->load(['predecessorTask', 'successorTask', 'createdBy']);
 
             return AdminResponse::success([
