@@ -83,6 +83,7 @@ class CreateScheduleTaskRequest extends FormRequest
             'planned_duration_days' => 'nullable|integer|min:1',
             'planned_work_hours' => 'nullable|numeric|min:0',
             'quantity' => 'nullable|numeric|min:0',
+            'measurement_unit_id' => 'nullable|integer|exists:measurement_units,id',
             'status' => 'nullable|string|in:not_started,in_progress,completed,cancelled,on_hold',
             'priority' => 'nullable|string|in:low,normal,high,critical',
             'estimated_cost' => 'nullable|numeric|min:0',
@@ -113,6 +114,7 @@ class CreateScheduleTaskRequest extends FormRequest
             'assigned_user_id.exists' => 'Указанный пользователь не найден',
             'estimated_cost.min' => 'Стоимость не может быть отрицательной',
             'planned_work_hours.min' => 'Трудозатраты не могут быть отрицательными',
+            'measurement_unit_id.exists' => 'Указанная единица измерения не найдена',
             'constraint_date.required_unless' => 'Дата ограничения обязательна при указании типа ограничения',
         ];
     }
