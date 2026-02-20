@@ -35,6 +35,8 @@ class EstimateCalculationService
         $equipmentSum = 0;
         $resourcesSum = 0;
         
+        $hasChildren = EstimateItem::where('parent_work_id', $item->id)->exists();
+
         if ($item->isWork() || $item->isMaterial()) {
              // В GrandSmeta ресурсы часто дублируются (сводная строка "М" + детализация).
              // Ищем сводные строки компонентов.
@@ -48,14 +50,14 @@ class EstimateCalculationService
                  $resourcesSum = (float) EstimateItem::where('parent_work_id', $item->id)
                      ->whereIn('name', $summaryNames)
                      ->sum('total_amount');
-             } else {
+             } else if ($hasChildren) {
                  // Если сводных строк нет, суммируем все детальные ресурсы (кроме оборудования)
                  $resourcesSum = (float) EstimateItem::where('parent_work_id', $item->id)
                      ->where('item_type', '!=', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
                      ->where('is_not_accounted', false)
                      ->get()
                      ->filter(function ($resource) {
-                         // Выделение Оборудования: если это material дороже 50 000 руб. без вложенных ресурсов
+                         // Выделение Оборудования в дочерних ресурсах
                          return !($resource->isMaterial() && $resource->unit_price > 50000);
                      })
                      ->sum('total_amount');
@@ -72,9 +74,16 @@ class EstimateCalculationService
                  })
                  ->sum('total_amount');
              
+             // Самостоятельная детекция оборудования для корневой позиции
+             // Если это материал > 50к и у него НЕТ дочерних ресурсов — это оборудование
+             if ($item->isMaterial() && $item->unit_price > 50000 && !$hasChildren) {
+                 $equipmentSum = $item->quantity * $item->unit_price;
+                 $resourcesSum = 0;
+             }
+
              // Если сама позиция помечена как equipment — считаем всё её содержимое или её саму как оборудование
              if ($item->isEquipment()) {
-                 $equipmentSum = $resourcesSum + $equipmentSum;
+                 $equipmentSum = $resourcesSum > 0 ? $resourcesSum + $equipmentSum : ($item->quantity * $item->unit_price);
                  $resourcesSum = 0;
              }
         }
@@ -83,10 +92,14 @@ class EstimateCalculationService
         if ($item->is_manual && $item->current_total_amount !== null && $item->current_total_amount > 0) {
             $totalAmount = (float)$item->current_total_amount;
             
-            // Если ресурсов нет (ручной ввод), подгоняем базу
-            $directCosts = $resourcesSum > 0 ? $resourcesSum : ($item->isEquipment() ? 0 : $item->quantity * $item->unit_price);
+            // Если ресурсов нет (ручной ввод), база — это то, что не оборудование
+            $directCosts = $resourcesSum;
+            if (!$hasChildren && $equipmentSum <= 0) {
+                 $directCosts = $item->quantity * $item->unit_price;
+            }
             
-            if ($item->isEquipment()) {
+            // Если позиция — оборудование (по типу или по цене), обнуляем ПЗ
+            if ($item->isEquipment() || ($item->isMaterial() && $item->unit_price > 50000 && !$hasChildren)) {
                 $equipmentSum = $totalAmount;
                 $directCosts = 0;
             }
@@ -104,12 +117,12 @@ class EstimateCalculationService
             }
             
             // Если ресурсов нет (ручной ввод), подгоняем ПЗ под оставшуюся итоговую сумму
-            if ($resourcesSum <= 0 && !$item->isEquipment()) {
-                 $directCosts = max(0, $totalAmount - $overheadAmount - $profitAmount - $equipmentSum);
+            if ($resourcesSum <= 0 && $equipmentSum <= 0) {
+                 $directCosts = max(0, $totalAmount - $overheadAmount - $profitAmount);
             }
         } else {
             // Стандартный расчет снизу вверх
-            $directCosts = $resourcesSum > 0 ? $resourcesSum : ($item->quantity * $item->unit_price);
+            $directCosts = $resourcesSum > 0 ? $resourcesSum : ($item->isEquipment() || ($item->isMaterial() && $item->unit_price > 50000 && !$hasChildren) ? 0 : $item->quantity * $item->unit_price);
             $overheadAmount = $directCosts * ($estimate->overhead_rate / 100);
             $profitAmount = $directCosts * ($estimate->profit_rate / 100);
             $totalAmount = $directCosts + $overheadAmount + $profitAmount + $equipmentSum;
