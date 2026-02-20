@@ -21,7 +21,7 @@ class EstimateCalculationService
     {
         // 1. Считаем фактические прямые затраты из дочерних ресурсов (для расценок)
         $resourcesSum = 0;
-        if ($item->item_type === 'work' || $item->item_type === 'material') {
+        if ($item->isWork() || $item->isMaterial()) {
              $resourcesSum = EstimateItem::where('parent_work_id', $item->id)
                  ->where('is_not_accounted', false)
                  ->sum('total_amount');
