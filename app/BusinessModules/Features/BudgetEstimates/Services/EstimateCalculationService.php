@@ -92,40 +92,68 @@ class EstimateCalculationService
         if ($item->is_manual && $item->current_total_amount !== null && $item->current_total_amount > 0) {
             $totalAmount = (float)$item->current_total_amount;
             
-            // Если ресурсов нет (ручной ввод), база — это то, что не оборудование
+            // Если ресурсы есть, они определяют ПЗ. Если нет — вся сумма идет в ПЗ (или оборудование)
             $directCosts = $resourcesSum;
-            if (!$hasChildren && $equipmentSum <= 0) {
-                 $directCosts = $item->quantity * $item->unit_price;
-            }
-            
-            // Если позиция — оборудование (по типу или по цене), обнуляем ПЗ
-            if ($item->isEquipment() || ($item->isMaterial() && $item->unit_price > 50000 && !$hasChildren)) {
-                $equipmentSum = $totalAmount;
-                $directCosts = 0;
-            }
+            $equipmentSum = 0;
 
-            // Накладные и прибыль считаем от остатка за вычетом оборудования ПЕРЕД распределением
-            $remainingForMarkup = max(0, $totalAmount - $directCosts - $equipmentSum);
-            
-            $overheadAmount = (float)($item->overhead_amount ?? 0);
-            $profitAmount = (float)($item->profit_amount ?? 0);
-            
-            // Если в файле НР/СП не было (или они крайне малы), делим остаток 66/34
-            if ($remainingForMarkup > 0 && ($overheadAmount + $profitAmount) <= 0.05) {
-                 $overheadAmount = round($remainingForMarkup * 0.66, 2);
-                 $profitAmount = round($remainingForMarkup * 0.34, 2);
-            }
-            
-            // Если ресурсов нет (ручной ввод), подгоняем ПЗ под оставшуюся итоговую сумму
-            if ($resourcesSum <= 0 && $equipmentSum <= 0) {
-                 $directCosts = max(0, $totalAmount - $overheadAmount - $profitAmount);
+            // КРИТЕРИЙ ОБОРУДОВАНИЯ:
+            // 1. Прямой тип оборудование
+            // 2. Материал дороже 50к за единицу
+            // 3. Материал/Работа с ключевым словом "Прибор", "Извещатель" и т.д.
+            $isEquipment = $item->isEquipment() || 
+                ($item->unit_price > 50000) || 
+                ($this->isEquipmentName($item->name));
+
+            if ($isEquipment) {
+                // Для оборудования: ПЗ — это только ресурсы (труд/механизмы), остальное — оборудование
+                // Накладные и прибыль считаем ТОЛЬКО от ресурсов (если они есть)
+                if ($directCosts > 0) {
+                    $overheadAmount = round($directCosts * ($estimate->overhead_rate / 100), 2);
+                    $profitAmount = round($directCosts * ($estimate->profit_rate / 100), 2);
+                } else {
+                    $overheadAmount = 0;
+                    $profitAmount = 0;
+                }
+                
+                $equipmentSum = max(0, $totalAmount - $directCosts - $overheadAmount - $profitAmount);
+            } else {
+                // Стандартная позиция (Работа/Материал)
+                if ($directCosts <= 0) {
+                    $directCosts = $totalAmount;
+                }
+                
+                // Накладные и прибыль считаем от остатка ПЕРЕД распределением
+                $remainingForMarkup = max(0, $totalAmount - $directCosts);
+                
+                $overheadAmount = (float)($item->overhead_amount ?? 0);
+                $profitAmount = (float)($item->profit_amount ?? 0);
+                
+                // Если в БД не было НР/СП или они малы, делим остаток 66/34
+                if ($remainingForMarkup > 0 && ($overheadAmount + $profitAmount) <= 0.05) {
+                     $overheadAmount = round($remainingForMarkup * 0.66, 2);
+                     $profitAmount = round($remainingForMarkup * 0.34, 2);
+                }
+                
+                // Подгоняем ПЗ, чтобы Итого сошлось
+                $directCosts = max(0, $totalAmount - $overheadAmount - $profitAmount);
             }
         } else {
             // Стандартный расчет снизу вверх
-            $directCosts = $resourcesSum > 0 ? $resourcesSum : ($item->isEquipment() || ($item->isMaterial() && $item->unit_price > 50000 && !$hasChildren) ? 0 : $item->quantity * $item->unit_price);
-            $overheadAmount = $directCosts * ($estimate->overhead_rate / 100);
-            $profitAmount = $directCosts * ($estimate->profit_rate / 100);
-            $totalAmount = $directCosts + $overheadAmount + $profitAmount + $equipmentSum;
+            $isEquipment = $item->isEquipment() || ($item->unit_price > 50000) || ($this->isEquipmentName($item->name));
+            
+            if ($isEquipment) {
+                $directCosts = $resourcesSum;
+                $overheadAmount = round($directCosts * ($estimate->overhead_rate / 100), 2);
+                $profitAmount = round($directCosts * ($estimate->profit_rate / 100), 2);
+                $equipmentSum = ($item->quantity * $item->unit_price) - $directCosts - $overheadAmount - $profitAmount;
+                if ($equipmentSum < 0) $equipmentSum = $item->quantity * $item->unit_price; // Fallback
+                $totalAmount = $directCosts + $overheadAmount + $profitAmount + $equipmentSum;
+            } else {
+                $directCosts = $resourcesSum > 0 ? $resourcesSum : $item->quantity * $item->unit_price;
+                $overheadAmount = $directCosts * ($estimate->overhead_rate / 100);
+                $profitAmount = $directCosts * ($estimate->profit_rate / 100);
+                $totalAmount = $directCosts + $overheadAmount + $profitAmount;
+            }
         }
         
         $item->update([
@@ -137,6 +165,21 @@ class EstimateCalculationService
         ]);
         
         return $totalAmount;
+    }
+
+    private function isEquipmentName(?string $name): bool
+    {
+        if (empty($name)) return false;
+        $lower = mb_strtolower($name);
+        $keywords = [
+            'извещатель', 'оповещатель', 'прибор', 'устройство', 'блок', 'модуль', 
+            'пульт', 'источник питания', 'камера', 'видеокамера', 'регистратор', 
+            'сервер', 'коммутатор', 'шкаф', 'щит', 'приемно-контрольный'
+        ];
+        foreach ($keywords as $kw) {
+            if (str_contains($lower, $kw)) return true;
+        }
+        return false;
     }
 
     public function calculateSectionTotal(EstimateSection $section): float
