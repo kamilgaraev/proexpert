@@ -296,6 +296,44 @@ class ProjectScheduleController extends Controller
     }
 
     /**
+     * Обновить зависимость между задачами
+     */
+    public function updateDependency(UpdateTaskDependencyRequest $request, int $project, int $schedule, int $dependency): JsonResponse
+    {
+        $scheduleModel = $this->scheduleRepository->findForProject($schedule, $project);
+
+        if (!$scheduleModel) {
+            throw new ScheduleNotFoundException($schedule);
+        }
+
+        $this->validateProjectSchedule($project, $scheduleModel);
+        
+        $organizationId = $this->getOrganizationId($request);
+
+        return $this->updateScheduleDependency($schedule, $dependency, $request, $organizationId, function ($scheduleId) use ($project) {
+            return $this->scheduleRepository->findForProject($scheduleId, $project);
+        });
+    }
+
+    /**
+     * Удалить зависимость между задачами
+     */
+    public function destroyDependency(Request $request, int $project, int $schedule, int $dependency): JsonResponse
+    {
+        $scheduleModel = $this->scheduleRepository->findForProject($schedule, $project);
+
+        if (!$scheduleModel) {
+            throw new ScheduleNotFoundException($schedule);
+        }
+
+        $this->validateProjectSchedule($project, $scheduleModel);
+
+        return $this->deleteScheduleDependency($schedule, $dependency, function ($scheduleId) use ($project) {
+            return $this->scheduleRepository->findForProject($scheduleId, $project);
+        });
+    }
+
+    /**
      * Получить конфликты ресурсов в расписании
      */
     public function resourceConflicts(Request $request, int $project, int $schedule): JsonResponse

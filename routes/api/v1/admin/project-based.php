@@ -152,6 +152,9 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         // Зависимости и ресурсы
         Route::get('/{schedule}/dependencies', [ProjectScheduleController::class, 'dependencies']);
         Route::post('/{schedule}/dependencies', [ProjectScheduleController::class, 'storeDependency']);
+        Route::put('/{schedule}/dependencies/{dependency}', [ProjectScheduleController::class, 'updateDependency']);
+        Route::patch('/{schedule}/dependencies/{dependency}', [ProjectScheduleController::class, 'updateDependency']);
+        Route::delete('/{schedule}/dependencies/{dependency}', [ProjectScheduleController::class, 'destroyDependency']);
         Route::get('/{schedule}/resource-conflicts', [ProjectScheduleController::class, 'resourceConflicts']);
         
         // Интеграция со сметой

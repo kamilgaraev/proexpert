@@ -82,6 +82,7 @@ class CreateScheduleTaskRequest extends FormRequest
             'planned_end_date' => 'required|date|after_or_equal:planned_start_date',
             'planned_duration_days' => 'nullable|integer|min:1',
             'planned_work_hours' => 'nullable|numeric|min:0',
+            'quantity' => 'nullable|numeric|min:0',
             'status' => 'nullable|string|in:not_started,in_progress,completed,cancelled,on_hold',
             'priority' => 'nullable|string|in:low,normal,high,critical',
             'estimated_cost' => 'nullable|numeric|min:0',

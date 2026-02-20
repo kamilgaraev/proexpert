@@ -15,6 +15,7 @@ use App\Models\TaskDependency;
 use App\Exceptions\Schedule\ScheduleNotFoundException;
 use App\Exceptions\Schedule\CircularDependencyException;
 use App\Exceptions\Schedule\ScheduleValidationException;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
@@ -252,20 +253,14 @@ trait HasScheduleOperations
                 'task_id' => $task->id,
             ]);
 
-            return response()->json([
-                'message' => 'Задача успешно создана',
-                'data' => $task
-            ], 201);
+            return AdminResponse::success($task, 'Задача успешно создана', 201);
         } catch (ScheduleValidationException $e) {
             Log::warning('[ScheduleTask] Ошибка валидации задачи', [
                 'schedule_id' => $scheduleId,
                 'errors' => $e->getErrors(),
                 'error' => $e->getMessage()
             ]);
-            return response()->json([
-                'message' => $e->getMessage(),
-                'errors' => $e->getErrors()
-            ], 422);
+            return AdminResponse::error($e->getMessage(), 422, $e->getErrors());
         } catch (\Exception $e) {
             Log::error('[ScheduleTask] ОШИБКА при создании задачи', [
                 'schedule_id' => $scheduleId,
@@ -277,10 +272,8 @@ trait HasScheduleOperations
                 'trace' => $e->getTraceAsString(),
                 'data' => $data,
             ]);
-            
-            return response()->json([
-                'message' => 'Внутренняя ошибка сервера при создании задачи'
-            ], 500);
+
+            return AdminResponse::error('Внутренняя ошибка сервера при создании задачи', 500);
         }
     }
 
@@ -318,73 +311,164 @@ trait HasScheduleOperations
 
         try {
             $dependency = TaskDependency::create($data);
-            
-            // Загружаем связанные данные для ответа
+
             $dependency->load(['predecessorTask', 'successorTask', 'createdBy']);
 
-            return response()->json([
-                'message' => 'Зависимость между задачами успешно создана',
-                'data' => [
-                    'id' => $dependency->id,
-                    'dependency_type' => $dependency->dependency_type->value,
-                    'dependency_type_label' => $dependency->dependency_type->label(),
-                    'lag_days' => $dependency->lag_days,
-                    'lag_hours' => $dependency->lag_hours,
-                    'lag_type' => $dependency->lag_type,
-                    'description' => $dependency->description,
-                    'is_hard_constraint' => $dependency->is_hard_constraint,
-                    'priority' => $dependency->priority,
-                    'is_active' => $dependency->is_active,
-                    'validation_status' => $dependency->validation_status,
-                    'created_at' => $dependency->created_at,
-                    'predecessor_task' => [
-                        'id' => $dependency->predecessorTask->id,
-                        'name' => $dependency->predecessorTask->name,
-                        'planned_start_date' => $dependency->predecessorTask->planned_start_date,
-                        'planned_end_date' => $dependency->predecessorTask->planned_end_date,
-                    ],
-                    'successor_task' => [
-                        'id' => $dependency->successorTask->id,
-                        'name' => $dependency->successorTask->name,
-                        'planned_start_date' => $dependency->successorTask->planned_start_date,
-                        'planned_end_date' => $dependency->successorTask->planned_end_date,
-                    ],
-                    'created_by' => [
-                        'id' => $dependency->createdBy->id,
-                        'name' => $dependency->createdBy->name,
-                        'email' => $dependency->createdBy->email,
-                    ]
-                ]
-            ], 201);
+            return AdminResponse::success([
+                'id' => $dependency->id,
+                'dependency_type' => $dependency->dependency_type->value,
+                'dependency_type_label' => $dependency->dependency_type->label(),
+                'lag_days' => $dependency->lag_days,
+                'lag_hours' => $dependency->lag_hours,
+                'lag_type' => $dependency->lag_type,
+                'description' => $dependency->description,
+                'is_hard_constraint' => $dependency->is_hard_constraint,
+                'priority' => $dependency->priority,
+                'is_active' => $dependency->is_active,
+                'validation_status' => $dependency->validation_status,
+                'created_at' => $dependency->created_at,
+                'predecessor_task' => [
+                    'id' => $dependency->predecessorTask->id,
+                    'name' => $dependency->predecessorTask->name,
+                    'planned_start_date' => $dependency->predecessorTask->planned_start_date,
+                    'planned_end_date' => $dependency->predecessorTask->planned_end_date,
+                ],
+                'successor_task' => [
+                    'id' => $dependency->successorTask->id,
+                    'name' => $dependency->successorTask->name,
+                    'planned_start_date' => $dependency->successorTask->planned_start_date,
+                    'planned_end_date' => $dependency->successorTask->planned_end_date,
+                ],
+                'created_by' => [
+                    'id' => $dependency->createdBy->id,
+                    'name' => $dependency->createdBy->name,
+                    'email' => $dependency->createdBy->email,
+                ],
+            ], 'Зависимость между задачами успешно создана', 201);
         } catch (CircularDependencyException $e) {
             Log::warning('Попытка создания циклической зависимости', [
                 'schedule_id' => $scheduleId,
                 'cycle_tasks' => $e->getCycleTasks(),
                 'error' => $e->getMessage()
             ]);
-            return response()->json([
-                'message' => $e->getMessage(),
-                'cycle_tasks' => $e->getCycleTasks()
-            ], 422);
+            return AdminResponse::error($e->getMessage(), 422, ['cycle_tasks' => $e->getCycleTasks()]);
         } catch (ScheduleValidationException $e) {
             Log::warning('Ошибка валидации зависимости', [
                 'schedule_id' => $scheduleId,
                 'errors' => $e->getErrors(),
                 'error' => $e->getMessage()
             ]);
-            return response()->json([
-                'message' => $e->getMessage(),
-                'errors' => $e->getErrors()
-            ], 422);
+            return AdminResponse::error($e->getMessage(), 422, $e->getErrors());
         } catch (\Exception $e) {
             Log::error('Ошибка при создании зависимости', [
                 'schedule_id' => $scheduleId,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            return response()->json([
-                'message' => 'Внутренняя ошибка сервера при создании зависимости'
-            ], 500);
+            return AdminResponse::error('Внутренняя ошибка сервера при создании зависимости', 500);
+        }
+    }
+
+    /**
+     * Обновить зависимость между задачами
+     */
+    protected function updateScheduleDependency(int $scheduleId, int $dependencyId, UpdateTaskDependencyRequest $request, int $organizationId, callable $finder): JsonResponse
+    {
+        $schedule = $this->findScheduleOrFail($scheduleId, $finder);
+
+        $dependency = TaskDependency::where('id', $dependencyId)
+            ->where('schedule_id', $schedule->id)
+            ->first();
+
+        if (!$dependency) {
+            return AdminResponse::error('Зависимость не найдена', 404);
+        }
+
+        $data = $request->validated();
+        
+        try {
+            $dependency->update($data);
+
+            $dependency->load(['predecessorTask', 'successorTask', 'createdBy']);
+
+            return AdminResponse::success([
+                'id' => $dependency->id,
+                'dependency_type' => $dependency->dependency_type->value,
+                'dependency_type_label' => $dependency->dependency_type->label(),
+                'lag_days' => $dependency->lag_days,
+                'lag_hours' => $dependency->lag_hours,
+                'lag_type' => $dependency->lag_type,
+                'description' => $dependency->description,
+                'is_hard_constraint' => $dependency->is_hard_constraint,
+                'priority' => $dependency->priority,
+                'is_active' => $dependency->is_active,
+                'validation_status' => $dependency->validation_status,
+                'created_at' => $dependency->created_at,
+                'predecessor_task' => [
+                    'id' => $dependency->predecessorTask->id ?? null,
+                    'name' => $dependency->predecessorTask->name ?? null,
+                    'planned_start_date' => $dependency->predecessorTask->planned_start_date ?? null,
+                    'planned_end_date' => $dependency->predecessorTask->planned_end_date ?? null,
+                ],
+                'successor_task' => [
+                    'id' => $dependency->successorTask->id ?? null,
+                    'name' => $dependency->successorTask->name ?? null,
+                    'planned_start_date' => $dependency->successorTask->planned_start_date ?? null,
+                    'planned_end_date' => $dependency->successorTask->planned_end_date ?? null,
+                ],
+                'created_by' => [
+                    'id' => $dependency->createdBy->id ?? null,
+                    'name' => $dependency->createdBy->name ?? null,
+                    'email' => $dependency->createdBy->email ?? null,
+                ],
+            ], 'Зависимость успешно обновлена');
+        } catch (CircularDependencyException $e) {
+            Log::warning('Попытка создания циклической зависимости при обновлении', [
+                'schedule_id' => $scheduleId,
+                'dependency_id' => $dependencyId,
+                'error' => $e->getMessage()
+            ]);
+            return AdminResponse::error($e->getMessage(), 422, ['cycle_tasks' => $e->getCycleTasks()]);
+        } catch (\Exception $e) {
+            Log::error('Ошибка при обновлении зависимости', [
+                'schedule_id' => $scheduleId,
+                'dependency_id' => $dependencyId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return AdminResponse::error('Внутренняя ошибка сервера при обновлении зависимости', 500);
+        }
+    }
+
+    /**
+     * Удалить зависимость между задачами
+     */
+    protected function deleteScheduleDependency(int $scheduleId, int $dependencyId, callable $finder): JsonResponse
+    {
+        $schedule = $this->findScheduleOrFail($scheduleId, $finder);
+
+        $dependency = TaskDependency::where('id', $dependencyId)
+            ->where('schedule_id', $schedule->id)
+            ->first();
+
+        if (!$dependency) {
+            return AdminResponse::error('Зависимость не найдена', 404);
+        }
+
+        try {
+            $dependency->delete();
+
+            $schedule->update(['critical_path_calculated' => false]);
+
+            return AdminResponse::success(null, 'Зависимость успешно удалена');
+        } catch (\Exception $e) {
+            Log::error('Ошибка при удалении зависимости', [
+                'schedule_id' => $scheduleId,
+                'dependency_id' => $dependencyId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return AdminResponse::error('Внутренняя ошибка сервера при удалении зависимости', 500);
         }
     }
 
