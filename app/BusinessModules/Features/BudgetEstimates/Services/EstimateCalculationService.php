@@ -51,30 +51,47 @@ class EstimateCalculationService
              } else {
                  // Если сводных строк нет, суммируем все детальные ресурсы (кроме оборудования)
                  $resourcesSum = (float) EstimateItem::where('parent_work_id', $item->id)
-                     ->where('item_type', '!=', \App\Enums\EstimatePositionItemType::EQUIPMENT)
+                     ->where('item_type', '!=', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
                      ->where('is_not_accounted', false)
+                     ->get()
+                     ->filter(function ($resource) {
+                         // Выделение Оборудования: если это material дороже 50 000 руб. без вложенных ресурсов
+                         return !($resource->isMaterial() && $resource->unit_price > 50000);
+                     })
                      ->sum('total_amount');
              }
 
              // Оборудование всегда считаем отдельно (оно не база для НР/СП)
              $equipmentSum = (float) EstimateItem::where('parent_work_id', $item->id)
-                 ->where('item_type', \App\Enums\EstimatePositionItemType::EQUIPMENT)
+                 ->where(function ($query) {
+                     $query->where('item_type', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
+                           ->orWhere(function ($q) {
+                               $q->where('item_type', \App\Enums\EstimatePositionItemType::MATERIAL->value)
+                                 ->where('unit_price', '>', 50000);
+                           });
+                 })
                  ->sum('total_amount');
+             
+             // Если сама позиция помечена как equipment — считаем всё её содержимое или её саму как оборудование
+             if ($item->isEquipment()) {
+                 $equipmentSum = $resourcesSum + $equipmentSum;
+                 $resourcesSum = 0;
+             }
         }
 
         // 2. Логика распределения маржи (Reverse Engineering)
         if ($item->is_manual && $item->current_total_amount !== null && $item->current_total_amount > 0) {
             $totalAmount = (float)$item->current_total_amount;
             
-            // Если ресурсов нет, падаем на Q * P
-            $directCosts = $resourcesSum > 0 ? $resourcesSum : ($item->quantity * $item->unit_price);
+            // Если ресурсов нет (ручной ввод), подгоняем базу
+            $directCosts = $resourcesSum > 0 ? $resourcesSum : ($item->isEquipment() ? 0 : $item->quantity * $item->unit_price);
             
             if ($item->isEquipment()) {
-                $directCosts = 0;
                 $equipmentSum = $totalAmount;
+                $directCosts = 0;
             }
 
-            // Накладные и прибыль считаем от остатка за вычетом оборудования
+            // Накладные и прибыль считаем от остатка за вычетом оборудования ПЕРЕД распределением
             $remainingForMarkup = max(0, $totalAmount - $directCosts - $equipmentSum);
             
             $overheadAmount = (float)($item->overhead_amount ?? 0);
@@ -82,13 +99,13 @@ class EstimateCalculationService
             
             // Если в файле НР/СП не было (или они крайне малы), делим остаток 66/34
             if ($remainingForMarkup > 0 && ($overheadAmount + $profitAmount) <= 0.05) {
-                 $overheadAmount = $remainingForMarkup * 0.66;
-                 $profitAmount = $remainingForMarkup * 0.34;
+                 $overheadAmount = round($remainingForMarkup * 0.66, 2);
+                 $profitAmount = round($remainingForMarkup * 0.34, 2);
             }
             
-            // Если ресурсов нет (ручной ввод), подгоняем ПЗ под итоговую сумму
+            // Если ресурсов нет (ручной ввод), подгоняем ПЗ под оставшуюся итоговую сумму
             if ($resourcesSum <= 0 && !$item->isEquipment()) {
-                 $directCosts = $totalAmount - $overheadAmount - $profitAmount - $equipmentSum;
+                 $directCosts = max(0, $totalAmount - $overheadAmount - $profitAmount - $equipmentSum);
             }
         } else {
             // Стандартный расчет снизу вверх
@@ -151,30 +168,41 @@ class EstimateCalculationService
         $cmrTotals = EstimateItem::where('estimate_id', $estimate->id)
             ->whereNull('parent_work_id')
             ->where('is_not_accounted', false)
-            ->where('item_type', '!=', \App\Enums\EstimatePositionItemType::EQUIPMENT)
+            ->where('item_type', '!=', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
             ->selectRaw('
                 COALESCE(SUM(direct_costs), 0) as total_direct,
                 COALESCE(SUM(overhead_amount), 0) as total_overhead,
                 COALESCE(SUM(profit_amount), 0) as total_profit
             ')
-            ->first();
+            ->get()
+            ->first(); // Используем get()->first() для надежности с Eloquent
 
         // 2. Оборудование отдельно (оно входит в ИТОГО, но обычно не в ПЗ СМР)
         $totalEquipment = (float) EstimateItem::where('estimate_id', $estimate->id)
-            ->where('item_type', \App\Enums\EstimatePositionItemType::EQUIPMENT)
+            ->whereNull('parent_work_id') // Считаем только корневые оборудование или позиции
+            ->where('item_type', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
             ->sum('total_amount');
+        
+        // Дополнительно учитываем оборудование, которое было "спрятано" внутри материалов (дороже 50к)
+        // Но так как calculateItemTotal уже обновил equipment_cost у корневых позиций, 
+        // нам лучше суммировать поле equipment_cost у всех корневых позиций.
+        
+        $totalEquipmentFromItems = (float) EstimateItem::where('estimate_id', $estimate->id)
+            ->whereNull('parent_work_id')
+            ->sum('equipment_cost');
         
         $totalDirectCosts = (float) $cmrTotals->total_direct;
         $totalOverheadCosts = (float) $cmrTotals->total_overhead;
         $totalEstimatedProfit = (float) $cmrTotals->total_profit;
         
-        $totalAmount = $totalDirectCosts + $totalOverheadCosts + $totalEstimatedProfit + $totalEquipment;
+        $totalAmount = $totalDirectCosts + $totalOverheadCosts + $totalEstimatedProfit + $totalEquipmentFromItems;
         $totalAmountWithVat = $totalAmount * (1 + $estimate->vat_rate / 100);
         
         $result = [
             'total_direct_costs' => round($totalDirectCosts, 2),
             'total_overhead_costs' => round($totalOverheadCosts, 2),
             'total_estimated_profit' => round($totalEstimatedProfit, 2),
+            'total_equipment_costs' => round($totalEquipmentFromItems, 2),
             'total_amount' => round($totalAmount, 2),
             'total_amount_with_vat' => round($totalAmountWithVat, 2),
         ];

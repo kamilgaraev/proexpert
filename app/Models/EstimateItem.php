@@ -255,27 +255,27 @@ class EstimateItem extends Model
 
     public function isWork(): bool
     {
-        return $this->item_type === EstimatePositionItemType::WORK;
+        return ($this->item_type->value ?? $this->item_type) === EstimatePositionItemType::WORK->value;
     }
 
     public function isMaterial(): bool
     {
-        return $this->item_type === EstimatePositionItemType::MATERIAL;
+        return ($this->item_type->value ?? $this->item_type) === EstimatePositionItemType::MATERIAL->value;
     }
 
     public function isEquipment(): bool
     {
-        return $this->item_type === EstimatePositionItemType::EQUIPMENT;
+        return ($this->item_type->value ?? $this->item_type) === EstimatePositionItemType::EQUIPMENT->value;
     }
 
     public function isLabor(): bool
     {
-        return $this->item_type === EstimatePositionItemType::LABOR;
+        return ($this->item_type->value ?? $this->item_type) === EstimatePositionItemType::LABOR->value;
     }
 
     public function isSummary(): bool
     {
-        return $this->item_type === EstimatePositionItemType::SUMMARY;
+        return ($this->item_type->value ?? $this->item_type) === EstimatePositionItemType::SUMMARY->value;
     }
 
     public function calculateTotal(): float
