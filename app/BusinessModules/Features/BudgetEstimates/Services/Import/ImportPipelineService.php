@@ -30,7 +30,8 @@ class ImportPipelineService
         private NormativeMatchingService $matcher,
         private SemanticMatchingService $semanticMatcher,
         private SubItemGroupingService $subItemGrouper,
-        private FormulaAwarenessService $formulaAwareness
+        private FormulaAwarenessService $formulaAwareness,
+        private \App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService $calculationService
     ) {}
 
     public function run(ImportSession $session, array $config = []): void
@@ -96,8 +97,8 @@ class ImportPipelineService
                 }
             }
 
-            // Update Totals
-            $this->updateEstimateTotals($estimate);
+            // Update Totals with proper markup distribution
+            $this->calculationService->recalculateAll($estimate);
             
             DB::commit();
             
@@ -440,62 +441,7 @@ class ImportPipelineService
         };
     }
     
-    private function updateEstimateTotals(Estimate $estimate): void
-    {
-        $totals = EstimateItem::where('estimate_id', $estimate->id)
-            ->whereNull('parent_work_id')
-            ->where('is_not_accounted', false)
-            ->selectRaw('
-                -- Current Totals: round each row before sum to match Excel behavior
-                SUM(ROUND(CAST(direct_costs AS NUMERIC), 2)) as direct_costs,
-                SUM(ROUND(CAST(overhead_amount AS NUMERIC), 2)) as overhead_amount,
-                SUM(ROUND(CAST(profit_amount AS NUMERIC), 2)) as profit_amount,
-                
-                -- Base Totals: round each product before sum
-                SUM(ROUND(CAST(base_unit_price AS NUMERIC) * CAST(quantity AS NUMERIC), 2)) as base_direct_costs,
-                SUM(ROUND(CAST(base_materials_cost AS NUMERIC) * CAST(quantity AS NUMERIC), 2)) as base_materials_cost,
-                SUM(ROUND(CAST(base_machinery_cost AS NUMERIC) * CAST(quantity AS NUMERIC), 2)) as base_machinery_cost,
-                SUM(ROUND(CAST(base_labor_cost AS NUMERIC) * CAST(quantity AS NUMERIC), 2)) as base_labor_cost,
-                SUM(ROUND(CAST(base_machinery_labor_cost AS NUMERIC) * CAST(quantity AS NUMERIC), 2)) as base_machinery_labor_cost,
-                
-                SUM(base_overhead_amount) as base_overhead_total,
-                SUM(base_profit_amount) as base_profit_total
-            ')
-            ->first();
 
-        if ($totals) {
-            $totalDirect = round((float)($totals->direct_costs ?? 0), 2);
-            $totalOverhead = round((float)($totals->overhead_amount ?? 0), 2);
-            $totalProfit = round((float)($totals->profit_amount ?? 0), 2);
-            
-            // Excel Total = Direct + OH + Profit
-            $totalWithoutVat = round($totalDirect + $totalOverhead + $totalProfit, 2);
-            
-            $vatRate = (float)($estimate->vat_rate ?? self::DEFAULT_VAT_RATE);
-            // НДС считается от уже округленной суммы без НДС
-            $totalWithVat = round(round($totalWithoutVat, 2) * (1 + ($vatRate / 100)), 2);
-
-            $estimate->update([
-                'total_amount' => $totalWithoutVat,
-                'total_direct_costs' => $totalDirect,
-                'total_overhead_costs' => $totalOverhead,
-                'total_estimated_profit' => $totalProfit,
-                'total_amount_with_vat' => $totalWithVat,
-                'vat_rate' => $vatRate,
-                
-                // Base fields
-                'total_base_direct_costs' => round((float)($totals->base_direct_costs ?? 0), 2),
-                'total_base_materials_cost' => round((float)($totals->base_materials_cost ?? 0), 2),
-                'total_base_machinery_cost' => round((float)($totals->base_machinery_cost ?? 0), 2),
-                // ФОТ (Base) = ЗП + ЗПМ
-                'total_base_labor_cost' => round((float)(($totals->base_labor_cost ?? 0) + ($totals->base_machinery_labor_cost ?? 0)), 2),
-                'total_base_overhead_amount' => round((float)($totals->base_overhead_total ?? 0), 2),
-                'total_base_profit_amount' => round((float)($totals->base_profit_total ?? 0), 2),
-            ]);
-        }
-
-        Log::info("Estimate {$estimate->id} totals updated", ['total' => $estimate->total_amount_with_vat]);
-    }
 
     private function resolveUnitId(?string $unitName, int $organizationId): ?int
     {
