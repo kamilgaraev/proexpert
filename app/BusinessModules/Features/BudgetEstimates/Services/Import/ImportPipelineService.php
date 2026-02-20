@@ -442,6 +442,8 @@ class ImportPipelineService
     private function updateEstimateTotals(Estimate $estimate): void
     {
         $totals = EstimateItem::where('estimate_id', $estimate->id)
+            ->whereNull('parent_work_id')
+            ->where('is_not_accounted', false)
             ->selectRaw('
                 -- Current Totals: round each row before sum to match Excel behavior
                 SUM(ROUND(CAST(direct_costs AS NUMERIC), 2)) as direct_costs,
