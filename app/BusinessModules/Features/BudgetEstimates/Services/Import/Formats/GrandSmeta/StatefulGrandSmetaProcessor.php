@@ -237,7 +237,7 @@ class StatefulGrandSmetaProcessor
 
     private function mapToDTO(array $data, array $mapping, int $rowNumber, bool $isSection): EstimateImportRowDTO
     {
-        $qty = $this->parseFloat($data[$mapping['quantity'] ?? ''] ?? 0);
+        $qty = $this->parseFloat($data[$mapping['quantity'] ?? ''] ?? 0, true);
         $price = $this->parseFloat($data[$mapping['unit_price'] ?? ''] ?? 0);
         $total = $this->parseFloat($data[$mapping['total_price'] ?? ''] ?? 0);
         $name = trim((string)($data[$mapping['name'] ?? ''] ?? ''));
@@ -306,18 +306,46 @@ class StatefulGrandSmetaProcessor
         );
     }
 
-    private function parseFloat(mixed $value): float
+    private function parseFloat(mixed $value, bool $isQuantity = false): float
     {
         if (is_numeric($value)) return (float)$value;
         if (empty($value)) return 0.0;
 
-        // Handle Russian formatting (space as thousands, comma as fractional)
+        // Clean up common spaces and convert comma to dot
         $clean = str_replace([' ', "\xc2\xa0"], '', (string)$value);
         $clean = str_replace(',', '.', $clean);
         
-        // Extract first numeric part (to handle things like "100 шт" if misplaced)
-        if (preg_match('/-?\d+(\.\d+)?/', $clean, $matches)) {
-            return (float)$matches[0];
+        // If it's a quantity column, we need to be careful with "100 м" or "Объем=60/100"
+        if ($isQuantity) {
+            // Check for explicit formulas like "=60/100" or just "60/100"
+            if (preg_match('/(?:^|=)(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/', $clean, $matches)) {
+                 $num = (float)$matches[1];
+                 $den = (float)$matches[2];
+                 if ($den > 0) return $num / $den;
+            }
+            
+            // If it contains text like "100 м", extracting just the first number "100"
+            // is exactly what causes the bug (it's the unit multiplier, not the actual volume).
+            // In GrandSmeta, if a cell contains text, it's usually NOT the quantity,
+            // unless it's a formula. So if we hit text, it's safer to return 0 
+            // and let the system fallback or recalculate.
+            if (preg_match('/[а-яА-Яa-zA-Z]/u', $clean) && !str_starts_with($clean, '=')) {
+                 // BUT: sometimes they write "0.5 шт". Let's try to grab the number if it's at the VERY start
+                 if (preg_match('/^-?\d+(?:\.\d+)?\b/', $clean, $matches)) {
+                      return (float)$matches[0];
+                 }
+                 return 0.0;
+            }
+            
+            // Try to evaluate simple numbers or math
+            if (preg_match('/^-?\d+(\.\d+)?$/', $clean, $matches)) {
+                return (float)$matches[0];
+            }
+        } else {
+            // For prices, just grab the first number
+            if (preg_match('/-?\d+(\.\d+)?/', $clean, $matches)) {
+                return (float)$matches[0];
+            }
         }
 
         return 0.0;
