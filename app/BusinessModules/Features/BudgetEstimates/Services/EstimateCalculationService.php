@@ -97,20 +97,16 @@ class EstimateCalculationService
             $equipmentSum = 0;
 
             // КРИТЕРИЙ ОБОРУДОВАНИЯ:
-            // 1. Прямой тип оборудование + отсутствие ресурсов
+            // 1. Прямой тип оборудование
             // 2. Материал дороже 50к за единицу + отсутствие ресурсов
-            // 3. Материал/Работа с ключевым словом "Прибор", "Извещатель" и т.д. + отсутствие ресурсов
-            $isEquipmentCandidate = $item->isEquipment() || 
-                ($item->unit_price > 50000) || 
-                ($this->isEquipmentName($item->name));
-            
-            $isEquipment = $isEquipmentCandidate && !$hasChildren;
+            $isEquipment = $item->isEquipment() || 
+                ($item->unit_price > 50000 && !$hasChildren);
 
             $overheadAmount = (float)($item->overhead_amount ?? 0);
             $profitAmount = (float)($item->profit_amount ?? 0);
 
             // Если НР/СП не были спарсены при импорте, попробуем найти их в названии сейчас
-            if (($overheadAmount + $profitAmount) <= 0) {
+            if (($overheadAmount + $profitAmount) <= 0.05) {
                 $attrs = $this->parseAttributesFromName($item->name);
                 if ($attrs['overhead'] > 0 || $attrs['profit'] > 0) {
                     $overheadAmount = $attrs['overhead'] * ($item->price_index ?? 1);
@@ -184,21 +180,6 @@ class EstimateCalculationService
         ]);
         
         return $totalAmount;
-    }
-
-    private function isEquipmentName(?string $name): bool
-    {
-        if (empty($name)) return false;
-        $lower = mb_strtolower($name);
-        $keywords = [
-            'извещатель', 'оповещатель', 'прибор', 'устройство', 'блок', 'модуль', 
-            'пульт', 'источник питания', 'камера', 'видеокамера', 'регистратор', 
-            'сервер', 'коммутатор', 'шкаф', 'щит', 'приемно-контрольный'
-        ];
-        foreach ($keywords as $kw) {
-            if (str_contains($lower, $kw)) return true;
-        }
-        return false;
     }
 
     private function parseAttributesFromName(?string $name): array
