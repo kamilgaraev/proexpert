@@ -97,12 +97,26 @@ class EstimateCalculationService
             $equipmentSum = 0;
 
             // КРИТЕРИЙ ОБОРУДОВАНИЯ:
-            // 1. Прямой тип оборудование
-            // 2. Материал дороже 50к за единицу
-            // 3. Материал/Работа с ключевым словом "Прибор", "Извещатель" и т.д.
-            $isEquipment = $item->isEquipment() || 
+            // 1. Прямой тип оборудование + отсутствие ресурсов
+            // 2. Материал дороже 50к за единицу + отсутствие ресурсов
+            // 3. Материал/Работа с ключевым словом "Прибор", "Извещатель" и т.д. + отсутствие ресурсов
+            $isEquipmentCandidate = $item->isEquipment() || 
                 ($item->unit_price > 50000) || 
                 ($this->isEquipmentName($item->name));
+            
+            $isEquipment = $isEquipmentCandidate && !$hasChildren;
+
+            $overheadAmount = (float)($item->overhead_amount ?? 0);
+            $profitAmount = (float)($item->profit_amount ?? 0);
+
+            // Если НР/СП не были спарсены при импорте, попробуем найти их в названии сейчас
+            if (($overheadAmount + $profitAmount) <= 0) {
+                $attrs = $this->parseAttributesFromName($item->name);
+                if ($attrs['overhead'] > 0 || $attrs['profit'] > 0) {
+                    $overheadAmount = $attrs['overhead'] * ($item->price_index ?? 1);
+                    $profitAmount = $attrs['profit'] * ($item->price_index ?? 1);
+                }
+            }
 
             if ($isEquipment) {
                 // Для оборудования: ПЗ — это только ресурсы (труд/механизмы), остальное — оборудование
@@ -128,10 +142,15 @@ class EstimateCalculationService
                 $overheadAmount = (float)($item->overhead_amount ?? 0);
                 $profitAmount = (float)($item->profit_amount ?? 0);
                 
-                // Если в БД не было НР/СП или они малы, делим остаток 66/34
+                // Если в БД не было НР/СП или они малы, используем глобальные ставки или делим остаток 66/34
                 if ($remainingForMarkup > 0 && ($overheadAmount + $profitAmount) <= 0.05) {
-                     $overheadAmount = round($remainingForMarkup * 0.66, 2);
-                     $profitAmount = round($remainingForMarkup * 0.34, 2);
+                     if (($estimate->overhead_rate ?? 0) > 0 || ($estimate->profit_rate ?? 0) > 0) {
+                         $overheadAmount = round($directCosts * ($estimate->overhead_rate / 100), 2);
+                         $profitAmount = round($directCosts * ($estimate->profit_rate / 100), 2);
+                     } else {
+                         $overheadAmount = round($remainingForMarkup * 0.66, 2);
+                         $profitAmount = round($remainingForMarkup * 0.34, 2);
+                     }
                 }
                 
                 // Подгоняем ПЗ, чтобы Итого сошлось
@@ -180,6 +199,21 @@ class EstimateCalculationService
             if (str_contains($lower, $kw)) return true;
         }
         return false;
+    }
+
+    private function parseAttributesFromName(?string $name): array
+    {
+        $res = ['overhead' => 0, 'profit' => 0];
+        if (empty($name)) return $res;
+
+        // Поиск конструкций типа "НР ( 123,45 руб )"
+        if (preg_match('/(?:нр|накладные).*?\(\s*([\d\s]+[.,]?\d*)\s*(?:руб|р)/ui', $name, $m)) {
+            $res['overhead'] = (float)str_replace([' ', ','], ['', '.'], $m[1]);
+        }
+        if (preg_match('/(?:сп|сметная).*?\(\s*([\d\s]+[.,]?\d*)\s*(?:руб|р)/ui', $name, $m)) {
+            $res['profit'] = (float)str_replace([' ', ','], ['', '.'], $m[1]);
+        }
+        return $res;
     }
 
     public function calculateSectionTotal(EstimateSection $section): float
