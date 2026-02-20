@@ -48,34 +48,38 @@ abstract class BaseItemStrategy implements ItemImportStrategyInterface
 
     protected function calculateCosts(EstimateImportRowDTO $row): array
     {
-        // Fallback: если unit_price = null, используем current_unit_price
-        $unitPrice = $row->unitPrice ?? $row->currentUnitPrice ?? 0;
         $quantity = $row->quantity ?? 0;
+        $unitPrice = $row->unitPrice ?? $row->currentUnitPrice ?? 0;
         
-        // ПРИОРИТЕТ: Используем currentTotalAmount как прямые затраты из XML (TotalPos)
-        // Это точное значение из сметы, а не расчетное
-        // ВАЖНО: для коммерческих позиций currentTotalAmount может быть 0 (нет TotalPos в XML),
-        // но есть unit_price из VrXXXX атрибута - в этом случае используем quantity * unitPrice
-        $directCosts = ($row->currentTotalAmount !== null && $row->currentTotalAmount > 0) 
-            ? $row->currentTotalAmount 
-            : ($quantity * $unitPrice);
+        // В GrandSmeta (свернутые форматы) currentTotalAmount (Всего по позиции) уже может включать в себя 
+        // прямые затраты + индексы + НР + СП.
+        // То есть это полноценный total_amount, а не только прямые затраты.
         
-        // Если currentTotalAmount есть и > 0, пересчитываем unit_price для консистентности
-        if ($row->currentTotalAmount !== null && $row->currentTotalAmount > 0 && $quantity > 0) {
-            $unitPrice = $row->currentTotalAmount / $quantity;
+        $totalAmount = $row->currentTotalAmount > 0 ? $row->currentTotalAmount : ($quantity * $unitPrice);
+
+        // Если нам передали только TotalAmount (и он больше 0), а цена за единицу пустая,
+        // вычисляем ее обратным счетом.
+        if ($totalAmount > 0 && $quantity > 0 && $unitPrice <= 0) {
+            $unitPrice = $totalAmount / $quantity;
         }
+
+        // Прямые затраты в идеале должны парситься из ресурсов (суммироваться потом на уровне EstimateCalculator).
+        // Но для начального сохранения в базу мы можем записать total_amount как direct_costs (грязный вариант),
+        // либо, если парсер передал overheadAmount/profitAmount, вычистить их.
+        $overhead = $row->overheadAmount ?? 0;
+        $profit = $row->profitAmount ?? 0;
         
-        // total_amount = прямые + НР + СП (если есть)
-        $totalAmount = $directCosts + ($row->overheadAmount ?? 0) + ($row->profitAmount ?? 0);
-        // Если totalAmount получился меньше прямых затрат, используем прямые
-        if ($totalAmount < $directCosts) {
-            $totalAmount = $directCosts;
+        // Если у нас есть totalAmount, но нет явного разделения, запишем все в прямые затраты для сохранения баланса.
+        // Позже EstimateCalculator сможет сделать реверс-маркап (отнять от total_amount сумму ресурсов и вычислить НР/СП).
+        $directCosts = $totalAmount - $overhead - $profit;
+        if ($directCosts < 0) {
+            $directCosts = $totalAmount; // Fallback
         }
-        
+
         return [
             'unit_price' => $unitPrice,
-            'direct_costs' => $directCosts,
-            'total_amount' => $totalAmount,
+            'direct_costs' => $directCosts, // С грязной сметой сюда попадает totalAmount (до пересчета калькулятором)
+            'total_amount' => $totalAmount, // Это наша фиксированная целевая сумма (16 668,12)
             'quantity' => $quantity
         ];
     }
