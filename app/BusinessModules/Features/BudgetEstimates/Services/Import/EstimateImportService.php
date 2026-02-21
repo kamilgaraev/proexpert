@@ -470,9 +470,17 @@ class EstimateImportService
             ];
         }
 
+        // Try to get real-time progress from Cache first (to bypass DB transactions)
+        $progress = \Illuminate\Support\Facades\Cache::get("import_session_progress_{$id}");
+        
+        // If not in cache, fallback to session stats (DB)
+        if ($progress === null) {
+            $progress = $session->stats['progress'] ?? 0;
+        }
+
         return [
             'status'      => $this->mapSessionStatusToOldStatus($session->status),
-            'progress'    => $session->stats['progress'] ?? 0,
+            'progress'    => (int)$progress,
             'message'     => $session->stats['message'] ?? null,
             'error'       => $session->error_message,
             'result'      => $session->stats['result'] ?? null,

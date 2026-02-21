@@ -12,6 +12,7 @@ use App\Models\MeasurementUnit;
 use App\Models\NormativeRate;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Classification\ItemClassificationService;
 
 class ImportPipelineService
@@ -36,6 +37,10 @@ class ImportPipelineService
 
     private function updateProgress(ImportSession $session, int $progress, string $message): void
     {
+        // 1. Update Cache for real-time tracking (bypasses DB transactions)
+        Cache::put("import_session_progress_{$session->id}", $progress, 3600);
+
+        // 2. Update Database (will be committed later)
         $fresh = $session->fresh();
         $session->update([
             'stats' => array_merge($fresh->stats ?? [], [
@@ -262,12 +267,13 @@ class ImportPipelineService
 
             $stats['processed_rows']++;
             
-            // Обновляем прогресс каждые 10 строк (сдвинуто: 50% → 88% для Excel)
+            // Обновляем прогресс каждые 10 строк
             if ($stats['processed_rows'] % 10 === 0) {
                 $totalRows = $stats['total_rows'] ?? 0;
+                // Распределяем диапазон от 10% до 88%
                 $progress = $totalRows > 0
-                    ? (int) (50 + min(38, (($stats['processed_rows'] / $totalRows) * 38)))
-                    : min(88, 50 + (int) ($stats['processed_rows'] / 5));
+                    ? (int) (10 + min(78, (($stats['processed_rows'] / $totalRows) * 78)))
+                    : min(88, 10 + (int) ($stats['processed_rows'] / 5));
 
                 $this->updateProgress(
                     $session,
