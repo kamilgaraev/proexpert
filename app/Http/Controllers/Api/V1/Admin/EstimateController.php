@@ -112,12 +112,16 @@ class EstimateController extends Controller
             }, 200, ['Content-Type' => 'application/json']);
         }
 
-        // Снапшот отсутствует — генерируем синхронно (первый запрос для этой сметы)
-        // Jobs генерирует файл и обновляет structure_cache_path
-        \App\BusinessModules\Features\BudgetEstimates\Jobs\GenerateEstimateSnapshotJob::dispatchSync($estimateModel->id);
-
-        // Перечитываем модель, чтобы получить свежий путь
-        $estimateModel->refresh();
+        // Снапшот отсутствует — запускаем генерацию синхронно
+        try {
+            \App\BusinessModules\Features\BudgetEstimates\Jobs\GenerateEstimateSnapshotJob::dispatchSync($estimateModel->id);
+            $estimateModel->refresh();
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('[EstimateController] Snapshot generation failed, falling back to metadata-only', [
+                'estimate_id' => $estimateModel->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
 
         if ($estimateModel->structure_cache_path && \Illuminate\Support\Facades\Storage::disk('local')->exists($estimateModel->structure_cache_path)) {
             $meta = (new EstimateResource($estimateModel))->resolve();
@@ -138,7 +142,6 @@ class EstimateController extends Controller
         // Финальный фолбэк — возвращаем только метаданные без дерева
         return AdminResponse::success(new EstimateResource($estimateModel));
     }
-
 
     public function update(UpdateEstimateRequest $request, $project, int $estimate): JsonResponse
     {

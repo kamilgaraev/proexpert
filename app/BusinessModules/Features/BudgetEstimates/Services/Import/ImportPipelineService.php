@@ -82,7 +82,19 @@ class ImportPipelineService
         $estimate = $this->resolveEstimate($session);
         
         // 3. Stream & Process
-        $stream = $parser->getStream($filePath, $options);
+        if ($formatHandler === 'grandsmeta') {
+            $progressCallback = function (int $current, int $total) use ($session) {
+                $pct = (int) (10 + min(78, ($current / $total) * 78));
+                $session->update(['stats' => array_merge($session->stats ?? [], [
+                    'progress' => $pct,
+                    'message' => "Processed {$current}/{$total} rows...",
+                    'processed_rows' => $current,
+                ])]);
+            };
+            $stream = $parser->getStream($filePath, $options, $progressCallback);
+        } else {
+            $stream = $parser->getStream($filePath, $options);
+        }
         
         $stats = [
             'processed_rows' => 0,
