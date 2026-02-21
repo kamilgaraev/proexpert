@@ -97,14 +97,13 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
 
             $workTypes = DB::table('work_types')->pluck('name', 'id')->toArray();
             $measurementUnits = DB::table('measurement_units')->pluck('symbol', 'id')->toArray();
-
             // 2. Сборка дерева O(N) в памяти ссылками
             $itemsById = [];
             foreach ($items as &$item) {
                 $item['resources'] = $resourcesByItemId[$item['id']] ?? [];
                 $item['totals'] = $totalsByItemId[$item['id']] ?? [];
                 $item['works'] = $worksByItemId[$item['id']] ?? [];
-                $item['childItems'] = [];
+                $item['children'] = []; // В EstimateItemResource это 'children'
                 
                 // Append simple relations
                 $item['work_type'] = isset($item['work_type_id']) && isset($workTypes[$item['work_type_id']]) 
@@ -120,9 +119,9 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
             $rootItemsWithoutSection = [];
 
             foreach ($items as &$item) {
-                if (!empty($item['parent_work_id'])) {
-                    if (isset($itemsById[$item['parent_work_id']])) {
-                        $itemsById[$item['parent_work_id']]['childItems'][] =& $item;
+                if (!empty($item['parent_item_id'])) {
+                    if (isset($itemsById[$item['parent_item_id']])) {
+                        $itemsById[$item['parent_item_id']]['children'][] =& $item;
                     }
                 } else {
                     if (!empty($item['estimate_section_id'])) {
