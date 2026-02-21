@@ -34,13 +34,24 @@ class ImportPipelineService
         private \App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService $calculationService
     ) {}
 
+    private function updateProgress(ImportSession $session, int $progress, string $message): void
+    {
+        $fresh = $session->fresh();
+        $session->update([
+            'stats' => array_merge($fresh->stats ?? [], [
+                'progress' => $progress,
+                'message'  => $message,
+            ])
+        ]);
+    }
+
     public function run(ImportSession $session, array $config = []): void
     {
         Log::info("[ImportPipeline] Started for session {$session->id}");
         
         $session->update([
             'status' => 'parsing', 
-            'stats' => array_merge($session->stats ?? [], ['progress' => 5, 'message' => 'Starting import pipeline...'])
+            'stats' => array_merge($session->fresh()->stats ?? [], ['progress' => 5, 'message' => 'Starting import pipeline...'])
         ]);
 
         $filePath = $this->fileStorage->getAbsolutePath($session);
@@ -71,10 +82,10 @@ class ImportPipelineService
         $totalRows = method_exists($parser, 'getTotalRows') ? $parser->getTotalRows($filePath, $options) : 0;
         
         $session->update([
-            'stats' => array_merge($session->stats ?? [], [
-                'progress' => 10,
+            'stats' => array_merge($session->fresh()->stats ?? [], [
+                'progress'   => 10,
                 'total_rows' => $totalRows,
-                'message' => $totalRows > 0 ? "File has {$totalRows} rows. Starting processing..." : 'Parsing file...'
+                'message'    => $totalRows > 0 ? "File has {$totalRows} rows. Starting processing..." : 'Parsing file...'
             ])
         ]);
 
@@ -84,12 +95,8 @@ class ImportPipelineService
         // 3. Stream & Process
         if ($formatHandler === 'grandsmeta') {
             $progressCallback = function (int $current, int $total) use ($session) {
-                $pct = (int) (10 + min(78, ($current / $total) * 78));
-                $session->update(['stats' => array_merge($session->stats ?? [], [
-                    'progress' => $pct,
-                    'message' => "Processed {$current}/{$total} rows...",
-                    'processed_rows' => $current,
-                ])]);
+                $pct = (int) (10 + min(78, ($current / max(1, $total)) * 78));
+                $this->updateProgress($session, $pct, "Processed {$current}/{$total} rows...");
             };
             $stream = $parser->getStream($filePath, $options, $progressCallback);
         } else {
@@ -142,7 +149,7 @@ class ImportPipelineService
             }
 
             // Update Totals with proper markup distribution
-            $session->update(['stats' => array_merge($session->stats ?? [], ['progress' => 90, 'message' => 'Recalculating totals...'])]);
+            $this->updateProgress($session, 90, 'Recalculating totals...');
             $this->calculationService->recalculateAll($estimate);
             
             DB::commit();
@@ -151,11 +158,11 @@ class ImportPipelineService
             
             $session->update([
                 'status' => 'completed',
-                'stats' => array_merge($session->stats ?? [], [
-                    'progress' => 100, 
-                    'result' => $stats, 
+                'stats'  => array_merge($session->fresh()->stats ?? [], [
+                    'progress'    => 100,
+                    'result'      => $stats,
                     'estimate_id' => $estimate->id,
-                    'message' => 'Import successfully completed.'
+                    'message'     => 'Import successfully completed.',
                 ])
             ]);
 
@@ -250,18 +257,19 @@ class ImportPipelineService
 
             $stats['processed_rows']++;
             
-            // Обновляем прогресс каждые 100 строк (10% → 88%)
-            if ($stats['processed_rows'] % 100 === 0) {
+            // Обновляем прогресс каждые 10 строк (10% → 88%)
+            if ($stats['processed_rows'] % 10 === 0) {
                 $totalRows = $stats['total_rows'] ?? 0;
                 $progress = $totalRows > 0
                     ? (int) (10 + min(78, (($stats['processed_rows'] / $totalRows) * 78)))
-                    : min(88, 10 + (int) ($stats['processed_rows'] / 100));
+                    : min(88, 10 + (int) ($stats['processed_rows'] / 5));
 
-                $session->update(['stats' => array_merge($session->stats ?? [], [
-                    'progress' => $progress,
-                    'message' => "Processed {$stats['processed_rows']}" . ($totalRows > 0 ? "/{$totalRows}" : '') . " rows...",
-                    'processed_rows' => $stats['processed_rows']
-                ])]);
+                $this->updateProgress(
+                    $session,
+                    $progress,
+                    "Processed {$stats['processed_rows']}" . ($totalRows > 0 ? "/{$totalRows}" : '') . ' rows...'
+                );
+                $session->stats = array_merge($session->fresh()->stats ?? [], ['processed_rows' => $stats['processed_rows']]);
             }
         }
         

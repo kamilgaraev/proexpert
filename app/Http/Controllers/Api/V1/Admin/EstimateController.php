@@ -93,7 +93,7 @@ class EstimateController extends Controller
         
         $this->authorize('view', $estimateModel);
 
-        $estimateModel->load(['project', 'contract', 'approvedBy']);
+        $estimateModel->load(['project', 'contract', 'approvedBy', 'sections.items.measurementUnit']);
 
         // Если снапшот есть - стримим его с огромной экономией RAM
         if ($estimateModel->structure_cache_path && \Illuminate\Support\Facades\Storage::disk('local')->exists($estimateModel->structure_cache_path)) {
