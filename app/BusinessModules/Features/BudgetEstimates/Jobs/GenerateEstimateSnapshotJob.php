@@ -96,7 +96,9 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
             }
 
             $workTypes = DB::table('work_types')->pluck('name', 'id')->toArray();
-            $measurementUnits = DB::table('measurement_units')->pluck('symbol', 'id')->toArray();
+            
+            $units = DB::table('measurement_units')->get(['id', 'short_name', 'name'])->keyBy('id');
+
             // 2. Сборка дерева O(N) в памяти ссылками
             $itemsById = [];
             foreach ($items as &$item) {
@@ -108,8 +110,13 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
                 // Append simple relations
                 $item['work_type'] = isset($item['work_type_id']) && isset($workTypes[$item['work_type_id']]) 
                     ? ['id' => $item['work_type_id'], 'name' => $workTypes[$item['work_type_id']]] : null;
-                $item['measurement_unit'] = isset($item['measurement_unit_id']) && isset($measurementUnits[$item['measurement_unit_id']])
-                    ? ['id' => $item['measurement_unit_id'], 'symbol' => $measurementUnits[$item['measurement_unit_id']]] : null;
+                    
+                $unit = isset($item['measurement_unit_id']) ? $units->get($item['measurement_unit_id']) : null;
+                $item['measurement_unit'] = $unit ? [
+                    'id' => $unit->id, 
+                    'short_name' => $unit->short_name,
+                    'name' => $unit->name
+                ] : null;
 
                 $itemsById[$item['id']] =& $item;
             }
