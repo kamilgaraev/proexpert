@@ -1,0 +1,723 @@
+{
+    "uid": "loki-logs-main",
+    "title": "🪵 Laravel Logs (Loki)",
+    "tags": [
+        "loki",
+        "logs",
+        "laravel",
+        "errors"
+    ],
+    "timezone": "browser",
+    "refresh": "30s",
+    "time": {
+        "from": "now-3h",
+        "to": "now"
+    },
+    "schemaVersion": 38,
+    "version": 1,
+    "templating": {
+        "list": [
+            {
+                "name": "job",
+                "label": "Job",
+                "type": "custom",
+                "current": {
+                    "value": "laravel",
+                    "text": "laravel"
+                },
+                "options": [
+                    {
+                        "value": "laravel",
+                        "text": "laravel",
+                        "selected": true
+                    },
+                    {
+                        "value": "nginx",
+                        "text": "nginx"
+                    },
+                    {
+                        "value": "system",
+                        "text": "system"
+                    }
+                ],
+                "includeAll": false,
+                "multi": false
+            },
+            {
+                "name": "env",
+                "label": "Environment",
+                "type": "custom",
+                "current": {
+                    "value": ".*",
+                    "text": "All"
+                },
+                "options": [
+                    {
+                        "value": ".*",
+                        "text": "All",
+                        "selected": true
+                    },
+                    {
+                        "value": "production",
+                        "text": "production"
+                    },
+                    {
+                        "value": "local",
+                        "text": "local"
+                    },
+                    {
+                        "value": "staging",
+                        "text": "staging"
+                    }
+                ],
+                "includeAll": true,
+                "multi": false
+            },
+            {
+                "name": "filename",
+                "label": "Log File",
+                "type": "custom",
+                "current": {
+                    "value": ".*",
+                    "text": "All"
+                },
+                "options": [
+                    {
+                        "value": ".*",
+                        "text": "All",
+                        "selected": true
+                    },
+                    {
+                        "value": "laravel.log",
+                        "text": "laravel.log"
+                    },
+                    {
+                        "value": "worker.log",
+                        "text": "worker.log"
+                    },
+                    {
+                        "value": "horizon.log",
+                        "text": "horizon.log"
+                    }
+                ],
+                "includeAll": true,
+                "multi": false
+            },
+            {
+                "name": "search",
+                "label": "Search text",
+                "type": "textbox",
+                "current": {
+                    "value": "",
+                    "text": ""
+                },
+                "query": ""
+            }
+        ]
+    },
+    "panels": [
+        {
+            "id": 1,
+            "title": "🔴 Все ERROR логи",
+            "description": "Все записи уровня ERROR за выбранный период. LogQL: {job=\"laravel\", level=\"error\"}",
+            "type": "logs",
+            "datasource": {
+                "type": "loki",
+                "uid": "loki"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "loki",
+                        "uid": "loki"
+                    },
+                    "expr": "{job=\"$job\", level=\"error\", env=~\"$env\", filename=~\"$filename\"}",
+                    "legendFormat": "",
+                    "refId": "A"
+                }
+            ],
+            "options": {
+                "dedupStrategy": "none",
+                "showLabels": true,
+                "showCommonLabels": false,
+                "wrapLogMessage": true,
+                "prettifyLogMessage": false,
+                "enableLogDetails": true,
+                "sortOrder": "Descending"
+            },
+            "gridPos": {
+                "x": 0,
+                "y": 0,
+                "w": 24,
+                "h": 8
+            }
+        },
+        {
+            "id": 2,
+            "title": "🟡 Все WARNING логи",
+            "description": "Все записи уровня WARNING. LogQL: {job=\"laravel\", level=\"warning\"}",
+            "type": "logs",
+            "datasource": {
+                "type": "loki",
+                "uid": "loki"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "loki",
+                        "uid": "loki"
+                    },
+                    "expr": "{job=\"$job\", level=\"warning\", env=~\"$env\", filename=~\"$filename\"}",
+                    "legendFormat": "",
+                    "refId": "A"
+                }
+            ],
+            "options": {
+                "dedupStrategy": "none",
+                "showLabels": true,
+                "showCommonLabels": false,
+                "wrapLogMessage": true,
+                "prettifyLogMessage": false,
+                "enableLogDetails": true,
+                "sortOrder": "Descending"
+            },
+            "gridPos": {
+                "x": 0,
+                "y": 8,
+                "w": 24,
+                "h": 8
+            }
+        },
+        {
+            "id": 3,
+            "title": "💥 Stack Traces / Exceptions",
+            "description": "Многострочные стектрейсы — ищем Exception, Stack trace, #0, #1 и т.д.",
+            "type": "logs",
+            "datasource": {
+                "type": "loki",
+                "uid": "loki"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "loki",
+                        "uid": "loki"
+                    },
+                    "expr": "{job=\"$job\", env=~\"$env\", filename=~\"$filename\"} |~ \"(?i)(exception|stack trace|#[0-9]+|Throwable|thrown in)\"",
+                    "legendFormat": "",
+                    "refId": "A"
+                }
+            ],
+            "options": {
+                "dedupStrategy": "none",
+                "showLabels": false,
+                "showCommonLabels": false,
+                "wrapLogMessage": true,
+                "prettifyLogMessage": false,
+                "enableLogDetails": true,
+                "sortOrder": "Descending"
+            },
+            "gridPos": {
+                "x": 0,
+                "y": 16,
+                "w": 24,
+                "h": 10
+            }
+        },
+        {
+            "id": 4,
+            "title": "🔒 Auth / Unauthorized / 401 / 403",
+            "description": "Авторизационные события, попытки несанкционированного доступа",
+            "type": "logs",
+            "datasource": {
+                "type": "loki",
+                "uid": "loki"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "loki",
+                        "uid": "loki"
+                    },
+                    "expr": "{job=\"$job\", env=~\"$env\"} |~ \"(?i)(unauthorized|unauthenticated|403|401|forbidden|invalid token|jwt|auth)\"",
+                    "legendFormat": "",
+                    "refId": "A"
+                }
+            ],
+            "options": {
+                "dedupStrategy": "none",
+                "showLabels": true,
+                "showCommonLabels": false,
+                "wrapLogMessage": true,
+                "enableLogDetails": true,
+                "sortOrder": "Descending"
+            },
+            "gridPos": {
+                "x": 0,
+                "y": 26,
+                "w": 12,
+                "h": 8
+            }
+        },
+        {
+            "id": 5,
+            "title": "🐢 Медленные SQL запросы",
+            "description": "Запросы к БД которые логируются — slow query, DB error",
+            "type": "logs",
+            "datasource": {
+                "type": "loki",
+                "uid": "loki"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "loki",
+                        "uid": "loki"
+                    },
+                    "expr": "{job=\"$job\", env=~\"$env\"} |~ \"(?i)(slow query|query time|SQLSTATE|QueryException|Illuminate\\\\Database)\"",
+                    "legendFormat": "",
+                    "refId": "A"
+                }
+            ],
+            "options": {
+                "dedupStrategy": "none",
+                "showLabels": true,
+                "showCommonLabels": false,
+                "wrapLogMessage": true,
+                "enableLogDetails": true,
+                "sortOrder": "Descending"
+            },
+            "gridPos": {
+                "x": 12,
+                "y": 26,
+                "w": 12,
+                "h": 8
+            }
+        },
+        {
+            "id": 6,
+            "title": "📊 Частота ошибок по времени",
+            "description": "График количества ERROR-логов за период",
+            "type": "timeseries",
+            "datasource": {
+                "type": "loki",
+                "uid": "loki"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "loki",
+                        "uid": "loki"
+                    },
+                    "expr": "sum(count_over_time({job=\"$job\", level=\"error\", env=~\"$env\"}[5m]))",
+                    "legendFormat": "errors/5m",
+                    "refId": "A"
+                },
+                {
+                    "datasource": {
+                        "type": "loki",
+                        "uid": "loki"
+                    },
+                    "expr": "sum(count_over_time({job=\"$job\", level=\"warning\", env=~\"$env\"}[5m]))",
+                    "legendFormat": "warnings/5m",
+                    "refId": "B"
+                },
+                {
+                    "datasource": {
+                        "type": "loki",
+                        "uid": "loki"
+                    },
+                    "expr": "sum(count_over_time({job=\"$job\", level=\"critical\", env=~\"$env\"}[5m]))",
+                    "legendFormat": "critical/5m",
+                    "refId": "C"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "custom": {
+                        "drawStyle": "bars",
+                        "fillOpacity": 40,
+                        "lineWidth": 1
+                    },
+                    "color": {
+                        "mode": "palette-classic"
+                    }
+                },
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "errors/5m"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "mode": "fixed",
+                                    "fixedColor": "red"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "warnings/5m"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "mode": "fixed",
+                                    "fixedColor": "yellow"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "critical/5m"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "mode": "fixed",
+                                    "fixedColor": "dark-red"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "gridPos": {
+                "x": 0,
+                "y": 34,
+                "w": 24,
+                "h": 8
+            }
+        },
+        {
+            "id": 7,
+            "title": "🌐 HTTP 500 / Server Errors",
+            "description": "Логи содержащие HTTP 500 ошибки сервера",
+            "type": "logs",
+            "datasource": {
+                "type": "loki",
+                "uid": "loki"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "loki",
+                        "uid": "loki"
+                    },
+                    "expr": "{job=\"$job\", env=~\"$env\"} |~ \"(?i)(500|internal server error|server error)\"",
+                    "legendFormat": "",
+                    "refId": "A"
+                }
+            ],
+            "options": {
+                "dedupStrategy": "none",
+                "showLabels": false,
+                "showCommonLabels": false,
+                "wrapLogMessage": true,
+                "enableLogDetails": true,
+                "sortOrder": "Descending"
+            },
+            "gridPos": {
+                "x": 0,
+                "y": 42,
+                "w": 12,
+                "h": 8
+            }
+        },
+        {
+            "id": 8,
+            "title": "⚙️ Queue / Job Failed",
+            "description": "Ошибки очередей Laravel Horizon/Queue",
+            "type": "logs",
+            "datasource": {
+                "type": "loki",
+                "uid": "loki"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "loki",
+                        "uid": "loki"
+                    },
+                    "expr": "{job=\"$job\", env=~\"$env\"} |~ \"(?i)(job failed|failed.*job|queue.*error|horizon|dispatch|MaxJobAttempts)\"",
+                    "legendFormat": "",
+                    "refId": "A"
+                }
+            ],
+            "options": {
+                "dedupStrategy": "none",
+                "showLabels": true,
+                "showCommonLabels": false,
+                "wrapLogMessage": true,
+                "enableLogDetails": true,
+                "sortOrder": "Descending"
+            },
+            "gridPos": {
+                "x": 12,
+                "y": 42,
+                "w": 12,
+                "h": 8
+            }
+        },
+        {
+            "id": 9,
+            "title": "🔍 Поиск по тексту",
+            "description": "Свободный поиск. Вводи текст в переменную Search text вверху страницы",
+            "type": "logs",
+            "datasource": {
+                "type": "loki",
+                "uid": "loki"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "loki",
+                        "uid": "loki"
+                    },
+                    "expr": "{job=\"$job\", env=~\"$env\", filename=~\"$filename\"} |~ \"(?i)$search\"",
+                    "legendFormat": "",
+                    "refId": "A"
+                }
+            ],
+            "options": {
+                "dedupStrategy": "none",
+                "showLabels": true,
+                "showCommonLabels": false,
+                "wrapLogMessage": true,
+                "enableLogDetails": true,
+                "sortOrder": "Descending"
+            },
+            "gridPos": {
+                "x": 0,
+                "y": 50,
+                "w": 24,
+                "h": 10
+            }
+        },
+        {
+            "id": 10,
+            "title": "📋 Все логи (Live Stream)",
+            "description": "Все логи без фильтрации — для живого наблюдения",
+            "type": "logs",
+            "datasource": {
+                "type": "loki",
+                "uid": "loki"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "loki",
+                        "uid": "loki"
+                    },
+                    "expr": "{job=\"$job\", env=~\"$env\", filename=~\"$filename\"}",
+                    "legendFormat": "",
+                    "refId": "A"
+                }
+            ],
+            "options": {
+                "dedupStrategy": "none",
+                "showLabels": true,
+                "showCommonLabels": false,
+                "wrapLogMessage": true,
+                "prettifyLogMessage": false,
+                "enableLogDetails": true,
+                "sortOrder": "Descending"
+            },
+            "gridPos": {
+                "x": 0,
+                "y": 60,
+                "w": 24,
+                "h": 10
+            }
+        },
+        {
+            "id": 11,
+            "title": "🤐 CRITICAL логи",
+            "description": "Только CRITICAL уровень — самое важное",
+            "type": "logs",
+            "datasource": {
+                "type": "loki",
+                "uid": "loki"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "loki",
+                        "uid": "loki"
+                    },
+                    "expr": "{job=\"$job\", level=\"critical\", env=~\"$env\", filename=~\"$filename\"}",
+                    "legendFormat": "",
+                    "refId": "A"
+                }
+            ],
+            "options": {
+                "dedupStrategy": "none",
+                "showLabels": true,
+                "showCommonLabels": false,
+                "wrapLogMessage": true,
+                "enableLogDetails": true,
+                "sortOrder": "Descending"
+            },
+            "gridPos": {
+                "x": 0,
+                "y": 70,
+                "w": 24,
+                "h": 8
+            }
+        },
+        {
+            "id": 12,
+            "title": "📦 Распределение логов по уровням",
+            "description": "Сколько логов каждого уровня за выбранный период",
+            "type": "piechart",
+            "datasource": {
+                "type": "loki",
+                "uid": "loki"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "loki",
+                        "uid": "loki"
+                    },
+                    "expr": "sum by (level) (count_over_time({job=\"$job\", env=~\"$env\"}[$__range]))",
+                    "legendFormat": "{{level}}",
+                    "refId": "A"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    }
+                },
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "error"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "mode": "fixed",
+                                    "fixedColor": "red"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "warning"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "mode": "fixed",
+                                    "fixedColor": "yellow"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "info"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "mode": "fixed",
+                                    "fixedColor": "blue"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "critical"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "mode": "fixed",
+                                    "fixedColor": "dark-red"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "options": {
+                "legend": {
+                    "displayMode": "table",
+                    "placement": "right",
+                    "values": [
+                        "value",
+                        "percent"
+                    ]
+                },
+                "pieType": "donut"
+            },
+            "gridPos": {
+                "x": 0,
+                "y": 78,
+                "w": 12,
+                "h": 8
+            }
+        },
+        {
+            "id": 13,
+            "title": "📁 Логи по файлу",
+            "description": "Топ файлов логов по количеству ERROR-записей",
+            "type": "barchart",
+            "datasource": {
+                "type": "loki",
+                "uid": "loki"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "loki",
+                        "uid": "loki"
+                    },
+                    "expr": "sum by (filename) (count_over_time({job=\"$job\", level=\"error\", env=~\"$env\"}[$__range]))",
+                    "legendFormat": "{{filename}}",
+                    "refId": "A"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    }
+                }
+            },
+            "options": {
+                "orientation": "horizontal",
+                "showValue": "always"
+            },
+            "gridPos": {
+                "x": 12,
+                "y": 78,
+                "w": 12,
+                "h": 8
+            }
+        }
+    ]
+}
