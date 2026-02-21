@@ -34,9 +34,6 @@ class EstimateProgressController extends Controller
         return AdminResponse::success(['items' => $comparison]);
     }
 
-    /**
-     * Получить статистику выполнения сметы
-     */
     public function getCompletionStats(Request $request, int $projectId, int $estimateId): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id');
@@ -48,28 +45,11 @@ class EstimateProgressController extends Controller
 
         $stats = $this->integrationService->getEstimateCompletionStats($estimate);
 
-        // Дополнительно вычисляем статусы позиций
-        $items = $estimate->items()->get();
-        $completedItems = 0;
-        $inProgressItems = 0;
-        $notStartedItems = 0;
-
-        foreach ($items as $item) {
-            $completionPercent = $item->getCompletionPercentage();
-            if ($completionPercent >= 100) {
-                $completedItems++;
-            } elseif ($completionPercent > 0) {
-                $inProgressItems++;
-            } else {
-                $notStartedItems++;
-            }
-        }
-
         return AdminResponse::success([
             'total_items' => $stats['total_items'],
-            'completed_items' => $completedItems,
-            'in_progress_items' => $inProgressItems,
-            'not_started_items' => $notStartedItems,
+            'completed_items' => $stats['completed_items'],
+            'in_progress_items' => $stats['in_progress_items'],
+            'not_started_items' => $stats['not_started_items'],
             'overall_completion_percentage' => $stats['overall_completion_percent'],
             'total_planned_amount' => $stats['estimated_amount'],
             'total_actual_amount' => $stats['completed_amount'],
