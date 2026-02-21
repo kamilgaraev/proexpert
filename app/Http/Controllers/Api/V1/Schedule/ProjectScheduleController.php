@@ -13,6 +13,7 @@ use App\Http\Requests\Api\V1\Schedule\CreateTaskDependencyRequest;
 use App\Http\Resources\Api\V1\Schedule\ProjectScheduleResource;
 use App\Http\Resources\Api\V1\Schedule\ProjectScheduleCollection;
 use App\Http\Resources\Api\V1\Schedule\ScheduleGanttResource;
+use App\Services\Schedule\ScheduleTaskService;
 use App\Models\ScheduleTask;
 use App\Models\TaskDependency;
 use App\Enums\Schedule\PriorityEnum;
@@ -29,7 +30,8 @@ class ProjectScheduleController extends Controller
 
     public function __construct(
         protected ProjectScheduleRepositoryInterface $scheduleRepository,
-        protected CriticalPathService $criticalPathService
+        protected CriticalPathService $criticalPathService,
+        protected ScheduleTaskService $taskService
     ) {}
 
     /**
@@ -94,6 +96,14 @@ class ProjectScheduleController extends Controller
 
         // Если запрашивается формат Gantt
         if ($request->get('format') === 'gantt') {
+            // Проверяем, нужно ли инициализировать sort_order
+            $needsReorder = $schedule->tasks()->where('sort_order', 0)->exists();
+            if ($needsReorder) {
+                $this->taskService->reorderTasks($schedule);
+                // Перезагружаем график чтобы получить обновленные данные
+                $schedule = $this->scheduleRepository->findForOrganization((int) $id, $this->getOrganizationId($request));
+            }
+
             $schedule->load([
                 'rootTasks.childTasks' => function ($query) {
                     $query->orderBy('sort_order');
