@@ -9,11 +9,6 @@ clients:
   - url: http://loki:3100/loki/api/v1/push
 
 scrape_configs:
-  # -----------------------------------------------------------------
-  # Laravel Logs
-  # Все логи из папки storage/logs будут иметь лейбл filename
-  # Например: filename="laravel.log", filename="worker.log"
-  # -----------------------------------------------------------------
   - job_name: laravel_logs
     static_configs:
       - targets:
@@ -22,36 +17,30 @@ scrape_configs:
           job: laravel
           __path__: /var/log/laravel/*.log
     pipeline_stages:
-      # 1. Извлекаем имя файла из пути
-      - regex:
-          source: filename
-          expression: "^(?:.*\\/)(?P<filename>[^\\/]+)$"
-      
-      # 2. Если regex выше не сработал (иногда бывает), пробуем простой вариант
+      - multiline:
+          firstline: '^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]'
+          max_wait_time: 3s
+          max_lines: 500
+
       - regex:
           source: filename
           expression: "(?P<filename>[^\\/]+\\.log)$"
 
-      # 3. Присваиваем имя файла как лейбл
       - labels:
           filename:
 
-      # 4. Парсим стандартный лог Laravel
       - regex:
           expression: '^\[(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (?P<env>\w+)\.(?P<level>\w+): (?P<message>.*)'
-      
+
       - timestamp:
           source: timestamp
           format: "2006-01-02 15:04:05"
           fallback_formats: ["2006-01-02T15:04:05"]
-          
+
       - labels:
           level:
           env:
 
-  # -----------------------------------------------------------------
-  # System Logs (syslog)
-  # -----------------------------------------------------------------
   - job_name: system_logs
     static_configs:
       - targets:
@@ -61,7 +50,7 @@ scrape_configs:
           __path__: /var/log/host/syslog
     pipeline_stages:
       - regex:
-          expression: '^(?P<timestamp>\w{3} \d{1,2} \d{2}:\d{2}:\d{2}) (?P<hostname>\S+) (?P<service>\S+): (?P<message>.*)'
+          expression: '^(?P<timestamp>\w{3} +\d{1,2} \d{2}:\d{2}:\d{2}) (?P<hostname>\S+) (?P<service>\S+): (?P<message>.*)'
       - timestamp:
           source: timestamp
           format: "Jan _2 15:04:05"
@@ -69,9 +58,6 @@ scrape_configs:
           hostname:
           service:
 
-  # -----------------------------------------------------------------
-  # Nginx Access Logs
-  # -----------------------------------------------------------------
   - job_name: nginx_access
     static_configs:
       - targets:
@@ -90,9 +76,6 @@ scrape_configs:
           method:
           status:
 
-  # -----------------------------------------------------------------
-  # Nginx Error Logs
-  # -----------------------------------------------------------------
   - job_name: nginx_error
     static_configs:
       - targets:

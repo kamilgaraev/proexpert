@@ -47,13 +47,14 @@ class GrandSmetaParser implements EstimateImportParserInterface, StreamParserInt
         return [];
     }
 
-    public function getStream(string $filePath, array $options = []): \Generator
+    public function getStream(string $filePath, array $options = [], ?\Closure $onProgress = null): \Generator
     {
         $spreadsheet = IOFactory::load($filePath);
         $sheet = $spreadsheet->getActiveSheet();
         
         $mapping = $options['column_mapping'] ?? [];
         $headerRow = $options['header_row'] ?? 1;
+        $totalRows = max(1, $sheet->getHighestRow() - $headerRow);
 
         Log::info('[GrandSmetaParser] Starting parsing', [
             'header_row' => $headerRow,
@@ -61,21 +62,29 @@ class GrandSmetaParser implements EstimateImportParserInterface, StreamParserInt
 
         $this->processor->reset();
 
+        $rawRowIndex = 0;
         foreach ($sheet->getRowIterator($headerRow + 1) as $row) {
             $rowData = [];
             foreach ($row->getCellIterator() as $cell) {
-                // Ensure formula calculated values are used
                 $rowData[$cell->getColumn()] = $cell->getCalculatedValue();
             }
 
-            if (empty(array_filter($rowData))) continue;
+            if (empty(array_filter($rowData))) {
+                $rawRowIndex++;
+                continue;
+            }
 
             $this->processor->processRow($rowData, $mapping, $row->getRowIndex());
+            $rawRowIndex++;
+
+            // Уведомляем о прогрессе каждые 500 строк
+            if ($onProgress && $rawRowIndex % 500 === 0) {
+                $onProgress($rawRowIndex, $totalRows);
+            }
         }
 
         $result = $this->processor->getResult();
         
-        // Merge items and sections, then sort by row number to maintain sequence
         $allRows = array_merge($result['items'], $result['sections']);
         usort($allRows, fn($a, $b) => $a->rowNumber <=> $b->rowNumber);
 
