@@ -34,6 +34,31 @@ class ScheduleTaskObserver
         
         // Вычисляем длительность ПЕРЕД сохранением
         $this->calculateDuration($task);
+
+        // Устанавливаем sort_order если он не задан
+        $this->setSortOrder($task);
+    }
+
+    /**
+     * Установить порядковый номер задачи
+     */
+    protected function setSortOrder(ScheduleTask $task): void
+    {
+        if ($task->sort_order > 0) {
+            return;
+        }
+
+        $maxSortOrder = ScheduleTask::where('schedule_id', $task->schedule_id)
+            ->where('parent_task_id', $task->parent_task_id)
+            ->max('sort_order');
+
+        $task->sort_order = ($maxSortOrder ?? 0) + 1;
+        
+        Log::info('[ScheduleTaskObserver] sort_order set', [
+            'task_id' => $task->id,
+            'sort_order' => $task->sort_order,
+            'parent_task_id' => $task->parent_task_id
+        ]);
     }
 
     /**
