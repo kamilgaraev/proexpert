@@ -102,6 +102,9 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
             // 2. Сборка дерева O(N) в памяти ссылками
             $itemsById = [];
             foreach ($items as &$item) {
+                // Фронтенд ожидает parent_item_id, а в базе хранится parent_work_id. Мапим для логики и фронта
+                $item['parent_item_id'] = $item['parent_work_id'];
+
                 $item['resources'] = $resourcesByItemId[$item['id']] ?? [];
                 $item['totals'] = $totalsByItemId[$item['id']] ?? [];
                 $item['works'] = $worksByItemId[$item['id']] ?? [];
