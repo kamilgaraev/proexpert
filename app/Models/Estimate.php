@@ -196,5 +196,14 @@ class Estimate extends Model
     {
         return $this->status === 'in_review';
     }
+
+    protected static function booted()
+    {
+        static::deleting(function ($estimate) {
+            if ($estimate->isForceDeleting() && $estimate->structure_cache_path && \Illuminate\Support\Facades\Storage::disk('s3')->exists($estimate->structure_cache_path)) {
+                \Illuminate\Support\Facades\Storage::disk('s3')->delete($estimate->structure_cache_path);
+            }
+        });
+    }
 }
 

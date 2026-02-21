@@ -110,8 +110,10 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         // 3. AI Row Classification (Pre-process)
         // Warning: This scans the whole file. For streaming huge files, we might want to skip or chunk this.
         // For now, we assume simple table parser is for files that fit in memory.
+        $progressCallback = $options['raw_progress_callback'] ?? null;
+        
         if ($this->useAI && $this->rowClassifierService) {
-            $this->classifyRowsWithAI($sheet, $headerRow + 1, $columnMapping);
+            $this->classifyRowsWithAI($sheet, $headerRow + 1, $columnMapping, $progressCallback);
         }
 
         // 4. Yield Rows
@@ -1100,7 +1102,7 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
     /**
      * 🧠 Pre-classify rows using AI in batches
      */
-    private function classifyRowsWithAI(Worksheet $sheet, int $startRow, array $columnMapping): void
+    private function classifyRowsWithAI(Worksheet $sheet, int $startRow, array $columnMapping, ?callable $progressCallback = null): void
     {
         $nameColumn = $columnMapping['name'] ?? 'A'; // Default to A if not mapped (fallback)
         if (!$nameColumn) return;
@@ -1108,8 +1110,10 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         $maxRow = $sheet->getHighestRow();
         $batchSize = 50;
         $batch = [];
+        $totalToClassify = max(1, $maxRow - $startRow + 1);
+        $processed = 0;
         
-        Log::info('[ExcelParser] Starting AI Row Classification', ['total_rows' => $maxRow - $startRow]);
+        Log::info('[ExcelParser] Starting AI Row Classification', ['total_rows' => $totalToClassify]);
 
         // Собираем батчи и отправляем
         // TODO: В идеале использовать асинхронные запросы (Guzzle Promises), но пока последовательно для надежности
@@ -1124,6 +1128,7 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             if (count($batch) >= $batchSize || $row === $maxRow) {
                 if (!empty($batch)) {
                     $results = $this->rowClassifierService->classifyBatch($batch);
+                    $processed += count($batch);
                     
                     // Сохраняем результаты в кеш класса
                     foreach ($results as $id => $type) {
@@ -1135,6 +1140,11 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                             default => self::ROW_TYPE_IGNORE,
                         };
                         $this->aiRowTypes[$id] = $mappedType;
+                    }
+                    
+                    if ($progressCallback) {
+                        $pct = (int)(10 + ($processed / $totalToClassify) * 40); // 10% to 50%
+                        $progressCallback($pct, "AI Analysis: {$processed}/{$totalToClassify} rows...");
                     }
                     
                     Log::debug('[ExcelParser] Processed AI batch', [

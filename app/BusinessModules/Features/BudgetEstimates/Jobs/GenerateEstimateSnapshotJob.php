@@ -160,10 +160,11 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
 
             // 3. Сохранение в Storage
             $versionTimestamp = now()->getTimestamp();
+            // Добавляем префикс окружения или проекта, чтобы файлы в S3 были упорядочены
             $fileName = "estimates/{$this->estimateId}/structure_snapshot_{$versionTimestamp}.json";
             
             // Запись огромного JSON
-            Storage::disk('local')->put($fileName, json_encode($payload, JSON_UNESCAPED_UNICODE));
+            Storage::disk('s3')->put($fileName, json_encode($payload, JSON_UNESCAPED_UNICODE));
 
             // Обновляем структуру
             $oldPath = $estimate->structure_cache_path;
@@ -172,8 +173,8 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
             $estimate->save();
 
             // Удаляем старый кэш
-            if ($oldPath && $oldPath !== $fileName && Storage::disk('local')->exists($oldPath)) {
-                Storage::disk('local')->delete($oldPath);
+            if ($oldPath && $oldPath !== $fileName && Storage::disk('s3')->exists($oldPath)) {
+                Storage::disk('s3')->delete($oldPath);
             }
 
             Log::info("Snapshot generated successfully", [

@@ -93,17 +93,18 @@ class EstimateController extends Controller
         
         $this->authorize('view', $estimateModel);
 
-        $estimateModel->load(['project', 'contract', 'approvedBy', 'sections.items.measurementUnit']);
+        // Грузим только плоские связи для меты. Не грузим sections.items!
+        $estimateModel->load(['project', 'contract', 'approvedBy']);
 
         // Если снапшот есть - стримим его с огромной экономией RAM
-        if ($estimateModel->structure_cache_path && \Illuminate\Support\Facades\Storage::disk('local')->exists($estimateModel->structure_cache_path)) {
+        if ($estimateModel->structure_cache_path && \Illuminate\Support\Facades\Storage::disk('s3')->exists($estimateModel->structure_cache_path)) {
             $meta = (new EstimateResource($estimateModel))->resolve();
             $metaJson = json_encode($meta, JSON_UNESCAPED_UNICODE);
             return response()->stream(function () use ($estimateModel, $metaJson) {
                 echo '{"success":true,"message":null,"data":';
                 echo $metaJson;
                 echo ',"tree":';
-                $stream = \Illuminate\Support\Facades\Storage::disk('local')->readStream($estimateModel->structure_cache_path);
+                $stream = \Illuminate\Support\Facades\Storage::disk('s3')->readStream($estimateModel->structure_cache_path);
                 while (!feof($stream)) {
                     echo fread($stream, 8192);
                 }
@@ -112,7 +113,8 @@ class EstimateController extends Controller
             }, 200, ['Content-Type' => 'application/json']);
         }
 
-        // Снапшот отсутствует — запускаем генерацию синхронно
+        // Снапшот отсутствует — запускаем генерацию (синхронно или в фоне)
+        // Для больших смет генерация через Job работает сверхбыстро (Raw Builder)
         try {
             \App\BusinessModules\Features\BudgetEstimates\Jobs\GenerateEstimateSnapshotJob::dispatchSync($estimateModel->id);
             $estimateModel->refresh();
@@ -123,14 +125,15 @@ class EstimateController extends Controller
             ]);
         }
 
-        if ($estimateModel->structure_cache_path && \Illuminate\Support\Facades\Storage::disk('local')->exists($estimateModel->structure_cache_path)) {
+        // Проверяем снова
+        if ($estimateModel->structure_cache_path && \Illuminate\Support\Facades\Storage::disk('s3')->exists($estimateModel->structure_cache_path)) {
             $meta = (new EstimateResource($estimateModel))->resolve();
             $metaJson = json_encode($meta, JSON_UNESCAPED_UNICODE);
             return response()->stream(function () use ($estimateModel, $metaJson) {
                 echo '{"success":true,"message":null,"data":';
                 echo $metaJson;
                 echo ',"tree":';
-                $stream = \Illuminate\Support\Facades\Storage::disk('local')->readStream($estimateModel->structure_cache_path);
+                $stream = \Illuminate\Support\Facades\Storage::disk('s3')->readStream($estimateModel->structure_cache_path);
                 while (!feof($stream)) {
                     echo fread($stream, 8192);
                 }
@@ -139,7 +142,9 @@ class EstimateController extends Controller
             }, 200, ['Content-Type' => 'application/json']);
         }
 
-        // Финальный фолбэк — возвращаем только метаданные без дерева
+        // Финальный фолбэк (очень редкий случай, если джоба упала). 
+        // ТОЛЬКО ЗДЕСЬ мы грузим гигантское дерево в память Eloquent.
+        $estimateModel->load('sections.items.measurementUnit');
         return AdminResponse::success(new EstimateResource($estimateModel));
     }
 

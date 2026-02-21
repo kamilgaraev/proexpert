@@ -93,8 +93,13 @@ class ImportPipelineService
         $estimate = $this->resolveEstimate($session);
         
         // 3. Stream & Process
+        $options['raw_progress_callback'] = function (int $progress, string $message) use ($session) {
+            $this->updateProgress($session, $progress, $message);
+        };
+
         if ($formatHandler === 'grandsmeta') {
             $progressCallback = function (int $current, int $total) use ($session) {
+                // Grandsmeta takes stream callback mapped to 10-88%
                 $pct = (int) (10 + min(78, ($current / max(1, $total)) * 78));
                 $this->updateProgress($session, $pct, "Processed {$current}/{$total} rows...");
             };
@@ -257,12 +262,12 @@ class ImportPipelineService
 
             $stats['processed_rows']++;
             
-            // Обновляем прогресс каждые 10 строк (10% → 88%)
+            // Обновляем прогресс каждые 10 строк (сдвинуто: 50% → 88% для Excel)
             if ($stats['processed_rows'] % 10 === 0) {
                 $totalRows = $stats['total_rows'] ?? 0;
                 $progress = $totalRows > 0
-                    ? (int) (10 + min(78, (($stats['processed_rows'] / $totalRows) * 78)))
-                    : min(88, 10 + (int) ($stats['processed_rows'] / 5));
+                    ? (int) (50 + min(38, (($stats['processed_rows'] / $totalRows) * 38)))
+                    : min(88, 50 + (int) ($stats['processed_rows'] / 5));
 
                 $this->updateProgress(
                     $session,
