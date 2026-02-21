@@ -192,6 +192,19 @@ class ExcelStreamParser implements EstimateImportParserInterface, StreamParserIn
         return $this->detectStructure($filePath);
     }
 
+    public function getTotalRows(string $filePath, array $options = []): int
+    {
+        if (!file_exists($filePath)) {
+            return 0;
+        }
+        try {
+            if ($xlsx = SimpleXLSX::parse($filePath)) {
+                return $xlsx->rows();
+            }
+        } catch (\Throwable) {}
+        return 0;
+    }
+
     public function getSupportedExtensions(): array
     {
         return ['xlsx', 'xls'];

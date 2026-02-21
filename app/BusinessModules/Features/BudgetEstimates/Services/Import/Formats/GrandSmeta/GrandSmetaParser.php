@@ -146,6 +146,18 @@ class GrandSmetaParser implements EstimateImportParserInterface, StreamParserInt
         return $this->getStream($filePath);
     }
 
+    public function getTotalRows(string $filePath, array $options = []): int
+    {
+        try {
+            $spreadsheet = IOFactory::load($filePath);
+            $sheet = $spreadsheet->getActiveSheet();
+            $headerRow = (int) ($options['header_row'] ?? 1);
+            return max(0, $sheet->getHighestRow() - $headerRow);
+        } catch (\Throwable) {
+            return 0;
+        }
+    }
+
     public function getSupportedExtensions(): array
     {
         return ['xls', 'xlsx', 'xlsm', 'xml'];
