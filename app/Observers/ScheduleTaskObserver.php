@@ -99,6 +99,46 @@ class ScheduleTaskObserver
     }
 
     /**
+     * Обработка после обновления задачи
+     */
+    public function updated(ScheduleTask $task): void
+    {
+        if ($task->wasChanged(['planned_start_date', 'planned_end_date'])) {
+            $service = app(\App\Services\Schedule\AutoSchedulingService::class);
+            
+            // 1. Обновляем родителей (вверх)
+            $service->syncParentDates($task);
+            
+            // 2. Обновляем последователей (вниз)
+            $service->applyCascadeUpdates($task);
+        }
+    }
+
+    /**
+     * Обработка после создания задачи
+     */
+    public function created(ScheduleTask $task): void
+    {
+        $service = app(\App\Services\Schedule\AutoSchedulingService::class);
+        $service->syncParentDates($task);
+    }
+
+    /**
+     * Обработка после удаления задачи
+     */
+    public function deleted(ScheduleTask $task): void
+    {
+        if ($task->parent_task_id) {
+            // Пытаемся получить родителя (даже если он мягко удален, но тут нам нужен живой)
+            $parent = ScheduleTask::find($task->parent_task_id);
+            if ($parent) {
+                $service = app(\App\Services\Schedule\AutoSchedulingService::class);
+                $service->syncParentDates($parent); // Вызываем для родителя, так как он "условный ребенок" для уровня выше
+            }
+        }
+    }
+
+    /**
      * Валидация дат задачи
      */
     protected function validateDates(ScheduleTask $task): void
