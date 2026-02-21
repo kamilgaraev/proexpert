@@ -160,8 +160,11 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
 
             // 3. Сохранение в Storage
             $versionTimestamp = now()->getTimestamp();
-            // Добавляем префикс окружения или проекта, чтобы файлы в S3 были упорядочены
-            $fileName = "estimates/{$this->estimateId}/structure_snapshot_{$versionTimestamp}.json";
+            
+            // Распределяем файлы по папкам организаций, как это делает FileService
+            $orgId = $estimate->organization_id;
+            $orgPrefix = $orgId ? "org-{$orgId}" : 'shared';
+            $fileName = "{$orgPrefix}/estimates/{$this->estimateId}/structure_snapshot_{$versionTimestamp}.json";
             
             // Запись огромного JSON
             Storage::disk('s3')->put($fileName, json_encode($payload, JSON_UNESCAPED_UNICODE));
