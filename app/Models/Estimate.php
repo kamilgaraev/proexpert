@@ -45,6 +45,8 @@ class Estimate extends Model
         'total_base_materials_cost',
         'total_base_machinery_cost',
         'total_base_labor_cost',
+        'statistics',
+        'structure_cache_path',
     ];
 
     protected $casts = [
@@ -66,6 +68,7 @@ class Estimate extends Model
         'approved_at' => 'datetime',
         'metadata' => 'array',
         'import_diagnostics' => 'array',
+        'statistics' => 'array',
         'is_onboarding_demo' => 'boolean',
     ];
 

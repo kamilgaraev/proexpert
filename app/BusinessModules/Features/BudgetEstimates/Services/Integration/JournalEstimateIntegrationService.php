@@ -84,24 +84,34 @@ class JournalEstimateIntegrationService
      */
     public function getEstimateCompletionStats(Estimate $estimate): array
     {
-        $items = $estimate->items()->get();
-        
-        $totalItems = $items->count();
-        $completedItems = 0;
-        $totalPlannedVolume = 0;
-        $totalActualVolume = 0;
+        $actualVolumesQuery = \Illuminate\Support\Facades\DB::table('journal_work_volumes as jwv')
+            ->join('construction_journal_entries as cje', 'cje.id', '=', 'jwv.construction_journal_entry_id')
+            ->where('cje.estimate_id', $estimate->id)
+            ->where('cje.status', JournalEntryStatusEnum::APPROVED->value)
+            ->select('jwv.estimate_item_id', \Illuminate\Support\Facades\DB::raw('SUM(jwv.quantity) as sum_actual'))
+            ->groupBy('jwv.estimate_item_id');
 
-        foreach ($items as $item) {
-            $plannedVolume = (float) $item->quantity_total;
-            $actualVolume = $item->getActualVolume();
-            
-            $totalPlannedVolume += $plannedVolume;
-            $totalActualVolume += $actualVolume;
-            
-            if ($item->getCompletionPercentage() >= 100) {
-                $completedItems++;
-            }
-        }
+        $stats = \Illuminate\Support\Facades\DB::table('estimate_items as ei')
+            ->leftJoinSub($actualVolumesQuery, 'actual_vols', function ($join) {
+                $join->on('ei.id', '=', 'actual_vols.estimate_item_id');
+            })
+            ->where('ei.estimate_id', $estimate->id)
+            ->selectRaw("
+                COUNT(ei.id) as total_items,
+                COALESCE(SUM(ei.quantity_total), 0) as total_planned_volume,
+                COALESCE(SUM(actual_vols.sum_actual), 0) as total_actual_volume,
+                SUM(CASE WHEN ei.quantity_total > 0 AND COALESCE(actual_vols.sum_actual, 0) >= ei.quantity_total THEN 1 ELSE 0 END) as completed_items,
+                SUM(CASE WHEN ei.quantity_total > 0 AND COALESCE(actual_vols.sum_actual, 0) > 0 AND COALESCE(actual_vols.sum_actual, 0) < ei.quantity_total THEN 1 ELSE 0 END) as in_progress_items,
+                SUM(CASE WHEN COALESCE(actual_vols.sum_actual, 0) <= 0 THEN 1 ELSE 0 END) as not_started_items
+            ")
+            ->first();
+
+        $totalItems = (int) ($stats->total_items ?? 0);
+        $completedItems = (int) ($stats->completed_items ?? 0);
+        $inProgressItems = (int) ($stats->in_progress_items ?? 0);
+        $notStartedItems = (int) ($stats->not_started_items ?? 0);
+        $totalPlannedVolume = (float) ($stats->total_planned_volume ?? 0);
+        $totalActualVolume = (float) ($stats->total_actual_volume ?? 0);
 
         $overallCompletion = $totalPlannedVolume > 0 
             ? ($totalActualVolume / $totalPlannedVolume) * 100 
@@ -110,6 +120,8 @@ class JournalEstimateIntegrationService
         return [
             'total_items' => $totalItems,
             'completed_items' => $completedItems,
+            'in_progress_items' => $inProgressItems,
+            'not_started_items' => $notStartedItems,
             'items_completion_percent' => $totalItems > 0 
                 ? round(($completedItems / $totalItems) * 100, 2) 
                 : 0,

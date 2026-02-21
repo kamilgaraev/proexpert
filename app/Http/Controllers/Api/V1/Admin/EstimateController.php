@@ -263,8 +263,9 @@ class EstimateController extends Controller
         
         $this->authorize('view', $estimateModel);
         
-        $itemsCount = $estimateModel->items()->count();
-        $sectionsCount = $estimateModel->sections()->count();
+        $statistics = $estimateModel->statistics ?? [];
+        $itemsCount = $statistics['items_count'] ?? $estimateModel->items()->count();
+        $sectionsCount = $statistics['sections_count'] ?? $estimateModel->sections()->count();
         
         $structure = $this->calculationService->getEstimateStructure($estimateModel);
         
@@ -291,7 +292,7 @@ class EstimateController extends Controller
         ]);
     }
 
-    public function structure(Request $request, $project, int $estimate): JsonResponse
+    public function structure(Request $request, $project, int $estimate): mixed
     {
         $organizationId = $request->attributes->get('current_organization_id');
         
@@ -300,8 +301,23 @@ class EstimateController extends Controller
             ->firstOrFail();
         
         $this->authorize('view', $estimateModel);
+
+        if ($estimateModel->structure_cache_path && \Illuminate\Support\Facades\Storage::disk('local')->exists($estimateModel->structure_cache_path)) {
+            return response()->stream(function () use ($estimateModel) {
+                echo '{"success":true,"message":null,"data":';
+                $stream = \Illuminate\Support\Facades\Storage::disk('local')->readStream($estimateModel->structure_cache_path);
+                while (!feof($stream)) {
+                    echo fread($stream, 8192);
+                }
+                fclose($stream);
+                echo '}';
+            }, 200, [
+                'Content-Type' => 'application/json',
+                'Cache-Control' => 'no-cache, no-store, must-revalidate',
+            ]);
+        }
         
-        // Оптимизированная загрузка структуры
+        // Оптимизированная загрузка структуры (fallback)
         $sections = $estimateModel->sections()
             ->whereNull('parent_section_id')
             ->with([
