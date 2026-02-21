@@ -461,23 +461,23 @@ class EstimateImportService
      */
     public function getImportStatus(string $id): array
     {
-       // Check if id is a session ID (UUID)
-       $session = ImportSession::find($id);
-       
-       if ($session) {
-           return [
-               'status' => $this->mapSessionStatusToOldStatus($session->status),
-               'progress' => $session->stats['progress'] ?? 0,
-               'error' => $session->error_message,
-               'result' => $session->stats['result'] ?? null,
-               'estimate_id' => $session->stats['estimate_id'] ?? null,
-           ];
-       }
-       
-       return [
-           'status' => 'failed',
-           'error' => 'Session not found'
-       ];
+        $session = ImportSession::find($id);
+
+        if (!$session) {
+            return [
+                'status' => 'failed',
+                'error'  => 'Session not found',
+            ];
+        }
+
+        return [
+            'status'      => $this->mapSessionStatusToOldStatus($session->status),
+            'progress'    => $session->stats['progress'] ?? 0,
+            'message'     => $session->stats['message'] ?? null,
+            'error'       => $session->error_message,
+            'result'      => $session->stats['result'] ?? null,
+            'estimate_id' => $session->stats['estimate_id'] ?? null,
+        ];
     }
     
     public function getImportHistory(int $organizationId, int $limit = 50): Collection

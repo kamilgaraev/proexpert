@@ -41,6 +41,15 @@ scrape_configs:
           level:
           env:
 
+      - template:
+          source: log_type
+          template: >-
+            {{ if or (eq .level "error") (eq .level "ERROR") }}errors{{ else if or (eq .level "critical") (eq .level "CRITICAL") (eq .level "alert") (eq .level "emergency") }}critical{{ else if or (eq .level "warning") (eq .level "WARNING") (eq .level "warn") }}warnings{{ else if or (eq .level "info") (eq .level "INFO") }}info{{ else if or (eq .level "debug") (eq .level "DEBUG") }}debug{{ else }}other{{ end }}
+
+      - labels:
+          log_type:
+
+
   - job_name: system_logs
     static_configs:
       - targets:
