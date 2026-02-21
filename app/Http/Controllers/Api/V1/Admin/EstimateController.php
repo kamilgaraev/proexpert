@@ -79,7 +79,7 @@ class EstimateController extends Controller
         );
     }
 
-    public function show(Request $request, $project, int $estimate): JsonResponse
+    public function show(Request $request, $project, int $estimate): mixed
     {
         $organizationId = $request->attributes->get('current_organization_id');
         
@@ -92,91 +92,53 @@ class EstimateController extends Controller
             ->firstOrFail();
         
         $this->authorize('view', $estimateModel);
-        
-        // Загружаем ВСЕ разделы одним запросом
-        $allSections = \App\Models\EstimateSection::where('estimate_id', $estimateModel->id)
-            ->with([
-                'items.workType',
-                'items.measurementUnit',
-                'items.resources',
-                'items.works',
-                'items.totals',
-                'items.childItems' => function ($query) {
-                    $query->with(['workType', 'measurementUnit', 'resources', 'works', 'totals', 'childItems']);
-                },
-            ])
-            ->orderBy('sort_order')
-            ->get();
-        
-        // Группируем разделы по родителю для O(1) поиска (всего O(N))
-        $sectionsByParent = $allSections->groupBy('parent_section_id');
 
-        // Оптимизированное построение дерева разделов
-        $buildTree = function($parentId = null) use (&$buildTree, $sectionsByParent) {
-            $currentLevelSections = $sectionsByParent->get($parentId, collect());
-            
-            return $currentLevelSections->map(function($section) use ($buildTree) {
-                // Внутри раздела группируем позиции для оптимизации
-                $allItems = $section->items;
-                $itemsByParent = $allItems->groupBy('parent_work_id');
+        $estimateModel->load(['project', 'contract', 'approvedBy']);
 
-                $buildItemsTree = function($parentItemId = null) use (&$buildItemsTree, $itemsByParent) {
-                    $currentLevelItems = $itemsByParent->get($parentItemId, collect());
-                    
-                    return $currentLevelItems->map(function($item) use ($buildItemsTree) {
-                        $item->setRelation('childItems', $buildItemsTree($item->id));
-                        return $item;
-                    })->values();
-                };
-
-                $section->setRelation('items', $buildItemsTree(null));
-                $section->setRelation('children', $buildTree($section->id));
-                return $section;
-            })->values();
-        };
-        
-        // Устанавливаем корневые разделы с построенной иерархией
-        $estimateModel->setRelation('sections', $buildTree(null));
-        
-        // Загружаем позиции без разделов и другие связи
-        $itemsWithoutSection = \App\Models\EstimateItem::where('estimate_id', $estimateModel->id)
-            ->whereNull('estimate_section_id')
-            ->with([
-                'workType', 
-                'measurementUnit', 
-                'resources', 
-                'works', 
-                'totals',
-                'childItems' => function ($q) {
-                    $q->with(['workType', 'measurementUnit', 'resources', 'works', 'totals', 'childItems']);
+        // Если снапшот есть - стримим его с огромной экономией RAM
+        if ($estimateModel->structure_cache_path && \Illuminate\Support\Facades\Storage::disk('local')->exists($estimateModel->structure_cache_path)) {
+            $meta = (new EstimateResource($estimateModel))->resolve();
+            $metaJson = json_encode($meta, JSON_UNESCAPED_UNICODE);
+            return response()->stream(function () use ($estimateModel, $metaJson) {
+                echo '{"success":true,"message":null,"data":';
+                echo $metaJson;
+                echo ',"tree":';
+                $stream = \Illuminate\Support\Facades\Storage::disk('local')->readStream($estimateModel->structure_cache_path);
+                while (!feof($stream)) {
+                    echo fread($stream, 8192);
                 }
-            ])
-            ->orderBy('position_number')
-            ->get();
-        
-        // Группируем для оптимизации
-        $itemsWithoutSectionByParent = $itemsWithoutSection->groupBy('parent_work_id');
+                fclose($stream);
+                echo '}';
+            }, 200, ['Content-Type' => 'application/json']);
+        }
 
-        // Строим иерархию позиций без разделов
-        $buildItemsTreeWithoutSection = function($parentItemId = null) use (&$buildItemsTreeWithoutSection, $itemsWithoutSectionByParent) {
-            $currentLevelItems = $itemsWithoutSectionByParent->get($parentItemId, collect());
+        // Снапшот отсутствует — генерируем синхронно (первый запрос для этой сметы)
+        // Jobs генерирует файл и обновляет structure_cache_path
+        \App\BusinessModules\Features\BudgetEstimates\Jobs\GenerateEstimateSnapshotJob::dispatchSync($estimateModel->id);
 
-            return $currentLevelItems->map(function($item) use ($buildItemsTreeWithoutSection) {
-                $item->setRelation('childItems', $buildItemsTreeWithoutSection($item->id));
-                return $item;
-            })->values();
-        };
-        
-        $estimateModel->setRelation('items', $buildItemsTreeWithoutSection(null));
-        
-        $estimateModel->load([
-            'project',
-            'contract',
-            'approvedBy',
-        ]);
-        
+        // Перечитываем модель, чтобы получить свежий путь
+        $estimateModel->refresh();
+
+        if ($estimateModel->structure_cache_path && \Illuminate\Support\Facades\Storage::disk('local')->exists($estimateModel->structure_cache_path)) {
+            $meta = (new EstimateResource($estimateModel))->resolve();
+            $metaJson = json_encode($meta, JSON_UNESCAPED_UNICODE);
+            return response()->stream(function () use ($estimateModel, $metaJson) {
+                echo '{"success":true,"message":null,"data":';
+                echo $metaJson;
+                echo ',"tree":';
+                $stream = \Illuminate\Support\Facades\Storage::disk('local')->readStream($estimateModel->structure_cache_path);
+                while (!feof($stream)) {
+                    echo fread($stream, 8192);
+                }
+                fclose($stream);
+                echo '}';
+            }, 200, ['Content-Type' => 'application/json']);
+        }
+
+        // Финальный фолбэк — возвращаем только метаданные без дерева
         return AdminResponse::success(new EstimateResource($estimateModel));
     }
+
 
     public function update(UpdateEstimateRequest $request, $project, int $estimate): JsonResponse
     {

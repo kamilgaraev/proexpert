@@ -85,7 +85,7 @@ class JournalEstimateIntegrationService
     public function getEstimateCompletionStats(Estimate $estimate): array
     {
         $actualVolumesQuery = \Illuminate\Support\Facades\DB::table('journal_work_volumes as jwv')
-            ->join('construction_journal_entries as cje', 'cje.id', '=', 'jwv.construction_journal_entry_id')
+            ->join('construction_journal_entries as cje', 'cje.id', '=', 'jwv.journal_entry_id')
             ->where('cje.estimate_id', $estimate->id)
             ->where('cje.status', JournalEntryStatusEnum::APPROVED->value)
             ->select('jwv.estimate_item_id', \Illuminate\Support\Facades\DB::raw('SUM(jwv.quantity) as sum_actual'))
@@ -96,6 +96,7 @@ class JournalEstimateIntegrationService
                 $join->on('ei.id', '=', 'actual_vols.estimate_item_id');
             })
             ->where('ei.estimate_id', $estimate->id)
+            ->whereNull('ei.deleted_at')
             ->selectRaw("
                 COUNT(ei.id) as total_items,
                 COALESCE(SUM(ei.quantity_total), 0) as total_planned_volume,
