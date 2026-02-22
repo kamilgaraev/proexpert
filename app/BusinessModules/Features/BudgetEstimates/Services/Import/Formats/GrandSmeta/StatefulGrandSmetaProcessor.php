@@ -37,6 +37,7 @@ class StatefulGrandSmetaProcessor
             return;
         }
 
+        $nameLower = mb_strtolower($name);
         if (str_contains($nameLower, 'всего по позиции')) {
             if ($this->currentPosition) {
                 $money = $this->extractMoney($rowData, $mapping);
