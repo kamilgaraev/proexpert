@@ -401,13 +401,9 @@ class EstimateItemTypeDetector
             return 'work';
         }
         
-        // РАБОТЫ: ФСБЦ (формат ФСБЦ-XX.X.XX.XX-XXXX с буквами)
-        if (preg_match('/^(ФСБЦ|ФССЦ|ФСБЦс|ФССЦп)[А-Я]?-\d{2}\.\d/ui', $code)) {
-        return 'work';
-        }
-        
-        // МАТЕРИАЛЫ: ФСБЦ материалы (формат 01.X.XX.XX-XXXX или 14.X.XX.XX-XXXX)
-        if (preg_match('/^(01|14)\.\d{1,2}\.\d{1,2}\.\d{1,2}-\d{4}$/u', $code)) {
+        // МАТЕРИАЛЫ/РАБОТЫ: ФСБЦ (формат ФСБЦ-XX.X.XX.XX-XXXX с буквами)
+        // В GrandSmeta ФСБЦ - это почти всегда материалы
+        if (preg_match('/^(ФСБЦ|ФССЦ|ФСБЦс|ФССЦп|01|14)[А-Я]?-\d{2}\.\d/ui', $code) || preg_match('/^(01|14)\.\d{1,2}\.\d{1,2}\.\d{1,2}-\d{4}$/u', $code)) {
             return 'material';
         }
         
