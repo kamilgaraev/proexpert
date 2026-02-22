@@ -56,7 +56,11 @@ class StatefulGrandSmetaProcessor
 
         // 2. Identify Row Type
         $isSection = $this->isSection($rowData, $name);
-        $isPosition = !$isSection && $this->isPosition($posNo, $name, $code);
+        
+        // Позиция — это не раздел, и у нее есть номер, отличный от текущего
+        $isPosition = !$isSection && $this->isPosition($posNo, $name, $code, $rowData, $mapping);
+        
+        // Ресурс — это если это не раздел и не новая позиция
         $isResource = !$isSection && !$isPosition && $this->isResource($rowData, $mapping);
 
         if ($isSection) {
@@ -76,8 +80,20 @@ class StatefulGrandSmetaProcessor
 
         // 3. Handle Resource/SubItem
         if ($this->currentPosition && !$isSection && !$isPosition) {
-            // Is it an informational row for NR/SP?
             $cleanName = mb_strtolower($name);
+            
+            // Обработка "Всего по позиции" - это финализация данных текущей позиции
+            if (str_contains($cleanName, 'всего по позиции')) {
+                $money = $this->extractMoney($rowData, $mapping);
+                $total = $money['total_price'] ?: $money['unit_price'];
+                if ($total > 0) {
+                    $this->currentPosition->currentTotalAmount = $total;
+                }
+                $this->closeCurrentPosition();
+                return;
+            }
+
+            // Is it an informational row for NR/SP?
             if (str_starts_with($cleanName, 'нр ') || str_starts_with($cleanName, 'нр(') || str_starts_with($cleanName, 'накладные')) {
                 $money = $this->extractMoney($rowData, $mapping);
                 $amt = $money['total_price'] ?: $money['unit_price'];
@@ -150,17 +166,32 @@ class StatefulGrandSmetaProcessor
         return false;
     }
 
-    private function isPosition(string $posNo, string $name, string $code): bool
+    private function isPosition(string $posNo, string $name, string $code, array $rowData = [], array $mapping = []): bool
     {
         if (empty($posNo)) return false;
 
         $lowerName = mb_strtolower($name);
-        if (in_array($lowerName, ['м', 'от', 'зп', 'эм', 'зт', 'от(зт)'], true)) {
+        
+        // Исключаем системные строки ресурсов
+        if (in_array($lowerName, ['м', 'от', 'зп', 'эм', 'зт', 'от(зт)', 'отм', 'зпм', 'мат'], true)) {
             return false;
+        }
+
+        // Если есть ресурсные единицы измерения — это 100% не самостоятельная позиция
+        if (!empty($rowData) && !empty($mapping)) {
+             $unit = mb_strtolower(trim((string)($rowData[$mapping['unit'] ?? ''] ?? '')));
+             if (in_array($unit, ['маш.-ч', 'чел.-ч', 'маш-ч', 'чел-ч', 'маш.час', 'чел.час'], true)) {
+                 return false;
+             }
         }
 
         // Exclude fractional numbers like "1.1", "70.1" which are sub-items
         if (preg_match('/^\d+\.\d+$/', $posNo)) {
+            return false;
+        }
+
+        // Если номер такой же, как у текущей позиции — это не новая позиция, а ее продолжение (ресурс)
+        if ($this->currentPosition && $this->currentPosition->sectionNumber === $posNo) {
             return false;
         }
 
