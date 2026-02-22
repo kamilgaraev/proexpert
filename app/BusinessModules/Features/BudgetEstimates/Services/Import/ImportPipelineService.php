@@ -521,6 +521,12 @@ class ImportPipelineService
         $code = mb_strtolower($dto->code ?? '');
         $unit = mb_strtolower($dto->unit ?? '');
 
+        // ⭐ Исключаем строки "разряда", чтобы не было двойного учета ФОТ
+        // (в GrandSmeta ФОТ уже учтен в основной строке ОТ/ОТм)
+        if (str_contains($name, 'разряд')) {
+            return 0;
+        }
+
         // Маркеры ФОТ в GrandSmeta
         $laborMarkers = ['от(', 'зт(', 'зп(', 'зарплата', 'оплата труда', 'машинист', 'отм(', 'зтм('];
         
