@@ -92,17 +92,12 @@ class EstimateCalculationService
         }
 
         // 2. Логика распределения маржи (Reverse Engineering)
-        if ($item->is_manual && $item->current_total_amount !== null && $item->current_total_amount != 0) {
-            $totalAmount = (float)$item->current_total_amount;
-            
-            // Если в БД заданы прямые затраты, доверяем им (особенно важно для импорта).
-            // В противном случае - считаем, что вся сумма позиции (current_total_amount) - это и есть прямые затраты.
-            $directCosts = $item->current_total_amount;
-            
-            // Если ПЗ были явно записаны в БД при импорте, и они не пустые (например, там уже вычли спарсенные НР и СП)
-            if ($item->direct_costs != 0) {
-                $directCosts = (float)$item->direct_costs;
-            }
+        if ($item->is_manual) {
+            // ⭐ Приоритет: current_total_amount или total_amount из БД
+            $totalAmount = (float)($item->current_total_amount ?: $item->total_amount);
+            if ($totalAmount <= 0) $totalAmount = round($item->quantity * $item->unit_price, 2);
+
+            $directCosts = (float)$item->direct_costs;
             
             $equipmentSum = 0;
 
@@ -173,6 +168,7 @@ class EstimateCalculationService
 
                 // 4. Подгоняем ПЗ (базовые затраты), чтобы Итого сошлось идеально
                 // Это гарантирует, что ПЗ + НР + СП = Итого (копейка в копейку)
+                // Если ПЗ пришли равными итогу (баг импорта), они будут корректно уменьшены здесь.
                 $directCosts = max(0, $totalAmount - $overheadAmount - $profitAmount);
             }
         } else {
