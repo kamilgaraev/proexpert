@@ -480,7 +480,10 @@ class ImportPipelineService
             'overhead_amount' => round(($dto->overheadAmount ?? 0) * ($dto->priceIndex ?? 1), 2),
             'profit_amount' => round(($dto->profitAmount ?? 0) * ($dto->priceIndex ?? 1), 2),
             
-            'direct_costs' => round($dto->currentTotalAmount ?? ($dto->quantity ?? 0) * ($dto->unitPrice ?? 0), 2),
+            // Прямые затраты - это Итого за вычетом НР и СП (если они известны)
+            // Иначе, это просто Итого (или Кол-во * Цена)
+            'direct_costs' => round(max(0, ($dto->currentTotalAmount ?? ($dto->quantity ?? 0) * ($dto->unitPrice ?? 0)) - (($dto->overheadAmount ?? 0) * ($dto->priceIndex ?? 1)) - (($dto->profitAmount ?? 0) * ($dto->priceIndex ?? 1))), 2),
+            
             'total_amount' => round($dto->currentTotalAmount ?? ($dto->quantity ?? 0) * ($dto->unitPrice ?? 0), 2),
             'current_total_amount' => $dto->currentTotalAmount !== null ? round($dto->currentTotalAmount, 2) : null,
             'normative_rate_code' => $dto->code,
