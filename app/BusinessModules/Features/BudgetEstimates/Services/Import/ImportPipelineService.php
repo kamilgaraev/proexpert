@@ -522,9 +522,10 @@ class ImportPipelineService
         $code = mb_strtolower($dto->code ?? '');
         $unit = mb_strtolower($dto->unit ?? '');
 
-        // ⭐ Исключаем строки "разряда", чтобы не было двойного учета ФОТ
-        // (в GrandSmeta ФОТ уже учтен в основной строке ОТ/ОТм)
-        if (str_contains($name, 'разряд')) {
+        // ⭐ Исключаем строки "разряда" и агрегаты (ОТ(ЗТ), ОТм(ЗТм)), чтобы не было двойного учета ФОТ
+        // (в GrandSmeta ФОТ уже учтен в детальных строках машин или разрядов)
+        $aggregateNames = ['от(зт)', 'отм(зтм)', 'отм(зтм)', 'зтм', 'зт'];
+        if (str_contains($name, 'разряд') || in_array($name, $aggregateNames)) {
             return 0;
         }
 
