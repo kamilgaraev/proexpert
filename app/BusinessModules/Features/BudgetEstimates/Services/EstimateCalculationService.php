@@ -159,19 +159,21 @@ class EstimateCalculationService
                 } else {
                      // ⭐ GrandSmeta Style: Если налоги по нулям, считаем их от ФОТ (labor_cost)
                 if (($overheadAmount + $profitAmount) <= 0.01 && ($estimate->overhead_rate + $estimate->profit_rate) > 0) {
-                     $fotBase = (float)$item->labor_cost;
+                     $fotBase = (float)($item->labor_cost ?? 0);
                      if ($fotBase > 0) {
                          $overheadAmount = round($fotBase * ($estimate->overhead_rate / 100), 2);
                          $profitAmount = round($fotBase * ($estimate->profit_rate / 100), 2);
                          
-                         // Защита: сумма не должна превышать разрыв между полным Итого и Прямыми Затратами
-                         $currentDirect = $resourcesSum > 0 ? $resourcesSum : ($item->quantity * $item->unit_price);
-                         $maxAvailable = max(0, $totalAmount - $currentDirect);
-                         if (($overheadAmount + $profitAmount) > $maxAvailable && $maxAvailable > 0) {
+                         // Защита: сумма не должна превышать итоговую стоимость строки
+                         if (($overheadAmount + $profitAmount) > $totalAmount && $totalAmount > 0) {
                              $totalRate = ($estimate->overhead_rate + $estimate->profit_rate);
-                             $overheadAmount = round($maxAvailable * ($estimate->overhead_rate / $totalRate), 2);
-                             $profitAmount = round($maxAvailable - $overheadAmount, 2);
+                             $overheadAmount = round($totalAmount * ($estimate->overhead_rate / $totalRate), 2);
+                             $profitAmount = round($totalAmount - $overheadAmount, 2);
                          }
+                         
+                         // КРИТИЧЕСКИ: раз мы создали налоги из ФОТ, нам нужно уменьшить ПЗ, 
+                         // чтобы сохранить баланс ПЗ + НР + СП = Итого
+                         $directCosts = max(0, $totalAmount - $overheadAmount - $profitAmount);
                      }
                 }
                      // НР и СП не были переданы из файла - пытаемся их восстановить из остатка
