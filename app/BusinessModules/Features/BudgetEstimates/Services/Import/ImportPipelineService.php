@@ -134,22 +134,23 @@ class ImportPipelineService
                     $meta = $estimate->metadata ?? [];
                     $meta['footer'] = $footerData;
                     
-                    // Set global markup rates if they are not already set
-                    if (($estimate->overhead_rate ?? 0) <= 0 || ($estimate->profit_rate ?? 0) <= 0) {
-                        $directCosts = (float)($footerData['direct_costs'] ?? 0);
-                        $laborCost = (float)($footerData['labor_cost'] ?? 0); // ФОТ
-                        $overhead = (float)($footerData['overhead_cost'] ?? 0);
-                        $profit = (float)($footerData['profit_cost'] ?? 0);
-                        
-                        $baseForRate = $laborCost > 0 ? $laborCost : ($directCosts > 0 ? $directCosts : 0);
-                        
-                        if ($baseForRate > 0) {
-                            if ($overhead > 0) {
-                                $estimate->overhead_rate = round(($overhead / $baseForRate) * 100, 2);
-                            }
-                            if ($profit > 0) {
-                                $estimate->profit_rate = round(($profit / $baseForRate) * 100, 2);
-                            }
+                    // ⭐ КАЛИБРОВКА СТАВОК (CALIBRATION)
+                    // Если в подвале удалось найти ФОТ и НР/СП - доверяем им, 
+                    // так как это единственный способ попасть в математику Гранд-Сметы.
+                    $directCosts = (float)($footerData['direct_costs'] ?? 0);
+                    $laborCostFromFooter = (float)($footerData['labor_cost'] ?? 0); // ФОТ
+                    $overheadFromFooter = (float)($footerData['overhead_cost'] ?? 0);
+                    $profitFromFooter = (float)($footerData['profit_cost'] ?? 0);
+                    
+                    $baseForCalibration = $laborCostFromFooter > 0 ? $laborCostFromFooter : ($directCosts > 0 ? $directCosts : 0);
+                    
+                    if ($baseForCalibration > 0) {
+                        Log::info("[ImportPipeline] Calibrating rates using footer: base={$baseForCalibration}, OH={$overheadFromFooter}, P={$profitFromFooter}");
+                        if ($overheadFromFooter > 0) {
+                            $estimate->overhead_rate = round(($overheadFromFooter / $baseForCalibration) * 100, 2);
+                        }
+                        if ($profitFromFooter > 0) {
+                            $estimate->profit_rate = round(($profitFromFooter / $baseForCalibration) * 100, 2);
                         }
                     }
                     

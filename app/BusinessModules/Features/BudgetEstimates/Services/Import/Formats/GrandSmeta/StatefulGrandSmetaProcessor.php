@@ -228,19 +228,19 @@ class StatefulGrandSmetaProcessor
         $cleanName = mb_strtolower(trim($name));
 
         if (str_starts_with($cleanName, 'итого прямые затраты') || str_starts_with($cleanName, 'прямые затраты')) {
-            $this->footerData['direct_costs'] = ($this->footerData['direct_costs'] ?? 0) + $val;
+            $this->footerData['direct_costs'] = $val; // ⭐ Не суммируем, а берем последнее значение (итог)
         } elseif (str_starts_with($cleanName, 'оплата труда рабочих') || $cleanName === 'оплата труда' || str_contains($cleanName, 'фот')) {
-            $this->footerData['labor_cost'] = ($this->footerData['labor_cost'] ?? 0) + $val;
+            $this->footerData['labor_cost'] = $val;
         } elseif (str_starts_with($cleanName, 'материалы') || str_contains($cleanName, 'итого материалы')) {
-            $this->footerData['materials_cost'] = ($this->footerData['materials_cost'] ?? 0) + $val;
+            $this->footerData['materials_cost'] = $val;
         } elseif (str_contains($cleanName, 'накладные расходы') || str_contains($cleanName, 'итого накладные') || str_starts_with($cleanName, 'нр')) {
-            $this->footerData['overhead_cost'] = ($this->footerData['overhead_cost'] ?? 0) + $val;
+            $this->footerData['overhead_cost'] = $val;
         } elseif (str_contains($cleanName, 'сметная прибыль') || str_contains($cleanName, 'итого сметная') || str_starts_with($cleanName, 'сп')) {
-            $this->footerData['profit_cost'] = ($this->footerData['profit_cost'] ?? 0) + $val;
+            $this->footerData['profit_cost'] = $val;
         } elseif (str_starts_with($cleanName, 'оборудование')) {
-            $this->footerData['equipment_cost'] = ($this->footerData['equipment_cost'] ?? 0) + $val;
+            $this->footerData['equipment_cost'] = $val;
         } elseif (str_contains($cleanName, 'всего по смете') || str_contains($cleanName, 'итого по смете') || str_contains($cleanName, 'всего по акту')) {
-            $this->footerData['total_estimate_cost'] = ($this->footerData['total_estimate_cost'] ?? 0) + $val;
+            $this->footerData['total_estimate_cost'] = $val;
         }
     }
 

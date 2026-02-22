@@ -68,7 +68,7 @@ class EstimateCalculationService
                      $query->where('item_type', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
                            ->orWhere(function ($q) {
                                $q->where('item_type', \App\Enums\EstimatePositionItemType::MATERIAL->value)
-                                 ->where('unit_price', '>', 50000);
+                                 ->where('unit_price', '>', 5000000); // Порог поднят до 5 млн, чтобы не цеплять стройматериалы
                            });
                  })
                  ->sum('total_amount');
