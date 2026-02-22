@@ -292,7 +292,7 @@ class EstimateCalculationService
             'total_direct_costs' => round($totalDirectCosts, 2),
             'total_overhead_costs' => round($totalOverheadCosts, 2),
             'total_estimated_profit' => round($totalEstimatedProfit, 2),
-            'total_equipment_costs' => round($totalEquipmentFromItems, 2),
+            'total_equipment_costs' => round($totalEquipment, 2),
             'total_amount' => round($totalAmount, 2),
             'total_amount_with_vat' => round($totalAmountWithVat, 2),
         ];
