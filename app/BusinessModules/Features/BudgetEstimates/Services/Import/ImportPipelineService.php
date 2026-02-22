@@ -229,9 +229,9 @@ class ImportPipelineService
             // Skip rows that have no numeric value (Quantity=0 AND Price=0 AND Total=0)
             // This filters out headers that were technically mapped but contain no data.
             if (!$rowDTO->isSection && 
-                ($rowDTO->quantity === null || $rowDTO->quantity <= 0) && 
-                ($rowDTO->unitPrice === null || $rowDTO->unitPrice <= 0) &&
-                ($rowDTO->currentTotalAmount === null || $rowDTO->currentTotalAmount <= 0)
+                ($rowDTO->quantity === null || $rowDTO->quantity == 0) && 
+                ($rowDTO->unitPrice === null || $rowDTO->unitPrice == 0) &&
+                ($rowDTO->currentTotalAmount === null || $rowDTO->currentTotalAmount == 0)
             ) {
                 Log::info("[ImportPipeline] Skipping empty/garbage item: '{$rowDTO->itemName}'");
                 continue;
@@ -477,15 +477,19 @@ class ImportPipelineService
             'base_profit_amount' => round($dto->profitAmount ?? 0, 2),
             
             // Current Overhead & Profit (Base * Index)
-            'overhead_amount' => round(($dto->overheadAmount ?? 0) * ($dto->priceIndex ?? 1), 2),
-            'profit_amount' => round(($dto->profitAmount ?? 0) * ($dto->priceIndex ?? 1), 2),
+            'overhead_amount' => $dto->overheadAmount,
+            'profit_amount' => $dto->profitAmount,
             
             // Прямые затраты - это Итого за вычетом НР и СП (если они известны)
-            // Иначе, это просто Итого (или Кол-во * Цена)
-            'direct_costs' => round(max(0, ($dto->currentTotalAmount ?? ($dto->quantity ?? 0) * ($dto->unitPrice ?? 0)) - (($dto->overheadAmount ?? 0) * ($dto->priceIndex ?? 1)) - (($dto->profitAmount ?? 0) * ($dto->priceIndex ?? 1))), 2),
+            // Иначе, это просто Итого (или Кол-во * Цена). Удаляем max(0, ...), так как поз. 134 может быть в минусе.
+            'direct_costs' => ($dto->currentTotalAmount ?? ($dto->quantity * $dto->unitPrice)) - ($dto->overheadAmount ?? 0) - ($dto->profitAmount ?? 0),
             
-            'total_amount' => round($dto->currentTotalAmount ?? ($dto->quantity ?? 0) * ($dto->unitPrice ?? 0), 2),
-            'current_total_amount' => $dto->currentTotalAmount !== null ? round($dto->currentTotalAmount, 2) : null,
+            'total_amount' => $dto->currentTotalAmount ?? ($dto->quantity * $dto->unitPrice),
+            'current_total_amount' => $dto->currentTotalAmount,
+            'materials_cost' => $dto->materialsCost,
+            'labor_cost' => $dto->laborCost,
+            'machinery_cost' => $dto->machineryCost,
+            'equipment_cost' => $dto->itemType === 'equipment' ? $dto->currentTotalAmount : null,
             'normative_rate_code' => $dto->code,
             'position_number' => (string)($dto->sectionNumber ?: ''),
             'item_type' => $this->mapItemType($dto->itemType),
