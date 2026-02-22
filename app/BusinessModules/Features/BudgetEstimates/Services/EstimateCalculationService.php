@@ -138,14 +138,15 @@ class EstimateCalculationService
                 $overheadAmount = (float)($item->overhead_amount ?? 0);
                 $profitAmount = (float)($item->profit_amount ?? 0);
                 
-                // Если в БД не было НР/СП или они малы, используем глобальные ставки или делим остаток 66/34
-                if ($remainingForMarkup > 0 && ($overheadAmount + $profitAmount) <= 0.05) {
-                     if (($estimate->overhead_rate ?? 0) > 0 || ($estimate->profit_rate ?? 0) > 0) {
-                         $overheadAmount = round($directCosts * ($estimate->overhead_rate / 100), 2);
-                         $profitAmount = round($directCosts * ($estimate->profit_rate / 100), 2);
+                // Если в БД не было НР/СП или они малы, используем глобальные ставки или делим остаток пропорционально
+                if ($remainingForMarkup > 1 && ($overheadAmount + $profitAmount) <= 0.05) {
+                     $totalRate = ($estimate->overhead_rate ?? 0) + ($estimate->profit_rate ?? 0);
+                     if ($totalRate > 0) {
+                         $overheadAmount = round($remainingForMarkup * ($estimate->overhead_rate / $totalRate), 2);
+                         $profitAmount = $remainingForMarkup - $overheadAmount;
                      } else {
                          $overheadAmount = round($remainingForMarkup * 0.66, 2);
-                         $profitAmount = round($remainingForMarkup * 0.34, 2);
+                         $profitAmount = $remainingForMarkup - $overheadAmount;
                      }
                 }
                 

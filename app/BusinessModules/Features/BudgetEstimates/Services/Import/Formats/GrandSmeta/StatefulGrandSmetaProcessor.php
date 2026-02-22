@@ -76,6 +76,40 @@ class StatefulGrandSmetaProcessor
 
         // 3. Handle Resource/SubItem
         if ($this->currentPosition && !$isSection && !$isPosition) {
+            // Is it an informational row for NR/SP?
+            $cleanName = mb_strtolower($name);
+            if (str_starts_with($cleanName, 'нр ') || str_starts_with($cleanName, 'нр(') || str_starts_with($cleanName, 'накладные')) {
+                $money = $this->extractMoney($rowData, $mapping);
+                $amt = $money['total_price'] ?: $money['unit_price'];
+                if ($amt <= 0) {
+                    if (preg_match('/(?:нр|накладные).*?\s*=\s*([\d\s]+[.,]?\d*)/ui', $name, $m)) {
+                        $amt = $this->parseFloat($m[1]);
+                    } elseif (preg_match('/(?:нр|накладные).*?([\d\s]+[.,]?\d*)\s*(?:руб|р)/ui', $name, $m)) {
+                        $amt = $this->parseFloat($m[1]);
+                    }
+                }
+                $this->currentPosition->overheadAmount = ($this->currentPosition->overheadAmount ?? 0) + $amt;
+                return;
+            }
+
+            if (str_starts_with($cleanName, 'сп ') || str_starts_with($cleanName, 'сп(') || str_starts_with($cleanName, 'сметная прибыль')) {
+                $money = $this->extractMoney($rowData, $mapping);
+                $amt = $money['total_price'] ?: $money['unit_price'];
+                 if ($amt <= 0) {
+                    if (preg_match('/(?:сп|сметная).*?\s*=\s*([\d\s]+[.,]?\d*)/ui', $name, $m)) {
+                        $amt = $this->parseFloat($m[1]);
+                    } elseif (preg_match('/(?:сп|сметная).*?([\d\s]+[.,]?\d*)\s*(?:руб|р)/ui', $name, $m)) {
+                        $amt = $this->parseFloat($m[1]);
+                    }
+                }
+                $this->currentPosition->profitAmount = ($this->currentPosition->profitAmount ?? 0) + $amt;
+                return;
+            }
+            
+            if (str_starts_with($cleanName, 'фот ') || str_starts_with($cleanName, 'оплата труда')) {
+                 return; // just informational
+            }
+
             $subItemDTO = $this->mapToDTO($rowData, $mapping, $rowNumber, false);
             $subItemDTO->isSubItem = true;
             $this->items[] = $subItemDTO;
@@ -89,6 +123,10 @@ class StatefulGrandSmetaProcessor
         $unit = mb_strtolower(trim((string)($data[$mapping['unit'] ?? ''] ?? '')));
         $code = mb_strtolower(trim((string)($data[$mapping['code'] ?? ''] ?? '')));
         
+        // Exclude NR and SP from being resources even if unit is %
+        if (str_starts_with($name, 'нр ') || str_starts_with($name, 'нр(') || str_starts_with($name, 'накладные')) return false;
+        if (str_starts_with($name, 'сп ') || str_starts_with($name, 'сп(') || str_starts_with($name, 'сметная прибыль')) return false;
+
         if (str_contains($name, 'вспомогательные') && str_contains($name, 'ресурсы')) {
             return true;
         }
@@ -98,7 +136,7 @@ class StatefulGrandSmetaProcessor
         }
 
         // Specific GrandSmeta codes for materials and labor
-        if (preg_match('/^(01\.|ТСЦ|ФССЦ|ОТ|ЗП|ЗТ|ЭМ)/ui', $code)) {
+        if (preg_match('/^(01\.|ТСЦ|ФССЦ|ФСБЦ|ФСРЦ|ОТ|ЗП|ЗТ|ЭМ|ФСЭМ)/ui', $code)) {
             return true;
         }
 
@@ -285,9 +323,9 @@ class StatefulGrandSmetaProcessor
 
         if (str_contains($lowerName, 'труд') || str_contains($lowerName, 'от(') || str_starts_with($lowerCode, 'от')) {
             $itemType = 'labor';
-        } elseif (str_contains($lowerName, 'маш.') || str_contains($lowerName, 'механизм') || str_starts_with($lowerCode, 'эм')) {
+        } elseif (str_contains($lowerName, 'маш.') || str_contains($lowerName, 'механизм') || str_starts_with($lowerCode, 'эм') || str_starts_with($lowerCode, 'фсэм')) {
             $itemType = 'machinery';
-        } elseif (str_contains($lowerName, 'материал') || preg_match('/^(01\.|с|тсц|фссц)/u', $lowerCode)) {
+        } elseif (str_contains($lowerName, 'материал') || preg_match('/^(01\.|с\b|тсц|фссц|фсбц|фсрц|прайс)/u', $lowerCode)) {
             $itemType = 'material';
         }
 
