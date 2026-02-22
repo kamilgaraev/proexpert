@@ -505,8 +505,43 @@ class ImportPipelineService
                 'raw_data' => $dto->rawData,
                 'overhead_rate' => $dto->overheadRate,
                 'profit_rate' => $dto->profitRate,
-            ])
+                'is_informative_row' => $this->isInformativeGrandSmetaRow($dto), // Для фронтенда
+            ]),
+            'is_not_accounted' => $this->isInformativeGrandSmetaRow($dto)
         ];
+    }
+
+    /**
+     * Помощник для определения "информационных" строк GrandSmeta, 
+     * которые не должны участвовать в суммировании Прямых Затрат
+     */
+    private function isInformativeGrandSmetaRow($dto): bool
+    {
+        $name = mb_strtolower($dto->itemName ?? '');
+        $code = mb_strtolower($dto->code ?? '');
+        
+        // 1. Агрегирующие заголовки (ОТ, ЭМ, М, ОТм) обычно не имеют шифра или имеют короткий цифровой код
+        $aggregates = ['от(зт)', 'эм', 'отм(зтм)', 'м'];
+        if (in_array($name, $aggregates) && (empty($code) || strlen($code) <= 2)) {
+            return true;
+        }
+
+        // 2. Строки зарплаты машиниста под конкретной машиной (шифр 4-100-XXX)
+        // Их стоимость уже заложена в стоимость самой машины
+        if (str_starts_with($code, '4-100-')) {
+            return true;
+        }
+
+        // 3. Дублирующие строки "Средний разряд" если они идут под ОТ(ЗТ)
+        // В рамках нашей системы безопаснее считать ОТ(ЗТ) информационным заголовком,
+        // а разряды - фактическими носителями цены, но в Гранд-Смете часто наоборот. 
+        // Оставим разряды как "неучитываемые", если есть строка ОТ(ЗТ). 
+        // Но проще всего: если в строке есть "разряд" и она идет ресурсом - это доп. инфо.
+        if (str_contains($name, 'разряд') && !empty($dto->code)) {
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -518,16 +553,10 @@ class ImportPipelineService
             return (float)$dto->laborCost;
         }
 
-        $name = mb_strtolower($dto->itemName ?? '');
-        $code = mb_strtolower($dto->code ?? '');
-        $unit = mb_strtolower($dto->unit ?? '');
-
-        // ⭐ Исключаем строки "разряда" и агрегаты (ОТ(ЗТ), ОТм(ЗТм)), чтобы не было двойного учета ФОТ
-        // (в GrandSmeta ФОТ уже учтен в детальных строках машин или разрядов)
-        $aggregateNames = ['от(зт)', 'отм(зтм)', 'отм(зтм)', 'зтм', 'зт'];
-        if (str_contains($name, 'разряд') || in_array($name, $aggregateNames)) {
-            return 0;
-        }
+        // ⭐ В GrandSmeta ФОТ может быть как в агрегирующих строках (ОТ(ЗТ)), так и в разрядах (1-100-XX).
+        // Мы собираем его СО ВСЕХ строк, чтобы ничего не потерять, 
+        // а дублирование денег решаем через флаг is_not_accounted в prepareWorkData.
+        return (float)($dto->currentTotalAmount ?? 0);
 
         // Маркеры ФОТ в GrandSmeta
         $laborMarkers = ['от(', 'зт(', 'зп(', 'зарплата', 'оплата труда', 'машинист', 'отм(', 'зтм('];
