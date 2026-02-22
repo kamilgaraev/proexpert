@@ -22,6 +22,13 @@ class EstimateCalculationService
         // 0. Для дочерних ресурсов (винтики, труд и т.д.) просто считаем Q * P
         if ($item->parent_work_id !== null) {
             $totalAmount = round($item->quantity * $item->unit_price, 2);
+            
+            // ⭐ Если это импортированный ресурс и расчет Q*P дал 0 (например, для заголовков ЭМ, М),
+            // но в файле был указан Итог — доверяем Итогу из файла.
+            if ($item->current_total_amount > 0 && ($totalAmount <= 0 || $item->is_manual)) {
+                $totalAmount = (float)$item->current_total_amount;
+            }
+
             $item->update([
                 'direct_costs' => $totalAmount,
                 'overhead_amount' => 0,
@@ -38,29 +45,21 @@ class EstimateCalculationService
         $hasChildren = EstimateItem::where('parent_work_id', $item->id)->exists();
 
         if ($item->isWork() || $item->isMaterial()) {
-             // В GrandSmeta ресурсы часто дублируются (сводная строка "М" + детализация).
-             // Ищем сводные строки компонентов.
-             $summaryNames = ['М', 'ОТ(ЗТ)', 'ОТм', 'ЭМ', 'ОТ', 'ЗП', 'ЗПМ', 'МАТ'];
-             $hasSummaries = EstimateItem::where('parent_work_id', $item->id)
-                 ->whereIn('name', $summaryNames)
-                 ->exists();
-
-             if ($hasSummaries) {
-                 // Если есть сводные строки, суммируем ТОЛЬКО их (это и есть ПЗ по позиции)
+             // ⭐ Находим сумму ПЗ из дочерних ресурсов. 
+             // Чтобы избежать двойного счета (сумма заголовков + сумма деталей),
+             // суммируем только "листовые" записи (у которых нет своих детей).
+             $resourcesSum = (float) EstimateItem::where('parent_work_id', $item->id)
+                 ->where('is_not_accounted', false)
+                 ->where('item_type', '!=', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
+                 ->whereDoesntHave('childItems')
+                 ->sum('total_amount');
+             
+             // Если ресурсов много, а сумма 0 — пробуем все-таки суммировать всё (кроме оборудования), 
+             // на случай если иерархия не проставилась.
+             if ($resourcesSum <= 0 && $hasChildren) {
                  $resourcesSum = (float) EstimateItem::where('parent_work_id', $item->id)
-                     ->whereIn('name', $summaryNames)
-                     ->sum('total_amount');
-             } else if ($hasChildren) {
-                 // Если сводных строк нет, суммируем все детальные ресурсы (кроме оборудования)
-                 $resourcesSum = (float) EstimateItem::where('parent_work_id', $item->id)
-                     ->where('item_type', '!=', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
-                     ->where('is_not_accounted', false)
-                     ->get()
-                     ->filter(function ($resource) {
-                         // Выделение Оборудования в дочерних ресурсах
-                         return !($resource->isMaterial() && $resource->unit_price > 50000);
-                     })
-                     ->sum('total_amount');
+                    ->where('item_type', '!=', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
+                    ->sum('total_amount');
              }
 
              // Оборудование всегда считаем отдельно (оно не база для НР/СП)
@@ -74,14 +73,18 @@ class EstimateCalculationService
                  })
                  ->sum('total_amount');
              
+             // Суммируем трудозатраты и маш-часы для красоты
+             $laborHours = (float) EstimateItem::where('parent_work_id', $item->id)->sum('labor_hours');
+             $machineryHours = (float) EstimateItem::where('parent_work_id', $item->id)->sum('machinery_hours');
+             if ($laborHours > 0) $item->labor_hours = $laborHours;
+             if ($machineryHours > 0) $item->machinery_hours = $machineryHours;
+
              // Самостоятельная детекция оборудования для корневой позиции
-             // Если это материал > 50к и у него НЕТ дочерних ресурсов — это оборудование
              if ($item->isMaterial() && $item->unit_price > 50000 && !$hasChildren) {
                  $equipmentSum = $item->quantity * $item->unit_price;
                  $resourcesSum = 0;
              }
 
-             // Если сама позиция помечена как equipment — считаем всё её содержимое или её саму как оборудование
              if ($item->isEquipment()) {
                  $equipmentSum = $resourcesSum > 0 ? $resourcesSum + $equipmentSum : ($item->quantity * $item->unit_price);
                  $resourcesSum = 0;
@@ -92,8 +95,15 @@ class EstimateCalculationService
         if ($item->is_manual && $item->current_total_amount !== null && $item->current_total_amount > 0) {
             $totalAmount = (float)$item->current_total_amount;
             
-            // Если ресурсы есть, они определяют ПЗ. Если нет — вся сумма идет в ПЗ (или оборудование)
-            $directCosts = $resourcesSum;
+            // Если в БД заданы прямые затраты, доверяем им (особенно важно для импорта).
+            // В противном случае - считаем, что вся сумма позиции (current_total_amount) - это и есть прямые затраты.
+            $directCosts = $item->current_total_amount;
+            
+            // Если ПЗ были явно записаны в БД при импорте, и они не пустые (например, там уже вычли спарсенные НР и СП)
+            if ($item->direct_costs > 0 && $item->direct_costs <= $totalAmount) {
+                $directCosts = (float)$item->direct_costs;
+            }
+            
             $equipmentSum = 0;
 
             // КРИТЕРИЙ ОБОРУДОВАНИЯ:
@@ -132,36 +142,41 @@ class EstimateCalculationService
                     $directCosts = $totalAmount;
                 }
                 
-                // 3. Выделяем остаток (маржу), который нужно распределить на НР и СП
-                $remainingForMarkup = round(max(0, $totalAmount - $directCosts), 2);
-                
+                // 3. Работа с остатком (маржой)
                 $overheadAmount = (float)($item->overhead_amount ?? 0);
                 $profitAmount = (float)($item->profit_amount ?? 0);
                 
-                // Если НР/СП были явно спарсены из строк "НР (28 руб)" и в сумме они больше нуля -
-                // мы просто доверяем им (они уже лежат в $overheadAmount и $profitAmount).
-                // Иначе - пытаемся распределить $remainingForMarkup
-                if ($remainingForMarkup > 0 && ($overheadAmount + $profitAmount) <= 0.05) {
-                     $totalRate = ($estimate->overhead_rate ?? 0) + ($estimate->profit_rate ?? 0);
-                     if ($totalRate > 0) {
-                         $overheadAmount = round($remainingForMarkup * ($estimate->overhead_rate / $totalRate), 2);
-                         $profitAmount = $remainingForMarkup - $overheadAmount;
+                // Если НР/СП заданы явно, используем их напрямую и НЕ вычисляем остаток
+                if ($overheadAmount > 0 || $profitAmount > 0) {
+                     // Мы просто доверяем марже из БД (она пришла из парсера)
+                } else {
+                     // НР и СП не были переданы из файла - пытаемся их восстановить из остатка
+                     // Считаем остаток ПЕРЕД НР/СП
+                     $remainingForMarkup = round(max(0, $totalAmount - $directCosts), 2);
+
+                     if ($remainingForMarkup > 1) {
+                         $totalRate = ($estimate->overhead_rate ?? 0) + ($estimate->profit_rate ?? 0);
+                         if ($totalRate > 0) {
+                             $overheadAmount = round($remainingForMarkup * ($estimate->overhead_rate / $totalRate), 2);
+                             $profitAmount = $remainingForMarkup - $overheadAmount;
+                         } else {
+                             // Default 66/34 split
+                             $overheadAmount = round($remainingForMarkup * 0.66, 2);
+                             $profitAmount = $remainingForMarkup - $overheadAmount;
+                         }
                      } else {
-                         // Default 66/34 split if no global rates exist
-                         $overheadAmount = round($remainingForMarkup * 0.66, 2);
-                         $profitAmount = $remainingForMarkup - $overheadAmount;
+                         // Остатка нет (Сумма = ПЗ), смета без скрытых НР/СП
+                         $overheadAmount = 0;
+                         $profitAmount = 0;
                      }
-                } elseif ($remainingForMarkup <= 0) {
-                    // Это чистый ресурсный метод, итог равен сумме ресурсов, НР/СП спрятаны где-то еще
-                    $overheadAmount = 0;
-                    $profitAmount = 0;
                 }
-                
-                // Подгоняем ПЗ, чтобы Итого сошлось
+
+                // 4. Подгоняем ПЗ (базовые затраты), чтобы Итого сошлось идеально
+                // Это гарантирует, что ПЗ + НР + СП = Итого (копейка в копейку)
                 $directCosts = max(0, $totalAmount - $overheadAmount - $profitAmount);
             }
         } else {
-            // Стандартный расчет снизу вверх
+            // АВТОМАТИЧЕСКАЯ КАЛЬКУЛЯЦИЯ (Снизу вверх, если позиция не пришла из Excel или изменена вручную)
             $isEquipment = $item->isEquipment() || ($item->unit_price > 50000);
             
             if ($isEquipment) {
@@ -173,8 +188,8 @@ class EstimateCalculationService
                 $totalAmount = $directCosts + $overheadAmount + $profitAmount + $equipmentSum;
             } else {
                 $directCosts = $resourcesSum > 0 ? $resourcesSum : $item->quantity * $item->unit_price;
-                $overheadAmount = $directCosts * ($estimate->overhead_rate / 100);
-                $profitAmount = $directCosts * ($estimate->profit_rate / 100);
+                $overheadAmount = round($directCosts * ($estimate->overhead_rate / 100), 2);
+                $profitAmount = round($directCosts * ($estimate->profit_rate / 100), 2);
                 $totalAmount = $directCosts + $overheadAmount + $profitAmount;
             }
         }
