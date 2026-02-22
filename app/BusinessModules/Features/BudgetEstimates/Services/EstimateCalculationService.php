@@ -260,32 +260,28 @@ class EstimateCalculationService
     
     private function performCalculation(Estimate $estimate): array
     {
-        // 1. СМР часть: Суммируем total_amount всех корневых позиций, кроме оборудования.
-        // Это гарантирует, что Итог сметы всегда совпадает с суммой строк, которые видит юзер.
-        $cmrTotals = EstimateItem::where('estimate_id', $estimate->id)
+        // ⭐ ЕДИНЫЙ ЗАПРОС: Суммируем всё одним махом без фильтрации по типам.
+        // Это гарантирует, что каждая строка будет посчитана ровно один раз.
+        $totals = EstimateItem::where('estimate_id', $estimate->id)
             ->whereNull('parent_work_id')
             ->where('is_not_accounted', false)
-            ->where('item_type', '!=', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
             ->selectRaw('
-                COALESCE(SUM(total_amount), 0) as total_cmr_val,
+                COALESCE(SUM(total_amount), 0) as grand_total,
+                COALESCE(SUM(equipment_cost), 0) as total_equipment,
                 COALESCE(SUM(overhead_amount), 0) as total_overhead,
                 COALESCE(SUM(profit_amount), 0) as total_profit
             ')
             ->first();
 
-        // 2. Оборудование: суммируем по колонке equipment_cost для всех корневых позиций
-        $totalEquipment = (float) EstimateItem::where('estimate_id', $estimate->id)
-            ->whereNull('parent_work_id')
-            ->where('is_not_accounted', false)
-            ->sum('equipment_cost');
+        $totalAmount = (float)$totals->grand_total;
+        $totalEquipment = (float)$totals->total_equipment;
+        $totalOverheadCosts = (float)$totals->total_overhead;
+        $totalEstimatedProfit = (float)$totals->total_profit;
         
-        $totalOverheadCosts = (float) $cmrTotals->total_overhead;
-        $totalEstimatedProfit = (float) $cmrTotals->total_profit;
+        // Прямые затраты в шапке — это то, что осталось от общего Итога за вычетом ОБ, НР и СП.
+        // Такая формула физически исключает расхождение шапки с разделами.
+        $totalDirectCosts = max(0, $totalAmount - $totalEquipment - $totalOverheadCosts - $totalEstimatedProfit);
         
-        // Прямые затраты - это остаток от суммы СМР строк за вычетом их налогов.
-        $totalDirectCosts = max(0, (float)$cmrTotals->total_cmr_val - $totalOverheadCosts - $totalEstimatedProfit);
-        
-        $totalAmount = (float)$cmrTotals->total_cmr_val + $totalEquipment;
         $totalAmountWithVat = $totalAmount * (1 + $estimate->vat_rate / 100);
         
         $result = [
