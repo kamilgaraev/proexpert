@@ -194,24 +194,6 @@ class EstimateCalculationService
             }
         }
         
-        // 5. ГАРАНТИЯ "ЧЕСТНОГО" РАСЧЕТА: Итого позиции ВСЕГДА должно быть равно Q * P
-        // Если только это не сложный заголовок с вложенными ресурсами, где Итого — это сумма ресурсов.
-        if (!$hasChildren && $item->quantity > 0 && $item->unit_price > 0) {
-            $calculatedTotal = round($item->quantity * $item->unit_price, 2);
-            // Если расчетное Итого отличается от того, что мы получили (например, из Excel),
-            // мы отдаем приоритет расчетному Итого (Q*P), чтобы результат был "честным".
-            if (abs($calculatedTotal - $totalAmount) > 0.01) {
-                 $totalAmount = $calculatedTotal;
-                 
-                 // Пересчитываем ПЗ, чтобы баланс ПЗ + НР + СП сошелся с новым "честным" Итого
-                 if (!$isEquipment) {
-                     $directCosts = max(0, $totalAmount - $overheadAmount - $profitAmount);
-                 } else {
-                     $equipmentSum = max(0, $totalAmount - $directCosts - $overheadAmount - $profitAmount);
-                 }
-            }
-        }
-
         $item->update([
             'direct_costs' => round($directCosts, 2),
             'equipment_cost' => round($equipmentSum, 2),
@@ -307,14 +289,7 @@ class EstimateCalculationService
         $totalOverheadCosts = (float) $cmrTotals->total_overhead;
         $totalEstimatedProfit = (float) $cmrTotals->total_profit;
         
-        // НЕЗАВИСИМЫЙ ПОДСЧЕТ ИТОГО:
-        // Вместо суммы компонентов, берем чистую сумму total_amount всех корневых позиций.
-        // Это гарантирует "честный" результат, который видит пользователь в таблице.
-        $totalAmount = (float) EstimateItem::where('estimate_id', $estimate->id)
-            ->whereNull('parent_work_id')
-            ->where('is_not_accounted', false)
-            ->sum('total_amount');
-
+        $totalAmount = $totalDirectCosts + $totalOverheadCosts + $totalEstimatedProfit + $totalEquipmentFromItems;
         $totalAmountWithVat = $totalAmount * (1 + $estimate->vat_rate / 100);
         
         $result = [
