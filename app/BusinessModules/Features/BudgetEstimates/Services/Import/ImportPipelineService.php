@@ -485,7 +485,11 @@ class ImportPipelineService
             'total_amount' => (float)($dto->currentTotalAmount ?? ($dto->quantity * $dto->unitPrice ?? 0)),
             'current_total_amount' => (float)($dto->currentTotalAmount ?? 0),
             'materials_cost' => $dto->materialsCost ?? 0,
-            'labor_cost' => $dto->laborCost ?? 0,
+            
+            // ⭐ ИНТЕЛЛЕКТУАЛЬНОЕ ОПРЕДЕЛЕНИЕ ФОТ (Фонда оплаты труда)
+            // Если в DTO нет laborCost, но это строка ресурса ОТ/ЗТ/Машинисты - берем ее Итого как ФОТ
+            'labor_cost' => $this->detectLaborCost($dto),
+
             'machinery_cost' => $dto->machineryCost ?? 0,
             'equipment_cost' => $dto->itemType === 'equipment' ? ($dto->currentTotalAmount ?? 0) : 0,
             'normative_rate_code' => $dto->code,
@@ -502,6 +506,30 @@ class ImportPipelineService
                 'profit_rate' => $dto->profitRate,
             ])
         ];
+    }
+
+    /**
+     * Помощник для детекции ФОТ из названия или обоснования GrandSmeta
+     */
+    private function detectLaborCost($dto): float
+    {
+        if (isset($dto->laborCost) && (float)$dto->laborCost > 0) {
+            return (float)$dto->laborCost;
+        }
+
+        $name = mb_strtolower($dto->itemName ?? '');
+        $code = mb_strtolower($dto->code ?? '');
+
+        // Маркеры ФОТ в GrandSmeta
+        $laborMarkers = ['от(', 'зт(', 'зп(', 'зарплата', 'оплата труда', 'машинист'];
+        
+        foreach ($laborMarkers as $marker) {
+            if (str_contains($name, $marker) || str_contains($code, $marker)) {
+                return (float)($dto->currentTotalAmount ?? ($dto->quantity * $dto->unitPrice ?? 0));
+            }
+        }
+
+        return 0;
     }
     
     private function mapItemType(?string $type): string
