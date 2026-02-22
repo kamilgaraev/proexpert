@@ -16,6 +16,11 @@ use Illuminate\Support\Facades\Log;
 class AutoSchedulingService
 {
     /**
+     * @var array<int, ScheduleTask> Список задач, обновленных в ходе текущего запроса
+     */
+    protected array $updatedTasks = [];
+
+    /**
      * Синхронизировать даты родительских задач (SUMMARY) вверх по иерархии
      */
     public function syncParentDates(ScheduleTask $task): void
@@ -46,14 +51,20 @@ class AutoSchedulingService
             $endDate = Carbon::parse($maxEnd);
             $duration = $startDate->diffInDays($endDate) + 1;
 
-            $parent->update([
-                'planned_start_date' => $startDate->toDateString(),
-                'planned_end_date' => $endDate->toDateString(),
-                'planned_duration_days' => $duration,
-            ]);
+            if ($parent->planned_start_date !== $startDate->toDateString() || 
+                $parent->planned_end_date !== $endDate->toDateString()) {
+                
+                $parent->update([
+                    'planned_start_date' => $startDate->toDateString(),
+                    'planned_end_date' => $endDate->toDateString(),
+                    'planned_duration_days' => $duration,
+                ]);
 
-            // Рекурсивно идем выше
-            $this->syncParentDates($parent);
+                $this->trackUpdatedTask($parent);
+
+                // Рекурсивно идем выше
+                $this->syncParentDates($parent);
+            }
         }
     }
 
@@ -90,6 +101,8 @@ class AutoSchedulingService
                     'planned_start_date' => $newStartDate->toDateString(),
                     'planned_end_date' => $newEndDate->toDateString(),
                 ]);
+
+                $this->trackUpdatedTask($successor);
 
                 // Рекурсивно обновляем последователей последователя
                 $this->applyCascadeUpdates($successor);
@@ -138,5 +151,31 @@ class AutoSchedulingService
         foreach ($children as $index => $child) {
             $this->updateWbsRecursive($child, $prefix . '.' . ($index + 1));
         }
+    }
+
+    /**
+     * Добавить задачу в список отслеживаемых обновлений
+     */
+    protected function trackUpdatedTask(ScheduleTask $task): void
+    {
+        $this->updatedTasks[$task->id] = $task;
+    }
+
+    /**
+     * Получить список всех затронутых задач
+     * 
+     * @return array<ScheduleTask>
+     */
+    public function getUpdatedTasks(): array
+    {
+        return array_values($this->updatedTasks);
+    }
+
+    /**
+     * Очистить историю обновлений
+     */
+    public function clearUpdatedTasks(): void
+    {
+        $this->updatedTasks = [];
     }
 }
