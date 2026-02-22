@@ -137,7 +137,7 @@ class StatefulGrandSmetaProcessor
             return true;
         }
 
-        if (in_array($name, ['м', 'от', 'зп', 'эм', 'зт', 'от(зт)'], true)) {
+        if (in_array($name, ['м', 'от', 'зп', 'эм', 'зт', 'от(зт)', 'отм', 'зпм', 'зтм'], true)) {
             return true;
         }
 
@@ -163,7 +163,7 @@ class StatefulGrandSmetaProcessor
         $lowerName = mb_strtolower($name);
         
         // Исключаем системные строки ресурсов
-        if (in_array($lowerName, ['м', 'от', 'зп', 'эм', 'зт', 'от(зт)', 'отм', 'зпм', 'мат'], true)) {
+        if (in_array($lowerName, ['м', 'от', 'зп', 'эм', 'зт', 'от(зт)', 'отм', 'зпм', 'зтм', 'мат'], true)) {
             return false;
         }
 
@@ -363,7 +363,7 @@ class StatefulGrandSmetaProcessor
         if (empty($value)) return 0.0;
 
         // Clean up common spaces and convert comma to dot
-        $clean = str_replace([' ', "\xc2\xa0"], '', (string)$value);
+        $clean = str_replace([' ', "\xc2\xa0", "\xa0", "\r", "\n", "\t"], '', (string)$value);
         $clean = str_replace(',', '.', $clean);
         
         // If it's a quantity column, we need to be careful with "100 м" or "Объем=60/100"

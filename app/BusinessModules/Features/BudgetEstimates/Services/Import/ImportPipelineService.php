@@ -519,10 +519,21 @@ class ImportPipelineService
 
         $name = mb_strtolower($dto->itemName ?? '');
         $code = mb_strtolower($dto->code ?? '');
+        $unit = mb_strtolower($dto->unit ?? '');
 
         // Маркеры ФОТ в GrandSmeta
-        $laborMarkers = ['от(', 'зт(', 'зп(', 'зарплата', 'оплата труда', 'машинист'];
+        $laborMarkers = ['от(', 'зт(', 'зп(', 'зарплата', 'оплата труда', 'машинист', 'отм(', 'зтм('];
         
+        // 1. Проверка по единицам измерения (чел.-ч - это всегда ФОТ)
+        if (str_contains($unit, 'чел') && str_contains($unit, 'ч')) {
+            return (float)($dto->currentTotalAmount ?? ($dto->quantity * $dto->unitPrice ?? 0));
+        }
+
+        // 2. Проверка по именам и кодам
+        if (str_starts_with($name, 'от') || str_starts_with($name, 'зт') || str_starts_with($name, 'отм')) {
+             return (float)($dto->currentTotalAmount ?? ($dto->quantity * $dto->unitPrice ?? 0));
+        }
+
         foreach ($laborMarkers as $marker) {
             if (str_contains($name, $marker) || str_contains($code, $marker)) {
                 return (float)($dto->currentTotalAmount ?? ($dto->quantity * $dto->unitPrice ?? 0));
