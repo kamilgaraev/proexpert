@@ -39,6 +39,10 @@ class ScheduleTaskController extends Controller
 
             $validatedData = $request->validated();
 
+            // Очищаем историю обновлений перед началом операции
+            $autoSchedulingService = app(\App\Services\Schedule\AutoSchedulingService::class);
+            $autoSchedulingService->clearUpdatedTasks();
+
             $taskModel->update($validatedData);
 
             if (isset($validatedData['planned_start_date']) ||
@@ -51,7 +55,14 @@ class ScheduleTaskController extends Controller
                 $scheduleModel->recalculateProgress();
             }
 
-            return AdminResponse::success(new ScheduleTaskResource($taskModel->fresh()), 'Задача успешно обновлена');
+            // Получаем список всех затронутых задач (включая тех, что обновились через обсерверы)
+            $affectedTasks = $autoSchedulingService->getUpdatedTasks();
+            $affectedTasksResources = ScheduleTaskResource::collection($affectedTasks);
+
+            return AdminResponse::success([
+                'task' => new ScheduleTaskResource($taskModel->fresh()),
+                'affected_tasks' => $affectedTasksResources,
+            ], 'Задача успешно обновлена');
         } catch (\Exception $e) {
             Log::error('schedule.task.update.error', [
                 'project_id' => $project,
