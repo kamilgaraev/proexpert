@@ -120,14 +120,21 @@ class EstimateCalculationService
             }
 
             if ($isEquipment) {
-                // Для оборудования: ПЗ — это только ресурсы (труд/механизмы), остальное — оборудование
+                // ⭐ КРИТИЧЕСКИЙ ФИКС: Для оборудования Прямые Затраты — это только РЕСУРСЫ (труд/меш).
+                // Если ресурсов нет ($hasChildren = false), то ПЗ должны быть 0, 
+                // чтобы налоги не считались от стоимости самого оборудования.
+                if (!$hasChildren && ($overheadAmount <= 0 && $profitAmount <= 0)) {
+                    $directCosts = 0;
+                }
+
                 // Накладные и прибыль считаем ТОЛЬКО от ресурсов (если они есть)
                 if ($directCosts > 0) {
                     $overheadAmount = round($directCosts * ($estimate->overhead_rate / 100), 2);
                     $profitAmount = round($directCosts * ($estimate->profit_rate / 100), 2);
                 } else {
-                    $overheadAmount = 0;
-                    $profitAmount = 0;
+                    // Если налоги не пришли из файла и ПЗ нет — налоги 0
+                    if ($overheadAmount <= 0) $overheadAmount = 0;
+                    if ($profitAmount <= 0) $profitAmount = 0;
                 }
                 
                 $equipmentSum = max(0, $totalAmount - $directCosts - $overheadAmount - $profitAmount);
@@ -253,39 +260,32 @@ class EstimateCalculationService
     
     private function performCalculation(Estimate $estimate): array
     {
-        // Используем агрегацию на уровне БД
-        // 1. СМР часть: Прямые затраты + НР + СП для позиций, не являющихся ресурсами
+        // 1. СМР часть: Суммируем total_amount всех корневых позиций, кроме оборудования.
+        // Это гарантирует, что Итог сметы всегда совпадает с суммой строк, которые видит юзер.
         $cmrTotals = EstimateItem::where('estimate_id', $estimate->id)
             ->whereNull('parent_work_id')
             ->where('is_not_accounted', false)
             ->where('item_type', '!=', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
             ->selectRaw('
-                COALESCE(SUM(direct_costs), 0) as total_direct,
+                COALESCE(SUM(total_amount), 0) as total_cmr_val,
                 COALESCE(SUM(overhead_amount), 0) as total_overhead,
                 COALESCE(SUM(profit_amount), 0) as total_profit
             ')
-            ->get()
-            ->first(); // Используем get()->first() для надежности с Eloquent
+            ->first();
 
-        // 2. Оборудование отдельно (оно входит в ИТОГО, но обычно не в ПЗ СМР)
+        // 2. Оборудование: суммируем по колонке equipment_cost для всех корневых позиций
         $totalEquipment = (float) EstimateItem::where('estimate_id', $estimate->id)
-            ->whereNull('parent_work_id') // Считаем только корневые оборудование или позиции
-            ->where('item_type', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
-            ->sum('total_amount');
-        
-        // Дополнительно учитываем оборудование, которое было "спрятано" внутри материалов (дороже 50к)
-        // Но так как calculateItemTotal уже обновил equipment_cost у корневых позиций, 
-        // нам лучше суммировать поле equipment_cost у всех корневых позиций.
-        
-        $totalEquipmentFromItems = (float) EstimateItem::where('estimate_id', $estimate->id)
             ->whereNull('parent_work_id')
+            ->where('is_not_accounted', false)
             ->sum('equipment_cost');
         
-        $totalDirectCosts = (float) $cmrTotals->total_direct;
         $totalOverheadCosts = (float) $cmrTotals->total_overhead;
         $totalEstimatedProfit = (float) $cmrTotals->total_profit;
         
-        $totalAmount = $totalDirectCosts + $totalOverheadCosts + $totalEstimatedProfit + $totalEquipmentFromItems;
+        // Прямые затраты - это остаток от суммы СМР строк за вычетом их налогов.
+        $totalDirectCosts = max(0, (float)$cmrTotals->total_cmr_val - $totalOverheadCosts - $totalEstimatedProfit);
+        
+        $totalAmount = (float)$cmrTotals->total_cmr_val + $totalEquipment;
         $totalAmountWithVat = $totalAmount * (1 + $estimate->vat_rate / 100);
         
         $result = [
