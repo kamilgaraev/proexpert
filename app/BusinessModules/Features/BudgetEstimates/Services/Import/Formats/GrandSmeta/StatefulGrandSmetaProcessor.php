@@ -37,14 +37,12 @@ class StatefulGrandSmetaProcessor
             return;
         }
 
-        $nameLower = mb_strtolower($name);
         if (str_contains($nameLower, 'всего по позиции')) {
             if ($this->currentPosition) {
                 $money = $this->extractMoney($rowData, $mapping);
                 $this->currentPosition->unitPrice = $money['unit_price'] !== 0.0 ? $money['unit_price'] : $this->currentPosition->unitPrice;
                 $this->currentPosition->currentTotalAmount = $money['total_price'] !== 0.0 ? $money['total_price'] : $this->currentPosition->currentTotalAmount;
             }
-            $this->closeCurrentPosition();
             return;
         }
 
@@ -89,7 +87,6 @@ class StatefulGrandSmetaProcessor
                 if ($total !== 0.0) {
                     $this->currentPosition->currentTotalAmount = $total;
                 }
-                $this->closeCurrentPosition();
                 return;
             }
 
@@ -228,21 +225,21 @@ class StatefulGrandSmetaProcessor
         
         $val = $this->parseFloat($rowData[$mapping['total_price'] ?? ''] ?? 0);
         $cleanName = mb_strtolower(trim($name));
-        
-        if (str_starts_with($cleanName, 'итого прямые затраты')) {
-            $this->footerData['direct_costs'] = $val;
-        } elseif (str_starts_with($cleanName, 'оплата труда рабочих') || $cleanName === 'оплата труда') {
+
+        if (str_starts_with($cleanName, 'итого прямые затраты') || str_starts_with($cleanName, 'прямые затраты')) {
+            $this->footerData['direct_costs'] = ($this->footerData['direct_costs'] ?? 0) + $val;
+        } elseif (str_starts_with($cleanName, 'оплата труда рабочих') || $cleanName === 'оплата труда' || str_contains($cleanName, 'фот')) {
             $this->footerData['labor_cost'] = ($this->footerData['labor_cost'] ?? 0) + $val;
-        } elseif (str_starts_with($cleanName, 'материалы')) {
+        } elseif (str_starts_with($cleanName, 'материалы') || str_contains($cleanName, 'итого материалы')) {
             $this->footerData['materials_cost'] = ($this->footerData['materials_cost'] ?? 0) + $val;
-        } elseif (str_starts_with($cleanName, 'накладные расходы') || str_starts_with($cleanName, 'итого накладные')) {
-            $this->footerData['overhead_cost'] = $val;
-        } elseif (str_starts_with($cleanName, 'сметная прибыль') || str_starts_with($cleanName, 'итого сметная')) {
-            $this->footerData['profit_cost'] = $val;
+        } elseif (str_contains($cleanName, 'накладные расходы') || str_contains($cleanName, 'итого накладные') || str_starts_with($cleanName, 'нр')) {
+            $this->footerData['overhead_cost'] = ($this->footerData['overhead_cost'] ?? 0) + $val;
+        } elseif (str_contains($cleanName, 'сметная прибыль') || str_contains($cleanName, 'итого сметная') || str_starts_with($cleanName, 'сп')) {
+            $this->footerData['profit_cost'] = ($this->footerData['profit_cost'] ?? 0) + $val;
         } elseif (str_starts_with($cleanName, 'оборудование')) {
             $this->footerData['equipment_cost'] = ($this->footerData['equipment_cost'] ?? 0) + $val;
-        } elseif (str_starts_with($cleanName, 'всего по смете')) {
-            $this->footerData['total_estimate_cost'] = $val;
+        } elseif (str_contains($cleanName, 'всего по смете') || str_contains($cleanName, 'итого по смете') || str_contains($cleanName, 'всего по акту')) {
+            $this->footerData['total_estimate_cost'] = ($this->footerData['total_estimate_cost'] ?? 0) + $val;
         }
     }
 
