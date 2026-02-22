@@ -299,9 +299,10 @@ class ImportPipelineService
         // Step 1: Normative Matching
         foreach ($batch as $index => $item) {
             $dto = $item['dto'];
-            $itemData = $this->prepareWorkData($dto, $estimate->id, $item['section_id'], $estimate->organization_id);
+            $itemData = $this->prepareWorkData($dto, $estimate, $item['section_id']);
             
             $matched = false;
+            // ... (keeping existing matcher logic) ...
             if ($dto->code) {
                 $match = $this->matcher->findByCode($dto->code, ['fallback_to_name' => true, 'name' => $dto->itemName]);
                 if ($match && isset($match['normative'])) {
@@ -316,10 +317,12 @@ class ImportPipelineService
                     $norm = \App\Models\NormativeRate::find($semanticHit['id']);
                     if ($norm) {
                         $itemData = $this->matcher->fillFromNormative($norm, $itemData);
-                        $itemData['metadata']['semantic_match'] = [
+                        $itemDataMetadata = is_string($itemData['metadata']) ? json_decode($itemData['metadata'], true) : $itemData['metadata'];
+                        $itemDataMetadata['semantic_match'] = [
                             'similarity' => $semanticHit['similarity'],
                             'matched_name' => $semanticHit['name'],
                         ];
+                        $itemData['metadata'] = json_encode($itemDataMetadata);
                         $matched = true;
                         Log::info("[ImportPipeline] SemanticMatch hit for '{$dto->itemName}' → '{$semanticHit['name']}' (sim={$semanticHit['similarity']})");
                     }
@@ -449,65 +452,67 @@ class ImportPipelineService
         return $lastSectionId;
     }
 
-    private function prepareWorkData($dto, int $estimateId, ?int $sectionId, int $organizationId): array
+    private function prepareWorkData($dto, Estimate $estimate, ?int $sectionId): array
     {
+        // ⭐ КАЛЬКУЛЯЦИЯ НАЛОГОВ И ИТОГОВ (TOP-DOWN)
+        $laborCost = $this->detectLaborCost($dto);
+        $isInformative = $this->isInformativeGrandSmetaRow($dto);
+        $totalAmount = (float)($dto->currentTotalAmount ?? ($dto->quantity * ($dto->unitPrice ?? 0)));
+        
+        $overheadAmount = 0;
+        $profitAmount = 0;
+        
+        // Налоги начисляются только на основные работы
+        if (!$isInformative && $laborCost > 0) {
+            $overheadAmount = round($laborCost * ($estimate->overhead_rate / 100), 2);
+            $profitAmount = round($laborCost * ($estimate->profit_rate / 100), 2);
+        }
+
+        // Прямые затраты - это остаток от Итога после вычета налогов.
+        // Это гарантирует копеечное совпадение с Excel.
+        $directCosts = $totalAmount - $overheadAmount - $profitAmount;
+
+        $metadata = [
+            'original_unit' => $dto->unit,
+            'raw_data' => $dto->rawData,
+            'overhead_rate' => $estimate->overhead_rate,
+            'profit_rate' => $estimate->profit_rate,
+            'is_informative_row' => $isInformative,
+        ];
+
         return [
-            'estimate_id' => $estimateId,
+            'estimate_id' => $estimate->id,
             'estimate_section_id' => $sectionId,
             'name' => $dto->itemName,
-            'measurement_unit_id' => $this->resolveUnitId($dto->unit, $organizationId),
-            
+            'description' => $dto->itemDescription,
+            'measurement_unit_id' => $this->smartMapping->findUnitId($dto->unit),
             'quantity' => $dto->quantity ?? 0,
             'unit_price' => $dto->unitPrice ?? 0,
             
-            // Base & Index fields
             'base_unit_price' => $dto->baseUnitPrice ?? 0,
             'price_index' => $dto->priceIndex ?? 1,
             'current_unit_price' => $dto->currentUnitPrice ?? ($dto->unitPrice ?? 0),
             
-            // Detailed Base Costs
-            'base_materials_cost' => $dto->baseMaterialsCost ?? 0,
-            'base_machinery_cost' => $dto->baseMachineryCost ?? 0,
-            'base_machinery_labor_cost' => $dto->baseMachineryLaborCost ?? 0,
-            'base_labor_cost' => $dto->baseLaborCost ?? 0,
-            
-            // Base Overhead & Profit (from text, e.g. "НР (28,38 руб)...")
-            // These are already row totals in typical FER export, so we don't multiply by quantity again here
-            // to avoid double-counting if quantity > 1.
-            'base_overhead_amount' => round($dto->overheadAmount ?? 0, 2),
-            'base_profit_amount' => round($dto->profitAmount ?? 0, 2),
-            'overhead_amount' => $dto->overheadAmount ?? 0,
-            'profit_amount' => $dto->profitAmount ?? 0,
-            
-            // Прямые затраты - это Итого за вычетом НР и СП (если они известны)
-            // Иначе, это просто Итого (или Кол-во * Цена). Удаляем max(0, ...), так как поз. 134 может быть в минусе.
-            'direct_costs' => (float)($dto->currentTotalAmount ?? ($dto->quantity * $dto->unitPrice ?? 0)) - ($dto->overheadAmount ?? 0) - ($dto->profitAmount ?? 0),
-            
-            'total_amount' => (float)($dto->currentTotalAmount ?? ($dto->quantity * $dto->unitPrice ?? 0)),
-            'current_total_amount' => (float)($dto->currentTotalAmount ?? 0),
-            'materials_cost' => $dto->materialsCost ?? 0,
-            
-            // ⭐ ИНТЕЛЛЕКТУАЛЬНОЕ ОПРЕДЕЛЕНИЕ ФОТ (Фонда оплаты труда)
-            // Если в DTO нет laborCost, но это строка ресурса ОТ/ЗТ/Машинисты - берем ее Итого как ФОТ
-            'labor_cost' => $this->detectLaborCost($dto),
+            'labor_cost' => $laborCost,
+            'overhead_amount' => $overheadAmount,
+            'profit_amount' => $profitAmount,
+            'direct_costs' => $directCosts,
+            'total_amount' => $totalAmount,
+            'current_total_amount' => $totalAmount,
 
+            'materials_cost' => $dto->materialsCost ?? 0,
             'machinery_cost' => $dto->machineryCost ?? 0,
-            'equipment_cost' => $dto->itemType === 'equipment' ? ($dto->currentTotalAmount ?? 0) : 0,
+            'equipment_cost' => $dto->itemType === 'equipment' ? $totalAmount : 0,
+            
             'normative_rate_code' => $dto->code,
             'position_number' => (string)($dto->sectionNumber ?: ''),
             'item_type' => $this->mapItemType($dto->itemType),
             'is_manual' => true, 
-            'is_sub_item' => $dto->isSubItem ?? false, // ⭐ Передаем флаг для группировщика
+            'is_sub_item' => $dto->isSubItem ?? false,
             'created_at' => now(),
             'updated_at' => now(),
-            'metadata' => json_encode([
-                'original_unit' => $dto->unit,
-                'raw_data' => $dto->rawData,
-                'overhead_rate' => $dto->overheadRate,
-                'profit_rate' => $dto->profitRate,
-                'is_informative_row' => $this->isInformativeGrandSmetaRow($dto), // Для фронтенда
-            ]),
-            'is_not_accounted' => $this->isInformativeGrandSmetaRow($dto)
+            'metadata' => json_encode($metadata),
+            'is_not_accounted' => $isInformative
         ];
     }
 
@@ -551,12 +556,26 @@ class ImportPipelineService
         }
 
         $name = mb_strtolower($dto->itemName ?? '');
-        $aggregates = ['от(зт)', 'отм(зтм)', 'зтм', 'зт', 'от', 'отм'];
+        $code = mb_strtolower($dto->code ?? '');
+
+        // ⭐ ИНКЛЮЗИВНЫЙ ПОИСК ФОТ В РЕСУРСАХ
+        // Нам нужно ловить всё, что похоже на зарплату (ОТ, ЗТ, ОТм, ЗТм, ОТ(...)).
+        $laborPrefixes = ['от(', 'зт(', 'отм(', 'зтм(', 'от ', 'отм ', 'зт ', 'зтм '];
+        $isLaborName = false;
         
-        // ⭐ КЛЮЧЕВОЕ: Берем ФОТ ТОЛЬКО из агрегирующих строк заголовков.
-        // Это самая точная база для налогов в Гранд-Смете.
-        if (in_array($name, $aggregates)) {
-             return (float)($dto->currentTotalAmount ?? 0);
+        if (in_array($name, ['от', 'отм', 'зт', 'зтм', 'от(зт)', 'отм(зтм)'])) {
+            $isLaborName = true;
+        } else {
+            foreach ($laborPrefixes as $pref) {
+                if (str_starts_with($name, $pref)) {
+                    $isLaborName = true;
+                    break;
+                }
+            }
+        }
+
+        if ($isLaborName) {
+            return (float)($dto->currentTotalAmount ?? 0);
         }
 
         return 0;
