@@ -76,8 +76,8 @@ class EstimateCalculationService
              // Суммируем трудозатраты и маш-часы для красоты
              $laborHours = (float) EstimateItem::where('parent_work_id', $item->id)->sum('labor_hours');
              $machineryHours = (float) EstimateItem::where('parent_work_id', $item->id)->sum('machinery_hours');
-             if ($laborHours > 0) $item->labor_hours = $laborHours;
-             if ($machineryHours > 0) $item->machinery_hours = $machineryHours;
+             if ($laborHours != 0) $item->labor_hours = $laborHours;
+             if ($machineryHours != 0) $item->machinery_hours = $machineryHours;
 
              // Самостоятельная детекция оборудования для корневой позиции
              if ($item->isMaterial() && $item->unit_price > 50000 && !$hasChildren) {
@@ -86,13 +86,13 @@ class EstimateCalculationService
              }
 
              if ($item->isEquipment()) {
-                 $equipmentSum = $resourcesSum > 0 ? $resourcesSum + $equipmentSum : ($item->quantity * $item->unit_price);
+                 $equipmentSum = $resourcesSum != 0 ? $resourcesSum + $equipmentSum : ($item->quantity * $item->unit_price);
                  $resourcesSum = 0;
              }
         }
 
         // 2. Логика распределения маржи (Reverse Engineering)
-        if ($item->is_manual && $item->current_total_amount !== null && $item->current_total_amount > 0) {
+        if ($item->is_manual && $item->current_total_amount !== null && $item->current_total_amount != 0) {
             $totalAmount = (float)$item->current_total_amount;
             
             // Если в БД заданы прямые затраты, доверяем им (особенно важно для импорта).
@@ -100,7 +100,7 @@ class EstimateCalculationService
             $directCosts = $item->current_total_amount;
             
             // Если ПЗ были явно записаны в БД при импорте, и они не пустые (например, там уже вычли спарсенные НР и СП)
-            if ($item->direct_costs > 0 && $item->direct_costs <= $totalAmount) {
+            if ($item->direct_costs != 0) {
                 $directCosts = (float)$item->direct_costs;
             }
             

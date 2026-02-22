@@ -41,8 +41,8 @@ class StatefulGrandSmetaProcessor
         if (str_contains($nameLower, 'всего по позиции')) {
             if ($this->currentPosition) {
                 $money = $this->extractMoney($rowData, $mapping);
-                $this->currentPosition->unitPrice = $money['unit_price'] ?: $this->currentPosition->unitPrice;
-                $this->currentPosition->currentTotalAmount = $money['total_price'] ?: $this->currentPosition->currentTotalAmount;
+                $this->currentPosition->unitPrice = $money['unit_price'] !== 0.0 ? $money['unit_price'] : $this->currentPosition->unitPrice;
+                $this->currentPosition->currentTotalAmount = $money['total_price'] !== 0.0 ? $money['total_price'] : $this->currentPosition->currentTotalAmount;
             }
             $this->closeCurrentPosition();
             return;
@@ -85,8 +85,8 @@ class StatefulGrandSmetaProcessor
             // Обработка "Всего по позиции" - это финализация данных текущей позиции
             if (str_contains($cleanName, 'всего по позиции')) {
                 $money = $this->extractMoney($rowData, $mapping);
-                $total = $money['total_price'] ?: $money['unit_price'];
-                if ($total > 0) {
+                $total = $money['total_price'] !== 0.0 ? $money['total_price'] : $money['unit_price'];
+                if ($total !== 0.0) {
                     $this->currentPosition->currentTotalAmount = $total;
                 }
                 $this->closeCurrentPosition();
@@ -96,13 +96,9 @@ class StatefulGrandSmetaProcessor
             // Is it an informational row for NR/SP?
             if (str_starts_with($cleanName, 'нр ') || str_starts_with($cleanName, 'нр(') || str_starts_with($cleanName, 'накладные')) {
                 $money = $this->extractMoney($rowData, $mapping);
-                $amt = $money['total_price'] ?: $money['unit_price'];
-                if ($amt <= 0) {
-                    if (preg_match('/(?:нр|накладные).*?\s*=\s*([\d\s]+[.,]?\d*)/ui', $name, $m)) {
-                        $amt = $this->parseFloat($m[1]);
-                    } elseif (preg_match('/(?:нр|накладные).*?([\d\s]+[.,]?\d*)\s*(?:руб|р)/ui', $name, $m)) {
-                        $amt = $this->parseFloat($m[1]);
-                    }
+                $amt = $money['total_price'] !== 0.0 ? $money['total_price'] : $money['unit_price'];
+                if ($amt === 0.0) {
+                    $amt = $this->parseFloat($name, false, true); // takeLast = true для НР
                 }
                 $this->currentPosition->overheadAmount = ($this->currentPosition->overheadAmount ?? 0) + $amt;
                 return;
@@ -110,13 +106,9 @@ class StatefulGrandSmetaProcessor
 
             if (str_starts_with($cleanName, 'сп ') || str_starts_with($cleanName, 'сп(') || str_starts_with($cleanName, 'сметная прибыль')) {
                 $money = $this->extractMoney($rowData, $mapping);
-                $amt = $money['total_price'] ?: $money['unit_price'];
-                 if ($amt <= 0) {
-                    if (preg_match('/(?:сп|сметная).*?\s*=\s*([\d\s]+[.,]?\d*)/ui', $name, $m)) {
-                        $amt = $this->parseFloat($m[1]);
-                    } elseif (preg_match('/(?:сп|сметная).*?([\d\s]+[.,]?\d*)\s*(?:руб|р)/ui', $name, $m)) {
-                        $amt = $this->parseFloat($m[1]);
-                    }
+                $amt = $money['total_price'] !== 0.0 ? $money['total_price'] : $money['unit_price'];
+                if ($amt === 0.0) {
+                    $amt = $this->parseFloat($name, false, true); // takeLast = true для СП
                 }
                 $this->currentPosition->profitAmount = ($this->currentPosition->profitAmount ?? 0) + $amt;
                 return;
@@ -335,7 +327,7 @@ class StatefulGrandSmetaProcessor
         }
 
         // In GrandSmeta unit price column might be empty if price is only in total
-        if ($price <= 0 && $qty > 0 && $total > 0) {
+        if (($price === null || $price === 0.0) && $qty != 0 && $total != 0) {
             $price = $total / $qty;
         }
 
@@ -357,17 +349,17 @@ class StatefulGrandSmetaProcessor
             sectionNumber: $sectionNum,
             itemName: $name,
             unit: (string)($data[$mapping['unit'] ?? ''] ?? ''),
-            quantity: $qty > 0 ? $qty : null,
-            unitPrice: $price > 0 ? $price : null,
+            quantity: $qty != 0.0 ? $qty : null,
+            unitPrice: $price != 0.0 ? $price : null,
             code: $code,
             isSection: $isSection,
             itemType: $itemType,
-            currentTotalAmount: $total > 0 ? $total : null,
+            currentTotalAmount: $total != 0.0 ? $total : null,
             rawData: $data
         );
     }
 
-    private function parseFloat(mixed $value, bool $isQuantity = false): float
+    private function parseFloat(mixed $value, bool $isQuantity = false, bool $takeLast = false): float
     {
         if (is_numeric($value)) return (float)$value;
         if (empty($value)) return 0.0;
@@ -385,27 +377,25 @@ class StatefulGrandSmetaProcessor
                  if ($den > 0) return $num / $den;
             }
             
-            // If it contains text like "100 м", extracting just the first number "100"
-            // is exactly what causes the bug (it's the unit multiplier, not the actual volume).
-            // In GrandSmeta, if a cell contains text, it's usually NOT the quantity,
-            // unless it's a formula. So if we hit text, it's safer to return 0 
-            // and let the system fallback or recalculate.
             if (preg_match('/[а-яА-Яa-zA-Z]/u', $clean) && !str_starts_with($clean, '=')) {
-                 // BUT: sometimes they write "0.5 шт". Let's try to grab the number if it's at the VERY start
                  if (preg_match('/^-?\d+(?:\.\d+)?\b/', $clean, $matches)) {
-                      return (float)$matches[0];
+                       return (float)$matches[0];
                  }
                  return 0.0;
             }
             
-            // Try to evaluate simple numbers or math
             if (preg_match('/^-?\d+(\.\d+)?$/', $clean, $matches)) {
                 return (float)$matches[0];
             }
         } else {
-            // For prices, just grab the first number
-            if (preg_match('/-?\d+(\.\d+)?/', $clean, $matches)) {
-                return (float)$matches[0];
+            // Для денежных полей в GrandSmeta может быть мусор (проценты и т.д.)
+            // Используем REGEX для поиска всех чисел с опциональным минусом
+            if (preg_match_all('/-?\d+(?:\.\d+)?/', (string)$clean, $matches)) {
+                $found = $matches[0];
+                if ($takeLast) {
+                    return (float)end($found);
+                }
+                return (float)$found[0];
             }
         }
 
