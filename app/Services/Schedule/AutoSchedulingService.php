@@ -51,12 +51,25 @@ class AutoSchedulingService
             $endDate = Carbon::parse($maxEnd);
             $duration = $startDate->diffInDays($endDate) + 1;
 
-            if ($parent->planned_start_date !== $startDate->toDateString() || 
-                $parent->planned_end_date !== $endDate->toDateString()) {
+            $newStartStr = $startDate->toDateString();
+            $newEndStr = $endDate->toDateString();
+            
+            $currentStartStr = $parent->planned_start_date ? $parent->planned_start_date->toDateString() : null;
+            $currentEndStr = $parent->planned_end_date ? $parent->planned_end_date->toDateString() : null;
+
+            if ($currentStartStr !== $newStartStr || $currentEndStr !== $newEndStr) {
                 
+                Log::info('[AutoScheduling] Updating parent dates', [
+                    'parent_id' => $parent->id,
+                    'old_start' => $currentStartStr,
+                    'new_start' => $newStartStr,
+                    'old_end' => $currentEndStr,
+                    'new_end' => $newEndStr
+                ]);
+
                 $parent->update([
-                    'planned_start_date' => $startDate->toDateString(),
-                    'planned_end_date' => $endDate->toDateString(),
+                    'planned_start_date' => $newStartStr,
+                    'planned_end_date' => $newEndStr,
                     'planned_duration_days' => $duration,
                 ]);
 
