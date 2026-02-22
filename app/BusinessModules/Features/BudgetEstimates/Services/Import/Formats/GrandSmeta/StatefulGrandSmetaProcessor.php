@@ -177,14 +177,6 @@ class StatefulGrandSmetaProcessor
             return false;
         }
 
-        // Если есть ресурсные единицы измерения — это 100% не самостоятельная позиция
-        if (!empty($rowData) && !empty($mapping)) {
-             $unit = mb_strtolower(trim((string)($rowData[$mapping['unit'] ?? ''] ?? '')));
-             if (in_array($unit, ['маш.-ч', 'чел.-ч', 'маш-ч', 'чел-ч', 'маш.час', 'чел.час'], true)) {
-                 return false;
-             }
-        }
-
         // Exclude fractional numbers like "1.1", "70.1" which are sub-items
         if (preg_match('/^\d+\.\d+$/', $posNo)) {
             return false;
