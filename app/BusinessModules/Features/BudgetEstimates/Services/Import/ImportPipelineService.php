@@ -480,14 +480,14 @@ class ImportPipelineService
             
             // Прямые затраты - это Итого за вычетом НР и СП (если они известны)
             // Иначе, это просто Итого (или Кол-во * Цена). Удаляем max(0, ...), так как поз. 134 может быть в минусе.
-            'direct_costs' => ($dto->currentTotalAmount ?? ($dto->quantity * $dto->unitPrice)) - ($dto->overheadAmount ?? 0) - ($dto->profitAmount ?? 0),
+            'direct_costs' => (float)($dto->currentTotalAmount ?? ($dto->quantity * $dto->unitPrice ?? 0)) - ($dto->overheadAmount ?? 0) - ($dto->profitAmount ?? 0),
             
-            'total_amount' => $dto->currentTotalAmount ?? ($dto->quantity * $dto->unitPrice),
-            'current_total_amount' => $dto->currentTotalAmount,
+            'total_amount' => (float)($dto->currentTotalAmount ?? ($dto->quantity * $dto->unitPrice ?? 0)),
+            'current_total_amount' => (float)($dto->currentTotalAmount ?? 0),
             'materials_cost' => $dto->materialsCost ?? 0,
             'labor_cost' => $dto->laborCost ?? 0,
             'machinery_cost' => $dto->machineryCost ?? 0,
-            'equipment_cost' => $dto->itemType === 'equipment' ? $dto->currentTotalAmount : null,
+            'equipment_cost' => $dto->itemType === 'equipment' ? ($dto->currentTotalAmount ?? 0) : 0,
             'normative_rate_code' => $dto->code,
             'position_number' => (string)($dto->sectionNumber ?: ''),
             'item_type' => $this->mapItemType($dto->itemType),
