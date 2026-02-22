@@ -73,11 +73,16 @@ class EstimateCalculationService
                  })
                  ->sum('total_amount');
              
-             // Суммируем трудозатраты и маш-часы для красоты
-             $laborHours = (float) EstimateItem::where('parent_work_id', $item->id)->sum('labor_hours');
-             $machineryHours = (float) EstimateItem::where('parent_work_id', $item->id)->sum('machinery_hours');
-             if ($laborHours != 0) $item->labor_hours = $laborHours;
-             if ($machineryHours != 0) $item->machinery_hours = $machineryHours;
+             // Суммируем ресурсы для красоты и расчетов
+             $laborResources = EstimateItem::where('parent_work_id', $item->id)
+                 ->selectRaw('SUM(labor_hours) as hours, SUM(machinery_hours) as mach_hours, SUM(labor_cost) as labor_money')
+                 ->first();
+             
+             if ($laborResources->hours > 0) $item->labor_hours = $laborResources->hours;
+             if ($laborResources->mach_hours > 0) $item->machinery_hours = $laborResources->mach_hours;
+             
+             // ⭐ Сохраняем общий ФОТ в позицию (это база для НР и СП в Гранд-Смете)
+             if ($laborResources->labor_money > 0) $item->labor_cost = $laborResources->labor_money;
 
              // Самостоятельная детекция оборудования для корневой позиции
              if ($item->isMaterial() && $item->unit_price > 50000 && !$hasChildren) {
@@ -152,6 +157,23 @@ class EstimateCalculationService
                 if ($overheadAmount > 0 || $profitAmount > 0) {
                      // Мы просто доверяем марже из БД (она пришла из парсера)
                 } else {
+                     // ⭐ GrandSmeta Style: Если налоги по нулям, считаем их от ФОТ (labor_cost)
+                if (($overheadAmount + $profitAmount) <= 0.01 && ($estimate->overhead_rate + $estimate->profit_rate) > 0) {
+                     $fotBase = (float)$item->labor_cost;
+                     if ($fotBase > 0) {
+                         $overheadAmount = round($fotBase * ($estimate->overhead_rate / 100), 2);
+                         $profitAmount = round($fotBase * ($estimate->profit_rate / 100), 2);
+                         
+                         // Защита: сумма не должна превышать разрыв между полным Итого и Прямыми Затратами
+                         $currentDirect = $resourcesSum > 0 ? $resourcesSum : ($item->quantity * $item->unit_price);
+                         $maxAvailable = max(0, $totalAmount - $currentDirect);
+                         if (($overheadAmount + $profitAmount) > $maxAvailable && $maxAvailable > 0) {
+                             $totalRate = ($estimate->overhead_rate + $estimate->profit_rate);
+                             $overheadAmount = round($maxAvailable * ($estimate->overhead_rate / $totalRate), 2);
+                             $profitAmount = round($maxAvailable - $overheadAmount, 2);
+                         }
+                     }
+                }
                      // НР и СП не были переданы из файла - пытаемся их восстановить из остатка
                      // Считаем остаток ПЕРЕД НР/СП
                      $remainingForMarkup = round(max(0, $totalAmount - $directCosts), 2);
