@@ -550,28 +550,13 @@ class ImportPipelineService
             return (float)$dto->laborCost;
         }
 
-        // ⭐ В GrandSmeta ФОТ может быть как в агрегирующих строках (ОТ(ЗТ)), так и в разрядах (1-100-XX).
-        // Мы собираем его СО ВСЕХ строк, чтобы ничего не потерять, 
-        // а дублирование денег решаем через флаг is_not_accounted в prepareWorkData.
-        return (float)($dto->currentTotalAmount ?? 0);
-
-        // Маркеры ФОТ в GrandSmeta
-        $laborMarkers = ['от(', 'зт(', 'зп(', 'зарплата', 'оплата труда', 'машинист', 'отм(', 'зтм('];
+        $name = mb_strtolower($dto->itemName ?? '');
+        $aggregates = ['от(зт)', 'отм(зтм)', 'зтм', 'зт', 'от', 'отм'];
         
-        // 1. Проверка по единицам измерения (чел.-ч - это всегда ФОТ)
-        if (str_contains($unit, 'чел') && str_contains($unit, 'ч')) {
-            return (float)($dto->currentTotalAmount ?? ($dto->quantity * $dto->unitPrice ?? 0));
-        }
-
-        // 2. Проверка по именам и кодам
-        if (str_starts_with($name, 'от') || str_starts_with($name, 'зт') || str_starts_with($name, 'отм')) {
-             return (float)($dto->currentTotalAmount ?? ($dto->quantity * $dto->unitPrice ?? 0));
-        }
-
-        foreach ($laborMarkers as $marker) {
-            if (str_contains($name, $marker) || str_contains($code, $marker)) {
-                return (float)($dto->currentTotalAmount ?? ($dto->quantity * $dto->unitPrice ?? 0));
-            }
+        // ⭐ КЛЮЧЕВОЕ: Берем ФОТ ТОЛЬКО из агрегирующих строк заголовков.
+        // Это самая точная база для налогов в Гранд-Смете.
+        if (in_array($name, $aggregates)) {
+             return (float)($dto->currentTotalAmount ?? 0);
         }
 
         return 0;
