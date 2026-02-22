@@ -95,7 +95,7 @@ jobs:
             
             # Перезапуск queue workers (если они еще используются вне Horizon)
             echo "🔄 Restarting queue workers..."
-            supervisorctl restart laravel-worker:* || true
+            php artisan queue:restart || true
             echo "✅ Queue workers restarted"
             
             # Выход из режима обслуживания (сайт снова доступен)
