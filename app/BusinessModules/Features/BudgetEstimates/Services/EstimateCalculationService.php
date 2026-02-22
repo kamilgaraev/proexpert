@@ -132,22 +132,29 @@ class EstimateCalculationService
                     $directCosts = $totalAmount;
                 }
                 
-                // Накладные и прибыль считаем от остатка ПЕРЕД распределением
-                $remainingForMarkup = max(0, $totalAmount - $directCosts);
+                // 3. Выделяем остаток (маржу), который нужно распределить на НР и СП
+                $remainingForMarkup = round(max(0, $totalAmount - $directCosts), 2);
                 
                 $overheadAmount = (float)($item->overhead_amount ?? 0);
                 $profitAmount = (float)($item->profit_amount ?? 0);
                 
-                // Если в БД не было НР/СП или они малы, используем глобальные ставки или делим остаток пропорционально
-                if ($remainingForMarkup > 1 && ($overheadAmount + $profitAmount) <= 0.05) {
+                // Если НР/СП были явно спарсены из строк "НР (28 руб)" и в сумме они больше нуля -
+                // мы просто доверяем им (они уже лежат в $overheadAmount и $profitAmount).
+                // Иначе - пытаемся распределить $remainingForMarkup
+                if ($remainingForMarkup > 0 && ($overheadAmount + $profitAmount) <= 0.05) {
                      $totalRate = ($estimate->overhead_rate ?? 0) + ($estimate->profit_rate ?? 0);
                      if ($totalRate > 0) {
                          $overheadAmount = round($remainingForMarkup * ($estimate->overhead_rate / $totalRate), 2);
                          $profitAmount = $remainingForMarkup - $overheadAmount;
                      } else {
+                         // Default 66/34 split if no global rates exist
                          $overheadAmount = round($remainingForMarkup * 0.66, 2);
                          $profitAmount = $remainingForMarkup - $overheadAmount;
                      }
+                } elseif ($remainingForMarkup <= 0) {
+                    // Это чистый ресурсный метод, итог равен сумме ресурсов, НР/СП спрятаны где-то еще
+                    $overheadAmount = 0;
+                    $profitAmount = 0;
                 }
                 
                 // Подгоняем ПЗ, чтобы Итого сошлось
