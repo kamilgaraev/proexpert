@@ -475,10 +475,8 @@ class ImportPipelineService
             // to avoid double-counting if quantity > 1.
             'base_overhead_amount' => round($dto->overheadAmount ?? 0, 2),
             'base_profit_amount' => round($dto->profitAmount ?? 0, 2),
-            
-            // Current Overhead & Profit (Base * Index)
-            'overhead_amount' => $dto->overheadAmount,
-            'profit_amount' => $dto->profitAmount,
+            'overhead_amount' => $dto->overheadAmount ?? 0,
+            'profit_amount' => $dto->profitAmount ?? 0,
             
             // Прямые затраты - это Итого за вычетом НР и СП (если они известны)
             // Иначе, это просто Итого (или Кол-во * Цена). Удаляем max(0, ...), так как поз. 134 может быть в минусе.
@@ -486,9 +484,9 @@ class ImportPipelineService
             
             'total_amount' => $dto->currentTotalAmount ?? ($dto->quantity * $dto->unitPrice),
             'current_total_amount' => $dto->currentTotalAmount,
-            'materials_cost' => $dto->materialsCost,
-            'labor_cost' => $dto->laborCost,
-            'machinery_cost' => $dto->machineryCost,
+            'materials_cost' => $dto->materialsCost ?? 0,
+            'labor_cost' => $dto->laborCost ?? 0,
+            'machinery_cost' => $dto->machineryCost ?? 0,
             'equipment_cost' => $dto->itemType === 'equipment' ? $dto->currentTotalAmount : null,
             'normative_rate_code' => $dto->code,
             'position_number' => (string)($dto->sectionNumber ?: ''),
