@@ -484,7 +484,7 @@ class ImportPipelineService
             'estimate_id' => $estimate->id,
             'estimate_section_id' => $sectionId,
             'name' => $dto->itemName,
-            'description' => $dto->itemDescription,
+            'description' => null,
             'measurement_unit_id' => $this->smartMapping->findUnitId($dto->unit),
             'quantity' => $dto->quantity ?? 0,
             'unit_price' => $dto->unitPrice ?? 0,
