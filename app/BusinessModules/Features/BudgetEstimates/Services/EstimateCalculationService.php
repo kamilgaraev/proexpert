@@ -103,43 +103,30 @@ class EstimateCalculationService
             if ($totalAmount <= 0) $totalAmount = round($item->quantity * $item->unit_price, 2);
 
             $directCosts = (float)$item->direct_costs;
-            
             $equipmentSum = 0;
 
             // КРИТЕРИЙ ОБОРУДОВАНИЯ:
             // 1. Прямой тип оборудование
-            // 2. Материал дороже 50к за единицу + отсутствие ресурсов
+            // 2. Материал дороже 500к (поднят порог) + отсутствие ресурсов + отсутствие нормативного шифра (материалы по ГОСТ/ФССЦ не оборудование!)
+            $hasNormativeCode = !empty($item->normative_rate_code) && 
+                preg_match('/^(ФСБЦ|ФССЦ|ТССЦ|ТСЦ|01\.|ПРАЙС)/ui', $item->normative_rate_code);
+                
             $isEquipment = $item->isEquipment() || 
-                ($item->unit_price > 50000 && !$hasChildren);
+                ($item->unit_price > 500000 && !$hasChildren && !$hasNormativeCode);
 
             $overheadAmount = (float)($item->overhead_amount ?? 0);
             $profitAmount = (float)($item->profit_amount ?? 0);
 
-            // Если НР/СП не были спарсены при импорте, попробуем найти их в названии сейчас
-            if (($overheadAmount + $profitAmount) <= 0.05) {
-                $attrs = $this->parseAttributesFromName($item->name);
-                if ($attrs['overhead'] > 0 || $attrs['profit'] > 0) {
-                    $overheadAmount = $attrs['overhead'] * ($item->price_index ?? 1);
-                    $profitAmount = $attrs['profit'] * ($item->price_index ?? 1);
-                }
-            }
-
             if ($isEquipment) {
-                // ⭐ КРИТИЧЕСКИЙ ФИКС: Для оборудования Прямые Затраты — это только РЕСУРСЫ (труд/меш).
-                // Если ресурсов нет ($hasChildren = false), то ПЗ должны быть 0, 
-                // чтобы налоги не считались от стоимости самого оборудования.
+                // Прямые Затраты для оборудования — это только РЕСУРСЫ (труд/маш). 
+                // Сумма самой "железки" - это оборудование.
                 if (!$hasChildren && ($overheadAmount <= 0 && $profitAmount <= 0)) {
                     $directCosts = 0;
                 }
 
-                // Накладные и прибыль считаем ТОЛЬКО от ресурсов (если они есть)
                 if ($directCosts > 0) {
                     $overheadAmount = round($directCosts * ($estimate->overhead_rate / 100), 2);
                     $profitAmount = round($directCosts * ($estimate->profit_rate / 100), 2);
-                } else {
-                    // Если налоги не пришли из файла и ПЗ нет — налоги 0
-                    if ($overheadAmount <= 0) $overheadAmount = 0;
-                    if ($profitAmount <= 0) $profitAmount = 0;
                 }
                 
                 $equipmentSum = max(0, $totalAmount - $directCosts - $overheadAmount - $profitAmount);
@@ -149,57 +136,29 @@ class EstimateCalculationService
                     $directCosts = $totalAmount;
                 }
                 
-                // 3. Работа с остатком (маржой)
-                $overheadAmount = (float)($item->overhead_amount ?? 0);
-                $profitAmount = (float)($item->profit_amount ?? 0);
-                
-                // Если НР/СП заданы явно, используем их напрямую и НЕ вычисляем остаток
+                // ⭐ Если НР и СП уже есть (пришли из парсера), НЕ пересчитываем их по процентам
                 if ($overheadAmount > 0 || $profitAmount > 0) {
-                     // Мы просто доверяем марже из БД (она пришла из парсера)
+                     // Доверяем данным в БД (они уже в рублях)
                 } else {
-                     // ⭐ GrandSmeta Style: Если налоги по нулям, считаем их от ФОТ (labor_cost)
-                if (($overheadAmount + $profitAmount) <= 0.01 && ($estimate->overhead_rate + $estimate->profit_rate) > 0) {
-                     $fotBase = (float)($item->labor_cost ?? 0);
-                     if ($fotBase > 0) {
-                         $overheadAmount = round($fotBase * ($estimate->overhead_rate / 100), 2);
-                         $profitAmount = round($fotBase * ($estimate->profit_rate / 100), 2);
-                         
-                         // Защита: сумма не должна превышать итоговую стоимость строки
-                         if (($overheadAmount + $profitAmount) > $totalAmount && $totalAmount > 0) {
-                             $totalRate = ($estimate->overhead_rate + $estimate->profit_rate);
-                             $overheadAmount = round($totalAmount * ($estimate->overhead_rate / $totalRate), 2);
-                             $profitAmount = round($totalAmount - $overheadAmount, 2);
+                    // Только если рублёвых сумм НЕТ, пробуем считать от ФОТ (базовая логика)
+                    if (($estimate->overhead_rate + $estimate->profit_rate) > 0) {
+                         $fotBase = (float)($item->labor_cost ?? 0);
+                         if ($fotBase > 0) {
+                             $overheadAmount = round($fotBase * ($estimate->overhead_rate / 100), 2);
+                             $profitAmount = round($fotBase * ($estimate->profit_rate / 100), 2);
+                             
+                             // Если сумма налогов вылезла за Итого, подрезаем их
+                             if (($overheadAmount + $profitAmount) > $totalAmount && $totalAmount > 0) {
+                                 $totalRate = ($estimate->overhead_rate + $estimate->profit_rate);
+                                 $overheadAmount = round($totalAmount * ($estimate->overhead_rate / $totalRate), 2);
+                                 $profitAmount = round($totalAmount - $overheadAmount, 2);
+                             }
                          }
-                         
-                         // КРИТИЧЕСКИ: раз мы создали налоги из ФОТ, нам нужно уменьшить ПЗ, 
-                         // чтобы сохранить баланс ПЗ + НР + СП = Итого
-                         $directCosts = max(0, $totalAmount - $overheadAmount - $profitAmount);
-                     }
-                }
-                     // НР и СП не были переданы из файла - пытаемся их восстановить из остатка
-                     // Считаем остаток ПЕРЕД НР/СП
-                     $remainingForMarkup = round(max(0, $totalAmount - $directCosts), 2);
-
-                     if ($remainingForMarkup > 1) {
-                         $totalRate = ($estimate->overhead_rate ?? 0) + ($estimate->profit_rate ?? 0);
-                         if ($totalRate > 0) {
-                             $overheadAmount = round($remainingForMarkup * ($estimate->overhead_rate / $totalRate), 2);
-                             $profitAmount = $remainingForMarkup - $overheadAmount;
-                         } else {
-                             // Default 66/34 split
-                             $overheadAmount = round($remainingForMarkup * 0.66, 2);
-                             $profitAmount = $remainingForMarkup - $overheadAmount;
-                         }
-                     } else {
-                         // Остатка нет (Сумма = ПЗ), смета без скрытых НР/СП
-                         $overheadAmount = 0;
-                         $profitAmount = 0;
-                     }
+                    }
                 }
 
-                // 4. Подгоняем ПЗ (базовые затраты), чтобы Итого сошлось идеально
-                // Это гарантирует, что ПЗ + НР + СП = Итого (копейка в копейку)
-                // Если ПЗ пришли равными итогу (баг импорта), они будут корректно уменьшены здесь.
+                // КРИТИЧНО: ПЗ — это то, что осталось от общего итога после налогов.
+                // Это гарантирует равенство: ПЗ + НР + СП = Итого (рубль в рубль)
                 $directCosts = max(0, $totalAmount - $overheadAmount - $profitAmount);
             }
         } else {
