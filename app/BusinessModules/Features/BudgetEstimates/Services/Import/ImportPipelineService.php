@@ -454,23 +454,31 @@ class ImportPipelineService
 
     private function prepareWorkData($dto, Estimate $estimate, ?int $sectionId): array
     {
-        // ⭐ КАЛЬКУЛЯЦИЯ НАЛОГОВ И ИТОГОВ (TOP-DOWN)
         $laborCost = $this->detectLaborCost($dto);
         $isInformative = $this->isInformativeGrandSmetaRow($dto);
         $totalAmount = (float)($dto->currentTotalAmount ?? ($dto->quantity * ($dto->unitPrice ?? 0)));
         
-        $overheadAmount = 0;
-        $profitAmount = 0;
+        // 1. Берем точные рублевые значения НР и СП напрямую от парсера ГрандСметы
+        $overheadAmount = isset($dto->overheadAmount) ? (float)$dto->overheadAmount : 0;
+        $profitAmount = isset($dto->profitAmount) ? (float)$dto->profitAmount : 0;
         
-        // Налоги начисляются только на основные работы
-        if (!$isInformative && $laborCost > 0) {
+        // 2. Fallback: если парсер не нашел суммы, но есть ФОТ и настройки сметы
+        if ($overheadAmount == 0 && $profitAmount == 0 && !$isInformative && $laborCost > 0) {
             $overheadAmount = round($laborCost * ($estimate->overhead_rate / 100), 2);
             $profitAmount = round($laborCost * ($estimate->profit_rate / 100), 2);
         }
 
-        // Прямые затраты - это остаток от Итога после вычета налогов.
-        // Это гарантирует копеечное совпадение с Excel.
-        $directCosts = $totalAmount - $overheadAmount - $profitAmount;
+        // 3. В Гранд-Смете сумма позиции из колонки "Всего" - это Прямые Затраты!
+        $directCosts = $totalAmount;
+        
+        // Значит Итог с учетом налогов (полная стоимость) - это ПЗ + НР + СП
+        // Для подпунктов математика налогов не применяется (их сумма заложена в ПЗ родителя)
+        $actualTotalAmount = $directCosts + $overheadAmount + $profitAmount;
+
+        $isSubItem = $dto->isSubItem ?? false;
+        
+        // 4. Все подпункты делают задвоение, поэтому их исключаем из учета итоговых сумм
+        $isNotAccounted = $isInformative || $isSubItem;
 
         $metadata = [
             'original_unit' => $dto->unit,
@@ -497,22 +505,22 @@ class ImportPipelineService
             'overhead_amount' => $overheadAmount,
             'profit_amount' => $profitAmount,
             'direct_costs' => $directCosts,
-            'total_amount' => $totalAmount,
-            'current_total_amount' => $totalAmount,
+            'total_amount' => $actualTotalAmount,
+            'current_total_amount' => $actualTotalAmount,
 
             'materials_cost' => $dto->materialsCost ?? 0,
             'machinery_cost' => $dto->machineryCost ?? 0,
-            'equipment_cost' => $dto->itemType === 'equipment' ? $totalAmount : 0,
+            'equipment_cost' => $dto->itemType === 'equipment' ? $actualTotalAmount : 0,
             
             'normative_rate_code' => $dto->code,
             'position_number' => (string)($dto->sectionNumber ?: ''),
             'item_type' => $this->mapItemType($dto->itemType),
             'is_manual' => true, 
-            'is_sub_item' => $dto->isSubItem ?? false,
+            'is_sub_item' => $isSubItem,
             'created_at' => now(),
             'updated_at' => now(),
             'metadata' => json_encode($metadata),
-            'is_not_accounted' => $isInformative
+            'is_not_accounted' => $isNotAccounted
         ];
     }
 
