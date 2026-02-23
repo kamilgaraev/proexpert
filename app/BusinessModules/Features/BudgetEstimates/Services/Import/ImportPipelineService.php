@@ -559,41 +559,33 @@ class ImportPipelineService
      */
     private function detectLaborCost($dto): float
     {
-        // ⭐ ИСПРАВЛЕНИЕ: Если строка уже помечена как информационная или вспомогательная, 
-        // мы НЕ извлекаем из нее ФОТ, чтобы избежать задвоения (например, ОТм под машиной).
+        // 1. Игнорируем агрегирующие заголовки (ОТ, ЭМ, М), чтобы не двоить ФОТ с их материальными деталями
         if ($this->isInformativeGrandSmetaRow($dto)) {
             return 0;
         }
 
+        // 2. Если в DTO уже есть явный ФОТ (от других парсеров) - используем его
         if (isset($dto->laborCost) && (float)$dto->laborCost > 0) {
             return (float)$dto->laborCost;
         }
 
-        $name = mb_strtolower($dto->itemName ?? '');
-        $code = mb_strtolower($dto->code ?? '');
-
-        // 🔧 Дополнительная защита: игнорируем ФОТ из строк расшифровки зарплаты машиниста (шифры 4-100-XXX)
-        if (str_starts_with($code, '4-100-')) {
-            return 0;
-        }
-
-        // ⭐ ИНКЛЮЗИВНЫЙ ПОИСК ФОТ В РЕСУРСАХ
-        $laborPrefixes = ['от(', 'зт(', 'отм(', 'зтм(', 'от ', 'отм ', 'зт ', 'зтм '];
-        $isLaborName = false;
-        
-        if (in_array($name, ['от', 'отм', 'зт', 'зтм', 'от(зт)', 'отм(зтм)'])) {
-            $isLaborName = true;
-        } else {
-            foreach ($laborPrefixes as $pref) {
-                if (str_starts_with($name, $pref)) {
-                    $isLaborName = true;
-                    break;
-                }
-            }
-        }
-
-        if ($isLaborName) {
+        // 3. Если строка классифицирована как "labor" (труд) - берем всю ее сумму как ФОТ
+        if ($dto->itemType === 'labor') {
             return (float)($dto->currentTotalAmount ?? 0);
+        }
+
+        // 4. Дополнительный поиск по ключевым словам для надежности (Fallback)
+        $name = mb_strtolower($dto->itemName ?? '');
+        $laborPrefixes = ['от(', 'зт(', 'отм(', 'зтм(', 'от ', 'отм ', 'зт ', 'зтм '];
+        
+        if (str_contains($name, 'труд')) {
+             return (float)($dto->currentTotalAmount ?? 0);
+        }
+
+        foreach ($laborPrefixes as $pref) {
+            if (str_starts_with($name, $pref)) {
+                return (float)($dto->currentTotalAmount ?? 0);
+            }
         }
 
         return 0;
