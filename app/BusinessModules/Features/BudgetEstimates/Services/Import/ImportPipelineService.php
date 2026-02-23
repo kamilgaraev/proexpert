@@ -559,33 +559,21 @@ class ImportPipelineService
      */
     private function detectLaborCost($dto): float
     {
-        // 1. Игнорируем агрегирующие заголовки (ОТ, ЭМ, М), чтобы не двоить ФОТ с их материальными деталями
+        // 1. ИГНОРИРУЕМ заголовки-агрегаторы (ОТ, ЭМ, М), чтобы не двоить ФОТ с их материальными деталями.
+        // Мы уже пометили их как "информационные" в процессоре (код <= 2 символов).
         if ($this->isInformativeGrandSmetaRow($dto)) {
             return 0;
         }
 
-        // 2. Если в DTO уже есть явный ФОТ (от других парсеров) - используем его
-        if (isset($dto->laborCost) && (float)$dto->laborCost > 0) {
-            return (float)$dto->laborCost;
-        }
-
-        // 3. Если строка классифицирована как "labor" (труд) - берем всю ее сумму как ФОТ
+        // 2. Если в DTO уже определен тип "labor" (труд), берем сумму как ФОТ
         if ($dto->itemType === 'labor') {
             return (float)($dto->currentTotalAmount ?? 0);
         }
 
-        // 4. Дополнительный поиск по ключевым словам для надежности (Fallback)
+        // 3. Fallback для других типов импорта
         $name = mb_strtolower($dto->itemName ?? '');
-        $laborPrefixes = ['от(', 'зт(', 'отм(', 'зтм(', 'от ', 'отм ', 'зт ', 'зтм '];
-        
-        if (str_contains($name, 'труд')) {
+        if (str_contains($name, 'труд') || str_contains($name, 'от(') || str_contains($name, 'разряд') || str_contains($name, 'зарплата')) {
              return (float)($dto->currentTotalAmount ?? 0);
-        }
-
-        foreach ($laborPrefixes as $pref) {
-            if (str_starts_with($name, $pref)) {
-                return (float)($dto->currentTotalAmount ?? 0);
-            }
         }
 
         return 0;
