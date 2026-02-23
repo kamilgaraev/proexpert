@@ -49,7 +49,8 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
 
             $items = DB::table('estimate_items')
                 ->where('estimate_id', $this->estimateId)
-                ->orderBy('position_number')
+                ->orderByRaw("string_to_array(position_number, '.')::int[] ASC")
+                ->orderBy('id', 'asc')
                 ->get()
                 ->map(fn($item) => (array) $item)
                 ->toArray();

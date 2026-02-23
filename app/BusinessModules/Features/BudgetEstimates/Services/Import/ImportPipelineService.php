@@ -511,6 +511,8 @@ class ImportPipelineService
             'materials_cost' => $dto->materialsCost ?? 0,
             'machinery_cost' => $dto->machineryCost ?? 0,
             'equipment_cost' => $dto->itemType === 'equipment' ? $actualTotalAmount : 0,
+            'labor_hours' => $this->detectLaborHours($dto),
+            'machinery_hours' => $this->detectMachineryHours($dto),
             
             'normative_rate_code' => $dto->code,
             'position_number' => (string)($dto->sectionNumber ?: ''),
@@ -589,6 +591,42 @@ class ImportPipelineService
         return 0;
     }
     
+    private function detectLaborHours($dto): float
+    {
+        if ($dto->itemType !== 'labor') {
+            return 0;
+        }
+
+        $unit = mb_strtolower(trim((string)($dto->unit ?? '')));
+        $laborUnits = ['чел.-ч', 'чел-ч', 'чел.ч', 'чел/ч'];
+
+        foreach ($laborUnits as $lu) {
+            if (str_starts_with($unit, $lu)) {
+                return (float)($dto->quantity ?? 0);
+            }
+        }
+
+        return (float)($dto->quantity ?? 0);
+    }
+
+    private function detectMachineryHours($dto): float
+    {
+        if (!in_array($dto->itemType, ['machinery', 'equipment'], true)) {
+            return 0;
+        }
+
+        $unit = mb_strtolower(trim((string)($dto->unit ?? '')));
+        $machineUnits = ['маш.-ч', 'маш-ч', 'маш.ч', 'маш/ч'];
+
+        foreach ($machineUnits as $mu) {
+            if (str_starts_with($unit, $mu)) {
+                return (float)($dto->quantity ?? 0);
+            }
+        }
+
+        return 0;
+    }
+
     private function mapItemType(?string $type): string
     {
         return match($type) {

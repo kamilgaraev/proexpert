@@ -104,7 +104,9 @@ class Estimate extends Model
 
     public function items(): HasMany
     {
-        return $this->hasMany(EstimateItem::class)->orderBy('position_number');
+        return $this->hasMany(EstimateItem::class)
+            ->orderByRaw("string_to_array(position_number, '.')::int[] ASC")
+            ->orderBy('id', 'asc');
     }
 
     public function approvedBy(): BelongsTo

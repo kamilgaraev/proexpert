@@ -39,7 +39,7 @@ class EstimateItemRepository
     {
         return EstimateItem::with(['section', 'workType', 'measurementUnit'])
             ->where('estimate_id', $estimateId)
-            ->orderBy('position_number')
+            ->orderByRaw("string_to_array(position_number, '.')::int[] ASC")
             ->paginate($perPage);
     }
 
@@ -47,7 +47,7 @@ class EstimateItemRepository
     {
         return EstimateItem::with(['section', 'workType', 'measurementUnit', 'resources'])
             ->where('estimate_id', $estimateId)
-            ->orderBy('position_number')
+            ->orderByRaw("string_to_array(position_number, '.')::int[] ASC")
             ->get();
     }
 
@@ -55,7 +55,7 @@ class EstimateItemRepository
     {
         return EstimateItem::with(['workType', 'measurementUnit', 'resources'])
             ->where('estimate_section_id', $sectionId)
-            ->orderBy('position_number')
+            ->orderByRaw("string_to_array(position_number, '.')::int[] ASC")
             ->get();
     }
 
