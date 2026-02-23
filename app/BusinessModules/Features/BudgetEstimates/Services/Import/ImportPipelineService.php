@@ -559,6 +559,12 @@ class ImportPipelineService
      */
     private function detectLaborCost($dto): float
     {
+        // ⭐ ИСПРАВЛЕНИЕ: Если строка уже помечена как информационная или вспомогательная, 
+        // мы НЕ извлекаем из нее ФОТ, чтобы избежать задвоения (например, ОТм под машиной).
+        if ($this->isInformativeGrandSmetaRow($dto)) {
+            return 0;
+        }
+
         if (isset($dto->laborCost) && (float)$dto->laborCost > 0) {
             return (float)$dto->laborCost;
         }
@@ -566,8 +572,12 @@ class ImportPipelineService
         $name = mb_strtolower($dto->itemName ?? '');
         $code = mb_strtolower($dto->code ?? '');
 
+        // 🔧 Дополнительная защита: игнорируем ФОТ из строк расшифровки зарплаты машиниста (шифры 4-100-XXX)
+        if (str_starts_with($code, '4-100-')) {
+            return 0;
+        }
+
         // ⭐ ИНКЛЮЗИВНЫЙ ПОИСК ФОТ В РЕСУРСАХ
-        // Нам нужно ловить всё, что похоже на зарплату (ОТ, ЗТ, ОТм, ЗТм, ОТ(...)).
         $laborPrefixes = ['от(', 'зт(', 'отм(', 'зтм(', 'от ', 'отм ', 'зт ', 'зтм '];
         $isLaborName = false;
         
