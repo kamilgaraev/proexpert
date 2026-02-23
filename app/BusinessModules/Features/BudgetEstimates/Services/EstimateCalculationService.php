@@ -158,9 +158,13 @@ class EstimateCalculationService
                     $directCosts = 0;
                 }
 
-                if ($directCosts > 0) {
-                    $overheadAmount = round($directCosts * ($estimate->overhead_rate / 100), 2);
-                    $profitAmount = round($directCosts * ($estimate->profit_rate / 100), 2);
+                $laborBase = (float)($item->labor_cost ?? 0);
+                if ($laborBase > 0) {
+                    $overheadAmount = round($laborBase * ($estimate->overhead_rate / 100), 2);
+                    $profitAmount = round($laborBase * ($estimate->profit_rate / 100), 2);
+                } else {
+                    $overheadAmount = 0;
+                    $profitAmount = 0;
                 }
                 
                 $equipmentSum = max(0, $totalAmount - $directCosts - $overheadAmount - $profitAmount);
