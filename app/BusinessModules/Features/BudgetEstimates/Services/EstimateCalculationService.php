@@ -159,6 +159,11 @@ class EstimateCalculationService
                 }
 
                 $laborBase = (float)($item->labor_cost ?? 0);
+                if ($laborBase <= 0 && $hasChildren) {
+                    $laborBase = (float) EstimateItem::where('parent_work_id', $item->id)
+                        ->where('item_type', \App\Enums\EstimatePositionItemType::LABOR->value)
+                        ->sum('labor_cost');
+                }
                 if ($laborBase > 0) {
                     $overheadAmount = round($laborBase * ($estimate->overhead_rate / 100), 2);
                     $profitAmount = round($laborBase * ($estimate->profit_rate / 100), 2);
