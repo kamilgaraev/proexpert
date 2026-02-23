@@ -162,6 +162,32 @@ class ImportPipelineService
             // Update Totals with proper markup distribution
             $this->updateProgress($session, 90, 'Recalculating totals...');
             $this->calculationService->recalculateAll($estimate);
+
+            // ⭐ OVERRIDE ШАПКИ СМЕТЫ ТОЧНЫМИ ЗНАЧЕНИЯМИ ИЗ FOOTER
+            // GrandSmeta не хранит НР/СП построчно — только итоговые суммы в подвале.
+            // recalculateAll даёт ~99.99% точность, но накопленное округление per-position
+            // даёт расхождение в ~64 руб. Берём точные значения из подвала файла.
+            $savedFooter = $estimate->fresh()->metadata['footer'] ?? [];
+            $footerTotal    = (float)($savedFooter['total_estimate_cost'] ?? 0);
+            $footerOverhead = (float)($savedFooter['overhead_cost'] ?? 0);
+            $footerProfit   = (float)($savedFooter['profit_cost'] ?? 0);
+
+            if ($footerTotal > 0 && ($footerOverhead > 0 || $footerProfit > 0)) {
+                $footerDirect = round($footerTotal - $footerOverhead - $footerProfit, 2);
+                $estimate->update([
+                    'total_amount'            => $footerTotal,
+                    'total_overhead_costs'    => $footerOverhead,
+                    'total_estimated_profit'  => $footerProfit,
+                    'total_direct_costs'      => $footerDirect,
+                    'total_amount_with_vat'   => round($footerTotal * (1 + $estimate->vat_rate / 100), 2),
+                ]);
+                Log::info("[ImportPipeline] Footer override applied for estimate #{$estimate->id}", [
+                    'total'    => $footerTotal,
+                    'overhead' => $footerOverhead,
+                    'profit'   => $footerProfit,
+                    'direct'   => $footerDirect,
+                ]);
+            }
             
             DB::commit();
             
@@ -330,12 +356,18 @@ class ImportPipelineService
             }
             
             if (!$matched) {
-                $aiBatch[$index] = [
-                    'code' => $dto->code ?? '',
-                    'name' => $dto->itemName,
-                    'unit' => $dto->unit,
-                    'price' => (float)$dto->unitPrice
-                ];
+                $isGesnCode = !empty($dto->code) && preg_match('/^\u0413\u042d\u0421\u041d/ui', $dto->code);
+
+                if ($isGesnCode) {
+                    $batch[$index]['prepared_data']['item_type'] = 'work';
+                } else {
+                    $aiBatch[$index] = [
+                        'code'  => $dto->code ?? '',
+                        'name'  => $dto->itemName,
+                        'unit'  => $dto->unit,
+                        'price' => (float)$dto->unitPrice
+                    ];
+                }
             }
             
             $batch[$index]['prepared_data'] = $itemData;

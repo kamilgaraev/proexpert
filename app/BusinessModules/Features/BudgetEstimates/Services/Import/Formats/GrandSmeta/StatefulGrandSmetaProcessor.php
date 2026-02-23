@@ -335,23 +335,30 @@ class StatefulGrandSmetaProcessor
         $lowerCode = mb_strtolower($code);
 
         $unit = (string)($data[$mapping['unit'] ?? ''] ?? '');
-        $isLabor = str_contains($lowerName, 'труд') || 
-                   str_contains($lowerName, 'от(') || 
-                   str_contains($lowerName, 'зт(') || 
-                   str_contains($lowerName, 'разряд') ||
-                   str_contains($lowerName, 'зарплата') ||
-                   str_starts_with($lowerCode, 'от') ||
-                   str_starts_with($lowerCode, 'зп') ||
-                   str_starts_with($lowerCode, '4-100') || // Зарплата машинистов (Detail)
-                   trim($unit) === 'чел.-ч' || 
-                   trim($unit) === 'чел-ч';
 
-        if ($isLabor) {
-            $itemType = 'labor';
-        } elseif (str_contains($lowerName, 'маш.') || str_contains($lowerName, 'механизм') || str_starts_with($lowerCode, 'эм') || str_starts_with($lowerCode, 'фсэм')) {
-            $itemType = 'machinery';
-        } elseif (str_contains($lowerName, 'материал') || preg_match('/^(01\.|с\b|тсц|фссц|фсбц|фсрц|прайс)/u', $lowerCode)) {
-            $itemType = 'material';
+        // Государственные сметные нормы (ГЭСН, ГЭСНм, ГЭСНп, ГЭСНр, ГЭСНмр и т.д.) — это всегда работы.
+        // Проверяем в первую очередь, чтобы AI-классификация не могла переопределить тип.
+        if (preg_match('/^гэсн/ui', $lowerCode)) {
+            $itemType = 'work';
+        } else {
+            $isLabor = str_contains($lowerName, 'труд') ||
+                       str_contains($lowerName, 'от(') ||
+                       str_contains($lowerName, 'зт(') ||
+                       str_contains($lowerName, 'разряд') ||
+                       str_contains($lowerName, 'зарплата') ||
+                       str_starts_with($lowerCode, 'от') ||
+                       str_starts_with($lowerCode, 'зп') ||
+                       str_starts_with($lowerCode, '4-100') ||
+                       trim($unit) === 'чел.-ч' ||
+                       trim($unit) === 'чел-ч';
+
+            if ($isLabor) {
+                $itemType = 'labor';
+            } elseif (str_contains($lowerName, 'маш.') || str_contains($lowerName, 'механизм') || str_starts_with($lowerCode, 'эм') || str_starts_with($lowerCode, 'фсэм')) {
+                $itemType = 'machinery';
+            } elseif (str_contains($lowerName, 'материал') || preg_match('/^(01\.|с\b|тсц|фссц|фсбц|фсрц|прайс)/u', $lowerCode)) {
+                $itemType = 'material';
+            }
         }
 
         return new EstimateImportRowDTO(
