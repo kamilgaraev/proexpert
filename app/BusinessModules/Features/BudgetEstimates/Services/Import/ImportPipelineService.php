@@ -559,19 +559,31 @@ class ImportPipelineService
      */
     private function detectLaborCost($dto): float
     {
-        // ⭐ ИСПРАВЛЕНИЕ: Мы НЕ скипаем поиск ФОТ даже для "информационных" строк.
-        // Почему? Потому что подпункты (например, ЗП машиниста 4-100) — информационные для итога сметы,
-        // но они КРИТИЧЕСКИ важны для сбора ФОТ родительской позиции.
-
-        // 1. Если в DTO уже определен тип "labor" (труд), берем сумму как ФОТ
-        if ($dto->itemType === 'labor') {
-            return (float)($dto->currentTotalAmount ?? 0);
+        if (isset($dto->laborCost) && (float)$dto->laborCost > 0) {
+            return (float)$dto->laborCost;
         }
 
-        // 3. Fallback для других типов импорта
         $name = mb_strtolower($dto->itemName ?? '');
-        if (str_contains($name, 'труд') || str_contains($name, 'от(') || str_contains($name, 'разряд') || str_contains($name, 'зарплата')) {
-             return (float)($dto->currentTotalAmount ?? 0);
+        $code = mb_strtolower($dto->code ?? '');
+
+        // ⭐ ИНКЛЮЗИВНЫЙ ПОИСК ФОТ В РЕСУРСАХ
+        // Нам нужно ловить всё, что похоже на зарплату (ОТ, ЗТ, ОТм, ЗТм, ОТ(...)).
+        $laborPrefixes = ['от(', 'зт(', 'отм(', 'зтм(', 'от ', 'отм ', 'зт ', 'зтм '];
+        $isLaborName = false;
+        
+        if (in_array($name, ['от', 'отм', 'зт', 'зтм', 'от(зт)', 'отм(зтм)'])) {
+            $isLaborName = true;
+        } else {
+            foreach ($laborPrefixes as $pref) {
+                if (str_starts_with($name, $pref)) {
+                    $isLaborName = true;
+                    break;
+                }
+            }
+        }
+
+        if ($isLaborName) {
+            return (float)($dto->currentTotalAmount ?? 0);
         }
 
         return 0;
