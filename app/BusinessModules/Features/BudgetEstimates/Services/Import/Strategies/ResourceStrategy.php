@@ -31,8 +31,8 @@ class ResourceStrategy extends BaseItemStrategy
         $itemData = [
             'estimate_id' => $context->estimate->id,
             'estimate_section_id' => $context->currentSectionId,
-            'position_number' => $row->sectionNumber ?: null, // Pass explicit number from XML if available
-            'parent_work_id' => $context->currentWorkId, // ⭐ Привязка к родительской работе
+            'position_number' => $row->sectionNumber ?: null,
+            'parent_work_id' => $context->currentWorkId,
             'item_type' => $row->itemType,
             'name' => $row->itemName,
             'measurement_unit_id' => $unitId,
@@ -52,6 +52,10 @@ class ResourceStrategy extends BaseItemStrategy
             'overhead_amount' => $row->overheadAmount ?? 0,
             'profit_amount' => $row->profitAmount ?? 0,
             'is_manual' => $row->isManual,
+            'labor_hours' => $row->itemType === 'labor' ? (float)($costs['quantity'] ?? 0) : 0,
+            'machinery_hours' => $row->itemType === 'machinery' && str_starts_with(mb_strtolower(trim((string)($row->unit ?? ''))), 'маш')
+                ? (float)($costs['quantity'] ?? 0)
+                : 0,
         ];
 
         if (!empty($row->code)) {

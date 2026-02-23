@@ -43,8 +43,8 @@ class EstimateItemResource extends JsonResource
             'current_total_amount' => $this->current_total_amount ? (float) $this->current_total_amount : null,
             
             // Трудозатраты
-            'labor_hours' => $this->labor_hours ? (float) $this->labor_hours : null,
-            'machinery_hours' => $this->machinery_hours ? (float) $this->machinery_hours : null,
+            'labor_hours' => (float) ($this->labor_hours ?? 0),
+            'machinery_hours' => (float) ($this->machinery_hours ?? 0),
             
             // Базовая стоимость (для базисно-индексного метода)
             'base_costs' => $this->base_materials_cost || $this->base_machinery_cost || $this->base_labor_cost ? [
