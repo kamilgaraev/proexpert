@@ -81,20 +81,41 @@ class EstimateCalculationService
              if ($laborResources->hours > 0) $item->labor_hours = $laborResources->hours;
              if ($laborResources->mach_hours > 0) $item->machinery_hours = $laborResources->mach_hours;
              
-             // ⭐ ПРАВИЛО ГРАНД-СМЕТЫ: ФОТ берем только из агрегаторов ОТ/ОТм (кратким или пустым кодом).
-             // Детальные разряды (1-100-*, 4-100-*) — справочные, дублируют сумму агрегатора.
-             // Если брать и тех и других — ФОТ удваивается.
-             $fotFromAggregates = (float) EstimateItem::where('parent_work_id', $item->id)
-                 ->where('item_type', \App\Enums\EstimatePositionItemType::LABOR->value)
-                 ->where(function($q) {
-                     $q->whereRaw('(normative_rate_code IS NULL OR LENGTH(TRIM(normative_rate_code)) <= 3)')
-                       ->orWhereRaw("normative_rate_code ~ '^[0-9]{1,3}$'");
-                 })
-                 ->where('labor_cost', '>', 0)
-                 ->sum('labor_cost');
+             // ⭐ УМНЫЙ СБОР ФОТ ИЗ ДЕТЕЙ (MAX-BASED DEDUPLICATION)
+             $fotOtAgg = 0; $fotOtDet = 0;
+             $fotOtmAgg = 0; $fotOtmDet = 0;
 
-             if ($fotFromAggregates > 0) {
-                 $item->labor_cost = $fotFromAggregates;
+             $laborChildren = EstimateItem::where('parent_work_id', $item->id)
+                 ->where('item_type', \App\Enums\EstimatePositionItemType::LABOR->value)
+                 ->get();
+
+             foreach ($laborChildren as $child) {
+                 if ($child->labor_cost <= 0) continue;
+                 
+                 $code = trim($child->normative_rate_code ?? '');
+                 $name = mb_strtolower(trim($child->name));
+                 
+                 // Детальные разряды
+                 if (str_starts_with($code, '1-100-')) {
+                     $fotOtDet += $child->labor_cost;
+                 } elseif (str_starts_with($code, '4-100-')) {
+                     $fotOtmDet += $child->labor_cost;
+                 } 
+                 // Агрегаторы ЗП Машинистов
+                 elseif (str_contains($name, 'отм') || str_contains($name, 'зтм')) {
+                     $fotOtmAgg += $child->labor_cost;
+                 } 
+                 // Агрегаторы Основной ЗП (код 1, 'от(зт)' и все остальные)
+                 else {
+                     $fotOtAgg += $child->labor_cost;
+                 }
+             }
+
+             // Берем максимум между агрегатором и суммой деталей для каждой категории
+             $finalFot = max($fotOtAgg, $fotOtDet) + max($fotOtmAgg, $fotOtmDet);
+
+             if ($finalFot > 0) {
+                 $item->labor_cost = $finalFot;
              }
 
              // Самостоятельная детекция оборудования для корневой позиции
