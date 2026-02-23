@@ -356,10 +356,10 @@ class ImportPipelineService
             }
             
             if (!$matched) {
-                $isGesnCode = !empty($dto->code) && preg_match('/^\u0413\u042d\u0421\u041d/ui', $dto->code);
+                $isGesnCode = !empty($dto->code) && stripos($dto->code, 'ГЭСН') === 0;
 
                 if ($isGesnCode) {
-                    $batch[$index]['prepared_data']['item_type'] = 'work';
+                    $itemData['item_type'] = 'work';
                 } else {
                     $aiBatch[$index] = [
                         'code'  => $dto->code ?? '',
