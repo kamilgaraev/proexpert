@@ -75,14 +75,32 @@ class EstimateCalculationService
              
              // Суммируем ресурсы для красоты и расчетов
              $laborResources = EstimateItem::where('parent_work_id', $item->id)
-                 ->selectRaw('SUM(labor_hours) as hours, SUM(machinery_hours) as mach_hours, SUM(labor_cost) as labor_money')
+                 ->selectRaw('SUM(labor_hours) as hours, SUM(machinery_hours) as mach_hours')
                  ->first();
              
              if ($laborResources->hours > 0) $item->labor_hours = $laborResources->hours;
              if ($laborResources->mach_hours > 0) $item->machinery_hours = $laborResources->mach_hours;
              
-             // ⭐ Сохраняем общий ФОТ в позицию (это база для НР и СП в Гранд-Смете)
-             if ($laborResources->labor_money > 0) $item->labor_cost = $laborResources->labor_money;
+             // ⭐ УМНЫЙ СБОР ФОТ БЕЗ ПЕРЕКРЫТИЙ (DOUBLE COUNTING)
+             // Сначала пытаемся собрать ФОТ из детальных разрядов (у которых is_not_accounted = false ИЛИ шифр машины 4-100-)
+             $fotFromDetails = (float) EstimateItem::where('parent_work_id', $item->id)
+                 ->where(function($query) {
+                      $query->where('is_not_accounted', false)
+                            ->orWhere('normative_rate_code', 'like', '4-100-%');
+                 })
+                 ->sum('labor_cost');
+                 
+             if ($fotFromDetails > 0) {
+                 $item->labor_cost = $fotFromDetails;
+             } else {
+                 // Если детальных строк нет, берем ФОТ из агрегаторов (ОТ, ЗТ, ОТм), которые помечены как is_not_accounted = true
+                 $fotFromAggregates = (float) EstimateItem::where('parent_work_id', $item->id)
+                     ->where('is_not_accounted', true)
+                     ->sum('labor_cost');
+                 if ($fotFromAggregates > 0) {
+                     $item->labor_cost = $fotFromAggregates;
+                 }
+             }
 
              // Самостоятельная детекция оборудования для корневой позиции
              if ($item->isMaterial() && $item->unit_price > 50000 && !$hasChildren) {
