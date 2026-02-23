@@ -42,6 +42,8 @@ class EstimateItemController extends Controller
         
         $items = $estimateModel->items()
             ->with(['workType', 'measurementUnit', 'section'])
+            ->orderByRaw("string_to_array(position_number, '.')::int[] ASC")
+            ->orderBy('id', 'asc')
             ->paginate($request->input('per_page', 50));
         
         return AdminResponse::success(
@@ -390,7 +392,7 @@ class EstimateItemController extends Controller
             $items = $estimateModel->items()
                 ->with(['workType', 'measurementUnit', 'section'])
                 ->orderBy('estimate_section_id')
-                ->orderBy('position_number')
+                ->orderByRaw("string_to_array(position_number, '.')::int[] ASC")
                 ->get();
 
             return AdminResponse::success(

@@ -122,7 +122,9 @@ class EstimateItem extends Model
      */
     public function childItems(): HasMany
     {
-        return $this->hasMany(EstimateItem::class, 'parent_work_id');
+        return $this->hasMany(EstimateItem::class, 'parent_work_id')
+            ->orderByRaw("string_to_array(position_number, '.')::int[] ASC")
+            ->orderBy('id', 'asc');
     }
 
     public function workType(): BelongsTo
