@@ -73,50 +73,53 @@ class EstimateCalculationService
                  })
                  ->sum('total_amount');
              
-             // Суммируем ресурсы для красоты и расчетов
-             $laborResources = EstimateItem::where('parent_work_id', $item->id)
-                 ->selectRaw('SUM(labor_hours) as hours, SUM(machinery_hours) as mach_hours')
-                 ->first();
-             
-             if ($laborResources->hours > 0) $item->labor_hours = $laborResources->hours;
-             if ($laborResources->mach_hours > 0) $item->machinery_hours = $laborResources->mach_hours;
-             
-             // ⭐ УМНЫЙ СБОР ФОТ ИЗ ДЕТЕЙ (MAX-BASED DEDUPLICATION)
+             // ⭐ УМНЫЙ СБОР ФОТ И ТРУДОЗАТРАТ ИЗ ДЕТЕЙ (MAX-BASED DEDUPLICATION)
              $fotOtAgg = 0; $fotOtDet = 0;
              $fotOtmAgg = 0; $fotOtmDet = 0;
+             $hoursOtAgg = 0; $hoursOtDet = 0;
+             $hoursOtmAgg = 0; $hoursOtmDet = 0;
+             $machineryHours = 0;
 
-             $laborChildren = EstimateItem::where('parent_work_id', $item->id)
-                 ->where('item_type', \App\Enums\EstimatePositionItemType::LABOR->value)
-                 ->get();
+             $allChildren = EstimateItem::where('parent_work_id', $item->id)->get();
 
-             foreach ($laborChildren as $child) {
-                 if ($child->labor_cost <= 0) continue;
-                 
+             foreach ($allChildren as $child) {
                  $code = trim($child->normative_rate_code ?? '');
                  $name = mb_strtolower(trim($child->name));
-                 
-                 // Детальные разряды
-                 if (str_starts_with($code, '1-100-')) {
-                     $fotOtDet += $child->labor_cost;
-                 } elseif (str_starts_with($code, '4-100-')) {
-                     $fotOtmDet += $child->labor_cost;
-                 } 
-                 // Агрегаторы ЗП Машинистов
-                 elseif (str_contains($name, 'отм') || str_contains($name, 'зтм')) {
-                     $fotOtmAgg += $child->labor_cost;
-                 } 
-                 // Агрегаторы Основной ЗП (код 1, 'от(зт)' и все остальные)
-                 else {
-                     $fotOtAgg += $child->labor_cost;
+                 $type = $child->item_type;
+
+                 if ($type === \App\Enums\EstimatePositionItemType::LABOR) {
+                     // Детальные разряды (1-100-XXX)
+                     if (str_starts_with($code, '1-100-')) {
+                         $fotOtDet += (float)$child->labor_cost;
+                         $hoursOtDet += (float)$child->labor_hours;
+                     } 
+                     // ЗП машинистов детали (4-100-XXX)
+                     elseif (str_starts_with($code, '4-100-')) {
+                         $fotOtmDet += (float)$child->labor_cost;
+                         $hoursOtmDet += (float)$child->labor_hours;
+                     } 
+                     // Агрегаторы ЗП Машинистов (ОТм, ЗТм...)
+                     elseif (str_contains($name, 'отм') || str_contains($name, 'зтм')) {
+                         $fotOtmAgg += (float)$child->labor_cost;
+                         $hoursOtmAgg += (float)$child->labor_hours;
+                     } 
+                     // Основные агрегаторы (ОТ, ЗТ, ОТ(ЗТ)...)
+                     else {
+                         $fotOtAgg += (float)$child->labor_cost;
+                         $hoursOtAgg += (float)$child->labor_hours;
+                     }
+                 } elseif ($type === \App\Enums\EstimatePositionItemType::MACHINERY) {
+                     $machineryHours += (float)$child->machinery_hours;
                  }
              }
 
-             // Берем максимум между агрегатором и суммой деталей для каждой категории
+             // Расчет итогов с дедупликацией (защита от двойного счета ОТ и деталей разрядов)
              $finalFot = max($fotOtAgg, $fotOtDet) + max($fotOtmAgg, $fotOtmDet);
+             $finalHours = max($hoursOtAgg, $hoursOtDet) + max($hoursOtmAgg, $hoursOtmDet);
 
-             if ($finalFot > 0) {
-                 $item->labor_cost = $finalFot;
-             }
+             if ($finalFot > 0) $item->labor_cost = $finalFot;
+             if ($finalHours > 0) $item->labor_hours = $finalHours;
+             if ($machineryHours > 0) $item->machinery_hours = $machineryHours;
 
              // Самостоятельная детекция оборудования для корневой позиции
              if ($item->isMaterial() && $item->unit_price > 50000 && !$hasChildren) {
