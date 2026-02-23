@@ -137,7 +137,7 @@ class StatefulGrandSmetaProcessor
             return true;
         }
 
-        if (in_array($name, ['м', 'от', 'зп', 'эм', 'зт', 'от(зт)', 'отм', 'зпм', 'зтм'], true)) {
+        if (in_array($name, ['м', 'от', 'зп', 'эм', 'зт', 'от(зт)', 'отм', 'зпм', 'зтм', 'отм(зтм)', 'мат', 'зпм(зтм)'], true)) {
             return true;
         }
 
@@ -334,7 +334,19 @@ class StatefulGrandSmetaProcessor
         $lowerName = mb_strtolower($name);
         $lowerCode = mb_strtolower($code);
 
-        if (str_contains($lowerName, 'труд') || str_contains($lowerName, 'от(') || str_starts_with($lowerCode, 'от')) {
+        $unit = (string)($data[$mapping['unit'] ?? ''] ?? '');
+        $isLabor = str_contains($lowerName, 'труд') || 
+                   str_contains($lowerName, 'от(') || 
+                   str_contains($lowerName, 'зт(') || 
+                   str_contains($lowerName, 'разряд') ||
+                   str_contains($lowerName, 'зарплата') ||
+                   str_starts_with($lowerCode, 'от') ||
+                   str_starts_with($lowerCode, 'зп') ||
+                   str_starts_with($lowerCode, '4-100') || // Зарплата машинистов (Detail)
+                   trim($unit) === 'чел.-ч' || 
+                   trim($unit) === 'чел-ч';
+
+        if ($isLabor) {
             $itemType = 'labor';
         } elseif (str_contains($lowerName, 'маш.') || str_contains($lowerName, 'механизм') || str_starts_with($lowerCode, 'эм') || str_starts_with($lowerCode, 'фсэм')) {
             $itemType = 'machinery';
@@ -346,7 +358,7 @@ class StatefulGrandSmetaProcessor
             rowNumber: $rowNumber,
             sectionNumber: $sectionNum,
             itemName: $name,
-            unit: (string)($data[$mapping['unit'] ?? ''] ?? ''),
+            unit: $unit,
             quantity: $qty != 0.0 ? $qty : null,
             unitPrice: $price != 0.0 ? $price : null,
             code: $code,
