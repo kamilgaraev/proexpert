@@ -81,25 +81,20 @@ class EstimateCalculationService
              if ($laborResources->hours > 0) $item->labor_hours = $laborResources->hours;
              if ($laborResources->mach_hours > 0) $item->machinery_hours = $laborResources->mach_hours;
              
-             // ⭐ УМНЫЙ СБОР ФОТ БЕЗ ПЕРЕКРЫТИЙ (DOUBLE COUNTING)
-             // Сначала пытаемся собрать ФОТ из детальных разрядов (у которых is_not_accounted = false ИЛИ шифр машины 4-100-)
-             $fotFromDetails = (float) EstimateItem::where('parent_work_id', $item->id)
-                 ->where(function($query) {
-                      $query->where('is_not_accounted', false)
-                            ->orWhere('normative_rate_code', 'like', '4-100-%');
+             // ⭐ ПРАВИЛО ГРАНД-СМЕТЫ: ФОТ берем только из агрегаторов ОТ/ОТм (кратким или пустым кодом).
+             // Детальные разряды (1-100-*, 4-100-*) — справочные, дублируют сумму агрегатора.
+             // Если брать и тех и других — ФОТ удваивается.
+             $fotFromAggregates = (float) EstimateItem::where('parent_work_id', $item->id)
+                 ->where('item_type', \App\Enums\EstimatePositionItemType::LABOR->value)
+                 ->where(function($q) {
+                     $q->whereRaw('(normative_rate_code IS NULL OR LENGTH(TRIM(normative_rate_code)) <= 3)')
+                       ->orWhereRaw("normative_rate_code ~ '^[0-9]{1,3}$'");
                  })
+                 ->where('labor_cost', '>', 0)
                  ->sum('labor_cost');
-                 
-             if ($fotFromDetails > 0) {
-                 $item->labor_cost = $fotFromDetails;
-             } else {
-                 // Если детальных строк нет, берем ФОТ из агрегаторов (ОТ, ЗТ, ОТм), которые помечены как is_not_accounted = true
-                 $fotFromAggregates = (float) EstimateItem::where('parent_work_id', $item->id)
-                     ->where('is_not_accounted', true)
-                     ->sum('labor_cost');
-                 if ($fotFromAggregates > 0) {
-                     $item->labor_cost = $fotFromAggregates;
-                 }
+
+             if ($fotFromAggregates > 0) {
+                 $item->labor_cost = $fotFromAggregates;
              }
 
              // Самостоятельная детекция оборудования для корневой позиции
