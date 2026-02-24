@@ -78,6 +78,7 @@ class EstimateScheduleImportService
                 'include_weekends' => $includeWeekends,
                 'auto_calculate_dates' => $autoCalculateDates,
                 'start_date' => $startDate,
+                'item_ids' => $options['item_ids'] ?? null,
             ]);
 
             // Пересчитываем даты окончания графика
@@ -123,6 +124,11 @@ class EstimateScheduleImportService
         foreach ($sections as $section) {
             // Фильтруем работы (дополнительная проверка на случай кеша)
             $works = $section->items->filter(fn($item) => $item->isWork());
+            
+            // Если передан список ID, фильтруем только выбранные позиции
+            if (isset($options['item_ids']) && is_array($options['item_ids'])) {
+                $works = $works->filter(fn($item) => in_array($item->id, $options['item_ids']));
+            }
             
             // Логируем для отладки
             \Log::info('schedule.import.section_processing', [

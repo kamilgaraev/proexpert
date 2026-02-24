@@ -30,6 +30,8 @@ class CreateScheduleFromEstimateRequest extends FormRequest
             'options.hours_per_day' => 'sometimes|integer|min:1|max:24',
             'options.include_weekends' => 'sometimes|boolean',
             'options.auto_calculate_dates' => 'sometimes|boolean',
+            'options.item_ids' => 'sometimes|nullable|array',
+            'options.item_ids.*' => 'integer|exists:estimate_items,id',
         ];
     }
 
