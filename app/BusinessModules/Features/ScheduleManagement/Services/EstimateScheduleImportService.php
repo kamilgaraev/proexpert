@@ -52,7 +52,8 @@ class EstimateScheduleImportService
             $workersCount,
             $hoursPerDay,
             $includeWeekends,
-            $autoCalculateDates
+            $autoCalculateDates,
+            $options
         ) {
             // Создаем график
             $schedule = ProjectSchedule::create([
