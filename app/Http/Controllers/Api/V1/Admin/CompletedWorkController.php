@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Services\CompletedWork\CompletedWorkService;
+use App\Services\Schedule\ScheduleTaskCompletedWorkService;
 use App\Http\Requests\Api\V1\Admin\CompletedWork\StoreCompletedWorkRequest;
 use App\Http\Requests\Api\V1\Admin\CompletedWork\UpdateCompletedWorkRequest;
 use App\Http\Requests\Api\V1\Admin\CompletedWork\SyncCompletedWorkMaterialsRequest;
@@ -17,15 +18,19 @@ use Illuminate\Http\JsonResponse;
 use Symfony\Component\HttpFoundation\Response;
 use App\Exceptions\BusinessLogicException;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 
 class CompletedWorkController extends Controller
 {
     protected CompletedWorkService $completedWorkService;
+    protected ScheduleTaskCompletedWorkService $scheduleTaskService;
 
-    public function __construct(CompletedWorkService $completedWorkService)
-    {
+    public function __construct(
+        CompletedWorkService $completedWorkService,
+        ScheduleTaskCompletedWorkService $scheduleTaskService
+    ) {
         $this->completedWorkService = $completedWorkService;
-        // Middleware для прав доступа, например, $this->middleware('can:manage-completed-works');
+        $this->scheduleTaskService  = $scheduleTaskService;
     }
 
     public function index(Request $request): CompletedWorkCollection
@@ -181,6 +186,50 @@ class CompletedWorkController extends Controller
             ]);
         } catch (BusinessLogicException $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    public function getScheduleTasks(Request $request): JsonResponse
+    {
+        try {
+            $projectId = $request->route('project');
+            $scheduleId = $request->query('schedule_id');
+            $search = $request->query('search');
+
+            $tasks = $this->scheduleTaskService->getTasksForSelection(
+                projectId: (int)$projectId,
+                scheduleId: $scheduleId ? (int)$scheduleId : null,
+                search: $search ?: null,
+            );
+
+            return response()->json([
+                'success' => true,
+                'data'    => $tasks->map(fn($t) => [
+                    'id'                 => $t->id,
+                    'name'               => $t->name,
+                    'wbs_code'           => $t->wbs_code,
+                    'quantity'           => $t->quantity !== null ? (float)$t->quantity : null,
+                    'completed_quantity' => $t->completed_quantity !== null ? (float)$t->completed_quantity : null,
+                    'progress_percent'   => $t->progress_percent !== null ? (float)$t->progress_percent : null,
+                    'planned_start_date' => $t->planned_start_date?->format('Y-m-d'),
+                    'planned_end_date'   => $t->planned_end_date?->format('Y-m-d'),
+                    'status'             => $t->status instanceof \BackedEnum ? $t->status->value : $t->status,
+                    'schedule'           => $t->relationLoaded('schedule') ? [
+                        'id'   => $t->schedule->id,
+                        'name' => $t->schedule->name,
+                    ] : null,
+                    'measurement_unit'   => $t->relationLoaded('measurementUnit') && $t->measurementUnit ? [
+                        'id'         => $t->measurementUnit->id,
+                        'short_name' => $t->measurementUnit->short_name,
+                    ] : null,
+                ])->values(),
+            ]);
+        } catch (\Exception $e) {
+            Log::error('getScheduleTasks failed', [
+                'error'      => $e->getMessage(),
+                'project_id' => $request->route('project'),
+            ]);
+            return response()->json(['success' => false, 'message' => 'Ошибка при загрузке задач графика'], 500);
         }
     }
 } 
