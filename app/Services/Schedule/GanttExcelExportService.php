@@ -77,10 +77,11 @@ class GanttExcelExportService
             ->setCompany('ProHelper')
             ->setDescription('Экспорт графика работ из системы ProHelper');
 
-        $this->buildCoverSheet($spreadsheet->getActiveSheet(), $schedule, $tasks, $dependencies);
+        $this->buildGanttSheet($spreadsheet->getActiveSheet(), $schedule, $tasks);
         $this->buildScheduleSheet($spreadsheet->createSheet(), $schedule, $tasks);
         $this->buildDependenciesSheet($spreadsheet->createSheet(), $dependencies, $tasks);
         $this->buildCriticalPathSheet($spreadsheet->createSheet(), $tasks);
+        $this->buildCoverSheet($spreadsheet->createSheet(), $schedule, $tasks, $dependencies);
 
         $spreadsheet->setActiveSheetIndex(0);
 
@@ -90,6 +91,194 @@ class GanttExcelExportService
         $writer->save($tempPath);
 
         return $tempPath;
+    }
+
+    private function buildGanttSheet(Worksheet $sheet, ProjectSchedule $schedule, Collection $tasks): void
+    {
+        $sheet->setTitle('Диаграмма Ганта');
+
+        $minDate = null;
+        $maxDate = null;
+        foreach ($tasks as $task) {
+            if ($task->planned_start_date) {
+                $d = Carbon::parse($task->planned_start_date);
+                if (!$minDate || $d->lt($minDate)) $minDate = $d;
+            }
+            if ($task->planned_end_date) {
+                $d = Carbon::parse($task->planned_end_date);
+                if (!$maxDate || $d->gt($maxDate)) $maxDate = $d;
+            }
+        }
+
+        if (!$minDate || !$maxDate || $tasks->isEmpty()) {
+            $sheet->setCellValue('A1', 'Задачи с датами отсутсвуют');
+            return;
+        }
+
+        $timelineStart = $minDate->copy()->startOfMonth();
+        $timelineEnd   = $maxDate->copy()->endOfMonth();
+        $totalDays     = $timelineStart->diffInDays($timelineEnd);
+        $useMonths     = $totalDays > 120;
+
+        $periods = [];
+        if ($useMonths) {
+            $cur = $timelineStart->copy();
+            while ($cur->lte($timelineEnd)) {
+                $periods[] = ['label' => $cur->translatedFormat('M Y'), 'start' => $cur->copy(), 'end' => $cur->copy()->endOfMonth()];
+                $cur->addMonth();
+            }
+        } else {
+            $cur = $timelineStart->copy()->startOfWeek(Carbon::MONDAY);
+            while ($cur->lte($timelineEnd)) {
+                $periods[] = ['label' => $cur->format('d.m'), 'start' => $cur->copy(), 'end' => $cur->copy()->endOfWeek(Carbon::SUNDAY)];
+                $cur->addWeek();
+            }
+        }
+
+        $fixedCols    = 6;
+        $fixedHeaders = ['WBS', 'Задача', 'Начало', 'Окончание', 'Дней', '%'];
+        $fixedWidths  = [10, 38, 11, 11, 7, 5];
+
+        foreach ($fixedWidths as $i => $w) {
+            $sheet->getColumnDimension(Coordinate::stringFromColumnIndex($i + 1))->setWidth($w);
+        }
+
+        $timeColWidth = $useMonths ? 11 : 7;
+        $periodCount  = count($periods);
+        for ($i = 0; $i < $periodCount; $i++) {
+            $sheet->getColumnDimension(Coordinate::stringFromColumnIndex($fixedCols + $i + 1))->setWidth($timeColWidth);
+        }
+
+        $lastCol = Coordinate::stringFromColumnIndex($fixedCols + $periodCount);
+        $this->writeSectionHeader($sheet, "A1:{$lastCol}1", $schedule->name . ' — Диаграмма Ганта');
+
+        $headerRow = 2;
+        foreach ($fixedHeaders as $i => $h) {
+            $col = Coordinate::stringFromColumnIndex($i + 1);
+            $sheet->setCellValue("{$col}{$headerRow}", $h);
+        }
+        foreach ($periods as $i => $period) {
+            $col = Coordinate::stringFromColumnIndex($fixedCols + $i + 1);
+            $sheet->setCellValue("{$col}{$headerRow}", $period['label']);
+            $sheet->getStyle("{$col}{$headerRow}")->getAlignment()->setTextRotation(60)->setHorizontal(Alignment::HORIZONTAL_CENTER);
+        }
+        $this->applyTableHeader($sheet, "A{$headerRow}:{$lastCol}{$headerRow}");
+        $sheet->getRowDimension($headerRow)->setRowHeight(40);
+
+        $today       = Carbon::today();
+        $todayColIdx = null;
+        foreach ($periods as $i => $period) {
+            if ($today->gte($period['start']) && $today->lte($period['end'])) {
+                $todayColIdx = $i;
+                break;
+            }
+        }
+
+        if ($todayColIdx !== null) {
+            $todayCol = Coordinate::stringFromColumnIndex($fixedCols + $todayColIdx + 1);
+            $sheet->getStyle("{$todayCol}{$headerRow}")->applyFromArray([
+                'fill' => ['fillType' => Fill::FILL_SOLID, 'color' => ['argb' => 'FFDC2626']],
+                'font' => ['bold' => true, 'color' => ['argb' => 'FFFFFFFF']],
+            ]);
+        }
+
+        $dataRow = 3;
+        foreach ($tasks as $task) {
+            $indent     = str_repeat('  ', max(0, ($task->level ?? 0) - 1));
+            $isCritical = (bool)($task->is_critical ?? false);
+            $type       = $this->enumVal($task->task_type, 'task');
+            $taskStart  = $task->planned_start_date ? Carbon::parse($task->planned_start_date) : null;
+            $taskEnd    = $task->planned_end_date   ? Carbon::parse($task->planned_end_date)   : null;
+            $progress   = (int)($task->progress_percent ?? 0);
+
+            $sheet->setCellValue('A' . $dataRow, $task->wbs_code ?? '');
+            $sheet->setCellValue('B' . $dataRow, $indent . ($task->name ?? ''));
+            $sheet->setCellValue('C' . $dataRow, $taskStart ? $taskStart->format('d.m.Y') : '');
+            $sheet->setCellValue('D' . $dataRow, $taskEnd   ? $taskEnd->format('d.m.Y')   : '');
+            $sheet->setCellValue('E' . $dataRow, $task->planned_duration_days ?? '');
+            $sheet->setCellValue('F' . $dataRow, $progress . '%');
+
+            $rowBg   = $this->getTaskRowBgColor($task, $isCritical);
+            $isSummary = ($type === 'summary' || $type === 'container');
+            $sheet->getStyle("A{$dataRow}:F{$dataRow}")->applyFromArray([
+                'fill'      => ['fillType' => Fill::FILL_SOLID, 'color' => ['argb' => 'FF' . $rowBg]],
+                'font'      => [
+                    'bold'  => ($isSummary || $isCritical),
+                    'size'  => $isSummary ? 10 : 9,
+                    'color' => ['argb' => $isCritical ? 'FF' . self::CRITICAL_FG : 'FF111827'],
+                ],
+                'borders'   => ['bottom' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFE5E7EB']]],
+                'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
+            ]);
+            $sheet->getStyle('B' . $dataRow)->getAlignment()->setIndent(max(0, ($task->level ?? 0) - 1));
+
+            $activePeriodIdxs = [];
+            if ($taskStart && $taskEnd) {
+                foreach ($periods as $i => $period) {
+                    if ($taskStart->lte($period['end']) && $taskEnd->gte($period['start'])) {
+                        $activePeriodIdxs[] = $i;
+                    }
+                }
+            }
+            $donePeriodCount = $progress > 0 ? (int)round(count($activePeriodIdxs) * $progress / 100) : 0;
+
+            $barColor  = $this->getBarColor($type, $isCritical);
+            $doneColor = $this->getDoneColor($type, $isCritical);
+
+            for ($i = 0; $i < $periodCount; $i++) {
+                $col     = Coordinate::stringFromColumnIndex($fixedCols + $i + 1);
+                $cellRef = "{$col}{$dataRow}";
+
+                $posInActive = array_search($i, $activePeriodIdxs, true);
+                $isBar       = $posInActive !== false;
+
+                if ($isBar) {
+                    $cellColor = ($posInActive < $donePeriodCount) ? $doneColor : $barColor;
+                    $sheet->getStyle($cellRef)->applyFromArray([
+                        'fill'      => ['fillType' => Fill::FILL_SOLID, 'color' => ['argb' => 'FF' . $cellColor]],
+                        'borders'   => ['bottom' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFE5E7EB']]],
+                        'alignment' => ['vertical' => Alignment::VERTICAL_CENTER, 'horizontal' => Alignment::HORIZONTAL_CENTER],
+                    ]);
+                    if ($type === 'milestone') {
+                        $sheet->setCellValue($cellRef, '◆');
+                        $sheet->getStyle($cellRef)->getFont()->setBold(true)->setColor(new Color('FF' . $barColor));
+                        $sheet->getStyle($cellRef)->getFill()->setFillType(Fill::FILL_NONE);
+                    }
+                } else {
+                    $altBg = ($dataRow % 2 === 0) ? 'F9FAFB' : 'FFFFFF';
+                    $sheet->getStyle($cellRef)->applyFromArray([
+                        'fill'    => ['fillType' => Fill::FILL_SOLID, 'color' => ['argb' => 'FF' . $altBg]],
+                        'borders' => ['bottom' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFE5E7EB']]],
+                    ]);
+                }
+
+                if ($todayColIdx === $i) {
+                    $sheet->getStyle($cellRef)->getBorders()->getLeft()->setBorderStyle(Border::BORDER_MEDIUM)->getColor()->setARGB('FFDC2626');
+                }
+            }
+
+            $sheet->getRowDimension($dataRow)->setRowHeight(18);
+            $dataRow++;
+        }
+
+        $freezeCol = Coordinate::stringFromColumnIndex($fixedCols + 1);
+        $sheet->freezePane("{$freezeCol}3");
+    }
+
+    private function getBarColor(string $type, bool $isCritical): string
+    {
+        if ($isCritical)                             return 'EF4444';
+        if ($type === 'summary' || $type === 'container') return '3B82F6';
+        if ($type === 'milestone')                   return 'F59E0B';
+        return '22C55E';
+    }
+
+    private function getDoneColor(string $type, bool $isCritical): string
+    {
+        if ($isCritical)                             return '991B1B';
+        if ($type === 'summary' || $type === 'container') return '1D4ED8';
+        if ($type === 'milestone')                   return 'B45309';
+        return '15803D';
     }
 
     private function buildCoverSheet(Worksheet $sheet, ProjectSchedule $schedule, Collection $tasks, Collection $dependencies): void
