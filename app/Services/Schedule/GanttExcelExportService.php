@@ -245,7 +245,8 @@ class GanttExcelExportService
             $sheet->setCellValue("G{$dataRow}", $task->progress_percent ?? 0);
             $sheet->setCellValue("H{$dataRow}", $task->estimated_cost ?? 0);
             $sheet->setCellValue("I{$dataRow}", $task->actual_cost ?? 0);
-            $sheet->setCellValue("J{$dataRow}", self::STATUS_LABELS[$task->status ?? 'not_started'] ?? ($task->status ?? ''));
+            $statusValue = $task->status instanceof \BackedEnum ? $task->status->value : (string)($task->status ?? 'not_started');
+            $sheet->setCellValue("J{$dataRow}", self::STATUS_LABELS[$statusValue] ?? $statusValue);
             $sheet->setCellValue("K{$dataRow}", $isCritical ? '🔴 Да' : 'Нет');
             $sheet->setCellValue("L{$dataRow}", $task->total_float_days ?? '');
 
@@ -264,7 +265,9 @@ class GanttExcelExportService
 
             $sheet->getStyle("G{$dataRow}")->getNumberFormat()->setFormatCode('0"%"');
             $sheet->getStyle("H{$dataRow}:I{$dataRow}")->getNumberFormat()->setFormatCode('#,##0.00');
-            $sheet->getStyle("F{$dataRow}:G{$dataRow}:L{$dataRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+            $sheet->getStyle("F{$dataRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+            $sheet->getStyle("G{$dataRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+            $sheet->getStyle("L{$dataRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
 
             $sheet->getRowDimension($dataRow)->setRowHeight(20);
             $dataRow++;
