@@ -444,7 +444,7 @@ class GanttExcelExportService
             return self::CRITICAL_BG;
         }
 
-        $type = $task->task_type ?? 'task';
+        $type = $task->task_type instanceof \BackedEnum ? $task->task_type->value : (string)($task->task_type ?? 'task');
 
         if ($type === 'summary' || $type === 'container') {
             return self::SUMMARY_BG;
@@ -454,28 +454,32 @@ class GanttExcelExportService
             return self::MILESTONE_BG;
         }
 
-        $status = $task->status ?? 'not_started';
+        $status = $task->status instanceof \BackedEnum ? $task->status->value : (string)($task->status ?? 'not_started');
         return self::STATUS_COLORS[$status] ?? 'FFFFFF';
     }
 
-    private function getTaskTypeLabel(string $type): string
+    private function getTaskTypeLabel(mixed $type): string
     {
-        return match ($type) {
+        $value = $type instanceof \BackedEnum ? $type->value : (string)($type ?? 'task');
+
+        return match ($value) {
             'summary', 'container' => 'Суммарная',
             'milestone'            => 'Веха',
             default                => 'Работа',
         };
     }
 
-    private function getScheduleStatusLabel(?string $status): string
+    private function getScheduleStatusLabel(mixed $status): string
     {
-        return match ($status) {
-            'draft'       => 'Черновик',
-            'active'      => 'Активный',
-            'on_hold'     => 'На паузе',
-            'completed'   => 'Завершён',
-            'cancelled'   => 'Отменён',
-            default       => $status ?? '—',
+        $value = $status instanceof \BackedEnum ? $status->value : (string)$status;
+
+        return match ($value) {
+            'draft'     => 'Черновик',
+            'active'    => 'Активный',
+            'on_hold'   => 'На паузе',
+            'completed' => 'Завершён',
+            'cancelled' => 'Отменён',
+            default     => $value ?: '—',
         };
     }
 }
