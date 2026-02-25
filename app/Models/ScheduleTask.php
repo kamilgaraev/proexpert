@@ -36,6 +36,7 @@ class ScheduleTask extends Model
         'planned_duration_days',
         'planned_work_hours',
         'quantity',
+        'completed_quantity',
         'measurement_unit_id',
         'labor_hours_from_estimate',
         'resource_cost',
@@ -86,6 +87,7 @@ class ScheduleTask extends Model
         'planned_work_hours' => 'decimal:2',
         'actual_work_hours' => 'decimal:2',
         'quantity' => 'decimal:4',
+        'completed_quantity' => 'decimal:4',
         'labor_hours_from_estimate' => 'decimal:2',
         'resource_cost' => 'decimal:2',
         'progress_percent' => 'decimal:2',
@@ -357,7 +359,6 @@ class ScheduleTask extends Model
 
         $this->update(['progress_percent' => $percent]);
 
-        // Автоматически меняем статус
         if ($percent == 0 && $this->status === TaskStatusEnum::IN_PROGRESS) {
             $this->update(['status' => TaskStatusEnum::NOT_STARTED]);
         } elseif ($percent > 0 && $percent < 100 && $this->status === TaskStatusEnum::NOT_STARTED) {
@@ -367,10 +368,22 @@ class ScheduleTask extends Model
             return true;
         }
 
-        // Обновляем прогресс родительских задач
         $this->updateParentProgress();
 
         return true;
+    }
+
+    public function recalculateProgressFromQuantity(): void
+    {
+        $quantity = (float) $this->quantity;
+        $completed = (float) $this->completed_quantity;
+
+        if ($quantity <= 0 || $completed < 0) {
+            return;
+        }
+
+        $percent = min(round($completed / $quantity * 100, 2), 100);
+        $this->updateProgress($percent);
     }
 
     public function updateParentProgress(): void
