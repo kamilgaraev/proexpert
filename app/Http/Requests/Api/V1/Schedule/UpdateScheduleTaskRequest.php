@@ -68,6 +68,7 @@ class UpdateScheduleTaskRequest extends FormRequest
             'estimated_cost' => 'sometimes|numeric|min:0|nullable',
             'actual_cost' => 'sometimes|numeric|min:0|nullable',
             'quantity' => 'sometimes|numeric|min:0|nullable',
+            'completed_quantity' => 'sometimes|numeric|min:0|nullable',
             'measurement_unit_id' => 'sometimes|integer|exists:measurement_units,id|nullable',
             
             // Связи
@@ -95,6 +96,7 @@ class UpdateScheduleTaskRequest extends FormRequest
             'actual_end_date.after_or_equal' => 'Фактическая дата окончания должна быть не раньше даты начала',
             'progress_percent.min' => 'Прогресс не может быть меньше 0%',
             'progress_percent.max' => 'Прогресс не может быть больше 100%',
+            'completed_quantity.min' => 'Выполненный объём не может быть отрицательным',
             'measurement_unit_id.exists' => 'Указанная единица измерения не найдена',
             'constraint_date.required_unless' => 'Дата ограничения обязательна при указании типа ограничения',
         ];

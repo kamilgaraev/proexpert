@@ -39,19 +39,28 @@ class ScheduleTaskController extends Controller
 
             $validatedData = $request->validated();
 
-            // Очищаем историю обновлений перед началом операции
             $autoSchedulingService = app(\App\Services\Schedule\AutoSchedulingService::class);
             $autoSchedulingService->clearUpdatedTasks();
 
             $taskModel->update($validatedData);
 
+            if (
+                isset($validatedData['completed_quantity']) &&
+                $taskModel->quantity > 0
+            ) {
+                $taskModel->refresh();
+                $taskModel->recalculateProgressFromQuantity();
+                $validatedData['progress_percent'] = $taskModel->fresh()->progress_percent;
+            }
+
             if (isset($validatedData['planned_start_date']) ||
                 isset($validatedData['planned_end_date']) ||
-                isset($validatedData['progress_percent'])) {
+                isset($validatedData['progress_percent']) ||
+                isset($validatedData['completed_quantity'])) {
                 $scheduleModel->update(['critical_path_calculated' => false]);
             }
 
-            if (isset($validatedData['progress_percent'])) {
+            if (isset($validatedData['progress_percent']) || isset($validatedData['completed_quantity'])) {
                 $scheduleModel->recalculateProgress();
             }
 

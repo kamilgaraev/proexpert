@@ -46,6 +46,7 @@ class ScheduleTaskResource extends JsonResource
             'estimated_cost' => (float) ($this->estimated_cost ?? 0),
             'actual_cost' => (float) ($this->actual_cost ?? 0),
             'quantity' => (float) ($this->quantity ?? 0),
+            'completed_quantity' => $this->completed_quantity !== null ? (float) $this->completed_quantity : null,
             'measurement_unit_id' => $this->measurement_unit_id,
             'resource_cost' => (float) ($this->resource_cost ?? 0),
             'labor_hours_from_estimate' => (float) ($this->labor_hours_from_estimate ?? 0),
