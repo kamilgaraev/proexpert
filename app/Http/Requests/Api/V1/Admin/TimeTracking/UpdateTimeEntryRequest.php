@@ -27,7 +27,7 @@ class UpdateTimeEntryRequest extends FormRequest
             'worker_type' => [
                 'sometimes',
                 'string',
-                Rule::in(['user', 'virtual', 'brigade'])
+                Rule::in(['user', 'virtual', 'brigade', 'equipment'])
             ],
             'user_id' => [
                 'sometimes',
@@ -47,6 +47,18 @@ class UpdateTimeEntryRequest extends FormRequest
                 'integer',
                 'min:1',
                 'max:1000'
+            ],
+            'equipment_type' => [
+                'sometimes',
+                'nullable',
+                'string',
+                'max:100'
+            ],
+            'equipment_number' => [
+                'sometimes',
+                'nullable',
+                'string',
+                'max:50'
             ],
             'project_id' => [
                 'sometimes',
@@ -144,7 +156,7 @@ class UpdateTimeEntryRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'worker_type.in' => 'Тип работника должен быть: user, virtual или brigade',
+            'worker_type.in' => 'Тип работника должен быть: user, virtual, brigade или equipment',
             'user_id.exists' => 'Выбранный пользователь не существует',
             'worker_name.max' => 'Имя работника не может превышать 255 символов',
             'worker_count.integer' => 'Количество работников должно быть целым числом',

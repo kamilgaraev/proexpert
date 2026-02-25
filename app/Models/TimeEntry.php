@@ -38,6 +38,8 @@ class TimeEntry extends Model
         'location',
         'custom_fields',
         'notes',
+        'equipment_type',
+        'equipment_number',
     ];
 
     protected $casts = [
@@ -271,17 +273,27 @@ class TimeEntry extends Model
         return $this->worker_type === 'user';
     }
 
+    public function isEquipment(): bool
+    {
+        return $this->worker_type === 'equipment';
+    }
+
     public function getWorkerDisplayNameAttribute(): string
     {
         if ($this->isRegisteredUser() && $this->user) {
             return $this->user->name;
         }
-        
+
         if ($this->isBrigade()) {
             $count = $this->worker_count ? " ({$this->worker_count} чел.)" : '';
             return ($this->worker_name ?? 'Бригада') . $count;
         }
-        
+
+        if ($this->isEquipment()) {
+            $parts = array_filter([$this->worker_name, $this->equipment_type, $this->equipment_number]);
+            return implode(' / ', $parts) ?: 'Техника';
+        }
+
         return $this->worker_name ?? 'Не указан';
     }
 
