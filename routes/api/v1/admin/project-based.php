@@ -108,6 +108,9 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         Route::post('/bulk', [CompletedWorkController::class, 'bulkCreate']);
         Route::get('/export/excel', [CompletedWorkController::class, 'exportExcel']);
     });
+
+    Route::get('schedule-tasks', [CompletedWorkController::class, 'getScheduleTasks']);
+
     
     // === SPECIFICATIONS ===
     Route::prefix('specifications')->group(function () {

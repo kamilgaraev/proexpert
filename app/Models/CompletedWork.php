@@ -15,11 +15,13 @@ class CompletedWork extends Model
     protected $fillable = [
         'organization_id',
         'project_id',
+        'schedule_task_id',
         'contract_id',
         'work_type_id',
         'user_id',
         'contractor_id',
         'quantity',
+        'completed_quantity',
         'price',
         'total_amount',
         'completion_date',
@@ -30,11 +32,12 @@ class CompletedWork extends Model
     ];
 
     protected $casts = [
-        'quantity' => 'decimal:3',
-        'price' => 'decimal:2',
-        'total_amount' => 'decimal:2',
-        'completion_date' => 'date',
-        'additional_info' => 'array',
+        'quantity'           => 'decimal:3',
+        'completed_quantity' => 'decimal:4',
+        'price'              => 'decimal:2',
+        'total_amount'       => 'decimal:2',
+        'completion_date'    => 'date',
+        'additional_info'    => 'array',
         'is_onboarding_demo' => 'boolean',
     ];
 
@@ -118,6 +121,11 @@ class CompletedWork extends Model
     /**
      * Акты выполненных работ в которые включена данная работа
      */
+    public function scheduleTask(): BelongsTo
+    {
+        return $this->belongsTo(ScheduleTask::class);
+    }
+
     public function performanceActs()
     {
         return $this->belongsToMany(ContractPerformanceAct::class, 'performance_act_completed_works', 'completed_work_id', 'performance_act_id')

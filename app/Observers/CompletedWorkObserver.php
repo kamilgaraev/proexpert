@@ -3,10 +3,15 @@
 namespace App\Observers;
 
 use App\Models\CompletedWork;
+use App\Services\Schedule\ScheduleTaskCompletedWorkService;
 use Illuminate\Support\Facades\Log;
 
 class CompletedWorkObserver
 {
+    public function __construct(
+        private readonly ScheduleTaskCompletedWorkService $scheduleTaskService
+    ) {}
+
     public function creating(CompletedWork $work): void
     {
         $this->calculateAmounts($work);
@@ -21,27 +26,54 @@ class CompletedWorkObserver
 
     public function saved(CompletedWork $work): void
     {
-        // После сохранения пересчитываем на основе материалов, если они есть
         $this->recalculateFromMaterials($work);
+        $this->syncScheduleTask($work);
+    }
+
+    public function deleted(CompletedWork $work): void
+    {
+        $this->syncScheduleTask($work);
+    }
+
+    public function restored(CompletedWork $work): void
+    {
+        $this->syncScheduleTask($work);
+    }
+
+    private function syncScheduleTask(CompletedWork $work): void
+    {
+        if (!$work->schedule_task_id) {
+            return;
+        }
+
+        try {
+            $task = $work->scheduleTask;
+            if ($task) {
+                $this->scheduleTaskService->syncCompletedQuantity($task);
+            }
+        } catch (\Exception $e) {
+            Log::error('Failed to sync schedule task completed quantity', [
+                'completed_work_id' => $work->id,
+                'schedule_task_id'  => $work->schedule_task_id,
+                'error'             => $e->getMessage(),
+            ]);
+        }
     }
 
     protected function calculateAmounts(CompletedWork $work): void
     {
         try {
-            // Если есть цена и количество, но нет общей суммы
             if ($work->price !== null && $work->quantity > 0 && $work->total_amount === null) {
                 $work->total_amount = round($work->price * $work->quantity, 2);
             }
-            
-            // Если есть общая сумма и количество, но нет цены
+
             if ($work->total_amount !== null && $work->quantity > 0 && $work->price === null) {
                 $work->price = round($work->total_amount / $work->quantity, 2);
             }
-
         } catch (\Exception $e) {
             Log::error('Failed to calculate CompletedWork amounts', [
                 'work_id' => $work->id ?? 'new',
-                'error' => $e->getMessage()
+                'error'   => $e->getMessage(),
             ]);
         }
     }
@@ -49,11 +81,9 @@ class CompletedWorkObserver
     protected function recalculateFromMaterials(CompletedWork $work): void
     {
         try {
-            // Если нет цены и суммы, попытаемся рассчитать из материалов
             if ($work->price === null && $work->total_amount === null) {
                 $materialsSum = 0;
-                
-                // Загружаем материалы если они не загружены
+
                 if (!$work->relationLoaded('materials')) {
                     $work->load('materials');
                 }
@@ -67,19 +97,20 @@ class CompletedWorkObserver
                     }
                     $materialsSum += $pivotAmount;
                 }
-                
+
                 if ($materialsSum > 0) {
                     $work->update([
                         'total_amount' => round($materialsSum, 2),
-                        'price' => $work->quantity > 0 ? round($materialsSum / $work->quantity, 2) : 0
+                        'price'        => $work->quantity > 0 ? round($materialsSum / $work->quantity, 2) : 0,
                     ]);
                 }
             }
         } catch (\Exception $e) {
             Log::error('Failed to recalculate CompletedWork from materials', [
                 'work_id' => $work->id,
-                'error' => $e->getMessage()
+                'error'   => $e->getMessage(),
             ]);
         }
     }
-} 
+}
+
