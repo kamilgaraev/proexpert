@@ -306,7 +306,8 @@ class GanttExcelExportService
             $succTask = $tasksMap->get($dep->successor_task_id);
             $isCritical = (bool)($dep->is_critical ?? false);
 
-            $depTypeLabel = self::DEPENDENCY_TYPES[$dep->dependency_type ?? 'FS'] ?? ($dep->dependency_type ?? 'FS');
+            $depTypeRaw   = $this->enumVal($dep->dependency_type, 'FS');
+            $depTypeLabel = self::DEPENDENCY_TYPES[$depTypeRaw] ?? $depTypeRaw;
 
             $sheet->setCellValue("A{$dataRow}", $num++);
             $sheet->setCellValue("B{$dataRow}", $dep->predecessor_task_id);
@@ -447,7 +448,7 @@ class GanttExcelExportService
             return self::CRITICAL_BG;
         }
 
-        $type = $task->task_type instanceof \BackedEnum ? $task->task_type->value : (string)($task->task_type ?? 'task');
+        $type = $this->enumVal($task->task_type, 'task');
 
         if ($type === 'summary' || $type === 'container') {
             return self::SUMMARY_BG;
@@ -457,13 +458,13 @@ class GanttExcelExportService
             return self::MILESTONE_BG;
         }
 
-        $status = $task->status instanceof \BackedEnum ? $task->status->value : (string)($task->status ?? 'not_started');
+        $status = $this->enumVal($task->status, 'not_started');
         return self::STATUS_COLORS[$status] ?? 'FFFFFF';
     }
 
     private function getTaskTypeLabel(mixed $type): string
     {
-        $value = $type instanceof \BackedEnum ? $type->value : (string)($type ?? 'task');
+        $value = $this->enumVal($type, 'task');
 
         return match ($value) {
             'summary', 'container' => 'Суммарная',
@@ -474,7 +475,7 @@ class GanttExcelExportService
 
     private function getScheduleStatusLabel(mixed $status): string
     {
-        $value = $status instanceof \BackedEnum ? $status->value : (string)$status;
+        $value = $this->enumVal($status, '');
 
         return match ($value) {
             'draft'     => 'Черновик',
@@ -484,5 +485,13 @@ class GanttExcelExportService
             'cancelled' => 'Отменён',
             default     => $value ?: '—',
         };
+    }
+
+    private function enumVal(mixed $value, string $default = ''): string
+    {
+        if ($value === null) {
+            return $default;
+        }
+        return $value instanceof \BackedEnum ? $value->value : (string)$value;
     }
 }
