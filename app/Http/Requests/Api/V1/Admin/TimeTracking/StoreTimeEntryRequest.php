@@ -32,7 +32,7 @@ class StoreTimeEntryRequest extends FormRequest
             'worker_type' => [
                 'nullable',
                 'string',
-                Rule::in(['user', 'virtual', 'brigade'])
+                Rule::in(['user', 'virtual', 'brigade', 'equipment'])
             ],
             'user_id' => [
                 'nullable',
@@ -51,8 +51,8 @@ class StoreTimeEntryRequest extends FormRequest
                 'max:255',
                 function ($attribute, $value, $fail) {
                     $workerType = $this->input('worker_type', 'user');
-                    if (in_array($workerType, ['virtual', 'brigade']) && !$value) {
-                        $fail('Для виртуального работника или бригады необходимо указать имя');
+                    if (in_array($workerType, ['virtual', 'brigade', 'equipment']) && !$value) {
+                        $fail('Для виртуального работника, бригады или техники необходимо указать имя/наименование');
                     }
                 }
             ],
@@ -61,6 +61,22 @@ class StoreTimeEntryRequest extends FormRequest
                 'integer',
                 'min:1',
                 'max:1000'
+            ],
+            'equipment_type' => [
+                'nullable',
+                'string',
+                'max:100',
+                function ($attribute, $value, $fail) {
+                    $workerType = $this->input('worker_type', 'user');
+                    if ($workerType === 'equipment' && !$value) {
+                        $fail('Для техники необходимо указать тип');
+                    }
+                }
+            ],
+            'equipment_number' => [
+                'nullable',
+                'string',
+                'max:50'
             ],
             'project_id' => [
                 'required',
@@ -168,7 +184,7 @@ class StoreTimeEntryRequest extends FormRequest
         return [
             'organization_id.required' => 'Организация обязательна для заполнения',
             'organization_id.exists' => 'Выбранная организация не существует',
-            'worker_type.in' => 'Тип работника должен быть: user, virtual или brigade',
+            'worker_type.in' => 'Тип работника должен быть: user, virtual, brigade или equipment',
             'user_id.required' => 'Пользователь обязателен для заполнения',
             'user_id.exists' => 'Выбранный пользователь не существует',
             'worker_name.required' => 'Имя работника обязательно для заполнения',

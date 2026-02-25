@@ -21,6 +21,8 @@ class TimeEntryResource extends JsonResource
             'worker_type' => $this->worker_type,
             'worker_name' => $this->worker_name,
             'worker_count' => $this->worker_count,
+            'equipment_type' => $this->equipment_type,
+            'equipment_number' => $this->equipment_number,
             'worker_display_name' => $this->worker_display_name,
             'project_id' => $this->project_id,
             'work_type_id' => $this->work_type_id,
