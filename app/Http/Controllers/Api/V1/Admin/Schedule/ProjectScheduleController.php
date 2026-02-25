@@ -20,9 +20,11 @@ use App\Models\TaskDependency;
 use App\Http\Middleware\ProjectContextMiddleware;
 use App\Exceptions\Schedule\ScheduleNotFoundException;
 use App\Exceptions\Schedule\CircularDependencyException;
+use App\Services\Schedule\GanttExcelExportService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class ProjectScheduleController extends Controller
 {
@@ -333,6 +335,38 @@ class ProjectScheduleController extends Controller
         return $this->deleteScheduleDependency($schedule, $dependency, function ($scheduleId) use ($project) {
             return $this->scheduleRepository->findForProject($scheduleId, $project);
         });
+    }
+
+    /**
+     * Экспортировать график в Excel
+     */
+    public function export(Request $request, int $project, int $schedule): StreamedResponse
+    {
+        try {
+            $scheduleModel = $this->scheduleRepository->findForProject($schedule, $project);
+
+            if (!$scheduleModel) {
+                throw new ScheduleNotFoundException($schedule);
+            }
+
+            $this->validateProjectSchedule($project, $scheduleModel);
+
+            $exportService = app(GanttExcelExportService::class);
+            $filePath = $exportService->export($scheduleModel);
+
+            $filename = "График_" . preg_replace('/[^a-zA-Z0-9А-Яа-я_-]/u', '_', $scheduleModel->name) . '_' . now()->format('Y-m-d') . '.xlsx';
+
+            return response()->streamDownload(function () use ($filePath) {
+                readfile($filePath);
+                @unlink($filePath);
+            }, $filename, [
+                'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+                'Cache-Control' => 'no-cache, no-store, must-revalidate',
+            ]);
+        } catch (ScheduleNotFoundException $e) {
+            abort(Response::HTTP_NOT_FOUND, "График не найден");
+        }
     }
 
     /**

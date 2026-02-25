@@ -156,6 +156,7 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         Route::patch('/{schedule}/dependencies/{dependency}', [ProjectScheduleController::class, 'updateDependency']);
         Route::delete('/{schedule}/dependencies/{dependency}', [ProjectScheduleController::class, 'destroyDependency']);
         Route::get('/{schedule}/resource-conflicts', [ProjectScheduleController::class, 'resourceConflicts']);
+        Route::get('/{schedule}/export', [ProjectScheduleController::class, 'export']);
         
         // Интеграция со сметой
         Route::post('/{schedule}/sync-from-estimate', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ScheduleEstimateController::class, 'syncFromEstimate']);
