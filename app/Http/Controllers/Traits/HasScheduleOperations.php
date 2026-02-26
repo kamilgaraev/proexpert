@@ -235,6 +235,24 @@ trait HasScheduleOperations
         $data['organization_id'] = $organizationId;
         $data['created_by_user_id'] = $request->user()->id;
 
+        $insertAfterId = $data['insert_after_id'] ?? null;
+        unset($data['insert_after_id']);
+
+        if ($insertAfterId !== null) {
+            $taskService = app(\App\Services\Schedule\ScheduleTaskService::class);
+            $data['sort_order'] = $taskService->insertTaskAfter(
+                $schedule->id,
+                $insertAfterId,
+                $data['parent_task_id'] ?? null
+            );
+        } elseif (empty($data['sort_order'])) {
+            $taskService = app(\App\Services\Schedule\ScheduleTaskService::class);
+            $data['sort_order'] = $taskService->getNextSortOrder(
+                $schedule->id,
+                $data['parent_task_id'] ?? null
+            );
+        }
+
         Log::info('[ScheduleTask] Данные для создания задачи', [
             'data' => $data,
         ]);
