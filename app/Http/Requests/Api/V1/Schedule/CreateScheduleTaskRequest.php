@@ -72,6 +72,7 @@ class CreateScheduleTaskRequest extends FormRequest
     {
         return [
             'parent_task_id' => 'nullable|integer|exists:schedule_tasks,id',
+            'insert_after_id' => 'nullable|integer|exists:schedule_tasks,id',
             'work_type_id' => 'nullable|integer|exists:work_types,id',
             'assigned_user_id' => 'nullable|integer|exists:users,id',
             'name' => 'required|string|max:255',

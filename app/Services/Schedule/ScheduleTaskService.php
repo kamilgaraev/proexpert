@@ -59,4 +59,33 @@ class ScheduleTaskService
 
         return ($maxSortOrder ?? 0) + 1;
     }
+
+    /**
+     * Вставить задачу после указанной, сдвинув sort_order остальных задач
+     */
+    public function insertTaskAfter(int $scheduleId, ?int $afterTaskId, ?int $parentId): int
+    {
+        if ($afterTaskId === null) {
+            return $this->getNextSortOrder($scheduleId, $parentId);
+        }
+
+        $afterTask = ScheduleTask::where('id', $afterTaskId)
+            ->where('schedule_id', $scheduleId)
+            ->first();
+
+        if (!$afterTask) {
+            return $this->getNextSortOrder($scheduleId, $parentId);
+        }
+
+        $insertAt = $afterTask->sort_order + 1;
+
+        DB::transaction(function () use ($scheduleId, $parentId, $insertAt) {
+            ScheduleTask::where('schedule_id', $scheduleId)
+                ->where('parent_task_id', $parentId)
+                ->where('sort_order', '>=', $insertAt)
+                ->increment('sort_order');
+        });
+
+        return $insertAt;
+    }
 }
