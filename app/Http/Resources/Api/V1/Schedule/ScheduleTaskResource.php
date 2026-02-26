@@ -87,6 +87,9 @@ class ScheduleTaskResource extends JsonResource
             // Временные метки
             'created_at' => $this->created_at?->format('Y-m-d H:i:s'),
             'updated_at' => $this->updated_at?->format('Y-m-d H:i:s'),
+
+            // Счетчики связей
+            'completed_works_count' => $this->whenCounted('completedWorks'),
         ];
     }
 }

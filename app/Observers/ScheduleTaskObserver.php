@@ -112,6 +112,20 @@ class ScheduleTaskObserver
             // 2. Обновляем последователей (вниз)
             $service->applyCascadeUpdates($task);
         }
+
+        if ($task->wasChanged('status')) {
+            try {
+                $oldStatus = $task->getOriginal('status');
+                app(\App\Services\Schedule\ScheduleTaskSyncService::class)
+                    ->onTaskStatusChanged($task, (string) $oldStatus);
+            } catch (\Exception $e) {
+                Log::error('[ScheduleTaskObserver] Ошибка синхронизации выполненных работ', [
+                    'task_id' => $task->id,
+                    'status'  => $task->status,
+                    'error'   => $e->getMessage(),
+                ]);
+            }
+        }
     }
 
     /**
