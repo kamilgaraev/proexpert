@@ -1,24 +1,19 @@
 <?php
 
 use Illuminate\Database\Migrations\Migration;
-use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
     public function up(): void
     {
-        Schema::table('completed_works', function (Blueprint $table) {
-            $table->foreignId('work_type_id')->nullable()->change();
-            $table->foreignId('user_id')->nullable()->change();
-        });
+        DB::statement('ALTER TABLE completed_works ALTER COLUMN work_type_id DROP NOT NULL');
+        DB::statement('ALTER TABLE completed_works ALTER COLUMN user_id DROP NOT NULL');
     }
 
     public function down(): void
     {
-        Schema::table('completed_works', function (Blueprint $table) {
-            $table->foreignId('work_type_id')->nullable(false)->change();
-            $table->foreignId('user_id')->nullable(false)->change();
-        });
+        DB::statement('ALTER TABLE completed_works ALTER COLUMN work_type_id SET NOT NULL');
+        DB::statement('ALTER TABLE completed_works ALTER COLUMN user_id SET NOT NULL');
     }
 };
