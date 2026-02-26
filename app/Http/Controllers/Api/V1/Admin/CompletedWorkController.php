@@ -10,8 +10,8 @@ use App\Http\Requests\Api\V1\Admin\CompletedWork\UpdateCompletedWorkRequest;
 use App\Http\Requests\Api\V1\Admin\CompletedWork\SyncCompletedWorkMaterialsRequest;
 use App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkResource;
 use App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkCollection;
-use App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkMaterialResource;
 use App\Http\Middleware\ProjectContextMiddleware;
+use App\Http\Responses\AdminResponse;
 use App\Models\CompletedWork;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -33,138 +33,190 @@ class CompletedWorkController extends Controller
         $this->scheduleTaskService  = $scheduleTaskService;
     }
 
-    public function index(Request $request): CompletedWorkCollection
+    public function index(Request $request): JsonResponse
     {
-        $organizationId = Auth::user()->current_organization_id;
-        
-        // Получаем project_id из URL (обязательный параметр для project-based маршрутов)
-        $projectId = $request->route('project');
-        
-        // Расширенная фильтрация выполненных работ
-        $filters = $request->only([
-            'contract_id',          // По контракту  
-            'work_type_id',         // По типу работ
-            'user_id',              // По прорабу/исполнителю
-            'status',               // По статусу (pending, confirmed, rejected)
-            'completion_date_from', // Дата выполнения от
-            'completion_date_to',   // Дата выполнения до
-            'amount_from',          // Сумма работы от
-            'amount_to',            // Сумма работы до
-            'quantity_from',        // Количество от
-            'quantity_to',          // Количество до
-            'with_materials',       // Только работы с материалами (boolean)
-            'contractor_id',        // По подрядчику (через контракт)
-            'search',               // Поиск по описанию/комментарию
-        ]);
-        
-        $filters['organization_id'] = $organizationId;
-        // ЖЕСТКО устанавливаем project_id из URL (игнорируем любые другие значения)
-        $filters['project_id'] = $projectId;
-        
-        $sortBy = $request->query('sortBy', 'completion_date');
-        $sortDirection = $request->query('sortDirection', 'desc');
-        $perPage = $request->query('perPage', 15);
+        try {
+            $organizationId = Auth::user()->current_organization_id;
+            $projectId = $request->route('project');
 
-        $completedWorks = $this->completedWorkService->getAll(
-            $filters, 
-            $perPage, 
-            $sortBy, 
-            $sortDirection, 
-            ['project', 'contract.contractor', 'workType', 'user', 'contractor', 'materials.measurementUnit']
-        );
-        
-        return new CompletedWorkCollection($completedWorks);
+            $filters = $request->only([
+                'contract_id',
+                'work_type_id',
+                'user_id',
+                'status',
+                'completion_date_from',
+                'completion_date_to',
+                'amount_from',
+                'amount_to',
+                'quantity_from',
+                'quantity_to',
+                'with_materials',
+                'contractor_id',
+                'search',
+            ]);
+
+            $filters['organization_id'] = $organizationId;
+            $filters['project_id'] = $projectId;
+
+            $sortBy = $request->query('sortBy', 'completion_date');
+            $sortDirection = $request->query('sortDirection', 'desc');
+            $perPage = $request->query('per_page', 15);
+
+            $completedWorks = $this->completedWorkService->getAll(
+                $filters,
+                $perPage,
+                $sortBy,
+                $sortDirection,
+                ['project', 'contract.contractor', 'workType', 'user', 'contractor', 'materials.measurementUnit', 'scheduleTask']
+            );
+
+            return AdminResponse::success(
+                new CompletedWorkCollection($completedWorks)
+            );
+        } catch (\Exception $e) {
+            Log::error('completed_work.index.error', [
+                'error'      => $e->getMessage(),
+                'project_id' => $request->route('project'),
+                'user_id'    => Auth::id(),
+            ]);
+            return AdminResponse::error('Ошибка при получении списка выполненных работ', 500);
+        }
     }
 
     public function store(StoreCompletedWorkRequest $request): JsonResponse
     {
         try {
             $dto = $request->toDto();
-            
-            // Получаем ProjectContext если доступен (для project-based routes)
             $projectContext = ProjectContextMiddleware::getProjectContext($request);
-            
             $completedWork = $this->completedWorkService->create($dto, $projectContext);
-            
-            return response()->json(
-                [
-                    'success' => true, 
-                    'message' => 'Запись о выполненной работе успешно создана.',
-                    'data' => new CompletedWorkResource($completedWork->load(['project', 'contract', 'workType', 'user', 'contractor', 'materials.measurementUnit']))
-                ],
+
+            return AdminResponse::success(
+                new CompletedWorkResource($completedWork->load(['project', 'contract', 'workType', 'user', 'contractor', 'materials.measurementUnit', 'scheduleTask'])),
+                'Запись о выполненной работе успешно создана.',
                 Response::HTTP_CREATED
             );
         } catch (BusinessLogicException $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: Response::HTTP_BAD_REQUEST);
+            Log::error('completed_work.store.error', [
+                'error'   => $e->getMessage(),
+                'user_id' => Auth::id(),
+            ]);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: Response::HTTP_BAD_REQUEST);
+        } catch (\Exception $e) {
+            Log::error('completed_work.store.error', [
+                'error'   => $e->getMessage(),
+                'user_id' => Auth::id(),
+            ]);
+            return AdminResponse::error('Ошибка при создании выполненной работы', 500);
         }
     }
 
-    public function show(CompletedWork $completedWork): CompletedWorkResource // Используем Route Model Binding
+    public function show(CompletedWork $completedWork): JsonResponse
     {
-        // Проверка принадлежности организации
-        if ($completedWork->organization_id !== Auth::user()->current_organization_id) {
-            abort(404, 'Запись о выполненной работе не найдена.');
+        try {
+            if ($completedWork->organization_id !== Auth::user()->current_organization_id) {
+                return AdminResponse::error('Запись о выполненной работе не найдена.', 404);
+            }
+            return AdminResponse::success(
+                new CompletedWorkResource($completedWork->load(['project', 'contract', 'workType', 'user', 'contractor', 'materials.measurementUnit', 'files', 'scheduleTask']))
+            );
+        } catch (\Exception $e) {
+            Log::error('completed_work.show.error', [
+                'error'             => $e->getMessage(),
+                'completed_work_id' => $completedWork->id,
+                'user_id'           => Auth::id(),
+            ]);
+            return AdminResponse::error('Ошибка при получении выполненной работы', 500);
         }
-        return new CompletedWorkResource($completedWork->load(['project', 'contract', 'workType', 'user', 'contractor', 'materials.measurementUnit', 'files']));
     }
 
     public function update(UpdateCompletedWorkRequest $request, CompletedWork $completedWork): JsonResponse
     {
-        // Проверка принадлежности организации (FormRequest делает это через $this->route('completed_work')->organization_id)
         if ($completedWork->organization_id !== Auth::user()->current_organization_id) {
-             abort(403, 'Это действие не авторизовано.');
+            return AdminResponse::error('Это действие не авторизовано.', 403);
         }
 
         try {
-            $dto = $request->toDto(); // DTO содержит ID и organization_id из существующей модели
+            $dto = $request->toDto();
             $updatedWork = $this->completedWorkService->update($completedWork->id, $dto);
-            return response()->json(
-                [
-                    'success' => true, 
-                    'message' => 'Запись о выполненной работе успешно обновлена.',
-                    'data' => new CompletedWorkResource($updatedWork->load(['project', 'contract', 'workType', 'user', 'contractor', 'materials.measurementUnit']))
-                ]
+            return AdminResponse::success(
+                new CompletedWorkResource($updatedWork->load(['project', 'contract', 'workType', 'user', 'contractor', 'materials.measurementUnit', 'scheduleTask'])),
+                'Запись о выполненной работе успешно обновлена.'
             );
         } catch (BusinessLogicException $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: Response::HTTP_BAD_REQUEST);
+            Log::error('completed_work.update.error', [
+                'error'             => $e->getMessage(),
+                'completed_work_id' => $completedWork->id,
+                'user_id'           => Auth::id(),
+            ]);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: Response::HTTP_BAD_REQUEST);
+        } catch (\Exception $e) {
+            Log::error('completed_work.update.error', [
+                'error'             => $e->getMessage(),
+                'completed_work_id' => $completedWork->id,
+                'user_id'           => Auth::id(),
+            ]);
+            return AdminResponse::error('Ошибка при обновлении выполненной работы', 500);
         }
     }
 
     public function destroy(CompletedWork $completedWork): JsonResponse
     {
         if ($completedWork->organization_id !== Auth::user()->current_organization_id) {
-            abort(403, 'Это действие не авторизовано.');
+            return AdminResponse::error('Это действие не авторизовано.', 403);
         }
 
         try {
             $this->completedWorkService->delete($completedWork->id, $completedWork->organization_id);
-            return response()->json(null, Response::HTTP_NO_CONTENT);
+            return AdminResponse::success(null, 'Выполненная работа удалена.', Response::HTTP_NO_CONTENT);
         } catch (BusinessLogicException $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: Response::HTTP_BAD_REQUEST);
+            Log::error('completed_work.destroy.error', [
+                'error'             => $e->getMessage(),
+                'completed_work_id' => $completedWork->id,
+                'user_id'           => Auth::id(),
+            ]);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: Response::HTTP_BAD_REQUEST);
+        } catch (\Exception $e) {
+            Log::error('completed_work.destroy.error', [
+                'error'             => $e->getMessage(),
+                'completed_work_id' => $completedWork->id,
+                'user_id'           => Auth::id(),
+            ]);
+            return AdminResponse::error('Ошибка при удалении выполненной работы', 500);
         }
     }
 
     public function syncMaterials(SyncCompletedWorkMaterialsRequest $request, CompletedWork $completedWork): JsonResponse
     {
         if ($completedWork->organization_id !== Auth::user()->current_organization_id) {
-            abort(403, 'Это действие не авторизовано.');
+            return AdminResponse::error('Это действие не авторизовано.', 403);
         }
 
         try {
             $materials = $request->getMaterialsArray();
             $updatedWork = $this->completedWorkService->syncCompletedWorkMaterials(
-                $completedWork->id, 
-                $materials, 
+                $completedWork->id,
+                $materials,
                 $completedWork->organization_id
             );
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Материалы выполненной работы успешно синхронизированы.',
-                'data' => new CompletedWorkResource($updatedWork->load(['project', 'contract', 'workType', 'user', 'contractor', 'materials.measurementUnit']))
-            ]);
+            return AdminResponse::success(
+                new CompletedWorkResource($updatedWork->load(['project', 'contract', 'workType', 'user', 'contractor', 'materials.measurementUnit'])),
+                'Материалы выполненной работы успешно синхронизированы.'
+            );
         } catch (BusinessLogicException $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: Response::HTTP_BAD_REQUEST);
+            Log::error('completed_work.sync_materials.error', [
+                'error'             => $e->getMessage(),
+                'completed_work_id' => $completedWork->id,
+                'user_id'           => Auth::id(),
+            ]);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: Response::HTTP_BAD_REQUEST);
+        } catch (\Exception $e) {
+            Log::error('completed_work.sync_materials.error', [
+                'error'             => $e->getMessage(),
+                'completed_work_id' => $completedWork->id,
+                'user_id'           => Auth::id(),
+            ]);
+            return AdminResponse::error('Ошибка при синхронизации материалов', 500);
         }
     }
 
@@ -179,13 +231,21 @@ class CompletedWorkController extends Controller
 
         try {
             $defaults = $this->completedWorkService->getWorkTypeMaterialDefaults($workTypeId, $organizationId);
-
-            return response()->json([
-                'success' => true,
-                'data' => $defaults
-            ]);
+            return AdminResponse::success($defaults);
         } catch (BusinessLogicException $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: Response::HTTP_BAD_REQUEST);
+            Log::error('completed_work.material_defaults.error', [
+                'error'        => $e->getMessage(),
+                'work_type_id' => $workTypeId,
+                'user_id'      => Auth::id(),
+            ]);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: Response::HTTP_BAD_REQUEST);
+        } catch (\Exception $e) {
+            Log::error('completed_work.material_defaults.error', [
+                'error'        => $e->getMessage(),
+                'work_type_id' => $workTypeId,
+                'user_id'      => Auth::id(),
+            ]);
+            return AdminResponse::error('Ошибка при получении материалов по умолчанию', 500);
         }
     }
 
@@ -197,20 +257,19 @@ class CompletedWorkController extends Controller
             $search = $request->query('search');
 
             $tasks = $this->scheduleTaskService->getTasksForSelection(
-                projectId: (int)$projectId,
-                scheduleId: $scheduleId ? (int)$scheduleId : null,
+                projectId: (int) $projectId,
+                scheduleId: $scheduleId ? (int) $scheduleId : null,
                 search: $search ?: null,
             );
 
-            return response()->json([
-                'success' => true,
-                'data'    => $tasks->map(fn($t) => [
+            return AdminResponse::success(
+                $tasks->map(fn($t) => [
                     'id'                 => $t->id,
                     'name'               => $t->name,
                     'wbs_code'           => $t->wbs_code,
-                    'quantity'           => $t->quantity !== null ? (float)$t->quantity : null,
-                    'completed_quantity' => $t->completed_quantity !== null ? (float)$t->completed_quantity : null,
-                    'progress_percent'   => $t->progress_percent !== null ? (float)$t->progress_percent : null,
+                    'quantity'           => $t->quantity !== null ? (float) $t->quantity : null,
+                    'completed_quantity' => $t->completed_quantity !== null ? (float) $t->completed_quantity : null,
+                    'progress_percent'   => $t->progress_percent !== null ? (float) $t->progress_percent : null,
                     'planned_start_date' => $t->planned_start_date?->format('Y-m-d'),
                     'planned_end_date'   => $t->planned_end_date?->format('Y-m-d'),
                     'status'             => $t->status instanceof \BackedEnum ? $t->status->value : $t->status,
@@ -222,14 +281,15 @@ class CompletedWorkController extends Controller
                         'id'         => $t->measurementUnit->id,
                         'short_name' => $t->measurementUnit->short_name,
                     ] : null,
-                ])->values(),
-            ]);
+                ])->values()
+            );
         } catch (\Exception $e) {
-            Log::error('getScheduleTasks failed', [
+            Log::error('completed_work.get_schedule_tasks.error', [
                 'error'      => $e->getMessage(),
                 'project_id' => $request->route('project'),
+                'user_id'    => Auth::id(),
             ]);
-            return response()->json(['success' => false, 'message' => 'Ошибка при загрузке задач графика'], 500);
+            return AdminResponse::error('Ошибка при загрузке задач графика', 500);
         }
     }
-} 
+}
