@@ -151,6 +151,7 @@ class ScheduleTaskController extends Controller
                     'predecessorDependencies',
                     'successorDependencies'
                 ])
+                ->withCount('completedWorks')
                 ->first();
 
             if (!$taskModel) {
