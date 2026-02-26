@@ -115,9 +115,9 @@ class ScheduleTaskObserver
 
         if ($task->wasChanged('status')) {
             try {
-                $oldStatus = $task->getOriginal('status');
+                $oldStatus = (string) $task->getRawOriginal('status');
                 app(\App\Services\Schedule\ScheduleTaskSyncService::class)
-                    ->onTaskStatusChanged($task, (string) $oldStatus);
+                    ->onTaskStatusChanged($task, $oldStatus);
             } catch (\Exception $e) {
                 Log::error('[ScheduleTaskObserver] Ошибка синхронизации выполненных работ', [
                     'task_id' => $task->id,
