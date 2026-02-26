@@ -50,12 +50,6 @@ class ScheduleTaskSyncService
         }
 
         $userId = $task->assigned_user_id ?? auth()->id();
-        if (!$userId) {
-            Log::warning('[ScheduleTaskSyncService] Не удалось определить user_id для создания выполненной работы', [
-                'task_id' => $task->id,
-            ]);
-            return null;
-        }
 
         try {
             return DB::transaction(function () use ($task, $schedule, $userId): CompletedWork {
