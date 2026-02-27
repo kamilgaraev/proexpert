@@ -1,5 +1,6 @@
 <?php
 
+use App\BusinessModules\Features\BasicWarehouse\Controllers\AssetController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\InventoryController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\ProjectAllocationController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseController;
@@ -68,6 +69,17 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
                 Route::put('/{id}', [WarehouseZoneController::class, 'update']);
                 Route::delete('/{id}', [WarehouseZoneController::class, 'destroy']);
             });
+        });
+
+        // Управление активами (по типам: материалы, расходники, оборудование и т.д.)
+        Route::prefix('assets')->name('assets.')->group(function () {
+            Route::get('/types', [AssetController::class, 'types'])->name('types');
+            Route::get('/statistics', [AssetController::class, 'statistics'])->name('statistics');
+            Route::get('/', [AssetController::class, 'index'])->name('index');
+            Route::post('/', [AssetController::class, 'store'])->name('store');
+            Route::get('/{id}', [AssetController::class, 'show'])->name('show');
+            Route::put('/{id}', [AssetController::class, 'update'])->name('update');
+            Route::delete('/{id}', [AssetController::class, 'destroy'])->name('destroy');
         });
 
         // Продвинутые функции (Аналитика, Резервирование, Автозаказ)
