@@ -12,7 +12,7 @@ use App\BusinessModules\Features\AIAssistant\Actions\Analysis\CollectWorkersData
 use App\BusinessModules\Features\AIAssistant\Actions\Analysis\CollectContractsDataAction;
 use App\BusinessModules\Features\AIAssistant\Actions\Analysis\CalculateKPIAction;
 use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
-use App\BusinessModules\Features\AdvancedDashboard\Services\DashboardCacheService;
+use Illuminate\Support\Facades\Cache;
 use App\Models\Project;
 use App\Models\User;
 use App\Services\Logging\LoggingService;
@@ -22,19 +22,19 @@ class SystemAnalysisService
 {
     protected AIAnalyzerService $aiAnalyzer;
     protected UsageTracker $usageTracker;
-    protected DashboardCacheService $cache;
+    protected int $cacheTtl;
     protected LoggingService $logging;
 
     public function __construct(
         AIAnalyzerService $aiAnalyzer,
         UsageTracker $usageTracker,
-        DashboardCacheService $cache,
-        LoggingService $logging
+        LoggingService $logging,
+        int $cacheTtl = 3600
     ) {
         $this->aiAnalyzer = $aiAnalyzer;
         $this->usageTracker = $usageTracker;
-        $this->cache = $cache;
         $this->logging = $logging;
+        $this->cacheTtl = $cacheTtl;
     }
 
     /**
@@ -49,7 +49,7 @@ class SystemAnalysisService
         $useCache = $options['use_cache'] ?? true;
         
         if ($useCache) {
-            $cached = $this->cache->getCachedWidget($cacheKey, $cacheTags);
+            $cached = Cache::tags($cacheTags)->get($cacheKey);
             if ($cached) {
                 $this->logging->technical('system_analysis.cache_hit', ['project_id' => $projectId]);
                 return $cached;
@@ -102,8 +102,8 @@ class SystemAnalysisService
             $result = $this->formatAnalysisResult($report, $collectedData, $analyses);
 
             // Кешируем
-            $ttl = config('ai-assistant.system_analysis.cache_ttl', 3600);
-            $this->cache->cacheWidget($cacheKey, $result, $ttl, $cacheTags);
+            $ttl = config('ai-assistant.system_analysis.cache_ttl', $this->cacheTtl);
+            Cache::tags($cacheTags)->put($cacheKey, $result, $ttl);
 
             $this->logging->business('system_analysis.completed', [
                 'report_id' => $report->id,
@@ -618,8 +618,8 @@ class SystemAnalysisService
     {
         $cacheKey = "system_analysis:project:{$projectId}";
         $cacheTags = ['system_analysis', "project:{$projectId}", "org:{$organizationId}"];
-        
-        $this->cache->forget($cacheKey, $cacheTags);
+
+        Cache::tags($cacheTags)->forget($cacheKey);
     }
 }
 
