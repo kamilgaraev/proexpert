@@ -50,6 +50,7 @@ class StorePaymentDocumentRequest extends FormRequest
             'estimate_splits.*.amount' => 'required_with:estimate_splits|numeric|min:0',
             'estimate_splits.*.percentage' => 'nullable|numeric|min:0|max:100',
             'invoice_type' => 'nullable|string|in:act,advance,progress,final,material_purchase,service,equipment,salary,other',
+            'direction' => 'nullable|string|in:incoming,outgoing',
             'description' => 'nullable|string',
             'payment_purpose' => 'nullable|string',
             'bank_account' => 'nullable|string|size:20',
