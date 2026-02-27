@@ -880,7 +880,7 @@ class PaymentDocumentService
                 'unit_price_plan' => $unitPricePlan,
                 'unit_price_actual' => $unitPriceActual,
                 'amount' => $splitData['amount'] ?? $amount,
-                'percentage' => $splitData['percentage'] ?? null,
+                'percentage' => $splitData['percentage'] ?? 100, // По умолчанию 100% если не задано
                 'price_deviation' => $priceDeviation,
             ]);
 
