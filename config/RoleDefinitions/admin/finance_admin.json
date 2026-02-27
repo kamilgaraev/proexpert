@@ -1,133 +1,131 @@
-﻿{
-    "name":  "Р¤РёРЅР°РЅСЃРѕРІС‹Р№ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ",
-    "slug":  "finance_admin",
-    "version":  "1.0.0",
-    "context":  "organization",
-    "interface":  "admin",
-    "description":  "РђРґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ СЃ С„РѕРєСѓСЃРѕРј РЅР° С„РёРЅР°РЅСЃРѕРІС‹Рµ РѕРїРµСЂР°С†РёРё Рё РѕС‚С‡РµС‚РЅРѕСЃС‚СЊ",
-    "system_permissions":  [
-                               "admin.access",
-                               "admin.dashboard.view",
-                               "admin.contracts.view",
-                               "admin.contracts.edit",
-                               "admin.reports.*",
-                               "admin.materials.view",
-                               "admin.advance_accounts.view",
-                               "admin.advance_accounts.manage",
-                               "admin.time_tracking.view",
-                               "profile.view",
-                               "profile.edit"
-                           ],
-    "module_permissions":  {
-                               "contracts":  [
-                                                 "contracts.view",
-                                                 "contracts.edit"
-                                             ],
-                               "reports":  [
-                                               "reports.view",
-                                               "reports.export",
-                                               "reports.schedule",
-                                               "reports.official_reports",
-                                               "reports.predictive"
-                                           ],
-                               "finance":  [
-                                               "finance.view",
-                                               "finance.manage"
-                                           ],
-                               "materials":  [
-                                                 "materials.view"
-                                             ],
-                               "advance-accounts":  [
-                                                        "advance-accounts.view",
-                                                        "advance-accounts.manage"
-                                                    ],
-                               "time-tracking":  [
-                                                     "time-tracking.view"
-                                                 ],
-                               "contractor-portal":  [
-                                                         "contractor_invitations.view",
-                                                         "contractor_invitations.stats"
-                                                     ],
-                               "file-management":  [
-                                                       "personal_files.view",
-                                                       "report_files.view"
-                                                   ],
-                               "system-logs":  [
-                                                   "system-logs.material_usage.view",
-                                                   "system-logs.export"
-                                               ],
-                               "rate-management":  [
-                                                       "rate_coefficients.view",
-                                                       "rate_coefficients.create",
-                                                       "rate_coefficients.edit",
-                                                       "rate_coefficients.export"
-                                                   ],
-                               "report-templates":  [
-                                                        "report_templates.view",
-                                                        "report_templates.create",
-                                                        "report_templates.export"
-                                                    ],
-                               "data-filters":  [
-                                                    "filters.contracts.view",
-                                                    "filters.export"
-                                                ],
-                               "dashboard-widgets":  [
-                                                         "dashboard.view",
-                                                         "dashboard.contracts.statistics",
-                                                         "dashboard.limits.view"
-                                                     ],
-                               "schedule-management":  [
-                                                           "schedule.view",
-                                                           "schedule.export"
-                                                       ],
-                               "payments":  [
-                                                "payments.dashboard.view",
-                                                "payments.invoice.view_all",
-                                                "payments.invoice.create",
-                                                "payments.invoice.edit",
-                                                "payments.invoice.cancel",
-                                                "payments.invoice.issue",
-                                                "payments.invoice.export",
-                                                "payments.transaction.view_all",
-                                                "payments.transaction.register",
-                                                "payments.transaction.edit",
-                                                "payments.transaction.approve",
-                                                "payments.transaction.refund",
-                                                "payments.schedule.view",
-                                                "payments.schedule.create",
-                                                "payments.schedule.edit",
-                                                "payments.counterparty_account.view",
-                                                "payments.counterparty_account.manage",
-                                                "payments.counterparty_account.reconcile",
-                                                "payments.reconciliation.view",
-                                                "payments.reconciliation.perform",
-                                                "payments.reports.view",
-                                                "payments.reports.export",
-                                                "payments.reports.financial_analytics",
-                                                "payments.settings.view"
-                                            ]
-                           },
-    "interface_access":  [
-                             "admin"
-                         ],
-    "hierarchy":  {
-                      "can_manage_roles":  [
-
-                                           ],
-                      "cannot_manage":  [
-                                            "*"
-                                        ]
-                  },
-    "conditions":  {
-                       "time":  {
-                                    "working_hours":  "09:00-18:00",
-                                    "working_days":  [
-                                                         "monday",
-                                                         "tuesday",
-                                                         "wednesday",
-                                                         "thursday",
-                                                         "friday"
-                                                     ]
-                                }
-                   }
+{
+  "name": "Финансовый администратор",
+  "slug": "finance_admin",
+  "version": "1.0.0",
+  "context": "organization",
+  "interface": "admin",
+  "description": "Администратор с фокусом на финансовые операции и отчетность",
+  "system_permissions": [
+    "admin.access",
+    "admin.dashboard.view",
+    "admin.contracts.view",
+    "admin.contracts.edit",
+    "admin.reports.*",
+    "admin.materials.view",
+    "admin.advance_accounts.view",
+    "admin.advance_accounts.manage",
+    "admin.time_tracking.view",
+    "profile.view",
+    "profile.edit"
+  ],
+  "module_permissions": {
+    "contracts": [
+      "contracts.view",
+      "contracts.edit"
+    ],
+    "reports": [
+      "reports.view",
+      "reports.export",
+      "reports.schedule",
+      "reports.official_reports",
+      "reports.predictive"
+    ],
+    "finance": [
+      "finance.view",
+      "finance.manage"
+    ],
+    "materials": [
+      "materials.view"
+    ],
+    "advance-accounts": [
+      "advance-accounts.view",
+      "advance-accounts.manage"
+    ],
+    "time-tracking": [
+      "time-tracking.view"
+    ],
+    "contractor-portal": [
+      "contractor_invitations.view",
+      "contractor_invitations.stats"
+    ],
+    "file-management": [
+      "personal_files.view",
+      "report_files.view"
+    ],
+    "system-logs": [
+      "system-logs.material_usage.view",
+      "system-logs.export"
+    ],
+    "rate-management": [
+      "rate_coefficients.view",
+      "rate_coefficients.create",
+      "rate_coefficients.edit",
+      "rate_coefficients.export"
+    ],
+    "report-templates": [
+      "report_templates.view",
+      "report_templates.create",
+      "report_templates.export"
+    ],
+    "data-filters": [
+      "filters.contracts.view",
+      "filters.export"
+    ],
+    "dashboard-widgets": [
+      "dashboard.view",
+      "dashboard.contracts.statistics",
+      "dashboard.limits.view"
+    ],
+    "schedule-management": [
+      "schedule.view",
+      "schedule.export"
+    ],
+    "payments": [
+      "payments.dashboard.view",
+      "payments.invoice.view_all",
+      "payments.invoice.create",
+      "payments.invoice.edit",
+      "payments.invoice.cancel",
+      "payments.invoice.issue",
+      "payments.invoice.export",
+      "payments.transaction.view_all",
+      "payments.transaction.register",
+      "payments.transaction.edit",
+      "payments.transaction.approve",
+      "payments.transaction.refund",
+      "payments.schedule.view",
+      "payments.schedule.create",
+      "payments.schedule.edit",
+      "payments.counterparty_account.view",
+      "payments.counterparty_account.manage",
+      "payments.counterparty_account.reconcile",
+      "payments.reconciliation.view",
+      "payments.reconciliation.perform",
+      "payments.reports.view",
+      "payments.reports.export",
+      "payments.reports.financial_analytics",
+      "payments.settings.view"
+    ]
+  },
+  "interface_access": [
+    "admin"
+  ],
+  "hierarchy": {
+    "can_manage_roles": [],
+    "cannot_manage": [
+      "*"
+    ]
+  },
+  "conditions": {
+    "time": {
+      "working_hours": "09:00-18:00",
+      "working_days": [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday"
+      ]
+    }
+  }
 }

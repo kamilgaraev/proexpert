@@ -1,119 +1,115 @@
-﻿{
-    "name":  "РќР°Р±Р»СЋРґР°С‚РµР»СЊ",
-    "slug":  "viewer",
-    "version":  "1.0.0",
-    "context":  "organization",
-    "interface":  "lk",
-    "description":  "РўРѕР»СЊРєРѕ РїСЂРѕСЃРјРѕС‚СЂ РёРЅС„РѕСЂРјР°С†РёРё Р±РµР· РїСЂР°РІР° СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ",
-    "system_permissions":  [
-                               "organization.view",
-                               "profile.view",
-                               "profile.edit"
-                           ],
-    "module_permissions":  {
-                               "projects":  [
-                                                "projects.view"
-                                            ],
-                               "materials":  [
-                                                 "materials.view"
-                                             ],
-                               "reports":  [
-                                               "reports.view"
-                                           ],
-                               "finance":  [
-                                               "finance.view_summary"
-                                           ],
-                               "contracts":  [
-                                                 "contracts.view"
-                                             ],
-                               "multi-organization":  [
-                                                          "multi-organization.view",
-                                                          "multi-organization.reports.view"
-                                                      ],
-                               "project-management":  [
-                                                          "projects.view",
-                                                          "projects.materials.view",
-                                                          "projects.work_types.view",
-                                                          "projects.statistics"
-                                                      ],
-                               "contract-management":  [
-                                                           "contracts.view",
-                                                           "contracts.completed_works.view",
-                                                           "contracts.performance_acts.view",
-                                                           "contracts.payments.view",
-                                                           "agreements.view",
-                                                           "specifications.view"
-                                                       ],
-                               "catalog-management":  [
-                                                          "materials.view",
-                                                          "materials.balances.view",
-                                                          "suppliers.view",
-                                                          "contractors.view",
-                                                          "work_types.view",
-                                                          "cost_categories.view"
-                                                      ],
-                               "workflow-management":  [
-                                                           "completed_works.view"
-                                                       ],
-                               "advance-accounting":  [
-                                                          "advance_transactions.view",
-                                                          "users.advance_balance.view",
-                                                          "reports.advance_accounts.view"
-                                                      ],
-                               "act-reporting":  [
-                                                     "act_reports.view",
-                                                     "act_reports.contracts.view"
-                                                 ],
-                               "time-tracking":  [
-                                                     "time_tracking.view",
-                                                     "time_tracking.statistics"
-                                                 ],
-                               "material-analytics":  [
-                                                          "materials.analytics.summary"
-                                                      ],
-                               "contractor-portal":  [
-                                                         "contractor_invitations.view"
-                                                     ],
-                               "file-management":  [
-                                                       "personal_files.view"
-                                                   ],
-                               "system-logs":  [
-
-                                               ],
-                               "rate-management":  [
-                                                       "rate_coefficients.view"
-                                                   ],
-                               "report-templates":  [
-                                                        "report_templates.view"
-                                                    ],
-                               "data-filters":  [
-                                                    "filters.contracts.view",
-                                                    "filters.completed_works.view",
-                                                    "filters.quick_stats.view"
-                                                ],
-                               "dashboard-widgets":  [
-                                                         "dashboard.view"
-                                                     ],
-                               "schedule-management":  [
-                                                           "schedule.view"
-                                                       ],
-                               "budget-estimates":  [
-                                                        "budget-estimates.view"
-                                                    ],
-                               "payments":  [
-                                                "payments.invoice.view",
-                                                "payments.transaction.view"
-                                            ]
-                           },
-    "interface_access":  [
-                             "lk"
-                         ],
-    "hierarchy":  {
-                      "can_manage_roles":  [
-
-                                           ],
-                      "cannot_manage":  [
-                                            "*"
-                                        ]
-                  }
+{
+  "name": "Наблюдатель",
+  "slug": "viewer",
+  "version": "1.0.0",
+  "context": "organization",
+  "interface": "lk",
+  "description": "Только просмотр информации без права редактирования",
+  "system_permissions": [
+    "organization.view",
+    "profile.view",
+    "profile.edit"
+  ],
+  "module_permissions": {
+    "projects": [
+      "projects.view"
+    ],
+    "materials": [
+      "materials.view"
+    ],
+    "reports": [
+      "reports.view"
+    ],
+    "finance": [
+      "finance.view_summary"
+    ],
+    "contracts": [
+      "contracts.view"
+    ],
+    "multi-organization": [
+      "multi-organization.view",
+      "multi-organization.reports.view"
+    ],
+    "project-management": [
+      "projects.view",
+      "projects.materials.view",
+      "projects.work_types.view",
+      "projects.statistics"
+    ],
+    "contract-management": [
+      "contracts.view",
+      "contracts.completed_works.view",
+      "contracts.performance_acts.view",
+      "contracts.payments.view",
+      "agreements.view",
+      "specifications.view"
+    ],
+    "catalog-management": [
+      "materials.view",
+      "materials.balances.view",
+      "suppliers.view",
+      "contractors.view",
+      "work_types.view",
+      "cost_categories.view"
+    ],
+    "workflow-management": [
+      "completed_works.view"
+    ],
+    "advance-accounting": [
+      "advance_transactions.view",
+      "users.advance_balance.view",
+      "reports.advance_accounts.view"
+    ],
+    "act-reporting": [
+      "act_reports.view",
+      "act_reports.contracts.view"
+    ],
+    "time-tracking": [
+      "time_tracking.view",
+      "time_tracking.statistics"
+    ],
+    "material-analytics": [
+      "materials.analytics.summary"
+    ],
+    "contractor-portal": [
+      "contractor_invitations.view"
+    ],
+    "file-management": [
+      "personal_files.view"
+    ],
+    "system-logs": [],
+    "rate-management": [
+      "rate_coefficients.view"
+    ],
+    "report-templates": [
+      "report_templates.view"
+    ],
+    "data-filters": [
+      "filters.contracts.view",
+      "filters.completed_works.view",
+      "filters.quick_stats.view"
+    ],
+    "dashboard-widgets": [
+      "dashboard.view"
+    ],
+    "schedule-management": [
+      "schedule.view"
+    ],
+    "budget-estimates": [
+      "budget-estimates.view"
+    ],
+    "payments": [
+      "payments.invoice.view",
+      "payments.transaction.view"
+    ]
+  },
+  "interface_access": [
+    "lk"
+  ],
+  "hierarchy": {
+    "can_manage_roles": [],
+    "cannot_manage": [
+      "*"
+    ]
+  }
 }
