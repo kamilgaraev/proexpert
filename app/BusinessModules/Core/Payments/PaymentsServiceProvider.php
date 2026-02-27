@@ -128,6 +128,12 @@ class PaymentsServiceProvider extends ServiceProvider
             \App\BusinessModules\Core\Payments\Listeners\NotifyRecipientOnPaymentRegistered::class
         );
         
+        // Автоматическое создание прихода на склад при оплате
+        Event::listen(
+            \App\BusinessModules\Core\Payments\Events\PaymentDocumentPaid::class,
+            \App\BusinessModules\Core\Payments\Listeners\CreateWarehouseReceiptOnPayment::class
+        );
+        
         // Уведомление создателю о подтверждении получения
         Event::listen(
             \App\BusinessModules\Core\Payments\Events\PaymentReceiptConfirmed::class,

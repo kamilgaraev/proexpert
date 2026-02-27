@@ -69,6 +69,14 @@ class EstimateItemResource extends JsonResource
             'justification' => $this->justification,
             'is_manual' => $this->is_manual,
             'metadata' => $this->metadata,
+
+            // Закупка
+            'actual_unit_price' => $this->actual_unit_price !== null ? (float) $this->actual_unit_price : null,
+            'actual_quantity' => $this->actual_quantity !== null ? (float) $this->actual_quantity : null,
+            'procurement_status' => $this->procurement_status ?? 'pending',
+            'price_deviation' => $this->getPriceDeviation(),
+            'price_deviation_percent' => $this->getPriceDeviationPercent(),
+
             'created_at' => $this->created_at?->toISOString(),
             'updated_at' => $this->updated_at?->toISOString(),
             

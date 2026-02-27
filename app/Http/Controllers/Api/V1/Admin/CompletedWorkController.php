@@ -67,7 +67,7 @@ class CompletedWorkController extends Controller
                 $perPage,
                 $sortBy,
                 $sortDirection,
-                ['project', 'contract.contractor', 'workType', 'user', 'contractor', 'materials.measurementUnit', 'scheduleTask']
+                ['project', 'contract.contractor', 'workType', 'user', 'contractor', 'materials.measurementUnit', 'scheduleTask.estimateItem']
             );
 
             return AdminResponse::success(
@@ -91,7 +91,7 @@ class CompletedWorkController extends Controller
             $completedWork = $this->completedWorkService->create($dto, $projectContext);
 
             return AdminResponse::success(
-                new CompletedWorkResource($completedWork->load(['project', 'contract', 'workType', 'user', 'contractor', 'materials.measurementUnit', 'scheduleTask'])),
+                new CompletedWorkResource($completedWork->load(['project', 'contract', 'workType', 'user', 'contractor', 'materials.measurementUnit', 'scheduleTask.estimateItem'])),
                 'Запись о выполненной работе успешно создана.',
                 Response::HTTP_CREATED
             );
@@ -117,7 +117,7 @@ class CompletedWorkController extends Controller
                 return AdminResponse::error('Запись о выполненной работе не найдена.', 404);
             }
             return AdminResponse::success(
-                new CompletedWorkResource($completedWork->load(['project', 'contract', 'workType', 'user', 'contractor', 'materials.measurementUnit', 'files', 'scheduleTask']))
+                new CompletedWorkResource($completedWork->load(['project', 'contract', 'workType', 'user', 'contractor', 'materials.measurementUnit', 'files', 'scheduleTask.estimateItem']))
             );
         } catch (\Exception $e) {
             Log::error('completed_work.show.error', [
@@ -139,7 +139,7 @@ class CompletedWorkController extends Controller
             $dto = $request->toDto();
             $updatedWork = $this->completedWorkService->update($completedWork->id, $dto);
             return AdminResponse::success(
-                new CompletedWorkResource($updatedWork->load(['project', 'contract', 'workType', 'user', 'contractor', 'materials.measurementUnit', 'scheduleTask'])),
+                new CompletedWorkResource($updatedWork->load(['project', 'contract', 'workType', 'user', 'contractor', 'materials.measurementUnit', 'scheduleTask.estimateItem'])),
                 'Запись о выполненной работе успешно обновлена.'
             );
         } catch (BusinessLogicException $e) {
