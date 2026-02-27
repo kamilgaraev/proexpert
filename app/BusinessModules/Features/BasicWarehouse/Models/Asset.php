@@ -128,6 +128,24 @@ class Asset extends Material
     }
 
     /**
+     * Получить поступления актива
+     */
+    public function receipts(): HasMany
+    {
+        return $this->hasMany(WarehouseMovement::class, 'material_id')
+            ->where('movement_type', WarehouseMovement::TYPE_RECEIPT);
+    }
+
+    /**
+     * Получить списания актива
+     */
+    public function writeOffs(): HasMany
+    {
+        return $this->hasMany(WarehouseMovement::class, 'material_id')
+            ->where('movement_type', WarehouseMovement::TYPE_WRITE_OFF);
+    }
+
+    /**
      * Scope для фильтрации по типу актива
      * Поддерживает PostgreSQL и MySQL
      */
