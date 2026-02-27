@@ -861,6 +861,8 @@ class PaymentDocumentService
 
     public function processEstimateSplits(PaymentDocument $document, array $splits): void
     {
+        $affectedEstimateIds = [];
+
         foreach ($splits as $splitData) {
             $estimateItem = \App\Models\EstimateItem::find($splitData['estimate_item_id']);
             if (!$estimateItem) {
@@ -880,7 +882,7 @@ class PaymentDocumentService
                 'unit_price_plan' => $unitPricePlan,
                 'unit_price_actual' => $unitPriceActual,
                 'amount' => $splitData['amount'] ?? $amount,
-                'percentage' => $splitData['percentage'] ?? 100, // По умолчанию 100% если не задано
+                'percentage' => $splitData['percentage'] ?? 100,
                 'price_deviation' => $priceDeviation,
             ]);
 
@@ -889,11 +891,20 @@ class PaymentDocumentService
                 'actual_quantity' => ($estimateItem->actual_quantity ?? 0) + $quantity,
                 'procurement_status' => 'paid',
             ]);
+
+            if ($estimateItem->estimate_id) {
+                $affectedEstimateIds[$estimateItem->estimate_id] = true;
+            }
+        }
+
+        foreach (array_keys($affectedEstimateIds) as $estimateId) {
+            \App\BusinessModules\Features\BudgetEstimates\Jobs\GenerateEstimateSnapshotJob::dispatch($estimateId);
         }
 
         Log::info('payment_document.splits_processed', [
             'document_id' => $document->id,
             'splits_count' => count($splits),
+            'invalidated_estimates' => array_keys($affectedEstimateIds),
         ]);
     }
 
