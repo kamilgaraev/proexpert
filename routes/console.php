@@ -95,26 +95,6 @@ Schedule::command('modules:convert-expired-trials')
     })
     ->appendOutputTo(storage_path('logs/schedule-trial-expired.log'));
 
-// Проверка алертов Advanced Dashboard каждые 10 минут
-Schedule::command('dashboard:check-alerts')
-    ->everyTenMinutes()
-    ->withoutOverlapping(8)
-    ->runInBackground()
-    ->onFailure(function () {
-        Log::channel('stderr')->error('Scheduled dashboard:check-alerts command failed.');
-    })
-    ->appendOutputTo(storage_path('logs/schedule-dashboard-alerts.log'));
-
-// Обработка scheduled reports каждые 15 минут
-Schedule::command('dashboard:process-scheduled-reports')
-    ->everyFifteenMinutes()
-    ->withoutOverlapping(12)
-    ->runInBackground()
-    ->onFailure(function () {
-        Log::channel('stderr')->error('Scheduled dashboard:process-scheduled-reports command failed.');
-    })
-    ->appendOutputTo(storage_path('logs/schedule-dashboard-reports.log'));
-
 Schedule::command('custom-reports:execute-scheduled')
     ->everyFiveMinutes()
     ->withoutOverlapping(30)

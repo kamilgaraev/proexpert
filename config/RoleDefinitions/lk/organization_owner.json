@@ -1,143 +1,140 @@
-{
-  "name": "Владелец организации",
-  "slug": "organization_owner",
-  "version": "1.0.0",
-  "context": "organization",
-  "interface": "admin",
-  "description": "Полное управление организацией, включая биллинг",
-  "system_permissions": [
-    "organization.view",
-    "organization.edit",
-    "organization.delete",
-    "organization.manage",
-    "billing.manage",
-    "modules.manage",
-    "modules.billing",
-    "users.invite",
-    "users.manage",
-    "users.manage_admin",
-    "users.assign_roles",
-    "roles.view_custom",
-    "roles.create_custom",
-    "roles.manage_custom",
-    "profile.view",
-    "profile.edit",
-    "admin.*"
-  ],
-  "module_permissions": {
-    "projects": [
-      "*"
-    ],
-    "materials": [
-      "*"
-    ],
-    "reports": [
-      "*"
-    ],
-    "finance": [
-      "*"
-    ],
-    "contracts": [
-      "*"
-    ],
-    "personnel": [
-      "*"
-    ],
-    "multi-organization": [
-      "*"
-    ],
-    "project-management": [
-      "*"
-    ],
-    "contract-management": [
-      "*"
-    ],
-    "catalog-management": [
-      "*"
-    ],
-    "workflow-management": [
-      "*"
-    ],
-    "advance-accounting": [
-      "*"
-    ],
-    "act-reporting": [
-      "*"
-    ],
-    "time-tracking": [
-      "*"
-    ],
-    "material-analytics": [
-      "*"
-    ],
-    "contractor-portal": [
-      "*"
-    ],
-    "file-management": [
-      "*"
-    ],
-    "system-logs": [
-      "*"
-    ],
-    "rate-management": [
-      "*"
-    ],
-    "report-templates": [
-      "*"
-    ],
-    "data-filters": [
-      "*"
-    ],
-    "dashboard-widgets": [
-      "*"
-    ],
-    "schedule-management": [
-      "*"
-    ],
-    "advanced-dashboard": [
-      "*"
-    ],
-    "ai-assistant": [
-      "*"
-    ],
-    "basic-warehouse": [
-      "*"
-    ],
-    "budget-estimates": [
-      "*"
-    ],
-    "payments": [
-      "*"
-    ],
-    "site-requests": [
-      "*"
-    ],
-    "ai-estimates": [
-      "*"
-    ],
-    "procurement": [
-      "*"
-    ]
-  },
-  "interface_access": [
-    "lk",
-    "admin",
-    "mobile"
-  ],
-  "hierarchy": {
-    "can_manage_roles": [
-      "organization_admin",
-      "accountant",
-      "supplier",
-      "viewer",
-      "project_manager",
-      "foreman",
-      "worker"
-    ],
-    "cannot_manage": [
-      "organization_owner",
-      "system_admin",
-      "super_admin"
-    ]
-  }
+﻿{
+    "name":  "Р’Р»Р°РґРµР»РµС† РѕСЂРіР°РЅРёР·Р°С†РёРё",
+    "slug":  "organization_owner",
+    "version":  "1.0.0",
+    "context":  "organization",
+    "interface":  "admin",
+    "description":  "РџРѕР»РЅРѕРµ СѓРїСЂР°РІР»РµРЅРёРµ РѕСЂРіР°РЅРёР·Р°С†РёРµР№, РІРєР»СЋС‡Р°СЏ Р±РёР»Р»РёРЅРі",
+    "system_permissions":  [
+                               "organization.view",
+                               "organization.edit",
+                               "organization.delete",
+                               "organization.manage",
+                               "billing.manage",
+                               "modules.manage",
+                               "modules.billing",
+                               "users.invite",
+                               "users.manage",
+                               "users.manage_admin",
+                               "users.assign_roles",
+                               "roles.view_custom",
+                               "roles.create_custom",
+                               "roles.manage_custom",
+                               "profile.view",
+                               "profile.edit",
+                               "admin.*"
+                           ],
+    "module_permissions":  {
+                               "projects":  [
+                                                "*"
+                                            ],
+                               "materials":  [
+                                                 "*"
+                                             ],
+                               "reports":  [
+                                               "*"
+                                           ],
+                               "finance":  [
+                                               "*"
+                                           ],
+                               "contracts":  [
+                                                 "*"
+                                             ],
+                               "personnel":  [
+                                                 "*"
+                                             ],
+                               "multi-organization":  [
+                                                          "*"
+                                                      ],
+                               "project-management":  [
+                                                          "*"
+                                                      ],
+                               "contract-management":  [
+                                                           "*"
+                                                       ],
+                               "catalog-management":  [
+                                                          "*"
+                                                      ],
+                               "workflow-management":  [
+                                                           "*"
+                                                       ],
+                               "advance-accounting":  [
+                                                          "*"
+                                                      ],
+                               "act-reporting":  [
+                                                     "*"
+                                                 ],
+                               "time-tracking":  [
+                                                     "*"
+                                                 ],
+                               "material-analytics":  [
+                                                          "*"
+                                                      ],
+                               "contractor-portal":  [
+                                                         "*"
+                                                     ],
+                               "file-management":  [
+                                                       "*"
+                                                   ],
+                               "system-logs":  [
+                                                   "*"
+                                               ],
+                               "rate-management":  [
+                                                       "*"
+                                                   ],
+                               "report-templates":  [
+                                                        "*"
+                                                    ],
+                               "data-filters":  [
+                                                    "*"
+                                                ],
+                               "dashboard-widgets":  [
+                                                         "*"
+                                                     ],
+                               "schedule-management":  [
+                                                           "*"
+                                                       ],
+                               "ai-assistant":  [
+                                                    "*"
+                                                ],
+                               "basic-warehouse":  [
+                                                       "*"
+                                                   ],
+                               "budget-estimates":  [
+                                                        "*"
+                                                    ],
+                               "payments":  [
+                                                "*"
+                                            ],
+                               "site-requests":  [
+                                                     "*"
+                                                 ],
+                               "ai-estimates":  [
+                                                    "*"
+                                                ],
+                               "procurement":  [
+                                                   "*"
+                                               ]
+                           },
+    "interface_access":  [
+                             "lk",
+                             "admin",
+                             "mobile"
+                         ],
+    "hierarchy":  {
+                      "can_manage_roles":  [
+                                               "organization_admin",
+                                               "accountant",
+                                               "supplier",
+                                               "viewer",
+                                               "project_manager",
+                                               "foreman",
+                                               "worker"
+                                           ],
+                      "cannot_manage":  [
+                                            "organization_owner",
+                                            "system_admin",
+                                            "super_admin"
+                                        ]
+                  }
 }

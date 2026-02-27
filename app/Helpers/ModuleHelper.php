@@ -9,7 +9,7 @@ class ModuleHelper
         'contract-management' => 'Управление контрактами',
         'basic-warehouse' => 'Базовое управление складом',
         'schedule-management' => 'Управление графиком',
-        'advanced-dashboard' => 'Расширенная панель',
+
         'time-tracking' => 'Учет рабочего времени',
         'workflow-management' => 'Управление процессами',
         'catalog-management' => 'Управление каталогом',

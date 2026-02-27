@@ -52,7 +52,6 @@ enum OrganizationCapability: string
                 'contract-management',
                 'basic-warehouse',
                 'schedule-management',
-                'advanced-dashboard',
                 'time-tracking',
             ],
             self::SUBCONTRACTING => [

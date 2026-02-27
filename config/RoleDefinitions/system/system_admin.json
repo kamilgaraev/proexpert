@@ -1,128 +1,122 @@
-{
-  "name": "Системный администратор",
-  "slug": "system_admin",
-  "version": "1.0.0",
-  "context": "system",
-  "interface": "admin",
-  "description": "Администрирование системы без доступа к биллингу",
-  "system_permissions": [
-    "admin.access",
-    "admin.dashboard.view",
-    "admin.users.view",
-    "admin.users.create",
-    "admin.users.edit",
-    "admin.users.block",
-    "admin.organizations.view",
-    "admin.organizations.edit",
-    "admin.projects.view",
-    "admin.projects.edit",
-    "admin.projects.analytics",
-    "admin.materials.view",
-    "admin.materials.edit",
-    "admin.materials.import",
-    "admin.contracts.view",
-    "admin.contracts.edit",
-    "admin.reports.view",
-    "admin.reports.export",
-    "admin.logs.view",
-    "admin.system.monitoring",
-    "admin.catalogs.manage",
-    "profile.view",
-    "profile.edit"
-  ],
-  "module_permissions": {
-    "users": [
-      "users.view",
-      "users.edit",
-      "users.block"
-    ],
-    "organizations": [
-      "organizations.view",
-      "organizations.edit"
-    ],
-    "projects": [
-      "projects.view",
-      "projects.edit",
-      "projects.analytics"
-    ],
-    "materials": [
-      "materials.view",
-      "materials.edit",
-      "materials.import"
-    ],
-    "contracts": [
-      "contracts.view",
-      "contracts.edit"
-    ],
-    "reports": [
-      "reports.*"
-    ],
-    "finance": [
-      "finance.view"
-    ],
-    "time-tracking": [
-      "time-tracking.view",
-      "time-tracking.manage"
-    ],
-    "contractor-portal": [
-      "contractor_invitations.*",
-      "organizations.*"
-    ],
-    "file-management": [
-      "personal_files.*",
-      "report_files.*"
-    ],
-    "system-logs": [
-      "logs.*"
-    ],
-    "rate-management": [
-      "rate_coefficients.*"
-    ],
-    "report-templates": [
-      "report_templates.*"
-    ],
-    "data-filters": [
-      "filters.*"
-    ],
-    "dashboard-widgets": [
-      "dashboard.*"
-    ],
-    "schedule-management": [
-      "schedule.*"
-    ],
-    "advanced-dashboard": [
-      "advanced-dashboard.dashboards.*",
-      "advanced-dashboard.analytics.*",
-      "advanced-dashboard.alerts.*",
-      "advanced-dashboard.export.*"
-    ],
-    "ai-assistant": [
-      "ai_assistant.chat",
-      "ai_assistant.reports.generate",
-      "ai_assistant.analytics.view",
-      "ai_assistant.settings.manage",
-      "ai_assistant.usage.view",
-      "admin.ai_assistant.system_analysis.view",
-      "admin.ai_assistant.system_analysis.analyze",
-      "admin.ai_assistant.system_analysis.export",
-      "admin.ai_assistant.system_analysis.delete"
-    ]
-  },
-  "interface_access": [
-    "admin"
-  ],
-  "hierarchy": {
-    "can_manage_roles": [
-      "organization_owner",
-      "organization_admin",
-      "accountant",
-      "project_manager",
-      "foreman",
-      "worker"
-    ],
-    "cannot_manage": [
-      "super_admin",
-      "system_admin"
-    ]
-  }
+﻿{
+    "name":  "РЎРёСЃС‚РµРјРЅС‹Р№ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ",
+    "slug":  "system_admin",
+    "version":  "1.0.0",
+    "context":  "system",
+    "interface":  "admin",
+    "description":  "РђРґРјРёРЅРёСЃС‚СЂРёСЂРѕРІР°РЅРёРµ СЃРёСЃС‚РµРјС‹ Р±РµР· РґРѕСЃС‚СѓРїР° Рє Р±РёР»Р»РёРЅРіСѓ",
+    "system_permissions":  [
+                               "admin.access",
+                               "admin.dashboard.view",
+                               "admin.users.view",
+                               "admin.users.create",
+                               "admin.users.edit",
+                               "admin.users.block",
+                               "admin.organizations.view",
+                               "admin.organizations.edit",
+                               "admin.projects.view",
+                               "admin.projects.edit",
+                               "admin.projects.analytics",
+                               "admin.materials.view",
+                               "admin.materials.edit",
+                               "admin.materials.import",
+                               "admin.contracts.view",
+                               "admin.contracts.edit",
+                               "admin.reports.view",
+                               "admin.reports.export",
+                               "admin.logs.view",
+                               "admin.system.monitoring",
+                               "admin.catalogs.manage",
+                               "profile.view",
+                               "profile.edit"
+                           ],
+    "module_permissions":  {
+                               "users":  [
+                                             "users.view",
+                                             "users.edit",
+                                             "users.block"
+                                         ],
+                               "organizations":  [
+                                                     "organizations.view",
+                                                     "organizations.edit"
+                                                 ],
+                               "projects":  [
+                                                "projects.view",
+                                                "projects.edit",
+                                                "projects.analytics"
+                                            ],
+                               "materials":  [
+                                                 "materials.view",
+                                                 "materials.edit",
+                                                 "materials.import"
+                                             ],
+                               "contracts":  [
+                                                 "contracts.view",
+                                                 "contracts.edit"
+                                             ],
+                               "reports":  [
+                                               "reports.*"
+                                           ],
+                               "finance":  [
+                                               "finance.view"
+                                           ],
+                               "time-tracking":  [
+                                                     "time-tracking.view",
+                                                     "time-tracking.manage"
+                                                 ],
+                               "contractor-portal":  [
+                                                         "contractor_invitations.*",
+                                                         "organizations.*"
+                                                     ],
+                               "file-management":  [
+                                                       "personal_files.*",
+                                                       "report_files.*"
+                                                   ],
+                               "system-logs":  [
+                                                   "logs.*"
+                                               ],
+                               "rate-management":  [
+                                                       "rate_coefficients.*"
+                                                   ],
+                               "report-templates":  [
+                                                        "report_templates.*"
+                                                    ],
+                               "data-filters":  [
+                                                    "filters.*"
+                                                ],
+                               "dashboard-widgets":  [
+                                                         "dashboard.*"
+                                                     ],
+                               "schedule-management":  [
+                                                           "schedule.*"
+                                                       ],
+                               "ai-assistant":  [
+                                                    "ai_assistant.chat",
+                                                    "ai_assistant.reports.generate",
+                                                    "ai_assistant.analytics.view",
+                                                    "ai_assistant.settings.manage",
+                                                    "ai_assistant.usage.view",
+                                                    "admin.ai_assistant.system_analysis.view",
+                                                    "admin.ai_assistant.system_analysis.analyze",
+                                                    "admin.ai_assistant.system_analysis.export",
+                                                    "admin.ai_assistant.system_analysis.delete"
+                                                ]
+                           },
+    "interface_access":  [
+                             "admin"
+                         ],
+    "hierarchy":  {
+                      "can_manage_roles":  [
+                                               "organization_owner",
+                                               "organization_admin",
+                                               "accountant",
+                                               "project_manager",
+                                               "foreman",
+                                               "worker"
+                                           ],
+                      "cannot_manage":  [
+                                            "super_admin",
+                                            "system_admin"
+                                        ]
+                  }
 }
