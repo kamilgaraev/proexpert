@@ -21,7 +21,7 @@ class ReceiptRequest extends FormRequest
             'material.code' => 'nullable|string|max:50',
             'material.measurement_unit_id' => 'required_without:material_id|exists:measurement_units,id',
             'material.category' => 'nullable|string|max:100',
-            'material.asset_type' => 'nullable|string|in:material,equipment,tool,consumable',
+            'material.asset_type' => 'nullable|string|in:material,equipment,tool,furniture,consumable,structure',
             'material.default_price' => 'nullable|numeric|min:0',
             'material.description' => 'nullable|string',
             'quantity' => 'required|numeric|min:0.001',

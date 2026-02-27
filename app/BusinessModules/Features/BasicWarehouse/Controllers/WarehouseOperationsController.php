@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ReceiptRequest;
@@ -8,6 +10,7 @@ use App\BusinessModules\Features\BasicWarehouse\Http\Requests\TransferRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\TransferToContractorRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\UnreserveRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\WriteOffRequest;
+use App\BusinessModules\Features\BasicWarehouse\Services\AssetService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\BusinessModules\Features\BasicWarehouse\Http\Resources\WarehouseMovementResource;
 use App\Http\Controllers\Controller;
@@ -21,7 +24,8 @@ use Illuminate\Http\Request;
 class WarehouseOperationsController extends Controller
 {
     public function __construct(
-        protected WarehouseService $warehouseService
+        protected WarehouseService $warehouseService,
+        protected AssetService $assetService
     ) {}
 
     /**
@@ -33,26 +37,22 @@ class WarehouseOperationsController extends Controller
         $validated = $request->validated();
         $organizationId = $request->user()->current_organization_id;
         
-        // Определяем material_id
         $materialId = $validated['material_id'] ?? null;
-        
-        // Если material_id не указан, создаем новый материал
+
         if (!$materialId && isset($validated['material'])) {
-            $material = \App\Models\Material::create([
-                'organization_id' => $organizationId,
-                'name' => $validated['material']['name'],
-                'code' => $validated['material']['code'] ?? null,
-                'measurement_unit_id' => $validated['material']['measurement_unit_id'],
-                'category' => $validated['material']['category'] ?? null,
-                'default_price' => $validated['material']['default_price'] ?? $validated['price'],
-                'description' => $validated['material']['description'] ?? null,
-                'additional_properties' => [
-                    'asset_type' => $validated['material']['asset_type'] ?? 'material',
-                ],
-                'is_active' => true,
+            $materialData = $validated['material'];
+            $asset = $this->assetService->createAsset($organizationId, [
+                'name'                => $materialData['name'],
+                'code'                => $materialData['code'] ?? null,
+                'measurement_unit_id' => $materialData['measurement_unit_id'],
+                'category'            => $materialData['category'] ?? null,
+                'default_price'       => $materialData['default_price'] ?? $validated['price'],
+                'description'         => $materialData['description'] ?? null,
+                'asset_type'          => $materialData['asset_type'] ?? 'material',
+                'is_active'           => true,
             ]);
-            
-            $materialId = $material->id;
+
+            $materialId = $asset->id;
         }
         
         if (!$materialId) {
