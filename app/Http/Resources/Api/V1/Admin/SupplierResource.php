@@ -12,14 +12,14 @@ class SupplierResource extends JsonResource
         return [
             'id' => $this->id,
             'name' => $this->name,
-            'contactPerson' => $this->contact_person,
+            'contact_person' => $this->contact_person,
             'phone' => $this->phone,
             'email' => $this->email,
             'address' => $this->address,
-            'isActive' => $this->is_active,
-            'organizationId' => $this->organization_id,
-            'createdAt' => $this->created_at->format('Y-m-d H:i:s'),
-            'updatedAt' => $this->updated_at->format('Y-m-d H:i:s'),
+            'is_active' => $this->is_active,
+            'organization_id' => $this->organization_id,
+            'created_at' => $this->created_at->format('Y-m-d H:i:s'),
+            'updated_at' => $this->updated_at->format('Y-m-d H:i:s'),
         ];
     }
 } 

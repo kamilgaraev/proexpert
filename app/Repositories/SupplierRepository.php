@@ -47,7 +47,13 @@ class SupplierRepository extends BaseRepository implements SupplierRepositoryInt
 
         // Фильтры
         if (!empty($filters['name'])) {
-            $query->where('name', 'ilike', '%' . $filters['name'] . '%');
+            $query->where(function ($q) use ($filters) {
+                $search = '%' . $filters['name'] . '%';
+                $q->where('name', 'ilike', $search)
+                  ->orWhere('email', 'ilike', $search)
+                  ->orWhere('phone', 'ilike', $search)
+                  ->orWhere('contact_person', 'ilike', $search);
+            });
         }
         if (isset($filters['is_active'])) {
             $query->where('is_active', (bool)$filters['is_active']);
