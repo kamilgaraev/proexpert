@@ -35,6 +35,7 @@ class CompletedWorkResource extends JsonResource
                     'id'         => $this->scheduleTask->measurementUnit->id,
                     'short_name' => $this->scheduleTask->measurementUnit->short_name,
                 ] : null,
+                'procurement_status' => $this->scheduleTask->estimateItem?->procurement_status,
             ]),
             'quantity'           => (float)$this->quantity,
             'completed_quantity' => $this->completed_quantity !== null ? (float)$this->completed_quantity : null,

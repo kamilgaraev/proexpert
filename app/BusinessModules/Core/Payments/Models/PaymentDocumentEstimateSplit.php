@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Core\Payments\Models;
 
 use App\Models\EstimateItem;
@@ -14,13 +16,21 @@ class PaymentDocumentEstimateSplit extends Model
     protected $fillable = [
         'payment_document_id',
         'estimate_item_id',
+        'quantity',
+        'unit_price_plan',
+        'unit_price_actual',
         'amount',
         'percentage',
+        'price_deviation',
     ];
 
     protected $casts = [
         'amount' => 'decimal:2',
         'percentage' => 'decimal:2',
+        'quantity' => 'decimal:8',
+        'unit_price_plan' => 'decimal:4',
+        'unit_price_actual' => 'decimal:4',
+        'price_deviation' => 'decimal:2',
     ];
 
     public function document(): BelongsTo
@@ -33,4 +43,3 @@ class PaymentDocumentEstimateSplit extends Model
         return $this->belongsTo(EstimateItem::class);
     }
 }
-

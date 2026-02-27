@@ -59,8 +59,11 @@ class EstimateItem extends Model
         'justification',
         'notes',
         'is_manual',
-        'is_not_accounted', // ⭐ Флаг "не учтенного" материала (буква Н)
+        'is_not_accounted',
         'metadata',
+        'actual_unit_price',
+        'actual_quantity',
+        'procurement_status',
     ];
 
     protected $casts = [
@@ -95,8 +98,10 @@ class EstimateItem extends Model
         'total_amount' => 'decimal:2',
         'current_total_amount' => 'decimal:2',
         'is_manual' => 'boolean',
-        'is_not_accounted' => 'boolean', // ⭐ Флаг "Н"
+        'is_not_accounted' => 'boolean',
         'metadata' => 'array',
+        'actual_unit_price' => 'decimal:4',
+        'actual_quantity' => 'decimal:8',
     ];
 
     public function estimate(): BelongsTo
@@ -418,6 +423,28 @@ class EstimateItem extends Model
     {
         return (float) ($this->coefficient_total ?? 1.0);
     }
+
+    public function getPriceDeviation(): ?float
+    {
+        if ($this->actual_unit_price === null) {
+            return null;
+        }
+
+        $qty = (float) ($this->actual_quantity ?? $this->quantity_total ?? $this->quantity ?? 0);
+        return round(((float) $this->actual_unit_price - (float) $this->unit_price) * $qty, 2);
+    }
+
+    public function getPriceDeviationPercent(): ?float
+    {
+        if ($this->actual_unit_price === null || (float) $this->unit_price == 0) {
+            return null;
+        }
+
+        return round(((float) $this->actual_unit_price / (float) $this->unit_price - 1) * 100, 2);
+    }
+
+    public function isProcured(): bool
+    {
+        return $this->procurement_status !== 'pending';
+    }
 }
-
-

@@ -318,52 +318,49 @@ class PaymentDocumentController extends Controller
                 ]);
             }
 
-            $document = $this->service->create($validated);
+            $warnings = [];
 
-            // Сохраняем splits по позициям сметы, если указаны
-            if (isset($validated['estimate_splits']) && is_array($validated['estimate_splits'])) {
-                $totalAmount = $document->amount;
-                $totalSplitsAmount = 0;
-
-                foreach ($validated['estimate_splits'] as $split) {
-                    $percentage = $split['percentage'] ?? null;
-                    
-                    // Если процент не указан, вычисляем его на основе суммы
-                    if ($percentage === null && $totalAmount > 0) {
-                        $percentage = ($split['amount'] / $totalAmount) * 100;
-                    }
-
-                    \App\BusinessModules\Core\Payments\Models\PaymentDocumentEstimateSplit::create([
-                        'payment_document_id' => $document->id,
-                        'estimate_item_id' => $split['estimate_item_id'],
-                        'amount' => $split['amount'],
-                        'percentage' => $percentage ?? 0,
-                    ]);
-
-                    $totalSplitsAmount += $split['amount'];
-                }
-
-                // Валидация: сумма splits не должна превышать общую сумму документа
-                if ($totalSplitsAmount > $totalAmount) {
-                    // Удаляем документ и splits, если сумма превышает
-                    $document->estimateSplits()->delete();
-                    $document->delete();
-                    
+            // Проверка отклонений цен перед созданием
+            if (!empty($validated['estimate_splits'])) {
+                $deviationAnalysis = $this->service->analyzePriceDeviation($validated['estimate_splits']);
+                
+                if ($deviationAnalysis['is_blocked'] && empty($validated['overprice_justification'])) {
                     return response()->json([
                         'success' => false,
-                        'error' => 'Сумма распределения по позициям не может превышать общую сумму документа',
+                        'error' => 'Обнаружена существенная переплата (более 25%). Пожалуйста, укажите обоснование переплаты.',
+                        'requires_justification' => true,
+                        'deviation_data' => $deviationAnalysis,
                     ], 422);
                 }
+
+                if ($deviationAnalysis['requires_approval']) {
+                    $warnings[] = 'Внимание: обнаружено превышение плановой цены более чем на 15%';
+                }
+            }
+
+            // Сервис сам обработает estimate_splits внутри метода create()
+            $document = $this->service->create($validated);
+
+            // Если было обоснование - сохраняем его в notes
+            if (!empty($validated['overprice_justification'])) {
+                $document->notes = trim(($document->notes ?? '') . "\n\nОбоснование переплаты:\n" . $validated['overprice_justification']);
+                $document->saveQuietly();
             }
 
             // Загружаем splits для ответа
             $document->load('estimateSplits.estimateItem');
 
-            return response()->json([
+            $responseData = [
                 'success' => true,
                 'message' => 'Платежный документ создан',
                 'data' => $this->formatDocumentDetailed($document),
-            ], 201);
+            ];
+
+            if (!empty($warnings)) {
+                $responseData['warnings'] = $warnings;
+            }
+
+            return response()->json($responseData, 201);
         } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,

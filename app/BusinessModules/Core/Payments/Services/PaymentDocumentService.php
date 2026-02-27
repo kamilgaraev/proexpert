@@ -55,6 +55,11 @@ class PaymentDocumentService
                 // Создание документа
                 $document = PaymentDocument::create($data);
 
+                // Обрабатываем сплиты по позициям сметы
+                if (!empty($data['estimate_splits'])) {
+                    $this->processEstimateSplits($document, $data['estimate_splits']);
+                }
+
                 // Автоматически определяем и кэшируем получателя-организацию
                 $this->detectAndSetRecipientOrganization($document);
 
@@ -838,9 +843,8 @@ class PaymentDocumentService
             $recipientOrgId = $document->getRecipientOrganizationId();
             
             if ($recipientOrgId && $document->recipient_organization_id !== $recipientOrgId) {
-                // Кэшируем ID организации-получателя для быстрого поиска
                 $document->recipient_organization_id = $recipientOrgId;
-                $document->saveQuietly(); // Сохраняем без событий, чтобы избежать циклов
+                $document->saveQuietly();
                 
                 Log::debug('payment_document.recipient_detected', [
                     'document_id' => $document->id,
@@ -848,12 +852,54 @@ class PaymentDocumentService
                 ]);
             }
         } catch (\Exception $e) {
-            // Не бросаем исключение - отсутствие получателя не должно ломать систему
             Log::warning('payment_document.recipient_detection_failed', [
                 'document_id' => $document->id,
                 'error' => $e->getMessage(),
             ]);
         }
+    }
+
+    public function processEstimateSplits(PaymentDocument $document, array $splits): void
+    {
+        foreach ($splits as $splitData) {
+            $estimateItem = \App\Models\EstimateItem::find($splitData['estimate_item_id']);
+            if (!$estimateItem) {
+                continue;
+            }
+
+            $quantity = (float) ($splitData['quantity'] ?? 0);
+            $unitPricePlan = (float) $estimateItem->unit_price;
+            $unitPriceActual = (float) ($splitData['unit_price_actual'] ?? $unitPricePlan);
+            $amount = round($quantity * $unitPriceActual, 2);
+            $priceDeviation = round(($unitPriceActual - $unitPricePlan) * $quantity, 2);
+
+            \App\BusinessModules\Core\Payments\Models\PaymentDocumentEstimateSplit::create([
+                'payment_document_id' => $document->id,
+                'estimate_item_id' => $estimateItem->id,
+                'quantity' => $quantity,
+                'unit_price_plan' => $unitPricePlan,
+                'unit_price_actual' => $unitPriceActual,
+                'amount' => $splitData['amount'] ?? $amount,
+                'percentage' => $splitData['percentage'] ?? null,
+                'price_deviation' => $priceDeviation,
+            ]);
+
+            $estimateItem->update([
+                'actual_unit_price' => $unitPriceActual,
+                'actual_quantity' => ($estimateItem->actual_quantity ?? 0) + $quantity,
+                'procurement_status' => 'paid',
+            ]);
+        }
+
+        Log::info('payment_document.splits_processed', [
+            'document_id' => $document->id,
+            'splits_count' => count($splits),
+        ]);
+    }
+
+    public function analyzePriceDeviation(array $splits): array
+    {
+        return app(PriceDeviationAnalyzer::class)->analyze($splits);
     }
 }
 
