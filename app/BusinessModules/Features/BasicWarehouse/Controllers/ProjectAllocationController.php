@@ -57,7 +57,7 @@ class ProjectAllocationController extends Controller
             }
 
             // Проверяем, что есть доступное количество
-            if ($balance->available_quantity <= 0) {
+            if ($balance->availableQuantity <= 0) {
                 DB::rollBack();
                 return response()->json([
                     'success' => false,
