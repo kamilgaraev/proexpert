@@ -22,6 +22,22 @@ class ImportPipelineService
 
     private array $unitCache = [];
 
+    private array $unitAliases = [
+        'м2'       => 'м²',  'м^2'     => 'м²',  'кв.м'    => 'м²',
+        'кв. м'    => 'м²',  'кв м'    => 'м²',  'м.кв'    => 'м²',
+        'м3'       => 'м³',  'куб.м'   => 'м³',  'куб. м'  => 'м³',
+        'куб м'    => 'м³',  'м.куб'   => 'м³',
+        'чел-час'  => 'чел-ч', 'чел.ч'   => 'чел-ч', 'ч-ч'     => 'чел-ч', 'чел. ч'  => 'чел-ч', 'чел.-ч' => 'чел-ч',
+        'маш-час'  => 'маш-ч', 'маш.ч'   => 'маш-ч', 'маш. ч'  => 'маш-ч', 'маш.-ч' => 'маш-ч',
+        'погон.м'  => 'пог. м', 'пог.м'   => 'пог. м',
+        'кг.'      => 'кг',   'т.'      => 'т',    'шт.'     => 'шт',
+        'м.'       => 'м',
+    ];
+
+    private array $workUnitKeywords = [
+        'чел-ч', 'маш-ч', 'смн', 'чел-дн', 'маш-смн', 'рейс', 'усл', 'этап', 'час'
+    ];
+
     public function __construct(
         private ParserFactory $parserFactory,
         private FileStorageService $fileStorage,
@@ -32,7 +48,8 @@ class ImportPipelineService
         private SemanticMatchingService $semanticMatcher,
         private SubItemGroupingService $subItemGrouper,
         private FormulaAwarenessService $formulaAwareness,
-        private \App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService $calculationService
+        private \App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService $calculationService,
+        private MaterialMatchingService $materialMatcher
     ) {}
 
     private function updateProgress(ImportSession $session, int $progress, string $message): void
@@ -520,12 +537,35 @@ class ImportPipelineService
             'is_informative_row' => $isInformative,
         ];
 
+        // ⭐ АВТОМАТИЧЕСКАЯ РЕГИСТРАЦИЯ АКТИВОВ:
+        // Если это материал или оборудование, сохраняем в Каталог Активов (materials)
+        $materialId = null;
+        $itemType = $this->mapItemType($dto->itemType);
+        
+        // Не создаём активы для информационных строк
+        if (!$isInformative && in_array($itemType, ['material', 'equipment', 'machinery']) && !empty($dto->itemName)) {
+            try {
+                $material = $this->materialMatcher->findOrCreate(
+                    $dto->code ?? ('MAT-' . uniqid()), // Fallback код, если пусто
+                    $dto->itemName,
+                    $dto->unit,
+                    isset($dto->unitPrice) && $dto->unitPrice > 0 ? (float)$dto->unitPrice : null,
+                    $estimate->organization_id,
+                    $itemType === 'equipment' ? 'equipment' : 'material'
+                );
+                $materialId = $material->id;
+            } catch (\Exception $e) {
+                Log::warning("[ImportPipeline] Failed to auto-register material '{$dto->itemName}': " . $e->getMessage());
+            }
+        }
+
         return [
             'estimate_id' => $estimate->id,
             'estimate_section_id' => $sectionId,
             'name' => $dto->itemName,
             'description' => null,
             'measurement_unit_id' => $this->resolveUnitId($dto->unit, $estimate->organization_id),
+            'material_id' => $materialId,
             'quantity' => $dto->quantity ?? 0,
             'unit_price' => $dto->unitPrice ?? 0,
             
@@ -548,7 +588,7 @@ class ImportPipelineService
             
             'normative_rate_code' => $dto->code,
             'position_number' => (string)($dto->sectionNumber ?: ''),
-            'item_type' => $this->mapItemType($dto->itemType),
+            'item_type' => $itemType,
             'is_manual' => true, 
             'is_sub_item' => $isSubItem,
             'created_at' => now(),
@@ -673,32 +713,45 @@ class ImportPipelineService
     
 
 
+    private function normalizeUnitName(string $unitName): string
+    {
+        $normalized = mb_strtolower(trim($unitName));
+        return $this->unitAliases[$normalized] ?? $normalized;
+    }
+
     private function resolveUnitId(?string $unitName, int $organizationId): ?int
     {
         if (empty($unitName)) {
             return null;
         }
 
-        $normalized = mb_strtolower(trim($unitName));
+        $normalized = $this->normalizeUnitName($unitName);
         $cacheKey = "{$organizationId}:{$normalized}";
 
         if (array_key_exists($cacheKey, $this->unitCache)) {
             return $this->unitCache[$cacheKey];
         }
 
+        // Учитываем нормализованное имя при поиске
         $unit = MeasurementUnit::where('organization_id', $organizationId)
-            ->where(function ($q) use ($normalized) {
-                $q->whereRaw('LOWER(short_name) = ?', [$normalized])
-                  ->orWhereRaw('LOWER(name) = ?', [$normalized]);
-            })
+            ->whereRaw('LOWER(short_name) = ?', [$normalized])
             ->first();
+
+        // Определение типа: material или work
+        $unitType = 'material';
+        foreach ($this->workUnitKeywords as $keyword) {
+            if (mb_stripos($normalized, $keyword) !== false) {
+                $unitType = 'work';
+                break;
+            }
+        }
 
         if (!$unit) {
             $unit = MeasurementUnit::create([
                 'organization_id' => $organizationId,
-                'name'            => $unitName,
-                'short_name'      => $unitName,
-                'type'            => 'material',
+                'name'            => mb_strlen($normalized) > 5 ? $unitName : $normalized, // Сохраняем оригинальное для длинных (если это не просто "м2")
+                'short_name'      => $normalized,
+                'type'            => $unitType,
                 'is_system'       => false,
             ]);
         }

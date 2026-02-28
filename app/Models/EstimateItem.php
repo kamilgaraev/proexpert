@@ -27,6 +27,7 @@ class EstimateItem extends Model
         'description',
         'work_type_id',
         'measurement_unit_id',
+        'material_id',
         'quantity',
         'quantity_coefficient',
         'quantity_total',
@@ -150,6 +151,11 @@ class EstimateItem extends Model
     public function catalogItem(): BelongsTo
     {
         return $this->belongsTo(EstimatePositionCatalog::class, 'catalog_item_id')->withTrashed();
+    }
+
+    public function material(): BelongsTo
+    {
+        return $this->belongsTo(Material::class, 'material_id');
     }
 
     public function resources(): HasMany

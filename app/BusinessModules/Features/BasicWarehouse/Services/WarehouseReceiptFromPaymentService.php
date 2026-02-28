@@ -44,7 +44,7 @@ class WarehouseReceiptFromPaymentService
             WarehouseMovement::create([
                 'organization_id' => $document->organization_id,
                 'warehouse_id' => $warehouse->id,
-                'material_id' => $estimateItem->catalog_item_id,
+                'material_id' => $estimateItem->material_id, // Используем правильный ID материала
                 'movement_type' => WarehouseMovement::TYPE_RECEIPT,
                 'quantity' => (float) $split->quantity,
                 'price' => (float) $split->unit_price_actual,

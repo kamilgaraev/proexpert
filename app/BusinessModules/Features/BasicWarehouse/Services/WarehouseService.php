@@ -2,6 +2,7 @@
 
 namespace App\BusinessModules\Features\BasicWarehouse\Services;
 
+use App\BusinessModules\Features\BasicWarehouse\DTOs\WarehouseBalanceAggregateDTO;
 use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
@@ -21,6 +22,7 @@ use App\Services\Logging\LoggingService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
 use Carbon\Carbon;
+use Illuminate\Support\Collection;
 
 /**
  * Сервис управления складом
@@ -420,7 +422,7 @@ class WarehouseService implements WarehouseReportDataProvider
     /**
      * Получить остаток актива на складе (Агрегированный)
      */
-    public function getAssetBalance(int $organizationId, int $warehouseId, int $materialId): ?WarehouseBalance
+    public function getAssetBalance(int $organizationId, int $warehouseId, int $materialId): ?WarehouseBalanceAggregateDTO
     {
         $batches = WarehouseBalance::where('organization_id', $organizationId)
             ->where('warehouse_id', $warehouseId)
@@ -431,33 +433,30 @@ class WarehouseService implements WarehouseReportDataProvider
             return null;
         }
 
-        // Создаем виртуальный объект баланса с агрегированными данными
         $totalQty = $batches->sum('available_quantity');
         $totalReserved = $batches->sum('reserved_quantity');
         
         $totalValue = $batches->sum(fn($b) => $b->available_quantity * $b->unit_price);
         $avgPrice = $totalQty > 0 ? $totalValue / $totalQty : 0;
         
-        // Берем первый батч как основу для метаданных (материал, склад и т.д.)
-        $virtualBalance = $batches->first()->replicate();
-        $virtualBalance->exists = true; // Чтобы Laravel думал, что модель существует (нужно для связей)
-        $virtualBalance->id = $batches->first()->id; // ID первого батча (условно)
-        $virtualBalance->isVirtual = true; // Запрещаем сохранение
-        
-        $virtualBalance->available_quantity = $totalQty;
-        $virtualBalance->reserved_quantity = $totalReserved;
-        $virtualBalance->unit_price = $avgPrice; // Здесь unit_price выступает как средняя цена
-        
-        // Добавляем инфу о дате последнего движения (максимальная из батчей)
-        $virtualBalance->last_movement_at = $batches->max('last_movement_at');
-        
-        return $virtualBalance;
+        return new WarehouseBalanceAggregateDTO(
+            materialId: $materialId,
+            warehouseId: $warehouseId,
+            availableQuantity: (float)$totalQty,
+            reservedQuantity: (float)$totalReserved,
+            averagePrice: (float)$avgPrice,
+            totalValue: (float)$totalValue,
+            lastMovementAt: $batches->max('last_movement_at')?->toDateTimeString(),
+            material: $batches->first()->material ?? null,
+            warehouse: $batches->first()->warehouse ?? null
+        );
     }
 
     /**
      * Получить все остатки на складе (Агрегированные)
+     * @return Collection<WarehouseBalanceAggregateDTO>
      */
-    public function getWarehouseStock(int $organizationId, int $warehouseId, array $filters = []): \Illuminate\Database\Eloquent\Collection
+    public function getWarehouseStock(int $organizationId, int $warehouseId, array $filters = []): Collection
     {
         $query = WarehouseBalance::where('organization_id', $organizationId)
             ->where('warehouse_id', $warehouseId)
@@ -491,7 +490,7 @@ class WarehouseService implements WarehouseReportDataProvider
         // Группируем по материалам
         $grouped = $allBatches->groupBy('material_id');
         
-        $aggregatedCollection = new \Illuminate\Database\Eloquent\Collection();
+        $aggregatedCollection = new Collection();
         
         foreach ($grouped as $materialId => $batches) {
             $totalQty = $batches->sum('available_quantity');
@@ -500,19 +499,19 @@ class WarehouseService implements WarehouseReportDataProvider
             $totalValue = $batches->sum(fn($b) => $b->available_quantity * $b->unit_price);
             $avgPrice = $totalQty > 0 ? $totalValue / $totalQty : 0;
             
-            $virtualBalance = $batches->first()->replicate();
-            $virtualBalance->exists = true;
-            $virtualBalance->id = $batches->first()->id;
-            $virtualBalance->isVirtual = true; // Запрещаем сохранение
-            $virtualBalance->available_quantity = $totalQty;
-            $virtualBalance->reserved_quantity = $totalReserved;
-            $virtualBalance->unit_price = $avgPrice;
+            $dto = new WarehouseBalanceAggregateDTO(
+                materialId: $materialId,
+                warehouseId: $warehouseId,
+                availableQuantity: (float)$totalQty,
+                reservedQuantity: (float)$totalReserved,
+                averagePrice: (float)$avgPrice,
+                totalValue: (float)$totalValue,
+                lastMovementAt: $batches->max('last_movement_at')?->toDateTimeString(),
+                material: $batches->first()->material,
+                warehouse: $batches->first()->warehouse
+            );
             
-             // Загружаем связи, если они были загружены в оригинале
-            $virtualBalance->setRelation('material', $batches->first()->material);
-            $virtualBalance->setRelation('warehouse', $batches->first()->warehouse);
-            
-            $aggregatedCollection->push($virtualBalance);
+            $aggregatedCollection->push($dto);
         }
         
         return $aggregatedCollection;
