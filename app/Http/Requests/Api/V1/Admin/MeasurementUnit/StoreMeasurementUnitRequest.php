@@ -27,7 +27,9 @@ class StoreMeasurementUnitRequest extends FormRequest
      */
     public function rules(): array
     {
-        $organizationId = Auth::user()->organization_id; // Или другой способ получения ID организации
+        $organizationId = $this->attributes->get('current_organization_id') 
+            ?? Auth::user()?->current_organization_id 
+            ?? Auth::user()?->organization_id;
 
         return [
             'name' => [
@@ -38,7 +40,20 @@ class StoreMeasurementUnitRequest extends FormRequest
                     return $query->where('organization_id', $organizationId);
                 }),
             ],
-            'short_name' => 'required|string|max:50',
+            'short_name' => [
+                'required',
+                'string',
+                'max:50',
+                function ($attribute, $value, $fail) use ($organizationId) {
+                    $exists = \Illuminate\Support\Facades\DB::table('measurement_units')
+                        ->where('organization_id', $organizationId)
+                        ->whereRaw('LOWER(short_name) = ?', [mb_strtolower($value)])
+                        ->exists();
+                    if ($exists) {
+                        $fail('Единица измерения с таким кратким названием уже существует.');
+                    }
+                }
+            ],
             'type' => 'nullable|string|in:material,work,other', // Допустимые типы, если есть
             'description' => 'nullable|string',
             'is_default' => 'nullable|boolean',

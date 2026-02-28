@@ -29,7 +29,9 @@ class UpdateMeasurementUnitRequest extends FormRequest
      */
     public function rules(): array
     {
-        $organizationId = Auth::user()->organization_id;
+        $organizationId = $this->attributes->get('current_organization_id') 
+            ?? Auth::user()?->current_organization_id 
+            ?? Auth::user()?->organization_id;
         $measurementUnitId = $this->route('measurement_unit'); // Получаем ID из маршрута
 
         return [
@@ -42,7 +44,22 @@ class UpdateMeasurementUnitRequest extends FormRequest
                     return $query->where('organization_id', $organizationId);
                 })->ignore($measurementUnitId),
             ],
-            'short_name' => 'sometimes|required|string|max:50',
+            'short_name' => [
+                'sometimes',
+                'required',
+                'string',
+                'max:50',
+                function ($attribute, $value, $fail) use ($organizationId, $measurementUnitId) {
+                    $exists = \Illuminate\Support\Facades\DB::table('measurement_units')
+                        ->where('organization_id', $organizationId)
+                        ->whereRaw('LOWER(short_name) = ?', [mb_strtolower($value)])
+                        ->where('id', '!=', $measurementUnitId)
+                        ->exists();
+                    if ($exists) {
+                        $fail('Единица измерения с таким кратким названием уже существует.');
+                    }
+                }
+            ],
             'type' => 'sometimes|nullable|string|in:material,work,other',
             'description' => 'sometimes|nullable|string',
             'is_default' => 'sometimes|nullable|boolean',
