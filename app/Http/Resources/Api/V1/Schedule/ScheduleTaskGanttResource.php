@@ -146,6 +146,18 @@ class ScheduleTaskGanttResource extends JsonResource
                 'progress_color' => $this->getProgressColor(),
                 'text_color' => $this->is_critical ? '#DC2626' : '#1F2937',
             ],
+            
+            // Интервалы
+            'intervals' => $this->when($this->relationLoaded('intervals'), function () {
+                return $this->intervals->map(function ($interval) {
+                    return [
+                        'id' => $interval->id,
+                        'start_date' => $interval->start_date?->format('Y-m-d'),
+                        'end_date' => $interval->end_date?->format('Y-m-d'),
+                        'duration_days' => $interval->duration_days,
+                    ];
+                });
+            }),
         ];
 
         return $ganttData;
