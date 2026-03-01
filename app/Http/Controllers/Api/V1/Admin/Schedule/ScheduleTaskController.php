@@ -75,7 +75,7 @@ class ScheduleTaskController extends Controller
             $affectedTasksResources = ScheduleTaskResource::collection($affectedTasks);
 
             return AdminResponse::success([
-                'task' => new ScheduleTaskResource($taskModel->fresh()),
+                'task' => new ScheduleTaskResource($taskModel->fresh(['parentTask', 'childTasks', 'assignedUser', 'workType', 'measurementUnit', 'predecessorDependencies', 'successorDependencies', 'intervals'])),
                 'affected_tasks' => $affectedTasksResources,
             ], 'Задача успешно обновлена');
         } catch (\Exception $e) {
