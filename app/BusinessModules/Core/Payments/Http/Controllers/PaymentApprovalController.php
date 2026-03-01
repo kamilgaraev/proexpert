@@ -210,7 +210,7 @@ class PaymentApprovalController extends Controller
             $organizationId = $request->attributes->get('current_organization_id');
             $document = PaymentDocument::forOrganization($organizationId)->findOrFail($documentId);
 
-            $status = $this->approvalService->getApprovalStatus($document);
+            $status = $this->approvalService->getApprovalStatus($document, auth()->id());
 
             return response()->json([
                 'success' => true,

@@ -618,7 +618,7 @@ class ApprovalWorkflowService
     /**
      * Получить текущий статус утверждения
      */
-    public function getApprovalStatus(PaymentDocument $document): array
+    public function getApprovalStatus(PaymentDocument $document, ?int $userId = null): array
     {
         $approvals = $this->getApprovalHistory($document);
         
@@ -666,19 +666,77 @@ class ApprovalWorkflowService
             $approved = $approvals->where('status', 'approved')->count();
         }
 
+        // Если документ на утверждении, но нет записей - создаем дефолтную запись для администраторов
+        if ($document->status === PaymentDocumentStatus::PENDING_APPROVAL && $total === 0) {
+            PaymentApproval::create([
+                'payment_document_id' => $document->id,
+                'organization_id' => $document->organization_id,
+                'approval_role' => 'admin',
+                'approver_user_id' => null, // Может утвердить любой админ
+                'approval_level' => 1,
+                'approval_order' => 1,
+                'status' => 'pending',
+                'decision_comment' => null,
+            ]);
+            
+            // Перезагружаем approvals
+            $approvals = $this->getApprovalHistory($document);
+            $total = $approvals->count();
+            $pending = $approvals->where('status', 'pending')->count();
+        }
+
         $currentLevel = null;
         if ($pending > 0) {
             $firstPending = $approvals->where('status', 'pending')->first();
             $currentLevel = $firstPending?->approval_level;
         }
 
-        // Если документ утвержден, считаем его полностью утвержденным (даже без записей)
         $isFullyApproved = false;
         if ($document->status === PaymentDocumentStatus::APPROVED) {
             $isFullyApproved = true; // Документ в статусе approved = полностью утвержден
         } else {
             // Для других статусов проверяем наличие записей
             $isFullyApproved = $pending === 0 && $rejected === 0 && $total > 0;
+        }
+
+        $canBeApprovedByCurrentUser = false;
+        if ($userId && $document->status === PaymentDocumentStatus::PENDING_APPROVAL) {
+            $user = User::find($userId);
+            if ($user) {
+                // Проверяем админские права
+                if ($user->isOrganizationOwner($document->organization_id) || $user->hasRole('admin')) {
+                    $canBeApprovedByCurrentUser = true;
+                } else {
+                    // Ищем pending approvals, которые может утвердить этот юзер
+                    $pendingApprovals = $approvals->where('status', 'pending');
+                    
+                    // Чтобы разрешить параллельное утверждение, мы не привязываемся строго к currentLevel
+                    // (но в строгих системах может быть только $pendingApprovals->where('approval_level', $currentLevel))
+                    
+                    foreach ($pendingApprovals as $approval) {
+                        // Если назначен конкретному пользователю
+                        if ($approval->approver_user_id === $userId) {
+                            $canBeApprovedByCurrentUser = true;
+                            break;
+                        }
+                        
+                        // Или у пользователя есть необходимая роль
+                        if ($approval->approval_role) {
+                            $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($document->organization_id);
+                            $hasRole = User::where('id', $userId)
+                                ->whereHas('roleAssignments', function ($query) use ($context, $approval) {
+                                    $query->where('context_id', $context->id)
+                                          ->where('role_slug', $approval->approval_role);
+                                })->exists();
+                                
+                            if ($hasRole) {
+                                $canBeApprovedByCurrentUser = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         return [
@@ -690,6 +748,7 @@ class ApprovalWorkflowService
             'current_level' => $currentLevel,
             'is_fully_approved' => $isFullyApproved,
             'is_rejected' => $rejected > 0,
+            'can_be_approved_by_current_user' => $canBeApprovedByCurrentUser,
             'pending_approvals' => $approvals->where('status', 'pending')->values()->map(fn($a) => [
                 'id' => $a->id,
                 'role' => $a->approval_role,

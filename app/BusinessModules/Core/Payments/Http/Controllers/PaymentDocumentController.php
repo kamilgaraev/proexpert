@@ -171,14 +171,15 @@ class PaymentDocumentController extends Controller
                         'source', 
                         'approvals', 
                         'transactions',
-                        'invoiceable' // Загружаем связанную сущность (Contract, Act и т.д.)
+                        'invoiceable', // Загружаем связанную сущность (Contract, Act и т.д.)
+                        'estimateSplits.estimateItem' // Загружаем сплиты и позиции сметы
                     ])
                     ->findOrFail($id);
             } catch (\Error $e) {
                 // Если ошибка при загрузке invoiceable (класс Invoice не найден)
                 // Загружаем документ без eager loading invoiceable
                 $document = PaymentDocument::forOrganization($organizationId)
-                    ->with(['project', 'payerOrganization', 'payeeOrganization', 'payerContractor', 'payeeContractor', 'source', 'approvals', 'transactions'])
+                    ->with(['project', 'payerOrganization', 'payeeOrganization', 'payerContractor', 'payeeContractor', 'source', 'approvals', 'transactions', 'estimateSplits.estimateItem'])
                     ->where(function($query) {
                         $query->whereNull('invoiceable_type')
                               ->orWhere('invoiceable_type', '!=', 'App\\BusinessModules\\Core\\Payments\\Models\\Invoice')
@@ -1029,6 +1030,21 @@ class PaymentDocumentController extends Controller
             'attached_documents' => $document->attached_documents,
             'metadata' => $document->metadata,
             'notes' => $document->notes,
+            'estimate_splits' => $document->relationLoaded('estimateSplits') ? $document->estimateSplits->map(fn($split) => [
+                'id' => $split->id,
+                'estimate_item_id' => $split->estimate_item_id,
+                'quantity' => (float)$split->quantity,
+                'unit_price_plan' => (float)$split->unit_price_plan,
+                'unit_price_actual' => (float)$split->unit_price_actual,
+                'amount' => (float)$split->amount,
+                'percentage' => (float)$split->percentage,
+                'price_deviation' => (float)$split->price_deviation,
+                'estimate_item' => $split->estimateItem ? [
+                    'id' => $split->estimateItem->id,
+                    'title' => $split->estimateItem->title,
+                    'unit_name' => $split->estimateItem->unit_name ?? null,
+                ] : null,
+            ]) : [],
             'can_be_approved_by_current_user' => $canApprove, // Флаг для фронтенда
             // Информация о получателе (только если зарегистрирован)
             'recipient_is_registered' => $document->hasRegisteredRecipient(),
