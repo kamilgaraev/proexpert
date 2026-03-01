@@ -115,6 +115,16 @@ class ProjectScheduleResource extends JsonResource
                         'estimated_cost' => (float) ($task->estimated_cost ?? 0),
                         'quantity' => (float) ($task->quantity ?? 0),
                         'measurement_unit_id' => $task->measurement_unit_id,
+                        
+                        // Интервалы
+                        'intervals' => $task->relationLoaded('intervals') ? $task->intervals->map(function ($interval) {
+                            return [
+                                'id' => $interval->id,
+                                'start_date' => $interval->start_date?->format('Y-m-d'),
+                                'end_date' => $interval->end_date?->format('Y-m-d'),
+                                'duration_days' => $interval->duration_days,
+                            ];
+                        }) : null,
                     ];
                 })
             ),
