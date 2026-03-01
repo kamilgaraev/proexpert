@@ -266,9 +266,16 @@ trait HasScheduleOperations
                 'task_name' => $task->name,
             ]);
             
+            // Синхронизируем интервалы (если они есть в запросе)
+            if (array_key_exists('intervals', $data)) {
+                $scheduleTaskService = app(\App\Services\Schedule\ScheduleTaskService::class);
+                $scheduleTaskService->syncTaskIntervals($task, $data['intervals']);
+                $task->refresh();
+            }
+
             // Загружаем связанные данные для ответа
             Log::info('[ScheduleTask] Загрузка связанных данных');
-            $task->load(['assignedUser', 'workType', 'parentTask']);
+            $task->load(['assignedUser', 'workType', 'parentTask', 'intervals']);
             
             Log::info('[ScheduleTask] Задача успешно создана', [
                 'task_id' => $task->id,
