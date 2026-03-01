@@ -84,7 +84,7 @@ class TransactionController extends Controller
      * 
      * GET /api/v1/admin/payments/transactions/{id}
      */
-    public function show(Request $request, int $id): JsonResponse
+    public function show(Request $request, int|string $id): JsonResponse
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
@@ -110,7 +110,7 @@ class TransactionController extends Controller
      * 
      * POST /api/v1/admin/payments/transactions/{id}/approve
      */
-    public function approve(Request $request, int $id): JsonResponse
+    public function approve(Request $request, int|string $id): JsonResponse
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
@@ -159,7 +159,7 @@ class TransactionController extends Controller
      * 
      * POST /api/v1/admin/payments/transactions/{id}/reject
      */
-    public function reject(Request $request, int $id): JsonResponse
+    public function reject(Request $request, int|string $id): JsonResponse
     {
         $validator = Validator::make($request->all(), [
             'reason' => 'required|string|max:500',
@@ -217,7 +217,7 @@ class TransactionController extends Controller
      * 
      * POST /api/v1/admin/payments/transactions/{id}/refund
      */
-    public function refund(Request $request, int $id): JsonResponse
+    public function refund(Request $request, int|string $id): JsonResponse
     {
         $validator = Validator::make($request->all(), [
             'amount' => 'nullable|numeric|min:0',

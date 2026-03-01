@@ -127,7 +127,7 @@ class PaymentRequestController extends Controller
     /**
      * Принять платежное требование
      */
-    public function accept(Request $request, int $id): JsonResponse
+    public function accept(Request $request, int|string $id): JsonResponse
     {
         try {
             $validated = $request->validate([
@@ -171,7 +171,7 @@ class PaymentRequestController extends Controller
     /**
      * Отклонить платежное требование
      */
-    public function reject(Request $request, int $id): JsonResponse
+    public function reject(Request $request, int|string $id): JsonResponse
     {
         try {
             $validated = $request->validate([
@@ -210,7 +210,7 @@ class PaymentRequestController extends Controller
     /**
      * Получить требования от контрагента
      */
-    public function fromContractor(Request $request, int $contractorId): JsonResponse
+    public function fromContractor(Request $request, int|string $contractorId): JsonResponse
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');

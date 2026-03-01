@@ -46,7 +46,7 @@ class PaymentCalendarController extends Controller
     /**
      * Reschedule a payment (Drag & Drop handler)
      */
-    public function reschedule(Request $request, int $id): JsonResponse
+    public function reschedule(Request $request, int|string $id): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id');
         $document = PaymentDocument::forOrganization($organizationId)->findOrFail($id);

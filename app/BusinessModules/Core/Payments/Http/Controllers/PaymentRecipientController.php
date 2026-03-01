@@ -120,7 +120,7 @@ class PaymentRecipientController extends Controller
      * @group Payment Recipients
      * @authenticated
      */
-    public function show(Request $request, int $documentId): JsonResponse
+    public function show(Request $request, int|string $documentId): JsonResponse
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
@@ -164,7 +164,7 @@ class PaymentRecipientController extends Controller
      * @group Payment Recipients
      * @authenticated
      */
-    public function markAsViewed(Request $request, int $documentId): JsonResponse
+    public function markAsViewed(Request $request, int|string $documentId): JsonResponse
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
@@ -220,7 +220,7 @@ class PaymentRecipientController extends Controller
      * @group Payment Recipients
      * @authenticated
      */
-    public function confirmReceipt(Request $request, int $documentId): JsonResponse
+    public function confirmReceipt(Request $request, int|string $documentId): JsonResponse
     {
         try {
             $validated = $request->validate([
