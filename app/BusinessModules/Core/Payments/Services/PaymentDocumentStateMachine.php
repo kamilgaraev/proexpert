@@ -43,6 +43,10 @@ class PaymentDocumentStateMachine
      */
     public function transition(PaymentDocument $document, PaymentDocumentStatus $newStatus, ?string $reason = null): PaymentDocument
     {
+        if ($document->status === $newStatus) {
+            return $document; // Уже в этом статусе
+        }
+
         if (!$this->canTransition($document, $newStatus)) {
             throw new \DomainException(
                 "Недопустимый переход из статуса '{$document->status->label()}' в '{$newStatus->label()}'"

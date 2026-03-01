@@ -180,17 +180,6 @@ class ApprovalWorkflowService
             // Блокируем документ для предотвращения гонок
             $document = PaymentDocument::where('id', $document->id)->lockForUpdate()->first();
 
-            // Если документ уже утвержден или оплачен — просто выходим
-            if (in_array($document->status, [
-                PaymentDocumentStatus::APPROVED,
-                PaymentDocumentStatus::SCHEDULED,
-                PaymentDocumentStatus::PARTIALLY_PAID,
-                PaymentDocumentStatus::PAID
-            ])) {
-                DB::commit();
-                return true; 
-            }
-
             // Найти pending утверждение для данного пользователя
             $approval = PaymentApproval::where('payment_document_id', $document->id)
                 ->where('approver_user_id', $userId)
@@ -351,21 +340,6 @@ class ApprovalWorkflowService
             $approval->decision_comment = $comment;
             $approval->decided_at = now();
             $approval->save();
-            
-            // Если это админ, утвердим только остальные шаги ЭТОГО уровня, чтобы не застревало
-            if ($isAdmin) {
-                PaymentApproval::where('payment_document_id', $document->id)
-                    ->where('approval_level', $approval->approval_level)
-                    ->where('status', 'pending')
-                    ->get()
-                    ->each(function($a) use ($userId) {
-                        $a->approver_user_id = $userId;
-                        $a->status = 'approved';
-                        $a->decision_comment = "Автоматически утверждено (Синхронизация уровня Администратором/Владельцем)";
-                        $a->decided_at = now();
-                        $a->save();
-                    });
-            }
 
             Log::info('payment_approval.approved', [
                 'document_id' => $document->id,
@@ -726,13 +700,8 @@ class ApprovalWorkflowService
             $currentLevel = $firstPending?->approval_level;
         }
 
-        $isFullyApproved = false;
-        if ($document->status === PaymentDocumentStatus::APPROVED) {
-            $isFullyApproved = true; // Документ в статусе approved = полностью утвержден
-        } else {
-            // Для других статусов проверяем наличие записей
-            $isFullyApproved = $pending === 0 && $rejected === 0 && $total > 0;
-        }
+        // Для определения полной утвержденности смотрим ТОЛЬКО на шаги
+        $isFullyApproved = $pending === 0 && $rejected === 0 && $total > 0;
 
         $canBeApprovedByCurrentUser = false;
         if ($userId && $document->status === PaymentDocumentStatus::PENDING_APPROVAL) {
