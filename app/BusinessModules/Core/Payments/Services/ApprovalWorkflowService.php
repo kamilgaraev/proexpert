@@ -346,15 +346,21 @@ class ApprovalWorkflowService
             }
 
             // Утвердить конкретный шаг
+            if (!$approval->approver_user_id) {
+                $approval->approver_user_id = $userId;
+            }
             $approval->approve($comment);
             
-            // Если это админ, утвердим все остальные шаги этого уровня тоже, чтобы не застряло
+            // Если это админ, утвердим только остальные шаги ЭТОГО уровня, чтобы не застревало
             if ($isAdmin) {
                 PaymentApproval::where('payment_document_id', $document->id)
                     ->where('approval_level', $approval->approval_level)
                     ->where('status', 'pending')
                     ->get()
-                    ->each(fn($a) => $a->approve("Автоматически утверждено (Override by Admin)"));
+                    ->each(function($a) use ($userId) {
+                        $a->approver_user_id = $userId;
+                        $a->approve("Автоматически утверждено (Синхронизация уровня Администратором/Владельцем)");
+                    });
             }
 
             Log::info('payment_approval.approved', [
