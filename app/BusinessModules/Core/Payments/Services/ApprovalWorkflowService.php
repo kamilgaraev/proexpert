@@ -690,6 +690,18 @@ class ApprovalWorkflowService
             'current_level' => $currentLevel,
             'is_fully_approved' => $isFullyApproved,
             'is_rejected' => $rejected > 0,
+            'pending_approvals' => $approvals->where('status', 'pending')->values()->map(fn($a) => [
+                'id' => $a->id,
+                'role' => $a->approval_role,
+                'role_label' => $a->getRoleLabel(),
+                'approver' => $a->approver?->name,
+                'level' => $a->approval_level,
+                'order' => $a->approval_order,
+                'status' => $a->status,
+                'status_label' => $a->getStatusLabel(),
+                'comment' => $a->decision_comment,
+                'decided_at' => $a->decided_at?->toDateTimeString(),
+            ]),
             'approvals' => $approvals->map(fn($a) => [
                 'id' => $a->id,
                 'role' => $a->approval_role,
