@@ -60,13 +60,14 @@ class GanttExcelExportService
     public function export(ProjectSchedule $schedule): string
     {
         $schedule->load([
-            'tasks' => fn($q) => $q->orderBy('sort_order')->orderBy('level'),
+            'tasks.intervals',
             'dependencies.predecessorTask',
             'dependencies.successorTask',
             'project',
         ]);
 
-        $tasks = $schedule->tasks ?? collect();
+        $allTasks = $schedule->tasks ?? collect();
+        $tasks = $this->flattenTasksHierarchically($allTasks);
         $dependencies = $schedule->dependencies ?? collect();
 
         $spreadsheet = new Spreadsheet();
@@ -200,7 +201,21 @@ class GanttExcelExportService
             $sheet->getStyle('B' . $dataRow)->getAlignment()->setIndent(max(0, ($task->level ?? 0) - 1));
 
             $activePeriodIdxs = [];
-            if ($taskStart && $taskEnd) {
+            $hasIntervals = $task->intervals && $task->intervals->isNotEmpty();
+
+            if ($hasIntervals) {
+                foreach ($task->intervals as $interval) {
+                    $intStart = Carbon::parse($interval->start_date)->startOfDay();
+                    $intEnd = Carbon::parse($interval->end_date)->endOfDay();
+                    foreach ($periods as $i => $period) {
+                        if ($intStart->lte($period['end']) && $intEnd->gte($period['start'])) {
+                            $activePeriodIdxs[] = $i;
+                        }
+                    }
+                }
+                $activePeriodIdxs = array_values(array_unique($activePeriodIdxs));
+                sort($activePeriodIdxs);
+            } elseif ($taskStart && $taskEnd) {
                 foreach ($periods as $i => $period) {
                     if ($taskStart->lte($period['end']) && $taskEnd->gte($period['start'])) {
                         $activePeriodIdxs[] = $i;
@@ -221,7 +236,12 @@ class GanttExcelExportService
                     $cellColor = ($posInActive < $donePeriodCount) ? $doneColor : $barColor;
                     $sheet->getStyle($cellRef)->applyFromArray([
                         'fill'      => ['fillType' => Fill::FILL_SOLID, 'color' => ['argb' => 'FF' . $cellColor]],
-                        'borders'   => ['bottom' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFE5E7EB']]],
+                        'borders'   => [
+                            'top' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFCBD5E1']],
+                            'bottom' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFCBD5E1']],
+                            'left' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFCBD5E1']],
+                            'right' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFCBD5E1']],
+                        ],
                         'alignment' => ['vertical' => Alignment::VERTICAL_CENTER, 'horizontal' => Alignment::HORIZONTAL_CENTER],
                     ]);
                     if ($type === 'milestone') {
@@ -230,10 +250,15 @@ class GanttExcelExportService
                         $sheet->getStyle($cellRef)->getFill()->setFillType(Fill::FILL_NONE);
                     }
                 } else {
-                    $altBg = ($dataRow % 2 === 0) ? 'F3F4F6' : 'FFFFFF';
+                    $altBg = ($dataRow % 2 === 0) ? 'F9FAFB' : 'FFFFFF';
                     $sheet->getStyle($cellRef)->applyFromArray([
                         'fill'    => ['fillType' => Fill::FILL_SOLID, 'color' => ['argb' => 'FF' . $altBg]],
-                        'borders' => ['bottom' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFE5E7EB']]],
+                        'borders' => [
+                            'top' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFE5E7EB']],
+                            'bottom' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFE5E7EB']],
+                            'left' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFE5E7EB']],
+                            'right' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFE5E7EB']],
+                        ],
                     ]);
                 }
 
@@ -248,6 +273,24 @@ class GanttExcelExportService
 
         $freezeCol = Coordinate::stringFromColumnIndex($fixedCols + 1);
         $sheet->freezePane("{$freezeCol}" . ($headerRow + 1));
+    }
+
+    private function flattenTasksHierarchically(Collection $tasks): Collection
+    {
+        $grouped = $tasks->groupBy('parent_task_id');
+        $result = collect();
+
+        $flatten = function ($parentId) use (&$flatten, $grouped, &$result) {
+            $children = $grouped->get($parentId, collect())->sortBy('sort_order');
+            foreach ($children as $child) {
+                $result->push($child);
+                $flatten($child->id);
+            }
+        };
+
+        $flatten(null); // start with root tasks
+
+        return $result;
     }
 
     private function buildPeriods(Carbon $minDate, Carbon $maxDate, string $scale): array
