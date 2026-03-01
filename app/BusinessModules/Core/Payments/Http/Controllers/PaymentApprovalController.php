@@ -69,7 +69,7 @@ class PaymentApprovalController extends Controller
     /**
      * Утвердить документ
      */
-    public function approve(Request $request, int $documentId): JsonResponse
+    public function approve(Request $request, int|string $documentId): JsonResponse
     {
         try {
             $validated = $request->validate([
@@ -115,7 +115,7 @@ class PaymentApprovalController extends Controller
     /**
      * Отклонить документ
      */
-    public function reject(Request $request, int $documentId): JsonResponse
+    public function reject(Request $request, int|string $documentId): JsonResponse
     {
         try {
             $validated = $request->validate([
@@ -161,7 +161,7 @@ class PaymentApprovalController extends Controller
     /**
      * Получить историю утверждений документа
      */
-    public function history(Request $request, int $documentId): JsonResponse
+    public function history(Request $request, int|string $documentId): JsonResponse
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
@@ -204,7 +204,7 @@ class PaymentApprovalController extends Controller
     /**
      * Получить статус утверждения документа
      */
-    public function status(Request $request, int $documentId): JsonResponse
+    public function status(Request $request, int|string $documentId): JsonResponse
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
@@ -232,7 +232,7 @@ class PaymentApprovalController extends Controller
     /**
      * Отправить напоминания утверждающим
      */
-    public function sendReminders(Request $request, int $documentId): JsonResponse
+    public function sendReminders(Request $request, int|string $documentId): JsonResponse
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');

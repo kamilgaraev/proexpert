@@ -99,7 +99,7 @@ class ExportController extends Controller
      * 
      * POST /api/v1/admin/payments/export/pdf/{documentId}
      */
-    public function pdf(Request $request, int $documentId): \Symfony\Component\HttpFoundation\Response
+    public function pdf(Request $request, int|string $documentId): \Symfony\Component\HttpFoundation\Response
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');

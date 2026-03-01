@@ -155,7 +155,7 @@ class PaymentDocumentController extends Controller
     /**
      * Получить конкретный документ
      */
-    public function show(Request $request, int $id): JsonResponse
+    public function show(Request $request, int|string $id): JsonResponse
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
@@ -389,7 +389,7 @@ class PaymentDocumentController extends Controller
     /**
      * Обновить платежный документ
      */
-    public function update(Request $request, int $id): JsonResponse
+    public function update(Request $request, int|string $id): JsonResponse
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
@@ -440,7 +440,7 @@ class PaymentDocumentController extends Controller
     /**
      * Отправить на утверждение
      */
-    public function submit(Request $request, int $id): JsonResponse
+    public function submit(Request $request, int|string $id): JsonResponse
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
@@ -477,7 +477,7 @@ class PaymentDocumentController extends Controller
     /**
      * Сгенерировать печатную форму платежного поручения
      */
-    public function printOrder(Request $request, int $id): \Illuminate\Http\Response
+    public function printOrder(Request $request, int|string $id): \Illuminate\Http\Response
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
@@ -536,7 +536,7 @@ class PaymentDocumentController extends Controller
     /**
      * Запланировать платеж
      */
-    public function schedule(Request $request, int $id): JsonResponse
+    public function schedule(Request $request, int|string $id): JsonResponse
     {
         try {
             $validated = $request->validate([
@@ -578,7 +578,7 @@ class PaymentDocumentController extends Controller
     /**
      * Зарегистрировать платеж
      */
-    public function registerPayment(Request $request, int $id): JsonResponse
+    public function registerPayment(Request $request, int|string $id): JsonResponse
     {
         // Принудительное логирование через несколько каналов
         $logData = [
@@ -704,7 +704,7 @@ class PaymentDocumentController extends Controller
     /**
      * Отменить документ
      */
-    public function cancel(Request $request, int $id): JsonResponse
+    public function cancel(Request $request, int|string $id): JsonResponse
     {
         try {
             $validated = $request->validate([
@@ -742,7 +742,7 @@ class PaymentDocumentController extends Controller
     /**
      * Удалить документ
      */
-    public function destroy(Request $request, int $id): JsonResponse
+    public function destroy(Request $request, int|string $id): JsonResponse
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');

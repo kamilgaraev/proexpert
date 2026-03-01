@@ -18,7 +18,7 @@ class CounterpartyAccountController extends Controller
      * 
      * GET /api/v1/admin/payments/counterparty-accounts/{organizationId}
      */
-    public function show(Request $request, int $counterpartyOrganizationId): JsonResponse
+    public function show(Request $request, int|string $counterpartyOrganizationId): JsonResponse
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
