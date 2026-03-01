@@ -30,6 +30,7 @@ use App\Observers\ProjectOrganizationObserver;
 use App\Observers\ScheduleTaskObserver;
 use App\Observers\TaskDependencyObserver;
 use App\Observers\TaskResourceObserver;
+use App\Observers\ScheduleTaskIntervalObserver;
 use Illuminate\Support\Facades\Event;
 use App\Events\ProjectOrganizationAdded;
 use App\Events\ProjectOrganizationRoleChanged;
@@ -165,6 +166,7 @@ class AppServiceProvider extends ServiceProvider
         
         // Schedule observers
         ScheduleTask::observe(ScheduleTaskObserver::class);
+        \App\Models\ScheduleTaskInterval::observe(ScheduleTaskIntervalObserver::class);
         TaskDependency::observe(TaskDependencyObserver::class);
         TaskResource::observe(TaskResourceObserver::class);
         

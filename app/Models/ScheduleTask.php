@@ -168,6 +168,11 @@ class ScheduleTask extends Model
         return $this->hasMany(CompletedWork::class, 'schedule_task_id');
     }
 
+    public function intervals(): HasMany
+    {
+        return $this->hasMany(ScheduleTaskInterval::class, 'schedule_task_id')->orderBy('sort_order')->orderBy('start_date');
+    }
+
     public function estimateItem(): BelongsTo
     {
         return $this->belongsTo(EstimateItem::class);
@@ -485,5 +490,34 @@ class ScheduleTask extends Model
     public function scopeInProgress($query)
     {
         return $query->whereIn('status', TaskStatusEnum::workingStatuses());
+    }
+
+    /**
+     * Sync task dates with its intervals.
+     * Updates planned_start_date, planned_end_date and planned_duration_days
+     * based on the min/max dates and total duration from the intervals.
+     */
+    public function syncDatesFromIntervals(): void
+    {
+        $intervals = $this->intervals()->get();
+
+        if ($intervals->isEmpty()) {
+            return;
+        }
+
+        $minDate = $intervals->min('start_date');
+        $maxDate = $intervals->max('end_date');
+        $totalDurationDays = $intervals->sum('duration_days');
+
+        if ($this->planned_start_date !== $minDate || 
+            $this->planned_end_date !== $maxDate || 
+            $this->planned_duration_days !== $totalDurationDays) {
+            
+            $this->update([
+                'planned_start_date' => $minDate,
+                'planned_end_date' => $maxDate,
+                'planned_duration_days' => $totalDurationDays,
+            ]);
+        }
     }
 } 

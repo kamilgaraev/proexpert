@@ -96,6 +96,12 @@ class CreateScheduleTaskRequest extends FormRequest
             'tags' => 'nullable|array',
             'level' => 'nullable|integer|min:0',
             'sort_order' => 'nullable|integer|min:0',
+            
+            // Интервалы
+            'intervals' => 'nullable|array',
+            'intervals.*.start_date' => 'required_with:intervals|date',
+            'intervals.*.end_date' => 'required_with:intervals|date|after_or_equal:intervals.*.start_date',
+            'intervals.*.duration_days' => 'required_with:intervals|integer|min:1',
         ];
     }
 
@@ -117,6 +123,12 @@ class CreateScheduleTaskRequest extends FormRequest
             'planned_work_hours.min' => 'Трудозатраты не могут быть отрицательными',
             'measurement_unit_id.exists' => 'Указанная единица измерения не найдена',
             'constraint_date.required_unless' => 'Дата ограничения обязательна при указании типа ограничения',
+            
+            'intervals.*.start_date.required_with' => 'Дата начала интервала обязательна',
+            'intervals.*.end_date.required_with' => 'Дата окончания интервала обязательна',
+            'intervals.*.end_date.after_or_equal' => 'Дата окончания интервала должна быть не раньше даты начала интервала',
+            'intervals.*.duration_days.required_with' => 'Длительность интервала обязательна',
+            'intervals.*.duration_days.min' => 'Длительность интервала должна быть не менее 1 дня',
         ];
     }
 

@@ -88,6 +88,18 @@ class ScheduleTaskResource extends JsonResource
             'created_at' => $this->created_at?->format('Y-m-d H:i:s'),
             'updated_at' => $this->updated_at?->format('Y-m-d H:i:s'),
 
+            // Интервалы
+            'intervals' => $this->whenLoaded('intervals', function () {
+                return $this->intervals->map(function ($interval) {
+                    return [
+                        'id' => $interval->id,
+                        'start_date' => $interval->start_date?->format('Y-m-d'),
+                        'end_date' => $interval->end_date?->format('Y-m-d'),
+                        'duration_days' => $interval->duration_days,
+                    ];
+                });
+            }),
+
             // Счетчики связей
             'completed_works_count' => $this->whenCounted('completedWorks'),
         ];
