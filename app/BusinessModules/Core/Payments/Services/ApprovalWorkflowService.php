@@ -180,6 +180,17 @@ class ApprovalWorkflowService
             // Блокируем документ для предотвращения гонок
             $document = PaymentDocument::where('id', $document->id)->lockForUpdate()->first();
 
+            // Если документ уже утвержден или оплачен — просто выходим
+            if (in_array($document->status, [
+                PaymentDocumentStatus::APPROVED,
+                PaymentDocumentStatus::SCHEDULED,
+                PaymentDocumentStatus::PARTIALLY_PAID,
+                PaymentDocumentStatus::PAID
+            ])) {
+                DB::commit();
+                return true; 
+            }
+
             // Найти pending утверждение для данного пользователя
             $approval = PaymentApproval::where('payment_document_id', $document->id)
                 ->where('approver_user_id', $userId)
@@ -394,6 +405,11 @@ class ApprovalWorkflowService
         try {
             // Блокируем документ
             $document = PaymentDocument::where('id', $document->id)->lockForUpdate()->first();
+
+            if (in_array($document->status, [PaymentDocumentStatus::REJECTED, PaymentDocumentStatus::CANCELLED])) {
+                DB::commit();
+                return true; // Уже отклонен или отменен
+            }
 
             // Найти pending утверждение для данного пользователя
             $approval = PaymentApproval::where('payment_document_id', $document->id)
