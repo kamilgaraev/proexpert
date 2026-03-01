@@ -27,7 +27,7 @@ class PaymentApprovalController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $approvals->map(fn($approval) => [
-                    'id' => $approval->id,
+                    'payment_document_id' => $approval->payment_document_id,
                     'payment_document' => [
                         'id' => $approval->paymentDocument->id,
                         'document_number' => $approval->paymentDocument->document_number,
@@ -69,8 +69,15 @@ class PaymentApprovalController extends Controller
     /**
      * Утвердить документ
      */
-    public function approve(Request $request, int|string $documentId): JsonResponse
+    public function approve(Request $request, $documentId): JsonResponse
     {
+        if (!is_numeric($documentId)) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Некорректный ID документа',
+            ], 422);
+        }
+
         try {
             $validated = $request->validate([
                 'comment' => 'nullable|string',
@@ -115,8 +122,15 @@ class PaymentApprovalController extends Controller
     /**
      * Отклонить документ
      */
-    public function reject(Request $request, int|string $documentId): JsonResponse
+    public function reject(Request $request, $documentId): JsonResponse
     {
+        if (!is_numeric($documentId)) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Некорректный ID документа',
+            ], 422);
+        }
+
         try {
             $validated = $request->validate([
                 'reason' => 'required|string|min:3',
@@ -161,8 +175,15 @@ class PaymentApprovalController extends Controller
     /**
      * Получить историю утверждений документа
      */
-    public function history(Request $request, int|string $documentId): JsonResponse
+    public function history(Request $request, $documentId): JsonResponse
     {
+        if (!is_numeric($documentId)) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Некорректный ID документа',
+            ], 422);
+        }
+
         try {
             $organizationId = $request->attributes->get('current_organization_id');
             $document = PaymentDocument::forOrganization($organizationId)->findOrFail($documentId);
@@ -204,8 +225,15 @@ class PaymentApprovalController extends Controller
     /**
      * Получить статус утверждения документа
      */
-    public function status(Request $request, int|string $documentId): JsonResponse
+    public function status(Request $request, $documentId): JsonResponse
     {
+        if (!is_numeric($documentId)) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Некорректный ID документа',
+            ], 422);
+        }
+
         try {
             $organizationId = $request->attributes->get('current_organization_id');
             $document = PaymentDocument::forOrganization($organizationId)->findOrFail($documentId);
@@ -232,8 +260,15 @@ class PaymentApprovalController extends Controller
     /**
      * Отправить напоминания утверждающим
      */
-    public function sendReminders(Request $request, int|string $documentId): JsonResponse
+    public function sendReminders(Request $request, $documentId): JsonResponse
     {
+        if (!is_numeric($documentId)) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Некорректный ID документа',
+            ], 422);
+        }
+
         try {
             $organizationId = $request->attributes->get('current_organization_id');
             $document = PaymentDocument::forOrganization($organizationId)->findOrFail($documentId);
