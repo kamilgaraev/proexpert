@@ -55,7 +55,7 @@ return [
 
         'stack' => [
             'driver' => 'stack',
-            'channels' => ['single'],
+            'channels' => ['single', 'sentry'],
             'ignore_exceptions' => false,
         ],
 
@@ -237,6 +237,10 @@ return [
             'path' => storage_path('logs/auth/auth.log'),
             'level' => 'info',
             'days' => 14,
+        ],
+
+        'sentry' => [
+            'driver' => 'sentry',
         ],
 
     ],

@@ -133,6 +133,10 @@ return Application::configure(basePath: dirname(__DIR__))
         // ============================================================
         
         $exceptions->reportable(function (Throwable $e): void {
+            if (app()->bound('sentry')) {
+                app('sentry')->captureException($e);
+            }
+
             // Исключаем business logic исключения из мониторинга
             if ($e instanceof \App\Exceptions\Billing\InsufficientBalanceException) {
                 return;
