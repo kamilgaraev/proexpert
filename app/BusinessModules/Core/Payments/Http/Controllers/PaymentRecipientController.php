@@ -298,7 +298,7 @@ class PaymentRecipientController extends Controller
                 'by_status' => $query->selectRaw('status, COUNT(*) as count, SUM(amount) as total_amount')
                     ->groupBy('status')
                     ->get()
-                    ->keyBy('status')
+                    ->keyBy(fn($item) => $item->status instanceof \App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus ? $item->status->value : $item->status)
                     ->map(fn($item) => [
                         'count' => $item->count,
                         'total_amount' => (float) $item->total_amount,
