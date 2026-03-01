@@ -88,4 +88,44 @@ class ScheduleTaskService
 
         return $insertAt;
     }
+
+    /**
+     * Синхронизация интервалов задачи
+     * Удаляет старые интервалы и создает новые на основе переданного массива
+     */
+    public function syncTaskIntervals(ScheduleTask $task, ?array $intervalsData): void
+    {
+        if ($intervalsData === null) {
+            return;
+        }
+
+        DB::transaction(function () use ($task, $intervalsData) {
+            // Удаляем старые интервалы (Observer пересчитает даты родителя, если нужно, 
+            // но мы сделаем это один раз в конце через коллективный метод)
+            $task->intervals()->delete();
+
+            if (empty($intervalsData)) {
+                return;
+            }
+
+            // Создаем новые
+            $intervalsToInsert = [];
+            foreach ($intervalsData as $index => $intervalData) {
+                $intervalsToInsert[] = [
+                    'schedule_task_id' => $task->id,
+                    'start_date' => $intervalData['start_date'],
+                    'end_date' => $intervalData['end_date'],
+                    'duration_days' => $intervalData['duration_days'],
+                    'sort_order' => $index,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ];
+            }
+
+            \App\Models\ScheduleTaskInterval::insert($intervalsToInsert);
+            
+            // Принудительно вызываем пересчет дат у задачи
+            $task->syncDatesFromIntervals();
+        });
+    }
 }

@@ -85,6 +85,13 @@ class UpdateScheduleTaskRequest extends FormRequest
             'custom_fields' => 'sometimes|array|nullable',
             'tags' => 'sometimes|array|nullable',
             'sort_order' => 'sometimes|integer|min:0',
+
+            // Интервалы
+            'intervals' => 'sometimes|array|nullable',
+            'intervals.*.id' => 'sometimes|integer|exists:schedule_task_intervals,id',
+            'intervals.*.start_date' => 'required_with:intervals|date',
+            'intervals.*.end_date' => 'required_with:intervals|date|after_or_equal:intervals.*.start_date',
+            'intervals.*.duration_days' => 'required_with:intervals|integer|min:1',
         ];
     }
 
@@ -99,6 +106,13 @@ class UpdateScheduleTaskRequest extends FormRequest
             'completed_quantity.min' => 'Выполненный объём не может быть отрицательным',
             'measurement_unit_id.exists' => 'Указанная единица измерения не найдена',
             'constraint_date.required_unless' => 'Дата ограничения обязательна при указании типа ограничения',
+            
+            'intervals.*.id.exists' => 'Указанный интервал не найден',
+            'intervals.*.start_date.required_with' => 'Дата начала интервала обязательна',
+            'intervals.*.end_date.required_with' => 'Дата окончания интервала обязательна',
+            'intervals.*.end_date.after_or_equal' => 'Дата окончания интервала должна быть не раньше даты начала интервала',
+            'intervals.*.duration_days.required_with' => 'Длительность интервала обязательна',
+            'intervals.*.duration_days.min' => 'Длительность интервала должна быть не менее 1 дня',
         ];
     }
 }

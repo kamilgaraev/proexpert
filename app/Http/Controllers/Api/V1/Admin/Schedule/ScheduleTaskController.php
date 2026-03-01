@@ -44,6 +44,12 @@ class ScheduleTaskController extends Controller
 
             $taskModel->update($validatedData);
 
+            if (array_key_exists('intervals', $validatedData)) {
+                $scheduleTaskService = app(\App\Services\Schedule\ScheduleTaskService::class);
+                $scheduleTaskService->syncTaskIntervals($taskModel, $validatedData['intervals']);
+                $taskModel->refresh();
+            }
+
             if (
                 isset($validatedData['completed_quantity']) &&
                 $taskModel->quantity > 0
@@ -152,6 +158,7 @@ class ScheduleTaskController extends Controller
                     'successorDependencies'
                 ])
                 ->withCount('completedWorks')
+                ->with('intervals')
                 ->first();
 
             if (!$taskModel) {
