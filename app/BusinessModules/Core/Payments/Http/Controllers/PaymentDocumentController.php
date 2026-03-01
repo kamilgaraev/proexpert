@@ -172,7 +172,7 @@ class PaymentDocumentController extends Controller
                         'approvals', 
                         'transactions',
                         'invoiceable', // Загружаем связанную сущность (Contract, Act и т.д.)
-                        'estimateSplits.estimateItem' // Загружаем сплиты и позиции сметы
+                        'estimateSplits.estimateItem.measurementUnit' // Загружаем сплиты и позиции сметы с единицами измерения
                     ])
                     ->findOrFail($id);
             } catch (\Error $e) {
@@ -1041,8 +1041,8 @@ class PaymentDocumentController extends Controller
                 'price_deviation' => (float)$split->price_deviation,
                 'estimate_item' => $split->estimateItem ? [
                     'id' => $split->estimateItem->id,
-                    'title' => $split->estimateItem->title,
-                    'unit_name' => $split->estimateItem->unit_name ?? null,
+                    'title' => $split->estimateItem->name,
+                    'unit_name' => $split->estimateItem->measurementUnit ? $split->estimateItem->measurementUnit->short_name : null,
                 ] : null,
             ]) : [],
             'can_be_approved_by_current_user' => $canApprove, // Флаг для фронтенда
