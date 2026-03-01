@@ -100,11 +100,12 @@ class ProjectScheduleController extends Controller
         if ($request->get('format') === 'gantt') {
             $scheduleModel->load([
                 'rootTasks.childTasks' => function ($query) {
-                    $query->orderBy('sort_order');
+                    $query->orderBy('sort_order')->with('intervals');
                 },
+                'rootTasks.intervals',
                 'rootTasks.predecessorDependencies',
                 'tasks' => function ($query) {
-                    $query->orderBy('sort_order');
+                    $query->orderBy('sort_order')->with('intervals');
                 },
                 'dependencies'
             ]);
@@ -115,7 +116,7 @@ class ProjectScheduleController extends Controller
         }
 
         return response()->json([
-            'data' => new ProjectScheduleResource($scheduleModel->load(['project', 'createdBy', 'tasks', 'dependencies', 'resources']))
+            'data' => new ProjectScheduleResource($scheduleModel->load(['project', 'createdBy', 'tasks.intervals', 'dependencies', 'resources']))
         ]);
     }
 
