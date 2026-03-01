@@ -20,7 +20,7 @@ class WarehouseReceiptFromPaymentService
         }
 
         $warehouse = OrganizationWarehouse::where('organization_id', $document->organization_id)
-            ->where('is_default', true)
+            ->where('is_main', true)
             ->first();
 
         if (!$warehouse) {
