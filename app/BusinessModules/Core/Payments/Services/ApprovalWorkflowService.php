@@ -346,10 +346,11 @@ class ApprovalWorkflowService
             }
 
             // Утвердить конкретный шаг
-            if (!$approval->approver_user_id) {
-                $approval->approver_user_id = $userId;
-            }
-            $approval->approve($comment);
+            $approval->approver_user_id = $userId;
+            $approval->status = 'approved';
+            $approval->decision_comment = $comment;
+            $approval->decided_at = now();
+            $approval->save();
             
             // Если это админ, утвердим только остальные шаги ЭТОГО уровня, чтобы не застревало
             if ($isAdmin) {
@@ -359,7 +360,10 @@ class ApprovalWorkflowService
                     ->get()
                     ->each(function($a) use ($userId) {
                         $a->approver_user_id = $userId;
-                        $a->approve("Автоматически утверждено (Синхронизация уровня Администратором/Владельцем)");
+                        $a->status = 'approved';
+                        $a->decision_comment = "Автоматически утверждено (Синхронизация уровня Администратором/Владельцем)";
+                        $a->decided_at = now();
+                        $a->save();
                     });
             }
 
@@ -559,8 +563,15 @@ class ApprovalWorkflowService
             ->where('status', 'pending');
             
         if ($isAdmin && $organizationId) {
-            // Для админа/владельца показываем все pending утверждения организации
-            $query->where('organization_id', $organizationId);
+            // Для админа показываем:
+            // 1. Те, что назначены лично ему
+            // 2. Те, что не назначены никому (но подходят по ролям)
+            // 3. НО не показываем "чужие" задачи, если админ не перешел в спец. режим
+            $query->where('organization_id', $organizationId)
+                ->where(function($q) use ($userId) {
+                    $q->where('approver_user_id', $userId)
+                      ->orWhereNull('approver_user_id');
+                });
             
             Log::info('payment_approval.get_pending_for_admin', [
                 'user_id' => $userId,
@@ -642,6 +653,8 @@ class ApprovalWorkflowService
      */
     public function getApprovalStatus(PaymentDocument $document, ?int $userId = null): array
     {
+        // Принудительно очищаем связи, чтобы получить свежие данные с именами
+        $document->unsetRelation('approvals');
         $approvals = $this->getApprovalHistory($document);
         
         $total = $approvals->count();
