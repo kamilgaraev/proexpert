@@ -280,9 +280,17 @@ class GanttExcelExportService
         $grouped = $tasks->groupBy('parent_task_id');
         $result = collect();
 
-        $flatten = function ($parentId) use (&$flatten, $grouped, &$result) {
+        // Save relations to restore them later, because groupBy/sortBy might strip them in some array iterations
+        $tasksMap = $tasks->keyBy('id');
+
+        $flatten = function ($parentId) use (&$flatten, $grouped, &$result, $tasksMap) {
             $children = $grouped->get($parentId, collect())->sortBy('sort_order');
             foreach ($children as $child) {
+                // Restore intervals relation
+                if ($tasksMap->has($child->id) && $tasksMap->get($child->id)->relationLoaded('intervals')) {
+                    $child->setRelation('intervals', $tasksMap->get($child->id)->intervals);
+                }
+                
                 $result->push($child);
                 $flatten($child->id);
             }
