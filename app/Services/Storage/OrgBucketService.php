@@ -120,7 +120,7 @@ class OrgBucketService
         // Убираем кастомные твики для Regru, оставляем базовый конфиг.
         $diskConfig = array_merge($config, [
             'bucket' => $bucket,
-            'use_path_style_endpoint' => false,
+            'use_path_style_endpoint' => true,
             'region' => $region ?: ($config['region'] ?? 'ru-central1'),
         ]);
         Log::debug('[OrgBucketService] Building disk', [
