@@ -125,12 +125,19 @@ class YandexGPTProvider implements LLMProviderInterface
                     // Конвертируем tool_calls
                     $yandexToolCalls = [];
                     foreach ($toolCalls as $call) {
+                        $args = is_string($call['function']['arguments']) 
+                            ? json_decode($call['function']['arguments'], true) 
+                            : ($call['function']['arguments'] ?? []);
+                            
+                        // Если аргументы пустые, кастим в объект stdClass
+                        if (empty($args)) {
+                            $args = new \stdClass();
+                        }
+
                         $yandexToolCalls[] = [
                             'functionCall' => [
                                 'name' => $call['function']['name'] ?? '',
-                                'arguments' => is_string($call['function']['arguments']) 
-                                    ? json_decode($call['function']['arguments'], true) 
-                                    : ($call['function']['arguments'] ?? []),
+                                'arguments' => $args,
                             ]
                         ];
                     }
