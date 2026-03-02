@@ -96,7 +96,7 @@ Schedule::command('modules:convert-expired-trials')
     ->appendOutputTo(storage_path('logs/schedule-trial-expired.log'));
 
 Schedule::command('custom-reports:execute-scheduled')
-    ->everyFiveMinutes()
+    ->hourly()
     ->withoutOverlapping(30)
     ->onFailure(function () {
         Log::channel('stderr')->error('Scheduled custom-reports:execute-scheduled command failed.');
@@ -148,7 +148,7 @@ Schedule::command('subscriptions:renew --days-ahead=1')
 
 // Автоматическое продление модулей с автооплатой (каждые 5 минут)
 Schedule::command('modules:renew --days-ahead=1')
-    ->everyFiveMinutes()
+    ->hourly()
     ->withoutOverlapping(240)
     ->runInBackground()
     ->onFailure(function () {
@@ -202,7 +202,7 @@ Schedule::job(new SendUpcomingPaymentNotificationsJob())
 
 // Синхронизация total_amount контрактов с Event Sourcing (каждую минуту для мгновенного исправления)
 Schedule::command('contracts:sync-event-sourcing')
-    ->everyMinute()
+    ->hourly()
     ->withoutOverlapping(55)
     ->runInBackground()
     ->onFailure(function () {
