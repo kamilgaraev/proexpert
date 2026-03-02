@@ -222,20 +222,26 @@ class YandexGPTProvider implements LLMProviderInterface
         return $result;
     }
     
-    /**
-     * Конвертирует стандартный массив инструментов (OpenAI style) в формат YandexGPT
-     */
     protected function convertTools(array $tools): array
     {
         $yandexTools = [];
         
         foreach ($tools as $tool) {
             if (isset($tool['type']) && $tool['type'] === 'function') {
+                $parameters = $tool['function']['parameters'] ?? [];
+                
+                // Важно: YandexGPT ожидает JSON объект (map) для параметров,
+                // поэтому пустой массив PHP нужно принудительно кастовать в объект,
+                // чтобы json_encode выдал {}, а не []
+                if (empty($parameters)) {
+                    $parameters = new \stdClass();
+                }
+                
                 $yandexTools[] = [
                     'function' => [
                         'name' => $tool['function']['name'],
                         'description' => $tool['function']['description'] ?? '',
-                        'parameters' => $tool['function']['parameters'] ?? [],
+                        'parameters' => $parameters,
                     ]
                 ];
             }
