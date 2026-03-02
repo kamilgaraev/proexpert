@@ -7,6 +7,13 @@ use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\OpenAIProvider;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\YandexGPTProvider;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\DeepSeekProvider;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchMaterialsTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchContractorsTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\ApprovePaymentRequestTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\CreateScheduleTaskTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\UpdateScheduleTaskStatusTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SendProjectNotificationTool;
+use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateProfitabilityReportTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateWorkCompletionReportTool;
@@ -50,6 +57,14 @@ class AIAssistantServiceProvider extends ServiceProvider
             $registry->registerTool($app->make(GenerateTimeTrackingReportTool::class));
             $registry->registerTool($app->make(GenerateContractPaymentsReportTool::class));
             $registry->registerTool($app->make(GenerateProjectTimelinesReportTool::class));
+            
+            // Phase 2: CRUD and Business Actions
+            $registry->registerTool($app->make(SearchMaterialsTool::class));
+            $registry->registerTool($app->make(SearchContractorsTool::class));
+            $registry->registerTool($app->make(ApprovePaymentRequestTool::class));
+            $registry->registerTool($app->make(CreateScheduleTaskTool::class));
+            $registry->registerTool($app->make(UpdateScheduleTaskStatusTool::class));
+            $registry->registerTool($app->make(SendProjectNotificationTool::class));
             
             return $registry;
         });
