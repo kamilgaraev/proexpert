@@ -139,10 +139,20 @@ class YandexGPTProvider implements LLMProviderInterface
                     $yandexMessage['text'] = !empty($content) ? $content : '...';
                 }
             } elseif ($role === 'tool') {
-                // Результат работы инструмента в YandexGPT передается как специальное сообщение
-                $yandexMessage['role'] = 'function';
-                $yandexMessage['text'] = $content ?: '{}';
-                $yandexMessage['name'] = $message['name'] ?? 'generate_report';
+                // Результат работы инструмента в YandexGPT передается через toolResultList
+                $yandexMessage['role'] = 'user'; // По умолчанию отправим как от пользователя с результатами (или assistant, если требует API)
+                $yandexMessage['text'] = '';
+                
+                $yandexMessage['toolResultList'] = [
+                    'toolResults' => [
+                        [
+                            'functionResult' => [
+                                'name' => $message['name'] ?? '',
+                                'content' => is_string($content) ? $content : json_encode($content, JSON_UNESCAPED_UNICODE),
+                            ]
+                        ]
+                    ]
+                ];
             } else {
                 // user или system
                 $yandexMessage['role'] = $role === 'system' ? 'system' : 'user';
