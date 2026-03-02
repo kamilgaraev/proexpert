@@ -134,7 +134,7 @@ class YandexGPTProvider implements LLMProviderInterface
                             ]
                         ];
                     }
-                    $yandexMessage['toolCalls'] = $yandexToolCalls;
+                    $yandexMessage['toolCallList'] = ['toolCalls' => $yandexToolCalls];
                 } else {
                     $yandexMessage['text'] = !empty($content) ? $content : '...';
                 }
