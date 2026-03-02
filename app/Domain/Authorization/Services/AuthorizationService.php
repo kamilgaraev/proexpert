@@ -142,7 +142,8 @@ class AuthorizationService
         $permissions = [];
         
         foreach ($roles as $assignment) {
-            $rolePermissions = $this->getRolePermissions($assignment->role_slug, $assignment->role_type);
+            $orgId = $this->permissionResolver->extractOrganizationId($assignment);
+            $rolePermissions = $this->getRolePermissions($assignment->role_slug, $assignment->role_type, $orgId);
             $permissions = array_merge($permissions, $rolePermissions);
         }
         
@@ -322,7 +323,8 @@ class AuthorizationService
         $roles = $this->getUserRoles($user, $context);
         
         foreach ($roles as $assignment) {
-            $interfaceAccess = $this->getRoleInterfaceAccess($assignment->role_slug, $assignment->role_type);
+            $orgId = $this->permissionResolver->extractOrganizationId($assignment);
+            $interfaceAccess = $this->getRoleInterfaceAccess($assignment->role_slug, $assignment->role_type, $orgId);
             if (in_array($interface, $interfaceAccess)) {
                 return true;
             }
@@ -466,24 +468,30 @@ class AuthorizationService
     /**
      * Получить все права роли
      */
-    protected function getRolePermissions(string $roleSlug, string $roleType): array
+    protected function getRolePermissions(string $roleSlug, string $roleType, ?int $organizationId = null): array
     {
         if ($roleType === UserRoleAssignment::TYPE_SYSTEM) {
             return $this->permissionResolver->getSystemRolePermissions($roleSlug);
         } else {
-            return $this->permissionResolver->getCustomRolePermissions($roleSlug);
+            return $this->permissionResolver->getCustomRolePermissions($roleSlug, $organizationId);
         }
     }
 
     /**
      * Получить доступ к интерфейсам для роли
      */
-    protected function getRoleInterfaceAccess(string $roleSlug, string $roleType): array
+    protected function getRoleInterfaceAccess(string $roleSlug, string $roleType, ?int $organizationId = null): array
     {
         if ($roleType === UserRoleAssignment::TYPE_SYSTEM) {
             return $this->roleScanner->getInterfaceAccess($roleSlug);
         } else {
-            $role = OrganizationCustomRole::where('slug', $roleSlug)->first();
+            $query = OrganizationCustomRole::where('slug', $roleSlug);
+            
+            if ($organizationId) {
+                $query->where('organization_id', $organizationId);
+            }
+            
+            $role = $query->first();
             return $role ? $role->interface_access : [];
         }
     }

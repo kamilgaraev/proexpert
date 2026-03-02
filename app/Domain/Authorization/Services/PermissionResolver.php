@@ -254,13 +254,14 @@ class PermissionResolver
      */
     public function getSystemPermissions(UserRoleAssignment $assignment): array
     {
-        $cacheKey = "system_perms_{$assignment->role_type}_{$assignment->role_slug}";
+        $organizationId = $this->extractOrganizationId($assignment);
+        $cacheKey = "system_perms_{$assignment->role_type}_{$assignment->role_slug}_" . ($organizationId ?? 'global');
         
-        return Cache::remember($cacheKey, 600, function () use ($assignment) {
+        return Cache::remember($cacheKey, 600, function () use ($assignment, $organizationId) {
             if ($assignment->role_type === UserRoleAssignment::TYPE_SYSTEM) {
                 return $this->roleScanner->getSystemPermissions($assignment->role_slug);
             } else {
-                $customRole = $this->getCustomRole($assignment->role_slug);
+                $customRole = $this->getCustomRole($assignment->role_slug, $organizationId);
                 return $customRole ? $customRole->system_permissions : [];
             }
         });
@@ -271,13 +272,14 @@ class PermissionResolver
      */
     public function getModulePermissions(UserRoleAssignment $assignment): array
     {
-        $cacheKey = "module_perms_{$assignment->role_type}_{$assignment->role_slug}";
+        $organizationId = $this->extractOrganizationId($assignment);
+        $cacheKey = "module_perms_{$assignment->role_type}_{$assignment->role_slug}_" . ($organizationId ?? 'global');
         
-        return Cache::remember($cacheKey, 600, function () use ($assignment) {
+        return Cache::remember($cacheKey, 600, function () use ($assignment, $organizationId) {
             if ($assignment->role_type === UserRoleAssignment::TYPE_SYSTEM) {
                 return $this->roleScanner->getModulePermissions($assignment->role_slug);
             } else {
-                $customRole = $this->getCustomRole($assignment->role_slug);
+                $customRole = $this->getCustomRole($assignment->role_slug, $organizationId);
                 return $customRole ? $customRole->module_permissions : [];
             }
         });
@@ -310,9 +312,9 @@ class PermissionResolver
     /**
      * Получить все права кастомной роли
      */
-    public function getCustomRolePermissions(string $roleSlug): array
+    public function getCustomRolePermissions(string $roleSlug, ?int $organizationId = null): array
     {
-        $customRole = $this->getCustomRole($roleSlug);
+        $customRole = $this->getCustomRole($roleSlug, $organizationId);
         
         if (!$customRole) {
             return [];
@@ -397,7 +399,7 @@ class PermissionResolver
     /**
      * Извлечь ID организации из назначения или контекста
      */
-    protected function extractOrganizationId(UserRoleAssignment $assignment, ?array $context = null): ?int
+    public function extractOrganizationId(UserRoleAssignment $assignment, ?array $context = null): ?int
     {
         // Сначала пробуем из контекста
         if ($context && isset($context['organization_id'])) {
@@ -429,10 +431,18 @@ class PermissionResolver
     /**
      * Получить кастомную роль с кешированием
      */
-    protected function getCustomRole(string $roleSlug): ?OrganizationCustomRole
+    protected function getCustomRole(string $roleSlug, ?int $organizationId = null): ?OrganizationCustomRole
     {
-        return Cache::remember("custom_role_$roleSlug", 300, function () use ($roleSlug) {
-            return OrganizationCustomRole::where('slug', $roleSlug)->first();
+        $cacheKey = "custom_role_{$roleSlug}_" . ($organizationId ?? 'global');
+        
+        return Cache::remember($cacheKey, 300, function () use ($roleSlug, $organizationId) {
+            $query = OrganizationCustomRole::where('slug', $roleSlug);
+            
+            if ($organizationId) {
+                $query->where('organization_id', $organizationId);
+            }
+            
+            return $query->first();
         });
     }
 
