@@ -7,8 +7,9 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Http\UploadedFile;
 use App\Services\Storage\FileService;
-use Aws\S3\S3Client;
+use App\Models\Organization;
 
 class GenerateCustomReportAction
 {
@@ -441,15 +442,38 @@ class GenerateCustomReportAction
             default => 'other'
         };
 
-        $s3Path = "org-{$organizationId}/ai-reports/{$reportTypeFolder}/{$fileName}";
+        // Сохраняем в S3 через FileService
+        $fileService = app(FileService::class);
+        $organization = Organization::find($organizationId);
+        
+        if (!$organization) {
+            throw new \RuntimeException("Организация с ID {$organizationId} не найдена.");
+        }
+        
+        // Создаем временный файл
+        $tempPath = sys_get_temp_dir() . '/' . $fileName;
+        file_put_contents($tempPath, $pdfContent);
+        
+        $uploadedFile = new UploadedFile(
+            $tempPath,
+            $fileName,
+            'application/pdf',
+            null,
+            true
+        );
+        
+        // Загружаем в S3 (private)
+        $s3Path = $fileService->upload($uploadedFile, "ai-reports/{$reportTypeFolder}", null, 'private', $organization);
+        
+        // Удаляем временный файл
+        @unlink($tempPath);
+        
+        if (!$s3Path) {
+            throw new \RuntimeException("Не удалось сохранить PDF отчет в S3.");
+        }
 
-        // Сохраняем в S3
-        /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
-        $disk = Storage::disk('s3');
-        $disk->put($s3Path, $pdfContent);
-
-        // Генерируем presigned URL для Yandex Cloud Storage
-        return $this->generatePresignedUrl($s3Path);
+        // Генерируем presigned URL с помощью FileService (24 часа)
+        return $fileService->temporaryUrl($s3Path, 24 * 60, $organization) ?? '';
     }
     
     protected function generateReportHTML(array $data): string
@@ -682,7 +706,7 @@ class GenerateCustomReportAction
                 'version' => 'latest',
                 'region' => $config['region'] ?? 'ru-central1',
                 'endpoint' => 'https://storage.yandexcloud.net',
-                'use_path_style_endpoint' => false,
+                'use_path_style_endpoint' => true,
                 'credentials' => [
                     'key' => $config['key'],
                     'secret' => $config['secret'],

@@ -8,9 +8,17 @@ use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use App\Services\Storage\FileService;
+use App\Models\Organization;
 
 class AiReportsDownloadController extends Controller
 {
+    protected FileService $fileService;
+
+    public function __construct(FileService $fileService)
+    {
+        $this->fileService = $fileService;
+    }
     public function download(Request $request, string $token): StreamedResponse
     {
         try {
@@ -37,8 +45,18 @@ class AiReportsDownloadController extends Controller
                 abort(403, 'Доступ запрещен');
             }
 
+            // Получаем организацию
+            $organization = Organization::find($data['organization_id']);
+            if (!$organization) {
+                abort(404, 'Организация не найдена');
+            }
+
             // Генерируем presigned URL
-            $presignedUrl = $this->generatePresignedUrl($data['s3_path']);
+            $presignedUrl = $this->fileService->temporaryUrl($data['s3_path'], 15, $organization);
+            
+            if (!$presignedUrl) {
+                abort(500, 'Не удалось сгенерировать ссылку на скачивание');
+            }
 
             Log::info('AI Report download initiated', [
                 'organization_id' => $data['organization_id'],
@@ -88,48 +106,5 @@ class AiReportsDownloadController extends Controller
         return decrypt($encrypted);
     }
 
-    /**
-     * Генерирует presigned URL для файла
-     */
-    protected function generatePresignedUrl(string $s3Path): string
-    {
-        try {
-            $config = config('filesystems.disks.s3');
-            $bucket = $config['bucket'] ?? 'prohelper-storage';
-            
-            $s3Client = new \Aws\S3\S3Client([
-                'version' => 'latest',
-                'region' => $config['region'] ?? 'ru-central1',
-                'endpoint' => 'https://storage.yandexcloud.net',
-                'use_path_style_endpoint' => false,
-                'credentials' => [
-                    'key' => $config['key'],
-                    'secret' => $config['secret'],
-                ],
-            ]);
 
-            $cmd = $s3Client->getCommand('GetObject', [
-                'Bucket' => $bucket,
-                'Key' => $s3Path,
-            ]);
-
-            $request = $s3Client->createPresignedRequest($cmd, '+15 minutes');
-            $presignedUrl = (string) $request->getUri();
-
-            Log::info('Generated presigned URL for AI report download', [
-                'path' => $s3Path,
-                'bucket' => $bucket,
-            ]);
-
-            return $presignedUrl;
-
-        } catch (\Exception $e) {
-            Log::error('Failed to generate presigned URL for AI report', [
-                'path' => $s3Path,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-            throw $e;
-        }
-    }
 }
