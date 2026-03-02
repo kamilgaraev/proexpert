@@ -49,6 +49,25 @@ class SyncInvitedContractors extends Command
                     }, ARRAY_FILTER_USE_BOTH);
 
                     if (!empty($dirty)) {
+                        // Проверка уникальности ИНН в рамках организации, чтобы не поймать UniqueConstraintViolationException
+                        if (!empty($dirty['inn'])) {
+                            $duplicateExists = Contractor::where('organization_id', $contractor->organization_id)
+                                ->where('inn', $dirty['inn'])
+                                ->where('id', '!=', $contractor->id)
+                                ->whereNull('deleted_at')
+                                ->exists();
+
+                            if ($duplicateExists) {
+                                $this->warn("Пропуск подрядчика ID: {$contractor->id}. ИНН {$dirty['inn']} уже используется другой записью в организации {$contractor->organization_id}");
+                                Log::warning('SyncInvitedContractors: unique constraint conflict', [
+                                    'contractor_id' => $contractor->id,
+                                    'organization_id' => $contractor->organization_id,
+                                    'conflicting_inn' => $dirty['inn']
+                                ]);
+                                continue;
+                            }
+                        }
+
                         $contractor->fill($dirty);
                         $contractor->save();
                         $totalUpdated++;

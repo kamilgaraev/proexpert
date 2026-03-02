@@ -187,6 +187,24 @@ class HoldingContractorSyncService
         int $sourceOrganizationId,
         Organization $sourceOrganization
     ): Contractor {
+        // Проверка уникальности ИНН перед созданием
+        if (!empty($sourceOrganization->tax_number)) {
+            $duplicate = Contractor::where('organization_id', $forOrganizationId)
+                ->where('inn', $sourceOrganization->tax_number)
+                ->whereNull('deleted_at')
+                ->exists();
+
+            if ($duplicate) {
+                Log::warning('HoldingContractorSyncService: cannot create contractor, INN already exists', [
+                    'organization_id' => $forOrganizationId,
+                    'inn' => $sourceOrganization->tax_number,
+                    'source_org_id' => $sourceOrganizationId
+                ]);
+                // Возвращаем пустую модель или кидаем исключение, которое поймает handle()
+                throw new \Exception("ИНН {$sourceOrganization->tax_number} уже занят в организации {$forOrganizationId}");
+            }
+        }
+
         return Contractor::create([
             'organization_id' => $forOrganizationId,
             'source_organization_id' => $sourceOrganizationId,
@@ -237,6 +255,23 @@ class HoldingContractorSyncService
         }
 
         if (!empty($changes)) {
+            // Проверка уникальности ИНН при обновлении
+            if (isset($changes['inn']) && !empty($changes['inn'])) {
+                $duplicate = Contractor::where('organization_id', $contractor->organization_id)
+                    ->where('inn', $changes['inn'])
+                    ->where('id', '!=', $contractor->id)
+                    ->whereNull('deleted_at')
+                    ->exists();
+
+                if ($duplicate) {
+                    Log::warning('HoldingContractorSyncService: cannot update contractor INN, already exists', [
+                        'contractor_id' => $contractor->id,
+                        'inn' => $changes['inn']
+                    ]);
+                    return false;
+                }
+            }
+
             $changes['last_sync_at'] = now();
             $contractor->update($changes);
             
