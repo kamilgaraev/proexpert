@@ -101,9 +101,6 @@ class YandexGPTProvider implements LLMProviderInterface
         }
     }
 
-    /**
-     * Конвертирует сообщения из формата OpenAI в формат YandexGPT
-     */
     protected function convertMessages(array $messages): array
     {
         $converted = [];
@@ -112,11 +109,47 @@ class YandexGPTProvider implements LLMProviderInterface
             $role = $message['role'] ?? 'user';
             $content = $message['content'] ?? '';
             
-            // YandexGPT использует 'text' вместо 'content'
-            $converted[] = [
-                'role' => $role === 'assistant' ? 'assistant' : ($role === 'system' ? 'system' : 'user'),
-                'text' => $content,
-            ];
+            // Если это сообщение с вызовом функции
+            $toolCalls = $message['tool_calls'] ?? null;
+            
+            $yandexMessage = [];
+            
+            if ($role === 'assistant') {
+                $yandexMessage['role'] = 'assistant';
+                
+                // В YandexGPT если есть toolCalls, текст может быть обязательным,
+                // поэтому добавим заглушку если он пустой
+                if (!empty($toolCalls)) {
+                    $yandexMessage['text'] = !empty($content) ? $content : 'Вызываю инструмент...';
+                    
+                    // Конвертируем tool_calls
+                    $yandexToolCalls = [];
+                    foreach ($toolCalls as $call) {
+                        $yandexToolCalls[] = [
+                            'functionCall' => [
+                                'name' => $call['function']['name'] ?? '',
+                                'arguments' => is_string($call['function']['arguments']) 
+                                    ? json_decode($call['function']['arguments'], true) 
+                                    : ($call['function']['arguments'] ?? []),
+                            ]
+                        ];
+                    }
+                    $yandexMessage['toolCalls'] = $yandexToolCalls;
+                } else {
+                    $yandexMessage['text'] = !empty($content) ? $content : '...';
+                }
+            } elseif ($role === 'tool') {
+                // Результат работы инструмента в YandexGPT передается как специальное сообщение
+                $yandexMessage['role'] = 'function';
+                $yandexMessage['text'] = $content ?: '{}';
+                $yandexMessage['name'] = $message['name'] ?? 'tool_result';
+            } else {
+                // user или system
+                $yandexMessage['role'] = $role === 'system' ? 'system' : 'user';
+                $yandexMessage['text'] = !empty($content) ? $content : '...';
+            }
+            
+            $converted[] = $yandexMessage;
         }
         
         return $converted;
