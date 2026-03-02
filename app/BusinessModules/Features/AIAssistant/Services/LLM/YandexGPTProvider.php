@@ -48,11 +48,7 @@ class YandexGPTProvider implements LLMProviderInterface
 
             $startTime = microtime(true);
 
-            $response = Http::withHeaders([
-                'Authorization' => 'Api-Key ' . $this->apiKey,
-                'Content-Type' => 'application/json',
-                'x-folder-id' => $this->folderId,
-            ])->timeout(60)->post($this->endpoint, [
+            $requestPayload = [
                 'modelUri' => $modelUri,
                 'completionOptions' => [
                     'stream' => false,
@@ -60,7 +56,18 @@ class YandexGPTProvider implements LLMProviderInterface
                     'maxTokens' => (string)$maxTokens,
                 ],
                 'messages' => $yandexMessages,
-            ]);
+            ];
+            
+            if (!empty($options['tools'])) {
+                // YandexGPT expects tools in a specific format, we need to convert from standard OpenAI format
+                $requestPayload['tools'] = $this->convertTools($options['tools']);
+            }
+
+            $response = Http::withHeaders([
+                'Authorization' => 'Api-Key ' . $this->apiKey,
+                'Content-Type' => 'application/json',
+                'x-folder-id' => $this->folderId,
+            ])->timeout(60)->post($this->endpoint, $requestPayload);
 
             $duration = microtime(true) - $startTime;
 
@@ -133,7 +140,7 @@ class YandexGPTProvider implements LLMProviderInterface
         $outputTokens = $usage['completionTokens'] ?? 0;
         $totalTokens = $inputTokens + $outputTokens;
 
-        return [
+        $result = [
             'content' => $message['text'] ?? '',
             'role' => $message['role'] ?? 'assistant',
             'tokens_used' => $totalTokens,
@@ -142,6 +149,52 @@ class YandexGPTProvider implements LLMProviderInterface
             'model' => $data['result']['modelVersion'] ?? $this->modelUri,
             'finish_reason' => $alternative['status'] ?? 'ALTERNATIVE_STATUS_FINAL',
         ];
+
+        // Обрабатываем вызовы инструментов YandexGPT (только если они есть в ответе)
+        // В YandexGPT tool_calls передаются как type и function_call
+        if (isset($message['text']) && empty($message['text']) && isset($alternative['status']) && $alternative['status'] === 'ALTERNATIVE_STATUS_TOOL_CALLS') {
+            // YandexGPT currently doesn't standardly return tool calls the same as OpenAI in the response JSON easily
+            // We need to check if there are function calls present.
+            // As of current docs, Yandex API tool calls are located inside message->toolCalls or message->function_call
+            // Assuming it's in $message['tool_calls'] or we extract from a specific property.
+            // Let's implement standard handling assuming Yandex aligns to OpenAI or returns it in 'tool_calls' or 'functionCall'
+            if (!empty($message['functionCall'])) {
+                $result['tool_calls'] = [
+                    [
+                        'id' => uniqid('call_'),
+                        'type' => 'function',
+                        'function' => [
+                            'name' => $message['functionCall']['name'] ?? '',
+                            'arguments' => json_encode($message['functionCall']['arguments'] ?? []),
+                        ]
+                    ]
+                ];
+            }
+        }
+
+        return $result;
+    }
+    
+    /**
+     * Конвертирует стандартный массив инструментов (OpenAI style) в формат YandexGPT
+     */
+    protected function convertTools(array $tools): array
+    {
+        $yandexTools = [];
+        
+        foreach ($tools as $tool) {
+            if (isset($tool['type']) && $tool['type'] === 'function') {
+                $yandexTools[] = [
+                    'function' => [
+                        'name' => $tool['function']['name'],
+                        'description' => $tool['function']['description'] ?? '',
+                        'parameters' => $tool['function']['parameters'] ?? [],
+                    ]
+                ];
+            }
+        }
+        
+        return $yandexTools;
     }
 
     public function countTokens(string $text): int

@@ -15,6 +15,7 @@ class AIAssistantService
     protected IntentRecognizer $intentRecognizer;
     protected UsageTracker $usageTracker;
     protected LoggingService $logging;
+    protected AIToolRegistry $toolRegistry;
 
     public function __construct(
         LLMProviderInterface $llmProvider,
@@ -22,7 +23,8 @@ class AIAssistantService
         ContextBuilder $contextBuilder,
         IntentRecognizer $intentRecognizer,
         UsageTracker $usageTracker,
-        LoggingService $logging
+        LoggingService $logging,
+        AIToolRegistry $toolRegistry
     ) {
         $this->llmProvider = $llmProvider;
         $this->conversationManager = $conversationManager;
@@ -30,6 +32,7 @@ class AIAssistantService
         $this->intentRecognizer = $intentRecognizer;
         $this->usageTracker = $usageTracker;
         $this->logging = $logging;
+        $this->toolRegistry = $toolRegistry;
     }
 
     public function ask(
@@ -101,7 +104,64 @@ class AIAssistantService
         $messages = $this->buildMessages($conversation, $context);
 
         try {
-            $response = $this->llmProvider->chat($messages);
+            $options = [];
+            $tools = $this->toolRegistry->getToolsDefinitions();
+            if (!empty($tools)) {
+                $options['tools'] = $tools;
+            }
+
+            $response = $this->llmProvider->chat($messages, $options);
+            
+            $loopCount = 0;
+            $maxLoops = 5;
+            $organization = \App\Models\Organization::find($organizationId);
+
+            // Обработка Function Calling
+            while (!empty($response['tool_calls']) && $loopCount < $maxLoops) {
+                // Добавляем сообщение ассистента с вызовом функции в историю
+                $messages[] = [
+                    'role' => $response['role'],
+                    'content' => $response['content'] ?? '',
+                    'tool_calls' => $response['tool_calls'],
+                ];
+                
+                foreach ($response['tool_calls'] as $toolCall) {
+                    $toolName = $toolCall['function']['name'] ?? '';
+                    $args = json_decode($toolCall['function']['arguments'] ?? '{}', true) ?: [];
+                    
+                    $tool = $this->toolRegistry->getTool($toolName);
+                    if ($tool) {
+                        try {
+                            $toolResult = $tool->execute($args, $user, $organization);
+                            // Если инструмент вернул массив с executed_action (для записи стейта)
+                            if (is_array($toolResult) && isset($toolResult['_executed_action'])) {
+                                $executedAction = $toolResult['_executed_action'];
+                                unset($toolResult['_executed_action']);
+                            }
+                        } catch (\Exception $e) {
+                            $toolResult = ['error' => $e->getMessage()];
+                            $this->logging->technical('ai.tool.error', [
+                                'tool' => $toolName,
+                                'error' => $e->getMessage(),
+                            ], 'error');
+                        }
+                    } else {
+                        $toolResult = ['error' => "Tool {$toolName} not found or not registered."];
+                    }
+                    
+                    // Добавляем результат выполнения инструмента в историю
+                    $messages[] = [
+                        'role' => 'tool',
+                        'tool_call_id' => $toolCall['id'],
+                        'name' => $toolName,
+                        'content' => is_string($toolResult) ? $toolResult : json_encode($toolResult, JSON_UNESCAPED_UNICODE),
+                    ];
+                }
+                
+                // Делаем повторный запрос к LLM с результатами работы инструментов
+                $response = $this->llmProvider->chat($messages, $options);
+                $loopCount++;
+            }
 
             $assistantMessage = $this->conversationManager->addMessage(
                 $conversation,
