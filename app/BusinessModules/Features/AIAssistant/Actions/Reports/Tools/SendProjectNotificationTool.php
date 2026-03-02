@@ -33,8 +33,16 @@ class SendProjectNotificationTool implements AIToolInterface
                 ],
                 'recipient_role' => [
                     'type' => 'string',
-                    'description' => 'Роль получателя (например: pm, accountant, owner, worker). Если не указано, уведомление будет отправлено всем участникам.',
+                    'description' => 'Роль получателя в проекте (pm, accountant, owner, worker). Можно использовать вместе с project_id.',
                     'enum' => ['pm', 'accountant', 'owner', 'worker']
+                ],
+                'recipient_user_id' => [
+                    'type' => 'integer',
+                    'description' => 'ID конкретного пользователя для отправки уведомления.'
+                ],
+                'send_to_me' => [
+                    'type' => 'boolean',
+                    'description' => 'Если true, уведомление будет отправлено текущему пользователю (вам).'
                 ],
                 'message' => [
                     'type' => 'string',
@@ -50,6 +58,8 @@ class SendProjectNotificationTool implements AIToolInterface
         $projectId = $arguments['project_id'];
         $messageText = $arguments['message'];
         $role = $arguments['recipient_role'] ?? null;
+        $recipientUserId = $arguments['recipient_user_id'] ?? null;
+        $sendToMe = $arguments['send_to_me'] ?? false;
 
         $project = Project::where('id', $projectId)
             ->where('organization_id', $organization->id)
@@ -62,12 +72,26 @@ class SendProjectNotificationTool implements AIToolInterface
             ];
         }
 
-        $query = $project->users();
-        if ($role) {
-            $query->wherePivot('role', $role);
-        }
+        $recipients = collect();
 
-        $recipients = $query->get();
+        if ($sendToMe && $user) {
+            $recipients->push($user);
+        } elseif ($recipientUserId) {
+            $targetUser = User::where('id', $recipientUserId)
+                ->where('organization_id', $organization->id)
+                ->first();
+            if ($targetUser) {
+                $recipients->push($targetUser);
+            } else {
+                return ['status' => 'error', 'message' => "Пользователь с ID {$recipientUserId} не найден в вашей организации."];
+            }
+        } else {
+            $query = $project->users();
+            if ($role) {
+                $query->wherePivot('role', $role);
+            }
+            $recipients = $query->get();
+        }
 
         if ($recipients->isEmpty()) {
             return [

@@ -7,7 +7,10 @@ use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\OpenAIProvider;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\YandexGPTProvider;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\DeepSeekProvider;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchProjectsTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchWarehouseTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchMaterialsTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchUsersTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchContractorsTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\ApprovePaymentRequestTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\CreateScheduleTaskTool;
@@ -59,7 +62,10 @@ class AIAssistantServiceProvider extends ServiceProvider
             $registry->registerTool($app->make(GenerateProjectTimelinesReportTool::class));
             
             // Phase 2: CRUD and Business Actions
+            $registry->registerTool($app->make(SearchProjectsTool::class));
+            $registry->registerTool($app->make(SearchWarehouseTool::class));
             $registry->registerTool($app->make(SearchMaterialsTool::class));
+            $registry->registerTool($app->make(SearchUsersTool::class));
             $registry->registerTool($app->make(SearchContractorsTool::class));
             $registry->registerTool($app->make(ApprovePaymentRequestTool::class));
             $registry->registerTool($app->make(CreateScheduleTaskTool::class));
