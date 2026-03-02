@@ -8,7 +8,14 @@ use App\BusinessModules\Features\AIAssistant\Services\LLM\OpenAIProvider;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\YandexGPTProvider;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\DeepSeekProvider;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
-use App\BusinessModules\Features\AIAssistant\Actions\Reports\GenerateCustomReportAction;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateProfitabilityReportTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateWorkCompletionReportTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateMaterialMovementsReportTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateContractorSettlementsReportTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateWarehouseStockReportTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateTimeTrackingReportTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateContractPaymentsReportTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateProjectTimelinesReportTool;
 
 class AIAssistantServiceProvider extends ServiceProvider
 {
@@ -35,7 +42,14 @@ class AIAssistantServiceProvider extends ServiceProvider
             $registry = new AIToolRegistry();
             
             // Регистрируем инструменты
-            $registry->registerTool($app->make(GenerateCustomReportAction::class));
+            $registry->registerTool($app->make(GenerateProfitabilityReportTool::class));
+            $registry->registerTool($app->make(GenerateWorkCompletionReportTool::class));
+            $registry->registerTool($app->make(GenerateMaterialMovementsReportTool::class));
+            $registry->registerTool($app->make(GenerateContractorSettlementsReportTool::class));
+            $registry->registerTool($app->make(GenerateWarehouseStockReportTool::class));
+            $registry->registerTool($app->make(GenerateTimeTrackingReportTool::class));
+            $registry->registerTool($app->make(GenerateContractPaymentsReportTool::class));
+            $registry->registerTool($app->make(GenerateProjectTimelinesReportTool::class));
             
             return $registry;
         });
