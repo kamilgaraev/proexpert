@@ -189,6 +189,24 @@ class Contractor extends Model
         }
 
         if ($updated) {
+            // Проверка уникальности ИНН перед сохранением
+            if (!empty($this->inn)) {
+                $duplicateExists = static::where('organization_id', $this->organization_id)
+                    ->where('inn', $this->inn)
+                    ->where('id', '!=', $this->id)
+                    ->whereNull('deleted_at')
+                    ->exists();
+
+                if ($duplicateExists) {
+                    \Illuminate\Support\Facades\Log::warning('Contractor sync skipped: unique constraint conflict', [
+                        'contractor_id' => $this->id,
+                        'organization_id' => $this->organization_id,
+                        'conflicting_inn' => $this->inn
+                    ]);
+                    return false;
+                }
+            }
+
             $this->last_sync_at = now();
             $this->save();
 
