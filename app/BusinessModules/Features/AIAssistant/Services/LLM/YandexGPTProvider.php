@@ -230,11 +230,19 @@ class YandexGPTProvider implements LLMProviderInterface
             if (isset($tool['type']) && $tool['type'] === 'function') {
                 $parameters = $tool['function']['parameters'] ?? [];
                 
-                // Важно: YandexGPT ожидает JSON объект (map) для параметров,
-                // поэтому пустой массив PHP нужно принудительно кастовать в объект,
-                // чтобы json_encode выдал {}, а не []
+                // Важно: YandexGPT ожидает JSON объект (map) для параметров
                 if (empty($parameters)) {
                     $parameters = new \stdClass();
+                } else {
+                    if (isset($parameters['properties']) && empty($parameters['properties'])) {
+                        $parameters['properties'] = new \stdClass();
+                    }
+                    // 'required' in JSON Schema is typically an array of strings.
+                    // If it's an empty array, it SHOULD be an array [], but YandexGPT might be complaining 
+                    // about other empty maps being arrays. Let's make sure 'properties' is an object.
+                    // Wait, the error is "cannot unmarshal array into Go value of type map[string]json.RawMessage".
+                    // This means YandexGPT expects a map (object) but got an array.
+                    // This can happen if $parameters is `[]`, or $parameters['properties'] is `[]`.
                 }
                 
                 $yandexTools[] = [
