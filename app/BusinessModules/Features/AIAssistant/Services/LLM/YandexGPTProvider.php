@@ -142,7 +142,7 @@ class YandexGPTProvider implements LLMProviderInterface
                 // Результат работы инструмента в YandexGPT передается как специальное сообщение
                 $yandexMessage['role'] = 'function';
                 $yandexMessage['text'] = $content ?: '{}';
-                $yandexMessage['name'] = $message['name'] ?? 'tool_result';
+                $yandexMessage['name'] = $message['name'] ?? 'generate_report';
             } else {
                 // user или system
                 $yandexMessage['role'] = $role === 'system' ? 'system' : 'user';
@@ -183,25 +183,29 @@ class YandexGPTProvider implements LLMProviderInterface
             'finish_reason' => $alternative['status'] ?? 'ALTERNATIVE_STATUS_FINAL',
         ];
 
-        // Обрабатываем вызовы инструментов YandexGPT (только если они есть в ответе)
-        // В YandexGPT tool_calls передаются как type и function_call
-        if (isset($message['text']) && empty($message['text']) && isset($alternative['status']) && $alternative['status'] === 'ALTERNATIVE_STATUS_TOOL_CALLS') {
-            // YandexGPT currently doesn't standardly return tool calls the same as OpenAI in the response JSON easily
-            // We need to check if there are function calls present.
-            // As of current docs, Yandex API tool calls are located inside message->toolCalls or message->function_call
-            // Assuming it's in $message['tool_calls'] or we extract from a specific property.
-            // Let's implement standard handling assuming Yandex aligns to OpenAI or returns it in 'tool_calls' or 'functionCall'
-            if (!empty($message['functionCall'])) {
-                $result['tool_calls'] = [
-                    [
-                        'id' => uniqid('call_'),
-                        'type' => 'function',
-                        'function' => [
-                            'name' => $message['functionCall']['name'] ?? '',
-                            'arguments' => json_encode($message['functionCall']['arguments'] ?? []),
-                        ]
-                    ]
-                ];
+        // Обрабатываем вызовы инструментов YandexGPT
+        if (isset($alternative['status']) && $alternative['status'] === 'ALTERNATIVE_STATUS_TOOL_CALLS') {
+            
+            $toolCallsList = $message['toolCallList']['toolCalls'] ?? [];
+            
+            if (!empty($toolCallsList)) {
+                $result['tool_calls'] = [];
+                
+                foreach ($toolCallsList as $toolCallData) {
+                    if (!empty($toolCallData['functionCall'])) {
+                        $functionName = $toolCallData['functionCall']['name'] ?? '';
+                        $arguments = $toolCallData['functionCall']['arguments'] ?? [];
+                        
+                        $result['tool_calls'][] = [
+                            'id' => uniqid('call_'),
+                            'type' => 'function',
+                            'function' => [
+                                'name' => $functionName,
+                                'arguments' => is_string($arguments) ? $arguments : json_encode($arguments, JSON_UNESCAPED_UNICODE),
+                            ]
+                        ];
+                    }
+                }
             }
         }
 
