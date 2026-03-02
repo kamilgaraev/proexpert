@@ -261,15 +261,18 @@ class PermissionResolver
             $perms = [];
             $interfaceAccess = [];
 
-            if ($assignment->role_type === UserRoleAssignment::TYPE_SYSTEM) {
-                $perms = $this->roleScanner->getSystemPermissions($assignment->role_slug);
-                $interfaceAccess = $this->roleScanner->getInterfaceAccess($assignment->role_slug);
-            } else {
+            // 1. Пробуем получить как системную роль (из файлов)
+            $perms = $this->roleScanner->getSystemPermissions($assignment->role_slug);
+            $interfaceAccess = $this->roleScanner->getInterfaceAccess($assignment->role_slug);
+
+            // 2. Если в файлах пусто (роль кастомная) — ищем в БД
+            if (empty($perms) && (empty($interfaceAccess) || count($interfaceAccess) === 0)) {
                 $customRole = $this->getCustomRole($assignment->role_slug, $organizationId);
                 $perms = $customRole ? ($customRole->system_permissions ?? []) : [];
                 $interfaceAccess = $customRole ? ($customRole->interface_access ?? []) : [];
             }
 
+            // 3. Авто-добавление admin.access
             if (in_array('admin', $interfaceAccess)) {
                 $perms[] = 'admin.access';
                 $perms[] = 'admin.view';
@@ -289,12 +292,16 @@ class PermissionResolver
         $cacheKey = "module_perms_{$assignment->role_type}_{$assignment->role_slug}_" . ($organizationId ?? 'global');
         
         return Cache::remember($cacheKey, 600, function () use ($assignment, $organizationId) {
-            if ($assignment->role_type === UserRoleAssignment::TYPE_SYSTEM) {
-                return $this->roleScanner->getModulePermissions($assignment->role_slug);
-            } else {
+            // 1. Пробуем из файлов
+            $perms = $this->roleScanner->getModulePermissions($assignment->role_slug);
+            
+            // 2. Если в файлах пусто — ищем в БД
+            if (empty($perms)) {
                 $customRole = $this->getCustomRole($assignment->role_slug, $organizationId);
-                return $customRole ? $customRole->module_permissions : [];
+                return $customRole ? ($customRole->module_permissions ?? []) : [];
             }
+            
+            return $perms;
         });
     }
 
