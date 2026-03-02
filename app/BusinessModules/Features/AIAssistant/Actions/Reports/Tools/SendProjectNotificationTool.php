@@ -19,7 +19,7 @@ class SendProjectNotificationTool implements AIToolInterface
 
     public function getDescription(): string
     {
-        return 'Отправляет уведомление участникам проекта с определенной ролью (например, менеджеру проекта или бухгалтеру).';
+        return 'Отправляет уведомление участникам проекта. Если пользователь просит отправить уведомление "мне", "себе" или "напиши мне", ОБЯЗАТЕЛЬНО используйте параметр send_to_me: true.';
     }
 
     public function getParametersSchema(): array
@@ -29,20 +29,20 @@ class SendProjectNotificationTool implements AIToolInterface
             'properties' => [
                 'project_id' => [
                     'type' => 'integer',
-                    'description' => 'ID проекта'
+                    'description' => 'ID проекта (обязателен для привязки уведомления к контексту)'
                 ],
                 'recipient_role' => [
                     'type' => 'string',
-                    'description' => 'Роль получателя в проекте (pm, accountant, owner, worker). Можно использовать вместе с project_id.',
+                    'description' => 'Роль в проекте (pm, accountant, owner, worker).',
                     'enum' => ['pm', 'accountant', 'owner', 'worker']
                 ],
                 'recipient_user_id' => [
                     'type' => 'integer',
-                    'description' => 'ID конкретного пользователя для отправки уведомления.'
+                    'description' => 'ID конкретного пользователя из базы (можно найти через search_users).'
                 ],
                 'send_to_me' => [
                     'type' => 'boolean',
-                    'description' => 'Если true, уведомление будет отправлено текущему пользователю (вам).'
+                    'description' => 'Установите true, если пользователь просит уведомление для себя ("мне", "себе").'
                 ],
                 'message' => [
                     'type' => 'string',
@@ -94,11 +94,19 @@ class SendProjectNotificationTool implements AIToolInterface
         }
 
         if ($recipients->isEmpty()) {
+            // Фаллбек: если не указана роль и конкретный пользователь, но в проекте никого нет, 
+            // отправим текущему пользователю, если он относится к этой организации.
+            if (!$role && !$recipientUserId && $user && ($user->organization_id == $organization->id || $user->current_organization_id == $organization->id)) {
+                $recipients->push($user);
+            }
+        }
+
+        if ($recipients->isEmpty()) {
             return [
                 'status' => 'warning',
                 'message' => $role 
                     ? "Участники с ролью '{$role}' в проекте не найдены."
-                    : "В проекте нет зарегистрированных участников."
+                    : "В проекте нет зарегистрированных участников (и вы не указаны как участник)."
             ];
         }
 
