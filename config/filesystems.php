@@ -56,7 +56,7 @@ return [
             'bucket' => 'prohelper-storage', // основной бакет для всех организаций
             // bucket устанавливается динамически в OrgBucketService
             'endpoint' => env('AWS_ENDPOINT', 'https://storage.yandexcloud.net'),
-            'use_path_style_endpoint' => true, // для Yandex Object Storage нужен path-style
+            'use_path_style_endpoint' => false, // для Yandex Object Storage нужен virtual-host style
             'throw'   => false,
             'report'  => false,
         ],
