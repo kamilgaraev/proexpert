@@ -7,6 +7,8 @@ use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\OpenAIProvider;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\YandexGPTProvider;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\DeepSeekProvider;
+use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\GenerateCustomReportAction;
 
 class AIAssistantServiceProvider extends ServiceProvider
 {
@@ -26,6 +28,16 @@ class AIAssistantServiceProvider extends ServiceProvider
                 'deepseek' => $app->make(DeepSeekProvider::class),
                 default => $app->make(YandexGPTProvider::class),
             };
+        });
+
+        // Регистрация реестра инструментов
+        $this->app->singleton(AIToolRegistry::class, function ($app) {
+            $registry = new AIToolRegistry();
+            
+            // Регистрируем инструменты
+            $registry->registerTool($app->make(GenerateCustomReportAction::class));
+            
+            return $registry;
         });
     }
 

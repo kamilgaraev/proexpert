@@ -35,32 +35,59 @@ class OpenAIProvider implements LLMProviderInterface
         $model = $options['model'] ?? $this->model;
         $maxTokens = $options['max_tokens'] ?? $this->maxTokens;
         $temperature = $options['temperature'] ?? 0.7;
+        
+        $requestPayload = [
+            'model' => $model,
+            'messages' => $messages,
+            'max_tokens' => $maxTokens,
+            'temperature' => $temperature,
+        ];
+        
+        if (!empty($options['tools'])) {
+            $requestPayload['tools'] = $options['tools'];
+            // Optionally force tool choice if needed
+            // $requestPayload['tool_choice'] = 'auto'; 
+        }
 
         try {
             $this->logging->technical('ai.openai.request', [
                 'model' => $model,
                 'messages_count' => count($messages),
                 'max_tokens' => $maxTokens,
+                'has_tools' => !empty($options['tools']),
             ]);
 
             $startTime = microtime(true);
 
-            $response = $this->client->chat()->create([
-                'model' => $model,
-                'messages' => $messages,
-                'max_tokens' => $maxTokens,
-                'temperature' => $temperature,
-            ]);
+            $response = $this->client->chat()->create($requestPayload);
 
             $duration = microtime(true) - $startTime;
+            
+            $message = $response->choices[0]->message;
 
             $result = [
-                'content' => $response->choices[0]->message->content,
-                'role' => $response->choices[0]->message->role,
+                'content' => $message->content ?? '',
+                'role' => $message->role,
                 'tokens_used' => $response->usage->totalTokens,
+                'input_tokens' => $response->usage->promptTokens ?? null,
+                'output_tokens' => $response->usage->completionTokens ?? null,
                 'model' => $response->model,
                 'finish_reason' => $response->choices[0]->finishReason,
             ];
+            
+            // Если модель решила вызвать инструмент
+            if (!empty($message->toolCalls)) {
+                $result['tool_calls'] = array_map(function ($toolCall) {
+                    return [
+                        'id' => $toolCall->id,
+                        'type' => $toolCall->type,
+                        'function' => [
+                            'name' => $toolCall->function->name,
+                            'arguments' => $toolCall->function->arguments,
+                        ],
+                    ];
+                }, $message->toolCalls);
+            }
 
             $this->logging->technical('ai.openai.success', [
                 'model' => $model,

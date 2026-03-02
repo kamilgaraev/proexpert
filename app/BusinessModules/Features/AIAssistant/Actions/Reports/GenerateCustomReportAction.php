@@ -10,13 +10,58 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\UploadedFile;
 use App\Services\Storage\FileService;
 use App\Models\Organization;
+use App\Models\User;
+use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
 
-class GenerateCustomReportAction
+class GenerateCustomReportAction implements AIToolInterface
 {
-    public function execute(int $organizationId, ?array $params = []): array
+    public function getName(): string
     {
-        $reportType = $this->detectReportType($params['query'] ?? '');
-        $period = $this->extractPeriod($params['query'] ?? '');
+        return 'generate_report';
+    }
+
+    public function getDescription(): string
+    {
+        return 'Генерирует PDF отчет по финансам, материалам, подрядчикам, выполненным работам или контрактам. Возвращает ссылку на скачивание (pdf_url).';
+    }
+
+    public function getParametersSchema(): array
+    {
+        return [
+            'type' => 'object',
+            'properties' => [
+                'report_type' => [
+                    'type' => 'string',
+                    'description' => 'Тип отчета',
+                    'enum' => ['general_financial', 'materials_expenses', 'contractor_payments', 'project_financials', 'completed_works', 'contracts_summary']
+                ],
+                'period' => [
+                    'type' => 'string',
+                    'description' => 'Текстовое описание периода (например: "за последний месяц", "за этот год", "сентябрь")'
+                ],
+                'project_id' => [
+                    'type' => 'integer',
+                    'description' => 'ID проекта, если отчет запрашивается по конкретному проекту (необязательно)'
+                ]
+            ],
+            'required' => ['period']
+        ];
+    }
+
+    public function execute(array $arguments, ?User $user, Organization $organization): array|string
+    {
+        $organizationId = $organization->id;
+        
+        // Для обратной совместимости с логикой парсинга
+        $query = $arguments['period'] ?? 'за последний месяц';
+        if (isset($arguments['report_type'])) {
+            $reportType = $arguments['report_type'];
+        } else {
+            $reportType = $this->detectReportType($query);
+        }
+        
+        $period = $this->extractPeriod($query);
+        $params = $arguments;
         
         $data = match($reportType) {
             'materials_expenses' => $this->getMaterialsExpensesReport($organizationId, $period, $params),
@@ -32,7 +77,14 @@ class GenerateCustomReportAction
         $data['pdf_url'] = $pdfUrl;
         $data['pdf_generated'] = true;
         
-        return $data;
+        // Возвращаем только необходимые данные для LLM, чтобы не забивать контекст байтами
+        return [
+            'status' => 'success',
+            'message' => 'Отчет успешно сгенерирован',
+            'report_type' => $data['report_type'],
+            'period' => $data['period'],
+            'pdf_url' => $pdfUrl,
+        ];
     }
     
     protected function detectReportType(string $query): string
