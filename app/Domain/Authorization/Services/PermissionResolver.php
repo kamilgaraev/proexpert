@@ -258,12 +258,25 @@ class PermissionResolver
         $cacheKey = "system_perms_{$assignment->role_type}_{$assignment->role_slug}_" . ($organizationId ?? 'global');
         
         return Cache::remember($cacheKey, 600, function () use ($assignment, $organizationId) {
+            $perms = [];
+            $interfaceAccess = [];
+
             if ($assignment->role_type === UserRoleAssignment::TYPE_SYSTEM) {
-                return $this->roleScanner->getSystemPermissions($assignment->role_slug);
+                $perms = $this->roleScanner->getSystemPermissions($assignment->role_slug);
+                $interfaceAccess = $this->roleScanner->getInterfaceAccess($assignment->role_slug);
             } else {
                 $customRole = $this->getCustomRole($assignment->role_slug, $organizationId);
-                return $customRole ? $customRole->system_permissions : [];
+                $perms = $customRole ? ($customRole->system_permissions ?? []) : [];
+                $interfaceAccess = $customRole ? ($customRole->interface_access ?? []) : [];
             }
+
+            if (in_array('admin', $interfaceAccess)) {
+                $perms[] = 'admin.access';
+                $perms[] = 'admin.view';
+                $perms[] = 'dashboard.view';
+            }
+
+            return array_unique($perms);
         });
     }
 
