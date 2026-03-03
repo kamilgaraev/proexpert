@@ -13,6 +13,10 @@ use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestResource
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestCollection;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestTemplateResource;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestCalendarEventResource;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\PersonnelTypeEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
+use App\Models\MeasurementUnit;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Carbon\Carbon;
@@ -413,6 +417,33 @@ class SiteRequestController extends Controller
             ]);
 
             return MobileResponse::error(trans_message('site_requests::mobile.calendar_error'), 500);
+        }
+    }
+
+    /**
+     * Справочники для создания заявок
+     */
+    public function meta(Request $request): JsonResponse
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+
+            return MobileResponse::success([
+                'request_types' => SiteRequestTypeEnum::options(),
+                'personnel_types' => PersonnelTypeEnum::options(),
+                'equipment_types' => EquipmentTypeEnum::options(),
+                'units' => MeasurementUnit::where(function ($query) use ($organizationId) {
+                    $query->where('organization_id', $organizationId)
+                          ->orWhere('is_system', true);
+                })->get(['id', 'name', 'short_name', 'type']),
+            ]);
+        } catch (\Exception $e) {
+            Log::error('site_requests.mobile.meta.error', [
+                'userId' => auth()->id(),
+                'error' => $e->getMessage(),
+            ]);
+
+            return MobileResponse::error(trans_message('site_requests::mobile.meta_error'), 500);
         }
     }
 }
