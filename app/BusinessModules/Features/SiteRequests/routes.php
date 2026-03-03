@@ -89,7 +89,7 @@ Route::prefix('api/v1/admin/site-requests')
 // ============================================
 Route::prefix('api/v1/mobile/site-requests')
     ->name('mobile.site_requests.')
-    ->middleware(['auth:api', 'organization.context', 'site_requests.active'])
+    ->middleware(['auth:api_mobile', 'organization.context', 'site_requests.active'])
     ->group(function () {
 
         // ============================================
@@ -102,6 +102,11 @@ Route::prefix('api/v1/mobile/site-requests')
         // Календарь (ПЕРЕД CRUD)
         // ============================================
         Route::get('/calendar', [MobileSiteRequestController::class, 'calendar'])->name('calendar');
+
+        // ============================================
+        // Справочники
+        // ============================================
+        Route::get('/meta', [MobileSiteRequestController::class, 'meta'])->name('meta');
 
         // ============================================
         // CRUD заявок для прорабов (ПОСЛЕ специфичных маршрутов)
