@@ -18,8 +18,14 @@ class CheckSiteRequestsModuleActive
     {
         $organizationId = $request->attributes->get('current_organization_id');
 
+        // Если в атрибутах нет (например, middleware не успел сработать), берем из Auth
         if (!$organizationId && auth()->check()) {
             $organizationId = auth()->user()->current_organization_id;
+            
+            // Важно прописать обратно в атрибуты, чтобы контроллеры могли его достать
+            if ($organizationId) {
+                $request->attributes->add(['current_organization_id' => $organizationId]);
+            }
         }
 
         if (!$organizationId) {
