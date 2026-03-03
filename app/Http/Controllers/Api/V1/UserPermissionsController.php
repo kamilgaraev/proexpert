@@ -275,7 +275,7 @@ class UserPermissionsController extends Controller
             }
         }
         
-        return array_unique($flat);
+        return array_values(array_unique($flat));
     }
 
     /**
