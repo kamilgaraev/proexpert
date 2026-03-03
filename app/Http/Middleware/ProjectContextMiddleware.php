@@ -67,11 +67,11 @@ class ProjectContextMiddleware
             ], 404);
         }
 
-        // Проверка доступа организации к проекту
-        if (!$this->projectContextService->canOrganizationAccessProject($project, $organization)) {
+        // Проверка доступа организации (и пользователя) к проекту
+        if (!$this->projectContextService->canUserAccessProject($user, $project)) {
             Log::warning('Unauthorized project access attempt', [
                 'project_id' => $project->id,
-                'organization_id' => $organization->id,
+                'organization_id' => $organization?->id,
                 'user_id' => $user->id,
             ]);
             

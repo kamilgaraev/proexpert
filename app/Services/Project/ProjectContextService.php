@@ -144,6 +144,55 @@ class ProjectContextService
             ->exists();
     }
 
+    /**
+     * Проверить, может ли пользователь получить доступ к проекту.
+     * Учитывает как доступ через организацию, так и прямые назначения/права.
+     */
+    public function canUserAccessProject(User $user, Project $project): bool
+    {
+        // 1. Если пользователь — системный админ
+        if ($user->isSystemAdmin()) {
+            return true;
+        }
+
+        // 2. Если организация пользователя имеет доступ
+        if ($user->current_organization_id) {
+            $organization = Organization::find($user->current_organization_id);
+            if ($organization && $this->canOrganizationAccessProject($project, $organization)) {
+                return true;
+            }
+        }
+
+        // 3. Проверяем наличие прав в контексте этого проекта через новую систему авторизации
+        // (Особенно важно для кастомных ролей и проектных менеджеров)
+        if ($user->hasPermission('projects.view', ['project_id' => $project->id])) {
+            return true;
+        }
+
+        // Дополнительная проверка на владение проектом через организацию
+        if ($user->isOrganizationOwner($project->organization_id)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Проверить, может ли пользователь управлять проектом
+     */
+    public function canUserManageProject(User $user, Project $project): bool
+    {
+        if ($user->isSystemAdmin()) {
+            return true;
+        }
+
+        if ($user->hasPermission('projects.edit', ['project_id' => $project->id])) {
+            return true;
+        }
+
+        return $user->isOrganizationOwner($project->organization_id);
+    }
+
     public function getAccessibleProjects(Organization $organization): array
     {
         $ownedProjects = Project::where('organization_id', $organization->id)
