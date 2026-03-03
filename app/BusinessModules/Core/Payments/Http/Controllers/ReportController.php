@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
@@ -31,11 +32,7 @@ class ReportController extends Controller
         ]);
         
         if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'error' => 'Validation error',
-                'errors' => $validator->errors(),
-            ], 422);
+            return AdminResponse::error('Validation error', 422, $validator->errors());
         }
         
         try {
@@ -107,29 +104,23 @@ class ReportController extends Controller
                 ->values()
                 ->toArray();
             
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'period' => [
-                        'from' => $periodFrom,
-                        'to' => $periodTo,
-                    ],
-                    'summary' => $summary,
-                    'by_status' => $byStatus,
-                    'by_direction' => $byDirection,
-                    'by_project' => $byProject,
-                    'top_debtors' => $topDebtors,
+            return AdminResponse::success([
+                'period' => [
+                    'from' => $periodFrom,
+                    'to' => $periodTo,
                 ],
+                'summary' => $summary,
+                'by_status' => $byStatus,
+                'by_direction' => $byDirection,
+                'by_project' => $byProject,
+                'top_debtors' => $topDebtors,
             ]);
         } catch (\Exception $e) {
             Log::error('payments.reports.financial.error', [
                 'error' => $e->getMessage(),
             ]);
-            
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось сформировать отчёт',
-            ], 500);
+
+            return AdminResponse::error('Не удалось сформировать отчёт', 500);
         }
     }
     
@@ -150,42 +141,17 @@ class ReportController extends Controller
         ]);
         
         if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'error' => 'Validation error',
-                'errors' => $validator->errors(),
-            ], 422);
+            return AdminResponse::error('Validation error', 422, $validator->errors());
         }
         
         try {
-            // TODO: Реализовать экспорт в Excel/PDF
-            
-            $fileName = sprintf(
-                '%s_%s_%s.%s',
-                $request->input('report_type'),
-                $request->input('period_from'),
-                $request->input('period_to'),
-                $request->input('format') === 'excel' ? 'xlsx' : 'pdf'
-            );
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Отчёт сформирован',
-                'data' => [
-                    'file_url' => '/storage/reports/' . $fileName,
-                    'file_name' => $fileName,
-                    'file_size' => 0, // TODO: реальный размер файла
-                ],
-            ]);
+            return AdminResponse::error('Экспорт финансовых отчётов находится в разработке', 501);
         } catch (\Exception $e) {
             Log::error('payments.reports.export.error', [
                 'error' => $e->getMessage(),
             ]);
-            
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось экспортировать отчёт',
-            ], 500);
+
+            return AdminResponse::error('Не удалось экспортировать отчёт', 500);
         }
     }
 }

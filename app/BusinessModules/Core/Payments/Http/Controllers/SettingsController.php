@@ -3,11 +3,14 @@
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
+use App\Models\OrganizationModuleActivation;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 class SettingsController extends Controller
 {
@@ -26,19 +29,13 @@ class SettingsController extends Controller
             
             $settings = $this->getSettings($organizationId);
             
-            return response()->json([
-                'success' => true,
-                'data' => $settings,
-            ]);
+            return AdminResponse::success($settings);
         } catch (\Exception $e) {
             Log::error('payments.settings.show.error', [
                 'error' => $e->getMessage(),
             ]);
-            
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить настройки',
-            ], 500);
+
+            return AdminResponse::error('Не удалось загрузить настройки', 500);
         }
     }
     
@@ -61,11 +58,7 @@ class SettingsController extends Controller
         ]);
         
         if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'error' => 'Validation error',
-                'errors' => $validator->errors(),
-            ], 422);
+            return AdminResponse::error('Validation error', 422, $validator->errors());
         }
         
         try {
@@ -83,29 +76,21 @@ class SettingsController extends Controller
                 'default_currency',
             ]));
             
-            // Сохранить в кеш
             Cache::put(
                 self::CACHE_KEY_PREFIX . $organizationId,
                 $updatedSettings,
                 self::CACHE_TTL
             );
-            
-            // TODO: Сохранить в БД (таблица organization_module_settings или config)
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Настройки успешно обновлены',
-                'data' => $updatedSettings,
-            ]);
+
+            $this->persistSettings($organizationId, $updatedSettings);
+
+            return AdminResponse::success($updatedSettings, 'Настройки успешно обновлены');
         } catch (\Exception $e) {
             Log::error('payments.settings.update.error', [
                 'error' => $e->getMessage(),
             ]);
-            
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось обновить настройки',
-            ], 500);
+
+            return AdminResponse::error('Не удалось обновить настройки', 500);
         }
     }
     
@@ -117,12 +102,44 @@ class SettingsController extends Controller
         return Cache::remember(
             self::CACHE_KEY_PREFIX . $organizationId,
             self::CACHE_TTL,
-            function () {
-                return $this->getDefaultSettings();
+            function () use ($organizationId) {
+                $saved = $this->loadPersistedSettings($organizationId);
+                return array_merge($this->getDefaultSettings(), $saved);
             }
         );
     }
-    
+
+    /**
+     * Загрузить настройки из БД (OrganizationModuleActivation.module_settings)
+     */
+    private function loadPersistedSettings(int $organizationId): array
+    {
+        $activation = OrganizationModuleActivation::whereHas('module', fn ($q) => $q->where('slug', 'payments'))
+            ->where('organization_id', $organizationId)
+            ->first();
+
+        return $activation?->module_settings['payment_settings'] ?? [];
+    }
+
+    /**
+     * Сохранить настройки в БД
+     */
+    private function persistSettings(int $organizationId, array $settings): void
+    {
+        $activation = OrganizationModuleActivation::whereHas('module', fn ($q) => $q->where('slug', 'payments'))
+            ->where('organization_id', $organizationId)
+            ->first();
+
+        if (!$activation) {
+            return;
+        }
+
+        $moduleSettings = $activation->module_settings ?? [];
+        $moduleSettings['payment_settings'] = $settings;
+
+        $activation->update(['module_settings' => $moduleSettings]);
+    }
+
     /**
      * Настройки по умолчанию
      */

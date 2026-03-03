@@ -40,6 +40,8 @@ use App\Events\OrganizationOnboardingCompleted;
 use App\Listeners\LogProjectOrganizationActivity;
 use App\Listeners\InvalidateProjectContextCache;
 use App\Listeners\SuggestModulesBasedOnCapabilities;
+use App\Listeners\SendTrialExpiredNotification;
+use App\Modules\Events\TrialExpired;
 use App\Modules\Core\ModuleScanner;
 use App\Modules\Core\ModuleRegistry;
 use App\Modules\Core\BillingEngine;
@@ -187,6 +189,8 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(OrganizationProfileUpdated::class, [SuggestModulesBasedOnCapabilities::class, 'handleProfileUpdated']);
         
         Event::listen(OrganizationOnboardingCompleted::class, [SuggestModulesBasedOnCapabilities::class, 'handleOnboardingCompleted']);
+
+        Event::listen(TrialExpired::class, SendTrialExpiredNotification::class);
     }
 
     /**

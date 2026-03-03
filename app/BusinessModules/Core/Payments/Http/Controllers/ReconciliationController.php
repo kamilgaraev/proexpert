@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Models\Organization;
@@ -29,11 +30,7 @@ class ReconciliationController extends Controller
         ]);
         
         if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'error' => 'Validation error',
-                'errors' => $validator->errors(),
-            ], 422);
+            return AdminResponse::error('Validation error', 422, $validator->errors());
         }
         
         try {
@@ -80,25 +77,17 @@ class ReconciliationController extends Controller
                 'transactions_count' => $documents->sum(function ($doc) {
                     return $doc->transactions()->count();
                 }),
-                'document_url' => null, // TODO: генерация PDF
             ];
             
             Log::info('payments.reconciliation.created', $data);
             
-            return response()->json([
-                'success' => true,
-                'message' => 'Акт сверки создан',
-                'data' => $data,
-            ]);
+            return AdminResponse::success($data, 'Акт сверки создан');
         } catch (\Exception $e) {
             Log::error('payments.reconciliation.store.error', [
                 'error' => $e->getMessage(),
             ]);
-            
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось создать акт сверки',
-            ], 500);
+
+            return AdminResponse::error('Не удалось создать акт сверки', 500);
         }
     }
 }

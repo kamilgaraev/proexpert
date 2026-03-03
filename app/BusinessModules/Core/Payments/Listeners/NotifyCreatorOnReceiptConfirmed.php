@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Core\Payments\Listeners;
 
 use App\BusinessModules\Core\Payments\Events\PaymentReceiptConfirmed;
+use App\BusinessModules\Core\Payments\Notifications\PaymentReceiptConfirmedNotification;
 use App\Models\User;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
@@ -28,9 +29,8 @@ class NotifyCreatorOnReceiptConfirmed implements ShouldQueue
                 $creator = User::find($document->created_by_user_id);
                 
                 if ($creator) {
-                    // TODO: Создать Notification класс PaymentReceiptConfirmedNotification
-                    // $creator->notify(new PaymentReceiptConfirmedNotification($document, $event->confirmedByUserId));
-                    
+                    $creator->notify(new PaymentReceiptConfirmedNotification($document, $event->confirmedByUserId));
+
                     Log::info('payment_recipient.creator_notified', [
                         'document_id' => $document->id,
                         'creator_id' => $creator->id,
