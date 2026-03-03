@@ -41,6 +41,21 @@ class SiteRequestsServiceProvider extends ServiceProvider
 
         // Регистрируем observers
         $this->registerObservers();
+
+        // Загружаем переводы
+        $this->loadTranslations();
+    }
+
+    /**
+     * Загрузка переводов модуля
+     */
+    protected function loadTranslations(): void
+    {
+        $langPath = __DIR__ . '/lang';
+
+        if (is_dir($langPath)) {
+            $this->loadTranslationsFrom($langPath, 'site_requests');
+        }
     }
 
     /**

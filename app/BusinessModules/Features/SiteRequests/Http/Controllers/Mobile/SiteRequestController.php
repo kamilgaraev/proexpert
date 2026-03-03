@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Features\SiteRequests\Http\Controllers\Mobile;
 
 use App\Http\Controllers\Controller;
+use App\Http\Responses\MobileResponse;
 use App\BusinessModules\Features\SiteRequests\Services\SiteRequestService;
 use App\BusinessModules\Features\SiteRequests\Services\SiteRequestTemplateService;
 use App\BusinessModules\Features\SiteRequests\Services\SiteRequestCalendarService;
@@ -15,6 +16,7 @@ use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestCalendar
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Mobile API контроллер для заявок (для прорабов)
@@ -36,7 +38,11 @@ class SiteRequestController extends Controller
             $organizationId = $request->attributes->get('current_organization_id');
             $userId = auth()->id();
 
-            $perPage = min($request->input('per_page', 15), 50);
+            if (!$organizationId) {
+                return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
+            }
+
+            $perPage = min((int) $request->input('per_page', 15), 50);
 
             $filters = $request->only([
                 'status',
@@ -50,25 +56,15 @@ class SiteRequestController extends Controller
 
             $requests = $this->service->paginate($organizationId, $perPage, $filters);
 
-            return response()->json([
-                'success' => true,
-                'data' => new SiteRequestCollection($requests),
-                'meta' => [
-                    'current_page' => $requests->currentPage(),
-                    'per_page' => $requests->perPage(),
-                    'total' => $requests->total(),
-                    'last_page' => $requests->lastPage(),
-                ],
-            ]);
+            return MobileResponse::success(new SiteRequestCollection($requests));
         } catch (\Exception $e) {
-            \Log::error('site_requests.mobile.index.error', [
+            Log::error('site_requests.mobile.index.error', [
+                'userId' => auth()->id(),
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить заявки',
-            ], 500);
+            return MobileResponse::error(trans_message('site_requests::mobile.index_error'), 500);
         }
     }
 
@@ -81,37 +77,30 @@ class SiteRequestController extends Controller
             $organizationId = $request->attributes->get('current_organization_id');
             $userId = auth()->id();
 
+            if (!$organizationId) {
+                return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
+            }
+
             $siteRequest = $this->service->find($id, $organizationId);
 
             if (!$siteRequest) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Заявка не найдена',
-                ], 404);
+                return MobileResponse::error(trans_message('site_requests::mobile.not_found'), 404);
             }
 
             // Проверяем, что заявка принадлежит пользователю
             if (!$siteRequest->belongsToUser($userId) && !$siteRequest->isAssignedTo($userId)) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Нет доступа к этой заявке',
-                ], 403);
+                return MobileResponse::error(trans_message('site_requests::mobile.access_denied'), 403);
             }
 
-            return response()->json([
-                'success' => true,
-                'data' => new SiteRequestResource($siteRequest),
-            ]);
+            return MobileResponse::success(new SiteRequestResource($siteRequest));
         } catch (\Exception $e) {
-            \Log::error('site_requests.mobile.show.error', [
+            Log::error('site_requests.mobile.show.error', [
                 'id' => $id,
+                'userId' => auth()->id(),
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить заявку',
-            ], 500);
+            return MobileResponse::error(trans_message('site_requests::mobile.show_error'), 500);
         }
     }
 
@@ -124,31 +113,30 @@ class SiteRequestController extends Controller
             $organizationId = $request->attributes->get('current_organization_id');
             $userId = auth()->id();
 
+            if (!$organizationId) {
+                return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
+            }
+
             $siteRequest = $this->service->create(
                 $organizationId,
                 $userId,
                 $request->validated()
             );
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Заявка успешно создана',
-                'data' => new SiteRequestResource($siteRequest),
-            ], 201);
+            return MobileResponse::success(
+                new SiteRequestResource($siteRequest),
+                trans_message('site_requests::mobile.store_success'),
+                201
+            );
         } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return MobileResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
-            \Log::error('site_requests.mobile.store.error', [
+            Log::error('site_requests.mobile.store.error', [
+                'userId' => auth()->id(),
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось создать заявку',
-            ], 500);
+            return MobileResponse::error(trans_message('site_requests::mobile.store_error'), 500);
         }
     }
 
@@ -161,45 +149,37 @@ class SiteRequestController extends Controller
             $organizationId = $request->attributes->get('current_organization_id');
             $userId = auth()->id();
 
+            if (!$organizationId) {
+                return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
+            }
+
             $siteRequest = $this->service->find($id, $organizationId);
 
             if (!$siteRequest) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Заявка не найдена',
-                ], 404);
+                return MobileResponse::error(trans_message('site_requests::mobile.not_found'), 404);
             }
 
             // Проверяем, что заявка принадлежит пользователю
             if (!$siteRequest->belongsToUser($userId)) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Вы можете редактировать только свои заявки',
-                ], 403);
+                return MobileResponse::error(trans_message('site_requests::mobile.edit_only_own'), 403);
             }
 
             $updated = $this->service->update($siteRequest, $userId, $request->validated());
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Заявка успешно обновлена',
-                'data' => new SiteRequestResource($updated),
-            ]);
+            return MobileResponse::success(
+                new SiteRequestResource($updated),
+                trans_message('site_requests::mobile.update_success')
+            );
         } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return MobileResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
-            \Log::error('site_requests.mobile.update.error', [
+            Log::error('site_requests.mobile.update.error', [
                 'id' => $id,
+                'userId' => auth()->id(),
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось обновить заявку',
-            ], 500);
+            return MobileResponse::error(trans_message('site_requests::mobile.update_error'), 500);
         }
     }
 
@@ -212,44 +192,36 @@ class SiteRequestController extends Controller
             $organizationId = $request->attributes->get('current_organization_id');
             $userId = auth()->id();
 
+            if (!$organizationId) {
+                return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
+            }
+
             $siteRequest = $this->service->find($id, $organizationId);
 
             if (!$siteRequest) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Заявка не найдена',
-                ], 404);
+                return MobileResponse::error(trans_message('site_requests::mobile.not_found'), 404);
             }
 
             if (!$siteRequest->belongsToUser($userId)) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Вы можете отменять только свои заявки',
-                ], 403);
+                return MobileResponse::error(trans_message('site_requests::mobile.cancel_only_own'), 403);
             }
 
             $updated = $this->service->cancel($siteRequest, $userId, $request->input('notes'));
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Заявка отменена',
-                'data' => new SiteRequestResource($updated),
-            ]);
+            return MobileResponse::success(
+                new SiteRequestResource($updated),
+                trans_message('site_requests::mobile.cancel_success')
+            );
         } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return MobileResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
-            \Log::error('site_requests.mobile.cancel.error', [
+            Log::error('site_requests.mobile.cancel.error', [
                 'id' => $id,
+                'userId' => auth()->id(),
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось отменить заявку',
-            ], 500);
+            return MobileResponse::error(trans_message('site_requests::mobile.cancel_error'), 500);
         }
     }
 
@@ -262,44 +234,36 @@ class SiteRequestController extends Controller
             $organizationId = $request->attributes->get('current_organization_id');
             $userId = auth()->id();
 
+            if (!$organizationId) {
+                return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
+            }
+
             $siteRequest = $this->service->find($id, $organizationId);
 
             if (!$siteRequest) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Заявка не найдена',
-                ], 404);
+                return MobileResponse::error(trans_message('site_requests::mobile.not_found'), 404);
             }
 
             if (!$siteRequest->belongsToUser($userId)) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Вы можете отправлять только свои заявки',
-                ], 403);
+                return MobileResponse::error(trans_message('site_requests::mobile.submit_only_own'), 403);
             }
 
             $updated = $this->service->submit($siteRequest, $userId);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Заявка отправлена на обработку',
-                'data' => new SiteRequestResource($updated),
-            ]);
+            return MobileResponse::success(
+                new SiteRequestResource($updated),
+                trans_message('site_requests::mobile.submit_success')
+            );
         } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return MobileResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
-            \Log::error('site_requests.mobile.submit.error', [
+            Log::error('site_requests.mobile.submit.error', [
                 'id' => $id,
+                'userId' => auth()->id(),
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось отправить заявку',
-            ], 500);
+            return MobileResponse::error(trans_message('site_requests::mobile.submit_error'), 500);
         }
     }
 
@@ -312,44 +276,36 @@ class SiteRequestController extends Controller
             $organizationId = $request->attributes->get('current_organization_id');
             $userId = auth()->id();
 
+            if (!$organizationId) {
+                return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
+            }
+
             $siteRequest = $this->service->find($id, $organizationId);
 
             if (!$siteRequest) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Заявка не найдена',
-                ], 404);
+                return MobileResponse::error(trans_message('site_requests::mobile.not_found'), 404);
             }
 
             if (!$siteRequest->belongsToUser($userId)) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Вы можете подтверждать только свои заявки',
-                ], 403);
+                return MobileResponse::error(trans_message('site_requests::mobile.complete_only_own'), 403);
             }
 
             $updated = $this->service->complete($siteRequest, $userId, $request->input('notes'));
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Выполнение заявки подтверждено',
-                'data' => new SiteRequestResource($updated),
-            ]);
+            return MobileResponse::success(
+                new SiteRequestResource($updated),
+                trans_message('site_requests::mobile.complete_success')
+            );
         } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return MobileResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
-            \Log::error('site_requests.mobile.complete.error', [
+            Log::error('site_requests.mobile.complete.error', [
                 'id' => $id,
+                'userId' => auth()->id(),
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось подтвердить выполнение',
-            ], 500);
+            return MobileResponse::error(trans_message('site_requests::mobile.complete_error'), 500);
         }
     }
 
@@ -361,21 +317,20 @@ class SiteRequestController extends Controller
         try {
             $organizationId = $request->attributes->get('current_organization_id');
 
+            if (!$organizationId) {
+                return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
+            }
+
             $templates = $this->templateService->getPopularTemplates($organizationId, 20);
 
-            return response()->json([
-                'success' => true,
-                'data' => SiteRequestTemplateResource::collection($templates),
-            ]);
+            return MobileResponse::success(SiteRequestTemplateResource::collection($templates));
         } catch (\Exception $e) {
-            \Log::error('site_requests.mobile.templates.error', [
+            Log::error('site_requests.mobile.templates.error', [
+                'userId' => auth()->id(),
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить шаблоны',
-            ], 500);
+            return MobileResponse::error(trans_message('site_requests::mobile.templates_error'), 500);
         }
     }
 
@@ -388,6 +343,10 @@ class SiteRequestController extends Controller
             $organizationId = $request->attributes->get('current_organization_id');
             $userId = auth()->id();
 
+            if (!$organizationId) {
+                return MobileResponse::error(__('site_requests::mobile.no_organization'), 400);
+            }
+
             $validated = $request->validate([
                 'project_id' => ['required', 'integer', 'exists:projects,id'],
             ]);
@@ -399,26 +358,21 @@ class SiteRequestController extends Controller
                 $validated['project_id']
             );
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Заявка создана из шаблона',
-                'data' => new SiteRequestResource($siteRequest),
-            ], 201);
+            return MobileResponse::success(
+                new SiteRequestResource($siteRequest),
+                trans_message('site_requests::mobile.from_template_success'),
+                201
+            );
         } catch (\InvalidArgumentException | \DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return MobileResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
-            \Log::error('site_requests.mobile.create_from_template.error', [
+            Log::error('site_requests.mobile.create_from_template.error', [
                 'template_id' => $templateId,
+                'userId' => auth()->id(),
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось создать заявку из шаблона',
-            ], 500);
+            return MobileResponse::error(trans_message('site_requests::mobile.from_template_error'), 500);
         }
     }
 
@@ -429,6 +383,10 @@ class SiteRequestController extends Controller
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
+
+            if (!$organizationId) {
+                return MobileResponse::error(__('site_requests::mobile.no_organization'), 400);
+            }
 
             $request->validate([
                 'start_date' => ['required', 'date'],
@@ -447,21 +405,14 @@ class SiteRequestController extends Controller
                 $projectId
             );
 
-            return response()->json([
-                'success' => true,
-                'data' => SiteRequestCalendarEventResource::collection($events),
-                'count' => $events->count(),
-            ]);
+            return MobileResponse::success(SiteRequestCalendarEventResource::collection($events));
         } catch (\Exception $e) {
-            \Log::error('site_requests.mobile.calendar.error', [
+            Log::error('site_requests.mobile.calendar.error', [
+                'userId' => auth()->id(),
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить календарь',
-            ], 500);
+            return MobileResponse::error(trans_message('site_requests::mobile.calendar_error'), 500);
         }
     }
 }
-
