@@ -86,11 +86,6 @@ class PaymentValidationService
             $this->checkContractBalance($document, $errors);
         }
 
-        // Проверка баланса счета организации (для исходящих)
-        if ($document->document_type->isOutgoing()) {
-            $this->checkAccountBalance($document, $errors);
-        }
-
         if (!empty($errors)) {
             throw new \DomainException('Ошибки валидации: ' . implode('; ', $errors));
         }
@@ -748,44 +743,4 @@ class PaymentValidationService
         }
     }
 
-    /**
-     * Проверка баланса счета организации
-     */
-    private function checkAccountBalance(PaymentDocument $document, array &$errors): void
-    {
-        // TODO: Реализовать проверку баланса когда появится таблица счетов организации
-        // Пока пропускаем эту проверку
-        return;
-        
-        // Получаем текущий баланс организации (упрощенно)
-        try {
-            $balance = DB::table('organizations')
-                ->where('id', $document->organization_id)
-                ->value('account_balance');
-
-            if ($balance === null) {
-                return; // Баланс не отслеживается
-            }
-
-            // Получаем запланированные платежи
-            $scheduledPayments = PaymentDocument::where('organization_id', $document->organization_id)
-                ->where('id', '!=', $document->id)
-                ->whereIn('status', ['approved', 'scheduled'])
-                ->sum('remaining_amount');
-
-            $availableBalance = $balance - $scheduledPayments;
-
-            if ($document->amount > $availableBalance) {
-                $errors[] = sprintf(
-                    'Недостаточно средств на счете. Доступно: %.2f, требуется: %.2f',
-                    $availableBalance,
-                    $document->amount
-                );
-            }
-        } catch (\Exception $e) {
-            // Если колонка не существует или другая ошибка - просто пропускаем проверку
-            return;
-        }
-    }
 }
-

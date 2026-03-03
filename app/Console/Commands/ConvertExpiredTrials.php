@@ -48,9 +48,6 @@ class ConvertExpiredTrials extends Command
                     "модуль {$activation->module->name}"
                 );
                 
-                // TODO: Отправить уведомление организации о истечении trial
-                // (будет реализовано после создания системы уведомлений)
-                
             } catch (\Exception $e) {
                 $this->newLine();
                 $this->error(

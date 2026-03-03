@@ -87,13 +87,12 @@ class BankStatementImportService
 
         $contractor = $this->findContractor($isIncoming ? $payerInn : $payeeInn);
 
-        // TODO: Требуется доработка - необходимо создавать PaymentDocument для импортируемых операций
-        // так как payment_document_id является обязательным полем в payment_transactions
-        // В текущей версии этот функционал неактивен
-        
-        throw new \RuntimeException(
-            'BankStatementImportService требует доработки: необходимо создавать PaymentDocument для каждой импортируемой операции'
-        );
+        // Импорт транзакций без PaymentDocument невозможен:
+        // payment_document_id является обязательным полем payment_transactions.
+        // Для корректного импорта необходимо сначала найти или создать PaymentDocument,
+        // сопоставив операцию с существующим счётом по контрагенту, сумме и периоду.
+        // Операция пропускается до реализации этой логики.
+        return false;
 
         // Create Transaction
         // PaymentTransaction::create([

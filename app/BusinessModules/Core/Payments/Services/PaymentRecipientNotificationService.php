@@ -4,6 +4,8 @@ namespace App\BusinessModules\Core\Payments\Services;
 
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
+use App\BusinessModules\Core\Payments\Notifications\PaymentDocumentCreatedNotification;
+use App\BusinessModules\Core\Payments\Notifications\PaymentRegisteredNotification;
 use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Support\Facades\Log;
@@ -57,9 +59,7 @@ class PaymentRecipientNotificationService
                 return false;
             }
 
-            // Отправляем уведомления
-            // TODO: Создать Notification класс PaymentDocumentCreatedNotification
-            // Notification::send($usersToNotify, new PaymentDocumentCreatedNotification($document));
+            Notification::send($usersToNotify, new PaymentDocumentCreatedNotification($document));
 
             // Отмечаем документ как уведомленный
             $document->markAsNotifiedToRecipient();
@@ -116,9 +116,7 @@ class PaymentRecipientNotificationService
                 return false;
             }
 
-            // Отправляем уведомления
-            // TODO: Создать Notification класс PaymentRegisteredNotification
-            // Notification::send($usersToNotify, new PaymentRegisteredNotification($document, $transaction));
+            Notification::send($usersToNotify, new PaymentRegisteredNotification($document, $transaction));
 
             Log::info('payment_recipient.payment_notified', [
                 'document_id' => $document->id,
