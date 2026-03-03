@@ -18,6 +18,10 @@ class CheckSiteRequestsModuleActive
     {
         $organizationId = $request->attributes->get('current_organization_id');
 
+        if (!$organizationId && auth()->check()) {
+            $organizationId = auth()->user()->current_organization_id;
+        }
+
         if (!$organizationId) {
             return response()->json([
                 'success' => false,
