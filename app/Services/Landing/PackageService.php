@@ -18,6 +18,7 @@ class PackageService
     {
         $packageFiles = glob(config_path(self::PACKAGES_PATH.'/*.json'));
         $activeSubscriptions = $this->getOrganizationSubscriptions($organizationId);
+        $activeModuleSlugs = $this->getActiveModuleSlugs($organizationId);
 
         $packages = [];
 
@@ -31,7 +32,7 @@ class PackageService
             $packageSlug = $config['slug'];
             $subscription = $activeSubscriptions[$packageSlug] ?? null;
 
-            $packages[] = $this->buildPackageData($config, $subscription, $organizationId);
+            $packages[] = $this->buildPackageData($config, $subscription, $activeModuleSlugs);
         }
 
         usort($packages, fn ($a, $b) => $a['sort_order'] <=> $b['sort_order']);
@@ -103,12 +104,14 @@ class PackageService
         });
     }
 
-    private function buildPackageData(array $config, ?OrganizationPackageSubscription $subscription, int $organizationId): array
+    private function buildPackageData(array $config, ?OrganizationPackageSubscription $subscription, array $activeModuleSlugs): array
     {
         $activeTier = null;
 
         if ($subscription && $subscription->isActive()) {
             $activeTier = $subscription->tier;
+        } else {
+            $activeTier = $this->inferActiveTierFromModules($config['tiers'], $activeModuleSlugs);
         }
 
         $tiers = [];
@@ -133,6 +136,50 @@ class PackageService
             'active_tier' => $activeTier,
             'expires_at' => $subscription?->expires_at?->toISOString(),
         ];
+    }
+
+    private function inferActiveTierFromModules(array $tiersConfig, array $activeModuleSlugs): ?string
+    {
+        $tierOrder = ['enterprise', 'pro', 'base'];
+        $activeSet = array_flip($activeModuleSlugs);
+
+        foreach ($tierOrder as $tierKey) {
+            if (! isset($tiersConfig[$tierKey])) {
+                continue;
+            }
+
+            $tierModules = $tiersConfig[$tierKey]['modules'] ?? [];
+
+            if (empty($tierModules)) {
+                continue;
+            }
+
+            $allActive = true;
+            foreach ($tierModules as $slug) {
+                if (! isset($activeSet[$slug])) {
+                    $allActive = false;
+                    break;
+                }
+            }
+
+            if ($allActive) {
+                return $tierKey;
+            }
+        }
+
+        return null;
+    }
+
+    private function getActiveModuleSlugs(int $organizationId): array
+    {
+        return OrganizationModuleActivation::where('organization_id', $organizationId)
+            ->where('status', 'active')
+            ->where(function ($q) {
+                $q->whereNull('expires_at')->orWhere('expires_at', '>', now());
+            })
+            ->join('modules', 'modules.id', '=', 'organization_module_activations.module_id')
+            ->pluck('modules.slug')
+            ->all();
     }
 
     private function activateModules(int $organizationId, array $moduleSlugs, ?\Carbon\Carbon $expiresAt): void
