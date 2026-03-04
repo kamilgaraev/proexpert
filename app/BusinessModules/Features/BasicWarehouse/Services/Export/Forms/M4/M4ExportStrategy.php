@@ -44,22 +44,36 @@ class M4ExportStrategy extends BaseWarehouseExportStrategy
         $sheet->setCellValue('J1', 'Унифицированная форма № М-4');
         $sheet->setCellValue('J2', 'Утверждена постановлением Госкомстата');
         $sheet->setCellValue('J3', 'России от 30.10.97 № 71а');
+        $sheet->getStyle('J1:L3')->getFont()->setSize(8);
         
+        $sheet->mergeCells('A5:G5');
         $sheet->setCellValue('A5', $org->legal_name ?? $org->name);
+        $this->setUnderline($sheet, 'A5:G5');
         $sheet->setCellValue('A6', 'организация');
+        $this->setCenter($sheet, 'A6:G6');
+        $sheet->getStyle('A6')->getFont()->setSize(8);
         
         $sheet->setCellValue('H5', 'Код');
-        $sheet->setCellValue('H6', 'Форма по ОКУД 0315003');
+        $sheet->setCellValue('H6', 'Форма по ОКУД');
+        $sheet->setCellValue('I6', '0315003');
         $sheet->setCellValue('H7', 'по ОКПО');
         $sheet->setCellValue('I7', $org->okpo ?? '');
+        $this->applyTableStyle($sheet, 'H5:I7');
+        $this->setCenter($sheet, 'H5:I7');
         
+        $sheet->mergeCells('A9:I9');
         $sheet->setCellValue('A9', 'ПРИХОДНЫЙ ОРДЕР');
-        $sheet->getStyle('A9')->getFont()->setBold(true)->setSize(14);
+        $this->setBold($sheet, 'A9');
+        $this->setCenter($sheet, 'A9');
+        $sheet->getStyle('A9')->getFont()->setSize(14);
         
-        $sheet->setCellValue('D10', 'Номер документа');
-        $sheet->setCellValue('E10', 'Дата составления');
-        $sheet->setCellValue('D11', $movement->document_number ?: $movement->id);
-        $sheet->setCellValue('E11', $movement->movement_date->format('d.m.Y'));
+        $sheet->setCellValue('E10', 'Номер документа');
+        $sheet->setCellValue('F10', 'Дата составления');
+        $sheet->setCellValue('E11', $movement->document_number ?: $movement->id);
+        $sheet->setCellValue('F11', $movement->movement_date->format('d.m.Y'));
+        $this->applyTableStyle($sheet, 'E10:F11');
+        $this->setCenter($sheet, 'E10:F11');
+        $sheet->getStyle('E10:F10')->getFont()->setSize(8);
         
         $sheet->setCellValue('A13', 'Склад: ' . ($warehouse->name ?? ''));
         $sheet->setCellValue('A14', 'Поставщик: ' . ($movement->metadata['supplier_name'] ?? ''));
@@ -74,24 +88,39 @@ class M4ExportStrategy extends BaseWarehouseExportStrategy
         $sheet->setCellValue("H{$row}", 'Цена, руб. коп.');
         $sheet->setCellValue("I{$row}", 'Сумма без НДС, руб. коп.');
         
+        $this->setBold($sheet, "A{$row}:I{$row}");
+        $this->setCenter($sheet, "A{$row}:I{$row}");
+        $sheet->getStyle("A{$row}:I{$row}")->getAlignment()->setWrapText(true);
+        
         $row++;
         $sheet->setCellValue("A{$row}", $movement->material->name);
         $sheet->setCellValue("E{$row}", $movement->material->measurementUnit->name ?? '');
         $sheet->setCellValue("F{$row}", $movement->quantity);
-        $sheet->setCellValue("H{$row}", $movement->price);
-        $sheet->setCellValue("I{$row}", $movement->quantity * $movement->price);
+        $sheet->setCellValue("H{$row}", number_format((float)$movement->price, 2, ',', ' '));
+        $sheet->setCellValue("I{$row}", number_format((float)($movement->quantity * $movement->price), 2, ',', ' '));
+        
+        $this->applyTableStyle($sheet, "A16:I{$row}");
     }
 
     protected function setFooter($sheet, WarehouseMovement $movement): void
     {
         $row = $sheet->getHighestRow() + 2;
         $sheet->setCellValue("A{$row}", 'Принял: ____________________ / ' . ($movement->user->name ?? '') . ' /');
+        $sheet->mergeCells("A{$row}:I{$row}");
     }
 
     protected function applyStyles($sheet): void
     {
-        $sheet->getColumnDimension('A')->setWidth(40);
+        $sheet->getColumnDimension('A')->setWidth(45);
+        $sheet->getColumnDimension('B')->setWidth(10);
+        $sheet->getColumnDimension('C')->setWidth(10);
+        $sheet->getColumnDimension('D')->setWidth(10);
+        $sheet->getColumnDimension('E')->setWidth(12);
+        $sheet->getColumnDimension('F')->setWidth(12);
+        $sheet->getColumnDimension('G')->setWidth(12);
+        $sheet->getColumnDimension('H')->setWidth(15);
         $sheet->getColumnDimension('I')->setWidth(20);
-        $sheet->getStyle('A16:I17')->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+        
+        $sheet->getStyle('A1:L50')->getAlignment()->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER);
     }
 }
