@@ -41,7 +41,15 @@ class WarehouseOperationsController extends Controller
         }
 
         try {
-            $path = $this->exportManager->export('m4', $movement);
+            $dataToExport = $movement;
+            if ($movement->document_number) {
+                $dataToExport = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::where('document_number', $movement->document_number)
+                    ->where('organization_id', $movement->organization_id)
+                    ->where('movement_type', $movement->movement_type)
+                    ->get();
+            }
+
+            $path = $this->exportManager->export('m4', $dataToExport);
             $url = $this->exportManager->getTemporaryUrl($path);
             
             return AdminResponse::success(['url' => $url], __('warehouse_basic.export_success'));
@@ -62,7 +70,15 @@ class WarehouseOperationsController extends Controller
         }
 
         try {
-            $path = $this->exportManager->export('m11', $movement);
+            $dataToExport = $movement;
+            if ($movement->document_number) {
+                $dataToExport = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::where('document_number', $movement->document_number)
+                    ->where('organization_id', $movement->organization_id)
+                    ->where('movement_type', $movement->movement_type)
+                    ->get();
+            }
+
+            $path = $this->exportManager->export('m11', $dataToExport);
             $url = $this->exportManager->getTemporaryUrl($path);
             
             return AdminResponse::success(['url' => $url], __('warehouse_basic.export_success'));
@@ -83,7 +99,15 @@ class WarehouseOperationsController extends Controller
         }
 
         try {
-            $path = $this->exportManager->export('m15', $movement);
+            $dataToExport = $movement;
+            if ($movement->document_number) {
+                $dataToExport = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::where('document_number', $movement->document_number)
+                    ->where('organization_id', $movement->organization_id)
+                    ->where('movement_type', $movement->movement_type)
+                    ->get();
+            }
+
+            $path = $this->exportManager->export('m15', $dataToExport);
             $url = $this->exportManager->getTemporaryUrl($path);
             
             return AdminResponse::success(['url' => $url], __('warehouse_basic.export_success'));
@@ -104,7 +128,15 @@ class WarehouseOperationsController extends Controller
         }
 
         try {
-            $path = $this->exportManager->export('m7', $movement);
+            $dataToExport = $movement;
+            if ($movement->document_number) {
+                $dataToExport = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::where('document_number', $movement->document_number)
+                    ->where('organization_id', $movement->organization_id)
+                    ->where('movement_type', $movement->movement_type)
+                    ->get();
+            }
+
+            $path = $this->exportManager->export('m7', $dataToExport);
             $url = $this->exportManager->getTemporaryUrl($path);
             
             return AdminResponse::success(['url' => $url], __('warehouse_basic.export_success'));
