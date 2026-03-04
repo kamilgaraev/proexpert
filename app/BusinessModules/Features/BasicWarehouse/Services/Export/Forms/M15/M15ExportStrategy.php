@@ -76,12 +76,12 @@ class M15ExportStrategy extends BaseWarehouseExportStrategy
         $sheet->setCellValue('A10', 'на отпуск материалов на сторону');
         $this->setCenter($sheet, 'A10');
         
-        $sheet->setCellValue('D11', 'Номер документа');
-        $sheet->setCellValue('E11', 'Дата составления');
-        $sheet->setCellValue('D12', $movement->document_number ?: $movement->id);
-        $sheet->setCellValue('E12', $movement->movement_date->format('d.m.Y'));
-        $this->applyTableStyle($sheet, 'D11:E12');
-        $this->setCenter($sheet, 'D11:E12');
+        $sheet->setCellValue('H11', 'Номер документа');
+        $sheet->setCellValue('I11', 'Дата составления');
+        $sheet->setCellValue('H12', $movement->document_number ?: $movement->id);
+        $sheet->setCellValue('I12', $movement->movement_date->format('d.m.Y'));
+        $this->applyTableStyle($sheet, 'H11:I12');
+        $this->setCenter($sheet, 'H11:I12');
         
         $sheet->setCellValue('A14', 'Основание: ' . ($movement->metadata['reason'] ?? 'Бухгалтерская справка'));
         $sheet->setCellValue('A15', 'Кому: ' . ($movement->toWarehouse->name ?? $movement->metadata['recipient'] ?? 'Сторонняя организация'));
@@ -91,6 +91,7 @@ class M15ExportStrategy extends BaseWarehouseExportStrategy
     protected function setTable($sheet, $movements): void
     {
         $row = 18;
+        $sheet->getRowDimension($row)->setRowHeight(35);
         $sheet->setCellValue("A{$row}", 'Материал (наименование, сорт, размер, марка)');
         $sheet->setCellValue("E{$row}", 'Ед. изм.');
         $sheet->setCellValue("F{$row}", 'Количество');
@@ -128,7 +129,7 @@ class M15ExportStrategy extends BaseWarehouseExportStrategy
         $sheet->getColumnDimension('E')->setWidth(12);
         $sheet->getColumnDimension('F')->setWidth(12);
         $sheet->getColumnDimension('H')->setWidth(15);
-        $sheet->getColumnDimension('I')->setWidth(20);
+        $sheet->getColumnDimension('I')->setWidth(25);
         
         $sheet->getStyle('A1:L50')->getAlignment()->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER);
     }

@@ -72,12 +72,12 @@ class M7ExportStrategy extends BaseWarehouseExportStrategy
         $this->setCenter($sheet, 'A9');
         $sheet->getStyle('A9')->getFont()->setSize(12);
         
-        $sheet->setCellValue('D10', 'Номер документа');
-        $sheet->setCellValue('E10', 'Дата составления');
-        $sheet->setCellValue('D11', $movement->document_number ?: $movement->id);
-        $sheet->setCellValue('E11', $movement->movement_date->format('d.m.Y'));
-        $this->applyTableStyle($sheet, 'D10:E11');
-        $this->setCenter($sheet, 'D10:E11');
+        $sheet->setCellValue('H10', 'Номер документа');
+        $sheet->setCellValue('I10', 'Дата составления');
+        $sheet->setCellValue('H11', $movement->document_number ?: $movement->id);
+        $sheet->setCellValue('I11', $movement->movement_date->format('d.m.Y'));
+        $this->applyTableStyle($sheet, 'H10:I11');
+        $this->setCenter($sheet, 'H10:I11');
         
         $sheet->setCellValue('A13', 'Место приемки: ' . ($movement->warehouse->name ?? ''));
         $sheet->setCellValue('A14', 'Поставщик: ' . ($movement->metadata['supplier_name'] ?? ''));
@@ -87,6 +87,7 @@ class M7ExportStrategy extends BaseWarehouseExportStrategy
     protected function setTable($sheet, $movements): void
     {
         $row = 17;
+        $sheet->getRowDimension($row)->setRowHeight(35);
         $sheet->setCellValue("A{$row}", 'Материал (наименование, размер, сорт)');
         $sheet->setCellValue("E{$row}", 'Ед. изм.');
         $sheet->setCellValue("F{$row}", 'По документам');
@@ -132,7 +133,7 @@ class M7ExportStrategy extends BaseWarehouseExportStrategy
         $sheet->getColumnDimension('F')->setWidth(12);
         $sheet->getColumnDimension('G')->setWidth(12);
         $sheet->getColumnDimension('H')->setWidth(12);
-        $sheet->getColumnDimension('I')->setWidth(12);
+        $sheet->getColumnDimension('I')->setWidth(25);
         
         $sheet->getStyle('A1:L50')->getAlignment()->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER);
     }
