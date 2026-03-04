@@ -4,15 +4,22 @@ declare(strict_types=1);
 
 namespace App\Services\Landing;
 
+use App\Models\Organization;
 use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
 use App\Models\OrganizationPackageSubscription;
+use App\Interfaces\Billing\BalanceServiceInterface;
+use App\Exceptions\Billing\InsufficientBalanceException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class PackageService
 {
     private const PACKAGES_PATH = 'Packages';
+
+    public function __construct(
+        private readonly BalanceServiceInterface $balanceService
+    ) {}
 
     public function getAllPackages(int $organizationId): array
     {
@@ -56,14 +63,50 @@ class PackageService
         $moduleSlugsList = $tierConfig['modules'];
         $price = (float) ($tierConfig['price'] ?? 0);
 
+        // Рассчитываем сумму уже оплаченных платных активных модулей
+        $activeModules = OrganizationModuleActivation::where('organization_id', $organizationId)
+            ->where('status', 'active')
+            ->whereHas('module', function ($q) use ($moduleSlugsList) {
+                $q->whereIn('slug', $moduleSlugsList)->where('billing_model', '!=', 'free');
+            })
+            ->with('module')
+            ->get();
+
+        $alreadyPaidSum = 0;
+        foreach ($activeModules as $activation) {
+            $pricingConfig = $activation->module->pricing_config ?? [];
+            $alreadyPaidSum += (float) ($pricingConfig['base_price'] ?? 0);
+        }
+
+        $upgradePrice = max(0, $price - $alreadyPaidSum);
+        $amountCents = (int) round($upgradePrice * 100);
+
+        // Проверяем баланс перед транзакцией, если нужно доплатить
+        if ($upgradePrice > 0) {
+            $organization = Organization::findOrFail($organizationId);
+            $balance = $this->balanceService->getOrCreateOrganizationBalance($organization);
+            if ($balance->balance < $amountCents) {
+                throw new InsufficientBalanceException("Недостаточно средств. Необходимо пополнить баланс на " . (($amountCents - $balance->balance) / 100) . " руб.");
+            }
+        }
+
         return DB::transaction(function () use (
-            $organizationId, $packageSlug, $tier, $durationDays, $price, $moduleSlugsList
+            $organizationId, $packageSlug, $tier, $durationDays, $price, $moduleSlugsList, $upgradePrice, $amountCents
         ) {
             $expiresAt = $price > 0 ? now()->addDays($durationDays) : null;
 
+            if ($upgradePrice > 0) {
+                $organization = Organization::findOrFail($organizationId);
+                $this->balanceService->debitBalance(
+                    $organization,
+                    $amountCents,
+                    "Подключение пакета '{$config['name']}' (Тариф {$tierConfig['label']})".($alreadyPaidSum > 0 ? " со скидкой за активные модули" : "")
+                );
+            }
+
             OrganizationPackageSubscription::updateOrCreate(
                 ['organization_id' => $organizationId, 'package_slug' => $packageSlug],
-                ['tier' => $tier, 'price_paid' => $price, 'activated_at' => now(), 'expires_at' => $expiresAt]
+                ['tier' => $tier, 'price_paid' => $upgradePrice, 'activated_at' => now(), 'expires_at' => $expiresAt]
             );
 
             $this->activateModules($organizationId, $moduleSlugsList, $expiresAt);
@@ -72,6 +115,7 @@ class PackageService
                 'package_slug' => $packageSlug,
                 'tier' => $tier,
                 'modules' => $moduleSlugsList,
+                'price_paid' => $upgradePrice,
                 'expires_at' => $expiresAt,
             ];
         });
