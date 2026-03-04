@@ -18,11 +18,11 @@ class OrganizationPackageController
         private readonly PackageService $packageService
     ) {}
 
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
         try {
             $user = JWTAuth::parseToken()->authenticate();
-            $organizationId = (int) $user->organization_id;
+            $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
 
             $packages = $this->packageService->getAllPackages($organizationId);
 
@@ -46,7 +46,7 @@ class OrganizationPackageController
 
         try {
             $user = JWTAuth::parseToken()->authenticate();
-            $organizationId = (int) $user->organization_id;
+            $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
 
             $result = $this->packageService->subscribeToPackage(
                 $organizationId,
@@ -76,11 +76,11 @@ class OrganizationPackageController
         }
     }
 
-    public function unsubscribe(string $packageSlug): JsonResponse
+    public function unsubscribe(Request $request, string $packageSlug): JsonResponse
     {
         try {
             $user = JWTAuth::parseToken()->authenticate();
-            $organizationId = (int) $user->organization_id;
+            $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
 
             $this->packageService->unsubscribeFromPackage($organizationId, $packageSlug);
 
