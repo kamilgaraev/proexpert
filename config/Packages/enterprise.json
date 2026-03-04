@@ -1,0 +1,28 @@
+{
+    "slug": "enterprise",
+    "name": "Enterprise",
+    "description": "Инструменты для крупных компаний: мультиорганизационность и портал подрядчиков",
+    "icon": "building-office-2",
+    "color": "#6366F1",
+    "sort_order": 7,
+    "tiers": {
+        "enterprise": {
+            "label": "Enterprise",
+            "description": "Возможности корпоративного уровня",
+            "price": 9900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": [
+                "multi-organization",
+                "contractor-portal"
+            ],
+            "highlights": [
+                "Управление несколькими организациями",
+                "Единая иерархия компаний",
+                "Портал для подрядчиков",
+                "Совместный доступ к проектам",
+                "Расширенное разграничение прав"
+            ]
+        }
+    }
+}

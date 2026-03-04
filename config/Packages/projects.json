@@ -1,0 +1,48 @@
+{
+    "slug": "projects",
+    "name": "Управление проектами",
+    "description": "Полный набор инструментов для ведения строительных проектов: от создания до контроля выполнения",
+    "icon": "clipboard-document-list",
+    "color": "#3B82F6",
+    "sort_order": 1,
+    "tiers": {
+        "base": {
+            "label": "Базовый",
+            "description": "Основные инструменты управления проектами",
+            "price": 0,
+            "billing_model": "free",
+            "modules": [
+                "project-management",
+                "contract-management"
+            ],
+            "highlights": [
+                "Создание и управление проектами",
+                "Управление контрактами и соглашениями",
+                "Назначение прорабов",
+                "Базовая аналитика"
+            ]
+        },
+        "pro": {
+            "label": "Профессиональный",
+            "description": "Расширенные инструменты для полного контроля процессов",
+            "price": 4900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": [
+                "project-management",
+                "contract-management",
+                "schedule-management",
+                "time-tracking",
+                "site-requests",
+                "workflow-management"
+            ],
+            "highlights": [
+                "Всё из Базового",
+                "Управление графиком работ",
+                "Учёт рабочего времени",
+                "Заявки с объекта",
+                "Управление бизнес-процессами"
+            ]
+        }
+    }
+}

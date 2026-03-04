@@ -1,0 +1,46 @@
+{
+    "slug": "supply",
+    "name": "Снабжение и склад",
+    "description": "Управление закупками, складским учётом, каталогом материалов и расценками",
+    "icon": "cube",
+    "color": "#F59E0B",
+    "sort_order": 3,
+    "tiers": {
+        "base": {
+            "label": "Базовый",
+            "description": "Базовый склад и каталог материалов",
+            "price": 0,
+            "billing_model": "free",
+            "modules": [
+                "catalog-management",
+                "basic-warehouse"
+            ],
+            "highlights": [
+                "Каталог материалов и номенклатуры",
+                "Базовый складской учёт",
+                "Управление остатками"
+            ]
+        },
+        "pro": {
+            "label": "Профессиональный",
+            "description": "Полный цикл снабжения и аналитики",
+            "price": 3500,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": [
+                "catalog-management",
+                "basic-warehouse",
+                "procurement",
+                "rate-management",
+                "material-analytics"
+            ],
+            "highlights": [
+                "Всё из Базового",
+                "Управление закупками и тендерами",
+                "Управление расценками и коэффициентами",
+                "Аналитика материалов",
+                "Импорт/экспорт данных"
+            ]
+        }
+    }
+}

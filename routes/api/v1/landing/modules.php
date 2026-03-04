@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Landing\ModuleController;
+use App\Http\Controllers\Api\V1\Landing\OrganizationPackageController;
 
 Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context'])
     ->prefix('modules')
@@ -78,5 +79,22 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context'])
                 
                 Route::get('/history', [ModuleController::class, 'billingHistory'])
                     ->name('history');
+            });
+    });
+
+Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context'])
+    ->prefix('packages')
+    ->name('packages.')
+    ->group(function () {
+        Route::get('/', [OrganizationPackageController::class, 'index'])
+            ->name('index');
+
+        Route::middleware(['authorize:modules.manage'])
+            ->group(function () {
+                Route::post('/subscribe', [OrganizationPackageController::class, 'subscribe'])
+                    ->name('subscribe');
+
+                Route::delete('/{packageSlug}/unsubscribe', [OrganizationPackageController::class, 'unsubscribe'])
+                    ->name('unsubscribe');
             });
     });
