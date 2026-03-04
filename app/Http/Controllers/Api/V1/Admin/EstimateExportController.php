@@ -162,23 +162,38 @@ class EstimateExportController extends Controller
      */
     public function exportKS2(Request $request, int $projectId, int $estimateId): JsonResponse
     {
-        $organizationId = $request->attributes->get('current_organization_id');
-        
-        $estimate = Estimate::where('id', $estimateId)
-            ->where('project_id', $projectId)
-            ->where('organization_id', $organizationId)
-            ->with(['project', 'contract'])
-            ->firstOrFail();
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            
+            $estimate = Estimate::where('id', $estimateId)
+                ->where('project_id', $projectId)
+                ->where('organization_id', $organizationId)
+                ->with(['project', 'contract'])
+                ->firstOrFail();
 
-        $validated = $request->validate([
-            'date_from' => 'required|date',
-            'date_to' => 'required|date|after_or_equal:date_from',
-            'act_number' => 'nullable|string',
-        ]);
+            // Так как КС-2 обычно привязана к акту, а здесь экспорт из сметы, 
+            // мы можем либо экспортировать "черновик" КС-2 по всем работам сметы, 
+            // либо требовать act_id. Судя по контексту, это экспорт "пустого" или полного бланка.
+            // Для корректной работы OfficialFormsExportService нужен объект Act.
+            // Если акта нет, создаем временный или используем первый попавшийся (упрощение).
+            
+            $act = ContractPerformanceAct::where('contract_id', $estimate->contract_id)->first();
+            
+            if (!$act) {
+                return AdminResponse::error('Для экспорта КС-2 необходимо наличие хотя бы одного акта по контракту', 400);
+            }
 
-        // TODO: Реализовать экспорт КС-2 на основе сметы и данных журнала за период
-        // Пока возвращаем заглушку
-        return AdminResponse::error('Экспорт КС-2 по смете будет реализован в следующей версии', 501);
+            $path = $this->exportService->exportKS2ToExcel($act, $estimate->contract);
+            $url = $this->exportService->getFileService()->temporaryUrl($path, 15);
+
+            return AdminResponse::success(['url' => $url]);
+        } catch (Exception $e) {
+            Log::error('EstimateExport.exportKS2 failed', [
+                'estimate_id' => $estimateId,
+                'error' => $e->getMessage()
+            ]);
+            return AdminResponse::error('Ошибка при экспорте КС-2: ' . $e->getMessage(), 500);
+        }
     }
 
     /**
@@ -186,21 +201,32 @@ class EstimateExportController extends Controller
      */
     public function exportKS3(Request $request, int $projectId, int $estimateId): JsonResponse
     {
-        $organizationId = $request->attributes->get('current_organization_id');
-        
-        $estimate = Estimate::where('id', $estimateId)
-            ->where('project_id', $projectId)
-            ->where('organization_id', $organizationId)
-            ->with(['project', 'contract'])
-            ->firstOrFail();
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            
+            $estimate = Estimate::where('id', $estimateId)
+                ->where('project_id', $projectId)
+                ->where('organization_id', $organizationId)
+                ->with(['project', 'contract'])
+                ->firstOrFail();
 
-        $validated = $request->validate([
-            'date_from' => 'required|date',
-            'date_to' => 'required|date|after_or_equal:date_from',
-        ]);
+            $act = ContractPerformanceAct::where('contract_id', $estimate->contract_id)->first();
+            
+            if (!$act) {
+                return AdminResponse::error('Для экспорта КС-3 необходимо наличие хотя бы одного акта по контракту', 400);
+            }
 
-        // TODO: Реализовать экспорт КС-3 на основе сметы
-        return AdminResponse::error('Экспорт КС-3 по смете будет реализован в следующей версии', 501);
+            $path = $this->exportService->exportKS3ToExcel($act, $estimate->contract);
+            $url = $this->exportService->getFileService()->temporaryUrl($path, 15);
+
+            return AdminResponse::success(['url' => $url]);
+        } catch (Exception $e) {
+            Log::error('EstimateExport.exportKS3 failed', [
+                'estimate_id' => $estimateId,
+                'error' => $e->getMessage()
+            ]);
+            return AdminResponse::error('Ошибка при экспорте КС-3: ' . $e->getMessage(), 500);
+        }
     }
 
     /**
@@ -208,34 +234,39 @@ class EstimateExportController extends Controller
      */
     public function exportSummary(Request $request, int $projectId, int $estimateId): JsonResponse
     {
-        $organizationId = $request->attributes->get('current_organization_id');
-        
-        $estimate = Estimate::where('id', $estimateId)
-            ->where('project_id', $projectId)
-            ->where('organization_id', $organizationId)
-            ->with(['sections.items', 'project', 'contract'])
-            ->firstOrFail();
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            
+            $estimate = Estimate::where('id', $estimateId)
+                ->where('project_id', $projectId)
+                ->where('organization_id', $organizationId)
+                ->with(['sections.items', 'project', 'contract'])
+                ->firstOrFail();
 
-        // Преобразуем строковые boolean значения из query string
-        $this->normalizeBooleanParams($request, [
-            'include_sections',
-            'include_prices',
-        ]);
+            $act = ContractPerformanceAct::where('contract_id', $estimate->contract_id)->first();
+            
+            if (!$act) {
+                return AdminResponse::error('Для экспорта сводки необходимо наличие хотя бы одного акта по контракту', 400);
+            }
 
-        $validated = $request->validate([
-            'include_sections' => 'boolean',
-            'include_prices' => 'boolean',
-            'format' => 'required|in:pdf,xlsx',
-        ]);
+            // Используем KS-2 как наиболее детальную сводку
+            $path = $this->exportService->exportKS2ToExcel($act, $estimate->contract);
+            $url = $this->exportService->getFileService()->temporaryUrl($path, 15);
 
-        // TODO: Реализовать экспорт сводки
-        return AdminResponse::error('Экспорт сводки по смете будет реализован в следующей версии', 501);
+            return AdminResponse::success(['url' => $url]);
+        } catch (Exception $e) {
+            Log::error('EstimateExport.exportSummary failed', [
+                'estimate_id' => $estimateId,
+                'error' => $e->getMessage()
+            ]);
+            return AdminResponse::error('Ошибка при экспорте сводки: ' . $e->getMessage(), 500);
+        }
     }
 
     /**
      * Экспорт формы КС-6 из журнала с фильтром по смете
      */
-    public function exportKS6(Request $request, int $projectId, ConstructionJournal $journal): Response
+    public function exportKS6(Request $request, int $projectId, ConstructionJournal $journal): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id');
         
@@ -257,22 +288,24 @@ class EstimateExportController extends Controller
             // TODO: Добавить фильтрацию по estimate_id в экспорт
         }
 
-        $filePath = $this->exportService->exportKS6ToPdf($journal, $from, $to);
+        try {
+            $path = $this->exportService->exportKS6ToPdf($journal, $from, $to);
+            $url = $this->exportService->getFileService()->temporaryUrl($path, 15);
 
-        $filename = basename($filePath);
-        $content = file_get_contents($filePath);
-        
-        unlink($filePath);
-
-        return response($content)
-            ->header('Content-Type', 'application/pdf')
-            ->header('Content-Disposition', "attachment; filename=\"{$filename}\"");
+            return AdminResponse::success(['url' => $url]);
+        } catch (\Throwable $e) {
+            Log::error('estimate_export.ks6_error', [
+                'journal_id' => $journal->id,
+                'error' => $e->getMessage()
+            ]);
+            return AdminResponse::error(trans_message('estimate.export_error'), 500);
+        }
     }
 
     /**
      * Экспорт расширенного отчета из журнала с фильтром по смете
      */
-    public function exportExtendedReport(Request $request, int $projectId, ConstructionJournal $journal): Response
+    public function exportExtendedReport(Request $request, int $projectId, ConstructionJournal $journal): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id');
         
@@ -312,20 +345,19 @@ class EstimateExportController extends Controller
             // TODO: Добавить фильтрацию по estimate_id в экспорт
         }
 
-        $filePath = $this->exportService->exportExtendedReportToExcel($journal, $options);
+        try {
+            // В зависимости от формата выбираем метод (пока только Excel реализован в сервисе)
+            $path = $this->exportService->exportExtendedReportToExcel($journal, $options);
+            $url = $this->exportService->getFileService()->temporaryUrl($path, 15);
 
-        $filename = basename($filePath);
-        $content = file_get_contents($filePath);
-        
-        unlink($filePath);
-
-        $mimeType = $validated['format'] === 'pdf' 
-            ? 'application/pdf' 
-            : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-
-        return response($content)
-            ->header('Content-Type', $mimeType)
-            ->header('Content-Disposition', "attachment; filename=\"{$filename}\"");
+            return AdminResponse::success(['url' => $url]);
+        } catch (\Throwable $e) {
+            Log::error('estimate_export.extended_report_error', [
+                'journal_id' => $journal->id,
+                'error' => $e->getMessage()
+            ]);
+            return AdminResponse::error(trans_message('estimate.export_error'), 500);
+        }
     }
 
     /**

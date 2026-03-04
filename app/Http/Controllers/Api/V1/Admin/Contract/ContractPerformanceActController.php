@@ -13,235 +13,38 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
-use App\Services\Export\ExcelExporterService;
 use App\Services\Storage\FileService;
 use App\Models\Organization;
 use Barryvdh\DomPDF\Facade\Pdf;
-use Symfony\Component\HttpFoundation\StreamedResponse;
 use Illuminate\Support\Facades\Log;
 use Exception;
 
 class ContractPerformanceActController extends Controller
 {
     protected ContractPerformanceActService $actService;
-    protected ExcelExporterService $excelExporter;
+    protected \App\BusinessModules\Features\BudgetEstimates\Services\Export\OfficialFormsExportService $officialExportService;
     protected FileService $fileService;
 
     public function __construct(
         ContractPerformanceActService $actService, 
-        ExcelExporterService $excelExporter,
+        \App\BusinessModules\Features\BudgetEstimates\Services\Export\OfficialFormsExportService $officialExportService,
         FileService $fileService
     ) {
         $this->actService = $actService;
-        $this->excelExporter = $excelExporter;
+        $this->officialExportService = $officialExportService;
         $this->fileService = $fileService;
     }
     
-    private function validateProjectContext(Request $request, $act): bool
-    {
-        $projectId = $request->route('project');
-        
-        if (!$projectId || !$act->contract) {
-            return true;
-        }
-
-        if ($act->contract->is_multi_project) {
-            // Для мультипроектных контрактов проверяем связь через отношение projects
-            return $act->contract->projects()->where('projects.id', $projectId)->exists();
-        }
-
-        if ((int)$act->contract->project_id !== (int)$projectId) {
-            return false;
-        }
-        
-        return true;
-    }
-
     /**
-     * Display a listing of the resource for a specific contract.
+     * Экспорт акта в PDF (KS-2)
      */
-    public function index(Request $request, int $project, int $contract)
-    {
-        $organization = $request->attributes->get('current_organization');
-        $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
-        $projectId = $project;
-
-        try {
-            $acts = $this->actService->getAllActsForContract($contract, $organizationId, [], $projectId);
-            // Assuming AdminResponse expects array or resource collection, but to be consistent with resource usage:
-            return new ContractPerformanceActCollection($acts);
-        } catch (Exception $e) {
-            return AdminResponse::error(trans_message('contract.act_retrieve_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
-        }
-    }
-
-    /**
-     * Store a newly created resource in storage for a specific contract.
-     */
-    public function store(StoreContractPerformanceActRequest $request, int $project, int $contract)
-    {
-        $organization = $request->attributes->get('current_organization');
-        $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
-        $projectId = $project;
-
-        // Проверка наличия organizationId
-        if (!$organizationId) {
-            Log::error('performance_act.store.missing_organization', [
-                'project_id' => $projectId,
-                'contract_id' => $contract,
-                'user_id' => $request->user()?->id,
-                'has_organization_attribute' => $organization !== null,
-                'has_user' => $request->user() !== null,
-            ]);
-            
-            return AdminResponse::error(
-                'Не определена организация. Требуется аутентификация и контекст организации.', 
-                Response::HTTP_UNAUTHORIZED, 
-                'Organization context is required'
-            );
-        }
-
-        try {
-            $actDTO = $request->toDto();
-            $act = $this->actService->createActForContract($contract, $organizationId, $actDTO, $projectId);
-            
-            return AdminResponse::success(new ContractPerformanceActResource($act), trans_message('contract.act_created'), Response::HTTP_CREATED);
-
-        } catch (\DomainException $e) {
-            // Бизнес-ошибки (валидация, лимиты и т.д.)
-            return AdminResponse::error($e->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY);
-        } catch (\InvalidArgumentException $e) {
-            // Ошибки валидации данных
-            return AdminResponse::error($e->getMessage(), Response::HTTP_BAD_REQUEST);
-        } catch (Exception $e) {
-            Log::error('performance_act.store.error', [
-                'project_id' => $projectId,
-                'contract_id' => $contract,
-                'organization_id' => $organizationId,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            
-            return AdminResponse::error(trans_message('contract.act_create_error'), Response::HTTP_INTERNAL_SERVER_ERROR, config('app.debug') ? $e->getMessage() : null);
-        }
-    }
-
-    /**
-     * Display the specified resource.
-     */
-    public function show(Request $request, int $project, int $contract, int $act)
-    {
-        $organization = $request->attributes->get('current_organization');
-        $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
-        $projectId = $project;
-
-        try {
-            $actModel = $this->actService->getActById($act, $contract, $organizationId, $projectId);
-            if (!$actModel) {
-                return AdminResponse::error(trans_message('contract.act_not_found'), Response::HTTP_NOT_FOUND);
-            }
-            
-            if (!$this->validateProjectContext($request, $actModel)) {
-                return AdminResponse::error(trans_message('contract.act_not_found'), Response::HTTP_NOT_FOUND);
-            }
-            
-            return new ContractPerformanceActResource($actModel);
-        } catch (Exception $e) {
-            return AdminResponse::error(trans_message('contract.act_retrieve_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
-        }
-    }
-
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(UpdateContractPerformanceActRequest $request, int $project, int $contract, int $act)
-    {
-        $organization = $request->attributes->get('current_organization');
-        $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
-        $projectId = $project;
-        
-        try {
-            $existingAct = $this->actService->getActById($act, $contract, $organizationId, $projectId);
-            if (!$existingAct) {
-                return AdminResponse::error(trans_message('contract.act_not_found'), Response::HTTP_NOT_FOUND);
-            }
-            
-            if (!$this->validateProjectContext($request, $existingAct)) {
-                return AdminResponse::error(trans_message('contract.act_not_found'), Response::HTTP_NOT_FOUND);
-            }
-            
-            $actDTO = $request->toDto();
-            $updatedAct = $this->actService->updateAct($act, $contract, $organizationId, $actDTO, $projectId);
-            
-            return AdminResponse::success(new ContractPerformanceActResource($updatedAct), trans_message('contract.act_updated'));
-        } catch (Exception $e) {
-            return AdminResponse::error(trans_message('contract.act_update_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
-        }
-    }
-
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(Request $request, int $project, int $contract, int $act)
-    {
-        $organization = $request->attributes->get('current_organization');
-        $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
-        $projectId = $project;
-
-        try {
-            $existingAct = $this->actService->getActById($act, $contract, $organizationId, $projectId);
-            if (!$existingAct) {
-                return AdminResponse::error(trans_message('contract.act_not_found'), Response::HTTP_NOT_FOUND);
-            }
-            
-            if (!$this->validateProjectContext($request, $existingAct)) {
-                return AdminResponse::error(trans_message('contract.act_not_found'), Response::HTTP_NOT_FOUND);
-            }
-            
-            $this->actService->deleteAct($act, $contract, $organizationId, $projectId);
-            return AdminResponse::success(null, trans_message('contract.act_deleted'), Response::HTTP_NO_CONTENT);
-        } catch (Exception $e) {
-            return AdminResponse::error(trans_message('contract.act_delete_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
-        }
-    }
-
-    /**
-     * Получить доступные работы для включения в акт
-     */
-    public function availableWorks(Request $request, int $project, int $contract)
-    {
-        $projectContext = \App\Http\Middleware\ProjectContextMiddleware::getProjectContext($request);
-        $projectId = $project;
-        
-        $contractModel = \App\Models\Contract::find($contract);
-        if (!$contractModel) {
-            return AdminResponse::error(trans_message('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
-        }
-        
-        $organizationId = $contractModel->organization_id;
-
-        try {
-            $works = $this->actService->getAvailableWorksForAct($contract, $organizationId, $projectId);
-            return AdminResponse::success($works);
-        } catch (Exception $e) {
-            return AdminResponse::error(trans_message('contract.available_works_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
-        }
-    }
-
-    /**
-     * Экспорт акта в PDF
-     */
-    public function exportPdf(Request $request, int $project, int $contract, int $act)
+    public function exportPdf(Request $request, int $project, int $contract, int $act): JsonResponse
     {
         try {
             $user = $request->user();
             $organizationId = $user->organization_id ?? $user->current_organization_id;
             $projectId = $project;
 
-            if (!$organizationId) {
-                return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
-            }
-
             $actModel = $this->actService->getActById($act, $contract, $organizationId, $projectId);
             if (!$actModel) {
                 return AdminResponse::error(trans_message('contract.act_not_found'), Response::HTTP_NOT_FOUND);
@@ -251,58 +54,32 @@ class ContractPerformanceActController extends Controller
                 return AdminResponse::error(trans_message('contract.act_not_found'), Response::HTTP_NOT_FOUND);
             }
 
-            $actModel->load([
-                'contract.project', 
-                'contract.contractor',
-                'contract.organization',
-                'completedWorks.workType',
-                'completedWorks.materials',
-                'completedWorks.user'
-            ]);
+            $path = $this->officialExportService->exportKS2ToPdf($actModel, $actModel->contract);
+            $url = $this->officialExportService->getFileService()->temporaryUrl($path, 15);
 
-            $data = [
-                'act' => $actModel,
-                'contract' => $actModel->contract,
-                'project' => $actModel->contract->project ?? (object)['name' => 'Не указан'],
-                'contractor' => $actModel->contract->contractor ?? (object)['name' => 'Не указан'],
-                'works' => $actModel->completedWorks ?? collect(),
-                'total_amount' => $actModel->amount ?? 0,
-                'generated_at' => now()->format('d.m.Y H:i')
-            ];
-
-            $pdf = Pdf::loadView('reports.act-report-pdf', $data);
-            $pdf->setPaper('A4', 'portrait');
-
-            $filename = "act_" . preg_replace('/[^A-Za-z0-9\-_]/', '_', $actModel->act_document_number) . "_" . now()->format('Y-m-d') . ".pdf";
-
-            return $pdf->download($filename);
+            return AdminResponse::success(['url' => $url]);
 
         } catch (Exception $e) {
-            Log::error('Ошибка экспорта PDF акта', [
+            Log::error('Ошибка экспорта PDF акта KS-2', [
                 'contract_id' => $contract,
                 'act_id' => $act,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'error' => $e->getMessage()
             ]);
             
-            return AdminResponse::error(trans_message('contract.act_export_error'), 500, $e->getMessage());
+            return AdminResponse::error(trans_message('contract.act_export_error'), 500, config('app.debug') ? $e->getMessage() : null);
         }
     }
 
     /**
-     * Экспорт акта в Excel
+     * Экспорт акта в Excel (KS-2)
      */
-    public function exportExcel(Request $request, int $project, int $contract, int $act)
+    public function exportExcel(Request $request, int $project, int $contract, int $act): JsonResponse
     {
         try {
             $user = $request->user();
             $organizationId = $user->organization_id ?? $user->current_organization_id;
             $projectId = $project;
 
-            if (!$organizationId) {
-                return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
-            }
-
             $actModel = $this->actService->getActById($act, $contract, $organizationId, $projectId);
             if (!$actModel) {
                 return AdminResponse::error(trans_message('contract.act_not_found'), Response::HTTP_NOT_FOUND);
@@ -312,81 +89,42 @@ class ContractPerformanceActController extends Controller
                 return AdminResponse::error(trans_message('contract.act_not_found'), Response::HTTP_NOT_FOUND);
             }
 
-            $actModel->load([
-                'contract.project', 
-                'contract.contractor',
-                'completedWorks.workType',
-                'completedWorks.materials',
-                'completedWorks.user'
-            ]);
+            $path = $this->officialExportService->exportKS2ToExcel($actModel, $actModel->contract);
+            $url = $this->officialExportService->getFileService()->temporaryUrl($path, 15);
 
-            $headers = [
-                'Наименование работы',
-                'Единица измерения', 
-                'Количество',
-                'Цена за единицу',
-                'Сумма',
-                'Материалы',
-                'Дата выполнения',
-                'Исполнитель'
-            ];
-
-            $exportData = [];
-            $completedWorks = $actModel->completedWorks ?? collect();
-            
-            foreach ($completedWorks as $work) {
-                $materials = '';
-                if ($work->materials && $work->materials->isNotEmpty()) {
-                    $materials = $work->materials->map(function ($material) {
-                        $quantity = $material->pivot->quantity ?? 0;
-                        $unit = $material->unit ?? '';
-                        return $material->name . ' (' . $quantity . ' ' . $unit . ')';
-                    })->join(', ');
-                }
-
-                $workTypeName = $work->workType ? $work->workType->name : 'Не указан';
-                $executorName = $work->user ? $work->user->name : 'Не указан';
-                $completionDate = $work->completion_date ? $work->completion_date->format('d.m.Y') : 'Не указана';
-
-                $exportData[] = [
-                    $workTypeName,
-                    $work->unit ?? '',
-                    $work->quantity ?? 0,
-                    $work->unit_price ?? 0,
-                    $work->total_amount ?? 0,
-                    $materials,
-                    $completionDate,
-                    $executorName
-                ];
-            }
-
-            // Если нет работ, добавляем пустую строку
-            if (empty($exportData)) {
-                $exportData[] = [
-                    'Нет выполненных работ',
-                    '-',
-                    0,
-                    0,
-                    0,
-                    '-',
-                    '-',
-                    '-'
-                ];
-            }
-
-            $filename = "act_" . preg_replace('/[^A-Za-z0-9\-_]/', '_', $actModel->act_document_number) . "_" . now()->format('Y-m-d') . ".xlsx";
-
-            return $this->excelExporter->streamDownload($filename, $headers, $exportData);
+            return AdminResponse::success(['url' => $url]);
 
         } catch (Exception $e) {
-            Log::error('Ошибка экспорта Excel акта', [
+            Log::error('Ошибка экспорта Excel акта KS-2', [
                 'contract_id' => $contract,
                 'act_id' => $act,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'error' => $e->getMessage()
             ]);
             
-            return AdminResponse::error(trans_message('contract.act_export_error'), 500, $e->getMessage());
+            return AdminResponse::error(trans_message('contract.act_export_error'), 500, config('app.debug') ? $e->getMessage() : null);
+        }
+    }
+
+    /**
+     * Экспорт справки КС-3 в Excel
+     */
+    public function exportKS3(Request $request, int $project, int $contract, int $act): JsonResponse
+    {
+        try {
+            $user = $request->user();
+            $organizationId = $user->organization_id ?? $user->current_organization_id;
+
+            $actModel = $this->actService->getActById($act, $contract, $organizationId, $project);
+            if (!$actModel) {
+                return AdminResponse::error(trans_message('contract.act_not_found'), Response::HTTP_NOT_FOUND);
+            }
+
+            $path = $this->officialExportService->exportKS3ToExcel($actModel, $actModel->contract);
+            $url = $this->officialExportService->getFileService()->temporaryUrl($path, 15);
+
+            return AdminResponse::success(['url' => $url]);
+        } catch (Exception $e) {
+            return AdminResponse::error('Ошибка экспорта КС-3', 500, $e->getMessage());
         }
     }
 

@@ -10,11 +10,38 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+use App\Http\Responses\AdminResponse;
+use App\BusinessModules\Features\BasicWarehouse\Services\Export\WarehouseExportManager;
+
 /**
  * Контроллер для инвентаризации
  */
 class InventoryController extends Controller
 {
+    public function __construct(
+        protected WarehouseExportManager $exportManager
+    ) {}
+
+    /**
+     * Экспорт инвентаризационной описи (ИНВ-3)
+     */
+    public function export(int $id, Request $request): JsonResponse
+    {
+        $act = InventoryAct::with(['organization', 'warehouse', 'items.material.measurementUnit'])->findOrFail($id);
+        
+        if ($act->organization_id !== $request->user()->current_organization_id) {
+            return AdminResponse::error('Доступ запрещен', 403);
+        }
+
+        try {
+            $path = $this->exportManager->export('inv3', $act);
+            $url = $this->exportManager->getTemporaryUrl($path);
+            
+            return AdminResponse::success(['url' => $url], 'Файл успешно сгенерирован');
+        } catch (\Exception $e) {
+            return AdminResponse::error('Ошибка экспорта ИНВ-3: ' . $e->getMessage(), 500);
+        }
+    }
     /**
      * Получить список актов инвентаризации
      */

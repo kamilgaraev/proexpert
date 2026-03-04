@@ -36,6 +36,20 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
             Route::get('/{id}/balances', [WarehouseController::class, 'balances']);
             Route::get('/{id}/movements', [WarehouseController::class, 'movements']);
             
+            // Экспорт документов движений
+            Route::get('/movements/{id}/export-m4', [WarehouseOperationsController::class, 'exportM4'])
+                ->name('movements.export-m4');
+            Route::get('/movements/{id}/export-m11', [WarehouseOperationsController::class, 'exportM11'])
+                ->name('movements.export-m11');
+            Route::get('/movements/{id}/export-m15', [WarehouseOperationsController::class, 'exportM15'])
+                ->name('movements.export-m15');
+            Route::get('/movements/{id}/export-m7', [WarehouseOperationsController::class, 'exportM7'])
+                ->name('movements.export-m7');
+            
+            // Карточка учета материала
+            Route::get('/materials/{materialId}/export-m17', [WarehouseOperationsController::class, 'exportM17'])
+                ->name('materials.export-m17');
+            
             // Операции со складом
             Route::post('/operations/receipt', [WarehouseOperationsController::class, 'receipt'])
                 ->name('operations.receipt');
@@ -59,6 +73,8 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
                 Route::put('/{actId}/items/{itemId}', [InventoryController::class, 'updateItem']);
                 Route::post('/{id}/complete', [InventoryController::class, 'complete']);
                 Route::post('/{id}/approve', [InventoryController::class, 'approve']);
+                Route::get('/{id}/export', [InventoryController::class, 'export'])
+                    ->name('export');
             });
 
             // Зоны хранения
@@ -100,6 +116,8 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
                 ->name('reservations.index');
             Route::delete('/reservations/{reservationId}', [AdvancedWarehouseController::class, 'unreserve'])
                 ->name('reservations.unreserve');
+            Route::get('/reservations/{reservationId}/export-m8', [WarehouseOperationsController::class, 'exportM8'])
+                ->name('reservations.export-m8');
             
             // Автопополнение
             Route::post('/auto-reorder/rules', [AdvancedWarehouseController::class, 'createAutoReorderRule'])

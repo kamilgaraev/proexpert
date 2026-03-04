@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
+use App\BusinessModules\Features\BudgetEstimates\Services\Export\OfficialFormsExportService;
 use App\Models\ContractPerformanceAct;
 use App\Models\File;
 use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceActResource;
@@ -36,7 +37,8 @@ class ActReportsController extends Controller
     public function __construct(
         protected ActReportService $actReportService,
         protected ExcelExporterService $excelExporter,
-        protected FileService $fileService
+        protected FileService $fileService,
+        protected OfficialFormsExportService $officialExportService
     ) {
         $this->middleware('auth:api_admin');
         $this->middleware('organization.context');
@@ -277,8 +279,72 @@ class ActReportsController extends Controller
         }
     }
 
-    // ================================================================
-    // TODO: Методы экспорта (PDF, Excel) будут добавлены в следующем блоке
-    // TODO: Методы работы с файлами будут добавлены в следующем блоке
-    // ================================================================
+    /**
+     * Экспорт акта в PDF
+     * 
+     * GET /api/v1/admin/act-reports/{act}/export/pdf
+     */
+    public function exportPdf(Request $request, ContractPerformanceAct $act): JsonResponse
+    {
+        try {
+            $this->authorizeActAccess($request, $act);
+
+            $path = $this->officialExportService->exportKS2ToPdf($act, $act->contract);
+            $url = $this->fileService->temporaryUrl($path, 15);
+
+            return AdminResponse::success(['url' => $url]);
+        } catch (\Throwable $e) {
+            Log::error('act_reports.export_pdf_error', [
+                'act_id' => $act->id,
+                'error' => $e->getMessage()
+            ]);
+            return AdminResponse::error(trans_message('act_reports.export_failed'), 500);
+        }
+    }
+
+    /**
+     * Экспорт акта в Excel
+     * 
+     * GET /api/v1/admin/act-reports/{act}/export/excel
+     */
+    public function exportExcel(Request $request, ContractPerformanceAct $act): JsonResponse
+    {
+        try {
+            $this->authorizeActAccess($request, $act);
+
+            $path = $this->officialExportService->exportKS2ToExcel($act, $act->contract);
+            $url = $this->fileService->temporaryUrl($path, 15);
+
+            return AdminResponse::success(['url' => $url]);
+        } catch (\Throwable $e) {
+            Log::error('act_reports.export_excel_error', [
+                'act_id' => $act->id,
+                'error' => $e->getMessage()
+            ]);
+            return AdminResponse::error(trans_message('act_reports.export_failed'), 500);
+        }
+    }
+
+    /**
+     * Экспорт справки КС-3
+     * 
+     * GET /api/v1/admin/act-reports/{act}/export/ks3
+     */
+    public function exportKS3(Request $request, ContractPerformanceAct $act): JsonResponse
+    {
+        try {
+            $this->authorizeActAccess($request, $act);
+
+            $path = $this->officialExportService->exportKS3ToExcel($act, $act->contract);
+            $url = $this->fileService->temporaryUrl($path, 15);
+
+            return AdminResponse::success(['url' => $url]);
+        } catch (\Throwable $e) {
+            Log::error('act_reports.export_ks3_error', [
+                'act_id' => $act->id,
+                'error' => $e->getMessage()
+            ]);
+            return AdminResponse::error(trans_message('act_reports.export_failed'), 500);
+        }
+    }
 }
