@@ -23,7 +23,7 @@
         "pro": {
             "label": "Профессиональный",
             "description": "Полный финансовый контроль строительных проектов",
-            "price": 3900,
+            "price": 7490,
             "billing_model": "subscription",
             "duration_days": 30,
             "modules": [
