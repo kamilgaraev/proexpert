@@ -1,0 +1,46 @@
+{
+    "slug": "analytics",
+    "name": "Отчётность и аналитика",
+    "description": "Мощные инструменты для анализа данных, построения отчётов и управления дашбордами",
+    "icon": "chart-bar",
+    "color": "#8B5CF6",
+    "sort_order": 4,
+    "tiers": {
+        "base": {
+            "label": "Базовый",
+            "description": "Стандартные отчёты и дашборды",
+            "price": 0,
+            "billing_model": "free",
+            "modules": [
+                "reports",
+                "dashboard-widgets",
+                "data-filters"
+            ],
+            "highlights": [
+                "Стандартные отчёты",
+                "Виджеты дашборда",
+                "Фильтрация данных"
+            ]
+        },
+        "pro": {
+            "label": "Профессиональный",
+            "description": "Расширенный экспорт и кастомные шаблоны",
+            "price": 1900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": [
+                "reports",
+                "dashboard-widgets",
+                "data-filters",
+                "data-export",
+                "report-templates"
+            ],
+            "highlights": [
+                "Всё из Базового",
+                "Расширенный экспорт данных",
+                "Кастомные шаблоны отчётов",
+                "Экспорт в Excel, PDF, CSV"
+            ]
+        }
+    }
+}
