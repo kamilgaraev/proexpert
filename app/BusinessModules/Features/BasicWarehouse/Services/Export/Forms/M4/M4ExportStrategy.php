@@ -14,21 +14,27 @@ use PhpOffice\PhpSpreadsheet\Style\Border;
  */
 class M4ExportStrategy extends BaseWarehouseExportStrategy
 {
-    public function export($movement): string
+    public function export($movementOrCollection): string
     {
-        /** @var WarehouseMovement $movement */
+        $movements = $movementOrCollection instanceof \Illuminate\Database\Eloquent\Collection 
+            ? $movementOrCollection 
+            : collect([$movementOrCollection]);
+            
+        /** @var WarehouseMovement $firstMovement */
+        $firstMovement = $movements->first();
+        
         $spreadsheet = new Spreadsheet();
         $sheet = $spreadsheet->getActiveSheet();
         
-        $this->setHeader($sheet, $movement);
-        $this->setTable($sheet, $movement);
-        $this->setFooter($sheet, $movement);
+        $this->setHeader($sheet, $firstMovement);
+        $this->setTable($sheet, $movements);
+        $this->setFooter($sheet, $firstMovement);
         $this->applyStyles($sheet);
         
-        $filename = "M4_" . ($movement->document_number ?: $movement->id) . ".xlsx";
+        $filename = "M4_" . ($firstMovement->document_number ?: $firstMovement->id) . ".xlsx";
         $path = "exports/warehouse/m4/{$filename}";
         
-        return $this->saveSpreadsheetToS3($spreadsheet, $path, $movement->organization);
+        return $this->saveSpreadsheetToS3($spreadsheet, $path, $firstMovement->organization);
     }
 
     public function getSupportedType(): string
@@ -79,7 +85,7 @@ class M4ExportStrategy extends BaseWarehouseExportStrategy
         $sheet->setCellValue('A14', 'Поставщик: ' . ($movement->metadata['supplier_name'] ?? ''));
     }
 
-    protected function setTable($sheet, WarehouseMovement $movement): void
+    protected function setTable($sheet, $movements): void
     {
         $row = 16;
         $sheet->setCellValue("A{$row}", 'Материал (наименование, сорт, размер, марка)');
@@ -92,12 +98,14 @@ class M4ExportStrategy extends BaseWarehouseExportStrategy
         $this->setCenter($sheet, "A{$row}:I{$row}");
         $sheet->getStyle("A{$row}:I{$row}")->getAlignment()->setWrapText(true);
         
-        $row++;
-        $sheet->setCellValue("A{$row}", $movement->material->name);
-        $sheet->setCellValue("E{$row}", $movement->material->measurementUnit->name ?? '');
-        $sheet->setCellValue("F{$row}", $movement->quantity);
-        $sheet->setCellValue("H{$row}", number_format((float)$movement->price, 2, ',', ' '));
-        $sheet->setCellValue("I{$row}", number_format((float)($movement->quantity * $movement->price), 2, ',', ' '));
+        foreach ($movements as $m) {
+            $row++;
+            $sheet->setCellValue("A{$row}", $m->material->name);
+            $sheet->setCellValue("E{$row}", $m->material->measurementUnit->name ?? '');
+            $sheet->setCellValue("F{$row}", $m->quantity);
+            $sheet->setCellValue("H{$row}", number_format((float)$m->price, 2, ',', ' '));
+            $sheet->setCellValue("I{$row}", number_format((float)($m->quantity * $m->price), 2, ',', ' '));
+        }
         
         $this->applyTableStyle($sheet, "A16:I{$row}");
     }
