@@ -25,13 +25,37 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Exception;
 
+use App\BusinessModules\Features\BudgetEstimates\Services\Export\OfficialFormsExportService;
+
 class ContractController extends Controller
 {
     protected ContractService $contractService;
+    protected OfficialFormsExportService $exportService;
 
-    public function __construct(ContractService $contractService)
+    public function __construct(ContractService $contractService, OfficialFormsExportService $exportService)
     {
         $this->contractService = $contractService;
+        $this->exportService = $exportService;
+    }
+
+    /**
+     * Экспорт накопительной ведомости (КС-6а)
+     */
+    public function exportKS6a(int $contract, Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        
+        $contract = \App\Models\Contract::where('organization_id', $organizationId)->findOrFail($contract);
+
+        try {
+            $path = $this->exportService->exportKS6aToExcel($contract);
+            $url = $this->exportService->getFileService()->temporaryUrl($path, 15);
+            
+            return AdminResponse::success(['url' => $url], 'Файл успешно сгенерирован');
+        } catch (\Exception $e) {
+            return AdminResponse::error('Ошибка экспорта: ' . $e->getMessage(), 500);
+        }
     }
 
     /**

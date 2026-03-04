@@ -18,6 +18,8 @@ Route::group(['prefix' => 'contracts'], function () {
         ->name('contracts.analytics');
     Route::get('{contract}/completed-works', [ContractController::class, 'completedWorks'])
         ->name('contracts.completed-works');
+    Route::get('{contract}/export-ks6a', [ContractController::class, 'exportKS6a'])
+        ->name('contracts.export-ks6a');
     Route::get('{contract}/available-works-for-acts', [ContractPerformanceActController::class, 'availableWorks'])
         ->name('contracts.available-works-for-acts');
 });
@@ -36,6 +38,8 @@ Route::group(['prefix' => 'contracts/{contract}/performance-acts'], function () 
         ->name('contracts.performance-acts.export.pdf');
     Route::get('{performance_act}/export/excel', [ContractPerformanceActController::class, 'exportExcel'])
         ->name('contracts.performance-acts.export.excel');
+    Route::get('{performance_act}/export/ks3', [ContractPerformanceActController::class, 'exportKS3'])
+        ->name('contracts.performance-acts.export.ks3');
 });
 
 // Маршруты для файлов актов (shallow - без привязки к контракту)

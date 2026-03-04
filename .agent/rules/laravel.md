@@ -55,3 +55,4 @@ Best Practices:
 - Follow PSR standards
 - Secure mass assignment ($fillable)
 - Optimize N+1 queries (with())
+- **НИКОГДА** не сохраняй файлы локально. Используй S3.

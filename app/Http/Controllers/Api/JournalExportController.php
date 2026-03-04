@@ -10,6 +10,9 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Carbon\Carbon;
 
+use App\Http\Responses\AdminResponse;
+use Illuminate\Http\JsonResponse;
+
 class JournalExportController extends Controller
 {
     public function __construct(
@@ -19,8 +22,10 @@ class JournalExportController extends Controller
     /**
      * Экспорт журнала в формате КС-6
      */
-    public function exportKS6(Request $request, ConstructionJournal $journal): Response
+    public function exportKS6(Request $request, ConstructionJournal $journal): JsonResponse
     {
+        // Вместо authorize используем проверку через service или middleware, 
+        // но оставим проверку прав
         $this->authorize('export', $journal);
 
         $validated = $request->validate([
@@ -33,45 +38,32 @@ class JournalExportController extends Controller
         $to = Carbon::parse($validated['date_to']);
         $format = $validated['format'];
 
-        $filePath = $format === 'pdf'
+        $path = $format === 'pdf'
             ? $this->exportService->exportKS6ToPdf($journal, $from, $to)
             : $this->exportService->exportKS6ToExcel($journal, $from, $to);
 
-        $filename = basename($filePath);
-        $content = file_get_contents($filePath);
-        
-        unlink($filePath);
+        $url = $this->exportService->getFileService()->temporaryUrl($path, 15);
 
-        $mimeType = $format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-
-        return response($content)
-            ->header('Content-Type', $mimeType)
-            ->header('Content-Disposition', "attachment; filename=\"{$filename}\"");
+        return AdminResponse::success(['url' => $url]);
     }
 
     /**
      * Экспорт ежедневной выписки из журнала
      */
-    public function exportDailyReport(Request $request, ConstructionJournalEntry $entry): Response
+    public function exportDailyReport(Request $request, ConstructionJournalEntry $entry): JsonResponse
     {
         $this->authorize('export', $entry->journal);
 
-        $filePath = $this->exportService->exportDailyReportToPdf($entry);
+        $path = $this->exportService->exportDailyReportToPdf($entry);
+        $url = $this->exportService->getFileService()->temporaryUrl($path, 15);
 
-        $filename = basename($filePath);
-        $content = file_get_contents($filePath);
-        
-        unlink($filePath);
-
-        return response($content)
-            ->header('Content-Type', 'application/pdf')
-            ->header('Content-Disposition', "attachment; filename=\"{$filename}\"");
+        return AdminResponse::success(['url' => $url]);
     }
 
     /**
      * Экспорт расширенного отчета
      */
-    public function exportExtended(Request $request, ConstructionJournal $journal): Response
+    public function exportExtended(Request $request, ConstructionJournal $journal): JsonResponse
     {
         $this->authorize('export', $journal);
 
@@ -91,16 +83,10 @@ class JournalExportController extends Controller
             'include_workers' => $validated['include_workers'] ?? true,
         ];
 
-        $filePath = $this->exportService->exportExtendedReportToExcel($journal, $options);
+        $path = $this->exportService->exportExtendedReportToExcel($journal, $options);
+        $url = $this->exportService->getFileService()->temporaryUrl($path, 15);
 
-        $filename = basename($filePath);
-        $content = file_get_contents($filePath);
-        
-        unlink($filePath);
-
-        return response($content)
-            ->header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-            ->header('Content-Disposition', "attachment; filename=\"{$filename}\"");
+        return AdminResponse::success(['url' => $url]);
     }
 }
 

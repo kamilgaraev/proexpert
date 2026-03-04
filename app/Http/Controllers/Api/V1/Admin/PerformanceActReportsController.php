@@ -3,25 +3,28 @@
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
+use App\BusinessModules\Features\BudgetEstimates\Services\Export\OfficialFormsExportService;
 use App\Models\ContractPerformanceAct;
 use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceActResource;
 use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceActCollection;
 use App\Services\Export\ExcelExporterService;
+use App\Services\Storage\FileService;
+use App\Http\Responses\AdminResponse;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
-use Symfony\Component\HttpFoundation\StreamedResponse;
+use Illuminate\Support\Facades\Log;
 use Exception;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class PerformanceActReportsController extends Controller
 {
-    protected ExcelExporterService $excelExporter;
-
-    public function __construct(ExcelExporterService $excelExporter)
-    {
-        $this->excelExporter = $excelExporter;
-    }
+    public function __construct(
+        protected ExcelExporterService $excelExporter,
+        protected OfficialFormsExportService $officialExportService,
+        protected FileService $fileService
+    ) {}
 
     /**
      * Получить все акты организации с фильтрацией
@@ -155,111 +158,49 @@ class PerformanceActReportsController extends Controller
     /**
      * Экспорт акта в PDF
      */
-    public function exportPdf(int $actId)
+    public function exportPdf(int $actId): JsonResponse
     {
         try {
-            $act = ContractPerformanceAct::with([
-                'contract.project',
-                'contract.contractor',
-                'contract.organization',
-                'completedWorks.workType',
-                'completedWorks.materials',
-                'completedWorks.executor'
-            ])->findOrFail($actId);
+            $act = ContractPerformanceAct::with('contract')->findOrFail($actId);
+            
+            $path = $this->officialExportService->exportKS2ToPdf($act, $act->contract);
+            $url = $this->fileService->temporaryUrl($path, 15);
 
-            $data = [
-                'act' => $act,
-                'contract' => $act->contract,
-                'project' => $act->contract->project,
-                'contractor' => $act->contract->contractor,
-                'works' => $act->completedWorks,
-                'total_amount' => $act->amount,
-                'generated_at' => now()->format('d.m.Y H:i')
-            ];
-
-            $pdf = Pdf::loadView('reports.act-report-pdf', $data);
-            $pdf->setPaper('A4', 'portrait');
-
-            $filename = "act_{$act->act_document_number}_" . now()->format('Y-m-d') . ".pdf";
-
-            return $pdf->download($filename);
-
+            return AdminResponse::success(['url' => $url]);
         } catch (Exception $e) {
-            return response()->json([
-                'error' => 'Ошибка при экспорте в PDF',
-                'message' => $e->getMessage()
-            ], 500);
+            Log::error('PerformanceActReports.exportPdf failed', [
+                'act_id' => $actId,
+                'error' => $e->getMessage()
+            ]);
+            return AdminResponse::error('Ошибка при экспорте в PDF: ' . $e->getMessage(), 500);
         }
     }
 
     /**
      * Экспорт акта в Excel
      */
-    public function exportExcel(int $actId)
+    public function exportExcel(int $actId): JsonResponse
     {
         try {
-            $act = ContractPerformanceAct::with([
-                'contract.project',
-                'contract.contractor',
-                'completedWorks.workType',
-                'completedWorks.materials',
-                'completedWorks.executor'
-            ])->findOrFail($actId);
+            $act = ContractPerformanceAct::with('contract')->findOrFail($actId);
+            
+            $path = $this->officialExportService->exportKS2ToExcel($act, $act->contract);
+            $url = $this->fileService->temporaryUrl($path, 15);
 
-            $headers = [
-                'Наименование работы',
-                'Единица измерения',
-                'Количество',
-                'Цена за единицу',
-                'Сумма',
-                'Материалы',
-                'Дата выполнения',
-                'Исполнитель'
-            ];
-
-            $exportData = [];
-            foreach ($act->completedWorks as $work) {
-                $materials = '';
-                if ($work->materials && $work->materials->isNotEmpty()) {
-                    $materials = $work->materials->map(function ($material) {
-                        $quantity = $material->pivot->quantity ?? 0;
-                        $unit = $material->unit ?? '';
-                        return $material->name . ' (' . $quantity . ' ' . $unit . ')';
-                    })->join(', ');
-                }
-
-                $workTypeName = $work->workType ? $work->workType->name : 'Не указан';
-                $executorName = $work->executor ? $work->executor->name : 'Не указан';
-                $completionDate = $work->completion_date ? $work->completion_date->format('d.m.Y') : 'Не указана';
-
-                $exportData[] = [
-                    $workTypeName,
-                    $work->unit ?? '',
-                    number_format($work->quantity ?? 0, 2, ',', ' '),
-                    number_format($work->unit_price ?? 0, 2, ',', ' '),
-                    number_format($work->total_amount ?? 0, 2, ',', ' '),
-                    $materials,
-                    $completionDate,
-                    $executorName
-                ];
-            }
-
-            $filename = "act_{$act->act_document_number}_" . now()->format('Y-m-d') . ".xlsx";
-
-            return $this->excelExporter->streamDownload($filename, $headers, $exportData);
-
+            return AdminResponse::success(['url' => $url]);
         } catch (Exception $e) {
-            return response()->json([
-                'error' => 'Ошибка при экспорте в Excel',
-                'message' => $e->getMessage()
-            ], 500);
+            Log::error('PerformanceActReports.exportExcel failed', [
+                'act_id' => $actId,
+                'error' => $e->getMessage()
+            ]);
+            return AdminResponse::error('Ошибка при экспорте в Excel: ' . $e->getMessage(), 500);
         }
     }
 
     /**
      * Массовый экспорт актов в Excel
      */
-    public function bulkExportExcel(Request $request)
+    public function bulkExportExcel(Request $request): JsonResponse
     {
         try {
             $user = $request->user();
@@ -268,84 +209,64 @@ class PerformanceActReportsController extends Controller
             $actIds = $request->input('act_ids', []);
             
             if (empty($actIds)) {
-                return response()->json([
-                    'error' => 'Не выбраны акты для экспорта'
-                ], 400);
+                return AdminResponse::error('Не выбраны акты для экспорта', 400);
             }
 
             $acts = ContractPerformanceAct::with([
                 'contract.project',
                 'contract.contractor',
                 'completedWorks.workType',
-                'completedWorks.materials',
-                'completedWorks.executor'
             ])->whereHas('contract', function ($q) use ($organizationId) {
                 $q->where('organization_id', $organizationId);
             })->whereIn('id', $actIds)->get();
 
             $headers = [
-                'Номер акта',
-                'Контракт',
-                'Проект',
-                'Подрядчик',
-                'Дата акта',
-                'Сумма',
-                'Статус',
-                'Наименование работы',
-                'Единица измерения',
-                'Количество',
-                'Цена за единицу',
-                'Сумма работы',
-                'Материалы',
-                'Дата выполнения',
-                'Исполнитель'
+                'Номер акта', 'Контракт', 'Проект', 'Подрядчик', 'Дата акта', 'Сумма', 'Статус',
+                'Наименование работы', 'Единица измерения', 'Количество', 'Цена за единицу', 'Сумма работы'
             ];
 
             $exportData = [];
             foreach ($acts as $act) {
                 foreach ($act->completedWorks as $work) {
-                    $materials = '';
-                    if ($work->materials && $work->materials->isNotEmpty()) {
-                        $materials = $work->materials->map(function ($material) {
-                            $quantity = $material->pivot->quantity ?? 0;
-                            $unit = $material->unit ?? '';
-                            return $material->name . ' (' . $quantity . ' ' . $unit . ')';
-                        })->join(', ');
-                    }
-
-                    $workTypeName = $work->workType ? $work->workType->name : 'Не указан';
-                    $executorName = $work->executor ? $work->executor->name : 'Не указан';
-                    $completionDate = $work->completion_date ? $work->completion_date->format('d.m.Y') : 'Не указана';
-
                     $exportData[] = [
                         $act->act_document_number,
-                        $act->contract->contract_number ?? '',
+                        $act->contract->number ?? '',
                         $act->contract->project->name ?? '',
                         $act->contract->contractor->name ?? '',
                         $act->act_date ? $act->act_date->format('d.m.Y') : '',
-                        number_format($act->amount ?? 0, 2, ',', ' '),
+                        number_format((float)$act->amount, 2, '.', ''),
                         $act->is_approved ? 'Утвержден' : 'Не утвержден',
-                        $workTypeName,
-                        $work->unit ?? '',
-                        number_format($work->quantity ?? 0, 2, ',', ' '),
-                        number_format($work->unit_price ?? 0, 2, ',', ' '),
-                        number_format($work->total_amount ?? 0, 2, ',', ' '),
-                        $materials,
-                        $completionDate,
-                        $executorName
+                        $work->workType?->name ?? $work->description,
+                        $work->workType?->measurementUnit?->short_name ?? '',
+                        $work->pivot?->included_quantity ?? $work->quantity,
+                        $work->pivot?->included_amount ? ($work->pivot->included_amount / ($work->pivot->included_quantity ?: 1)) : $work->unit_price,
+                        $work->pivot?->included_amount ?? $work->total_amount
                     ];
                 }
             }
 
-            $filename = "acts_bulk_export_" . now()->format('Y-m-d_H-i-s') . ".xlsx";
+            $filename = "bulk_acts_" . now()->format('Ymd_His') . ".xlsx";
+            $spreadsheet = $this->excelExporter->createSpreadsheet($headers, $exportData);
+            
+            $writer = new Xlsx($spreadsheet);
+            ob_start();
+            $writer->save('php://output');
+            $content = ob_get_clean();
+            
+            $path = "exports/bulk_acts/{$filename}";
+            $org = Organization::find($organizationId);
+            $s3Path = "org-{$organizationId}/{$path}";
+            
+            $this->fileService->disk($org)->put($s3Path, $content);
+            $url = $this->fileService->temporaryUrl($s3Path, 15);
 
-            return $this->excelExporter->streamDownload($filename, $headers, $exportData);
+            return AdminResponse::success(['url' => $url]);
 
         } catch (Exception $e) {
-            return response()->json([
-                'error' => 'Ошибка при массовом экспорте',
-                'message' => $e->getMessage()
-            ], 500);
+            Log::error('PerformanceActReports.bulkExportExcel failed', [
+                'error' => $e->getMessage()
+            ]);
+            return AdminResponse::error('Ошибка при массовом экспорте: ' . $e->getMessage(), 500);
         }
     }
-} 
+}

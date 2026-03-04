@@ -13,9 +13,19 @@ use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Style\Font;
 use Barryvdh\DomPDF\Facade\Pdf;
+use App\Services\Storage\FileService;
+use Illuminate\Support\Str;
 
 class OfficialFormsExportService
 {
+    public function __construct(
+        protected FileService $fileService
+    ) {}
+
+    public function getFileService(): FileService
+    {
+        return $this->fileService;
+    }
     public function exportKS2ToExcel(ContractPerformanceAct $act, Contract $contract): string
     {
         $spreadsheet = new Spreadsheet();
@@ -28,16 +38,9 @@ class OfficialFormsExportService
 
         $actNumber = $act->act_document_number ?? $act->id;
         $filename = "KS-2_{$actNumber}_{$contract->number}.xlsx";
-        $tempPath = storage_path("app/temp/{$filename}");
+        $path = "exports/acts/ks2/{$filename}";
 
-        if (!file_exists(dirname($tempPath))) {
-            mkdir(dirname($tempPath), 0755, true);
-        }
-
-        $writer = new Xlsx($spreadsheet);
-        $writer->save($tempPath);
-
-        return $tempPath;
+        return $this->saveSpreadsheetToS3($spreadsheet, $path, $contract->organization);
     }
 
     public function exportKS3ToExcel(ContractPerformanceAct $act, Contract $contract): string
@@ -52,54 +55,151 @@ class OfficialFormsExportService
 
         $actNumber = $act->act_document_number ?? $act->id;
         $filename = "KS-3_{$actNumber}_{$contract->number}.xlsx";
-        $tempPath = storage_path("app/temp/{$filename}");
+        $path = "exports/acts/ks3/{$filename}";
 
-        if (!file_exists(dirname($tempPath))) {
-            mkdir(dirname($tempPath), 0755, true);
-        }
+        return $this->saveSpreadsheetToS3($spreadsheet, $path, $contract->organization);
+    }
 
+    protected function saveSpreadsheetToS3(Spreadsheet $spreadsheet, string $path, $organization): string
+    {
         $writer = new Xlsx($spreadsheet);
-        $writer->save($tempPath);
+        
+        ob_start();
+        $writer->save('php://output');
+        $content = ob_get_clean();
 
-        return $tempPath;
+        $orgId = $organization instanceof \App\Models\Organization ? $organization->id : $organization;
+        $s3Path = "org-{$orgId}/{$path}";
+        
+        $this->fileService->disk($organization)->put($s3Path, $content);
+
+        return $s3Path;
     }
 
     public function exportKS2ToPdf(ContractPerformanceAct $act, Contract $contract): string
     {
         $data = $this->prepareKS2Data($act, $contract);
-        
         $pdf = Pdf::loadView('estimates.exports.ks2', $data);
         
         $actNumber = $act->act_document_number ?? $act->id;
         $filename = "KS-2_{$actNumber}_{$contract->number}.pdf";
-        $tempPath = storage_path("app/temp/{$filename}");
+        $path = "exports/acts/ks2/{$filename}";
 
-        if (!file_exists(dirname($tempPath))) {
-            mkdir(dirname($tempPath), 0755, true);
-        }
-
-        $pdf->save($tempPath);
-
-        return $tempPath;
+        return $this->savePdfToS3($pdf, $path, $contract->organization);
     }
 
     public function exportKS3ToPdf(ContractPerformanceAct $act, Contract $contract): string
     {
         $data = $this->prepareKS3Data($act, $contract);
-        
         $pdf = Pdf::loadView('estimates.exports.ks3', $data);
         
         $actNumber = $act->act_document_number ?? $act->id;
         $filename = "KS-3_{$actNumber}_{$contract->number}.pdf";
-        $tempPath = storage_path("app/temp/{$filename}");
+        $path = "exports/acts/ks3/{$filename}";
 
-        if (!file_exists(dirname($tempPath))) {
-            mkdir(dirname($tempPath), 0755, true);
+        return $this->savePdfToS3($pdf, $path, $contract->organization);
+    }
+
+    protected function savePdfToS3($pdf, string $path, $organization): string
+    {
+        $content = $pdf->output();
+        
+        $orgId = $organization instanceof \App\Models\Organization ? $organization->id : $organization;
+        $s3Path = "org-{$orgId}/{$path}";
+        
+        $this->fileService->disk($organization)->put($s3Path, $content);
+
+        return $s3Path;
+    }
+
+
+    /**
+     * Экспорт Журнала учета выполненных работ (Форма КС-6а) в Excel на S3
+     */
+    public function exportKS6aToExcel(Contract $contract): string
+    {
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        
+        $this->setKS6aHeader($sheet, $contract);
+        $this->setKS6aTable($sheet, $contract);
+        $this->setKS6aFooter($sheet, $contract);
+        $this->applyKS6aStyles($sheet);
+        
+        $filename = "KS6a_" . ($contract->number ?: $contract->id) . ".xlsx";
+        $path = "exports/acts/ks6a/{$filename}";
+        
+        return $this->saveSpreadsheetToS3($spreadsheet, $path, $contract->organization);
+    }
+
+
+
+    protected function setKS6aHeader($sheet, Contract $contract): void
+    {
+        $org = $contract->organization;
+        $customer = $contract->project->client ?? $org; // Референс
+        
+        $sheet->setCellValue('J1', 'Унифицированная форма № КС-6а');
+        $sheet->setCellValue('J2', 'Утверждена постановлением Госкомстата');
+        $sheet->setCellValue('J3', 'России от 30.10.97 № 71а');
+        
+        $sheet->setCellValue('A5', 'Стройка: ' . $contract->project->name);
+        $sheet->setCellValue('A6', 'Объект: ' . $contract->project->name);
+        $sheet->setCellValue('A7', 'Подрядчик: ' . ($contract->contractor->name ?? $org->name));
+        $sheet->setCellValue('A8', 'Заказчик: ' . ($customer->name ?? ''));
+        
+        $sheet->setCellValue('A10', 'ЖУРНАЛ УЧЕТА ВЫПОЛНЕННЫХ РАБОТ');
+        $sheet->getStyle('A10')->getFont()->setBold(true)->setSize(14);
+        
+        $sheet->setCellValue('D11', 'Номер документа');
+        $sheet->setCellValue('E11', 'Дата составления');
+        $sheet->setCellValue('D12', $contract->number ?: $contract->id);
+        $sheet->setCellValue('E12', date('d.m.Y'));
+    }
+
+    protected function setKS6aTable($sheet, Contract $contract): void
+    {
+        $row = 15;
+        $sheet->setCellValue("A{$row}", '№');
+        $sheet->setCellValue("B{$row}", 'Наименование работ');
+        $sheet->setCellValue("E{$row}", 'Ед. изм.');
+        $sheet->setCellValue("F{$row}", 'Цена');
+        $sheet->setCellValue("G{$row}", 'Выполнено за период (по месяцам)');
+        
+        // Агрегируем суммы по месяцам из актов
+        $acts = $contract->performanceActs()->where('is_approved', true)->orderBy('act_date')->get();
+        $monthlyTotals = [];
+        foreach ($acts as $act) {
+            $month = $act->act_date->format('M Y');
+            $monthlyTotals[$month] = ($monthlyTotals[$month] ?? 0) + $act->amount;
         }
+        
+        $colOffset = 7; // Начинаем с G
+        foreach ($monthlyTotals as $month => $total) {
+            $column = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colOffset);
+            $sheet->setCellValue("{$column}{$row}", $month);
+            $sheet->setCellValue("{$column}" . ($row + 1), $total);
+            $colOffset++;
+        }
+        
+        $row += 2;
+        $sheet->setCellValue("A{$row}", 'ИТОГО');
+        $sheet->setCellValue("G{$row}", $contract->total_performed_amount);
+    }
 
-        $pdf->save($tempPath);
+    protected function setKS6aFooter($sheet, Contract $contract): void
+    {
+        $row = $sheet->getHighestRow() + 2;
+        $sheet->setCellValue("A{$row}", 'Работу сдал: ____________________');
+        $sheet->setCellValue("F{$row}", 'Работу принял: ____________________');
+    }
 
-        return $tempPath;
+    protected function applyKS6aStyles($sheet): void
+    {
+        $sheet->getColumnDimension('A')->setWidth(5);
+        $sheet->getColumnDimension('B')->setWidth(50);
+        $highestRow = $sheet->getHighestRow();
+        $sheet->getStyle("A15:M{$highestRow}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
     }
 
     protected function setKS2Header($sheet, ContractPerformanceAct $act, Contract $contract): void
@@ -758,35 +858,21 @@ class OfficialFormsExportService
 
         $journalNumber = $journal->journal_number ?? $journal->id;
         $filename = "KS-6_{$journalNumber}_{$from->format('Ymd')}_{$to->format('Ymd')}.xlsx";
-        $tempPath = storage_path("app/temp/{$filename}");
+        $path = "exports/journal/ks6/{$filename}";
 
-        if (!file_exists(dirname($tempPath))) {
-            mkdir(dirname($tempPath), 0755, true);
-        }
-
-        $writer = new Xlsx($spreadsheet);
-        $writer->save($tempPath);
-
-        return $tempPath;
+        return $this->saveSpreadsheetToS3($spreadsheet, $path, $journal->project->organization);
     }
 
     public function exportKS6ToPdf(\App\Models\ConstructionJournal $journal, \Carbon\Carbon $from, \Carbon\Carbon $to): string
     {
         $data = $this->prepareKS6Data($journal, $from, $to);
-        
         $pdf = Pdf::loadView('estimates.exports.ks6', $data);
         
         $journalNumber = $journal->journal_number ?? $journal->id;
         $filename = "KS-6_{$journalNumber}_{$from->format('Ymd')}_{$to->format('Ymd')}.pdf";
-        $tempPath = storage_path("app/temp/{$filename}");
+        $path = "exports/journal/ks6/{$filename}";
 
-        if (!file_exists(dirname($tempPath))) {
-            mkdir(dirname($tempPath), 0755, true);
-        }
-
-        $pdf->save($tempPath);
-
-        return $tempPath;
+        return $this->savePdfToS3($pdf, $path, $journal->project->organization);
     }
 
     public function exportDailyReportToPdf(\App\Models\ConstructionJournalEntry $entry): string
@@ -809,15 +895,9 @@ class OfficialFormsExportService
         
         $journalNumber = $entry->journal->journal_number ?? $entry->journal_id;
         $filename = "Daily_Report_{$journalNumber}_{$entry->entry_date->format('Ymd')}_{$entry->entry_number}.pdf";
-        $tempPath = storage_path("app/temp/{$filename}");
+        $path = "exports/journal/daily/{$filename}";
 
-        if (!file_exists(dirname($tempPath))) {
-            mkdir(dirname($tempPath), 0755, true);
-        }
-
-        $pdf->save($tempPath);
-
-        return $tempPath;
+        return $this->savePdfToS3($pdf, $path, $entry->journal->project->organization);
     }
 
     public function exportExtendedReportToExcel(\App\Models\ConstructionJournal $journal, array $options): string
@@ -832,18 +912,10 @@ class OfficialFormsExportService
         $this->setExtendedReportData($sheet, $journal, $from, $to, $options);
         $this->applyExtendedReportStyles($sheet);
 
-        $journalNumber = $journal->journal_number ?? $journal->id;
-        $filename = "Extended_Report_{$journalNumber}_{$from->format('Ymd')}_{$to->format('Ymd')}.xlsx";
-        $tempPath = storage_path("app/temp/{$filename}");
+        $filename = "Extended_Report_" . ($journal->journal_number ?? $journal->id) . ".xlsx";
+        $path = "exports/journal/extended/{$filename}";
 
-        if (!file_exists(dirname($tempPath))) {
-            mkdir(dirname($tempPath), 0755, true);
-        }
-
-        $writer = new Xlsx($spreadsheet);
-        $writer->save($tempPath);
-
-        return $tempPath;
+        return $this->saveSpreadsheetToS3($spreadsheet, $path, $journal->project->organization);
     }
 
     // === KS-6 HELPER METHODS ===

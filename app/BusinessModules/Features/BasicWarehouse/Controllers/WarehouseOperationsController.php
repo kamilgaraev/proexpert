@@ -25,8 +25,156 @@ class WarehouseOperationsController extends Controller
 {
     public function __construct(
         protected WarehouseService $warehouseService,
-        protected AssetService $assetService
+        protected AssetService $assetService,
+        protected \App\BusinessModules\Features\BasicWarehouse\Services\Export\WarehouseExportManager $exportManager
     ) {}
+
+    /**
+     * Экспорт Приходного ордера (М-4)
+     */
+    public function exportM4(int $id, Request $request): JsonResponse
+    {
+        $movement = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::findOrFail($id);
+        
+        if ($movement->organization_id !== $request->user()->current_organization_id) {
+            return AdminResponse::error('Доступ запрещен', 403);
+        }
+
+        try {
+            $path = $this->exportManager->export('m4', $movement);
+            $url = $this->exportManager->getTemporaryUrl($path);
+            
+            return AdminResponse::success(['url' => $url], __('warehouse_basic.export_success'));
+        } catch (\Exception $e) {
+            return AdminResponse::error('Ошибка экспорта М-4: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Экспорт Требования-накладной (М-11)
+     */
+    public function exportM11(int $id, Request $request): JsonResponse
+    {
+        $movement = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::findOrFail($id);
+        
+        if ($movement->organization_id !== $request->user()->current_organization_id) {
+            return AdminResponse::error('Доступ запрещен', 403);
+        }
+
+        try {
+            $path = $this->exportManager->export('m11', $movement);
+            $url = $this->exportManager->getTemporaryUrl($path);
+            
+            return AdminResponse::success(['url' => $url], __('warehouse_basic.export_success'));
+        } catch (\Exception $e) {
+            return AdminResponse::error('Ошибка экспорта М-11: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Экспорт Накладной на отпуск на сторону (М-15)
+     */
+    public function exportM15(int $id, Request $request): JsonResponse
+    {
+        $movement = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::findOrFail($id);
+        
+        if ($movement->organization_id !== $request->user()->current_organization_id) {
+            return AdminResponse::error('Доступ запрещен', 403);
+        }
+
+        try {
+            $path = $this->exportManager->export('m15', $movement);
+            $url = $this->exportManager->getTemporaryUrl($path);
+            
+            return AdminResponse::success(['url' => $url], __('warehouse_basic.export_success'));
+        } catch (\Exception $e) {
+            return AdminResponse::error('Ошибка экспорта М-15: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Экспорт Акта о приемке (М-7)
+     */
+    public function exportM7(int $id, Request $request): JsonResponse
+    {
+        $movement = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::findOrFail($id);
+        
+        if ($movement->organization_id !== $request->user()->current_organization_id) {
+            return AdminResponse::error('Доступ запрещен', 403);
+        }
+
+        try {
+            $path = $this->exportManager->export('m7', $movement);
+            $url = $this->exportManager->getTemporaryUrl($path);
+            
+            return AdminResponse::success(['url' => $url], __('warehouse_basic.export_success'));
+        } catch (\Exception $e) {
+            return AdminResponse::error('Ошибка экспорта М-7: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Экспорт Карточки учета материалов (М-17)
+     */
+    public function exportM17(int $materialId, Request $request): JsonResponse
+    {
+        $material = \App\Models\Material::findOrFail($materialId);
+        $warehouseId = (int) $request->query('warehouse_id');
+
+        if ($material->organization_id !== $request->user()->current_organization_id) {
+            return AdminResponse::error('Доступ запрещен', 403);
+        }
+
+        try {
+            // Получаем движения материала на конкретном складе
+            $movements = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::where('material_id', $materialId)
+                ->where('warehouse_id', $warehouseId)
+                ->orderBy('movement_date', 'asc')
+                ->get();
+
+            $path = $this->exportManager->export('m17', [
+                'material' => $material,
+                'warehouse_id' => $warehouseId,
+                'movements' => $movements
+            ]);
+            $url = $this->exportManager->getTemporaryUrl($path);
+            
+            return AdminResponse::success(['url' => $url], __('warehouse_basic.export_success'));
+        } catch (\Exception $e) {
+            return AdminResponse::error('Ошибка экспорта М-17: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Экспорт Лимитно-заборной карты (М-8)
+     */
+    public function exportM8(int $reservationId, Request $request): JsonResponse
+    {
+        $reservation = \App\BusinessModules\Features\BasicWarehouse\Models\AssetReservation::findOrFail($reservationId);
+        
+        if ($reservation->organization_id !== $request->user()->current_organization_id) {
+            return AdminResponse::error('Доступ запрещен', 403);
+        }
+
+        try {
+            // Получаем движения, связанные с этим резервом (списания)
+            $movements = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::where('material_id', $reservation->material_id)
+                ->where('warehouse_id', $reservation->warehouse_id)
+                ->where('movement_type', 'write-off')
+                ->where('movement_date', '>=', $reservation->created_at)
+                ->get();
+
+            $path = $this->exportManager->export('m8', [
+                'reservation' => $reservation,
+                'movements' => $movements
+            ]);
+            $url = $this->exportManager->getTemporaryUrl($path);
+            
+            return AdminResponse::success(['url' => $url], __('warehouse_basic.export_success'));
+        } catch (\Exception $e) {
+            return AdminResponse::error('Ошибка экспорта М-8: ' . $e->getMessage(), 500);
+        }
+    }
 
     /**
      * Оприходовать активы на склад

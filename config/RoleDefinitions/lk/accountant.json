@@ -165,6 +165,9 @@
     "basic-warehouse": [
       "warehouse.view",
       "warehouse.reports",
+      "warehouse.export_m4",
+      "warehouse.export_m11",
+      "warehouse.export_inv3",
       "warehouse.advanced.view",
       "warehouse.advanced.analytics"
     ]

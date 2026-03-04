@@ -186,3 +186,8 @@ Route::middleware(['role:organization_owner,organization'])->group(function () {
 - **RoleScanner**: Загружает и кэширует JSON роли.
 - **AuthorizationService**: Основная точка входа для проверок.
 - **UserRoleAssignment**: Модель, связывающая пользователей с ролями внутри контекста.
+
+## 6. Файловое хранилище (Storage)
+- ВСЕГДА используй **S3** для сохранения файлов. НЕ сохраняй файлы локально.
+- Используй хелпер-сервис `App\Services\Storage\FileService` для всех операций с файлами.
+- Все файлы должны сохраняться в подпапки организаций: `org-{organization_id}/path/to/file`.
