@@ -25,7 +25,7 @@
         "pro": {
             "label": "Профессиональный",
             "description": "Расширенные инструменты для полного контроля процессов",
-            "price": 4900,
+            "price": 4890,
             "billing_model": "subscription",
             "duration_days": 30,
             "modules": [

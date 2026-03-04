@@ -9,7 +9,7 @@
         "pro": {
             "label": "Профессиональный",
             "description": "Полный набор AI-инструментов",
-            "price": 5900,
+            "price": 6990,
             "billing_model": "subscription",
             "duration_days": 30,
             "modules": [

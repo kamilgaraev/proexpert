@@ -24,7 +24,7 @@
         "pro": {
             "label": "Профессиональный",
             "description": "Полный цикл снабжения и аналитики",
-            "price": 3500,
+            "price": 5490,
             "billing_model": "subscription",
             "duration_days": 30,
             "modules": [
