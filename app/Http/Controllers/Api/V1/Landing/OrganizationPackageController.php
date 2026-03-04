@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api\V1\Landing;
 
 use App\Http\Responses\LandingResponse;
 use App\Services\Landing\PackageService;
+use App\Exceptions\Billing\InsufficientBalanceException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -57,6 +58,8 @@ class OrganizationPackageController
             return LandingResponse::success($result, 'Пакет успешно подключён');
         } catch (\InvalidArgumentException $e) {
             return LandingResponse::error($e->getMessage(), 422);
+        } catch (InsufficientBalanceException $e) {
+            return LandingResponse::error($e->getMessage(), 402);
         } catch (\RuntimeException $e) {
             Log::error('PackageController@subscribe: '.$e->getMessage(), [
                 'request' => $request->all(),
