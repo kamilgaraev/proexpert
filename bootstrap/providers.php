@@ -4,6 +4,7 @@ return [
     App\BusinessModules\Addons\AIEstimates\AIEstimatesServiceProvider::class,
     App\BusinessModules\Core\Payments\PaymentsServiceProvider::class,
     App\BusinessModules\Features\AIAssistant\AIAssistantServiceProvider::class,
+    App\BusinessModules\Features\ContractManagement\ContractManagementServiceProvider::class,
     App\BusinessModules\Features\AdvancedDashboard\AdvancedDashboardServiceProvider::class,
     App\BusinessModules\Features\BudgetEstimates\BudgetEstimatesServiceProvider::class,
     App\BusinessModules\Features\NormativeReferences\NormativeReferencesServiceProvider::class,
