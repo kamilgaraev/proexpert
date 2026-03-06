@@ -140,4 +140,35 @@ class ContractEstimateItemController extends Controller
             return AdminResponse::error('Ошибка при загрузке сводки', 500);
         }
     }
+
+    public function projectEstimates(Contract $contract)
+    {
+        try {
+            $estimates = Estimate::where('project_id', $contract->project_id)
+                ->where('organization_id', $contract->organization_id)
+                ->withCount(['estimateItems as linked_items_count' => function ($query) use ($contract) {
+                    $query->whereHas('contractLinks', function ($q) use ($contract) {
+                        $q->where('contract_id', $contract->id);
+                    });
+                }])
+                ->get();
+
+            return AdminResponse::success(
+                $estimates->map(fn($estimate) => [
+                    'id'                 => $estimate->id,
+                    'name'               => $estimate->name,
+                    'number'             => $estimate->number,
+                    'is_linked'          => $estimate->contract_id === $contract->id,
+                    'linked_items_count' => $estimate->linked_items_count,
+                ]),
+                'Сметы проекта успешно загружены'
+            );
+        } catch (\Exception $e) {
+            Log::error('contract_estimate_items.project_estimates_failed', [
+                'contract_id' => $contract->id,
+                'error'       => $e->getMessage(),
+            ]);
+            return AdminResponse::error('Ошибка при загрузке смет проекта', 500);
+        }
+    }
 }
