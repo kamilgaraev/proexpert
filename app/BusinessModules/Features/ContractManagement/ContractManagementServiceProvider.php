@@ -25,6 +25,7 @@ class ContractManagementServiceProvider extends ServiceProvider
                 Route::get('/', [ContractEstimateItemController::class, 'index']);
                 Route::get('/available', [ContractEstimateItemController::class, 'available']);
                 Route::get('/summary', [ContractEstimateItemController::class, 'summary']);
+                Route::get('/project-estimates', [ContractEstimateItemController::class, 'projectEstimates']);
                 Route::post('/attach', [ContractEstimateItemController::class, 'attach']);
                 Route::delete('/detach', [ContractEstimateItemController::class, 'detach']);
             });
