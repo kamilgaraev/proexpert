@@ -264,12 +264,6 @@ class ContractService
         $contractData = $contractDTO->toArray();
         $contractData['organization_id'] = $organizationId;
 
-        // Если warranty_retention_percentage не указан, не передаем его в массив,
-        // чтобы БД использовала значение по умолчанию (2.5)
-        if (!isset($contractData['warranty_retention_percentage']) || $contractData['warranty_retention_percentage'] === null) {
-            unset($contractData['warranty_retention_percentage']);
-        }
-
         // Для контрактов с нефиксированной суммой: если total_amount не указан, устанавливаем 0
         // Сумма будет пересчитываться автоматически при создании актов и ДС
         if (!$contractDTO->is_fixed_amount && (!isset($contractData['total_amount']) || $contractData['total_amount'] === null)) {
@@ -621,12 +615,6 @@ class ContractService
         }
 
         $updateData = $contractDTO->toArray();
-        
-        // Если warranty_retention_percentage не указан или равен null, не передаем его в массив,
-        // чтобы сохранить текущее значение или использовать значение по умолчанию из БД (2.5)
-        if (!isset($updateData['warranty_retention_percentage']) || $updateData['warranty_retention_percentage'] === null) {
-            unset($updateData['warranty_retention_percentage']);
-        }
         
         // Сохраняем project_ids для мультипроектных контрактов
         $projectIds = $updateData['project_ids'] ?? null;

@@ -285,36 +285,31 @@ class Contract extends Model
     /**
      * Рассчитать сумму гарантийного удержания от общей суммы контракта
      * Гарантийное удержание рассчитывается от общей суммы (base_amount + gp_amount)
-     * По умолчанию: 2.5% от общей суммы контракта
+     * Если warranty_retention_calculation_type равен null — удержание не применяется
      */
     public function getWarrantyRetentionAmountAttribute(): float
     {
+        // Если тип расчёта не задан — гарантийное удержание не используется
+        if ($this->warranty_retention_calculation_type === null) {
+            return 0.00;
+        }
+
         // Общая сумма контракта = базовая сумма + ГП
         $baseAmount = $this->base_amount ?? 0;
         $gpAmount = $this->gp_amount ?? 0;
         $totalContractAmount = $baseAmount + $gpAmount;
         
-        // Если общая сумма равна нулю, то и гарантийное удержание равно нулю
         if ($totalContractAmount == 0) {
             return 0.00;
         }
         
-        $calculationType = $this->warranty_retention_calculation_type ?? GpCalculationTypeEnum::PERCENTAGE;
-        
-        if ($calculationType === GpCalculationTypeEnum::COEFFICIENT) {
+        if ($this->warranty_retention_calculation_type === GpCalculationTypeEnum::COEFFICIENT) {
             $coefficient = $this->warranty_retention_coefficient ?? 0;
-            // Формула: warranty_retention_amount = total_amount × (1 - coefficient)
-            // Коэффициент 1.0 → удержание 0
-            // Коэффициент 0.975 → удержание 2.5% от общей суммы
-            // Коэффициент 0.95 → удержание 5% от общей суммы
             return round($totalContractAmount * (1 - $coefficient), 2);
         }
         
-        // По умолчанию 2.5% от общей суммы контракта
         $percentage = $this->warranty_retention_percentage ?? 2.5;
-        if ($percentage != 0 && $totalContractAmount > 0) {
-            // Расчет: total_amount * (warranty_retention_percentage / 100)
-            // Например: 1100000 * (2.5 / 100) = 27500
+        if ($percentage != 0) {
             return round(($totalContractAmount * $percentage) / 100, 2);
         }
         
