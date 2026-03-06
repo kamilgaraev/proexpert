@@ -220,12 +220,16 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             warranty_retention_calculation_type: array_key_exists('warranty_retention_calculation_type', $validatedData)
                 ? ($validatedData['warranty_retention_calculation_type'] ? GpCalculationTypeEnum::from($validatedData['warranty_retention_calculation_type']) : null)
                 : $contract->warranty_retention_calculation_type,
-            warranty_retention_percentage: array_key_exists('warranty_retention_percentage', $validatedData)
-                ? ($validatedData['warranty_retention_percentage'] !== null ? (float) $validatedData['warranty_retention_percentage'] : null)
-                : $contract->warranty_retention_percentage,
-            warranty_retention_coefficient: array_key_exists('warranty_retention_coefficient', $validatedData)
-                ? ($validatedData['warranty_retention_coefficient'] !== null ? (float) $validatedData['warranty_retention_coefficient'] : null)
-                : $contract->warranty_retention_coefficient,
+            warranty_retention_percentage: array_key_exists('warranty_retention_calculation_type', $validatedData) && $validatedData['warranty_retention_calculation_type'] === null
+                ? null
+                : (array_key_exists('warranty_retention_percentage', $validatedData)
+                    ? ($validatedData['warranty_retention_percentage'] !== null ? (float) $validatedData['warranty_retention_percentage'] : null)
+                    : $contract->warranty_retention_percentage),
+            warranty_retention_coefficient: array_key_exists('warranty_retention_calculation_type', $validatedData) && $validatedData['warranty_retention_calculation_type'] === null
+                ? null
+                : (array_key_exists('warranty_retention_coefficient', $validatedData)
+                    ? ($validatedData['warranty_retention_coefficient'] !== null ? (float) $validatedData['warranty_retention_coefficient'] : null)
+                    : $contract->warranty_retention_coefficient),
             subcontract_amount: array_key_exists('subcontract_amount', $validatedData)
                 ? ($validatedData['subcontract_amount'] !== null ? (float) $validatedData['subcontract_amount'] : null)
                 : $contract->subcontract_amount,
