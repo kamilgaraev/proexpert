@@ -8,7 +8,9 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Support\Facades\Log;
+
 
 class EstimateItem extends Model
 {
@@ -179,6 +181,18 @@ class EstimateItem extends Model
     public function journalWorkVolumes(): HasMany
     {
         return $this->hasMany(JournalWorkVolume::class);
+    }
+
+    public function contractLinks(): HasMany
+    {
+        return $this->hasMany(ContractEstimateItem::class);
+    }
+
+    public function contracts(): BelongsToMany
+    {
+        return $this->belongsToMany(Contract::class, 'contract_estimate_items')
+            ->withPivot(['estimate_id', 'quantity', 'amount', 'notes'])
+            ->withTimestamps();
     }
 
     /**
