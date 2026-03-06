@@ -19,7 +19,14 @@ class ContractManagementServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        Route::middleware(['api', 'auth:api'])
+        Route::middleware([
+            'api', 
+            'auth:api_admin', 
+            'auth.jwt:api_admin', 
+            'organization.context', 
+            'authorize:admin.access', 
+            'interface:admin'
+        ])
             ->prefix('api/v1/admin/contracts/{contract}/estimate-items')
             ->group(function () {
                 Route::get('/', [ContractEstimateItemController::class, 'index']);
