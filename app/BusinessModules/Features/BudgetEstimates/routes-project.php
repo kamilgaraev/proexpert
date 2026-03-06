@@ -58,8 +58,9 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
             Route::get('/{estimate}/dashboard', [EstimateController::class, 'dashboard'])->name('dashboard');
             Route::get('/{estimate}/structure', [EstimateController::class, 'structure'])->name('structure');
 
-            Route::post('/{estimate}/what-if', [EstimateVersionController::class, 'whatIf'])->name('what_if');
-            Route::post('/{estimate}/schedule', [EstimateVersionController::class, 'schedule'])->name('schedule');
+            // Временно отключено - контроллер не существует
+            // Route::post('/{estimate}/what-if', [EstimateVersionController::class, 'whatIf'])->name('what_if');
+            // Route::post('/{estimate}/schedule', [EstimateVersionController::class, 'schedule'])->name('schedule');
             
             // Разделы сметы
             Route::prefix('{estimate}/sections')->name('sections.')->group(function () {

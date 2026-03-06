@@ -59,6 +59,7 @@ Route::prefix('api/v1/admin')
         // ============================================
         // ВЕРСИОНИРОВАНИЕ
         // ============================================
+        /*
         Route::prefix('estimate-versions')->name('estimate_versions.')->group(function () {
             Route::get('/{estimate}', [EstimateVersionController::class, 'index'])->name('index');
             Route::post('/{estimate}', [EstimateVersionController::class, 'store'])->name('store');
@@ -66,14 +67,17 @@ Route::prefix('api/v1/admin')
             Route::post('/{version}/rollback', [EstimateVersionController::class, 'rollback'])->name('rollback');
             Route::post('/snapshot-diff', [EstimateVersionController::class, 'snapshotDiff'])->name('snapshot_diff');
         });
+        */
 
         // ============================================
         // СЛОЙ ПАМЯТИ ИМПОРТА
         // ============================================
+        /*
         Route::prefix('import-memories')->name('import_memories.')->group(function () {
             Route::get('/', [EstimateVersionController::class, 'memoryList'])->name('index');
             Route::post('/feedback', [EstimateVersionController::class, 'memoryFeedback'])->name('feedback');
         });
+        */
 
         // ============================================
         // ШАБЛОНЫ СМЕТ
