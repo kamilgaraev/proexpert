@@ -9,6 +9,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasManyThrough;
+
 use App\Models\Estimate;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
@@ -154,6 +156,18 @@ class Contract extends Model
     public function estimates(): HasMany
     {
         return $this->hasMany(Estimate::class);
+    }
+
+    public function contractEstimateItems(): HasMany
+    {
+        return $this->hasMany(ContractEstimateItem::class);
+    }
+
+    public function linkedEstimateItemsByContract(): BelongsToMany
+    {
+        return $this->belongsToMany(EstimateItem::class, 'contract_estimate_items')
+            ->withPivot(['estimate_id', 'quantity', 'amount', 'notes'])
+            ->withTimestamps();
     }
 
     /**
