@@ -98,7 +98,6 @@ class ContractEstimateItemController extends Controller
                 ->toArray();
 
             $items = \App\Models\EstimateItem::where('estimate_id', $estimate->id)
-                ->whereNull('parent_work_id')
                 ->whereNotIn('id', $linkedItemIds)
                 ->with(['measurementUnit', 'childItems'])
                 ->get();
