@@ -146,7 +146,7 @@ class ContractEstimateItemController extends Controller
         try {
             $estimates = Estimate::where('project_id', $contract->project_id)
                 ->where('organization_id', $contract->organization_id)
-                ->withCount(['estimateItems as linked_items_count' => function ($query) use ($contract) {
+                ->withCount(['items as linked_items_count' => function ($query) use ($contract) {
                     $query->whereHas('contractLinks', function ($q) use ($contract) {
                         $q->where('contract_id', $contract->id);
                     });
