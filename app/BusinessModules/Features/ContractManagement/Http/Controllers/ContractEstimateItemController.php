@@ -99,6 +99,7 @@ class ContractEstimateItemController extends Controller
 
             $items = \App\Models\EstimateItem::where('estimate_id', $estimate->id)
                 ->whereNotIn('id', $linkedItemIds)
+                ->works()
                 ->with(['measurementUnit', 'childItems'])
                 ->get();
 
