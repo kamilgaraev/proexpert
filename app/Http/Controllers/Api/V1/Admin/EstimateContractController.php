@@ -2,11 +2,11 @@
 
 namespace App\Http\Controllers\Api\V1\Admin;
 
-use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateContractIntegrationService;
-use App\Models\Estimate;
-use App\Models\Contract;
+use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use App\Models\Contract;
+use App\Models\Estimate;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -22,7 +22,7 @@ class EstimateContractController extends Controller
     public function createFromContract(Request $request, int $projectId, int $contractId): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id');
-        
+
         $contract = Contract::where('id', $contractId)
             ->where('project_id', $projectId)
             ->where('organization_id', $organizationId)
@@ -52,7 +52,7 @@ class EstimateContractController extends Controller
     public function linkContract(Request $request, int $projectId, int $estimateId): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id');
-        
+
         $estimate = Estimate::where('id', $estimateId)
             ->where('project_id', $projectId)
             ->where('organization_id', $organizationId)
@@ -77,7 +77,7 @@ class EstimateContractController extends Controller
     public function unlinkContract(Request $request, int $projectId, int $estimateId): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id');
-        
+
         $estimate = Estimate::where('id', $estimateId)
             ->where('project_id', $projectId)
             ->where('organization_id', $organizationId)
@@ -96,7 +96,7 @@ class EstimateContractController extends Controller
     public function validateContractAmount(Request $request, int $projectId, int $estimateId): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id');
-        
+
         $estimate = Estimate::where('id', $estimateId)
             ->where('project_id', $projectId)
             ->where('organization_id', $organizationId)
@@ -119,7 +119,7 @@ class EstimateContractController extends Controller
     public function getEstimatesByContract(Request $request, int $projectId, int $contractId): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id');
-        
+
         $contract = Contract::where('id', $contractId)
             ->where('project_id', $projectId)
             ->where('organization_id', $organizationId)
@@ -131,13 +131,17 @@ class EstimateContractController extends Controller
             $estimates->map(function ($estimate) {
                 return [
                     'id' => $estimate->id,
+                    'number' => $estimate->number,
+                    'type' => $estimate->type,
                     'name' => $estimate->name,
                     'total_amount' => (float) $estimate->total_amount,
-                    'created_at' => $estimate->created_at->toISOString(),
+                    'totals' => [
+                        'total_amount' => (float) $estimate->total_amount,
+                    ],
+                    'created_at' => $estimate->created_at ? $estimate->created_at->toISOString() : null,
                     'status' => $estimate->status,
                 ];
             })
         );
     }
 }
-
