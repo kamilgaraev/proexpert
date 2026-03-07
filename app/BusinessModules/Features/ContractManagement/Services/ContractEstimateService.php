@@ -94,7 +94,8 @@ class ContractEstimateService
             'estimateItem.section',
             'estimateItem.measurementUnit',
             'estimateItem.childItems',
-        ])->where('contract_id', $contract->id);
+        ])->where('contract_id', $contract->id)
+        ->whereHas('estimateItem', fn($q) => $q->works());
 
         if ($estimateId !== null) {
             $query->where('estimate_id', $estimateId);
@@ -110,7 +111,8 @@ class ContractEstimateService
 
     public function calculateContractEstimateTotal(Contract $contract, ?int $estimateId = null): float
     {
-        $query = ContractEstimateItem::where('contract_id', $contract->id);
+        $query = ContractEstimateItem::where('contract_id', $contract->id)
+            ->whereHas('estimateItem', fn($q) => $q->works());
 
         if ($estimateId !== null) {
             $query->where('estimate_id', $estimateId);
@@ -122,6 +124,7 @@ class ContractEstimateService
     public function getSummary(Contract $contract): array
     {
         $links = ContractEstimateItem::where('contract_id', $contract->id)
+            ->whereHas('estimateItem', fn($q) => $q->works())
             ->with('estimateItem')
             ->get();
 
