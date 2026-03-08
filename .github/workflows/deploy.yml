@@ -66,6 +66,10 @@ jobs:
             # Поднимаем единый стек. Само удалит orphans!
             docker compose up -d --remove-orphans --force-recreate
             
+            # Дадим контейнеру API (RoadRunner) 10 секунд на полную загрузку воркеров, прежде чем выполнять exec
+            echo "⏳ Waiting for services to stabilize..."
+            sleep 15
+            
             # Миграции и оптимизация
             echo "🔄 Running artisan commands..."
             docker compose exec -T api php artisan migrate:safe --force
