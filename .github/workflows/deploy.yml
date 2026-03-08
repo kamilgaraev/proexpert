@@ -78,15 +78,6 @@ jobs:
             # Логинимся в GHCR на сервере
             echo ${{ secrets.GHCR_PAT }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             
-            # Сначала останавливаем старые не-докер процессы (supervisor, systemd), чтобы освободить порты 8000 и 8080
-            echo "🔄 Stopping old native services (if any)..."
-            sudo systemctl stop prohelper-octane || true
-            sudo systemctl stop supervisor || true
-            pkill -f roadrunner-worker || true
-            pkill -f rr || true
-            pkill -f "artisan reverb" || true
-            echo "✅ Old services stopped" 
-            
             # Скачиваем свежий образ
             echo "🔄 Pulling new Docker image..."
             if command -v docker-compose >/dev/null; then
