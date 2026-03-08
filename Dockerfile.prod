@@ -21,13 +21,14 @@ RUN apk add --no-cache \
     postgresql-dev \
     libzip-dev \
     freetype-dev \
+    icu-dev \
     libjpeg-turbo-dev
 
 # Конфигурация расширений GD
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg
 
 # Установка PHP расширений
-RUN docker-php-ext-install pdo pdo_pgsql pgsql gd zip sockets pcntl opcache
+RUN docker-php-ext-install pdo pdo_pgsql pgsql gd zip sockets pcntl opcache intl
 
 # Установка PECL расширений (Redis, Igbinary)
 RUN pecl install igbinary redis \
