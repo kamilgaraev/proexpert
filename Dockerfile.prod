@@ -1,0 +1,78 @@
+# Используем официальный образ PHP 8.2 с FPM/CLI
+FROM php:8.2-cli-alpine
+
+# Аргументы сборки
+ARG APP_DIR=/var/www/html
+WORKDIR ${APP_DIR}
+
+# Установка системных зависимостей
+# Используем apk для Alpine Linux
+RUN apk add --no-cache \
+    linux-headers \
+    curl \
+    libpng-dev \
+    libxml2-dev \
+    zip \
+    unzip \
+    git \
+    supervisor \
+    nginx \
+    $PHPIZE_DEPS \
+    postgresql-dev \
+    libzip-dev \
+    freetype-dev \
+    libjpeg-turbo-dev
+
+# Конфигурация расширений GD
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg
+
+# Установка PHP расширений
+RUN docker-php-ext-install pdo pdo_pgsql pgsql gd zip sockets pcntl opcache
+
+# Установка PECL расширений (Redis, Igbinary)
+RUN pecl install igbinary redis \
+    && docker-php-ext-enable igbinary redis
+
+# Настройка Opcache для Production
+RUN echo "opcache.enable=1" >> /usr/local/etc/php/conf.d/docker-php-ext-opcache.ini \
+    && echo "opcache.validate_timestamps=0" >> /usr/local/etc/php/conf.d/docker-php-ext-opcache.ini \
+    && echo "opcache.memory_consumption=256" >> /usr/local/etc/php/conf.d/docker-php-ext-opcache.ini \
+    && echo "opcache.interned_strings_buffer=16" >> /usr/local/etc/php/conf.d/docker-php-ext-opcache.ini \
+    && echo "opcache.max_accelerated_files=10000" >> /usr/local/etc/php/conf.d/docker-php-ext-opcache.ini
+
+# Установка Composer
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+# Копируем RoadRunner из официального образа
+COPY --from=ghcr.io/roadrunner-server/roadrunner:2023.3.11 /usr/bin/rr /usr/bin/rr
+
+# Копируем исходный код приложения
+COPY . ${APP_DIR}
+
+# Устанавливаем зависимости composer (без dev-зависимостей)
+# Обрати внимание: мы игнорируем composer.lock, если нужно
+RUN composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist
+
+# Создаем директории для Laravel (если их нет)
+RUN mkdir -p storage/framework/cache/data \
+    storage/framework/app/cache \
+    storage/framework/sessions \
+    storage/framework/views \
+    storage/logs \
+    bootstrap/cache
+
+# Меняем владельца файлов на пользователя www-data
+RUN chown -R www-data:www-data ${APP_DIR} \
+    && chmod -R 775 ${APP_DIR}/storage \
+    && chmod -R 775 ${APP_DIR}/bootstrap/cache
+
+# Выставляем права для RoadRunner
+RUN chmod +x /usr/bin/rr
+
+# Очищаем кэш apk, чтобы уменьшить размер образа
+RUN rm -rf /var/cache/apk/*
+
+USER www-data
+
+# По умолчанию запускаем Octane
+CMD ["php", "artisan", "octane:start", "--server=roadrunner", "--host=0.0.0.0", "--port=8000"]
