@@ -3,7 +3,7 @@ version: '3.8'
 services:
   # Основной сервер API (Octane)
   api:
-    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/prohelper:latest
+    image: ghcr.io/kamilgaraev/proexpert/prohelper:latest
     container_name: prohelper-api
     restart: unless-stopped
     command: "php artisan octane:start --server=roadrunner --host=0.0.0.0 --port=8000"
@@ -26,7 +26,7 @@ services:
 
   # WebSockets сервер (Reverb)
   websockets:
-    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/prohelper:latest
+    image: ghcr.io/kamilgaraev/proexpert/prohelper:latest
     container_name: prohelper-websockets
     restart: unless-stopped
     command: "php artisan reverb:start --host=0.0.0.0 --port=8080"
@@ -46,7 +46,7 @@ services:
 
   # Менеджер очередей (Horizon)
   horizon:
-    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/prohelper:latest
+    image: ghcr.io/kamilgaraev/proexpert/prohelper:latest
     container_name: prohelper-horizon
     restart: unless-stopped
     command: "php artisan horizon"
@@ -65,7 +65,7 @@ services:
 
   # Выделенный контейнер для тяжелых задач (импорт смет)
   worker-heavy:
-    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/prohelper:latest
+    image: ghcr.io/kamilgaraev/proexpert/prohelper:latest
     container_name: prohelper-worker-heavy
     restart: unless-stopped
     # Указываем конкретную очередь и лимит памяти (например, 2048 MB = 2GB)
@@ -90,7 +90,7 @@ services:
 
   # Планировщик задач (Cron)
   scheduler:
-    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/prohelper:latest
+    image: ghcr.io/kamilgaraev/proexpert/prohelper:latest
     container_name: prohelper-scheduler
     restart: unless-stopped
     command: "php artisan schedule:work"
