@@ -42,23 +42,29 @@ jobs:
           host: 89.169.44.117
           username: root
           key: ${{ secrets.DEPLOY }}
-          timeout: 10m
-          command_timeout: 10m
+          timeout: 15m
+          command_timeout: 15m
           script: |
             set -e
             cd /var/www/prohelper
             
-            # Обновляем конфиги
+            # Обновляем конфиги (docker-compose.yml и .rr.yaml)
             git fetch --all --prune
             git reset --hard origin/main
             
             # Логинимся
             echo ${{ secrets.GHCR_PAT }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             
-            # Пуллим и поднимаем ВСЁ (бэк + мониторинг) одной командой
+            # Обновляем ВСЁ (бэк + мониторинг)
             echo "🔄 Updating all services (Backend + Monitoring)..."
             docker compose pull
-            docker compose up -d
+            
+            # Принудительно гасим конфликтующие контейнеры перед обновлением
+            docker stop monitoring-watchdog promtail || true
+            docker rm -f monitoring-watchdog promtail || true
+            
+            # Поднимаем единый стек. Само удалит orphans!
+            docker compose up -d --remove-orphans --force-recreate
             
             # Миграции и оптимизация
             echo "🔄 Running artisan commands..."
