@@ -61,8 +61,8 @@ jobs:
           host: 89.169.44.117
           username: root
           key: ${{ secrets.DEPLOY }}
-          timeout: 300s
-          command_timeout: 180s
+          timeout: 15m
+          command_timeout: 15m
           script: |
             set -e # Остановить выполнение при первой ошибке
             cd /var/www/prohelper
