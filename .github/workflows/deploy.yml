@@ -82,11 +82,8 @@ jobs:
             echo "🔄 Stopping old native services (if any)..."
             sudo systemctl stop prohelper-octane || true
             sudo systemctl stop supervisor || true
-            killall -9 roadrunner-worker || true
-            killall -9 rr || true
-            # Жестко убиваем все процессы PHP, которые могут слушать 8080 (Reverb) или 8000
-            fuser -k 8000/tcp || true
-            fuser -k 8080/tcp || true
+            pkill -f roadrunner-worker || true
+            pkill -f rr || true
             pkill -f "artisan reverb" || true
             echo "✅ Old services stopped" 
             
