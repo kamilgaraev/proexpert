@@ -167,6 +167,21 @@ services:
     networks:
       - prohelper-network
 
+  # Автоматический перезапуск упавших контейнеров
+  watchdog:
+    image: willfarrell/autoheal
+    container_name: monitoring-watchdog
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=all
+      - AUTOHEAL_INTERVAL=5
+      - AUTOHEAL_START_PERIOD=0
+      - AUTOHEAL_DEFAULT_STOP_TIMEOUT=10
+    restart: unless-stopped
+    networks:
+      - prohelper-network
+
   postgres-exporter:
     image: prometheuscommunity/postgres-exporter:v0.15.0
     container_name: postgres-exporter
