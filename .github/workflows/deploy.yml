@@ -83,6 +83,11 @@ jobs:
             sudo systemctl stop prohelper-octane || true
             sudo systemctl stop supervisor || true
             killall -9 roadrunner-worker || true
+            killall -9 rr || true
+            # Жестко убиваем все процессы PHP, которые могут слушать 8080 (Reverb) или 8000
+            fuser -k 8000/tcp || true
+            fuser -k 8080/tcp || true
+            pkill -f "artisan reverb" || true
             echo "✅ Old services stopped" 
             
             # Скачиваем свежий образ
@@ -93,12 +98,12 @@ jobs:
               docker compose -f docker-compose.prod.yml pull
             fi
             
-            # ПЕРЕЗАПУСК МОНИТОРИНГА: Поднимаем его заново, так как --remove-orphans его случайно убил
+            # ПЕРЕЗАПУСК МОНИТОРИНГА (он живет в docker-compose.yml, а не в .prod)
             echo "🔄 Starting monitoring services..."
             if command -v docker-compose >/dev/null; then
-              docker-compose up -d prometheus grafana loki promtail node-exporter postgres-exporter monitoring-watchdog || true
+              docker-compose -f docker-compose.yml up -d || true
             else
-              docker compose up -d prometheus grafana loki promtail node-exporter postgres-exporter monitoring-watchdog || true
+              docker compose -f docker-compose.yml up -d || true
             fi
             
             # Перезапускаем контейнеры PROHELPER
