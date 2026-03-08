@@ -18,11 +18,7 @@ http:
         num_workers: 1
         supervisor:
             max_worker_memory: 100
-jobs:
-    pool:
-        num_workers: 2
-        max_worker_memory: 100
-    consume: {  }
+
 kv:
     local:
         driver: memory
