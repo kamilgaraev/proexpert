@@ -49,3 +49,7 @@ app/Console/Commands/Authorization/AssignOwnerRolesCommand.php
 .cursor
 *.txt
 *.xml
+rr
+rr.exe
+.rr.yaml
+.rr
