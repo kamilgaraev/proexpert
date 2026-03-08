@@ -1,0 +1,112 @@
+version: '3.8'
+
+services:
+  # Основной сервер API (Octane)
+  api:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/prohelper:latest
+    container_name: prohelper-api
+    restart: unless-stopped
+    command: "php artisan octane:start --server=roadrunner --host=0.0.0.0 --port=8000"
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    # Прокидываем логи в директорию хоста, чтобы твой текущий Promtail их видел
+    volumes:
+      - ./storage/logs:/var/www/html/storage/logs
+      - ./storage/framework/cache:/var/www/html/storage/framework/cache
+      - ./storage/framework/sessions:/var/www/html/storage/framework/sessions
+    networks:
+      - prohelper-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # WebSockets сервер (Reverb)
+  websockets:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/prohelper:latest
+    container_name: prohelper-websockets
+    restart: unless-stopped
+    command: "php artisan reverb:start --host=0.0.0.0 --port=8080"
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    volumes:
+      - ./storage/logs:/var/www/html/storage/logs
+    networks:
+      - prohelper-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Менеджер очередей (Horizon)
+  horizon:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/prohelper:latest
+    container_name: prohelper-horizon
+    restart: unless-stopped
+    command: "php artisan horizon"
+    env_file:
+      - .env
+    volumes:
+      - ./storage/logs:/var/www/html/storage/logs
+      - ./storage/framework/cache:/var/www/html/storage/framework/cache
+    networks:
+      - prohelper-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Выделенный контейнер для тяжелых задач (импорт смет)
+  worker-heavy:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/prohelper:latest
+    container_name: prohelper-worker-heavy
+    restart: unless-stopped
+    # Указываем конкретную очередь и лимит памяти (например, 2048 MB = 2GB)
+    command: "php artisan queue:work redis --queue=heavy-imports --memory=2048 --timeout=3600"
+    env_file:
+      - .env
+    volumes:
+      - ./storage/logs:/var/www/html/storage/logs
+      - ./storage/framework/cache:/var/www/html/storage/framework/cache
+    networks:
+      - prohelper-network
+    # Ограничиваем контейнер средствами Docker (Hard limit)
+    deploy:
+      resources:
+        limits:
+          memory: 2.5G # Оставляем 500Мб сверху для самого PHP
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Планировщик задач (Cron)
+  scheduler:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/prohelper:latest
+    container_name: prohelper-scheduler
+    restart: unless-stopped
+    command: "php artisan schedule:work"
+    env_file:
+      - .env
+    volumes:
+      - ./storage/logs:/var/www/html/storage/logs
+      - ./storage/framework/cache:/var/www/html/storage/framework/cache
+    networks:
+      - prohelper-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  prohelper-network:
+    driver: bridge

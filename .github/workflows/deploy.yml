@@ -33,6 +33,28 @@ jobs:
         run: |
           npm ci --silent
 
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/prohelper
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.prod
+          push: true
+          tags: ghcr.io/${{ github.repository }}/prohelper:latest
+          labels: ${{ steps.meta.outputs.labels }}
+
       - name: Deploy via SSH (appleboy)
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -45,61 +67,59 @@ jobs:
             set -e # Остановить выполнение при первой ошибке
             cd /var/www/prohelper
             
-            # Настройка Git safe.directory для работы от root
+            # Настройка Git safe.directory (оставляем для копирования docker-compose)
             git config --global --add safe.directory /var/www/prohelper
             git config --global --add safe.directory '*'
             
-            git reset --hard HEAD
-            git clean -fd -e public/docs -e public/docs/**
+            # Обновляем ТОЛЬКО docker-compose и конфигурации, сам код теперь в образе
             git fetch --all --prune
-            
-            # Входим в режим обслуживания перед обновлением кода
-            php artisan down || true
-            
             git reset --hard origin/main
             
-            # Установка зависимостей (без удаления vendor)
-            # --no-dev: не ставить dev-пакеты на проде
-            composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+            # Логинимся в GHCR на сервере
+            echo ${{ secrets.GHCR_PAT }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             
-            # Пересборка автозагрузчика (важно для устранения ошибок "file not found")
-            composer dump-autoload --optimize
+            # Скачиваем свежий образ
+            echo "🔄 Pulling new Docker image..."
+            if command -v docker-compose >/dev/null; then
+              docker-compose -f docker-compose.prod.yml pull
+            else
+              docker compose -f docker-compose.prod.yml pull
+            fi
             
-            php artisan storage:link || true
-            if [ ! -f /usr/local/bin/rr ]; then vendor/bin/rr get-binary --location=/usr/local/bin --no-config --stability=stable; fi
+            # Перезапускаем контейнеры (без прерывания работы, если возможно)
+            echo "🔄 Starting/Updating containers..."
+            if command -v docker-compose >/dev/null; then
+              docker-compose -f docker-compose.prod.yml up -d --remove-orphans
+            else
+              docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            fi
             
-            # КРИТИЧЕСКАЯ СЕКЦИЯ: безопасные миграции с автоматическим откатом
-            echo "🔄 Running safe migrations with automatic rollback..."
-            php artisan migrate:safe --force
+            # Выполняем миграции ВНУТРИ контейнера API
+            echo "🔄 Running safe migrations..."
+            if command -v docker-compose >/dev/null; then
+              docker-compose -f docker-compose.prod.yml exec -T api php artisan migrate:safe --force
+            else
+              docker compose -f docker-compose.prod.yml exec -T api php artisan migrate:safe --force
+            fi
             echo "✅ Migrations completed successfully"
             
-            # Сканирование модулей для обновления прав доступа
-            echo "🔄 Scanning modules..."
-            php artisan modules:scan --clear-cache
-            echo "✅ Modules scan completed successfully"
-            
-            # Оптимизация: сначала чистим, потом кешируем
+            # Оптимизация (кеширование роутов, конфигов) ВНУТРИ контейнера API
             echo "🔄 Optimizing application..."
-            php artisan optimize:clear
-            php artisan optimize
+            if command -v docker-compose >/dev/null; then
+              docker-compose -f docker-compose.prod.yml exec -T api php artisan optimize:clear
+              docker-compose -f docker-compose.prod.yml exec -T api php artisan optimize
+            else
+              docker compose -f docker-compose.prod.yml exec -T api php artisan optimize:clear
+              docker compose -f docker-compose.prod.yml exec -T api php artisan optimize
+            fi
             echo "✅ Optimization completed successfully"
             
-            # Перезапуск сервера приложений (RoadRunner/Octane)
-            echo "🔄 Reloading Application Server..."
-            php artisan octane:reload || sudo systemctl reload prohelper-octane || sudo systemctl restart prohelper-octane || true
-            
-            # Перезапуск Horizon
-            echo "🔄 Restarting Horizon..."
-            php artisan horizon:terminate || true
-            echo "✅ Horizon restarted"
-            
-            # Перезапуск queue workers (если они еще используются вне Horizon)
-            echo "🔄 Restarting queue workers..."
-            php artisan queue:restart || true
-            echo "✅ Queue workers restarted"
-            
-            # Выход из режима обслуживания (сайт снова доступен)
-            php artisan up || true
+            # Останавливаем старые не-докер процессы (supervisor, systemd) - это нужно только один раз при переходе
+            echo "🔄 Stopping old native services (if any)..."
+            sudo systemctl stop prohelper-octane || true
+            sudo systemctl stop supervisor || true
+            killall -9 roadrunner-worker || true
+            echo "✅ Old services stopped" 
 
 
       - name: Setup Monitoring (appleboy)
