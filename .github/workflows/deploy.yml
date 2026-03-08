@@ -78,6 +78,13 @@ jobs:
             # Логинимся в GHCR на сервере
             echo ${{ secrets.GHCR_PAT }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             
+            # Сначала останавливаем старые не-докер процессы (supervisor, systemd), чтобы освободить порты 8000 и 8080
+            echo "🔄 Stopping old native services (if any)..."
+            sudo systemctl stop prohelper-octane || true
+            sudo systemctl stop supervisor || true
+            killall -9 roadrunner-worker || true
+            echo "✅ Old services stopped" 
+            
             # Скачиваем свежий образ
             echo "🔄 Pulling new Docker image..."
             if command -v docker-compose >/dev/null; then
@@ -86,12 +93,20 @@ jobs:
               docker compose -f docker-compose.prod.yml pull
             fi
             
-            # Перезапускаем контейнеры (без прерывания работы, если возможно)
+            # ПЕРЕЗАПУСК МОНИТОРИНГА: Поднимаем его заново, так как --remove-orphans его случайно убил
+            echo "🔄 Starting monitoring services..."
+            if command -v docker-compose >/dev/null; then
+              docker-compose up -d prometheus grafana loki promtail node-exporter postgres-exporter monitoring-watchdog || true
+            else
+              docker compose up -d prometheus grafana loki promtail node-exporter postgres-exporter monitoring-watchdog || true
+            fi
+            
+            # Перезапускаем контейнеры PROHELPER
             echo "🔄 Starting/Updating containers..."
             if command -v docker-compose >/dev/null; then
-              docker-compose -f docker-compose.prod.yml up -d --remove-orphans
+              docker-compose -f docker-compose.prod.yml up -d
             else
-              docker compose -f docker-compose.prod.yml up -d --remove-orphans
+              docker compose -f docker-compose.prod.yml up -d
             fi
             
             # Выполняем миграции ВНУТРИ контейнера API
@@ -113,13 +128,6 @@ jobs:
               docker compose -f docker-compose.prod.yml exec -T api php artisan optimize
             fi
             echo "✅ Optimization completed successfully"
-            
-            # Останавливаем старые не-докер процессы (supervisor, systemd) - это нужно только один раз при переходе
-            echo "🔄 Stopping old native services (if any)..."
-            sudo systemctl stop prohelper-octane || true
-            sudo systemctl stop supervisor || true
-            killall -9 roadrunner-worker || true
-            echo "✅ Old services stopped" 
 
 
       - name: Setup Monitoring (appleboy)
