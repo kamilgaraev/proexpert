@@ -20,6 +20,9 @@ return Application::configure(basePath: dirname(__DIR__))
         apiPrefix: 'api',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Доверяем всем прокси (решает проблему с HTTPS в Nginx -> Octane/RoadRunner для Livewire)
+        $middleware->trustProxies(at: '*');
+
         // ============================================================
         // РЕГИСТРАЦИЯ ПСЕВДОНИМОВ MIDDLEWARE
         // ============================================================
