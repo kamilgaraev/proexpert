@@ -66,14 +66,22 @@ jobs:
             # Поднимаем единый стек. Само удалит orphans!
             docker compose up -d --remove-orphans --force-recreate
             
-            # Дадим контейнеру API (RoadRunner) 10 секунд на полную загрузку воркеров, прежде чем выполнять exec
+            # Дадим контейнеру API (RoadRunner) немного времени на старт
             echo "⏳ Waiting for services to stabilize..."
-            sleep 15
+            sleep 10
             
-            # Миграции и оптимизация
-            echo "🔄 Running artisan commands..."
-            docker compose exec -T api php artisan migrate:safe --force
+            # Обновляем кэш фреймворка из свежего .env файла сервера
+            echo "🔄 Optimizing Laravel cache..."
             docker compose exec -T api php artisan optimize:clear
             docker compose exec -T api php artisan optimize
+            
+            # Запускаем миграции
+            echo "🔄 Running migrations..."
+            docker compose exec -T api php artisan migrate:safe --force
+            
+            # ОБЯЗАТЕЛЬНО: Перезагружаем воркеры Octane (без убийства контейнера),
+            # чтобы процессы RoadRunner подтянули свежий кэш конфигурации и новые классы в ОЗУ
+            echo "🔄 Reloading Octane workers..."
+            docker compose exec -T api php artisan octane:reload
             
             echo "✅ Deployment successful!"

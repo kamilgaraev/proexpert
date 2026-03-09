@@ -73,5 +73,9 @@ RUN rm -rf /var/cache/apk/*
 
 USER www-data
 
+# Кэшируем скомпилированные Blade-представления на этапе сборки 
+# (они не зависят от .env и безопасно компилируются внутри контейнера)
+RUN php artisan view:cache
+
 # По умолчанию запускаем Octane
 CMD ["php", "artisan", "octane:start", "--server=roadrunner", "--host=0.0.0.0", "--port=8000"]
