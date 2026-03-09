@@ -5,6 +5,7 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services;
 use App\Models\Estimate;
 use App\Repositories\EstimateRepository;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
 
 class EstimateVersionService
 {
@@ -13,26 +14,27 @@ class EstimateVersionService
         protected EstimateService $estimateService
     ) {}
 
-    public function createVersion(Estimate $estimate, ?string $description = null): Estimate
+    public function createVersion(Estimate $estimate, string $label, ?string $comment = null): Estimate
     {
-        return DB::transaction(function () use ($estimate, $description) {
+        return DB::transaction(function () use ($estimate, $label, $comment) {
             $latestVersion = $this->repository->getLatestVersion($estimate);
             $newVersionNumber = $latestVersion ? $latestVersion->version + 1 : $estimate->version + 1;
             
+            $metadata = $estimate->metadata ?? [];
+            $metadata['version_label'] = $label;
+            $metadata['version_comment'] = $comment;
+
             $overrides = [
                 'version' => $newVersionNumber,
                 'parent_estimate_id' => $estimate->id,
                 'status' => 'draft',
                 'approved_at' => null,
-                'approved_by_user_id' => null,
+                'approved_by_user_id' => Auth::id(), // Автор слепка
+                'metadata' => $metadata,
             ];
             
-            if ($description) {
-                $metadata = $estimate->metadata ?? [];
-                $metadata['version_description'] = $description;
-                $overrides['metadata'] = $metadata;
-            }
-            
+            // В duplicate мы сбросим totals и прочее если надо, но тут мы создаем SNAPSHOT, 
+            // так что копируем как есть.
             $newVersion = $this->estimateService->duplicate($estimate, null, null);
             $newVersion->update($overrides);
             
@@ -54,31 +56,33 @@ class EstimateVersionService
     public function getVersionHistory(Estimate $estimate): array
     {
         $versions = $this->repository->getVersions($estimate);
+        $estimate->load('approvedBy');
         
-        $history = $versions->map(function ($version) {
+        $formatVersion = function ($v, $parentEstimateId) {
             return [
-                'id' => $version->id,
-                'version' => $version->version,
-                'status' => $version->status,
-                'total_amount' => $version->total_amount,
-                'created_at' => $version->created_at,
-                'approved_at' => $version->approved_at,
-                'approved_by' => $version->approvedBy,
-                'description' => $version->metadata['version_description'] ?? null,
+                'id' => $v->id,
+                'estimate_id' => $parentEstimateId,
+                'version_number' => $v->version,
+                'status' => $v->status,
+                'label' => $v->metadata['version_label'] ?? ($v->metadata['version_description'] ?? 'Снапшот'),
+                'comment' => $v->metadata['version_comment'] ?? null,
+                'total_amount' => (float) $v->total_amount,
+                'total_amount_with_vat' => (float) $v->total_amount_with_vat,
+                'total_direct_costs' => (float) $v->total_direct_costs,
+                'created_at' => $v->created_at?->toISOString(),
+                'created_by' => $v->approvedBy?->name ?? 'Система',
             ];
-        });
+        };
+
+        $history = $versions->map(fn($v) => $formatVersion($v, $estimate->id));
         
-        return [
-            'original' => [
-                'id' => $estimate->id,
-                'version' => $estimate->version,
-                'status' => $estimate->status,
-                'total_amount' => $estimate->total_amount,
-                'created_at' => $estimate->created_at,
-                'approved_at' => $estimate->approved_at,
-            ],
-            'versions' => $history,
-        ];
+        // Добавляем текущую (оригинальную) смету в список версий
+        $original = $formatVersion($estimate, $estimate->id);
+        $original['label'] = 'Оригинал (v1)';
+        
+        $allVersions = $history->push($original)->sortByDesc('version_number')->values()->toArray();
+        
+        return $allVersions;
     }
 
     public function rollback(Estimate $version): Estimate

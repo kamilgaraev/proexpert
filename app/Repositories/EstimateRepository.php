@@ -38,7 +38,8 @@ class EstimateRepository
     public function getByOrganization(int $organizationId, array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
         $query = Estimate::with(['project', 'contract', 'approvedBy'])
-            ->where('organization_id', $organizationId);
+            ->where('organization_id', $organizationId)
+            ->whereNull('parent_estimate_id');
 
         if (isset($filters['status'])) {
             $query->where('status', $filters['status']);
@@ -71,6 +72,7 @@ class EstimateRepository
     {
         return Estimate::with(['sections', 'items'])
             ->where('project_id', $projectId)
+            ->whereNull('parent_estimate_id')
             ->orderBy('created_at', 'desc')
             ->get();
     }
@@ -79,13 +81,15 @@ class EstimateRepository
     {
         return Estimate::with(['sections', 'items'])
             ->where('contract_id', $contractId)
+            ->whereNull('parent_estimate_id')
             ->orderBy('created_at', 'desc')
             ->get();
     }
 
     public function getVersions(Estimate $estimate): Collection
     {
-        return Estimate::where('parent_estimate_id', $estimate->id)
+        return Estimate::with('approvedBy')
+            ->where('parent_estimate_id', $estimate->id)
             ->orderBy('version', 'desc')
             ->get();
     }

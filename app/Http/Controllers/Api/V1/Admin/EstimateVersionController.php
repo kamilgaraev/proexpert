@@ -45,12 +45,14 @@ class EstimateVersionController extends Controller
         $this->authorize('update', $estimate);
         
         $validated = $request->validate([
-            'description' => 'nullable|string|max:1000',
+            'label' => 'required|string|max:255',
+            'comment' => 'nullable|string|max:1000',
         ]);
         
         $newVersion = $this->versionService->createVersion(
             $estimate,
-            $validated['description'] ?? null
+            $validated['label'],
+            $validated['comment'] ?? null
         );
         
         return AdminResponse::success(
