@@ -29,8 +29,9 @@ class EstimateVersionController extends Controller
         protected MemoryLayerService $memoryLayer
     ) {}
 
-    public function index(Estimate $estimate): JsonResponse
+    public function index(int $estimateId): JsonResponse
     {
+        $estimate = $this->findEstimateOrFail($estimateId);
         $this->authorize('view', $estimate);
         
         $history = $this->versionService->getVersionHistory($estimate);
@@ -38,8 +39,9 @@ class EstimateVersionController extends Controller
         return AdminResponse::success($history);
     }
 
-    public function store(Request $request, Estimate $estimate): JsonResponse
+    public function store(Request $request, int $estimateId): JsonResponse
     {
+        $estimate = $this->findEstimateOrFail($estimateId);
         $this->authorize('update', $estimate);
         
         $validated = $request->validate([
@@ -61,12 +63,12 @@ class EstimateVersionController extends Controller
     public function compare(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'version1_id' => 'required|exists:estimates,id',
-            'version2_id' => 'required|exists:estimates,id',
+            'version1_id' => 'required|integer',
+            'version2_id' => 'required|integer',
         ]);
         
-        $version1 = Estimate::findOrFail($validated['version1_id']);
-        $version2 = Estimate::findOrFail($validated['version2_id']);
+        $version1 = $this->findEstimateOrFail((int)$validated['version1_id']);
+        $version2 = $this->findEstimateOrFail((int)$validated['version2_id']);
         
         $this->authorize('view', $version1);
         $this->authorize('view', $version2);
@@ -76,8 +78,9 @@ class EstimateVersionController extends Controller
         return AdminResponse::success($comparison);
     }
 
-    public function rollback(Estimate $version): JsonResponse
+    public function rollback(int $versionId): JsonResponse
     {
+        $version = $this->findEstimateOrFail($versionId);
         $this->authorize('update', $version);
         
         $newVersion = $this->versionService->rollback($version);
@@ -89,7 +92,7 @@ class EstimateVersionController extends Controller
         );
     }
 
-    public function snapshotDiff(Request $request, Estimate $estimate): JsonResponse
+    public function snapshotDiff(Request $request): JsonResponse
     {
         $request->validate([
             'version_a_id' => ['required', 'integer', 'exists:estimate_versions,id'],
@@ -110,8 +113,10 @@ class EstimateVersionController extends Controller
         }
     }
 
-    public function whatIf(Request $request, mixed $project, Estimate $estimate): JsonResponse
+    public function whatIf(Request $request, int $estimateId): JsonResponse
     {
+        $estimate = $this->findEstimateOrFail($estimateId);
+        $this->authorize('view', $estimate);
         $request->validate([
             'materials_index' => ['nullable', 'numeric', 'min:0'],
             'machinery_index' => ['nullable', 'numeric', 'min:0'],
@@ -134,8 +139,10 @@ class EstimateVersionController extends Controller
         }
     }
 
-    public function schedule(Request $request, mixed $project, Estimate $estimate): JsonResponse
+    public function schedule(Request $request, int $estimateId): JsonResponse
     {
+        $estimate = $this->findEstimateOrFail($estimateId);
+        $this->authorize('view', $estimate);
         $request->validate([
             'start_date'        => ['nullable', 'date'],
             'workdays_per_week' => ['nullable', 'integer', 'min:1', 'max:7'],
@@ -177,6 +184,18 @@ class EstimateVersionController extends Controller
         );
 
         return AdminResponse::success(['message' => 'Обратная связь принята']);
+    }
+
+    /**
+     * Найти смету с проверкой организации
+     */
+    private function findEstimateOrFail(int $estimateId): Estimate
+    {
+        $organizationId = request()->attributes->get('current_organization_id');
+        
+        return Estimate::where('id', $estimateId)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
     }
 }
 

@@ -520,10 +520,21 @@ class AuthorizationService
         }
 
         if (isset($context['project_id'])) {
-            return AuthorizationContext::getProjectContext(
-                $context['project_id'], 
-                $context['organization_id']
-            );
+            $organizationId = $context['organization_id'] ?? null;
+            
+            if (!$organizationId) {
+                $project = \App\Models\Project::find($context['project_id']);
+                if ($project) {
+                    $organizationId = $project->organization_id;
+                }
+            }
+
+            if ($organizationId) {
+                return AuthorizationContext::getProjectContext(
+                    $context['project_id'], 
+                    $organizationId
+                );
+            }
         }
 
         if (isset($context['organization_id'])) {
