@@ -10,10 +10,13 @@ services:
     env_file: .env
     volumes:
       - ./storage/logs:/var/www/html/storage/logs
-      - ./storage/framework/cache:/var/www/html/storage/framework/cache
-      - ./storage/framework/sessions:/var/www/html/storage/framework/sessions
     networks:
       - prohelper-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/up || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     logging:
       driver: "json-file"
       options:
@@ -32,6 +35,11 @@ services:
       - ./storage/logs:/var/www/html/storage/logs
     networks:
       - prohelper-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   horizon:
     image: ghcr.io/kamilgaraev/proexpert/prohelper:latest
@@ -41,9 +49,18 @@ services:
     env_file: .env
     volumes:
       - ./storage/logs:/var/www/html/storage/logs
-      - ./storage/framework/cache:/var/www/html/storage/framework/cache
     networks:
       - prohelper-network
+    healthcheck:
+      test: ["CMD-SHELL", "php artisan horizon:status | grep -q 'Horizon is running' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   worker-heavy:
     image: ghcr.io/kamilgaraev/proexpert/prohelper:latest
@@ -53,9 +70,13 @@ services:
     env_file: .env
     volumes:
       - ./storage/logs:/var/www/html/storage/logs
-      - ./storage/framework/cache:/var/www/html/storage/framework/cache
     networks:
       - prohelper-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       resources:
         limits:
@@ -69,9 +90,13 @@ services:
     env_file: .env
     volumes:
       - ./storage/logs:/var/www/html/storage/logs
-      - ./storage/framework/cache:/var/www/html/storage/framework/cache
     networks:
       - prohelper-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # --- MONITORING SERVICES ---
   loki:

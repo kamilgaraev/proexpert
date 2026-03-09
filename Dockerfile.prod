@@ -15,8 +15,6 @@ RUN apk add --no-cache \
     zip \
     unzip \
     git \
-    supervisor \
-    nginx \
     $PHPIZE_DEPS \
     postgresql-dev \
     libzip-dev \
