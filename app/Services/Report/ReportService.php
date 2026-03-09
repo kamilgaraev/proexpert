@@ -699,9 +699,9 @@ class ReportService
         // Добавляем completed_amount с учетом фильтра по проекту
         $projectId = $request->filled('project_id') ? $request->query('project_id') : null;
         if ($projectId !== null) {
-            $query->addSelect(DB::raw('(SELECT COALESCE(SUM(amount), 0) FROM contract_performance_acts WHERE contract_id = contracts.id AND project_id = ' . $projectId . ' AND contract_performance_acts.organization_id = ' . $organizationId . ' AND is_approved = true) as completed_amount'));
+            $query->addSelect(DB::raw('(SELECT COALESCE(SUM(amount), 0) FROM contract_performance_acts WHERE contract_id = contracts.id AND project_id = ' . $projectId . ' AND is_approved = true) as completed_amount'));
         } else {
-            $query->addSelect(DB::raw('(SELECT COALESCE(SUM(amount), 0) FROM contract_performance_acts WHERE contract_id = contracts.id AND contract_performance_acts.organization_id = ' . $organizationId . ' AND is_approved = true) as completed_amount'));
+            $query->addSelect(DB::raw('(SELECT COALESCE(SUM(amount), 0) FROM contract_performance_acts WHERE contract_id = contracts.id AND is_approved = true) as completed_amount'));
         }
 
         if ($request->filled('project_id')) {
@@ -832,8 +832,8 @@ class ReportService
         // Определяем подзапрос для completed_amount с учетом project_id
         $projectId = $request->filled('project_id') ? $request->query('project_id') : null;
         $completedAmountSubquery = $projectId !== null
-            ? 'COALESCE(SUM((SELECT SUM(amount) FROM contract_performance_acts WHERE contract_id = contracts.id AND project_id = ' . $projectId . ' AND contract_performance_acts.organization_id = ' . $organizationId . ' AND is_approved = true)), 0) as total_completed'
-            : 'COALESCE(SUM((SELECT SUM(amount) FROM contract_performance_acts WHERE contract_id = contracts.id AND contract_performance_acts.organization_id = ' . $organizationId . ' AND is_approved = true)), 0) as total_completed';
+            ? 'COALESCE(SUM((SELECT SUM(amount) FROM contract_performance_acts WHERE contract_id = contracts.id AND project_id = ' . $projectId . ' AND is_approved = true)), 0) as total_completed'
+            : 'COALESCE(SUM((SELECT SUM(amount) FROM contract_performance_acts WHERE contract_id = contracts.id AND is_approved = true)), 0) as total_completed';
         
         $query = DB::table('contractors')
             ->where('contractors.organization_id', $organizationId)
@@ -1530,7 +1530,7 @@ class ReportService
                 'projects.created_at',
                 DB::raw('(SELECT COALESCE(SUM(total_amount), 0) FROM contracts WHERE project_id = projects.id AND contracts.organization_id = ' . $organizationId . ') as total_contract_amount'),
                 // Фильтруем акты по project_id для корректного отображения в мультипроектных контрактах
-                DB::raw('(SELECT COALESCE(SUM(amount), 0) FROM contract_performance_acts WHERE project_id = projects.id AND contract_performance_acts.organization_id = ' . $organizationId . ' AND is_approved = true) as completed_amount')
+                DB::raw('(SELECT COALESCE(SUM(amount), 0) FROM contract_performance_acts WHERE project_id = projects.id AND is_approved = true) as completed_amount')
             );
 
         if ($request->filled('project_id')) {
