@@ -23,6 +23,7 @@ class AdvanceAccountTransaction extends Model
         'type',
         'amount',
         'description',
+        'recipient_name',
         'document_number',
         'document_date',
         'balance_after',

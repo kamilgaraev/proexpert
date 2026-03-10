@@ -22,6 +22,7 @@ class AdvanceTransactionResource extends JsonResource
             'type' => $this->type,
             'amount' => (float) $this->amount,
             'description' => $this->description,
+            'recipient_name' => $this->recipient_name,
             'document_number' => $this->document_number,
             'document_date' => $this->document_date ? $this->document_date->format('Y-m-d') : null,
             'cost_category_id' => $this->cost_category_id,
