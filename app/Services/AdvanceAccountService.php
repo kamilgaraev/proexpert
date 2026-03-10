@@ -66,12 +66,12 @@ class AdvanceAccountService
         try {
             DB::beginTransaction();
             
-            $user = User::findOrFail($data['user_id']);
+            $user = isset($data['user_id']) ? User::find($data['user_id']) : null;
             $amount = (float) $data['amount'];
             $type = $data['type'];
             
-            // Рассчитываем новый баланс
-            $newBalance = $this->calculateNewBalance($user, $type, $amount);
+            // Рассчитываем новый баланс (только если есть пользователь)
+            $newBalance = $user ? $this->calculateNewBalance($user, $type, $amount) : 0;
             
             // Создаем транзакцию
             $transaction = new AdvanceAccountTransaction();
@@ -81,8 +81,10 @@ class AdvanceAccountService
             $transaction->created_by_user_id = Auth::id();
             $transaction->save();
             
-            // Обновляем баланс пользователя
-            $this->updateUserBalance($user, $type, $amount, $transaction);
+            // Обновляем баланс пользователя (только если есть пользователь)
+            if ($user) {
+                $this->updateUserBalance($user, $type, $amount, $transaction);
+            }
             
             DB::commit();
             return $transaction;
@@ -152,8 +154,10 @@ class AdvanceAccountService
             $type = $transaction->type;
             $amount = $transaction->amount;
             
-            // Восстанавливаем предыдущее состояние баланса пользователя
-            $this->revertUserBalanceChange($user, $type, $amount);
+            // Восстанавливаем предыдущее состояние баланса пользователя (только если есть пользователь)
+            if ($user) {
+                $this->revertUserBalanceChange($user, $type, $amount);
+            }
             
             // Удаляем транзакцию
             $transaction->delete();
@@ -203,10 +207,12 @@ class AdvanceAccountService
             
             $transaction->save();
             
-            // Обновляем данные пользователя
+            // Обновляем данные пользователя (только если есть пользователь)
             $user = $transaction->user;
-            $user->total_reported += $transaction->amount;
-            $user->save();
+            if ($user) {
+                $user->total_reported += $transaction->amount;
+                $user->save();
+            }
             
             DB::commit();
             return $transaction;

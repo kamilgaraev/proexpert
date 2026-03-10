@@ -25,7 +25,8 @@ class CreateAdvanceTransactionRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'user_id' => 'required|exists:users,id',
+            'user_id' => 'nullable|exists:users,id',
+            'recipient_name' => 'nullable|string|max:255',
             'project_id' => 'nullable|exists:projects,id',
             'type' => 'required|in:issue,expense,return',
             'amount' => 'required|numeric|min:0.01',
