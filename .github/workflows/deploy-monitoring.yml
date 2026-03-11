@@ -1,0 +1,44 @@
+name: Deploy Monitoring to Production
+
+concurrency:
+  group: prod-monitoring-deploy
+  cancel-in-progress: false
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'monitoring/**'
+      - 'docker-compose.yml'
+      - '.github/workflows/deploy-monitoring.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy monitoring via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 89.169.44.117
+          username: root
+          key: ${{ secrets.DEPLOY }}
+          timeout: 15m
+          command_timeout: 15m
+          script: |
+            set -e
+            cd /var/www/prohelper
+            MONITORING_SERVICES="loki promtail prometheus grafana node-exporter watchdog postgres-exporter"
+
+            git fetch --all --prune
+            git reset --hard origin/main
+
+            echo "Pulling monitoring services: ${MONITORING_SERVICES}"
+            docker compose pull ${MONITORING_SERVICES}
+            docker compose up -d ${MONITORING_SERVICES}
+
+            echo "Monitoring deployment successful!"

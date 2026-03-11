@@ -98,4 +98,36 @@ class GlitchTipOrchestratorServiceTest extends TestCase
         self::assertSame('Database timeout', $issues[0]['title']);
         self::assertSame('unresolved', $issues[0]['status']);
     }
+
+    public function test_normalizes_slack_compatible_webhook_payload(): void
+    {
+        $service = new GlitchTipOrchestratorService();
+
+        $payload = [
+            'text' => '[prohelper-backend] New issue detected #77',
+            'attachments' => [
+                [
+                    'title' => 'Database timeout',
+                    'text' => 'The request timed out. https://glitchtip.example/issues/77',
+                    'fields' => [
+                        ['title' => 'Project', 'value' => 'prohelper-backend'],
+                        ['title' => 'Environment', 'value' => 'production'],
+                        ['title' => 'Release', 'value' => 'prohelper@abc1234'],
+                        ['title' => 'Issue ID', 'value' => '77'],
+                        ['title' => 'Module', 'value' => 'billing'],
+                    ],
+                ],
+            ],
+        ];
+
+        $normalized = $service->normalizeWebhookPayload($payload);
+
+        self::assertSame('77', $normalized['issue_id']);
+        self::assertSame('prohelper-backend', $normalized['project']);
+        self::assertSame('production', $normalized['environment']);
+        self::assertSame('prohelper@abc1234', $normalized['release']);
+        self::assertSame('billing', $normalized['module']);
+        self::assertSame('Database timeout', $normalized['title']);
+        self::assertSame('https://glitchtip.example/issues/77', $normalized['url']);
+    }
 }

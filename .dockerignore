@@ -1,5 +1,6 @@
 /.git
 /.github
+/.agent
 /node_modules
 /public/build
 /tests
@@ -7,6 +8,9 @@
 /.env.*
 /docker-compose*.yml
 /Dockerfile*
+/monitoring
+/docs
+/@docs
 .phpunit.result.cache
 Homestead.json
 Homestead.yaml

@@ -1,0 +1,131 @@
+name: Deploy Backend to Production
+
+concurrency:
+  group: prod-backend-deploy
+  cancel-in-progress: false
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'app/**'
+      - 'artisan'
+      - 'bootstrap/**'
+      - 'composer.json'
+      - 'composer.lock'
+      - 'config/**'
+      - 'database/**'
+      - 'Dockerfile.prod'
+      - 'docker-compose.yml'
+      - 'lang/**'
+      - 'public/**'
+      - 'resources/**'
+      - 'routes/**'
+      - 'vendor/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Derive image metadata
+        id: meta
+        run: |
+          echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "image_repo=ghcr.io/${GITHUB_REPOSITORY}/prohelper" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.prod
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image_repo }}:latest
+            ${{ steps.meta.outputs.image_repo }}:${{ steps.meta.outputs.short_sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Deploy backend via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 89.169.44.117
+          username: root
+          key: ${{ secrets.DEPLOY }}
+          timeout: 15m
+          command_timeout: 15m
+          script: |
+            set -e
+            cd /var/www/prohelper
+            SHORT_RELEASE="${{ steps.meta.outputs.short_sha }}"
+            BACKEND_SERVICES="api websockets horizon worker-heavy scheduler"
+
+            git fetch --all --prune
+            git reset --hard origin/main
+
+            echo "Updating deploy metadata for backend release ${SHORT_RELEASE}"
+            if grep -q '^PROHELPER_IMAGE_TAG=' .env; then
+              sed -i "s/^PROHELPER_IMAGE_TAG=.*/PROHELPER_IMAGE_TAG=${SHORT_RELEASE}/" .env
+            else
+              printf '\nPROHELPER_IMAGE_TAG=%s\n' "${SHORT_RELEASE}" >> .env
+            fi
+
+            if grep -q '^SENTRY_RELEASE=' .env; then
+              sed -i "s/^SENTRY_RELEASE=.*/SENTRY_RELEASE=prohelper@${SHORT_RELEASE}/" .env
+            else
+              printf 'SENTRY_RELEASE=prohelper@%s\n' "${SHORT_RELEASE}" >> .env
+            fi
+
+            if grep -q '^SENTRY_ENVIRONMENT=' .env; then
+              sed -i "s/^SENTRY_ENVIRONMENT=.*/SENTRY_ENVIRONMENT=production/" .env
+            else
+              printf 'SENTRY_ENVIRONMENT=production\n' >> .env
+            fi
+
+            echo ${{ secrets.GHCR_PAT }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            echo "Pulling backend services: ${BACKEND_SERVICES}"
+            docker compose pull ${BACKEND_SERVICES}
+            docker compose up -d ${BACKEND_SERVICES}
+
+            echo "Waiting for API health endpoint..."
+            for attempt in $(seq 1 12); do
+              if docker compose exec -T api curl -fsS http://localhost:8000/up >/dev/null; then
+                echo "API is healthy."
+                break
+              fi
+
+              if [ "${attempt}" -eq 12 ]; then
+                echo "API did not become healthy in time."
+                exit 1
+              fi
+
+              sleep 5
+            done
+
+            echo "Refreshing Laravel caches..."
+            docker compose exec -T api php artisan optimize:clear
+            docker compose exec -T api php artisan optimize
+
+            echo "Running production-safe migrations..."
+            docker compose exec -T api php artisan migrate:safe --force
+
+            echo "Reloading Octane workers..."
+            docker compose exec -T api php artisan octane:reload
+
+            echo "Backend deployment successful!"

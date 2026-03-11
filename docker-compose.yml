@@ -1,7 +1,7 @@
 services:
   # --- BACKEND SERVICES ---
   api:
-    image: ghcr.io/kamilgaraev/proexpert/prohelper:latest
+    image: ghcr.io/kamilgaraev/proexpert/prohelper:${PROHELPER_IMAGE_TAG:-latest}
     container_name: prohelper-api
     restart: unless-stopped
     command: "php -d memory_limit=1G artisan octane:start --server=roadrunner --host=0.0.0.0 --port=8000 --workers=2"
@@ -24,7 +24,7 @@ services:
         max-file: "3"
 
   websockets:
-    image: ghcr.io/kamilgaraev/proexpert/prohelper:latest
+    image: ghcr.io/kamilgaraev/proexpert/prohelper:${PROHELPER_IMAGE_TAG:-latest}
     container_name: prohelper-websockets
     restart: unless-stopped
     command: "php artisan reverb:start --host=0.0.0.0 --port=8080"
@@ -42,7 +42,7 @@ services:
         max-file: "3"
 
   horizon:
-    image: ghcr.io/kamilgaraev/proexpert/prohelper:latest
+    image: ghcr.io/kamilgaraev/proexpert/prohelper:${PROHELPER_IMAGE_TAG:-latest}
     container_name: prohelper-horizon
     restart: unless-stopped
     command: "php artisan horizon"
@@ -63,7 +63,7 @@ services:
         max-file: "3"
 
   worker-heavy:
-    image: ghcr.io/kamilgaraev/proexpert/prohelper:latest
+    image: ghcr.io/kamilgaraev/proexpert/prohelper:${PROHELPER_IMAGE_TAG:-latest}
     container_name: prohelper-worker-heavy
     restart: unless-stopped
     command: "php artisan queue:work redis --queue=heavy-imports --memory=2048 --timeout=3600"
@@ -83,7 +83,7 @@ services:
           memory: 2.5G
 
   scheduler:
-    image: ghcr.io/kamilgaraev/proexpert/prohelper:latest
+    image: ghcr.io/kamilgaraev/proexpert/prohelper:${PROHELPER_IMAGE_TAG:-latest}
     container_name: prohelper-scheduler
     restart: unless-stopped
     command: "php artisan schedule:work"
