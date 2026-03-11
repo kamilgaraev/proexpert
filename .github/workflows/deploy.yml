@@ -47,41 +47,46 @@ jobs:
           script: |
             set -e
             cd /var/www/prohelper
-            
-            # Обновляем конфиги (docker-compose.yml и .rr.yaml)
+            RELEASE_HASH="${{ github.sha }}"
+            SHORT_RELEASE="${RELEASE_HASH:0:7}"
+
             git fetch --all --prune
             git reset --hard origin/main
-            
-            # Логинимся
+
+            echo "Updating Sentry release to prohelper@${SHORT_RELEASE}"
+            if grep -q '^SENTRY_RELEASE=' .env; then
+              sed -i "s/^SENTRY_RELEASE=.*/SENTRY_RELEASE=prohelper@${SHORT_RELEASE}/" .env
+            else
+              printf '\nSENTRY_RELEASE=prohelper@%s\n' "${SHORT_RELEASE}" >> .env
+            fi
+
+            if grep -q '^SENTRY_ENVIRONMENT=' .env; then
+              sed -i "s/^SENTRY_ENVIRONMENT=.*/SENTRY_ENVIRONMENT=production/" .env
+            else
+              printf 'SENTRY_ENVIRONMENT=production\n' >> .env
+            fi
+
             echo ${{ secrets.GHCR_PAT }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            
-            # Обновляем ВСЁ (бэк + мониторинг)
-            echo "🔄 Updating all services (Backend + Monitoring)..."
+
+            echo "Updating all services (Backend + Monitoring)..."
             docker compose pull
-            
-            # Принудительно гасим конфликтующие контейнеры перед обновлением
+
             docker stop monitoring-watchdog promtail || true
             docker rm -f monitoring-watchdog promtail || true
-            
-            # Поднимаем единый стек. Само удалит orphans!
+
             docker compose up -d --remove-orphans --force-recreate
-            
-            # Дадим контейнеру API (RoadRunner) немного времени на старт
-            echo "⏳ Waiting for services to stabilize..."
+
+            echo "Waiting for services to stabilize..."
             sleep 10
-            
-            # Обновляем кэш фреймворка из свежего .env файла сервера
-            echo "🔄 Optimizing Laravel cache..."
+
+            echo "Optimizing Laravel cache..."
             docker compose exec -T api php artisan optimize:clear
             docker compose exec -T api php artisan optimize
-            
-            # Запускаем миграции
-            echo "🔄 Running migrations..."
+
+            echo "Running migrations..."
             docker compose exec -T api php artisan migrate:safe --force
-            
-            # ОБЯЗАТЕЛЬНО: Перезагружаем воркеры Octane (без убийства контейнера),
-            # чтобы процессы RoadRunner подтянули свежий кэш конфигурации и новые классы в ОЗУ
-            echo "🔄 Reloading Octane workers..."
+
+            echo "Reloading Octane workers..."
             docker compose exec -T api php artisan octane:reload
-            
-            echo "✅ Deployment successful!"
+
+            echo "Deployment successful!"
