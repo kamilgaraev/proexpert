@@ -206,13 +206,15 @@ class GlitchTipOrchestratorService
 
     public function getStatus(): array
     {
+        $gitHubIssueConfigured = app(GitHubIssueService::class)->isConfigured();
+
         return [
             'api_configured' => $this->isApiConfigured(),
             'webhook_secret_configured' => config('glitchtip.webhook_secret') !== null && config('glitchtip.webhook_secret') !== '',
             'internal_token_configured' => config('glitchtip.internal_token') !== null && config('glitchtip.internal_token') !== '',
             'allow_unsigned_webhooks' => (bool) config('glitchtip.allow_unsigned_webhooks', false),
             'github_issue_auto_create' => (bool) config('glitchtip.auto_create_github_issue', false),
-            'github_issue_configured' => app()->bound(GitHubIssueService::class) && app(GitHubIssueService::class)->isConfigured(),
+            'github_issue_configured' => $gitHubIssueConfigured,
             'organization' => config('glitchtip.organization'),
             'project' => config('glitchtip.project'),
             'period' => config('glitchtip.period'),
