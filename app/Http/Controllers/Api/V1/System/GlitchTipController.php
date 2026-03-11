@@ -87,6 +87,37 @@ class GlitchTipController extends Controller
         }
     }
 
+    public function pullRequest(Request $request): JsonResponse
+    {
+        try {
+            if (!$this->glitchTipOrchestratorService->validateInternalToken($this->resolveInternalToken($request))) {
+                return AdminResponse::error(trans_message('glitchtip.internal_unauthorized'), 401);
+            }
+
+            $headBranch = trim((string) $request->input('head', ''));
+            if ($headBranch === '') {
+                return AdminResponse::error(trans_message('glitchtip.pull_request_invalid'), 422);
+            }
+
+            $pullRequest = $this->gitHubIssueService->createPullRequest([
+                'head' => $headBranch,
+                'base' => $request->input('base'),
+                'draft' => $request->boolean('draft', true),
+                'title' => $request->input('title'),
+                'body' => $request->input('body'),
+                'issue_number' => $request->integer('issue_number') ?: null,
+            ]);
+
+            return AdminResponse::success($pullRequest, trans_message('glitchtip.pull_request_created'));
+        } catch (Throwable $exception) {
+            Log::error('glitchtip.pull_request.failed', [
+                'message' => $exception->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('glitchtip.pull_request_failed'), 500);
+        }
+    }
+
     private function resolveWebhookSecret(Request $request): ?string
     {
         return $request->header('X-GlitchTip-Webhook-Secret')
