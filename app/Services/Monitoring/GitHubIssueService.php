@@ -21,6 +21,8 @@ class GitHubIssueService
             throw new RuntimeException('GitHub issue integration is not configured.');
         }
 
+        $metadata = $this->buildIncidentMetadata($incident);
+
         $response = Http::baseUrl('https://api.github.com')
             ->withToken($this->token())
             ->acceptJson()
@@ -29,8 +31,8 @@ class GitHubIssueService
             ])
             ->timeout(20)
             ->post(sprintf('/repos/%s/issues', $this->repository()), [
-                'title' => $this->buildTitle($incident),
-                'body' => $this->buildBody($incident),
+                'title' => $metadata['issue_title'],
+                'body' => $this->buildBody($incident, $metadata),
                 'labels' => config('glitchtip.github.labels', []),
             ]);
 
@@ -42,19 +44,40 @@ class GitHubIssueService
             'number' => $response->json('number'),
             'url' => $response->json('html_url'),
             'title' => $response->json('title'),
+            'suggested_branch' => $metadata['suggested_branch'],
+            'suggested_commit' => $metadata['suggested_commit'],
+            'suggested_pr_title' => $metadata['suggested_pr_title'],
         ];
     }
 
-    private function buildTitle(array $incident): string
+    public function buildIncidentMetadata(array $incident): array
     {
         $prefix = sprintf('[GlitchTip][%s]', strtoupper((string) ($incident['environment'] ?? 'unknown')));
-        $module = $incident['module'] ? sprintf('[%s]', $incident['module']) : '';
+        $module = !empty($incident['module']) ? sprintf('[%s]', $incident['module']) : '';
         $title = trim((string) ($incident['title'] ?? 'Unknown incident'));
+        $issueTitle = trim(sprintf('%s%s %s', $prefix, $module, $title));
+        $issueId = (string) ($incident['issue_id'] ?? 'unknown');
+        $moduleSlug = $this->slugify((string) ($incident['module'] ?? 'incident'));
+        $titleSlug = $this->slugify($title);
+        $suggestedBranch = trim(sprintf('codex/fix-incident-%s-%s-%s', $issueId, $moduleSlug, $titleSlug), '-');
+        $suggestedBranch = preg_replace('/-+/', '-', $suggestedBranch) ?? $suggestedBranch;
 
-        return trim(sprintf('%s%s %s', $prefix, $module, $title));
+        return [
+            'issue_title' => $issueTitle,
+            'suggested_branch' => rtrim($suggestedBranch, '-'),
+            'suggested_commit' => sprintf(
+                'fix: устранен инцидент GlitchTip #%s в модуле %s',
+                $issueId,
+                (string) ($incident['module'] ?? 'unknown')
+            ),
+            'suggested_pr_title' => sprintf(
+                'fix: устранен инцидент GlitchTip #%s',
+                $issueId
+            ),
+        ];
     }
 
-    private function buildBody(array $incident): string
+    private function buildBody(array $incident, array $metadata): string
     {
         $lines = [
             '# Инцидент из GlitchTip',
@@ -73,6 +96,18 @@ class GitHubIssueService
             sprintf('- User ID: `%s`', $incident['user_id'] ?? 'unknown'),
             sprintf('- Organization ID: `%s`', $incident['organization_id'] ?? 'unknown'),
             sprintf('- Correlation ID: `%s`', $incident['correlation_id'] ?? 'unknown'),
+            '',
+            '## Рекомендуемая ветка',
+            '',
+            sprintf('`%s`', $metadata['suggested_branch']),
+            '',
+            '## Рекомендуемый commit',
+            '',
+            sprintf('`%s`', $metadata['suggested_commit']),
+            '',
+            '## Рекомендуемый PR title',
+            '',
+            sprintf('`%s`', $metadata['suggested_pr_title']),
             '',
             '## Сообщение',
             '',
@@ -99,7 +134,26 @@ class GitHubIssueService
             $lines[] = $webUrl;
         }
 
+        $lines[] = '';
+        $lines[] = '## Чеклист фикса';
+        $lines[] = '';
+        $lines[] = '- [ ] воспроизвести проблему или подтвердить контекст инцидента';
+        $lines[] = '- [ ] определить root cause';
+        $lines[] = '- [ ] подготовить исправление в рекомендуемой ветке';
+        $lines[] = '- [ ] обновить или добавить тесты, если это уместно';
+        $lines[] = '- [ ] проверить сценарий после фикса';
+        $lines[] = '- [ ] указать в PR ссылку на этот issue и релиз';
+
         return implode("\n", $lines);
+    }
+
+    private function slugify(string $value): string
+    {
+        $value = mb_strtolower(trim($value));
+        $value = preg_replace('/[^a-z0-9]+/u', '-', $value) ?? 'incident';
+        $value = trim($value, '-');
+
+        return $value !== '' ? $value : 'incident';
     }
 
     private function token(): string

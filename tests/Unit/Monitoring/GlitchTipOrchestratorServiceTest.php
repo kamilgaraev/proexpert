@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Monitoring;
 
+use App\Services\Monitoring\GitHubIssueService;
 use App\Services\Monitoring\GlitchTipOrchestratorService;
 use PHPUnit\Framework\TestCase;
 
@@ -130,5 +131,22 @@ class GlitchTipOrchestratorServiceTest extends TestCase
         self::assertSame('billing', $normalized['module']);
         self::assertSame('Database timeout', $normalized['title']);
         self::assertSame('https://glitchtip.example/issues/77', $normalized['url']);
+    }
+
+    public function test_builds_github_issue_metadata_for_incident(): void
+    {
+        $service = new GitHubIssueService();
+
+        $metadata = $service->buildIncidentMetadata([
+            'issue_id' => '77',
+            'environment' => 'production',
+            'module' => 'billing',
+            'title' => 'Database timeout',
+        ]);
+
+        self::assertSame('[GlitchTip][PRODUCTION][billing] Database timeout', $metadata['issue_title']);
+        self::assertSame('codex/fix-incident-77-billing-database-timeout', $metadata['suggested_branch']);
+        self::assertSame('fix: устранен инцидент GlitchTip #77 в модуле billing', $metadata['suggested_commit']);
+        self::assertSame('fix: устранен инцидент GlitchTip #77', $metadata['suggested_pr_title']);
     }
 }
