@@ -66,9 +66,38 @@ class AdvanceAccountService
         try {
             DB::beginTransaction();
             
-            $user = isset($data['user_id']) ? User::find($data['user_id']) : null;
-            $amount = (float) $data['amount'];
+            $userId = isset($data['user_id']) ? (int) $data['user_id'] : null;
+            $recipientName = isset($data['recipient_name']) ? trim((string) $data['recipient_name']) : null;
             $type = $data['type'];
+
+            if ($type !== AdvanceAccountTransaction::TYPE_ISSUE) {
+                if ($userId === null) {
+                    throw new Exception('user_id is required for non-issue transactions.');
+                }
+
+                if ($recipientName !== null && $recipientName !== '') {
+                    throw new Exception('recipient_name can only be used for issue transactions.');
+                }
+            }
+
+            if ($userId === null && ($recipientName === null || $recipientName === '')) {
+                throw new Exception('Either user_id or recipient_name must be provided.');
+            }
+
+            if ($userId !== null) {
+                $data['recipient_name'] = null;
+            } else {
+                $data['user_id'] = null;
+                $data['recipient_name'] = $recipientName;
+            }
+
+            $user = $userId !== null ? User::find($userId) : null;
+
+            if ($userId !== null && !$user) {
+                throw new Exception('User not found.');
+            }
+
+            $amount = (float) $data['amount'];
             
             // Рассчитываем новый баланс (только если есть пользователь)
             $newBalance = $user ? $this->calculateNewBalance($user, $type, $amount) : 0;
