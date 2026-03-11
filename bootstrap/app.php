@@ -135,24 +135,6 @@ return Application::configure(basePath: dirname(__DIR__))
         // Трекинг исключений для мониторинга
         // ============================================================
         
-        $exceptions->reportable(function (Throwable $e): void {
-            if (app()->bound('sentry')) {
-                app('sentry')->captureException($e);
-            }
-
-            // Исключаем business logic исключения из мониторинга
-            if ($e instanceof \App\Exceptions\Billing\InsufficientBalanceException) {
-                return;
-            }
-            
-            try {
-                $prometheus = app(\App\Services\Monitoring\PrometheusService::class);
-                $prometheus->incrementExceptions(get_class($e));
-            } catch (\Throwable $ignored) {
-                // Игнорируем ошибки мониторинга, чтобы не сломать основное приложение
-            }
-        });
-
         // ============================================================
         // ПРИМЕЧАНИЕ:
         // Вся логика рендеринга исключений (renderable) находится в

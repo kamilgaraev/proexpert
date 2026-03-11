@@ -12,6 +12,7 @@ use Throwable;
 use Symfony\Component\Routing\Exception\RouteNotFoundException;
 use Illuminate\Support\Facades\Log;
 use App\Services\Monitoring\PrometheusService;
+use App\Services\Monitoring\SentryScopeService;
 use App\Services\Logging\LoggingService;
 use App\Services\ErrorTracking\ErrorTrackingService;
 use App\Exceptions\Billing\InsufficientBalanceException;
@@ -296,8 +297,8 @@ class Handler extends ExceptionHandler
 
     public function report(Throwable $exception)
     {
-        if (app()->bound('sentry') && $this->shouldReport($exception)) {
-            app('sentry')->captureException($exception);
+        if ($this->shouldReport($exception) && app()->bound(SentryScopeService::class)) {
+            app(SentryScopeService::class)->captureException($exception, app()->bound('request') ? request() : null);
         }
 
         // Интеграция с PrometheusService
