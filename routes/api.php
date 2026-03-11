@@ -279,4 +279,5 @@ Route::prefix('v1/system/glitchtip')->name('system.glitchtip.')->group(function 
     Route::post('webhook', [GlitchTipController::class, 'webhook'])->name('webhook');
     Route::get('status', [GlitchTipController::class, 'status'])->name('status');
     Route::get('issues', [GlitchTipController::class, 'issues'])->name('issues');
+    Route::post('pull-request', [GlitchTipController::class, 'pullRequest'])->name('pull-request');
 });

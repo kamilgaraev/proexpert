@@ -19,6 +19,7 @@ return [
     'github' => [
         'token' => env('GITHUB_ISSUES_TOKEN'),
         'repository' => env('GITHUB_ISSUES_REPOSITORY'),
+        'base_branch' => env('GITHUB_PULL_REQUEST_BASE', 'main'),
         'labels' => array_values(array_filter(array_map('trim', explode(',', (string) env('GITHUB_ISSUES_LABELS', 'bug,glitchtip'))))),
     ],
 ];

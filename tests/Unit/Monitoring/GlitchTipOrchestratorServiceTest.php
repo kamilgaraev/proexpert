@@ -149,4 +149,30 @@ class GlitchTipOrchestratorServiceTest extends TestCase
         self::assertSame('fix: устранен инцидент GlitchTip #77 в модуле billing', $metadata['suggested_commit']);
         self::assertSame('fix: устранен инцидент GlitchTip #77', $metadata['suggested_pr_title']);
     }
+
+    public function test_builds_pull_request_payload_from_github_issue(): void
+    {
+        $service = new GitHubIssueService();
+
+        $payload = $service->buildPullRequestPayload(
+            'codex/fix-incident-77-billing-database-timeout',
+            'main',
+            true,
+            2,
+            [
+                'title' => '[GlitchTip][PRODUCTION][billing] Database timeout',
+                'body' => implode("\n", [
+                    '## Рекомендуемый PR title',
+                    '',
+                    '`fix: resolve billing timeout`',
+                ]),
+            ]
+        );
+
+        self::assertSame('fix: resolve billing timeout', $payload['title']);
+        self::assertSame('codex/fix-incident-77-billing-database-timeout', $payload['head']);
+        self::assertSame('main', $payload['base']);
+        self::assertTrue($payload['draft']);
+        self::assertStringContainsString('Closes #2', $payload['body']);
+    }
 }
