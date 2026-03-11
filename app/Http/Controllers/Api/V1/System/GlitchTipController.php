@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api\V1\System;
 
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use App\Services\Monitoring\GitHubIssueService;
 use App\Services\Monitoring\GlitchTipOrchestratorService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -17,7 +18,8 @@ use function trans_message;
 class GlitchTipController extends Controller
 {
     public function __construct(
-        private readonly GlitchTipOrchestratorService $glitchTipOrchestratorService
+        private readonly GlitchTipOrchestratorService $glitchTipOrchestratorService,
+        private readonly GitHubIssueService $gitHubIssueService
     ) {
     }
 
@@ -30,8 +32,12 @@ class GlitchTipController extends Controller
 
             $incident = $this->glitchTipOrchestratorService->normalizeWebhookPayload($request->all());
             $this->glitchTipOrchestratorService->storeLatestIncident($incident);
+            $githubIssue = $this->glitchTipOrchestratorService->syncIncidentToGitHub($incident, $this->gitHubIssueService);
 
-            return AdminResponse::success($incident, trans_message('glitchtip.webhook_received'));
+            return AdminResponse::success([
+                'incident' => $incident,
+                'github_issue' => $githubIssue,
+            ], trans_message('glitchtip.webhook_received'));
         } catch (Throwable $exception) {
             Log::error('glitchtip.webhook.failed', [
                 'message' => $exception->getMessage(),

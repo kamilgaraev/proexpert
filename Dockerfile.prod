@@ -48,12 +48,16 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 # Копируем RoadRunner из официального образа
 COPY --from=ghcr.io/roadrunner-server/roadrunner:2023.3.11 /usr/bin/rr /usr/bin/rr
 
-# Копируем исходный код приложения
+# Ставим vendor в отдельном кэшируемом слое, чтобы не пересобирать зависимости на каждый коммит.
+COPY composer.json composer.lock ${APP_DIR}/
+RUN composer install --no-dev --no-interaction --prefer-dist --no-scripts --no-autoloader
+
+# Копируем исходный код приложения после установки зависимостей.
 COPY . ${APP_DIR}
 
-# Устанавливаем зависимости composer (без dev-зависимостей)
-# Обрати внимание: мы игнорируем composer.lock, если нужно
-RUN composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist
+RUN composer dump-autoload --optimize --no-dev \
+    && php artisan package:discover --ansi \
+    && php artisan filament:upgrade
 
 # Создаем директории для Laravel (если их нет)
 RUN mkdir -p storage/framework/cache/data \
