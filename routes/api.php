@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\AdvanceAccountTransactionController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\V1\Landing\MultiOrganizationController;
 use App\Http\Controllers\Api\V1\HoldingApiController;
+use App\Http\Controllers\Api\V1\System\GlitchTipController;
 
 /*
 |--------------------------------------------------------------------------
@@ -272,4 +273,10 @@ Route::prefix('superadmin')->name('superadmin.')->group(function () {
     // Route::middleware(['auth:api_superadmin', 'superadmin.context'])->group(function() {
     //     // require __DIR__ . '/api/v1/superadmin/dashboard.php';
     // });
+});
+
+Route::prefix('v1/system/glitchtip')->name('system.glitchtip.')->group(function () {
+    Route::post('webhook', [GlitchTipController::class, 'webhook'])->name('webhook');
+    Route::get('status', [GlitchTipController::class, 'status'])->name('status');
+    Route::get('issues', [GlitchTipController::class, 'issues'])->name('issues');
 });
