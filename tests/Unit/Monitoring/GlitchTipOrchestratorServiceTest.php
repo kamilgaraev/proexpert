@@ -74,6 +74,7 @@ class GlitchTipOrchestratorServiceTest extends TestCase
 
         self::assertTrue($service->matchesSecret('top-secret', 'top-secret'));
         self::assertFalse($service->matchesSecret('top-secret', 'wrong-secret'));
+        self::assertTrue($service->matchesSecret('top-secret', null, true));
         self::assertTrue($service->matchesSecret('', null, true));
         self::assertFalse($service->matchesSecret('', null, false));
     }

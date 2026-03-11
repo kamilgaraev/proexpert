@@ -27,6 +27,10 @@ class GlitchTipOrchestratorService
 
     public function matchesSecret(string $expectedSecret, ?string $providedSecret, bool $allowUnsignedWebhooks = false): bool
     {
+        if ($allowUnsignedWebhooks && ($providedSecret === null || $providedSecret === '')) {
+            return true;
+        }
+
         if ($expectedSecret === '') {
             return $allowUnsignedWebhooks;
         }
