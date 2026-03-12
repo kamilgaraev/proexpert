@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\EstimatePositionItemType;
+use App\Support\EstimatePositionOrder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -130,8 +131,7 @@ class EstimateItem extends Model
      */
     public function childItems(): HasMany
     {
-        return $this->hasMany(EstimateItem::class, 'parent_work_id')
-            ->orderByRaw("string_to_array(position_number, '.')::int[] ASC")
+        return EstimatePositionOrder::apply($this->hasMany(EstimateItem::class, 'parent_work_id'))
             ->orderBy('id', 'asc');
     }
 

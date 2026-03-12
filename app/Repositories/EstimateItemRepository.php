@@ -3,6 +3,7 @@
 namespace App\Repositories;
 
 use App\Models\EstimateItem;
+use App\Support\EstimatePositionOrder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 
@@ -37,26 +38,26 @@ class EstimateItemRepository
 
     public function getByEstimate(int $estimateId, int $perPage = 50): LengthAwarePaginator
     {
-        return EstimateItem::with(['section', 'workType', 'measurementUnit'])
-            ->where('estimate_id', $estimateId)
-            ->orderByRaw("string_to_array(position_number, '.')::int[] ASC")
-            ->paginate($perPage);
+        return EstimatePositionOrder::apply(
+            EstimateItem::with(['section', 'workType', 'measurementUnit'])
+                ->where('estimate_id', $estimateId)
+        )->paginate($perPage);
     }
 
     public function getAllByEstimate(int $estimateId): Collection
     {
-        return EstimateItem::with(['section', 'workType', 'measurementUnit', 'resources'])
-            ->where('estimate_id', $estimateId)
-            ->orderByRaw("string_to_array(position_number, '.')::int[] ASC")
-            ->get();
+        return EstimatePositionOrder::apply(
+            EstimateItem::with(['section', 'workType', 'measurementUnit', 'resources'])
+                ->where('estimate_id', $estimateId)
+        )->get();
     }
 
     public function getBySection(int $sectionId): Collection
     {
-        return EstimateItem::with(['workType', 'measurementUnit', 'resources'])
-            ->where('estimate_section_id', $sectionId)
-            ->orderByRaw("string_to_array(position_number, '.')::int[] ASC")
-            ->get();
+        return EstimatePositionOrder::apply(
+            EstimateItem::with(['workType', 'measurementUnit', 'resources'])
+                ->where('estimate_section_id', $sectionId)
+        )->get();
     }
 
     public function bulkCreate(array $items): Collection
@@ -117,4 +118,3 @@ class EstimateItemRepository
         return (string) ($lastNumber + 1);
     }
 }
-
