@@ -505,6 +505,7 @@ class ImportPipelineService
     {
         $laborCost = $this->detectLaborCost($dto);
         $isInformative = $this->isInformativeGrandSmetaRow($dto);
+        $isSubItem = $dto->isSubItem ?? false;
         $totalAmount = (float)($dto->currentTotalAmount ?? ($dto->quantity * ($dto->unitPrice ?? 0)));
         
         // 1. Берем точные рублевые значения НР и СП напрямую от парсера ГрандСметы
@@ -528,7 +529,6 @@ class ImportPipelineService
             ? $totalAmount
             : $directCosts + $overheadAmount + $profitAmount;
 
-        $isSubItem = $dto->isSubItem ?? false;
         
         // 4. Все подпункты делают задвоение, поэтому их исключаем из учета итоговых сумм
         $isNotAccounted = $isInformative || $isSubItem;
