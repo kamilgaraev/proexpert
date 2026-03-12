@@ -289,7 +289,12 @@ class StatefulGrandSmetaProcessor
     private function mapToDTO(array $data, array $mapping, int $rowNumber, bool $isSection): EstimateImportRowDTO
     {
         $qty = $this->parseFloat($data[$mapping['quantity'] ?? ''] ?? 0, true);
-        $price = $this->parseFloat($data[$mapping['unit_price'] ?? ''] ?? 0);
+        $basePrice = $this->parseFloat($data[$mapping['base_unit_price'] ?? ''] ?? 0);
+        $priceIndex = $this->parseFloat($data[$mapping['price_index'] ?? ''] ?? 0);
+        $currentPrice = $this->parseFloat($data[$mapping['current_unit_price'] ?? ''] ?? 0);
+        $price = $currentPrice !== 0.0
+            ? $currentPrice
+            : $this->parseFloat($data[$mapping['unit_price'] ?? ''] ?? 0);
         $total = $this->parseFloat($data[$mapping['total_price'] ?? ''] ?? 0);
         $name = trim((string)($data[$mapping['name'] ?? ''] ?? ''));
         $code = trim((string)($data[$mapping['code'] ?? ''] ?? ''));
@@ -371,6 +376,9 @@ class StatefulGrandSmetaProcessor
             code: $code,
             isSection: $isSection,
             itemType: $itemType,
+            baseUnitPrice: $basePrice != 0.0 ? $basePrice : null,
+            priceIndex: $priceIndex != 0.0 ? $priceIndex : null,
+            currentUnitPrice: $currentPrice != 0.0 ? $currentPrice : null,
             currentTotalAmount: $total != 0.0 ? $total : null,
             rawData: $data
         );
