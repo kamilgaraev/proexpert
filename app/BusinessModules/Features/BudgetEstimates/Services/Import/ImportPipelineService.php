@@ -518,11 +518,15 @@ class ImportPipelineService
         }
 
         // 3. В Гранд-Смете сумма позиции из колонки "Всего" - это Прямые Затраты!
-        $directCosts = $totalAmount;
+        $directCosts = (!$isInformative && !$isSubItem && $totalAmount > 0 && ($overheadAmount > 0 || $profitAmount > 0))
+            ? max(0, $totalAmount - $overheadAmount - $profitAmount)
+            : $totalAmount;
         
         // Значит Итог с учетом налогов (полная стоимость) - это ПЗ + НР + СП
         // Для подпунктов математика налогов не применяется (их сумма заложена в ПЗ родителя)
-        $actualTotalAmount = $directCosts + $overheadAmount + $profitAmount;
+        $actualTotalAmount = (!$isInformative && !$isSubItem && $totalAmount > 0 && ($overheadAmount > 0 || $profitAmount > 0))
+            ? $totalAmount
+            : $directCosts + $overheadAmount + $profitAmount;
 
         $isSubItem = $dto->isSubItem ?? false;
         
