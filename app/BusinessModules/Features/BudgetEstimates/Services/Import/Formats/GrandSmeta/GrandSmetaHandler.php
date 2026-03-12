@@ -109,12 +109,18 @@ class GrandSmetaHandler extends AbstractFormatHandler
                 if ($val === '3') { $tempMapping['name'] = $col; $foundMarkers++; }
                 if ($val === '4') { $tempMapping['unit'] = $col; $foundMarkers++; }
                 if ($val === '7') { $tempMapping['quantity'] = $col; $foundMarkers++; }
-                if ($val === '8') { $tempMapping['unit_price'] = $col; $foundMarkers++; }
-                if ($val === '10') { $tempMapping['total_price'] = $col; $foundMarkers++; }
+                if ($val === '8') { $tempMapping['base_unit_price'] = $col; }
+                if ($val === '9') { $tempMapping['price_index'] = $col; }
+                if ($val === '10') { $tempMapping['current_unit_price'] = $col; $tempMapping['unit_price'] = $col; $foundMarkers++; }
+                if ($val === '12') { $tempMapping['total_price'] = $col; $foundMarkers++; }
             }
 
             // If we found at least 4 key markers (including 1, 2, 3), this is our numbering row
             if ($foundMarkers >= 4) {
+                if (!isset($tempMapping['total_price']) && isset($tempMapping['current_unit_price'])) {
+                    $tempMapping['total_price'] = $tempMapping['current_unit_price'];
+                }
+
                 return [
                     'mapping' => array_merge($this->getDefaultMapping(), $tempMapping),
                     'header_row' => $row->getRowIndex()
@@ -133,8 +139,11 @@ class GrandSmetaHandler extends AbstractFormatHandler
             'name' => 'C',
             'unit' => 'D',
             'quantity' => 'G',
-            'unit_price' => 'H', // Column 8
-            'total_price' => 'J'  // Column 10
+            'base_unit_price' => 'H',
+            'price_index' => 'I',
+            'current_unit_price' => 'J',
+            'unit_price' => 'J',
+            'total_price' => 'L'
         ];
     }
 
