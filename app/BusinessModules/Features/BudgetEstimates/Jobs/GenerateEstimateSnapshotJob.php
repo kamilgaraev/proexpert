@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BudgetEstimates\Jobs;
 
 use App\Models\Estimate;
+use App\Support\EstimatePositionOrder;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -47,9 +48,10 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
                 ->map(fn($item) => (array) $item)
                 ->toArray();
 
-            $items = DB::table('estimate_items')
-                ->where('estimate_id', $this->estimateId)
-                ->orderByRaw("string_to_array(position_number, '.')::int[] ASC")
+            $items = EstimatePositionOrder::apply(
+                DB::table('estimate_items')
+                    ->where('estimate_id', $this->estimateId)
+            )
                 ->orderBy('id', 'asc')
                 ->get()
                 ->map(fn($item) => (array) $item)

@@ -11,6 +11,7 @@ use App\Http\Responses\AdminResponse;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\EstimateSection;
+use App\Support\EstimatePositionOrder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -40,9 +41,10 @@ class EstimateItemController extends Controller
         
         $this->authorize('view', $estimateModel);
         
-        $items = $estimateModel->items()
-            ->with(['workType', 'measurementUnit', 'section'])
-            ->orderByRaw("string_to_array(position_number, '.')::int[] ASC")
+        $items = EstimatePositionOrder::apply(
+            $estimateModel->items()
+                ->with(['workType', 'measurementUnit', 'section'])
+        )
             ->orderBy('id', 'asc')
             ->paginate($request->input('per_page', 50));
         
@@ -389,11 +391,11 @@ class EstimateItemController extends Controller
             $this->numberingService->recalculateAllItemNumbers($estimateModel->id, $numberingMode);
 
             // Возвращаем обновленный список позиций
-            $items = $estimateModel->items()
-                ->with(['workType', 'measurementUnit', 'section'])
-                ->orderBy('estimate_section_id')
-                ->orderByRaw("string_to_array(position_number, '.')::int[] ASC")
-                ->get();
+            $items = EstimatePositionOrder::apply(
+                $estimateModel->items()
+                    ->with(['workType', 'measurementUnit', 'section'])
+                    ->orderBy('estimate_section_id')
+            )->get();
 
             return AdminResponse::success(
                 EstimateItemResource::collection($items),
@@ -457,4 +459,3 @@ class EstimateItemController extends Controller
         }
     }
 }
-

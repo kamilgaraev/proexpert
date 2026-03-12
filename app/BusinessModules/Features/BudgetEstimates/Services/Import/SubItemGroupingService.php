@@ -8,41 +8,42 @@ use Illuminate\Support\Facades\Log;
 
 class SubItemGroupingService
 {
+    private const MAIN_POSITION_PATTERN = '/^\d[\d.\-]*[А-ЯA-Zа-яa-z]*$/u';
+
     private const SUB_ITEM_KEYWORDS = [
-        'material'  => ['материал', 'мат.', 'материалы', 'м:'],
+        'material' => ['материал', 'мат.', 'материалы', 'м:'],
         'machinery' => ['механизм', 'маш.', 'эм:', 'эм.', 'машины и механизмы', 'экскаватор', 'кран', 'бульдозер'],
-        'labor'     => ['от:', 'от.', 'оплата труда', 'труд рабочих', 'зп.', 'з/п'],
+        'labor' => ['от:', 'от.', 'оплата труда', 'труд рабочих', 'зп.', 'з/п'],
     ];
 
     private const RESOURCE_CODE_PATTERNS = [
-        'material'  => '/^(С|ТСЦ|01\.|ФССЦ|СМТ|ТСН|ресурс)/iu',
+        'material' => '/^(С|ТСЦ|01\.|ФССЦ|СМТ|ТСН|ресурс)/iu',
         'machinery' => '/^(машины|маш\.|91\.|мех\.|ЭМ)/iu',
-        'labor'     => '/^(ОТ|оплата|зарплата|ФОТ)/iu',
+        'labor' => '/^(ОТ|оплата|зарплата|ФОТ)/iu',
     ];
 
     public function groupItems(array $flatRows, array &$state = []): array
     {
-        $result           = [];
-        $lastWorkIndex    = ($state['carry_over'] ?? false) ? 'prev' : null;
-        $lastWorkLevel    = $state['last_work_level'] ?? null;
+        $result = [];
+        $lastWorkIndex = ($state['carry_over'] ?? false) ? 'prev' : null;
+        $lastWorkLevel = $state['last_work_level'] ?? null;
 
-        foreach ($flatRows as $idx => $row) {
+        foreach ($flatRows as $row) {
             if ($row['is_section'] ?? false) {
-                $result[]      = $row;
+                $result[] = $row;
                 $lastWorkIndex = null;
                 $lastWorkLevel = null;
                 $state['carry_over'] = false;
                 continue;
             }
 
-            $itemType = $row['item_type'] ?? 'work';
-            $level    = (int)($row['level'] ?? 0);
+            $level = (int) ($row['level'] ?? 0);
 
             if ($this->isSubItem($row, $lastWorkLevel)) {
                 if ($lastWorkIndex !== null) {
                     $row['_parent_index'] = $lastWorkIndex;
-                    $row['item_type']     = $this->resolveSubItemType($row);
-                    $row['is_sub_item']   = true;
+                    $row['item_type'] = $this->resolveSubItemType($row);
+                    $row['is_sub_item'] = true;
                     $itemNameLog = $row['name'] ?? $row['item_name'] ?? 'unknown';
                     Log::info("[SubItemGrouper] Row '{$itemNameLog}' grouped under parent idx={$lastWorkIndex} as {$row['item_type']}");
                 }
@@ -62,19 +63,13 @@ class SubItemGroupingService
 
     private function isSubItem(array $row, ?int $parentLevel): bool
     {
-        // ⭐ If already flagged as sub-item (e.g. by specialized parser), trust it.
         if (!empty($row['is_sub_item'])) {
             return true;
         }
 
-        // Если у позиции есть явный номер, 
-        // то это 100% самостоятельная (Main) позиция.
-        $position = trim((string)($row['position_number'] ?? ''));
-        if ($position !== '') {
-            // Пропускаем дробные номера (например 1.1, 10.5), так как они часто означают подпункты
-            if (!preg_match('/^\d+\.\d+$/', $position)) {
-                return false;
-            }
+        $position = trim((string) ($row['position_number'] ?? ''));
+        if ($position !== '' && preg_match(self::MAIN_POSITION_PATTERN, $position) && !preg_match('/^\d+\.\d+$/', $position)) {
+            return false;
         }
 
         $type = $row['item_type'] ?? 'work';
@@ -82,14 +77,13 @@ class SubItemGroupingService
             return true;
         }
 
-        $level = (int)($row['level'] ?? 0);
-
+        $level = (int) ($row['level'] ?? 0);
         if ($parentLevel !== null && $level > $parentLevel) {
             return true;
         }
 
-        $name = mb_strtolower(trim((string)($row['name'] ?? $row['item_name'] ?? '')));
-        $code = mb_strtolower(trim((string)($row['normative_rate_code'] ?? $row['code'] ?? '')));
+        $name = mb_strtolower(trim((string) ($row['name'] ?? $row['item_name'] ?? '')));
+        $code = mb_strtolower(trim((string) ($row['normative_rate_code'] ?? $row['code'] ?? '')));
 
         foreach (self::SUB_ITEM_KEYWORDS as $keywords) {
             foreach ($keywords as $kw) {
@@ -110,8 +104,8 @@ class SubItemGroupingService
 
     private function resolveSubItemType(array $row): string
     {
-        $name = mb_strtolower(trim((string)($row['name'] ?? $row['item_name'] ?? '')));
-        $code = (string)($row['normative_rate_code'] ?? $row['code'] ?? '');
+        $name = mb_strtolower(trim((string) ($row['name'] ?? $row['item_name'] ?? '')));
+        $code = (string) ($row['normative_rate_code'] ?? $row['code'] ?? '');
 
         foreach (self::RESOURCE_CODE_PATTERNS as $type => $pattern) {
             if ($code !== '' && preg_match($pattern, $code)) {
@@ -127,7 +121,7 @@ class SubItemGroupingService
             }
         }
 
-        if (isset($row['item_type']) && in_array($row['item_type'], ['material', 'machinery', 'equipment', 'labor'])) {
+        if (isset($row['item_type']) && in_array($row['item_type'], ['material', 'machinery', 'equipment', 'labor'], true)) {
             return $row['item_type'];
         }
 
