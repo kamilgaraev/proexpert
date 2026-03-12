@@ -235,7 +235,9 @@ class StatefulGrandSmetaProcessor
             $this->footerData['materials_cost'] = $val;
         } elseif (str_contains($cleanName, 'накладные расходы') || str_contains($cleanName, 'итого накладные') || str_starts_with($cleanName, 'нр')) {
             $this->footerData['overhead_cost'] = $val;
-        } elseif (str_contains($cleanName, 'сметная прибыль') || str_contains($cleanName, 'итого сметная') || str_starts_with($cleanName, 'сп')) {
+        } elseif (str_starts_with($cleanName, 'справочно')) {
+            return;
+        } elseif (str_contains($cleanName, 'сметная прибыль') || str_contains($cleanName, 'итого сметная') || preg_match('/^сп(?:\s|\(|$)/u', $cleanName)) {
             $this->footerData['profit_cost'] = $val;
         } elseif (str_starts_with($cleanName, 'оборудование')) {
             $this->footerData['equipment_cost'] = $val;
