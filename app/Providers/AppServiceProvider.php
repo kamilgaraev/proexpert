@@ -32,6 +32,7 @@ use App\Observers\TaskDependencyObserver;
 use App\Observers\TaskResourceObserver;
 use App\Observers\ScheduleTaskIntervalObserver;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Auth;
 use App\Events\ProjectOrganizationAdded;
 use App\Events\ProjectOrganizationRoleChanged;
 use App\Events\ProjectOrganizationRemoved;
@@ -148,7 +149,7 @@ class AppServiceProvider extends ServiceProvider
         }
 
         Gate::define('viewApiDocs', function ($user = null) {
-            return true;
+            return Auth::guard('system_admin')->check();
         });
 
         
