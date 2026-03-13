@@ -6,6 +6,7 @@ namespace App\Services\Schedule;
 
 use App\Enums\Schedule\TaskStatusEnum;
 use App\Models\CompletedWork;
+use App\Models\ContractEstimateItem;
 use App\Models\ScheduleTask;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -53,14 +54,20 @@ class ScheduleTaskSyncService
 
         try {
             return DB::transaction(function () use ($task, $schedule, $userId): CompletedWork {
+                $payload = $this->buildCompletedWorkPayload($task, $schedule->project_id, $userId);
+
                 $work = CompletedWork::create([
                     'organization_id'    => $task->organization_id,
                     'project_id'         => $schedule->project_id,
                     'schedule_task_id'   => $task->id,
-                    'work_type_id'       => $task->work_type_id,
+                    'work_type_id'       => $payload['work_type_id'],
+                    'contract_id'        => $payload['contract_id'],
+                    'contractor_id'      => $payload['contractor_id'],
                     'user_id'            => $userId,
-                    'quantity'           => (float) ($task->quantity ?? 0),
-                    'completed_quantity' => (float) ($task->completed_quantity ?? 0),
+                    'quantity'           => $payload['quantity'],
+                    'completed_quantity' => $payload['completed_quantity'],
+                    'price'              => $payload['price'],
+                    'total_amount'       => $payload['total_amount'],
                     'completion_date'    => now()->toDateString(),
                     'status'             => 'draft',
                 ]);
@@ -79,6 +86,45 @@ class ScheduleTaskSyncService
             ]);
             return null;
         }
+    }
+
+    public function syncActiveCompletedWork(ScheduleTask $task): void
+    {
+        $task->loadMissing([
+            'schedule',
+            'workType',
+            'estimateItem.workType',
+            'estimateItem.contractLinks.contract.contractor',
+        ]);
+
+        $projectId = $task->schedule?->project_id;
+        if (!$projectId) {
+            return;
+        }
+
+        $userId = $task->assigned_user_id ?? auth()->id();
+        $payload = $this->buildCompletedWorkPayload($task, $projectId, $userId);
+
+        CompletedWork::query()
+            ->where('schedule_task_id', $task->id)
+            ->whereIn('status', ['draft', 'pending', 'in_review'])
+            ->whereNull('deleted_at')
+            ->get()
+            ->each(function (CompletedWork $work) use ($payload): void {
+                $work->fill([
+                    'work_type_id'       => $payload['work_type_id'] ?? $work->work_type_id,
+                    'contract_id'        => $payload['contract_id'] ?? $work->contract_id,
+                    'contractor_id'      => $payload['contractor_id'] ?? $work->contractor_id,
+                    'quantity'           => $payload['quantity'],
+                    'completed_quantity' => $payload['completed_quantity'],
+                    'price'              => $payload['price'],
+                    'total_amount'       => $payload['total_amount'],
+                ]);
+
+                if ($work->isDirty()) {
+                    $work->saveQuietly();
+                }
+            });
     }
 
     public function onTaskCompleted(ScheduleTask $task): void
@@ -150,5 +196,77 @@ class ScheduleTaskSyncService
                 'error'   => $e->getMessage(),
             ]);
         }
+    }
+
+    private function buildCompletedWorkPayload(ScheduleTask $task, int $projectId, ?int $userId): array
+    {
+        $task->loadMissing([
+            'schedule',
+            'workType',
+            'estimateItem.workType',
+            'estimateItem.contractLinks.contract.contractor',
+        ]);
+
+        $contractLink = $this->resolveContractLink($task);
+        $quantity = (float) ($task->quantity ?? 0);
+        $completedQuantity = $this->resolveCompletedQuantity($task, $quantity);
+        $price = $this->resolvePrice($task, $contractLink);
+
+        return [
+            'organization_id'    => $task->organization_id,
+            'project_id'         => $projectId,
+            'schedule_task_id'   => $task->id,
+            'work_type_id'       => $task->work_type_id ?? $task->estimateItem?->work_type_id,
+            'contract_id'        => $contractLink?->contract_id,
+            'contractor_id'      => $contractLink?->contract?->contractor_id,
+            'user_id'            => $userId,
+            'quantity'           => $quantity,
+            'completed_quantity' => $completedQuantity,
+            'price'              => $price,
+            'total_amount'       => $price !== null ? round($price * $completedQuantity, 2) : null,
+        ];
+    }
+
+    private function resolveCompletedQuantity(ScheduleTask $task, float $quantity): float
+    {
+        if ($task->completed_quantity !== null && (float) $task->completed_quantity > 0) {
+            return round((float) $task->completed_quantity, 4);
+        }
+
+        if ($quantity > 0 && $task->progress_percent !== null && (float) $task->progress_percent > 0) {
+            return round($quantity * ((float) $task->progress_percent / 100), 4);
+        }
+
+        return 0.0;
+    }
+
+    private function resolvePrice(ScheduleTask $task, ?ContractEstimateItem $contractLink): ?float
+    {
+        $linkedQuantity = (float) ($contractLink?->quantity ?? 0);
+        $linkedAmount = $contractLink?->amount !== null ? (float) $contractLink->amount : null;
+
+        if ($linkedAmount !== null && $linkedQuantity > 0) {
+            return round($linkedAmount / $linkedQuantity, 2);
+        }
+
+        $estimateItem = $task->estimateItem;
+        if (!$estimateItem) {
+            return null;
+        }
+
+        foreach (['actual_unit_price', 'current_unit_price', 'unit_price'] as $field) {
+            if ($estimateItem->{$field} !== null && (float) $estimateItem->{$field} > 0) {
+                return round((float) $estimateItem->{$field}, 2);
+            }
+        }
+
+        return null;
+    }
+
+    private function resolveContractLink(ScheduleTask $task): ?ContractEstimateItem
+    {
+        return $task->estimateItem?->contractLinks
+            ?->sortBy('id')
+            ->first();
     }
 }

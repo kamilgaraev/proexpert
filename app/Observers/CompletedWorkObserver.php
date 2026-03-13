@@ -63,12 +63,14 @@ class CompletedWorkObserver
     protected function calculateAmounts(CompletedWork $work): void
     {
         try {
-            if ($work->price !== null && $work->quantity > 0 && $work->total_amount === null) {
-                $work->total_amount = round($work->price * $work->quantity, 2);
+            $baseQuantity = $this->resolveAmountQuantity($work);
+
+            if ($work->price !== null && $baseQuantity > 0 && $work->total_amount === null) {
+                $work->total_amount = round($work->price * $baseQuantity, 2);
             }
 
-            if ($work->total_amount !== null && $work->quantity > 0 && $work->price === null) {
-                $work->price = round($work->total_amount / $work->quantity, 2);
+            if ($work->total_amount !== null && $baseQuantity > 0 && $work->price === null) {
+                $work->price = round($work->total_amount / $baseQuantity, 2);
             }
         } catch (\Exception $e) {
             Log::error('Failed to calculate CompletedWork amounts', [
@@ -99,9 +101,10 @@ class CompletedWorkObserver
                 }
 
                 if ($materialsSum > 0) {
+                    $baseQuantity = $this->resolveAmountQuantity($work);
                     $work->update([
                         'total_amount' => round($materialsSum, 2),
-                        'price'        => $work->quantity > 0 ? round($materialsSum / $work->quantity, 2) : 0,
+                        'price'        => $baseQuantity > 0 ? round($materialsSum / $baseQuantity, 2) : 0,
                     ]);
                 }
             }
@@ -111,6 +114,15 @@ class CompletedWorkObserver
                 'error'   => $e->getMessage(),
             ]);
         }
+    }
+
+    private function resolveAmountQuantity(CompletedWork $work): float
+    {
+        if ($work->completed_quantity !== null && (float) $work->completed_quantity > 0) {
+            return (float) $work->completed_quantity;
+        }
+
+        return (float) ($work->quantity ?? 0);
     }
 }
 
