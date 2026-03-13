@@ -29,6 +29,9 @@ class GanttExcelExportService
     private const CRITICAL_FG = 'CC0000';
     private const SUMMARY_BG  = 'E8F0FE';
     private const MILESTONE_BG = 'FEF3C7';
+    private const GRID_BORDER = 'E2E8F0';
+    private const GRID_BORDER_STRONG = 'CBD5E1';
+    private const SUMMARY_BORDER = '94A3B8';
 
     private const STATUS_COLORS = [
         'not_started' => 'E5E7EB',
@@ -172,6 +175,7 @@ class GanttExcelExportService
         }
 
         $dataRow = $headerRow + 1;
+        $summaryRows = [];
         foreach ($tasks as $task) {
             $isCritical = (bool)($task->is_critical ?? false);
             $type       = $this->enumVal($task->task_type, 'task');
@@ -179,6 +183,10 @@ class GanttExcelExportService
             $taskEnd    = $task->planned_end_date   ? Carbon::parse($task->planned_end_date)   : null;
             $progress   = (int)($task->progress_percent ?? 0);
             $isSummary  = ($type === 'summary' || $type === 'container');
+
+            if ($isSummary) {
+                $summaryRows[] = $dataRow;
+            }
 
             $sheet->setCellValue('A' . $dataRow, $task->wbs_code ?? '');
             $sheet->setCellValue('B' . $dataRow, ($task->name ?? ''));
@@ -269,6 +277,20 @@ class GanttExcelExportService
 
             $sheet->getRowDimension($dataRow)->setRowHeight(18);
             $dataRow++;
+        }
+
+        if ($dataRow > ($headerRow + 1)) {
+            $tableEndRow = $dataRow - 1;
+            $this->applyPrintFriendlyGrid($sheet, "A{$headerRow}:{$lastCol}{$tableEndRow}");
+
+            foreach ($summaryRows as $summaryRow) {
+                $this->applySummaryRowBorders($sheet, "A{$summaryRow}:{$lastCol}{$summaryRow}");
+            }
+
+            if ($todayColIdx !== null) {
+                $todayCol = Coordinate::stringFromColumnIndex($fixedCols + $todayColIdx + 1);
+                $this->applyTodaySeparator($sheet, $todayCol, $headerRow, $tableEndRow);
+            }
         }
 
         $freezeCol = Coordinate::stringFromColumnIndex($fixedCols + 1);
@@ -562,10 +584,16 @@ class GanttExcelExportService
         $sheet->getRowDimension($headerRow)->setRowHeight(22);
 
         $dataRow = 3;
+        $summaryRows = [];
         foreach ($tasks as $task) {
             $indent = str_repeat('  ', max(0, ($task->level ?? 0) - 1));
             $isCritical = (bool)($task->is_critical ?? false);
             $type = $task->task_type ?? 'task';
+            $typeValue = $type instanceof \BackedEnum ? $type->value : (string)$type;
+
+            if (in_array($typeValue, ['summary', 'container'], true)) {
+                $summaryRows[] = $dataRow;
+            }
 
             $sheet->setCellValue("A{$dataRow}", $task->wbs_code ?? '');
             $sheet->setCellValue("B{$dataRow}", $indent . ($task->name ?? ''));
@@ -585,7 +613,7 @@ class GanttExcelExportService
             $sheet->getStyle("A{$dataRow}:L{$dataRow}")->applyFromArray([
                 'fill' => ['fillType' => Fill::FILL_SOLID, 'color' => ['argb' => 'FF' . $bgColor]],
                 'font' => [
-                    'bold'  => ($type === 'summary' || $type === 'container' || $isCritical),
+                    'bold'  => (in_array($typeValue, ['summary', 'container'], true) || $isCritical),
                     'color' => ['argb' => $isCritical ? 'FF' . self::CRITICAL_FG : 'FF111827'],
                 ],
                 'borders' => [
@@ -602,6 +630,15 @@ class GanttExcelExportService
 
             $sheet->getRowDimension($dataRow)->setRowHeight(20);
             $dataRow++;
+        }
+
+        if ($dataRow > 3) {
+            $tableEndRow = $dataRow - 1;
+            $this->applyPrintFriendlyGrid($sheet, "A2:L{$tableEndRow}");
+
+            foreach ($summaryRows as $summaryRow) {
+                $this->applySummaryRowBorders($sheet, "A{$summaryRow}:L{$summaryRow}");
+            }
         }
 
         $sheet->setAutoFilter("A2:L2");
@@ -674,6 +711,10 @@ class GanttExcelExportService
             $sheet->getStyle("A3")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
         }
 
+        if ($dependencies->isNotEmpty()) {
+            $this->applyPrintFriendlyGrid($sheet, "A2:J" . ($dataRow - 1));
+        }
+
         $sheet->setAutoFilter("A2:J2");
         $sheet->freezePane('A3');
     }
@@ -743,6 +784,10 @@ class GanttExcelExportService
             ]);
         }
 
+        if ($criticalTasks->isNotEmpty()) {
+            $this->applyPrintFriendlyGrid($sheet, "A2:K{$dataRow}");
+        }
+
         $sheet->setAutoFilter("A2:K2");
         $sheet->freezePane('A3');
     }
@@ -771,6 +816,47 @@ class GanttExcelExportService
                 'bottom' => ['borderStyle' => Border::BORDER_MEDIUM, 'color' => ['argb' => 'FFFFFFFF']],
             ],
         ]);
+    }
+
+    private function applyPrintFriendlyGrid(Worksheet $sheet, string $range): void
+    {
+        $borders = $sheet->getStyle($range)->getBorders();
+        $borders->getAllBorders()
+            ->setBorderStyle(Border::BORDER_THIN)
+            ->getColor()->setARGB('FF' . self::GRID_BORDER);
+
+        foreach ([$borders->getTop(), $borders->getBottom(), $borders->getLeft(), $borders->getRight()] as $border) {
+            $border->setBorderStyle(Border::BORDER_THIN)
+                ->getColor()->setARGB('FF' . self::GRID_BORDER_STRONG);
+        }
+    }
+
+    private function applySummaryRowBorders(Worksheet $sheet, string $range): void
+    {
+        $borders = $sheet->getStyle($range)->getBorders();
+
+        foreach ([$borders->getTop(), $borders->getBottom()] as $border) {
+            $border->setBorderStyle(Border::BORDER_MEDIUM)
+                ->getColor()->setARGB('FF' . self::SUMMARY_BORDER);
+        }
+
+        foreach ([$borders->getLeft(), $borders->getRight()] as $border) {
+            $border->setBorderStyle(Border::BORDER_THIN)
+                ->getColor()->setARGB('FF' . self::GRID_BORDER_STRONG);
+        }
+    }
+
+    private function applyTodaySeparator(Worksheet $sheet, string $column, int $startRow, int $endRow): void
+    {
+        if ($endRow < $startRow) {
+            return;
+        }
+
+        $sheet->getStyle("{$column}{$startRow}:{$column}{$endRow}")
+            ->getBorders()
+            ->getLeft()
+            ->setBorderStyle(Border::BORDER_MEDIUM)
+            ->getColor()->setARGB('FFDC2626');
     }
 
     private function getTaskRowBgColor(ScheduleTask $task, bool $isCritical): string
