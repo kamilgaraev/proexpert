@@ -3,9 +3,10 @@
 namespace App\DTOs;
 
 use App\Models\AdvanceAccountSetting;
-use Spatie\DataTransferObject\DataTransferObject;
+use Illuminate\Contracts\Support\Arrayable;
+use JsonSerializable;
 
-class AdvanceAccountSettingDTO extends DataTransferObject
+class AdvanceAccountSettingDTO implements Arrayable, JsonSerializable
 {
     public ?int $id;
     public int $organization_id;
@@ -21,6 +22,24 @@ class AdvanceAccountSettingDTO extends DataTransferObject
     public ?int $send_report_reminder_days_before;
     public ?string $created_at;
     public ?string $updated_at;
+
+    public function __construct(array $data)
+    {
+        $this->id = $data['id'] ?? null;
+        $this->organization_id = $data['organization_id'];
+        $this->max_single_issue_amount = $data['max_single_issue_amount'] ?? null;
+        $this->report_submission_deadline_days = $data['report_submission_deadline_days'] ?? null;
+        $this->dual_authorization_threshold = $data['dual_authorization_threshold'] ?? null;
+        $this->require_project_for_expense = (bool) ($data['require_project_for_expense'] ?? false);
+        $this->notify_admin_on_overdue_report = (bool) ($data['notify_admin_on_overdue_report'] ?? false);
+        $this->notify_admin_on_high_value_transaction = (bool) ($data['notify_admin_on_high_value_transaction'] ?? false);
+        $this->high_value_notification_threshold = $data['high_value_notification_threshold'] ?? null;
+        $this->notify_user_on_transaction_approval = (bool) ($data['notify_user_on_transaction_approval'] ?? false);
+        $this->notify_user_on_transaction_rejection = (bool) ($data['notify_user_on_transaction_rejection'] ?? false);
+        $this->send_report_reminder_days_before = $data['send_report_reminder_days_before'] ?? null;
+        $this->created_at = $data['created_at'] ?? null;
+        $this->updated_at = $data['updated_at'] ?? null;
+    }
 
     public static function fromModel(AdvanceAccountSetting $setting): self
     {
@@ -66,4 +85,29 @@ class AdvanceAccountSettingDTO extends DataTransferObject
             'updated_at' => null,
         ]);
     }
-} 
+
+    public function toArray(): array
+    {
+        return [
+            'id' => $this->id,
+            'organization_id' => $this->organization_id,
+            'max_single_issue_amount' => $this->max_single_issue_amount,
+            'report_submission_deadline_days' => $this->report_submission_deadline_days,
+            'dual_authorization_threshold' => $this->dual_authorization_threshold,
+            'require_project_for_expense' => $this->require_project_for_expense,
+            'notify_admin_on_overdue_report' => $this->notify_admin_on_overdue_report,
+            'notify_admin_on_high_value_transaction' => $this->notify_admin_on_high_value_transaction,
+            'high_value_notification_threshold' => $this->high_value_notification_threshold,
+            'notify_user_on_transaction_approval' => $this->notify_user_on_transaction_approval,
+            'notify_user_on_transaction_rejection' => $this->notify_user_on_transaction_rejection,
+            'send_report_reminder_days_before' => $this->send_report_reminder_days_before,
+            'created_at' => $this->created_at,
+            'updated_at' => $this->updated_at,
+        ];
+    }
+
+    public function jsonSerialize(): array
+    {
+        return $this->toArray();
+    }
+}
