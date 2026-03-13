@@ -77,7 +77,7 @@ class EstimateChangeLog extends Model
         return $query->whereBetween('changed_at', [$startDate, $endDate]);
     }
 
-    public function hasChanges(): bool
+    public function hasValueChanges(): bool
     {
         return !empty($this->old_values) || !empty($this->new_values);
     }
