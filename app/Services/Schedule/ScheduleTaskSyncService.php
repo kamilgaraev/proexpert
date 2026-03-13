@@ -208,7 +208,7 @@ class ScheduleTaskSyncService
         ]);
 
         $contractLink = $this->resolveContractLink($task);
-        $quantity = (float) ($task->quantity ?? 0);
+        $quantity = $this->resolveTaskQuantity($task);
         $completedQuantity = $this->resolveCompletedQuantity($task, $quantity);
         $price = $this->resolvePrice($task, $contractLink);
 
@@ -240,6 +240,26 @@ class ScheduleTaskSyncService
         return 0.0;
     }
 
+    private function resolveTaskQuantity(ScheduleTask $task): float
+    {
+        if ($task->quantity !== null && (float) $task->quantity > 0) {
+            return round((float) $task->quantity, 4);
+        }
+
+        $estimateItem = $task->estimateItem;
+        if (!$estimateItem) {
+            return 0.0;
+        }
+
+        foreach (['actual_quantity', 'quantity_total', 'quantity'] as $field) {
+            if ($estimateItem->{$field} !== null && (float) $estimateItem->{$field} > 0) {
+                return round((float) $estimateItem->{$field}, 4);
+            }
+        }
+
+        return 0.0;
+    }
+
     private function resolvePrice(ScheduleTask $task, ?ContractEstimateItem $contractLink): ?float
     {
         $linkedQuantity = (float) ($contractLink?->quantity ?? 0);
@@ -257,6 +277,13 @@ class ScheduleTaskSyncService
         foreach (['actual_unit_price', 'current_unit_price', 'unit_price'] as $field) {
             if ($estimateItem->{$field} !== null && (float) $estimateItem->{$field} > 0) {
                 return round((float) $estimateItem->{$field}, 2);
+            }
+        }
+
+        $estimateQuantity = $this->resolveTaskQuantity($task);
+        foreach (['current_total_amount', 'total_amount'] as $field) {
+            if ($estimateItem->{$field} !== null && (float) $estimateItem->{$field} > 0 && $estimateQuantity > 0) {
+                return round((float) $estimateItem->{$field} / $estimateQuantity, 2);
             }
         }
 

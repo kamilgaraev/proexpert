@@ -23,9 +23,12 @@ class CompletedWorkResource extends JsonResource
         $contract = $this->resolveContract($scheduleTask);
         $contractor = $this->resolveContractor($contract, $scheduleTask);
         $workType = $this->resolveWorkType($scheduleTask);
+        $taskQuantity = $this->resolveTaskQuantity($scheduleTask);
+        $taskCompletedQuantity = $this->resolveTaskCompletedQuantity($scheduleTask, $taskQuantity);
         $completedQuantity = $this->resolveCompletedQuantity($scheduleTask, $shouldSyncFromTask);
         $price = $this->resolvePrice($scheduleTask);
         $totalAmount = $this->resolveTotalAmount($shouldSyncFromTask, $completedQuantity, $price);
+        $measurementUnit = $this->resolveMeasurementUnit($scheduleTask);
 
         return [
             'id'                 => $this->id,
@@ -45,15 +48,12 @@ class CompletedWorkResource extends JsonResource
                 'id'                 => $this->scheduleTask->id,
                 'name'               => $this->scheduleTask->name,
                 'wbs_code'           => $this->scheduleTask->wbs_code,
-                'quantity'           => $this->scheduleTask->quantity ? (float)$this->scheduleTask->quantity : null,
-                'completed_quantity' => $this->scheduleTask->completed_quantity ? (float)$this->scheduleTask->completed_quantity : null,
+                'quantity'           => $taskQuantity,
+                'completed_quantity' => $taskCompletedQuantity,
                 'progress_percent'   => $this->scheduleTask->progress_percent ? (float)$this->scheduleTask->progress_percent : null,
                 'planned_start_date' => $this->scheduleTask->planned_start_date?->format('Y-m-d'),
                 'planned_end_date'   => $this->scheduleTask->planned_end_date?->format('Y-m-d'),
-                'measurement_unit'   => $this->scheduleTask->measurementUnit ? [
-                    'id'         => $this->scheduleTask->measurementUnit->id,
-                    'short_name' => $this->scheduleTask->measurementUnit->short_name,
-                ] : null,
+                'measurement_unit'   => $measurementUnit,
                 'procurement_status' => $this->scheduleTask->estimateItem?->procurement_status,
             ]),
             'quantity'           => $this->quantity !== null ? (float) $this->quantity : null,
@@ -148,7 +148,13 @@ class CompletedWorkResource extends JsonResource
             }
         }
 
-        $baseQuantity = $this->resolveStoredAmountQuantity();
+        $baseQuantity = $this->resolveTaskQuantity($scheduleTask) ?: $this->resolveStoredAmountQuantity();
+
+        foreach (['current_total_amount', 'total_amount'] as $field) {
+            if ($estimateItem->{$field} !== null && (float) $estimateItem->{$field} > 0 && $baseQuantity > 0) {
+                return round((float) $estimateItem->{$field} / $baseQuantity, 2);
+            }
+        }
 
         return $this->total_amount !== null && $baseQuantity > 0
             ? round((float) $this->total_amount / $baseQuantity, 2)
@@ -172,7 +178,7 @@ class CompletedWorkResource extends JsonResource
         return null;
     }
 
-    private function resolveTaskCompletedQuantity(?ScheduleTask $scheduleTask): ?float
+    private function resolveTaskCompletedQuantity(?ScheduleTask $scheduleTask, ?float $taskQuantity = null): ?float
     {
         if (!$scheduleTask) {
             return null;
@@ -182,8 +188,33 @@ class CompletedWorkResource extends JsonResource
             return (float) $scheduleTask->completed_quantity;
         }
 
-        if ($scheduleTask->quantity !== null && (float) $scheduleTask->quantity > 0 && $scheduleTask->progress_percent !== null) {
-            return round((float) $scheduleTask->quantity * ((float) $scheduleTask->progress_percent / 100), 4);
+        $resolvedTaskQuantity = $taskQuantity ?? $this->resolveTaskQuantity($scheduleTask);
+        if ($resolvedTaskQuantity > 0 && $scheduleTask->progress_percent !== null) {
+            return round($resolvedTaskQuantity * ((float) $scheduleTask->progress_percent / 100), 4);
+        }
+
+        return null;
+    }
+
+    private function resolveTaskQuantity(?ScheduleTask $scheduleTask): ?float
+    {
+        if (!$scheduleTask) {
+            return null;
+        }
+
+        if ($scheduleTask->quantity !== null && (float) $scheduleTask->quantity > 0) {
+            return (float) $scheduleTask->quantity;
+        }
+
+        $estimateItem = $scheduleTask->estimateItem;
+        if (!$estimateItem) {
+            return null;
+        }
+
+        foreach (['actual_quantity', 'quantity_total', 'quantity'] as $field) {
+            if ($estimateItem->{$field} !== null && (float) $estimateItem->{$field} > 0) {
+                return (float) $estimateItem->{$field};
+            }
         }
 
         return null;
@@ -217,5 +248,19 @@ class CompletedWorkResource extends JsonResource
         }
 
         return (float) ($this->quantity ?? 0);
+    }
+
+    private function resolveMeasurementUnit(?ScheduleTask $scheduleTask): ?array
+    {
+        $measurementUnit = $scheduleTask?->measurementUnit ?? $scheduleTask?->estimateItem?->measurementUnit;
+
+        if (!$measurementUnit) {
+            return null;
+        }
+
+        return [
+            'id'         => $measurementUnit->id,
+            'short_name' => $measurementUnit->short_name,
+        ];
     }
 }

@@ -67,7 +67,7 @@ class CompletedWorkController extends Controller
                 $perPage,
                 $sortBy,
                 $sortDirection,
-                ['project', 'contract.contractor', 'workType', 'user', 'contractor', 'materials.measurementUnit', 'scheduleTask.workType', 'scheduleTask.measurementUnit', 'scheduleTask.estimateItem.workType', 'scheduleTask.estimateItem.contractLinks.contract.contractor']
+                ['project', 'contract.contractor', 'workType', 'user', 'contractor', 'materials.measurementUnit', 'scheduleTask.workType', 'scheduleTask.measurementUnit', 'scheduleTask.estimateItem.workType', 'scheduleTask.estimateItem.measurementUnit', 'scheduleTask.estimateItem.contractLinks.contract.contractor']
             );
 
             return AdminResponse::success(
@@ -91,7 +91,7 @@ class CompletedWorkController extends Controller
             $completedWork = $this->completedWorkService->create($dto, $projectContext);
 
             return AdminResponse::success(
-                new CompletedWorkResource($completedWork->load(['project', 'contract.contractor', 'workType', 'user', 'contractor', 'materials.measurementUnit', 'scheduleTask.workType', 'scheduleTask.measurementUnit', 'scheduleTask.estimateItem.workType', 'scheduleTask.estimateItem.contractLinks.contract.contractor'])),
+                new CompletedWorkResource($completedWork->load(['project', 'contract.contractor', 'workType', 'user', 'contractor', 'materials.measurementUnit', 'scheduleTask.workType', 'scheduleTask.measurementUnit', 'scheduleTask.estimateItem.workType', 'scheduleTask.estimateItem.measurementUnit', 'scheduleTask.estimateItem.contractLinks.contract.contractor'])),
                 'Запись о выполненной работе успешно создана.',
                 Response::HTTP_CREATED
             );
@@ -117,7 +117,7 @@ class CompletedWorkController extends Controller
                 return AdminResponse::error('Запись о выполненной работе не найдена.', 404);
             }
             return AdminResponse::success(
-                new CompletedWorkResource($completedWork->load(['project', 'contract.contractor', 'workType', 'user', 'contractor', 'materials.measurementUnit', 'files', 'scheduleTask.workType', 'scheduleTask.measurementUnit', 'scheduleTask.estimateItem.workType', 'scheduleTask.estimateItem.contractLinks.contract.contractor']))
+                new CompletedWorkResource($completedWork->load(['project', 'contract.contractor', 'workType', 'user', 'contractor', 'materials.measurementUnit', 'files', 'scheduleTask.workType', 'scheduleTask.measurementUnit', 'scheduleTask.estimateItem.workType', 'scheduleTask.estimateItem.measurementUnit', 'scheduleTask.estimateItem.contractLinks.contract.contractor']))
             );
         } catch (\Exception $e) {
             Log::error('completed_work.show.error', [
@@ -139,7 +139,7 @@ class CompletedWorkController extends Controller
             $dto = $request->toDto();
             $updatedWork = $this->completedWorkService->update($completedWork->id, $dto);
             return AdminResponse::success(
-                new CompletedWorkResource($updatedWork->load(['project', 'contract.contractor', 'workType', 'user', 'contractor', 'materials.measurementUnit', 'scheduleTask.workType', 'scheduleTask.measurementUnit', 'scheduleTask.estimateItem.workType', 'scheduleTask.estimateItem.contractLinks.contract.contractor'])),
+                new CompletedWorkResource($updatedWork->load(['project', 'contract.contractor', 'workType', 'user', 'contractor', 'materials.measurementUnit', 'scheduleTask.workType', 'scheduleTask.measurementUnit', 'scheduleTask.estimateItem.workType', 'scheduleTask.estimateItem.measurementUnit', 'scheduleTask.estimateItem.contractLinks.contract.contractor'])),
                 'Запись о выполненной работе успешно обновлена.'
             );
         } catch (BusinessLogicException $e) {
@@ -200,7 +200,7 @@ class CompletedWorkController extends Controller
             );
 
             return AdminResponse::success(
-                new CompletedWorkResource($updatedWork->load(['project', 'contract.contractor', 'workType', 'user', 'contractor', 'materials.measurementUnit', 'scheduleTask.workType', 'scheduleTask.measurementUnit', 'scheduleTask.estimateItem.workType', 'scheduleTask.estimateItem.contractLinks.contract.contractor'])),
+                new CompletedWorkResource($updatedWork->load(['project', 'contract.contractor', 'workType', 'user', 'contractor', 'materials.measurementUnit', 'scheduleTask.workType', 'scheduleTask.measurementUnit', 'scheduleTask.estimateItem.workType', 'scheduleTask.estimateItem.measurementUnit', 'scheduleTask.estimateItem.contractLinks.contract.contractor'])),
                 'Материалы выполненной работы успешно синхронизированы.'
             );
         } catch (BusinessLogicException $e) {
