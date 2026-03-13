@@ -126,6 +126,18 @@ class ScheduleTaskObserver
                 ]);
             }
         }
+
+        if ($task->wasChanged(['status', 'quantity', 'completed_quantity', 'progress_percent', 'work_type_id', 'estimate_item_id'])) {
+            try {
+                app(\App\Services\Schedule\ScheduleTaskSyncService::class)
+                    ->syncActiveCompletedWork($task);
+            } catch (\Exception $e) {
+                Log::error('[ScheduleTaskObserver] Ошибка синхронизации активной выполненной работы', [
+                    'task_id' => $task->id,
+                    'error'   => $e->getMessage(),
+                ]);
+            }
+        }
     }
 
     /**
