@@ -39,7 +39,7 @@ class ScheduleTaskResource extends JsonResource
             // Прогресс и статус
             'progress_percent' => (float) ($this->progress_percent ?? 0),
             'status' => $this->status->value ?? $this->status,
-            'status_label' => $this->status->label ?? $this->status,
+            'status_label' => method_exists($this->status, 'label') ? $this->status->label() : ($this->status->value ?? $this->status),
             'priority' => $this->priority->value ?? $this->priority,
             
             // Стоимость и объемы

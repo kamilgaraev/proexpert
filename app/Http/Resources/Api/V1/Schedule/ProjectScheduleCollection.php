@@ -24,7 +24,7 @@ class ProjectScheduleCollection extends ResourceCollection
                     
                     // Статус и прогресс
                     'status' => $schedule->status->value ?? $schedule->status,
-                    'status_label' => $schedule->status->label ?? $schedule->status,
+                    'status_label' => method_exists($schedule->status, 'label') ? $schedule->status->label() : ($schedule->status->value ?? $schedule->status),
                     'overall_progress_percent' => (float) $schedule->overall_progress_percent,
                     'health_status' => $schedule->health_status,
                     
