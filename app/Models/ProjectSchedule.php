@@ -232,26 +232,66 @@ class ProjectSchedule extends Model
 
     public function recalculateProgress(): float
     {
-        $tasks = $this->tasks()->where('task_type', 'task')->get();
-        
-        if ($tasks->isEmpty()) {
-            return 0;
-        }
+        $progress = $this->calculateOverallProgressPercent();
 
-        $totalWork = $tasks->sum('planned_work_hours');
-        if ($totalWork == 0) {
-            return 0;
-        }
-
-        $completedWork = $tasks->sum(function ($task) {
-            return $task->planned_work_hours * ($task->progress_percent / 100);
-        });
-
-        $progress = ($completedWork / $totalWork) * 100;
-        
         $this->update(['overall_progress_percent' => round($progress, 2)]);
         
         return $progress;
+    }
+
+    public function calculateOverallProgressPercent(): float
+    {
+        $tasks = $this->tasks()
+            ->where('task_type', 'task')
+            ->get([
+                'quantity',
+                'completed_quantity',
+                'planned_work_hours',
+                'progress_percent',
+            ]);
+
+        if ($tasks->isEmpty()) {
+            return 0.0;
+        }
+
+        $totalQuantity = (float) $tasks->sum(function ($task) {
+            return max((float) ($task->quantity ?? 0), 0);
+        });
+
+        if ($totalQuantity > 0) {
+            $completedQuantity = (float) $tasks->sum(function ($task) {
+                $quantity = max((float) ($task->quantity ?? 0), 0);
+
+                if ($quantity <= 0) {
+                    return 0;
+                }
+
+                $completed = $task->completed_quantity !== null
+                    ? (float) $task->completed_quantity
+                    : $quantity * ((float) ($task->progress_percent ?? 0) / 100);
+
+                return min(max($completed, 0), $quantity);
+            });
+
+            return round(min(($completedQuantity / $totalQuantity) * 100, 100), 2);
+        }
+
+        $totalWork = (float) $tasks->sum(function ($task) {
+            return max((float) ($task->planned_work_hours ?? 0), 0);
+        });
+
+        if ($totalWork > 0) {
+            $completedWork = (float) $tasks->sum(function ($task) {
+                return max((float) ($task->planned_work_hours ?? 0), 0)
+                    * ((float) ($task->progress_percent ?? 0) / 100);
+            });
+
+            return round(min(($completedWork / $totalWork) * 100, 100), 2);
+        }
+
+        return round((float) $tasks->avg(function ($task) {
+            return (float) ($task->progress_percent ?? 0);
+        }), 2);
     }
 
     public function markCriticalPathCalculated(int $durationDays): void

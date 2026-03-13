@@ -47,11 +47,24 @@ class AdvanceAccountService
             $query->withStatus($filters['reporting_status']);
         }
         
-        if (isset($filters['date_from']) && isset($filters['date_to'])) {
-            $query->inPeriod($filters['date_from'], $filters['date_to']);
+        if (!empty($filters['date_from'])) {
+            $query->whereRaw(
+                $this->effectiveDateExpression() . ' >= ?',
+                [$filters['date_from']]
+            );
         }
-        
-        return $query->latest()->paginate($perPage);
+
+        if (!empty($filters['date_to'])) {
+            $query->whereRaw(
+                $this->effectiveDateExpression() . ' <= ?',
+                [$filters['date_to']]
+            );
+        }
+
+        return $query
+            ->orderByRaw($this->effectiveDateExpression() . ' DESC')
+            ->orderByDesc('created_at')
+            ->paginate($perPage);
     }
 
     /**
@@ -98,6 +111,9 @@ class AdvanceAccountService
             }
 
             $amount = (float) $data['amount'];
+            $data['document_date'] = !empty($data['document_date'])
+                ? Carbon::parse($data['document_date'])->toDateString()
+                : Carbon::now()->toDateString();
             
             // Рассчитываем новый баланс (только если есть пользователь)
             $newBalance = $user ? $this->calculateNewBalance($user, $type, $amount) : 0;
@@ -113,6 +129,7 @@ class AdvanceAccountService
             // Обновляем баланс пользователя (только если есть пользователь)
             if ($user) {
                 $this->updateUserBalance($user, $type, $amount, $transaction);
+                $this->syncUserLastTransactionAt($user);
             }
             
             DB::commit();
@@ -186,6 +203,7 @@ class AdvanceAccountService
             // Восстанавливаем предыдущее состояние баланса пользователя (только если есть пользователь)
             if ($user) {
                 $this->revertUserBalanceChange($user, $type, $amount);
+                $this->syncUserLastTransactionAt($user);
             }
             
             // Удаляем транзакцию
@@ -593,12 +611,18 @@ class AdvanceAccountService
         // Статистика за текущий месяц
         $monthlyIssued = AdvanceAccountTransaction::where('organization_id', $organizationId)
             ->where('type', AdvanceAccountTransaction::TYPE_ISSUE)
-            ->whereBetween('created_at', [$startOfMonth, $endOfMonth])
+            ->whereRaw(
+                $this->effectiveDateExpression() . ' BETWEEN ? AND ?',
+                [$startOfMonth->toDateString(), $endOfMonth->toDateString()]
+            )
             ->sum('amount');
 
         $monthlyExpenses = AdvanceAccountTransaction::where('organization_id', $organizationId)
             ->where('type', AdvanceAccountTransaction::TYPE_EXPENSE)
-            ->whereBetween('created_at', [$startOfMonth, $endOfMonth])
+            ->whereRaw(
+                $this->effectiveDateExpression() . ' BETWEEN ? AND ?',
+                [$startOfMonth->toDateString(), $endOfMonth->toDateString()]
+            )
             ->sum('amount');
 
         // Количество транзакций требующих внимания (ожидают утверждения)
@@ -622,4 +646,24 @@ class AdvanceAccountService
             'pending_report_count' => $pendingReportCount,
         ];
     }
-} 
+
+    protected function effectiveDateExpression(): string
+    {
+        return 'COALESCE(document_date, DATE(created_at))';
+    }
+
+    protected function syncUserLastTransactionAt(User $user): void
+    {
+        $lastTransaction = AdvanceAccountTransaction::query()
+            ->where('user_id', $user->id)
+            ->orderByRaw($this->effectiveDateExpression() . ' DESC')
+            ->orderByDesc('created_at')
+            ->first();
+
+        $user->last_transaction_at = $lastTransaction
+            ? Carbon::parse($lastTransaction->document_date ?? $lastTransaction->created_at)
+            : null;
+
+        $user->save();
+    }
+}

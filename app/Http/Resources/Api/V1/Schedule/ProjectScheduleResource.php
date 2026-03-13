@@ -9,6 +9,8 @@ class ProjectScheduleResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        $overallProgressPercent = $this->calculateOverallProgressPercent();
+
         return [
             'id' => $this->id,
             'project_id' => $this->project_id,
@@ -38,8 +40,8 @@ class ProjectScheduleResource extends JsonResource
             
             // Статус и прогресс
             'status' => $this->status->value ?? $this->status,
-            'status_label' => $this->status->label ?? $this->status,
-            'overall_progress_percent' => (float) $this->overall_progress_percent,
+            'status_label' => method_exists($this->status, 'label') ? $this->status->label() : ($this->status->value ?? $this->status),
+            'overall_progress_percent' => $overallProgressPercent,
             'health_status' => $this->health_status,
             
             // Шаблон
@@ -179,21 +181,20 @@ class ProjectScheduleResource extends JsonResource
             // Дополнительные вычисляемые поля для UI
             'ui_data' => [
                 'can_edit' => $this->status === 'draft' || $this->status === 'active',
-                'can_delete' => $this->status === 'draft' || ($this->status === 'active' && $this->overall_progress_percent == 0),
+                'can_delete' => $this->status === 'draft' || ($this->status === 'active' && $overallProgressPercent == 0),
                 'can_activate' => $this->status === 'draft',
-                'can_complete' => $this->status === 'active' && $this->overall_progress_percent >= 100,
+                'can_complete' => $this->status === 'active' && $overallProgressPercent >= 100,
                 'can_save_baseline' => $this->status === 'active' && !$this->baseline_saved_at,
                 'can_clear_baseline' => (bool) $this->baseline_saved_at,
                 'needs_critical_path_calculation' => !$this->critical_path_calculated || $this->needsCriticalPathRecalculation(),
-                'progress_color' => $this->getProgressColor(),
+                'progress_color' => $this->getProgressColor($overallProgressPercent),
                 'status_color' => $this->getStatusColor(),
             ],
         ];
     }
 
-    protected function getProgressColor(): string
+    protected function getProgressColor(float $progress): string
     {
-        $progress = (float) $this->overall_progress_percent;
         
         if ($progress < 25) return '#EF4444'; // красный
         if ($progress < 50) return '#F59E0B'; // оранжевый

@@ -53,7 +53,7 @@ class ScheduleTaskGanttResource extends JsonResource
             
             // Статус и прогресс
             'status' => $this->status->value ?? $this->status,
-            'status_label' => $this->status->label ?? $this->status,
+            'status_label' => method_exists($this->status, 'label') ? $this->status->label() : ($this->status->value ?? $this->status),
             'progress_percent' => (float) ($this->progress_percent ?? 0),
             'task_type' => $this->task_type->value ?? $this->task_type,
             

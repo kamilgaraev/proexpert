@@ -14,6 +14,7 @@ class ScheduleGanttResource extends JsonResource
     public function toArray(Request $request): array
     {
         // Получаем корневые задачи с полной иерархией
+        $overallProgressPercent = $this->calculateOverallProgressPercent();
         $rootTasks = $this->rootTasks ?? $this->whenLoaded('rootTasks', $this->rootTasks);
         
         // Если rootTasks не загружены, загружаем задачи и строим дерево
@@ -33,8 +34,11 @@ class ScheduleGanttResource extends JsonResource
             'actual_end_date' => $this->actual_end_date?->format('Y-m-d'),
             
             // Прогресс
-            'overall_progress_percent' => (float) ($this->overall_progress_percent ?? 0),
+            'overall_progress_percent' => $overallProgressPercent,
             'status' => $this->status->value ?? $this->status,
+            'status_label' => method_exists($this->status, 'label') ? $this->status->label() : ($this->status->value ?? $this->status),
+            'critical_path_calculated' => (bool) $this->critical_path_calculated,
+            'critical_path_duration_days' => $this->critical_path_duration_days,
             
             // Иерархия задач для Gantt
             'tasks' => ScheduleTaskGanttResource::collection($rootTasks),
