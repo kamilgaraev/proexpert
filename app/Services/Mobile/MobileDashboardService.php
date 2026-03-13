@@ -14,7 +14,9 @@ use DomainException;
 class MobileDashboardService
 {
     public function __construct(
-        private readonly AuthorizationService $authorizationService
+        private readonly AuthorizationService $authorizationService,
+        private readonly MobileWarehouseService $warehouseService,
+        private readonly MobileScheduleService $scheduleService
     ) {
     }
 
@@ -61,7 +63,7 @@ class MobileDashboardService
                     'overdue' => $requestSummary['overdue_count'],
                 ]),
                 'route' => 'site_requests',
-                'badge' => (string) $requestSummary['active_count'],
+                'badge' => $requestSummary['active_count'] > 0 ? (string) $requestSummary['active_count'] : null,
                 'payload' => $requestSummary,
             ];
         }
@@ -78,38 +80,36 @@ class MobileDashboardService
                     'review' => $approvalSummary['in_review_count'],
                 ]),
                 'route' => 'site_requests',
-                'badge' => (string) $approvalSummary['pending_count'],
+                'badge' => $approvalSummary['pending_count'] > 0 ? (string) $approvalSummary['pending_count'] : null,
                 'payload' => $approvalSummary,
             ];
         }
 
         if ($this->canShowWarehouse($modules)) {
+            $warehouseWidget = $this->warehouseService->buildWidget($user);
+
             $widgets[] = [
                 'type' => 'warehouse',
                 'order' => 40,
                 'title' => trans_message('mobile_dashboard.widgets.warehouse.title'),
-                'description' => trans_message('mobile_dashboard.widgets.warehouse.description'),
-                'route' => null,
-                'badge' => null,
-                'payload' => [
-                    'status' => 'module_ready',
-                    'toast' => trans_message('mobile_dashboard.widgets.warehouse.toast'),
-                ],
+                'description' => $warehouseWidget['description'],
+                'route' => 'warehouse',
+                'badge' => $warehouseWidget['badge'],
+                'payload' => $warehouseWidget['payload'],
             ];
         }
 
         if ($this->canShowSchedule($modules)) {
+            $scheduleWidget = $this->scheduleService->buildWidget($user);
+
             $widgets[] = [
                 'type' => 'schedule',
                 'order' => 50,
                 'title' => trans_message('mobile_dashboard.widgets.schedule.title'),
-                'description' => trans_message('mobile_dashboard.widgets.schedule.description'),
-                'route' => null,
-                'badge' => null,
-                'payload' => [
-                    'status' => 'module_ready',
-                    'toast' => trans_message('mobile_dashboard.widgets.schedule.toast'),
-                ],
+                'description' => $scheduleWidget['description'],
+                'route' => 'schedule',
+                'badge' => $scheduleWidget['badge'],
+                'payload' => $scheduleWidget['payload'],
             ];
         }
 
@@ -163,6 +163,9 @@ class MobileDashboardService
     private function canShowSchedule(array $modules): bool
     {
         return $this->hasAnyPermission($modules['schedule-management'] ?? [], [
+            'schedule-management.view',
+            'schedule-management.notifications',
+            'schedule-management.approve',
             'schedule.view',
             'schedule.notifications',
             'schedule.approve',
