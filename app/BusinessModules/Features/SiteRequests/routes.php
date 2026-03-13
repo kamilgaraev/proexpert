@@ -89,7 +89,7 @@ Route::prefix('api/v1/admin/site-requests')
 // ============================================
 Route::prefix('api/v1/mobile/site-requests')
     ->name('mobile.site_requests.')
-    ->middleware(['auth:api_mobile', 'organization.context', 'site_requests.active'])
+    ->middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.context', 'can:access-mobile-app', 'site_requests.active'])
     ->group(function () {
 
         // ============================================
@@ -123,4 +123,3 @@ Route::prefix('api/v1/mobile/site-requests')
         Route::post('/{id}/cancel', [MobileSiteRequestController::class, 'cancel'])->name('cancel');
         Route::post('/{id}/complete', [MobileSiteRequestController::class, 'complete'])->name('complete');
     });
-
