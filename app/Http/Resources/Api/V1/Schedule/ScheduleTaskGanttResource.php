@@ -83,6 +83,12 @@ class ScheduleTaskGanttResource extends JsonResource
             // Стоимость и объемы
             'estimated_cost' => (float) ($this->estimated_cost ?? 0),
             'quantity' => (float) ($this->quantity ?? 0),
+            'completed_quantity' => $this->completed_quantity !== null
+                ? (float) $this->completed_quantity
+                : ($this->quantity !== null
+                    ? round((float) $this->quantity * ((float) ($this->progress_percent ?? 0) / 100), 4)
+                    : null),
+            'completed_works_count' => $this->whenCounted('completedWorks'),
             'measurement_unit_id' => $this->measurement_unit_id,
             
             // Для визуализации в Gantt
