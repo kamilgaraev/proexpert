@@ -99,13 +99,20 @@ class ProjectScheduleController extends Controller
         // Если запрашивается формат Gantt
         if ($request->get('format') === 'gantt') {
             $scheduleModel->load([
+                'rootTasks' => function ($query) {
+                    $query->orderBy('sort_order')->withCount('completedWorks');
+                },
                 'rootTasks.childTasks' => function ($query) {
-                    $query->orderBy('sort_order')->with('intervals');
+                    $query->orderBy('sort_order')
+                        ->with('intervals')
+                        ->withCount('completedWorks');
                 },
                 'rootTasks.intervals',
                 'rootTasks.predecessorDependencies',
                 'tasks' => function ($query) {
-                    $query->orderBy('sort_order')->with('intervals');
+                    $query->orderBy('sort_order')
+                        ->with('intervals')
+                        ->withCount('completedWorks');
                 },
                 'dependencies'
             ]);
