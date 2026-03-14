@@ -13,6 +13,7 @@ use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestCalendar
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestCollection;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestResource;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestTemplateResource;
+use App\BusinessModules\Features\SiteRequests\Models\SiteRequestHistory;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\BusinessModules\Features\SiteRequests\Services\SiteRequestCalendarService;
 use App\BusinessModules\Features\SiteRequests\Services\SiteRequestService;
@@ -535,11 +536,115 @@ class SiteRequestController extends Controller
         User $user,
         int $organizationId
     ): array {
-        $siteRequest->loadMissing(['project', 'user', 'assignedUser', 'files', 'calendarEvent', 'group']);
+        $siteRequest->loadMissing([
+            'project',
+            'user',
+            'assignedUser',
+            'files',
+            'calendarEvent',
+            'history.user',
+            'group.requests.user',
+            'group.requests.assignedUser',
+        ]);
         $payload = (new SiteRequestResource($siteRequest))->resolve($request);
         $payload['available_transitions'] = $this->getAvailableTransitionsForUser($siteRequest, $user, $organizationId);
+        $payload['history'] = $this->makeHistoryPayload($siteRequest);
+        $payload['group_context'] = $this->makeGroupPayload($siteRequest);
 
         return $payload;
+    }
+
+    private function makeHistoryPayload(SiteRequest $siteRequest): array
+    {
+        return $siteRequest->history
+            ->map(function (SiteRequestHistory $historyItem) {
+                $oldStatus = $historyItem->old_value['status'] ?? null;
+                $newStatus = $historyItem->new_value['status'] ?? null;
+
+                return [
+                    'id' => $historyItem->id,
+                    'action' => $historyItem->action,
+                    'action_label' => $this->historyActionLabel($historyItem->action),
+                    'notes' => $historyItem->notes,
+                    'created_at' => $historyItem->created_at?->toIso8601String(),
+                    'user' => [
+                        'id' => $historyItem->user?->id,
+                        'name' => $historyItem->user?->name ?: trans_message('site_requests::mobile.system_user'),
+                    ],
+                    'old_status' => $oldStatus,
+                    'old_status_label' => $this->statusLabel($oldStatus),
+                    'new_status' => $newStatus,
+                    'new_status_label' => $this->statusLabel($newStatus),
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    private function makeGroupPayload(SiteRequest $siteRequest): ?array
+    {
+        if (!$siteRequest->relationLoaded('group') || !$siteRequest->group) {
+            return null;
+        }
+
+        $group = $siteRequest->group;
+        $requests = $group->requests ?? collect([$siteRequest]);
+
+        return [
+            'id' => $group->id,
+            'title' => $group->title,
+            'description' => $group->description,
+            'status' => $group->status?->value,
+            'status_label' => $group->status?->label(),
+            'status_color' => $group->status?->color(),
+            'request_count' => $requests->count(),
+            'items' => $requests
+                ->map(function (SiteRequest $groupRequest) use ($siteRequest) {
+                    return [
+                        'id' => $groupRequest->id,
+                        'title' => $groupRequest->title,
+                        'status' => $groupRequest->status->value,
+                        'status_label' => $groupRequest->status->label(),
+                        'material_name' => $groupRequest->material_name,
+                        'material_quantity' => $groupRequest->material_quantity,
+                        'material_unit' => $groupRequest->material_unit,
+                        'request_type' => $groupRequest->request_type->value,
+                        'request_type_label' => $groupRequest->request_type->label(),
+                        'is_current' => $groupRequest->id === $siteRequest->id,
+                        'assigned_user' => $groupRequest->assignedUser ? [
+                            'id' => $groupRequest->assignedUser->id,
+                            'name' => $groupRequest->assignedUser->name,
+                        ] : null,
+                    ];
+                })
+                ->values()
+                ->all(),
+        ];
+    }
+
+    private function historyActionLabel(string $action): string
+    {
+        return match ($action) {
+            SiteRequestHistory::ACTION_CREATED => trans_message('site_requests::mobile.history_created'),
+            SiteRequestHistory::ACTION_UPDATED => trans_message('site_requests::mobile.history_updated'),
+            SiteRequestHistory::ACTION_STATUS_CHANGED => trans_message('site_requests::mobile.history_status_changed'),
+            SiteRequestHistory::ACTION_ASSIGNED => trans_message('site_requests::mobile.history_assigned'),
+            SiteRequestHistory::ACTION_UNASSIGNED => trans_message('site_requests::mobile.history_unassigned'),
+            SiteRequestHistory::ACTION_FILE_UPLOADED => trans_message('site_requests::mobile.history_file_uploaded'),
+            SiteRequestHistory::ACTION_FILE_DELETED => trans_message('site_requests::mobile.history_file_deleted'),
+            SiteRequestHistory::ACTION_DELETED => trans_message('site_requests::mobile.history_deleted'),
+            SiteRequestHistory::ACTION_RESTORED => trans_message('site_requests::mobile.history_restored'),
+            default => $action,
+        };
+    }
+
+    private function statusLabel(?string $status): ?string
+    {
+        if (!is_string($status) || $status === '') {
+            return null;
+        }
+
+        return SiteRequestStatusEnum::tryFrom($status)?->label();
     }
 
     private function canAccessRequest(SiteRequest $siteRequest, User $user, int $organizationId): bool
