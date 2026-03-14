@@ -28,6 +28,7 @@ class WarehouseMovementResource extends JsonResource
             'reason' => $this->reason,
             'movement_date' => $this->movement_date->toDateTimeString(),
             'metadata' => $this->metadata,
+            'photo_gallery' => $this->photo_gallery,
         ];
     }
 }

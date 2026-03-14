@@ -113,6 +113,7 @@ Route::prefix('api/v1/mobile/site-requests')
         // ============================================
         Route::get('/', [MobileSiteRequestController::class, 'index'])->name('index');
         Route::post('/', [MobileSiteRequestController::class, 'store'])->name('store');
+        Route::put('/groups/{id}', [MobileSiteRequestController::class, 'updateGroup'])->name('update_group');
         Route::get('/{id}', [MobileSiteRequestController::class, 'show'])->name('show');
         Route::put('/{id}', [MobileSiteRequestController::class, 'update'])->name('update');
 

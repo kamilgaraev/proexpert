@@ -13,4 +13,10 @@ return [
     'unreserve_error' => 'Ошибка при снятии резерва',
     'transfer_to_contractor_success' => 'Материалы успешно переданы подрядчику',
     'transfer_to_contractor_error' => 'Ошибка при передаче материалов подрядчику',
+    'photo_upload_success' => 'Фотографии успешно загружены',
+    'photo_delete_success' => 'Фотография успешно удалена',
+    'photo_upload_failed' => 'Не удалось загрузить фотографии',
+    'photo_upload_empty' => 'Не выбраны фотографии для загрузки',
+    'photo_target_not_found' => 'Не удалось найти сущность для привязки фотографий',
+    'photo_limit_exceeded' => 'Можно прикрепить не более 4 фотографий',
 ];

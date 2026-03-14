@@ -122,6 +122,7 @@ class MobileWarehouseService
                 'document_number' => $movement->document_number,
                 'reason' => $movement->reason,
                 'movement_date' => $movement->movement_date?->toIso8601String(),
+                'photo_gallery' => $movement->photo_gallery,
             ];
         })->values()->all();
     }

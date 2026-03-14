@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 use App\Traits\HasOnboardingDemo;
 
 class Material extends Model
@@ -44,6 +45,10 @@ class Material extends Model
         'is_onboarding_demo' => 'boolean',
     ];
 
+    protected $appends = [
+        'photo_gallery',
+    ];
+
     /**
      * Получить организацию, которой принадлежит материал.
      */
@@ -58,6 +63,32 @@ class Material extends Model
     public function measurementUnit(): BelongsTo
     {
         return $this->belongsTo(MeasurementUnit::class);
+    }
+
+    public function files(): MorphMany
+    {
+        return $this->morphMany(File::class, 'fileable');
+    }
+
+    public function photos(): MorphMany
+    {
+        return $this->files()->where('type', 'photo')->orderByDesc('created_at');
+    }
+
+    public function getPhotoGalleryAttribute(): array
+    {
+        $photos = $this->relationLoaded('photos') ? $this->getRelation('photos') : $this->photos()->get();
+
+        return $photos->map(static fn (File $file): array => [
+            'id' => $file->id,
+            'name' => $file->name,
+            'original_name' => $file->original_name,
+            'url' => $file->url,
+            'mime_type' => $file->mime_type,
+            'size' => $file->size,
+            'category' => $file->category,
+            'uploaded_at' => optional($file->created_at)?->toDateTimeString(),
+        ])->values()->all();
     }
 
     /**

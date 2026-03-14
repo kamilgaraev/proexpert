@@ -8,9 +8,9 @@ use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Http\Requests\ChangeStatusRequest;
 use App\BusinessModules\Features\SiteRequests\Http\Requests\StoreSiteRequestRequest;
+use App\BusinessModules\Features\SiteRequests\Http\Requests\UpdateSiteRequestGroupRequest;
 use App\BusinessModules\Features\SiteRequests\Http\Requests\UpdateSiteRequestRequest;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestCalendarEventResource;
-use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestCollection;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestResource;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestTemplateResource;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequestHistory;
@@ -77,7 +77,21 @@ class SiteRequestController extends Controller
 
             $requests = $this->service->paginate($organizationId, $perPage, $filters);
 
-            return MobileResponse::success(new SiteRequestCollection($requests));
+            return MobileResponse::success([
+                'data' => $requests->getCollection()
+                    ->map(fn (SiteRequest $siteRequest) => $this->makeSiteRequestListPayload(
+                        $siteRequest,
+                        $request,
+                        $user,
+                        $organizationId
+                    ))
+                    ->values()
+                    ->all(),
+                'current_page' => $requests->currentPage(),
+                'last_page' => $requests->lastPage(),
+                'per_page' => $requests->perPage(),
+                'total' => $requests->total(),
+            ]);
         } catch (\Exception $e) {
             Log::error('site_requests.mobile.index.error', [
                 'user_id' => auth()->id(),
@@ -231,6 +245,59 @@ class SiteRequestController extends Controller
             ]);
 
             return MobileResponse::error(trans_message('site_requests::mobile.update_error'), 500);
+        }
+    }
+
+    public function updateGroup(UpdateSiteRequestGroupRequest $request, int $id): JsonResponse
+    {
+        try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            /** @var User|null $user */
+            $user = auth()->user();
+
+            if ($organizationId <= 0 || !$user) {
+                return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
+            }
+
+            $group = $this->service->findGroup($id, $organizationId);
+
+            if (!$group) {
+                return MobileResponse::error(trans_message('site_requests::mobile.group_not_found'), 404);
+            }
+
+            if ((int) $group->user_id !== (int) $user->id) {
+                return MobileResponse::error(trans_message('site_requests::mobile.group_edit_only_own'), 403);
+            }
+
+            if ($group->status !== SiteRequestStatusEnum::DRAFT) {
+                return MobileResponse::error(trans_message('site_requests::mobile.group_not_editable'), 422);
+            }
+
+            $updatedGroup = $this->service->updateGroup($group, (int) $user->id, $request->validated());
+            $updatedGroup->load(['requests.project', 'requests.user', 'requests.assignedUser', 'requests.group']);
+            $primaryRequest = $updatedGroup->requests->sortBy('id')->first();
+
+            return MobileResponse::success(
+                [
+                    'primary_request' => $primaryRequest
+                        ? $this->makeSiteRequestPayload($primaryRequest, $request, $user, $organizationId)
+                        : null,
+                    'group_id' => $updatedGroup->id,
+                    'updated_count' => $updatedGroup->requests->count(),
+                    'request_ids' => $updatedGroup->requests->pluck('id')->values()->all(),
+                ],
+                trans_message('site_requests::mobile.group_update_success')
+            );
+        } catch (\DomainException $e) {
+            return MobileResponse::error($e->getMessage(), 422);
+        } catch (\Exception $e) {
+            Log::error('site_requests.mobile.update_group.error', [
+                'id' => $id,
+                'user_id' => auth()->id(),
+                'error' => $e->getMessage(),
+            ]);
+
+            return MobileResponse::error(trans_message('site_requests::mobile.group_update_error'), 500);
         }
     }
 
@@ -554,6 +621,25 @@ class SiteRequestController extends Controller
         return $payload;
     }
 
+    private function makeSiteRequestListPayload(
+        SiteRequest $siteRequest,
+        Request $request,
+        User $user,
+        int $organizationId
+    ): array {
+        $siteRequest->loadMissing([
+            'project',
+            'user',
+            'assignedUser',
+            'group',
+        ]);
+
+        $payload = (new SiteRequestResource($siteRequest))->resolve($request);
+        $payload['available_transitions'] = $this->getAvailableTransitionsForUser($siteRequest, $user, $organizationId);
+
+        return $payload;
+    }
+
     private function makeHistoryPayload(SiteRequest $siteRequest): array
     {
         return $siteRequest->history
@@ -608,6 +694,7 @@ class SiteRequestController extends Controller
                         'material_name' => $groupRequest->material_name,
                         'material_quantity' => $groupRequest->material_quantity,
                         'material_unit' => $groupRequest->material_unit,
+                        'notes' => $groupRequest->notes,
                         'request_type' => $groupRequest->request_type->value,
                         'request_type_label' => $groupRequest->request_type->label(),
                         'is_current' => $groupRequest->id === $siteRequest->id,

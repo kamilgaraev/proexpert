@@ -11,6 +11,7 @@ use App\BusinessModules\Features\BasicWarehouse\Http\Requests\TransferToContract
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\UnreserveRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\WriteOffRequest;
 use App\BusinessModules\Features\BasicWarehouse\Services\AssetService;
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehousePhotoService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\BusinessModules\Features\BasicWarehouse\Http\Resources\WarehouseMovementResource;
 use App\Http\Controllers\Controller;
@@ -26,6 +27,7 @@ class WarehouseOperationsController extends Controller
     public function __construct(
         protected WarehouseService $warehouseService,
         protected AssetService $assetService,
+        protected WarehousePhotoService $warehousePhotoService,
         protected \App\BusinessModules\Features\BasicWarehouse\Services\Export\WarehouseExportManager $exportManager
     ) {}
 
@@ -254,6 +256,17 @@ class WarehouseOperationsController extends Controller
                     'metadata' => $validated['metadata'] ?? [],
                 ]
             );
+
+            if ($request->hasFile('photos')) {
+                $this->warehousePhotoService->uploadMovementPhotos(
+                    $organizationId,
+                    (int) $result['movement']->id,
+                    $request->file('photos', []),
+                    $request->user()
+                );
+
+                $result['movement']->load('photos');
+            }
 
             return AdminResponse::success(
                 new WarehouseMovementResource($result['movement']), 

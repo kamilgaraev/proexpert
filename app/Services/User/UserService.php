@@ -43,6 +43,35 @@ class UserService
 
     // --- Helper Methods ---
 
+    public function getUsersForCurrentOrg(Request $request, int $perPage = 15): LengthAwarePaginator
+    {
+        $this->ensureUserIsAdmin($request);
+
+        $organizationId = $request->attributes->get('current_organization_id');
+        if(!$organizationId) {
+            throw new BusinessLogicException('РљРѕРЅС‚РµРєСЃС‚ РѕСЂРіР°РЅРёР·Р°С†РёРё РЅРµ РѕРїСЂРµРґРµР»РµРЅ.', 500);
+        }
+
+        $filters = [
+            'name' => $request->query('name'),
+            'email' => $request->query('email'),
+            'is_active' => $request->query('is_active'),
+            'role' => $request->query('role'),
+        ];
+        $filters = array_filter($filters, fn($value) => !is_null($value) && $value !== '');
+
+        $sortBy = $request->query('sort_by', 'created_at');
+        $sortDirection = $request->query('sort_direction', 'desc');
+
+        return $this->userRepository->paginateInOrganization(
+            (int) $organizationId,
+            $perPage,
+            $filters,
+            $sortBy,
+            $sortDirection
+        );
+    }
+
     /**
      * Получить ID контекста авторизации для организации
      */
@@ -345,6 +374,80 @@ class UserService
         return $user;
     }
 
+    public function findOrganizationUserById(int $userId, Request $request): ?User
+    {
+        $this->ensureUserIsAdmin($request);
+        $organizationId = $request->attributes->get('current_organization_id');
+        if(!$organizationId) {
+            throw new BusinessLogicException('РљРѕРЅС‚РµРєСЃС‚ РѕСЂРіР°РЅРёР·Р°С†РёРё РЅРµ РѕРїСЂРµРґРµР»РµРЅ.', 500);
+        }
+
+        $contextId = $this->getOrganizationContextId((int) $organizationId);
+
+        return User::query()
+            ->where('id', $userId)
+            ->whereHas('organizations', function ($query) use ($organizationId) {
+                $query->where('organization_user.organization_id', (int) $organizationId);
+            })
+            ->with([
+                'organizations',
+                'roleAssignments' => function ($query) use ($contextId) {
+                    if ($contextId) {
+                        $query->where('context_id', $contextId);
+                    }
+                    $query->where('is_active', true);
+                },
+            ])
+            ->first();
+    }
+
+    public function updateOrganizationUser(int $userId, array $data, Request $request): User
+    {
+        $organizationUser = $this->findOrganizationUserById($userId, $request);
+
+        if (!$organizationUser) {
+            throw new BusinessLogicException('РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РЅР°Р№РґРµРЅ РІ СЌС‚РѕР№ РѕСЂРіР°РЅРёР·Р°С†РёРё.', 404);
+        }
+
+        if (!empty($data['password'])) {
+            $data['password'] = Hash::make($data['password']);
+        } else {
+            unset($data['password']);
+        }
+
+        unset($data['email'], $data['role_slug']);
+
+        $this->userRepository->update($userId, $data);
+
+        return $this->findOrganizationUserById($userId, $request) ?? $organizationUser;
+    }
+
+    public function blockOrganizationUser(int $userId, Request $request): bool
+    {
+        $organizationUser = $this->findOrganizationUserById($userId, $request);
+
+        if (!$organizationUser) {
+            throw new BusinessLogicException('РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РЅР°Р№РґРµРЅ РІ СЌС‚РѕР№ РѕСЂРіР°РЅРёР·Р°С†РёРё.', 404);
+        }
+
+        if ($request->user()?->id === $organizationUser->id) {
+            throw new BusinessLogicException('Р’С‹ РЅРµ РјРѕР¶РµС‚Рµ Р·Р°Р±Р»РѕРєРёСЂРѕРІР°С‚СЊ СЃР°РјРѕРіРѕ СЃРµР±СЏ.', 403);
+        }
+
+        return $this->userRepository->update($userId, ['is_active' => false]);
+    }
+
+    public function unblockOrganizationUser(int $userId, Request $request): bool
+    {
+        $organizationUser = $this->findOrganizationUserById($userId, $request);
+
+        if (!$organizationUser) {
+            throw new BusinessLogicException('РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РЅР°Р№РґРµРЅ РІ СЌС‚РѕР№ РѕСЂРіР°РЅРёР·Р°С†РёРё.', 404);
+        }
+
+        return $this->userRepository->update($userId, ['is_active' => true]);
+    }
+
      /**
      * Update an Admin user's details.
      * Requires the requesting user to be an organization admin or owner.
@@ -566,7 +669,7 @@ class UserService
      * @return User
      * @throws BusinessLogicException
      */
-    public function createForeman(array $data, Request $request): User
+    public function createForeman(array $data, Request $request, string $roleSlug = 'foreman'): User
     {
         // Получаем ID организации из атрибутов запроса
         $organizationId = $request->attributes->get('current_organization_id');
@@ -605,8 +708,7 @@ class UserService
         if(!$organizationId) {
             throw new BusinessLogicException('Контекст организации не определен.', 500);
         }
-        $foremanRoleSlug = 'foreman';
-        $this->validateRoleExists($foremanRoleSlug, $organizationId);
+        $this->validateRoleExists($roleSlug, (int) $organizationId);
 
         $data['password'] = Hash::make($data['password']);
         // user_type колонка удалена в новой системе авторизации - роли управляются через UserRoleAssignment
@@ -617,19 +719,19 @@ class UserService
         if ($existingUser) {
             // If user exists, check if they are already a foreman in this org
             $contextId = $this->getOrganizationContextId($organizationId);
-            if ($this->authorizationService->hasRole($existingUser, $foremanRoleSlug, $contextId)) {
+            if ($this->authorizationService->hasRole($existingUser, $roleSlug, $contextId)) {
                  throw new BusinessLogicException('Пользователь с таким email уже является прорабом в этой организации.', 409);
             }
             // If user exists but not foreman, add them to the org with the foreman role
             $this->userRepository->attachToOrganization($existingUser->id, $organizationId, false); // Ensure attached, NOT as owner
-            $this->userRepository->assignRoleToUser($existingUser->id, $foremanRoleSlug, $organizationId);
+            $this->userRepository->assignRoleToUser($existingUser->id, $roleSlug, $organizationId);
             $this->userRepository->update($existingUser->id, ['name' => $data['name']]); // Update name
             return $this->userRepository->find($existingUser->id);
         } else {
              // If user doesn't exist, create them and assign role/org
             $newUser = $this->userRepository->create($data);
             $this->userRepository->attachToOrganization($newUser->id, $organizationId, false); // Attach as NOT an owner
-            $this->userRepository->assignRoleToUser($newUser->id, $foremanRoleSlug, $organizationId);
+            $this->userRepository->assignRoleToUser($newUser->id, $roleSlug, $organizationId);
 
             if (!$newUser->hasVerifiedEmail()) {
                 try {

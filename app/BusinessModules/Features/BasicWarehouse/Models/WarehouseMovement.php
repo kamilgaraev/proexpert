@@ -2,6 +2,7 @@
 
 namespace App\BusinessModules\Features\BasicWarehouse\Models;
 
+use App\Models\File;
 use App\Models\Material;
 use App\Models\Organization;
 use App\Models\Project;
@@ -9,6 +10,7 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 /**
  * Модель движения активов на складе
@@ -16,6 +18,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class WarehouseMovement extends Model
 {
     use HasFactory;
+
+    protected $appends = [
+        'photo_gallery',
+    ];
 
     protected $fillable = [
         'organization_id',
@@ -84,6 +90,16 @@ class WarehouseMovement extends Model
         return $this->belongsTo(User::class);
     }
 
+    public function files(): MorphMany
+    {
+        return $this->morphMany(File::class, 'fileable');
+    }
+
+    public function photos(): MorphMany
+    {
+        return $this->files()->where('type', 'photo')->orderByDesc('created_at');
+    }
+
     /**
      * Scope для фильтрации по типу движения
      */
@@ -98,6 +114,22 @@ class WarehouseMovement extends Model
     public function scopeBetweenDates($query, $dateFrom, $dateTo)
     {
         return $query->whereBetween('movement_date', [$dateFrom, $dateTo]);
+    }
+
+    public function getPhotoGalleryAttribute(): array
+    {
+        $photos = $this->relationLoaded('photos') ? $this->getRelation('photos') : $this->photos()->get();
+
+        return $photos->map(static fn (File $file): array => [
+            'id' => $file->id,
+            'name' => $file->name,
+            'original_name' => $file->original_name,
+            'url' => $file->url,
+            'mime_type' => $file->mime_type,
+            'size' => $file->size,
+            'category' => $file->category,
+            'uploaded_at' => optional($file->created_at)?->toDateTimeString(),
+        ])->values()->all();
     }
 }
 

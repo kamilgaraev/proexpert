@@ -2,55 +2,82 @@
 
 namespace App\Http\Resources\Api\V1\Admin\User;
 
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 class ForemanUserResource extends JsonResource
 {
-    /**
-     * Transform the resource into an array.
-     *
-     * @return array<string, mixed>
-     */
+    private const ROLE_PRIORITY = [
+        'organization_owner',
+        'organization_admin',
+        'finance_admin',
+        'web_admin',
+        'accountant',
+        'project_manager',
+        'site_engineer',
+        'foreman',
+        'worker',
+        'observer',
+        'viewer',
+        'supplier',
+        'contractor',
+    ];
+
     public function toArray(Request $request): array
     {
-        // Ensure we have a User model instance
-        if (!$this->resource instanceof \App\Models\User) {
+        if (!$this->resource instanceof User) {
             return [];
         }
 
-        // Убираем сложную логику isActiveInOrg, т.к. is_active глобальное поле
-        /*
-        $organizationId = $request->attributes->get('organization_id');
-        $isActiveInOrg = false;
-
-        // Check if the user is active within the context of the current organization
-        // This requires accessing the pivot data.
-        if ($organizationId && $this->resource->relationLoaded('organizations')) {
-             $orgPivot = $this->resource->organizations->firstWhere('id', $organizationId);
-             if ($orgPivot && $orgPivot->pivot) {
-                 $isActiveInOrg = (bool) $orgPivot->pivot->is_active;
-             }
-        } else {
-             // Fallback or additional logic if organizations relation isn't loaded
-             // or organization context is missing. Might need a direct check.
-             // For simplicity, assume false if context is missing.
-             // Consider logging a warning if org context is expected but missing.
-        }
-        */
+        $organizationId = (int) ($request->attributes->get('current_organization_id')
+            ?? $request->user()?->current_organization_id
+            ?? 0);
+        $roles = $this->resolveRoles($organizationId);
 
         return [
             'id' => $this->resource->id,
             'name' => $this->resource->name,
             'email' => $this->resource->email,
-            'phone' => $this->resource->phone ?? null, // Добавляем телефон
-            'position' => $this->resource->position ?? null, // Добавляем должность
-            'avatar_path' => $this->resource->avatar_path, // Добавляем сырой путь к аватару
-            'avatar_url' => $this->resource->avatar_url, // Оставляем готовый URL аватара
-            'is_active' => (bool) $this->resource->is_active, // Возвращаем глобальный статус
-            // 'isActiveInOrg' => $isActiveInOrg, // Убрали
+            'phone' => $this->resource->phone,
+            'position' => $this->resource->position,
+            'avatar_path' => $this->resource->avatar_path,
+            'avatar_url' => $this->resource->avatar_url,
+            'is_active' => (bool) $this->resource->is_active,
+            'roles' => $roles,
+            'primary_role' => $this->resolvePrimaryRole($roles),
             'createdAt' => $this->resource->created_at,
             'updatedAt' => $this->resource->updated_at,
         ];
     }
-} 
+
+    private function resolveRoles(int $organizationId): array
+    {
+        if ($this->resource->relationLoaded('roleAssignments')) {
+            return $this->resource->roleAssignments
+                ->filter(fn ($assignment) => (bool) $assignment->is_active)
+                ->pluck('role_slug')
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+        }
+
+        if ($organizationId > 0) {
+            return array_values(array_unique($this->resource->getRoleSlugs($organizationId)));
+        }
+
+        return [];
+    }
+
+    private function resolvePrimaryRole(array $roles): ?string
+    {
+        foreach (self::ROLE_PRIORITY as $roleSlug) {
+            if (in_array($roleSlug, $roles, true)) {
+                return $roleSlug;
+            }
+        }
+
+        return $roles[0] ?? null;
+    }
+}

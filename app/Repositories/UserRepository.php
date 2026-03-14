@@ -380,6 +380,68 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         return $query->paginate($perPage);
     }
 
+    public function paginateInOrganization(
+        int $organizationId,
+        int $perPage = 15,
+        array $filters = [],
+        string $sortBy = 'name',
+        string $sortDirection = 'asc'
+    ): LengthAwarePaginator
+    {
+        $context = AuthorizationContext::getOrganizationContext($organizationId);
+
+        $query = $this->model->query()
+            ->whereHas('organizations', function ($q) use ($organizationId) {
+                $q->where('organization_user.organization_id', $organizationId);
+            })
+            ->with([
+                'roleAssignments' => function ($q) use ($context) {
+                    $q->where('context_id', $context->id)
+                        ->where('is_active', true);
+                },
+            ]);
+
+        if (!empty($filters['name'])) {
+            $query->where('name', 'like', '%' . $filters['name'] . '%');
+        }
+
+        if (!empty($filters['email'])) {
+            $query->where('email', 'like', '%' . $filters['email'] . '%');
+        }
+
+        if (isset($filters['is_active'])) {
+            $isActiveFilter = $filters['is_active'];
+            if (is_string($isActiveFilter)) {
+                if (strtolower($isActiveFilter) === 'true') {
+                    $isActiveFilter = true;
+                } elseif (strtolower($isActiveFilter) === 'false') {
+                    $isActiveFilter = false;
+                }
+            }
+
+            if (is_bool($isActiveFilter)) {
+                $query->where('is_active', $isActiveFilter);
+            }
+        }
+
+        if (!empty($filters['role'])) {
+            $query->whereHas('roleAssignments', function ($q) use ($filters, $context) {
+                $q->where('role_slug', $filters['role'])
+                    ->where('context_id', $context->id)
+                    ->where('is_active', true);
+            });
+        }
+
+        $allowedSortBy = ['id', 'name', 'email', 'created_at', 'is_active'];
+        $tableName = $this->model->getTable();
+        $validatedSortBy = in_array($sortBy, $allowedSortBy, true) ? $sortBy : 'created_at';
+        $validatedSortDirection = strtolower($sortDirection) === 'desc' ? 'desc' : 'asc';
+
+        return $query
+            ->orderBy($tableName . '.' . $validatedSortBy, $validatedSortDirection)
+            ->paginate($perPage);
+    }
+
     /**
      * Получить данные по активности прорабов (из логов).
      */

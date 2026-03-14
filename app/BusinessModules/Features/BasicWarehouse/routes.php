@@ -3,6 +3,7 @@
 use App\BusinessModules\Features\BasicWarehouse\Controllers\AssetController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\InventoryController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\ProjectAllocationController;
+use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehousePhotoController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseOperationsController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\AdvancedWarehouseController;
@@ -35,10 +36,19 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
             // Остатки и движения
             Route::get('/{id}/balances', [WarehouseController::class, 'balances']);
             Route::get('/{id}/movements', [WarehouseController::class, 'movements']);
+            Route::get('/{warehouseId}/balances/{materialId}/photos', [WarehousePhotoController::class, 'balancePhotos']);
+            Route::post('/{warehouseId}/balances/{materialId}/photos', [WarehousePhotoController::class, 'uploadBalancePhotos']);
+            Route::delete('/{warehouseId}/balances/{materialId}/photos/{fileId}', [WarehousePhotoController::class, 'deleteBalancePhoto']);
             
             // Экспорт документов движений
             Route::get('/movements/{id}/export-m4', [WarehouseOperationsController::class, 'exportM4'])
                 ->name('movements.export-m4');
+            Route::get('/movements/{id}/photos', [WarehousePhotoController::class, 'movementPhotos'])
+                ->name('movements.photos.index');
+            Route::post('/movements/{id}/photos', [WarehousePhotoController::class, 'uploadMovementPhotos'])
+                ->name('movements.photos.store');
+            Route::delete('/movements/{id}/photos/{fileId}', [WarehousePhotoController::class, 'deleteMovementPhoto'])
+                ->name('movements.photos.destroy');
             Route::get('/movements/{id}/export-m11', [WarehouseOperationsController::class, 'exportM11'])
                 ->name('movements.export-m11');
             Route::get('/movements/{id}/export-m15', [WarehouseOperationsController::class, 'exportM15'])
@@ -96,6 +106,9 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
             Route::get('/{id}', [AssetController::class, 'show'])->name('show');
             Route::put('/{id}', [AssetController::class, 'update'])->name('update');
             Route::delete('/{id}', [AssetController::class, 'destroy'])->name('destroy');
+            Route::get('/{id}/photos', [WarehousePhotoController::class, 'assetPhotos'])->name('photos.index');
+            Route::post('/{id}/photos', [WarehousePhotoController::class, 'uploadAssetPhotos'])->name('photos.store');
+            Route::delete('/{id}/photos/{fileId}', [WarehousePhotoController::class, 'deleteAssetPhoto'])->name('photos.destroy');
         });
 
         // Продвинутые функции (Аналитика, Резервирование, Автозаказ)
