@@ -6,6 +6,17 @@ use Illuminate\Foundation\Http\FormRequest;
 
 class ReceiptRequest extends FormRequest
 {
+    protected function prepareForValidation(): void
+    {
+        $material = $this->input('material');
+        $metadata = $this->input('metadata');
+
+        $this->merge([
+            'material' => is_string($material) ? json_decode($material, true) : $material,
+            'metadata' => is_string($metadata) ? json_decode($metadata, true) : $metadata,
+        ]);
+    }
+
     public function authorize(): bool
     {
         return true;
@@ -30,6 +41,8 @@ class ReceiptRequest extends FormRequest
             'document_number' => 'nullable|string|max:100',
             'reason' => 'nullable|string|max:255',
             'metadata' => 'nullable|array',
+            'photos' => 'nullable|array|max:4',
+            'photos.*' => 'file|image|mimes:jpg,jpeg,png,webp,heic,heif|max:10240',
         ];
     }
 }

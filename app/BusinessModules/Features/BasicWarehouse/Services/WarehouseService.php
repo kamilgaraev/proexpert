@@ -6,6 +6,7 @@ use App\BusinessModules\Features\BasicWarehouse\DTOs\WarehouseBalanceAggregateDT
 use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseItemGallery;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseZone;
 use App\BusinessModules\Features\BasicWarehouse\Models\AssetReservation;
@@ -535,7 +536,7 @@ class WarehouseService implements WarehouseReportDataProvider
     {
         $query = WarehouseBalance::where('organization_id', $organizationId)
             ->where('available_quantity', '>', 0)
-            ->with(['material.measurementUnit', 'warehouse']);
+            ->with(['material.measurementUnit', 'warehouse', 'material.photos']);
 
         // Применяем фильтры
         if (isset($filters['warehouse_id'])) {
@@ -573,6 +574,15 @@ class WarehouseService implements WarehouseReportDataProvider
         }
 
         $allBatches = $query->get();
+        $photoMap = WarehouseItemGallery::with('photos')
+            ->where('organization_id', $organizationId)
+            ->whereIn('warehouse_id', $allBatches->pluck('warehouse_id')->unique())
+            ->whereIn('material_id', $allBatches->pluck('material_id')->unique())
+            ->get()
+            ->mapWithKeys(fn (WarehouseItemGallery $gallery) => [
+                $gallery->warehouse_id . ':' . $gallery->material_id => $gallery->photo_gallery,
+            ])
+            ->all();
         
         // Группируем по материалам
         $grouped = $allBatches->groupBy('material_id');
@@ -606,6 +616,8 @@ class WarehouseService implements WarehouseReportDataProvider
                 'is_low_stock' => $first->min_stock_level > 0 && $totalQty <= $first->min_stock_level,
                 'location_code' => $batches->pluck('location_code')->filter()->unique()->implode(', '),
                 'last_movement_at' => $batches->max('last_movement_at')?->toDateTimeString(),
+                'photo_gallery' => $photoMap[$first->warehouse_id . ':' . $first->material_id] ?? [],
+                'asset_photo_gallery' => $first->material->photo_gallery,
             ];
 
             // Добавляем информацию о распределении по проектам (она общая для всех партий)
@@ -643,7 +655,7 @@ class WarehouseService implements WarehouseReportDataProvider
     public function getMovementsData(int $organizationId, array $filters = []): array
     {
         $query = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::where('organization_id', $organizationId)
-            ->with(['material.measurementUnit', 'warehouse', 'project', 'user']);
+            ->with(['material.measurementUnit', 'warehouse', 'project', 'user', 'photos']);
 
         // Применяем фильтры
         if (isset($filters['warehouse_id'])) {
@@ -694,6 +706,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 'document_number' => $movement->document_number,
                 'reason' => $movement->reason,
                 'movement_date' => $movement->movement_date->toDateTimeString(),
+                'photo_gallery' => $movement->photo_gallery,
             ];
         })->toArray();
     }

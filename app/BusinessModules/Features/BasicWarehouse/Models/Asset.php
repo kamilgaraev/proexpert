@@ -2,8 +2,10 @@
 
 namespace App\BusinessModules\Features\BasicWarehouse\Models;
 
+use App\Models\File;
 use App\Models\Material;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 /**
  * Модель Asset расширяет Material для работы со всеми типами активов
@@ -18,6 +20,14 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  */
 class Asset extends Material
 {
+    protected $appends = [
+        'asset_type',
+        'asset_category',
+        'asset_subcategory',
+        'asset_attributes',
+        'photo_gallery',
+    ];
+
     /**
      * Указываем что используем ту же таблицу что и Material
      */
@@ -127,6 +137,16 @@ class Asset extends Material
         return $this->hasMany(WarehouseBalance::class, 'material_id');
     }
 
+    public function files(): MorphMany
+    {
+        return $this->morphMany(File::class, 'fileable');
+    }
+
+    public function photos(): MorphMany
+    {
+        return $this->files()->where('type', 'photo')->orderByDesc('created_at');
+    }
+
     /**
      * Получить поступления актива
      */
@@ -221,6 +241,22 @@ class Asset extends Material
     public function getTotalAvailableQuantity(): float
     {
         return $this->getTotalWarehouseQuantity() - $this->getTotalReservedQuantity();
+    }
+
+    public function getPhotoGalleryAttribute(): array
+    {
+        $photos = $this->relationLoaded('photos') ? $this->getRelation('photos') : $this->photos()->get();
+
+        return $photos->map(static fn (File $file): array => [
+            'id' => $file->id,
+            'name' => $file->name,
+            'original_name' => $file->original_name,
+            'url' => $file->url,
+            'mime_type' => $file->mime_type,
+            'size' => $file->size,
+            'category' => $file->category,
+            'uploaded_at' => optional($file->created_at)?->toDateTimeString(),
+        ])->values()->all();
     }
 }
 

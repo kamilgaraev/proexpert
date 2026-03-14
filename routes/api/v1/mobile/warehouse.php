@@ -5,4 +5,15 @@ use Illuminate\Support\Facades\Route;
 
 Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.context', 'can:access-mobile-app'])->group(function () {
     Route::get('/warehouse', [WarehouseController::class, 'index'])->name('warehouse.index');
+    Route::get('/warehouse/warehouses/{warehouseId}/balances', [WarehouseController::class, 'balances'])->name('warehouse.balances');
+    Route::get('/warehouse/materials/autocomplete', [WarehouseController::class, 'materialAutocomplete'])->name('warehouse.materials.autocomplete');
+    Route::post('/warehouse/operations/receipt', [WarehouseController::class, 'receipt'])->name('warehouse.operations.receipt');
+
+    Route::get('/warehouse/balances/{warehouseId}/{materialId}/photos', [WarehouseController::class, 'balancePhotos'])->name('warehouse.balances.photos.index');
+    Route::post('/warehouse/balances/{warehouseId}/{materialId}/photos', [WarehouseController::class, 'uploadBalancePhotos'])->name('warehouse.balances.photos.store');
+    Route::delete('/warehouse/balances/{warehouseId}/{materialId}/photos/{fileId}', [WarehouseController::class, 'deleteBalancePhoto'])->name('warehouse.balances.photos.destroy');
+
+    Route::get('/warehouse/movements/{movementId}/photos', [WarehouseController::class, 'movementPhotos'])->name('warehouse.movements.photos.index');
+    Route::post('/warehouse/movements/{movementId}/photos', [WarehouseController::class, 'uploadMovementPhotos'])->name('warehouse.movements.photos.store');
+    Route::delete('/warehouse/movements/{movementId}/photos/{fileId}', [WarehouseController::class, 'deleteMovementPhoto'])->name('warehouse.movements.photos.destroy');
 });

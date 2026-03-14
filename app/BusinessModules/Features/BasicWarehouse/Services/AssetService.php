@@ -113,7 +113,7 @@ class AssetService
     ): LengthAwarePaginator {
         $query = Asset::where('organization_id', $organizationId)
             ->where('is_active', true)
-            ->with(['measurementUnit', 'warehouseBalances']);
+            ->with(['measurementUnit', 'warehouseBalances', 'photos']);
 
         // Фильтр по типу актива
         if (isset($filters['asset_type'])) {
@@ -156,7 +156,8 @@ class AssetService
             'measurementUnit',
             'warehouseBalances.warehouse',
             'receipts',
-            'writeOffs'
+            'writeOffs',
+            'photos',
         ])->findOrFail($assetId);
     }
 
