@@ -4,6 +4,7 @@ namespace App\BusinessModules\Features\BasicWarehouse\Models;
 
 use App\Models\File;
 use App\Models\Material;
+use App\Services\Storage\FileService;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 
@@ -246,12 +247,13 @@ class Asset extends Material
     public function getPhotoGalleryAttribute(): array
     {
         $photos = $this->relationLoaded('photos') ? $this->getRelation('photos') : $this->photos()->get();
+        $fileService = app(FileService::class);
 
         return $photos->map(static fn (File $file): array => [
             'id' => $file->id,
             'name' => $file->name,
             'original_name' => $file->original_name,
-            'url' => $file->url,
+            'url' => $fileService->temporaryUrl($file->path, 60) ?? $file->url,
             'mime_type' => $file->mime_type,
             'size' => $file->size,
             'category' => $file->category,

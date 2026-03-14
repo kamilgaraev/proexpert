@@ -203,11 +203,13 @@ class WarehousePhotoService
 
     private function mapFile(File $file): array
     {
+        $url = $this->fileService->temporaryUrl($file->path, 60) ?? $file->url;
+
         return [
             'id' => $file->id,
             'name' => $file->name,
             'original_name' => $file->original_name,
-            'url' => $file->url,
+            'url' => $url,
             'mime_type' => $file->mime_type,
             'size' => $file->size,
             'category' => $file->category,
