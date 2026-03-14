@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\Storage\FileService;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -78,12 +79,13 @@ class Material extends Model
     public function getPhotoGalleryAttribute(): array
     {
         $photos = $this->relationLoaded('photos') ? $this->getRelation('photos') : $this->photos()->get();
+        $fileService = app(FileService::class);
 
-        return $photos->map(static fn (File $file): array => [
+        return $photos->map(static fn (File $file) => [
             'id' => $file->id,
             'name' => $file->name,
             'original_name' => $file->original_name,
-            'url' => $file->url,
+            'url' => $fileService->temporaryUrl($file->path, 60) ?? $file->url,
             'mime_type' => $file->mime_type,
             'size' => $file->size,
             'category' => $file->category,
