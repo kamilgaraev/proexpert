@@ -2,6 +2,7 @@
 
 namespace App\BusinessModules\Features\SiteRequests\Http\Resources;
 
+use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -61,7 +62,12 @@ class SiteRequestResource extends JsonResource
             'estimated_personnel_cost' => $this->estimated_personnel_cost,
 
             // Техника
-            'equipment_type' => $this->equipment_type,
+            'equipment_type' => $this->equipment_type instanceof EquipmentTypeEnum
+                ? $this->equipment_type->value
+                : $this->equipment_type,
+            'equipment_type_label' => $this->equipment_type instanceof EquipmentTypeEnum
+                ? $this->equipment_type->label()
+                : EquipmentTypeEnum::tryFrom((string) $this->equipment_type)?->label(),
             'equipment_specs' => $this->equipment_specs,
             'rental_start_date' => $this->rental_start_date?->format('Y-m-d'),
             'rental_end_date' => $this->rental_end_date?->format('Y-m-d'),

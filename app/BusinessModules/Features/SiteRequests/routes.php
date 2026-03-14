@@ -119,6 +119,7 @@ Route::prefix('api/v1/mobile/site-requests')
         // ============================================
         // Действия с заявками
         // ============================================
+        Route::post('/{id}/status', [MobileSiteRequestController::class, 'changeStatus'])->name('change_status');
         Route::post('/{id}/submit', [MobileSiteRequestController::class, 'submit'])->name('submit');
         Route::post('/{id}/cancel', [MobileSiteRequestController::class, 'cancel'])->name('cancel');
         Route::post('/{id}/complete', [MobileSiteRequestController::class, 'complete'])->name('complete');

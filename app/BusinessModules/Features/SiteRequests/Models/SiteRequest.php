@@ -82,6 +82,7 @@ class SiteRequest extends Model
         'priority' => SiteRequestPriorityEnum::class,
         'request_type' => SiteRequestTypeEnum::class,
         'personnel_type' => PersonnelTypeEnum::class,
+        'equipment_type' => EquipmentTypeEnum::class,
         'required_date' => 'date',
         'work_start_date' => 'date',
         'work_end_date' => 'date',
