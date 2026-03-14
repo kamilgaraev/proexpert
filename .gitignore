@@ -41,6 +41,7 @@ app/Console/Commands/Authorization/AssignOwnerRolesCommand.php
 !CHANGELOG.md
 !/.agent/rules/*.md
 !/.agent/workflows/*.md
+!@docs/specs/mobile-roadmap-spec.md
 .gigaide
 *.bat
 *.docx

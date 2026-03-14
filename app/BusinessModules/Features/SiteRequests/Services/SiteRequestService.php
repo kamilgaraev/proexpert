@@ -527,6 +527,10 @@ class SiteRequestService
             $query->withStatus($filters['status']);
         }
 
+        if (!empty($filters['status_in']) && is_array($filters['status_in'])) {
+            $query->whereIn('status', array_values($filters['status_in']));
+        }
+
         if (!empty($filters['priority'])) {
             $query->withPriority($filters['priority']);
         }
