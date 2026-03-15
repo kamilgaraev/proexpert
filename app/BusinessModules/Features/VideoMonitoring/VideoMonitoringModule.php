@@ -6,9 +6,13 @@ namespace App\BusinessModules\Features\VideoMonitoring;
 
 use App\Enums\BillingModel;
 use App\Enums\ModuleType;
+use App\Models\Module;
+use App\Models\Organization;
+use App\Models\OrganizationModuleActivation;
 use App\Modules\Contracts\BillableInterface;
 use App\Modules\Contracts\ConfigurableInterface;
 use App\Modules\Contracts\ModuleInterface;
+use App\Modules\Core\BillingEngine;
 
 class VideoMonitoringModule implements ModuleInterface, BillableInterface, ConfigurableInterface
 {
@@ -144,22 +148,26 @@ class VideoMonitoringModule implements ModuleInterface, BillableInterface, Confi
         ];
     }
 
-    public function getConfigurationSchema(): array
+    public function calculateCost(int $organizationId): float
     {
-        return [
-            'max_cameras' => ['type' => 'integer', 'default' => 1],
-            'max_live_viewers' => ['type' => 'integer', 'default' => 1],
-            'default_transport' => ['type' => 'string', 'default' => 'tcp'],
-            'allow_custom_playback_url' => ['type' => 'boolean', 'default' => true],
-        ];
+        return $this->getPrice();
     }
 
-    public function validateConfiguration(array $config): bool
+    public function canAfford(int $organizationId): bool
     {
-        return true;
+        $organization = Organization::find($organizationId);
+
+        if (!$organization) {
+            return false;
+        }
+
+        $billingEngine = app(BillingEngine::class);
+        $module = Module::where('slug', $this->getSlug())->first();
+
+        return $module ? $billingEngine->canAfford($organization, $module) : false;
     }
 
-    public function getDefaultConfiguration(): array
+    public function getDefaultSettings(): array
     {
         return [
             'max_cameras' => 1,
@@ -167,5 +175,63 @@ class VideoMonitoringModule implements ModuleInterface, BillableInterface, Confi
             'default_transport' => 'tcp',
             'allow_custom_playback_url' => true,
         ];
+    }
+
+    public function validateSettings(array $settings): bool
+    {
+        if (isset($settings['max_cameras']) && (!is_int($settings['max_cameras']) || $settings['max_cameras'] < 1)) {
+            return false;
+        }
+
+        if (isset($settings['max_live_viewers']) && (!is_int($settings['max_live_viewers']) || $settings['max_live_viewers'] < 1)) {
+            return false;
+        }
+
+        if (isset($settings['default_transport']) && !in_array($settings['default_transport'], ['tcp', 'udp', 'http', 'https'], true)) {
+            return false;
+        }
+
+        if (isset($settings['allow_custom_playback_url']) && !is_bool($settings['allow_custom_playback_url'])) {
+            return false;
+        }
+
+        return true;
+    }
+
+    public function applySettings(int $organizationId, array $settings): void
+    {
+        if (!$this->validateSettings($settings)) {
+            throw new \InvalidArgumentException('Некорректные настройки модуля видеонаблюдения');
+        }
+
+        $activation = OrganizationModuleActivation::query()
+            ->where('organization_id', $organizationId)
+            ->whereHas('module', function ($query) {
+                $query->where('slug', $this->getSlug());
+            })
+            ->first();
+
+        if (!$activation) {
+            return;
+        }
+
+        $activation->update([
+            'module_settings' => array_merge($activation->module_settings ?? [], $settings),
+        ]);
+    }
+
+    public function getSettings(int $organizationId): array
+    {
+        $activation = OrganizationModuleActivation::query()
+            ->where('organization_id', $organizationId)
+            ->whereHas('module', function ($query) {
+                $query->where('slug', $this->getSlug());
+            })
+            ->first();
+
+        return array_merge(
+            $this->getDefaultSettings(),
+            $activation?->module_settings ?? []
+        );
     }
 }
