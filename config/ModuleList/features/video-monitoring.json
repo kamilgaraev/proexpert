@@ -1,0 +1,62 @@
+{
+  "name": "Видеонаблюдение",
+  "slug": "video-monitoring",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "subscription",
+  "category": "operations",
+  "description": "Подключение камер к объектам, live-статусы и просмотр потоков внутри карточки проекта.",
+  "class_name": "App\\BusinessModules\\Features\\VideoMonitoring\\VideoMonitoringModule",
+  "service_provider": "App\\BusinessModules\\Features\\VideoMonitoring\\VideoMonitoringServiceProvider",
+  "pricing": {
+    "base_price": 0,
+    "currency": "RUB",
+    "included_in_plans": ["starter", "business", "profi", "enterprise"],
+    "duration_days": 30,
+    "trial_days": 7
+  },
+  "permissions": [
+    "video_monitoring.view",
+    "video_monitoring.connect",
+    "video_monitoring.edit",
+    "video_monitoring.delete",
+    "video_monitoring.watch_live",
+    "video_monitoring.events.view",
+    "video_monitoring.settings.manage"
+  ],
+  "features": [
+    "Подключение IP-камер, RTSP-источников и NVR к проекту",
+    "Проверка доступности камеры перед сохранением",
+    "Карточка камер и статусов прямо в разделе проекта",
+    "Live-просмотр для источников с playback URL",
+    "Журнал последних событий по камерам"
+  ],
+  "dependencies": [
+    "organizations",
+    "users",
+    "project-management"
+  ],
+  "optional_integrations": [
+    "notifications",
+    "system-logs",
+    "ai-assistant",
+    "schedule-management"
+  ],
+  "conflicts": [],
+  "limits": {
+    "max_cameras": 1,
+    "max_live_viewers": 1,
+    "allow_archive": false,
+    "allow_webrtc": false,
+    "allow_multiview": false
+  },
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "icon": "videocam",
+  "display_order": 18,
+  "tags": ["video", "security", "projects", "live"],
+  "documentation_url": "/docs/modules/video-monitoring"
+}
