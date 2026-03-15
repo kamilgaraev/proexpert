@@ -34,13 +34,13 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
             // Управление складами
             Route::get('/', [WarehouseController::class, 'index']);
             Route::post('/', [WarehouseController::class, 'store']);
-            Route::get('/{id}', [WarehouseController::class, 'show']);
-            Route::put('/{id}', [WarehouseController::class, 'update']);
-            Route::delete('/{id}', [WarehouseController::class, 'destroy']);
+            Route::get('/{id}', [WarehouseController::class, 'show'])->whereNumber('id');
+            Route::put('/{id}', [WarehouseController::class, 'update'])->whereNumber('id');
+            Route::delete('/{id}', [WarehouseController::class, 'destroy'])->whereNumber('id');
             
             // Остатки и движения
-            Route::get('/{id}/balances', [WarehouseController::class, 'balances']);
-            Route::get('/{id}/movements', [WarehouseController::class, 'movements']);
+            Route::get('/{id}/balances', [WarehouseController::class, 'balances'])->whereNumber('id');
+            Route::get('/{id}/movements', [WarehouseController::class, 'movements'])->whereNumber('id');
             Route::get('/{warehouseId}/balances/{materialId}/photos', [WarehousePhotoController::class, 'balancePhotos']);
             Route::post('/{warehouseId}/balances/{materialId}/photos', [WarehousePhotoController::class, 'uploadBalancePhotos']);
             Route::delete('/{warehouseId}/balances/{materialId}/photos/{fileId}', [WarehousePhotoController::class, 'deleteBalancePhoto']);
