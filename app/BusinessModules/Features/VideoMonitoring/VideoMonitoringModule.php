@@ -90,13 +90,13 @@ class VideoMonitoringModule implements ModuleInterface, BillableInterface, Confi
     public function getPermissions(): array
     {
         return [
-            'video_monitoring.view',
-            'video_monitoring.connect',
-            'video_monitoring.edit',
-            'video_monitoring.delete',
-            'video_monitoring.watch_live',
-            'video_monitoring.events.view',
-            'video_monitoring.settings.manage',
+            'video-monitoring.view',
+            'video-monitoring.connect',
+            'video-monitoring.edit',
+            'video-monitoring.delete',
+            'video-monitoring.watch_live',
+            'video-monitoring.events.view',
+            'video-monitoring.settings.manage',
         ];
     }
 

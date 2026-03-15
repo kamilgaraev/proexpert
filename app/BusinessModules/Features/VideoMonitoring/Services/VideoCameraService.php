@@ -72,7 +72,7 @@ class VideoCameraService
 
     public function create(Project $project, array $payload, User $user): array
     {
-        $this->ensureManagePermission($project, $user, 'video_monitoring.connect');
+        $this->ensureManagePermission($project, $user, 'video-monitoring.connect');
 
         return DB::transaction(function () use ($project, $payload, $user) {
             $camera = new VideoCamera();
@@ -92,7 +92,7 @@ class VideoCameraService
     public function update(Project $project, VideoCamera $camera, array $payload, User $user): array
     {
         $this->ensureCameraBelongsToProject($project, $camera);
-        $this->ensureManagePermission($project, $user, 'video_monitoring.edit');
+        $this->ensureManagePermission($project, $user, 'video-monitoring.edit');
 
         return DB::transaction(function () use ($project, $camera, $payload, $user) {
             $mergedPayload = array_merge(
@@ -132,7 +132,7 @@ class VideoCameraService
     public function delete(Project $project, VideoCamera $camera, User $user): void
     {
         $this->ensureCameraBelongsToProject($project, $camera);
-        $this->ensureManagePermission($project, $user, 'video_monitoring.delete');
+        $this->ensureManagePermission($project, $user, 'video-monitoring.delete');
 
         DB::transaction(function () use ($camera) {
             $this->registerEvent($camera, 'camera.deleted', 'warning', trans_message('video_monitoring.deleted'));
@@ -142,7 +142,7 @@ class VideoCameraService
 
     public function check(Project $project, array $payload, User $user): array
     {
-        $this->ensureManagePermission($project, $user, 'video_monitoring.connect');
+        $this->ensureManagePermission($project, $user, 'video-monitoring.connect');
 
         return $this->probeCameraConnection($payload);
     }
@@ -314,12 +314,12 @@ class VideoCameraService
         $context = $this->buildPermissionContext($project, $user);
 
         return [
-            'can_view' => $user->can('video_monitoring.view', $context),
-            'can_manage' => $user->can('video_monitoring.edit', $context),
-            'can_connect' => $user->can('video_monitoring.connect', $context),
-            'can_delete' => $user->can('video_monitoring.delete', $context),
-            'can_watch_live' => $user->can('video_monitoring.watch_live', $context),
-            'can_view_events' => $user->can('video_monitoring.events.view', $context),
+            'can_view' => $user->can('video-monitoring.view', $context),
+            'can_manage' => $user->can('video-monitoring.edit', $context),
+            'can_connect' => $user->can('video-monitoring.connect', $context),
+            'can_delete' => $user->can('video-monitoring.delete', $context),
+            'can_watch_live' => $user->can('video-monitoring.watch_live', $context),
+            'can_view_events' => $user->can('video-monitoring.events.view', $context),
         ];
     }
 
