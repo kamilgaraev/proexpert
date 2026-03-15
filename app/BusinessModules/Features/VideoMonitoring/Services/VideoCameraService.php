@@ -64,7 +64,7 @@ class VideoCameraService
                 'camera_id' => $event->camera_id,
                 'event_type' => $event->event_type,
                 'severity' => $event->severity,
-                'message' => $event->message,
+                'message' => $this->resolveDisplayMessage($event->message),
                 'occurred_at' => optional($event->occurred_at)->toIso8601String(),
             ])->values()->all(),
         ];
@@ -78,10 +78,10 @@ class VideoCameraService
             $camera = new VideoCamera();
             $camera->fill($this->preparePayload($project, $payload, $user));
             $camera->status = 'pending';
-            $camera->status_message = trans_message('video_monitoring.status.pending');
+            $camera->status_message = trans_message('video_monitoring.status.pending', [], 'ru');
             $camera->save();
 
-            $this->registerEvent($camera, 'camera.created', 'info', trans_message('video_monitoring.created'));
+            $this->registerEvent($camera, 'camera.created', 'info', trans_message('video_monitoring.created', [], 'ru'));
             $probe = $this->probeCameraConnection($this->prepareProbePayloadFromCamera($camera));
             $this->syncCameraStatus($camera, $probe);
 
@@ -121,7 +121,7 @@ class VideoCameraService
             $camera->fill($this->preparePayload($project, $mergedPayload, $user, false));
             $camera->save();
 
-            $this->registerEvent($camera, 'camera.updated', 'info', trans_message('video_monitoring.updated'));
+            $this->registerEvent($camera, 'camera.updated', 'info', trans_message('video_monitoring.updated', [], 'ru'));
             $probe = $this->probeCameraConnection($this->prepareProbePayloadFromCamera($camera));
             $this->syncCameraStatus($camera, $probe);
 
@@ -135,7 +135,7 @@ class VideoCameraService
         $this->ensureManagePermission($project, $user, 'video-monitoring.delete');
 
         DB::transaction(function () use ($camera) {
-            $this->registerEvent($camera, 'camera.deleted', 'warning', trans_message('video_monitoring.deleted'));
+            $this->registerEvent($camera, 'camera.deleted', 'warning', trans_message('video_monitoring.deleted', [], 'ru'));
             $camera->delete();
         });
     }
@@ -212,7 +212,7 @@ class VideoCameraService
         $port = Arr::get($payload, 'port');
 
         if ($host === '' || $streamPath === '') {
-            throw new RuntimeException(trans_message('video_monitoring.source_required'));
+            throw new RuntimeException(trans_message('video_monitoring.source_required', [], 'ru'));
         }
 
         $scheme = in_array($sourceType, ['cloud'], true) ? 'https' : 'rtsp';
@@ -228,7 +228,7 @@ class VideoCameraService
         $parsed = parse_url($sourceUrl);
 
         if (!is_array($parsed) || empty($parsed['host'])) {
-            throw new RuntimeException(trans_message('video_monitoring.invalid_source'));
+            throw new RuntimeException(trans_message('video_monitoring.invalid_source', [], 'ru'));
         }
 
         $scheme = strtolower((string) ($parsed['scheme'] ?? 'rtsp'));
@@ -248,7 +248,7 @@ class VideoCameraService
                 );
 
                 if (!is_resource($connection)) {
-                    throw new RuntimeException($errorMessage ?: trans_message('video_monitoring.connection_failed'));
+                    throw new RuntimeException($errorMessage ?: trans_message('video_monitoring.connection_failed', [], 'ru'));
                 }
 
                 fclose($connection);
@@ -257,7 +257,7 @@ class VideoCameraService
             return [
                 'is_online' => true,
                 'status' => 'online',
-                'message' => trans_message('video_monitoring.connection_success'),
+                'message' => trans_message('video_monitoring.connection_success', [], 'ru'),
                 'checked_at' => $checkedAt->toIso8601String(),
                 'resolved_source_url' => $sourceUrl,
                 'resolved_playback_url' => Arr::get($payload, 'playback_url'),
@@ -266,7 +266,7 @@ class VideoCameraService
             return [
                 'is_online' => false,
                 'status' => 'offline',
-                'message' => $exception->getMessage() ?: trans_message('video_monitoring.connection_failed'),
+                'message' => $exception->getMessage() ?: trans_message('video_monitoring.connection_failed', [], 'ru'),
                 'checked_at' => $checkedAt->toIso8601String(),
                 'resolved_source_url' => $sourceUrl,
                 'resolved_playback_url' => Arr::get($payload, 'playback_url'),
@@ -311,14 +311,14 @@ class VideoCameraService
     private function ensureManagePermission(Project $project, User $user, string $permission): void
     {
         if (!$user->can($permission, $this->buildPermissionContext($project, $user))) {
-            throw new RuntimeException(trans_message('video_monitoring.access_denied'));
+            throw new RuntimeException(trans_message('video_monitoring.access_denied', [], 'ru'));
         }
     }
 
     private function ensureCameraBelongsToProject(Project $project, VideoCamera $camera): void
     {
         if ($camera->project_id !== $project->id) {
-            throw new RuntimeException(trans_message('video_monitoring.not_found'));
+            throw new RuntimeException(trans_message('video_monitoring.not_found', [], 'ru'));
         }
     }
 
@@ -361,7 +361,7 @@ class VideoCameraService
             'port' => $camera->port,
             'stream_path' => $camera->stream_path,
             'status' => $camera->status,
-            'status_message' => $camera->status_message,
+            'status_message' => $this->resolveDisplayMessage($camera->status_message),
             'transport_protocol' => $camera->transport_protocol,
             'is_enabled' => $camera->is_enabled,
             'has_credentials' => !empty($camera->username) || !empty($camera->password),
@@ -381,5 +381,18 @@ class VideoCameraService
             'rtsps' => 322,
             default => 554,
         };
+    }
+
+    private function resolveDisplayMessage(?string $message): ?string
+    {
+        if ($message === null || $message === '') {
+            return $message;
+        }
+
+        if (str_starts_with($message, 'video_monitoring.')) {
+            return trans_message($message, [], 'ru');
+        }
+
+        return $message;
     }
 }
