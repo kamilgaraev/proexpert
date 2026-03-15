@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Mobile;
 
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ReceiptRequest;
+use App\BusinessModules\Features\BasicWarehouse\Http\Requests\TransferRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\WarehousePhotoUploadRequest;
 use App\BusinessModules\Features\BasicWarehouse\Services\AssetService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehousePhotoService;
@@ -182,6 +183,57 @@ class WarehouseController extends Controller
             Log::error('mobile.warehouse.receipt.error', [
                 'user_id' => $request->user()?->id,
                 'organization_id' => $request->user()?->current_organization_id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return MobileResponse::error($exception->getMessage(), 422);
+        }
+    }
+
+    public function transfer(TransferRequest $request): JsonResponse
+    {
+        try {
+            $validated = $request->validated();
+
+            $result = $this->basicWarehouseService->transferAsset(
+                (int) $request->user()->current_organization_id,
+                (int) $validated['from_warehouse_id'],
+                (int) $validated['to_warehouse_id'],
+                (int) $validated['material_id'],
+                (float) $validated['quantity'],
+                [
+                    'user_id' => $request->user()->id,
+                    'document_number' => $validated['document_number'] ?? null,
+                    'reason' => $validated['reason'] ?? null,
+                    'metadata' => $validated['metadata'] ?? [],
+                ]
+            );
+
+            return MobileResponse::success([
+                'movement_out' => [
+                    'id' => $result['movement_out']->id,
+                    'movement_type' => $result['movement_out']->movement_type,
+                    'document_number' => $result['movement_out']->document_number,
+                ],
+                'movement_in' => [
+                    'id' => $result['movement_in']->id,
+                    'movement_type' => $result['movement_in']->movement_type,
+                    'document_number' => $result['movement_in']->document_number,
+                ],
+                'avg_price' => $result['avg_price'],
+            ]);
+        } catch (\Throwable $exception) {
+            Log::error('mobile.warehouse.transfer.error', [
+                'user_id' => $request->user()?->id,
+                'organization_id' => $request->user()?->current_organization_id,
+                'payload' => $request->only([
+                    'from_warehouse_id',
+                    'to_warehouse_id',
+                    'material_id',
+                    'quantity',
+                    'document_number',
+                    'reason',
+                ]),
                 'error' => $exception->getMessage(),
             ]);
 
