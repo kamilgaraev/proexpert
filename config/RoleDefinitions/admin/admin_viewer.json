@@ -34,6 +34,11 @@
     "data-filters": ["filters.contracts.view", "filters.completed_works.view"],
     "dashboard-widgets": ["dashboard.view"],
     "schedule-management": ["schedule.view"],
+    "video-monitoring": [
+      "video_monitoring.view",
+      "video_monitoring.watch_live",
+      "video_monitoring.events.view"
+    ],
     "budget-estimates": [
       "budget-estimates.view",
       "construction-journal.view"

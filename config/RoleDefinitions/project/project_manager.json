@@ -198,6 +198,15 @@
       "site_requests.templates.manage",
       "site_requests.calendar.view"
     ],
+    "video-monitoring": [
+      "video_monitoring.view",
+      "video_monitoring.connect",
+      "video_monitoring.edit",
+      "video_monitoring.delete",
+      "video_monitoring.watch_live",
+      "video_monitoring.events.view",
+      "video_monitoring.settings.manage"
+    ],
     "ai-assistant": [
       "ai_assistant.chat",
       "ai_assistant.reports.generate",

@@ -109,6 +109,9 @@
     "site-requests": [
       "*"
     ],
+    "video-monitoring": [
+      "*"
+    ],
     "ai-estimates": [
       "*"
     ],
