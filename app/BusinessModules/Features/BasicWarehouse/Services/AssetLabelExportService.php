@@ -10,6 +10,7 @@ use App\Services\Export\PdfExporterService;
 use chillerlan\QRCode\QRCode;
 use chillerlan\QRCode\QROptions;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class AssetLabelExportService
@@ -119,7 +120,7 @@ class AssetLabelExportService
                 'code' => $this->generateAssetIdentifierCode($organizationId, (int) $asset->id),
                 'entity_type' => 'asset',
                 'entity_id' => $asset->id,
-                'label' => $asset->name,
+                'label' => $this->normalizeIdentifierLabel($asset->name),
                 'status' => WarehouseIdentifier::STATUS_ACTIVE,
                 'is_primary' => ! $existingPrimaryIdentifiers->has($asset->id),
                 'assigned_at' => now(),
@@ -134,6 +135,15 @@ class AssetLabelExportService
     private function generateAssetIdentifierCode(int $organizationId, int $assetId): string
     {
         return sprintf('AST-%d-%06d', $organizationId, $assetId);
+    }
+
+    private function normalizeIdentifierLabel(?string $label): ?string
+    {
+        if ($label === null) {
+            return null;
+        }
+
+        return Str::limit(Str::squish($label), 255, '');
     }
 
     private function makeQrDataUri(string $payload): string
