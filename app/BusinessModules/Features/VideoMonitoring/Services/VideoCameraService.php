@@ -82,7 +82,7 @@ class VideoCameraService
             $camera->save();
 
             $this->registerEvent($camera, 'camera.created', 'info', trans_message('video_monitoring.created'));
-            $probe = $this->probeCameraConnection($this->prepareProbePayload($camera->toArray()));
+            $probe = $this->probeCameraConnection($this->prepareProbePayloadFromCamera($camera));
             $this->syncCameraStatus($camera, $probe);
 
             return $this->transformCamera($camera->fresh());
@@ -122,7 +122,7 @@ class VideoCameraService
             $camera->save();
 
             $this->registerEvent($camera, 'camera.updated', 'info', trans_message('video_monitoring.updated'));
-            $probe = $this->probeCameraConnection($this->prepareProbePayload($camera->toArray()));
+            $probe = $this->probeCameraConnection($this->prepareProbePayloadFromCamera($camera));
             $this->syncCameraStatus($camera, $probe);
 
             return $this->transformCamera($camera->fresh());
@@ -182,6 +182,19 @@ class VideoCameraService
             'transport_protocol' => Arr::get($payload, 'transport_protocol'),
             'source_type' => Arr::get($payload, 'source_type'),
             'playback_url' => Arr::get($payload, 'playback_url'),
+        ];
+    }
+
+    private function prepareProbePayloadFromCamera(VideoCamera $camera): array
+    {
+        return [
+            'source_url' => $camera->source_url,
+            'host' => $camera->host,
+            'port' => $camera->port,
+            'stream_path' => $camera->stream_path,
+            'transport_protocol' => $camera->transport_protocol,
+            'source_type' => $camera->source_type,
+            'playback_url' => $camera->playback_url,
         ];
     }
 
