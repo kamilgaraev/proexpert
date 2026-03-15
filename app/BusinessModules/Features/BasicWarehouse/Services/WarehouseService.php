@@ -854,6 +854,111 @@ class WarehouseService implements WarehouseReportDataProvider
         ];
     }
 
+    public function getTurnoverAnalyticsReport(int $organizationId, array $filters = []): array
+    {
+        $dateFrom = isset($filters['date_from'])
+            ? Carbon::parse((string) $filters['date_from'])->startOfDay()
+            : now()->subMonth()->startOfDay();
+        $dateTo = isset($filters['date_to'])
+            ? Carbon::parse((string) $filters['date_to'])->endOfDay()
+            : now()->endOfDay();
+        $warehouseId = isset($filters['warehouse_id']) ? (int) $filters['warehouse_id'] : null;
+
+        $movements = WarehouseMovement::query()
+            ->where('organization_id', $organizationId)
+            ->when($warehouseId !== null, fn ($query) => $query->where('warehouse_id', $warehouseId))
+            ->whereBetween('movement_date', [$dateFrom, $dateTo])
+            ->with(['material'])
+            ->get();
+
+        $days = max(1, $dateFrom->diffInDays($dateTo) + 1);
+        $materials = [];
+        $legacyAssets = [];
+        $materialIds = $movements->pluck('material_id')->filter()->unique()->values();
+
+        foreach ($materialIds as $materialId) {
+            $materialMovements = $movements->where('material_id', $materialId);
+            $material = $materialMovements->first()?->material;
+
+            if (! $material) {
+                continue;
+            }
+
+            $consumption = (float) $materialMovements
+                ->where('movement_type', 'write_off')
+                ->sum('quantity');
+
+            $averageStock = (float) WarehouseBalance::query()
+                ->where('organization_id', $organizationId)
+                ->when($warehouseId !== null, fn ($query) => $query->where('warehouse_id', $warehouseId))
+                ->where('material_id', (int) $materialId)
+                ->sum('available_quantity');
+
+            $turnoverRatio = $averageStock > 0 ? $consumption / $averageStock : 0.0;
+            $daysSupply = $turnoverRatio > 0 ? $days / $turnoverRatio : 0.0;
+            $category = $turnoverRatio > 2
+                ? 'fast_moving'
+                : ($turnoverRatio > 0.5 ? 'medium_moving' : 'slow_moving');
+
+            $materialPayload = [
+                'material_id' => (int) $materialId,
+                'material_name' => (string) $material->name,
+                'material_code' => (string) ($material->code ?? ''),
+                'average_stock' => round($averageStock, 2),
+                'total_consumption' => round($consumption, 2),
+                'turnover_ratio' => round($turnoverRatio, 2),
+                'days_supply' => round($daysSupply, 1),
+                'category' => $category,
+            ];
+
+            $materials[] = $materialPayload;
+            $legacyAssets[] = [
+                'asset_id' => $materialPayload['material_id'],
+                'asset_name' => $materialPayload['material_name'],
+                'asset_code' => $materialPayload['material_code'],
+                'average_stock' => $materialPayload['average_stock'],
+                'consumption' => $materialPayload['total_consumption'],
+                'turnover_rate' => $materialPayload['turnover_ratio'],
+                'turnover_days' => $materialPayload['days_supply'],
+                'category' => match ($category) {
+                    'fast_moving' => 'A',
+                    'medium_moving' => 'B',
+                    default => 'C',
+                },
+            ];
+        }
+
+        usort($materials, fn (array $left, array $right) => $right['turnover_ratio'] <=> $left['turnover_ratio']);
+        usort($legacyAssets, fn (array $left, array $right) => $right['turnover_rate'] <=> $left['turnover_rate']);
+
+        return [
+            'period' => [
+                'from' => $dateFrom->toDateString(),
+                'to' => $dateTo->toDateString(),
+                'date_from' => $dateFrom->toDateString(),
+                'date_to' => $dateTo->toDateString(),
+                'days' => $days,
+            ],
+            'materials' => $materials,
+            'assets' => $legacyAssets,
+            'summary' => [
+                'total_materials' => count($materials),
+                'total_assets_analyzed' => count($legacyAssets),
+                'average_turnover_ratio' => count($materials) > 0
+                    ? round((float) collect($materials)->avg('turnover_ratio'), 2)
+                    : 0.0,
+                'average_turnover_rate' => count($legacyAssets) > 0
+                    ? round((float) collect($legacyAssets)->avg('turnover_rate'), 2)
+                    : 0.0,
+                'fast_moving' => collect($materials)->where('category', 'fast_moving')->count(),
+                'medium_moving' => collect($materials)->where('category', 'medium_moving')->count(),
+                'slow_moving' => collect($materials)->where('category', 'slow_moving')->count(),
+                'fast_moving_count' => collect($legacyAssets)->where('category', 'A')->count(),
+                'slow_moving_count' => collect($legacyAssets)->where('category', 'C')->count(),
+            ],
+        ];
+    }
+
     /**
      * Получить прогноз потребности в материалах
      */

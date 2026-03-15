@@ -104,12 +104,14 @@ class WarehouseController extends Controller
         }
     }
 
-    public function show(Request $request, int $id): JsonResponse
+    public function show(Request $request, string|int $id): JsonResponse
     {
         $organizationId = (int) $request->user()->current_organization_id;
+        $warehouseId = is_int($id) ? $id : (ctype_digit($id) ? (int) $id : null);
 
         try {
-            $warehouse = $this->findWarehouse($organizationId, $id, ['balances.material']);
+            $warehouseId = $this->normalizeWarehouseId($id);
+            $warehouse = $this->findWarehouse($organizationId, $warehouseId, ['balances.material']);
 
             return AdminResponse::success($warehouse);
         } catch (ModelNotFoundException) {
@@ -118,7 +120,7 @@ class WarehouseController extends Controller
             Log::error('WarehouseController::show error', [
                 'organization_id' => $organizationId,
                 'user_id' => $request->user()?->id,
-                'warehouse_id' => $id,
+                'warehouse_id' => $warehouseId,
                 'error' => $exception->getMessage(),
             ]);
 
@@ -126,11 +128,13 @@ class WarehouseController extends Controller
         }
     }
 
-    public function update(Request $request, int $id): JsonResponse
+    public function update(Request $request, string|int $id): JsonResponse
     {
         $organizationId = (int) $request->user()->current_organization_id;
+        $warehouseId = is_int($id) ? $id : (ctype_digit($id) ? (int) $id : null);
 
         try {
+            $warehouseId = $this->normalizeWarehouseId($id);
             $validated = $request->validate([
                 'name' => 'sometimes|string|max:255',
                 'code' => [
@@ -139,7 +143,7 @@ class WarehouseController extends Controller
                     'max:50',
                     Rule::unique('organization_warehouses', 'code')
                         ->where('organization_id', $organizationId)
-                        ->ignore($id),
+                        ->ignore($warehouseId),
                 ],
                 'warehouse_type' => 'sometimes|in:central,project,external',
                 'description' => 'nullable|string',
@@ -153,7 +157,7 @@ class WarehouseController extends Controller
                 'storage_conditions' => 'nullable|array',
             ]);
 
-            $warehouse = $this->findWarehouse($organizationId, $id);
+            $warehouse = $this->findWarehouse($organizationId, $warehouseId);
             $warehouse->update($validated);
 
             return AdminResponse::success(
@@ -166,7 +170,7 @@ class WarehouseController extends Controller
             Log::error('WarehouseController::update error', [
                 'organization_id' => $organizationId,
                 'user_id' => $request->user()?->id,
-                'warehouse_id' => $id,
+                'warehouse_id' => $warehouseId,
                 'payload' => $request->except(['settings', 'storage_conditions']),
                 'error' => $exception->getMessage(),
             ]);
@@ -175,12 +179,14 @@ class WarehouseController extends Controller
         }
     }
 
-    public function destroy(Request $request, int $id): JsonResponse
+    public function destroy(Request $request, string|int $id): JsonResponse
     {
         $organizationId = (int) $request->user()->current_organization_id;
+        $warehouseId = is_int($id) ? $id : (ctype_digit($id) ? (int) $id : null);
 
         try {
-            $warehouse = $this->findWarehouse($organizationId, $id);
+            $warehouseId = $this->normalizeWarehouseId($id);
+            $warehouse = $this->findWarehouse($organizationId, $warehouseId);
             $warehouse->delete();
 
             return AdminResponse::success(null, trans_message('basic_warehouse.warehouse.deleted'));
@@ -190,7 +196,7 @@ class WarehouseController extends Controller
             Log::error('WarehouseController::destroy error', [
                 'organization_id' => $organizationId,
                 'user_id' => $request->user()?->id,
-                'warehouse_id' => $id,
+                'warehouse_id' => $warehouseId,
                 'error' => $exception->getMessage(),
             ]);
 
@@ -198,15 +204,17 @@ class WarehouseController extends Controller
         }
     }
 
-    public function balances(Request $request, int $id): JsonResponse
+    public function balances(Request $request, string|int $id): JsonResponse
     {
         $organizationId = (int) $request->user()->current_organization_id;
+        $warehouseId = is_int($id) ? $id : (ctype_digit($id) ? (int) $id : null);
 
         try {
-            $this->findWarehouse($organizationId, $id);
+            $warehouseId = $this->normalizeWarehouseId($id);
+            $this->findWarehouse($organizationId, $warehouseId);
 
             $filters = [
-                'warehouse_id' => $id,
+                'warehouse_id' => $warehouseId,
                 'asset_type' => $request->input('asset_type'),
                 'low_stock' => $request->boolean('low_stock'),
                 'project_id' => $request->input('project_id'),
@@ -222,7 +230,7 @@ class WarehouseController extends Controller
             Log::error('WarehouseController::balances error', [
                 'organization_id' => $organizationId,
                 'user_id' => $request->user()?->id,
-                'warehouse_id' => $id,
+                'warehouse_id' => $warehouseId,
                 'filters' => $request->only(['asset_type', 'low_stock', 'project_id', 'location_code']),
                 'error' => $exception->getMessage(),
             ]);
@@ -231,15 +239,17 @@ class WarehouseController extends Controller
         }
     }
 
-    public function movements(Request $request, int $id): JsonResponse
+    public function movements(Request $request, string|int $id): JsonResponse
     {
         $organizationId = (int) $request->user()->current_organization_id;
+        $warehouseId = is_int($id) ? $id : (ctype_digit($id) ? (int) $id : null);
 
         try {
-            $this->findWarehouse($organizationId, $id);
+            $warehouseId = $this->normalizeWarehouseId($id);
+            $this->findWarehouse($organizationId, $warehouseId);
 
             $filters = [
-                'warehouse_id' => $id,
+                'warehouse_id' => $warehouseId,
                 'movement_type' => $request->input('movement_type'),
                 'date_from' => $request->input('date_from'),
                 'date_to' => $request->input('date_to'),
@@ -254,7 +264,7 @@ class WarehouseController extends Controller
             Log::error('WarehouseController::movements error', [
                 'organization_id' => $organizationId,
                 'user_id' => $request->user()?->id,
-                'warehouse_id' => $id,
+                'warehouse_id' => $warehouseId,
                 'filters' => $request->only(['movement_type', 'date_from', 'date_to']),
                 'error' => $exception->getMessage(),
             ]);
@@ -269,5 +279,18 @@ class WarehouseController extends Controller
             ->with($relations)
             ->where('organization_id', $organizationId)
             ->findOrFail($warehouseId);
+    }
+
+    private function normalizeWarehouseId(string|int $id): int
+    {
+        if (is_int($id)) {
+            return $id;
+        }
+
+        if (ctype_digit($id)) {
+            return (int) $id;
+        }
+
+        throw (new ModelNotFoundException())->setModel(OrganizationWarehouse::class, [$id]);
     }
 }

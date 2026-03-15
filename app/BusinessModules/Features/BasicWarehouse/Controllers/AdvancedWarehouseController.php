@@ -32,7 +32,7 @@ class AdvancedWarehouseController extends Controller
         $organizationId = (int) $request->user()->current_organization_id;
 
         try {
-            $analytics = $this->warehouseService->getTurnoverAnalytics($organizationId, $request->validated());
+            $analytics = $this->warehouseService->getTurnoverAnalyticsReport($organizationId, $request->validated());
 
             return AdminResponse::success($analytics);
         } catch (\Throwable $exception) {
