@@ -37,7 +37,7 @@ class VideoCameraController extends Controller
                 'message' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error(trans_message('video_monitoring.load_error'), 500);
+            return AdminResponse::error(trans_message('video_monitoring.load_error', [], 'ru'), 500);
         }
     }
 
@@ -46,7 +46,7 @@ class VideoCameraController extends Controller
         try {
             $camera = $this->service->create($project, $request->validated(), $request->user());
 
-            return AdminResponse::success($camera, trans_message('video_monitoring.created'), 201);
+            return AdminResponse::success($camera, trans_message('video_monitoring.created', [], 'ru'), 201);
         } catch (Throwable $exception) {
             Log::error('Error in VideoCameraController@store', [
                 'project_id' => $project->id,
@@ -63,7 +63,7 @@ class VideoCameraController extends Controller
         try {
             $updatedCamera = $this->service->update($project, $camera, $request->validated(), $request->user());
 
-            return AdminResponse::success($updatedCamera, trans_message('video_monitoring.updated'));
+            return AdminResponse::success($updatedCamera, trans_message('video_monitoring.updated', [], 'ru'));
         } catch (Throwable $exception) {
             Log::error('Error in VideoCameraController@update', [
                 'project_id' => $project->id,
@@ -81,7 +81,7 @@ class VideoCameraController extends Controller
         try {
             $this->service->delete($project, $camera, $request->user());
 
-            return AdminResponse::success(null, trans_message('video_monitoring.deleted'));
+            return AdminResponse::success(null, trans_message('video_monitoring.deleted', [], 'ru'));
         } catch (Throwable $exception) {
             Log::error('Error in VideoCameraController@destroy', [
                 'project_id' => $project->id,
