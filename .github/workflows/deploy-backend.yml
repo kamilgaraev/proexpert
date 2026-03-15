@@ -140,10 +140,15 @@ jobs:
 
             echo "Refreshing Laravel caches..."
             docker compose exec -T api php artisan optimize:clear
-            docker compose exec -T api php artisan optimize
 
             echo "Running production-safe migrations..."
             docker compose exec -T api php artisan migrate:safe --force
+
+            echo "Scanning and registering business modules..."
+            docker compose exec -T api php artisan modules:scan --clear-cache
+
+            echo "Rebuilding Laravel caches..."
+            docker compose exec -T api php artisan optimize
 
             echo "Reloading Octane workers..."
             docker compose exec -T api php artisan octane:reload
