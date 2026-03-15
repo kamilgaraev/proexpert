@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\BasicWarehouse\Models;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
@@ -34,6 +36,10 @@ class WarehouseZone extends Model
         'max_weight' => 'decimal:2',
         'storage_conditions' => 'array',
         'is_active' => 'boolean',
+    ];
+
+    protected $appends = [
+        'full_address',
     ];
 
     // Типы зон
