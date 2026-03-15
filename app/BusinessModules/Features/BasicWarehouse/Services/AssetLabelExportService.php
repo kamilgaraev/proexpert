@@ -22,7 +22,7 @@ class AssetLabelExportService
 
     public function export(int $organizationId, array $filters = []): StreamedResponse
     {
-        $layout = (int) ($filters['layout'] ?? 6);
+        $layout = (int) ($filters['layout'] ?? 8);
         $assets = $this->getAssetsForExport($organizationId, $filters);
 
         if ($assets->isEmpty()) {
@@ -167,25 +167,69 @@ class AssetLabelExportService
             return [
                 'itemsPerPage' => 4,
                 'columns' => 2,
-                'labelHeight' => '134mm',
-                'labelPadding' => '9mm',
-                'qrSize' => '42mm',
+                'pageMargin' => '6mm',
+                'gridGapX' => '3mm',
+                'gridGapY' => '3mm',
+                'labelHeight' => '136mm',
+                'labelPadding' => '7mm',
+                'bottomPadding' => '13mm',
+                'qrSize' => '40mm',
                 'nameSize' => '13px',
                 'metaSize' => '10px',
                 'codeSize' => '9px',
+                'titleMinHeight' => '12mm',
+                'titleMaxHeight' => '18mm',
+                'qrMarginTop' => '4mm',
+                'qrMarginBottom' => '3mm',
+                'hintSize' => '8px',
+                'footerNote' => 'Формат 2x2, крупная метка для печати на A4.',
                 'cutNote' => 'Формат 2x2, крупная метка для печати на A4.',
             ];
         }
 
+        if ($layout === 6) {
+            return [
+                'itemsPerPage' => 6,
+                'columns' => 2,
+                'pageMargin' => '5mm',
+                'gridGapX' => '2.5mm',
+                'gridGapY' => '2.5mm',
+                'labelHeight' => '84mm',
+                'labelPadding' => '5.5mm',
+                'bottomPadding' => '10.5mm',
+                'qrSize' => '29mm',
+                'nameSize' => '10px',
+                'metaSize' => '8px',
+                'codeSize' => '7.5px',
+                'titleMinHeight' => '9mm',
+                'titleMaxHeight' => '14mm',
+                'qrMarginTop' => '3mm',
+                'qrMarginBottom' => '2.5mm',
+                'hintSize' => '7px',
+                'footerNote' => 'Формат 2x3, сбалансирован для печати и нарезки на складе.',
+                'cutNote' => 'Формат 2x3, сбалансирован для печати и нарезки на складе.',
+            ];
+        }
+
         return [
-            'itemsPerPage' => 6,
+            'itemsPerPage' => 8,
             'columns' => 2,
-            'labelHeight' => '88mm',
-            'labelPadding' => '7mm',
-            'qrSize' => '34mm',
-            'nameSize' => '11px',
-            'metaSize' => '9px',
-            'codeSize' => '8px',
+            'pageMargin' => '5mm',
+            'gridGapX' => '2.5mm',
+            'gridGapY' => '2mm',
+            'labelHeight' => '61mm',
+            'labelPadding' => '4mm',
+            'bottomPadding' => '8.5mm',
+            'qrSize' => '23mm',
+            'nameSize' => '9px',
+            'metaSize' => '7.5px',
+            'codeSize' => '7px',
+            'titleMinHeight' => '7mm',
+            'titleMaxHeight' => '11mm',
+            'qrMarginTop' => '2.5mm',
+            'qrMarginBottom' => '2mm',
+            'hintSize' => '6.5px',
+            'footerNote' => 'Формат 2x4, плотный лист на 8 меток A4.',
             'cutNote' => 'Формат 2x3, оптимален для печати и нарезки на складе.',
         ];
     }

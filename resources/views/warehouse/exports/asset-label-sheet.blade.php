@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <style>
         @page {
-            margin: 8mm;
+            margin: {{ $layout['pageMargin'] ?? '6mm' }};
         }
 
         * {
@@ -29,7 +29,7 @@
         .page-grid {
             width: 100%;
             border-collapse: separate;
-            border-spacing: 4mm;
+            border-spacing: {{ $layout['gridGapX'] ?? '3mm' }} {{ $layout['gridGapY'] ?? '3mm' }};
             table-layout: fixed;
         }
 
@@ -43,21 +43,26 @@
             border: 1px dashed #607d8b;
             border-radius: 3mm;
             height: {{ $layout['labelHeight'] }};
-            padding: {{ $layout['labelPadding'] }};
+            padding: {{ $layout['labelPadding'] }} {{ $layout['labelPadding'] }} {{ $layout['bottomPadding'] ?? $layout['labelPadding'] }};
             position: relative;
+            overflow: hidden;
         }
 
         .label-title {
             font-size: {{ $layout['nameSize'] }};
             font-weight: 700;
-            line-height: 1.35;
-            min-height: 11mm;
+            line-height: 1.3;
+            min-height: {{ $layout['titleMinHeight'] ?? '9mm' }};
+            max-height: {{ $layout['titleMaxHeight'] ?? ($layout['titleMinHeight'] ?? '9mm') }};
+            overflow: hidden;
         }
 
         .label-subtitle {
-            margin-top: 2mm;
+            margin-top: 1.6mm;
             font-size: {{ $layout['metaSize'] }};
             color: #455a64;
+            line-height: 1.25;
+            word-break: break-word;
         }
 
         .label-subtitle strong {
@@ -66,7 +71,7 @@
 
         .label-qr {
             text-align: center;
-            margin: 5mm 0 4mm;
+            margin: {{ $layout['qrMarginTop'] ?? '3mm' }} 0 {{ $layout['qrMarginBottom'] ?? '2.5mm' }};
         }
 
         .label-qr img {
@@ -86,8 +91,8 @@
             position: absolute;
             left: {{ $layout['labelPadding'] }};
             right: {{ $layout['labelPadding'] }};
-            bottom: 5mm;
-            font-size: 8px;
+            bottom: 3mm;
+            font-size: {{ $layout['hintSize'] ?? '7px' }};
             color: #607d8b;
             text-align: center;
         }
@@ -124,7 +129,7 @@
                                         <img src="{{ $label['qr_image'] }}" alt="QR {{ $label['name'] }}">
                                     </div>
                                     <div class="label-code">{{ $label['label_code'] }}</div>
-                                    <div class="label-hint">{{ $layout['cutNote'] }}</div>
+                                    <div class="label-hint">{{ $layout['footerNote'] ?? $layout['cutNote'] }}</div>
                                 </div>
                             @else
                                 <div class="empty-card"></div>
