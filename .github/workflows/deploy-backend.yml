@@ -101,6 +101,26 @@ jobs:
 
             echo "Pulling backend services: ${BACKEND_SERVICES}"
             docker compose pull ${BACKEND_SERVICES}
+
+            IMAGE_REF="ghcr.io/${{ github.repository }}/prohelper:${SHORT_RELEASE}"
+            LARAVEL_UID="$(docker run --rm --entrypoint sh "${IMAGE_REF}" -c 'id -u www-data')"
+            LARAVEL_GID="$(docker run --rm --entrypoint sh "${IMAGE_REF}" -c 'id -g www-data')"
+
+            install -d -m 775 bootstrap/cache
+            install -d -m 775 \
+              storage/logs \
+              storage/logs/access \
+              storage/logs/technical \
+              storage/logs/business \
+              storage/logs/security \
+              storage/logs/api \
+              storage/logs/telemetry \
+              storage/logs/audit
+            touch storage/logs/laravel.log
+            chown -R "${LARAVEL_UID}:${LARAVEL_GID}" storage bootstrap/cache
+            chmod -R ug+rwX storage bootstrap/cache
+            chmod 664 storage/logs/laravel.log
+
             docker compose up -d ${BACKEND_SERVICES}
 
             echo "Waiting for API health endpoint..."
