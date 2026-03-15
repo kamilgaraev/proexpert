@@ -174,6 +174,9 @@ class VideoMonitoringModule implements ModuleInterface, BillableInterface, Confi
             'max_live_viewers' => 1,
             'default_transport' => 'tcp',
             'allow_custom_playback_url' => true,
+            'preferred_live_protocol' => 'webrtc',
+            'autofill_playback_url' => false,
+            'media_server_driver' => 'mediamtx',
         ];
     }
 
@@ -192,6 +195,18 @@ class VideoMonitoringModule implements ModuleInterface, BillableInterface, Confi
         }
 
         if (isset($settings['allow_custom_playback_url']) && !is_bool($settings['allow_custom_playback_url'])) {
+            return false;
+        }
+
+        if (isset($settings['autofill_playback_url']) && !is_bool($settings['autofill_playback_url'])) {
+            return false;
+        }
+
+        if (isset($settings['preferred_live_protocol']) && !in_array($settings['preferred_live_protocol'], ['webrtc', 'hls'], true)) {
+            return false;
+        }
+
+        if (isset($settings['media_server_driver']) && !in_array($settings['media_server_driver'], ['none', 'mediamtx'], true)) {
             return false;
         }
 

@@ -14,12 +14,14 @@ use Carbon\Carbon;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 
 class VideoCameraService
 {
     public function __construct(
-        private readonly AccessController $accessController
+        private readonly AccessController $accessController,
+        private readonly MediaServerManager $mediaServerManager
     ) {
     }
 
@@ -84,6 +86,7 @@ class VideoCameraService
             $this->registerEvent($camera, 'camera.created', 'info', trans_message('video_monitoring.created', [], 'ru'));
             $probe = $this->probeCameraConnection($this->prepareProbePayloadFromCamera($camera));
             $this->syncCameraStatus($camera, $probe);
+            $this->syncMediaServerState($camera);
 
             return $this->transformCamera($camera->fresh());
         });
@@ -124,6 +127,7 @@ class VideoCameraService
             $this->registerEvent($camera, 'camera.updated', 'info', trans_message('video_monitoring.updated', [], 'ru'));
             $probe = $this->probeCameraConnection($this->prepareProbePayloadFromCamera($camera));
             $this->syncCameraStatus($camera, $probe);
+            $this->syncMediaServerState($camera);
 
             return $this->transformCamera($camera->fresh());
         });
@@ -135,6 +139,7 @@ class VideoCameraService
         $this->ensureManagePermission($project, $user, 'video-monitoring.delete');
 
         DB::transaction(function () use ($camera) {
+            $this->removeMediaServerState($camera);
             $this->registerEvent($camera, 'camera.deleted', 'warning', trans_message('video_monitoring.deleted', [], 'ru'));
             $camera->delete();
         });
@@ -169,19 +174,6 @@ class VideoCameraService
             'transport_protocol' => Arr::get($payload, 'transport_protocol', 'tcp'),
             'is_enabled' => Arr::get($payload, 'is_enabled', true),
             'settings' => Arr::get($payload, 'settings', []),
-        ];
-    }
-
-    private function prepareProbePayload(array $payload): array
-    {
-        return [
-            'source_url' => Arr::get($payload, 'source_url'),
-            'host' => Arr::get($payload, 'host'),
-            'port' => Arr::get($payload, 'port'),
-            'stream_path' => Arr::get($payload, 'stream_path'),
-            'transport_protocol' => Arr::get($payload, 'transport_protocol'),
-            'source_type' => Arr::get($payload, 'source_type'),
-            'playback_url' => Arr::get($payload, 'playback_url'),
         ];
     }
 
@@ -294,6 +286,100 @@ class VideoCameraService
         );
     }
 
+    private function syncMediaServerState(VideoCamera $camera): void
+    {
+        try {
+            $result = $this->mediaServerManager->sync($camera);
+            $settings = $camera->settings ?? [];
+            $settings['media_server'] = [
+                'driver' => $result['driver'] ?? $this->mediaServerManager->driver(),
+                'configured' => (bool) ($result['configured'] ?? false),
+                'managed' => (bool) ($result['managed'] ?? false),
+                'stream_name' => $result['stream_name'] ?? null,
+                'webrtc_url' => $result['webrtc_url'] ?? null,
+                'hls_url' => $result['hls_url'] ?? null,
+                'playback_url' => $result['playback_url'] ?? null,
+                'message' => $result['message'] ?? null,
+                'synced_at' => $result['synced_at'] ?? now()->toIso8601String(),
+                'metadata' => $result['metadata'] ?? [],
+            ];
+
+            $camera->settings = $settings;
+
+            if (
+                blank($camera->playback_url)
+                && (bool) config('services.video_monitoring.autofill_playback_url', false)
+                && filled($result['playback_url'] ?? null)
+            ) {
+                $camera->playback_url = $result['playback_url'];
+            }
+
+            $camera->save();
+
+            if (($result['configured'] ?? false) === true && ($result['managed'] ?? false) === true) {
+                $this->registerEvent(
+                    $camera,
+                    'camera.media_server.synced',
+                    'info',
+                    (string) ($result['message'] ?? trans_message('video_monitoring.media_server.synced', [], 'ru'))
+                );
+            }
+        } catch (\Throwable $exception) {
+            Log::error('Error syncing media server for video camera', [
+                'camera_id' => $camera->id,
+                'project_id' => $camera->project_id,
+                'organization_id' => $camera->organization_id,
+                'message' => $exception->getMessage(),
+            ]);
+
+            $settings = $camera->settings ?? [];
+            $settings['media_server'] = [
+                'driver' => $this->mediaServerManager->driver(),
+                'configured' => $this->mediaServerManager->isConfigured(),
+                'managed' => false,
+                'stream_name' => Arr::get($settings, 'media_server.stream_name'),
+                'webrtc_url' => Arr::get($settings, 'media_server.webrtc_url'),
+                'hls_url' => Arr::get($settings, 'media_server.hls_url'),
+                'playback_url' => Arr::get($settings, 'media_server.playback_url'),
+                'message' => trans_message('video_monitoring.media_server.sync_failed', [], 'ru'),
+                'last_error' => $exception->getMessage(),
+                'synced_at' => now()->toIso8601String(),
+                'metadata' => Arr::get($settings, 'media_server.metadata', []),
+            ];
+
+            $camera->settings = $settings;
+            $camera->save();
+
+            $this->registerEvent(
+                $camera,
+                'camera.media_server.sync_failed',
+                'warning',
+                trans_message('video_monitoring.media_server.sync_failed', [], 'ru')
+            );
+        }
+    }
+
+    private function removeMediaServerState(VideoCamera $camera): void
+    {
+        try {
+            $this->mediaServerManager->remove($camera);
+        } catch (\Throwable $exception) {
+            Log::error('Error removing media server path for video camera', [
+                'camera_id' => $camera->id,
+                'project_id' => $camera->project_id,
+                'organization_id' => $camera->organization_id,
+                'message' => $exception->getMessage(),
+            ]);
+
+            $this->registerEvent(
+                $camera,
+                'camera.media_server.remove_failed',
+                'warning',
+                trans_message('video_monitoring.media_server.remove_failed', [], 'ru')
+            );
+        }
+    }
+
     private function registerEvent(VideoCamera $camera, string $eventType, string $severity, string $message): void
     {
         VideoCameraEvent::create([
@@ -348,6 +434,8 @@ class VideoCameraService
 
     private function transformCamera(VideoCamera $camera): array
     {
+        $mediaServer = Arr::get($camera->settings ?? [], 'media_server', []);
+
         return [
             'id' => $camera->id,
             'name' => $camera->name,
@@ -370,6 +458,19 @@ class VideoCameraService
             'created_at' => optional($camera->created_at)->toIso8601String(),
             'updated_at' => optional($camera->updated_at)->toIso8601String(),
             'settings' => $camera->settings ?? [],
+            'live_urls' => [
+                'webrtc' => Arr::get($mediaServer, 'webrtc_url'),
+                'hls' => Arr::get($mediaServer, 'hls_url'),
+                'preferred' => Arr::get($mediaServer, 'playback_url', $camera->playback_url),
+            ],
+            'media_server' => [
+                'driver' => Arr::get($mediaServer, 'driver', $this->mediaServerManager->driver()),
+                'configured' => (bool) Arr::get($mediaServer, 'configured', $this->mediaServerManager->isConfigured()),
+                'managed' => (bool) Arr::get($mediaServer, 'managed', false),
+                'stream_name' => Arr::get($mediaServer, 'stream_name'),
+                'message' => $this->resolveDisplayMessage(Arr::get($mediaServer, 'message')),
+                'synced_at' => Arr::get($mediaServer, 'synced_at'),
+            ],
         ];
     }
 
