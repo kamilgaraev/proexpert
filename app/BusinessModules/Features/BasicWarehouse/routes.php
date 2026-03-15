@@ -5,8 +5,13 @@ use App\BusinessModules\Features\BasicWarehouse\Controllers\InventoryController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\ProjectAllocationController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehousePhotoController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseController;
+use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseIdentifierController;
+use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseLogisticUnitController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseOperationsController;
+use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseScanEventController;
+use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseTaskController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\AdvancedWarehouseController;
+use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseStorageCellController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseZoneController;
 use Illuminate\Support\Facades\Route;
 
@@ -95,12 +100,60 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
                 Route::put('/{id}', [WarehouseZoneController::class, 'update']);
                 Route::delete('/{id}', [WarehouseZoneController::class, 'destroy']);
             });
+
+            Route::prefix('{warehouseId}/cells')->name('cells.')->group(function () {
+                Route::get('/', [WarehouseStorageCellController::class, 'index']);
+                Route::post('/', [WarehouseStorageCellController::class, 'store']);
+                Route::get('/{id}', [WarehouseStorageCellController::class, 'show']);
+                Route::put('/{id}', [WarehouseStorageCellController::class, 'update']);
+                Route::delete('/{id}', [WarehouseStorageCellController::class, 'destroy']);
+            });
+
+            Route::prefix('{warehouseId}/logistic-units')->name('logistic-units.')->group(function () {
+                Route::get('/', [WarehouseLogisticUnitController::class, 'index']);
+                Route::post('/', [WarehouseLogisticUnitController::class, 'store']);
+                Route::get('/{id}', [WarehouseLogisticUnitController::class, 'show']);
+                Route::put('/{id}', [WarehouseLogisticUnitController::class, 'update']);
+                Route::delete('/{id}', [WarehouseLogisticUnitController::class, 'destroy']);
+            });
+
+            Route::prefix('{warehouseId}/tasks')->name('tasks.')->group(function () {
+                Route::get('/', [WarehouseTaskController::class, 'index']);
+                Route::post('/', [WarehouseTaskController::class, 'store']);
+                Route::get('/{id}', [WarehouseTaskController::class, 'show']);
+                Route::put('/{id}', [WarehouseTaskController::class, 'update']);
+                Route::post('/{id}/status', [WarehouseTaskController::class, 'updateStatus']);
+                Route::delete('/{id}', [WarehouseTaskController::class, 'destroy']);
+            });
+        });
+
+        Route::prefix('warehouse-identifiers')->name('warehouse-identifiers.')->group(function () {
+            Route::post('/resolve', [WarehouseIdentifierController::class, 'resolve'])
+                ->name('resolve');
+            Route::get('/', [WarehouseIdentifierController::class, 'index'])
+                ->name('index');
+            Route::post('/', [WarehouseIdentifierController::class, 'store'])
+                ->name('store');
+            Route::get('/{id}', [WarehouseIdentifierController::class, 'show'])
+                ->name('show');
+            Route::put('/{id}', [WarehouseIdentifierController::class, 'update'])
+                ->name('update');
+            Route::delete('/{id}', [WarehouseIdentifierController::class, 'destroy'])
+                ->name('destroy');
+        });
+
+        Route::prefix('warehouse-scan-events')->name('warehouse-scan-events.')->group(function () {
+            Route::get('/', [WarehouseScanEventController::class, 'index'])
+                ->name('index');
+            Route::post('/', [WarehouseScanEventController::class, 'store'])
+                ->name('store');
         });
 
         // Управление активами (по типам: материалы, расходники, оборудование и т.д.)
         Route::prefix('assets')->name('assets.')->group(function () {
             Route::get('/types', [AssetController::class, 'types'])->name('types');
             Route::get('/statistics', [AssetController::class, 'statistics'])->name('statistics');
+            Route::post('/export-labels-pdf', [AssetController::class, 'exportLabelsPdf'])->name('export-labels-pdf');
             Route::get('/', [AssetController::class, 'index'])->name('index');
             Route::post('/', [AssetController::class, 'store'])->name('store');
             Route::get('/{id}', [AssetController::class, 'show'])->name('show');
@@ -137,6 +190,10 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
                 ->name('auto-reorder.create-rule');
             Route::get('/auto-reorder/rules', [AdvancedWarehouseController::class, 'autoReorderRules'])
                 ->name('auto-reorder.rules');
+            Route::put('/auto-reorder/rules/{ruleId}', [AdvancedWarehouseController::class, 'updateAutoReorderRule'])
+                ->name('auto-reorder.update-rule');
+            Route::delete('/auto-reorder/rules/{ruleId}', [AdvancedWarehouseController::class, 'deleteAutoReorderRule'])
+                ->name('auto-reorder.delete-rule');
             Route::post('/auto-reorder/check', [AdvancedWarehouseController::class, 'checkAutoReorder'])
                 ->name('auto-reorder.check');
         });

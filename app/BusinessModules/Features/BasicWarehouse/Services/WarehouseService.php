@@ -482,6 +482,10 @@ class WarehouseService implements WarehouseReportDataProvider
             });
         }
 
+        if (!empty($filters['location_code'])) {
+            $query->where('location_code', $filters['location_code']);
+        }
+
         if (isset($filters['low_stock']) && $filters['low_stock']) {
             $query->lowStock();
         }
@@ -558,6 +562,10 @@ class WarehouseService implements WarehouseReportDataProvider
             $query->whereHas('material', function ($q) use ($filters) {
                 $q->where('category', $filters['category']);
             });
+        }
+
+        if (!empty($filters['location_code'])) {
+            $query->where('location_code', $filters['location_code']);
         }
 
         if (isset($filters['low_stock']) && $filters['low_stock']) {
@@ -1238,6 +1246,100 @@ class WarehouseService implements WarehouseReportDataProvider
             
             return true;
             
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    public function releaseReservedAssets(
+        int $organizationId,
+        int $warehouseId,
+        int $materialId,
+        float $quantity,
+        array $metadata = []
+    ): array {
+        DB::beginTransaction();
+
+        try {
+            $activeReservations = AssetReservation::where('organization_id', $organizationId)
+                ->where('warehouse_id', $warehouseId)
+                ->where('material_id', $materialId)
+                ->where('status', 'active')
+                ->orderBy('reserved_at')
+                ->lockForUpdate()
+                ->get();
+
+            $totalReserved = (float) $activeReservations->sum('quantity');
+
+            if ($totalReserved < $quantity) {
+                throw new \InvalidArgumentException(
+                    "Недостаточно зарезервированных активов. Зарезервировано: {$totalReserved}, запрошено: {$quantity}"
+                );
+            }
+
+            $this->unreserveQuantity($organizationId, $warehouseId, $materialId, $quantity);
+
+            $remainingToRelease = $quantity;
+            $releasedReservationIds = [];
+
+            foreach ($activeReservations as $reservation) {
+                if ($remainingToRelease <= 0) {
+                    break;
+                }
+
+                $reservationQuantity = (float) $reservation->quantity;
+                $takeFromReservation = min($reservationQuantity, $remainingToRelease);
+                $remainingAfterRelease = $reservationQuantity - $takeFromReservation;
+                $reservationMetadata = is_array($reservation->metadata) ? $reservation->metadata : [];
+
+                $updatePayload = [
+                    'quantity' => $remainingAfterRelease,
+                    'metadata' => array_merge($reservationMetadata, [
+                        'partial_release_history' => array_merge(
+                            $reservationMetadata['partial_release_history'] ?? [],
+                            [[
+                                'released_quantity' => $takeFromReservation,
+                                'released_at' => now()->toDateTimeString(),
+                                'reason' => $metadata['reason'] ?? null,
+                                'released_by' => $metadata['user_id'] ?? null,
+                            ]]
+                        ),
+                    ]),
+                ];
+
+                if ($remainingAfterRelease <= 0.000001) {
+                    $updatePayload['quantity'] = 0;
+                    $updatePayload['status'] = 'cancelled';
+                    $updatePayload['cancelled_at'] = now();
+                    $releasedReservationIds[] = $reservation->id;
+                }
+
+                $reservation->update($updatePayload);
+
+                $remainingToRelease -= $takeFromReservation;
+            }
+
+            $balance = $this->getAssetBalance($organizationId, $warehouseId, $materialId);
+
+            $this->logging->business('warehouse.asset.unreserved.manual', [
+                'organization_id' => $organizationId,
+                'warehouse_id' => $warehouseId,
+                'material_id' => $materialId,
+                'quantity' => $quantity,
+                'released_reservation_ids' => $releasedReservationIds,
+                'user_id' => $metadata['user_id'] ?? null,
+            ]);
+
+            DB::commit();
+
+            return [
+                'released' => true,
+                'quantity' => $quantity,
+                'released_reservation_ids' => $releasedReservationIds,
+                'remaining_reserved' => $balance ? (float) $balance->reserved_quantity : 0,
+                'remaining_available' => $balance ? (float) $balance->available_quantity : 0,
+            ];
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;

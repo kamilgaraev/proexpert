@@ -302,9 +302,9 @@ class WarehouseOperationsController extends Controller
             );
 
             return AdminResponse::success([
-                'movements' => WarehouseMovementResource::collection($result['movements']),
-                'total_quantity' => $result['total_quantity'],
-                'avg_price' => $result['avg_price'],
+                'movement' => new WarehouseMovementResource($result['movement']),
+                'write_off_details' => $result['write_off_details'],
+                'remaining_total_quantity' => $result['remaining_total_quantity'],
             ], __('warehouse_basic.write_off_success'));
 
         } catch (\Exception $e) {
@@ -384,7 +384,7 @@ class WarehouseOperationsController extends Controller
         $organizationId = $request->user()->current_organization_id;
         
         try {
-            $this->warehouseService->unreserveAssets(
+            $result = $this->warehouseService->releaseReservedAssets(
                 $organizationId,
                 $validated['warehouse_id'],
                 $validated['material_id'],
@@ -397,7 +397,7 @@ class WarehouseOperationsController extends Controller
                 ]
             );
 
-            return AdminResponse::success(null, __('warehouse_basic.unreserve_success'));
+            return AdminResponse::success($result, __('warehouse_basic.unreserve_success'));
             
         } catch (\Exception $e) {
             return AdminResponse::error(__('warehouse_basic.unreserve_error') . ': ' . $e->getMessage(), 500);
