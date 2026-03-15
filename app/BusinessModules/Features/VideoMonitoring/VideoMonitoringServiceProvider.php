@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\VideoMonitoring;
 
+use App\BusinessModules\Features\VideoMonitoring\Contracts\StreamProvisionerInterface;
+use App\BusinessModules\Features\VideoMonitoring\Services\MediaMtxStreamProvisioner;
+use App\BusinessModules\Features\VideoMonitoring\Services\MediaServerManager;
+use App\BusinessModules\Features\VideoMonitoring\Services\NullStreamProvisioner;
 use App\BusinessModules\Features\VideoMonitoring\Services\VideoCameraService;
 use Illuminate\Support\ServiceProvider;
 
@@ -12,6 +16,16 @@ class VideoMonitoringServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(VideoMonitoringModule::class);
+        $this->app->singleton(StreamProvisionerInterface::class, function () {
+            $config = (array) config('services.video_monitoring', []);
+            $driver = (string) ($config['driver'] ?? 'none');
+
+            return match ($driver) {
+                'mediamtx' => new MediaMtxStreamProvisioner($config),
+                default => new NullStreamProvisioner(),
+            };
+        });
+        $this->app->singleton(MediaServerManager::class);
         $this->app->singleton(VideoCameraService::class);
     }
 

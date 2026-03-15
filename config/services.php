@@ -53,4 +53,23 @@ return [
         'folder_id' => env('YANDEX_VISION_FOLDER_ID'),
     ],
 
+    'video_monitoring' => [
+        'driver' => env('VIDEO_MONITORING_MEDIA_DRIVER', 'none'),
+        'timeout' => (int) env('VIDEO_MONITORING_MEDIA_TIMEOUT', 5),
+        'verify_tls' => (bool) env('VIDEO_MONITORING_MEDIA_VERIFY_TLS', true),
+        'preferred_live_protocol' => env('VIDEO_MONITORING_PREFERRED_LIVE_PROTOCOL', 'webrtc'),
+        'autofill_playback_url' => (bool) env('VIDEO_MONITORING_AUTOFILL_PLAYBACK_URL', false),
+        'mediamtx' => [
+            'manage_paths' => (bool) env('VIDEO_MONITORING_MEDIAMTX_MANAGE_PATHS', false),
+            'api_base_url' => env('VIDEO_MONITORING_MEDIAMTX_API_BASE_URL'),
+            'api_token' => env('VIDEO_MONITORING_MEDIAMTX_API_TOKEN'),
+            'path_prefix' => env('VIDEO_MONITORING_MEDIAMTX_PATH_PREFIX', 'prohelper'),
+            'source_on_demand' => (bool) env('VIDEO_MONITORING_MEDIAMTX_SOURCE_ON_DEMAND', true),
+            'public_urls' => [
+                'webrtc' => env('VIDEO_MONITORING_MEDIAMTX_WEBRTC_URL'),
+                'hls' => env('VIDEO_MONITORING_MEDIAMTX_HLS_URL'),
+            ],
+        ],
+    ],
+
 ];
