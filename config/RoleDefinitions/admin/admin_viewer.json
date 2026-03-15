@@ -35,9 +35,9 @@
     "dashboard-widgets": ["dashboard.view"],
     "schedule-management": ["schedule.view"],
     "video-monitoring": [
-      "video_monitoring.view",
-      "video_monitoring.watch_live",
-      "video_monitoring.events.view"
+      "video-monitoring.view",
+      "video-monitoring.watch_live",
+      "video-monitoring.events.view"
     ],
     "budget-estimates": [
       "budget-estimates.view",
