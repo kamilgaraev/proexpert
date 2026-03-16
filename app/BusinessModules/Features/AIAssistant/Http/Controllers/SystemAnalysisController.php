@@ -127,6 +127,7 @@ class SystemAnalysisController extends Controller
         }
 
         $query = SystemAnalysisReport::forOrganization($organizationId)
+            ->completed()
             ->with(['project', 'createdBy'])
             ->latest();
 
@@ -140,7 +141,13 @@ class SystemAnalysisController extends Controller
         }
 
         if ($request->has('status')) {
-            $query->where('status', $request->status);
+            $status = (string) $request->status;
+
+            if (in_array($status, ['good', 'warning', 'critical'], true)) {
+                $query->where('overall_status', $status);
+            } else {
+                $query->where('status', $status);
+            }
         }
 
         // Пагинация
