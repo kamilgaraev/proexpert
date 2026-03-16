@@ -57,11 +57,11 @@ return Application::configure(basePath: dirname(__DIR__))
         // Порядок важен: сначала CORS, затем Correlation ID, в конце Prometheus
         // ============================================================
         
-        // 1. CORS - должен быть первым для обработки preflight запросов
-        $middleware->prepend(\App\Http\Middleware\CorsMiddleware::class);
-        
-        // 2. Correlation ID - генерируем уникальный ID для трекинга запроса
+        // 1. Correlation ID - генерируем уникальный ID для трекинга запроса
         $middleware->prepend(\App\Http\Middleware\CorrelationIdMiddleware::class);
+        
+        // 2. CORS - должен быть первым в реальной цепочке для обработки preflight запросов
+        $middleware->prepend(\App\Http\Middleware\CorsMiddleware::class);
         
         // 3. Prometheus - метрики в конце цепочки для корректного измерения времени
         $middleware->append(\App\Http\Middleware\PrometheusMiddleware::class);
