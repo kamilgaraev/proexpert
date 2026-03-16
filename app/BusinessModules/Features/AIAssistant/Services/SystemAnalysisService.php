@@ -20,6 +20,17 @@ use Illuminate\Support\Facades\DB;
 
 class SystemAnalysisService
 {
+    private const AVAILABLE_SECTIONS = [
+        'budget',
+        'schedule',
+        'materials',
+        'workers',
+        'contracts',
+        'risks',
+        'performance',
+        'recommendations',
+    ];
+
     protected AIAnalyzerService $aiAnalyzer;
     protected UsageTracker $usageTracker;
     protected int $cacheTtl;
@@ -57,13 +68,17 @@ class SystemAnalysisService
         }
 
         // Создаем запись отчета
+        $sections = $this->normalizeSectionsSelection(
+            $options['sections'] ?? config('ai-assistant.system_analysis.sections', [])
+        );
+
         $report = SystemAnalysisReport::create([
             'project_id' => $projectId,
             'organization_id' => $organizationId,
             'analysis_type' => 'single_project',
             'status' => 'processing',
             'created_by_user_id' => $user->id,
-            'sections' => $options['sections'] ?? config('ai-assistant.system_analysis.sections', []),
+            'sections' => $sections,
         ]);
 
         try {
@@ -71,7 +86,8 @@ class SystemAnalysisService
             $collectedData = $this->collectProjectData($projectId, $organizationId);
 
             // Анализируем через AI
-            $analyses = $this->performAIAnalysis($collectedData, $report->sections);
+            $analyses = $this->performAIAnalysis($collectedData, $sections);
+            $analyses = $this->postProcessAnalyses($collectedData, $analyses);
 
             // Рассчитываем общую оценку
             $overallScore = $this->calculateOverallScore($analyses);
@@ -336,6 +352,394 @@ class SystemAnalysisService
         return $analyses;
     }
 
+    private function normalizeSectionsSelection(array $sections): array
+    {
+        if ($sections === []) {
+            return array_fill_keys(self::AVAILABLE_SECTIONS, true);
+        }
+
+        if ($sections === [] || array_values($sections) !== $sections) {
+            $normalized = [];
+
+            foreach (self::AVAILABLE_SECTIONS as $section) {
+                $normalized[$section] = (bool) ($sections[$section] ?? true);
+            }
+
+            return $normalized;
+        }
+
+        $selected = array_fill_keys($sections, true);
+        $normalized = [];
+
+        foreach (self::AVAILABLE_SECTIONS as $section) {
+            $normalized[$section] = isset($selected[$section]);
+        }
+
+        return $normalized;
+    }
+
+    private function postProcessAnalyses(array $collectedData, array $analyses): array
+    {
+        foreach ($analyses as $sectionType => $analysis) {
+            $heuristics = $this->buildHeuristicSectionAnalysis($sectionType, $collectedData, $analyses);
+
+            $analyses[$sectionType] = [
+                ...$heuristics,
+                ...array_filter($analysis, static fn ($value) => $value !== null && $value !== ''),
+            ];
+
+            $analyses[$sectionType]['score'] = $this->normalizeScore($analyses[$sectionType]['score'] ?? $heuristics['score']);
+            $analyses[$sectionType]['status'] = $this->normalizeStatus(
+                $analyses[$sectionType]['status'] ?? $this->determineOverallStatus($analyses[$sectionType]['score'])
+            );
+
+            if (empty($analyses[$sectionType]['summary'])) {
+                $analyses[$sectionType]['summary'] = $heuristics['summary'];
+            }
+
+            if (empty($analyses[$sectionType]['analysis'])) {
+                $analyses[$sectionType]['analysis'] = $heuristics['analysis'];
+            }
+
+            if (empty($analyses[$sectionType]['recommendations'])) {
+                $analyses[$sectionType]['recommendations'] = $heuristics['recommendations'];
+            }
+        }
+
+        return $analyses;
+    }
+
+    private function buildHeuristicSectionAnalysis(string $sectionType, array $collectedData, array $analyses): array
+    {
+        return match ($sectionType) {
+            'budget' => $this->buildBudgetHeuristics($collectedData['budget'] ?? []),
+            'schedule' => $this->buildScheduleHeuristics($collectedData['schedule'] ?? []),
+            'materials' => $this->buildMaterialsHeuristics($collectedData['materials'] ?? []),
+            'workers' => $this->buildWorkersHeuristics($collectedData['workers'] ?? []),
+            'contracts' => $this->buildContractsHeuristics($collectedData['contracts'] ?? []),
+            'risks' => $this->buildRisksHeuristics($collectedData, $analyses),
+            'performance' => $this->buildPerformanceHeuristics($collectedData['kpi'] ?? []),
+            'recommendations' => $this->buildRecommendationsHeuristics($collectedData, $analyses),
+            default => [
+                'score' => 50,
+                'status' => 'warning',
+                'summary' => 'Раздел требует дополнительной оценки.',
+                'analysis' => 'Недостаточно структурированных данных для надежной интерпретации.',
+                'recommendations' => [],
+            ],
+        };
+    }
+
+    private function buildBudgetHeuristics(array $data): array
+    {
+        $spent = (float) ($data['percentage_spent'] ?? 0);
+        $completion = (float) ($data['completion_percentage'] ?? 0);
+        $gap = round($spent - $completion, 1);
+        $score = 100 - max(0, $gap * 1.5);
+
+        if ($spent > 100) {
+            $score -= 20;
+        }
+
+        $score = $this->normalizeScore($score);
+        $status = $this->determineOverallStatus($score);
+
+        return [
+            'score' => $score,
+            'status' => $status,
+            'summary' => $gap > 10
+                ? "Расходы опережают фактическое выполнение работ на {$gap}%."
+                : 'Расход бюджета близок к текущему прогрессу работ.',
+            'analysis' => sprintf(
+                'Освоение бюджета составляет %.1f%% при выполнении работ %.1f%%. Остаток бюджета: %.2f руб.',
+                $spent,
+                $completion,
+                (float) ($data['remaining_budget'] ?? 0)
+            ),
+            'recommendations' => [
+                [
+                    'priority' => $gap > 10 ? 'high' : 'medium',
+                    'action' => 'Проверить статьи затрат с максимальным отклонением.',
+                    'impact' => 'Снижение риска перерасхода и раннее выявление неэффективных расходов.',
+                ],
+                [
+                    'priority' => $spent > 100 ? 'high' : 'low',
+                    'action' => 'Актуализировать финансовый прогноз до завершения проекта.',
+                    'impact' => 'Понятный прогноз по потребности в финансировании до конца проекта.',
+                ],
+            ],
+        ];
+    }
+
+    private function buildScheduleHeuristics(array $data): array
+    {
+        $overdue = (int) ($data['tasks_summary']['overdue'] ?? 0);
+        $completion = (float) ($data['tasks_summary']['completion_percentage'] ?? 0);
+        $score = $this->normalizeScore(100 - ($overdue * 8) - max(0, 50 - $completion));
+        $status = $this->determineOverallStatus($score);
+
+        return [
+            'score' => $score,
+            'status' => $status,
+            'summary' => $overdue > 0
+                ? "В графике есть {$overdue} просроченных задач."
+                : 'Критических просрочек по графику не обнаружено.',
+            'analysis' => sprintf(
+                'Всего задач: %d, завершено: %d, просрочено: %d. Процент выполнения графика: %.1f%%.',
+                (int) ($data['tasks_summary']['total'] ?? 0),
+                (int) ($data['tasks_summary']['completed'] ?? 0),
+                $overdue,
+                $completion
+            ),
+            'recommendations' => [
+                [
+                    'priority' => $overdue > 0 ? 'high' : 'medium',
+                    'action' => 'Пересобрать план по просроченным и критическим задачам.',
+                    'impact' => 'Снижение риска каскадных сдвигов сроков.',
+                ],
+            ],
+        ];
+    }
+
+    private function buildMaterialsHeuristics(array $data): array
+    {
+        $deficitCount = (int) ($data['deficit_analysis']['deficit_count'] ?? 0);
+        $daysOfSupply = (int) ($data['days_of_supply'] ?? 0);
+        $score = $this->normalizeScore(100 - ($deficitCount * 6) - ($daysOfSupply < 14 ? 30 : ($daysOfSupply < 30 ? 15 : 0)));
+        $status = $this->determineOverallStatus($score);
+
+        return [
+            'score' => $score,
+            'status' => $status,
+            'summary' => $deficitCount > 0
+                ? "Обнаружен дефицит по {$deficitCount} позициям материалов."
+                : 'Материальные потребности проекта закрыты без критичного дефицита.',
+            'analysis' => sprintf(
+                'Запаса материалов ориентировочно хватит на %d дн. Оценочная стоимость закрытия дефицита: %.2f руб.',
+                $daysOfSupply,
+                (float) ($data['total_purchase_cost'] ?? 0)
+            ),
+            'recommendations' => [
+                [
+                    'priority' => $deficitCount > 0 ? 'high' : 'low',
+                    'action' => 'Сформировать приоритетную закупку дефицитных позиций.',
+                    'impact' => 'Снижение риска простоя и неравномерной загрузки бригад.',
+                ],
+            ],
+        ];
+    }
+
+    private function buildWorkersHeuristics(array $data): array
+    {
+        $trend = (string) ($data['productivity']['productivity_trend'] ?? 'stable');
+        $brigades = (int) ($data['brigade_analysis']['total_brigades'] ?? 0);
+        $score = 75;
+
+        if ($trend === 'declining') {
+            $score -= 30;
+        } elseif ($trend === 'improving') {
+            $score += 10;
+        }
+
+        if ($brigades < 2) {
+            $score -= 15;
+        }
+
+        $score = $this->normalizeScore($score);
+        $status = $this->determineOverallStatus($score);
+
+        return [
+            'score' => $score,
+            'status' => $status,
+            'summary' => $trend === 'declining'
+                ? 'Производительность бригад снижается.'
+                : 'Текущая производительность бригад выглядит управляемой.',
+            'analysis' => sprintf(
+                'На проекте задействовано %d бригад. Средняя выработка: %.2f руб./день.',
+                $brigades,
+                (float) ($data['productivity']['value_per_day'] ?? 0)
+            ),
+            'recommendations' => [
+                [
+                    'priority' => $trend === 'declining' ? 'high' : 'medium',
+                    'action' => 'Проверить загрузку и специализацию бригад по видам работ.',
+                    'impact' => 'Стабилизация выработки и снижение простоев.',
+                ],
+            ],
+        ];
+    }
+
+    private function buildContractsHeuristics(array $data): array
+    {
+        $total = (int) ($data['summary']['total_contracts'] ?? 0);
+        $problem = (int) ($data['problem_contracts_count'] ?? 0);
+        $score = $total > 0 ? $this->normalizeScore(100 - (($problem / $total) * 100 * 1.5)) : 100;
+        $status = $this->determineOverallStatus($score);
+
+        return [
+            'score' => $score,
+            'status' => $status,
+            'summary' => $problem > 0
+                ? "Проблемные контракты: {$problem} из {$total}."
+                : 'Существенных отклонений по контрактам не выявлено.',
+            'analysis' => sprintf(
+                'Всего контрактов: %d. Оплачено %.2f руб. из %.2f руб.',
+                $total,
+                (float) ($data['summary']['total_paid'] ?? 0),
+                (float) ($data['summary']['total_amount'] ?? 0)
+            ),
+            'recommendations' => [
+                [
+                    'priority' => $problem > 0 ? 'high' : 'low',
+                    'action' => 'Разобрать просрочки и дисбаланс между оплатой и актированием.',
+                    'impact' => 'Снижение финансовых и юридических рисков по договорам.',
+                ],
+            ],
+        ];
+    }
+
+    private function buildRisksHeuristics(array $collectedData, array $analyses): array
+    {
+        $criticalSections = collect($analyses)
+            ->filter(fn (array $analysis) => ($analysis['status'] ?? null) === 'critical')
+            ->keys()
+            ->values()
+            ->all();
+
+        $warningSections = collect($analyses)
+            ->filter(fn (array $analysis) => ($analysis['status'] ?? null) === 'warning')
+            ->keys()
+            ->values()
+            ->all();
+
+        $riskScore = 85 - (count($criticalSections) * 18) - (count($warningSections) * 8);
+        $score = $this->normalizeScore($riskScore);
+        $status = $this->determineOverallStatus($score);
+
+        return [
+            'score' => $score,
+            'status' => $status,
+            'summary' => count($criticalSections) > 0
+                ? 'Есть несколько риск-факторов с критичным уровнем влияния.'
+                : 'Критические риски не доминируют, но есть зоны постоянного контроля.',
+            'analysis' => 'Сводный риск рассчитывается по бюджету, срокам, материалам, рабочим ресурсам и контрактам.',
+            'top_risks' => array_values(array_filter([
+                (($collectedData['budget']['budget_health'] ?? null) === 'critical') ? [
+                    'risk' => 'Перерасход бюджета',
+                    'probability' => 80,
+                    'impact' => 'high',
+                    'mitigation' => 'Еженедельный контроль отклонений и пересмотр лимитов.',
+                ] : null,
+                (($collectedData['schedule']['schedule_health'] ?? null) === 'critical') ? [
+                    'risk' => 'Срыв сроков',
+                    'probability' => 75,
+                    'impact' => 'high',
+                    'mitigation' => 'Перепланировать критический путь и усилить контроль задач.',
+                ] : null,
+            ])),
+            'overall_risk_level' => $status,
+            'recommendations' => [
+                [
+                    'priority' => count($criticalSections) > 0 ? 'high' : 'medium',
+                    'action' => 'Сконцентрировать управленческое внимание на критичных разделах анализа.',
+                    'impact' => 'Быстрое снижение совокупного риска проекта.',
+                ],
+            ],
+        ];
+    }
+
+    private function buildPerformanceHeuristics(array $data): array
+    {
+        $health = (float) ($data['project_health_index']['score'] ?? 50);
+        $score = $this->normalizeScore($health);
+        $status = $this->determineOverallStatus($score);
+
+        return [
+            'score' => $score,
+            'status' => $status,
+            'summary' => sprintf('Сводный индекс здоровья проекта: %.1f из 100.', $health),
+            'analysis' => sprintf(
+                'CPI: %.3f, SPI: %.3f. Материальная эффективность: %.1f. Управление контрактами: %.1f.',
+                (float) ($data['cpi']['value'] ?? 0),
+                (float) ($data['spi']['value'] ?? 0),
+                (float) ($data['material_efficiency']['score'] ?? 0),
+                (float) ($data['contract_management']['score'] ?? 0)
+            ),
+            'recommendations' => [
+                [
+                    'priority' => $score < 70 ? 'high' : 'medium',
+                    'action' => 'Сверить фактические KPI проекта с планом по бюджету и срокам.',
+                    'impact' => 'Быстрое выявление источника отклонения общей эффективности.',
+                ],
+            ],
+        ];
+    }
+
+    private function buildRecommendationsHeuristics(array $collectedData, array $analyses): array
+    {
+        $criticalSections = collect($analyses)
+            ->filter(fn (array $analysis) => ($analysis['status'] ?? null) === 'critical')
+            ->map(fn (array $analysis, string $section) => $section)
+            ->values()
+            ->all();
+
+        $warningSections = collect($analyses)
+            ->filter(fn (array $analysis) => ($analysis['status'] ?? null) === 'warning')
+            ->map(fn (array $analysis, string $section) => $section)
+            ->values()
+            ->all();
+
+        $prioritySections = array_slice(array_merge($criticalSections, $warningSections), 0, 3);
+        $score = $this->normalizeScore(100 - (count($criticalSections) * 20) - (count($warningSections) * 10));
+
+        return [
+            'score' => $score,
+            'status' => $this->determineOverallStatus($score),
+            'summary' => empty($prioritySections)
+                ? 'Проект находится в управляемом состоянии, достаточно точечных улучшений.'
+                : 'Приоритет рекомендаций сформирован по наиболее проблемным направлениям проекта.',
+            'analysis' => empty($prioritySections)
+                ? 'Критичных управленческих действий не требуется, акцент на профилактике отклонений.'
+                : 'В фокусе: ' . implode(', ', $prioritySections) . '.',
+            'critical_actions' => array_map(
+                fn (string $section) => [
+                    'action' => 'Подготовить план действий по разделу ' . $section,
+                    'deadline' => now()->addDays(3)->format('Y-m-d'),
+                    'priority' => in_array($section, $criticalSections, true) ? 'high' : 'medium',
+                ],
+                $prioritySections
+            ),
+            'optimization_opportunities' => [
+                'Синхронизировать контроль бюджета, графика и поставок в одном цикле.',
+                'Пересмотреть недельный план работ по критичным зонам.',
+            ],
+            'long_term_improvements' => [
+                'Перейти на регулярный пересчет прогноза по срокам и стоимости.',
+            ],
+            'estimated_savings' => [
+                'money' => (float) ($collectedData['materials']['total_purchase_cost'] ?? 0) * 0.1,
+                'time_days' => count($criticalSections) > 0 ? 7 : 3,
+            ],
+            'recommendations' => [
+                [
+                    'priority' => count($criticalSections) > 0 ? 'high' : 'medium',
+                    'action' => 'Утвердить антикризисный план по проблемным разделам.',
+                    'impact' => 'Сокращение вероятности срыва бюджета и сроков.',
+                ],
+            ],
+        ];
+    }
+
+    private function normalizeScore(float|int $score): int
+    {
+        return (int) max(0, min(100, round($score)));
+    }
+
+    private function normalizeStatus(string $status): string
+    {
+        return in_array($status, ['good', 'warning', 'critical'], true) ? $status : 'warning';
+    }
+
     /**
      * Сохранить разделы анализа
      */
@@ -345,7 +749,7 @@ class SystemAnalysisService
             SystemAnalysisSection::create([
                 'report_id' => $report->id,
                 'section_type' => $sectionType,
-                'data' => $collectedData[$sectionType] ?? [],
+                'data' => $this->resolveSectionData($sectionType, $collectedData, $analyses),
                 'analysis' => $analysis['analysis'] ?? '',
                 'score' => $analysis['score'] ?? null,
                 'status' => $analysis['status'] ?? null,
@@ -354,6 +758,29 @@ class SystemAnalysisService
                 'summary' => $analysis['summary'] ?? '',
             ]);
         }
+    }
+
+    private function resolveSectionData(string $sectionType, array $collectedData, array $analyses): array
+    {
+        $recommendationsData = $this->buildRecommendationsHeuristics($collectedData, $analyses);
+
+        return match ($sectionType) {
+            'performance' => $collectedData['kpi'] ?? [],
+            'risks' => [
+                'budget_health' => $collectedData['budget']['budget_health'] ?? null,
+                'schedule_health' => $collectedData['schedule']['schedule_health'] ?? null,
+                'materials_health' => $collectedData['materials']['materials_health'] ?? null,
+                'workers_health' => $collectedData['workers']['workers_health'] ?? null,
+                'contracts_health' => $collectedData['contracts']['contracts_health'] ?? null,
+            ],
+            'recommendations' => [
+                'critical_actions' => $recommendationsData['critical_actions'] ?? [],
+                'optimization_opportunities' => $recommendationsData['optimization_opportunities'] ?? [],
+                'long_term_improvements' => $recommendationsData['long_term_improvements'] ?? [],
+                'estimated_savings' => $recommendationsData['estimated_savings'] ?? [],
+            ],
+            default => $collectedData[$sectionType] ?? [],
+        };
     }
 
     /**
@@ -501,6 +928,7 @@ class SystemAnalysisService
     {
         return [
             'report_id' => $report->id,
+            'id' => $report->id,
             'project' => $report->project ? [
                 'id' => $report->project->id,
                 'name' => $report->project->name,
@@ -512,10 +940,12 @@ class SystemAnalysisService
             'overall_score' => $report->overall_score,
             'overall_status' => $report->overall_status,
             'generated_at' => $report->completed_at?->toISOString(),
-            'created_by' => [
+            'tokens_used' => $report->tokens_used,
+            'cost_rub' => $report->cost,
+            'created_by' => $report->createdBy ? [
                 'id' => $report->createdBy->id,
                 'name' => $report->createdBy->name,
-            ],
+            ] : null,
             'sections' => $report->analysisSections->map(function ($section) {
                 return [
                     'type' => $section->section_type,
@@ -525,6 +955,7 @@ class SystemAnalysisService
                     'status' => $section->status,
                     'summary' => $section->summary,
                     'analysis' => $section->analysis,
+                    'data' => $section->data,
                     'recommendations' => $section->recommendations,
                 ];
             }),
