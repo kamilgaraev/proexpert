@@ -16,7 +16,8 @@ use Illuminate\Support\Facades\Cache;
 use App\Models\Project;
 use App\Models\User;
 use App\Services\Logging\LoggingService;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Throwable;
 
 class SystemAnalysisService
 {
@@ -60,7 +61,7 @@ class SystemAnalysisService
         $useCache = $options['use_cache'] ?? true;
         
         if ($useCache) {
-            $cached = Cache::tags($cacheTags)->get($cacheKey);
+            $cached = $this->getCachedValue($cacheKey, $cacheTags);
             if ($cached) {
                 $this->logging->technical('system_analysis.cache_hit', ['project_id' => $projectId]);
                 return $cached;
@@ -72,7 +73,7 @@ class SystemAnalysisService
             $options['sections'] ?? config('ai-assistant.system_analysis.sections', [])
         );
 
-        $report = SystemAnalysisReport::create([
+        $report = $this->createReportRecord([
             'project_id' => $projectId,
             'organization_id' => $organizationId,
             'analysis_type' => 'single_project',
@@ -94,7 +95,7 @@ class SystemAnalysisService
             $overallStatus = $this->determineOverallStatus($overallScore);
 
             // Сохраняем результаты
-            $report->update([
+            $this->updateReportRecord($report, [
                 'status' => 'completed',
                 'results' => [
                     'data' => $collectedData,
@@ -119,10 +120,10 @@ class SystemAnalysisService
 
             // Кешируем
             $ttl = config('ai-assistant.system_analysis.cache_ttl', $this->cacheTtl);
-            Cache::tags($cacheTags)->put($cacheKey, $result, $ttl);
+            $this->putCachedValue($cacheKey, $cacheTags, $result, $ttl);
 
             $this->logging->business('system_analysis.completed', [
-                'report_id' => $report->id,
+                'report_id' => $report?->id,
                 'project_id' => $projectId,
                 'organization_id' => $organizationId,
                 'overall_score' => $overallScore,
@@ -130,14 +131,14 @@ class SystemAnalysisService
 
             return $result;
 
-        } catch (\Exception $e) {
-            $report->update([
+        } catch (Throwable $e) {
+            $this->updateReportRecord($report, [
                 'status' => 'failed',
                 'error_message' => $e->getMessage(),
             ]);
 
             $this->logging->technical('system_analysis.failed', [
-                'report_id' => $report->id,
+                'report_id' => $report?->id,
                 'project_id' => $projectId,
                 'error' => $e->getMessage(),
             ], 'error');
@@ -743,10 +744,89 @@ class SystemAnalysisService
     /**
      * Сохранить разделы анализа
      */
-    private function saveSections(SystemAnalysisReport $report, array $collectedData, array $analyses): void
+    private function createReportRecord(array $attributes): ?SystemAnalysisReport
     {
+        $table = (new SystemAnalysisReport())->getTable();
+
+        if (!$this->tableExists($table)) {
+            $this->logging->technical('system_analysis.report_table_missing', [
+                'table' => $table,
+            ], 'warning');
+
+            return null;
+        }
+
+        $persistedAttributes = $this->filterAttributesForTable($table, $attributes);
+
+        if (!isset($persistedAttributes['organization_id'], $persistedAttributes['status'])) {
+            return null;
+        }
+
+        try {
+            return SystemAnalysisReport::create($persistedAttributes);
+        } catch (Throwable $e) {
+            $this->logging->technical('system_analysis.report_create_failed', [
+                'error' => $e->getMessage(),
+            ], 'warning');
+
+            return null;
+        }
+    }
+
+    private function updateReportRecord(?SystemAnalysisReport $report, array $attributes): void
+    {
+        if (!$report || !$report->exists || !$this->tableExists($report->getTable())) {
+            return;
+        }
+
+        $persistedAttributes = $this->filterAttributesForTable($report->getTable(), $attributes);
+
+        if ($persistedAttributes === []) {
+            return;
+        }
+
+        try {
+            $report->update($persistedAttributes);
+        } catch (Throwable $e) {
+            $this->logging->technical('system_analysis.report_update_failed', [
+                'report_id' => $report->id,
+                'error' => $e->getMessage(),
+            ], 'warning');
+        }
+    }
+
+    private function tableExists(string $table): bool
+    {
+        try {
+            return Schema::hasTable($table);
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
+    private function filterAttributesForTable(string $table, array $attributes): array
+    {
+        if (!$this->tableExists($table)) {
+            return [];
+        }
+
+        $columns = Schema::getColumnListing($table);
+
+        return array_filter(
+            $attributes,
+            static fn (string $attribute): bool => in_array($attribute, $columns, true),
+            ARRAY_FILTER_USE_KEY
+        );
+    }
+
+    private function saveSections(?SystemAnalysisReport $report, array $collectedData, array $analyses): void
+    {
+        if (!$report || !$this->tableExists($report->getTable()) || !$this->tableExists((new SystemAnalysisSection())->getTable())) {
+            return;
+        }
+
         foreach ($analyses as $sectionType => $analysis) {
-            SystemAnalysisSection::create([
+            $attributes = $this->filterAttributesForTable((new SystemAnalysisSection())->getTable(), [
                 'report_id' => $report->id,
                 'section_type' => $sectionType,
                 'data' => $this->resolveSectionData($sectionType, $collectedData, $analyses),
@@ -757,6 +837,20 @@ class SystemAnalysisService
                 'recommendations' => $analysis['recommendations'] ?? [],
                 'summary' => $analysis['summary'] ?? '',
             ]);
+
+            if (!isset($attributes['report_id'], $attributes['section_type'])) {
+                continue;
+            }
+
+            try {
+                SystemAnalysisSection::create($attributes);
+            } catch (Throwable $e) {
+                $this->logging->technical('system_analysis.section_persist_failed', [
+                    'report_id' => $report->id,
+                    'section_type' => $sectionType,
+                    'error' => $e->getMessage(),
+                ], 'warning');
+            }
         }
     }
 
@@ -786,9 +880,9 @@ class SystemAnalysisService
     /**
      * Сохранить историю
      */
-    private function saveHistory(SystemAnalysisReport $report): void
+    private function saveHistory(?SystemAnalysisReport $report): void
     {
-        if (!$report->project_id) {
+        if (!$report || !$report->project_id || !$this->tableExists((new SystemAnalysisHistory())->getTable())) {
             return;
         }
 
@@ -800,14 +894,25 @@ class SystemAnalysisService
             ->first();
 
         if ($previousReport) {
-            $comparison = $this->compareReports($report->id, $previousReport->id);
-            
-            SystemAnalysisHistory::create([
-                'report_id' => $report->id,
-                'previous_report_id' => $previousReport->id,
-                'changes' => $comparison['changes'],
-                'comparison' => $comparison,
-            ]);
+            try {
+                $comparison = $this->compareReports($report->id, $previousReport->id);
+                $attributes = $this->filterAttributesForTable((new SystemAnalysisHistory())->getTable(), [
+                    'report_id' => $report->id,
+                    'previous_report_id' => $previousReport->id,
+                    'changes' => $comparison['changes'],
+                    'comparison' => $comparison,
+                ]);
+
+                if (isset($attributes['report_id'])) {
+                    SystemAnalysisHistory::create($attributes);
+                }
+            } catch (Throwable $e) {
+                $this->logging->technical('system_analysis.history_persist_failed', [
+                    'report_id' => $report->id,
+                    'previous_report_id' => $previousReport->id,
+                    'error' => $e->getMessage(),
+                ], 'warning');
+            }
         }
     }
 
@@ -879,24 +984,28 @@ class SystemAnalysisService
     /**
      * Форматировать результат анализа
      */
-    private function formatAnalysisResult(SystemAnalysisReport $report, array $collectedData, array $analyses): array
+    private function formatAnalysisResult(?SystemAnalysisReport $report, array $collectedData, array $analyses): array
     {
-        $project = $report->project;
+        $project = $report?->project ?? Project::find($report?->project_id ?? null);
+        $storedSections = $report && $this->tableExists((new SystemAnalysisSection())->getTable())
+            ? $report->analysisSections()->get()
+            : collect();
 
         return [
-            'report_id' => $report->id,
+            'report_id' => $report?->id,
+            'id' => $report?->id,
             'project' => [
-                'id' => $project->id,
-                'name' => $project->name,
-                'status' => $project->status,
+                'id' => $project?->id,
+                'name' => $project?->name ?? '',
+                'status' => $project?->status,
             ],
-            'analysis_type' => $report->analysis_type,
-            'generated_at' => $report->completed_at ? $report->completed_at->toISOString() : now()->toISOString(),
-            'overall_score' => $report->overall_score,
-            'overall_status' => $report->overall_status,
-            'tokens_used' => $report->tokens_used,
-            'cost_rub' => $report->cost,
-            'sections' => $this->formatSectionsForOutput($report->analysisSections()->get(), $collectedData, $analyses),
+            'analysis_type' => $report?->analysis_type ?? 'single_project',
+            'generated_at' => $report?->completed_at ? $report->completed_at->toISOString() : now()->toISOString(),
+            'overall_score' => $report?->overall_score ?? $this->calculateOverallScore($analyses),
+            'overall_status' => $report?->overall_status ?? $this->determineOverallStatus($this->calculateOverallScore($analyses)),
+            'tokens_used' => $report?->tokens_used ?? $this->calculateTokensUsed($analyses),
+            'cost_rub' => $report?->cost ?? $this->calculateCost($analyses),
+            'sections' => $this->formatSectionsForOutput($storedSections, $collectedData, $analyses),
         ];
     }
 
@@ -915,6 +1024,21 @@ class SystemAnalysisService
                 'analysis' => $section->analysis,
                 'data' => $section->data,
                 'recommendations' => $section->recommendations,
+            ];
+        }
+
+        foreach ($analyses as $sectionType => $analysis) {
+            if (isset($formatted[$sectionType])) {
+                continue;
+            }
+
+            $formatted[$sectionType] = [
+                'score' => $analysis['score'] ?? null,
+                'status' => $analysis['status'] ?? null,
+                'summary' => $analysis['summary'] ?? '',
+                'analysis' => $analysis['analysis'] ?? '',
+                'data' => $this->resolveSectionData($sectionType, $collectedData, $analyses),
+                'recommendations' => $analysis['recommendations'] ?? [],
             ];
         }
 
@@ -1045,12 +1169,54 @@ class SystemAnalysisService
     /**
      * Инвалидировать кеш
      */
+    private function getCachedValue(string $cacheKey, array $cacheTags): mixed
+    {
+        try {
+            return Cache::tags($cacheTags)->get($cacheKey);
+        } catch (Throwable $e) {
+            $this->logging->technical('system_analysis.cache_read_fallback', [
+                'cache_key' => $cacheKey,
+                'error' => $e->getMessage(),
+            ], 'warning');
+
+            return Cache::get($cacheKey);
+        }
+    }
+
+    private function putCachedValue(string $cacheKey, array $cacheTags, array $value, int $ttl): void
+    {
+        try {
+            Cache::tags($cacheTags)->put($cacheKey, $value, $ttl);
+        } catch (Throwable $e) {
+            $this->logging->technical('system_analysis.cache_write_fallback', [
+                'cache_key' => $cacheKey,
+                'error' => $e->getMessage(),
+            ], 'warning');
+
+            Cache::put($cacheKey, $value, $ttl);
+        }
+    }
+
+    private function forgetCachedValue(string $cacheKey, array $cacheTags): void
+    {
+        try {
+            Cache::tags($cacheTags)->forget($cacheKey);
+        } catch (Throwable $e) {
+            $this->logging->technical('system_analysis.cache_forget_fallback', [
+                'cache_key' => $cacheKey,
+                'error' => $e->getMessage(),
+            ], 'warning');
+
+            Cache::forget($cacheKey);
+        }
+    }
+
     private function invalidateCache(int $projectId, int $organizationId): void
     {
         $cacheKey = "system_analysis:project:{$projectId}";
         $cacheTags = ['system_analysis', "project:{$projectId}", "org:{$organizationId}"];
 
-        Cache::tags($cacheTags)->forget($cacheKey);
+        $this->forgetCachedValue($cacheKey, $cacheTags);
     }
 }
 

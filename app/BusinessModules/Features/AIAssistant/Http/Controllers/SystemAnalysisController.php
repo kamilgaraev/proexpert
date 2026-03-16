@@ -8,6 +8,8 @@ use App\BusinessModules\Features\AIAssistant\Models\SystemAnalysisReport;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class SystemAnalysisController extends Controller
 {
@@ -59,7 +61,13 @@ class SystemAnalysisController extends Controller
                 'data' => $result,
             ]);
 
-        } catch (\Exception $e) {
+        } catch (Throwable $e) {
+            Log::error('system_analysis.analyze_project_failed', [
+                'project_id' => $projectId,
+                'organization_id' => $organizationId,
+                'user_id' => $user?->id,
+                'error' => $e->getMessage(),
+            ]);
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка при анализе проекта: ' . $e->getMessage(),
