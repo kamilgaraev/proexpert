@@ -7,6 +7,7 @@ use Illuminate\Auth\AuthenticationException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Throwable;
 use Symfony\Component\Routing\Exception\RouteNotFoundException;
@@ -106,6 +107,7 @@ class Handler extends ExceptionHandler
             
             // Получаем CORS заголовки из CorsMiddleware если есть
             $corsHeaders = $request->attributes->get('cors_headers', []);
+            $respond = fn (Response $response): Response => $this->applyCorsHeaders($response, $corsHeaders);
             
             // Определяем класс ответа в зависимости от API
             $responseClass = $this->getResponseClassForRequest($request);
@@ -116,7 +118,7 @@ class Handler extends ExceptionHandler
             
             // PostTooLargeException - слишком большой запрос
             if ($e instanceof \Illuminate\Http\Exceptions\PostTooLargeException) {
-                return $this->handlePostTooLargeException($e, $request, $responseClass);
+                return $respond($this->handlePostTooLargeException($e, $request, $responseClass));
             }
             
             // ValidationException - ошибки валидации
@@ -125,7 +127,7 @@ class Handler extends ExceptionHandler
                     'errors' => $e->errors(),
                 ];
                 $message = $e->getMessage() ?: trans_message('errors.validation_failed');
-                return $responseClass::error($message, $e->status, $data);
+                return $respond($responseClass::error($message, $e->status, $data));
             }
 
             // BusinessLogicException - ошибки бизнес-логики
@@ -135,7 +137,7 @@ class Handler extends ExceptionHandler
                     $status = 400;
                 }
                 $message = $e->getMessage() ?: trans_message('errors.business_logic_error');
-                return $responseClass::error($message, $status);
+                return $respond($responseClass::error($message, $status));
             }
 
             // AuthorizationException - нет прав
@@ -144,7 +146,7 @@ class Handler extends ExceptionHandler
                 if (empty($message) || $message === 'This action is unauthorized.') {
                     $message = trans_message('errors.unauthorized');
                 }
-                return $responseClass::error($message, 403);
+                return $respond($responseClass::error($message, 403));
             }
             
             // AccessDeniedHttpException - доступ запрещён
@@ -153,34 +155,34 @@ class Handler extends ExceptionHandler
                 if (empty($message) || $message === 'This action is unauthorized.') {
                     $message = trans_message('errors.forbidden');
                 }
-                return $responseClass::error($message, 403);
+                return $respond($responseClass::error($message, 403));
             }
 
             // AuthenticationException - не аутентифицирован
             if ($e instanceof AuthenticationException) {
                 $message = $e->getMessage() ?: trans_message('errors.unauthenticated');
-                return $responseClass::error($message, 401);
+                return $respond($responseClass::error($message, 401));
             }
 
             // ModelNotFoundException - модель не найдена
             if ($e instanceof \Illuminate\Database\Eloquent\ModelNotFoundException) {
-                return $responseClass::error(trans_message('errors.resource_not_found'), 404);
+                return $respond($responseClass::error(trans_message('errors.resource_not_found'), 404));
             }
 
             // RouteNotFoundException - маршрут не найден
             if ($e instanceof RouteNotFoundException) {
-                return $responseClass::error(trans_message('errors.route_not_found'), 401);
+                return $respond($responseClass::error(trans_message('errors.route_not_found'), 401));
             }
 
             // NotFoundHttpException - 404
             if ($e instanceof \Symfony\Component\HttpKernel\Exception\NotFoundHttpException) {
-                return $responseClass::error(trans_message('errors.resource_not_found'), 404);
+                return $respond($responseClass::error(trans_message('errors.resource_not_found'), 404));
             }
 
             // InsufficientBalanceException - недостаточно средств
             if ($e instanceof InsufficientBalanceException) {
                 $message = $e->getMessage() ?: trans_message('errors.insufficient_balance');
-                return $responseClass::error($message, 402); // 402 Payment Required
+                return $respond($responseClass::error($message, 402)); // 402 Payment Required
             }
 
             // AI Service Exceptions - ошибки AI сервисов
@@ -206,7 +208,7 @@ class Handler extends ExceptionHandler
                 ]);
                 
                 // Для пользователя возвращаем понятное сообщение
-                return $responseClass::error($message, $statusCode);
+                return $respond($responseClass::error($message, $statusCode));
             }
 
             // InvalidArgumentException - ошибки конфигурации (например, guard не определён)
@@ -220,14 +222,14 @@ class Handler extends ExceptionHandler
                 ]);
                 
                 if (config('app.debug')) {
-                    return $responseClass::error($e->getMessage(), 500, [
+                    return $respond($responseClass::error($e->getMessage(), 500, [
                         'exception' => get_class($e),
                         'file' => $e->getFile(),
                         'line' => $e->getLine(),
-                    ]);
+                    ]));
                 }
                 
-                return $responseClass::error(trans_message('errors.internal_server_error'), 500);
+                return $respond($responseClass::error(trans_message('errors.internal_server_error'), 500));
             }
 
             // Остальные HTTP исключения
@@ -257,7 +259,7 @@ class Handler extends ExceptionHandler
                     $data['line'] = $e->getLine();
                 }
                 
-                return $responseClass::error($message, $statusCode, $data);
+                return $respond($responseClass::error($message, $statusCode, $data));
             }
             
             // Ошибки базы данных
@@ -269,10 +271,10 @@ class Handler extends ExceptionHandler
                 ]);
                 
                 if (config('app.debug')) {
-                    return $responseClass::error($e->getMessage(), 500);
+                    return $respond($responseClass::error($e->getMessage(), 500));
                 }
                 
-                return $responseClass::error(trans_message('errors.database_error'), 500);
+                return $respond($responseClass::error(trans_message('errors.database_error'), 500));
             }
             
             // Все остальные исключения
@@ -291,7 +293,7 @@ class Handler extends ExceptionHandler
                 $data['line'] = $e->getLine();
             }
 
-            return $responseClass::error($message, $statusCode, $data);
+            return $respond($responseClass::error($message, $statusCode, $data));
         });
     }
 
@@ -528,7 +530,7 @@ class Handler extends ExceptionHandler
         \Illuminate\Http\Exceptions\PostTooLargeException $e,
         \Illuminate\Http\Request $request,
         string $responseClass
-    ) {
+    ): JsonResponse {
         // Получаем размер запроса из заголовков
         $contentLength = $request->header('Content-Length');
         $contentLengthBytes = $contentLength ? (int)$contentLength : null;
@@ -581,6 +583,15 @@ class Handler extends ExceptionHandler
             413, // 413 Payload Too Large
             $data
         );
+    }
+
+    protected function applyCorsHeaders(Response $response, array $corsHeaders): Response
+    {
+        foreach ($corsHeaders as $header => $value) {
+            $response->headers->set($header, $value);
+        }
+
+        return $response;
     }
 
     /**
