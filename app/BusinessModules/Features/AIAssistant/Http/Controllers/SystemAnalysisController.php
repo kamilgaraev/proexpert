@@ -14,14 +14,10 @@ use Throwable;
 class SystemAnalysisController extends Controller
 {
     protected SystemAnalysisService $analysisService;
-    protected SystemAnalysisExportService $exportService;
 
-    public function __construct(
-        SystemAnalysisService $analysisService,
-        SystemAnalysisExportService $exportService
-    ) {
+    public function __construct(SystemAnalysisService $analysisService)
+    {
         $this->analysisService = $analysisService;
-        $this->exportService = $exportService;
     }
 
     /**
@@ -232,7 +228,7 @@ class SystemAnalysisController extends Controller
             $report = SystemAnalysisReport::with(['project', 'analysisSections'])
                 ->findOrFail($reportId);
 
-            $pdfPath = $this->exportService->exportToPDF($report);
+            $pdfPath = app(SystemAnalysisExportService::class)->exportToPDF($report);
 
             return response()->download($pdfPath)->deleteFileAfterSend();
 
