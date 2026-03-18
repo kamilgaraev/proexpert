@@ -42,7 +42,7 @@ class AIAssistantController extends Controller
 
         $user = $request->user();
         if (!$user instanceof User || !$user->current_organization_id) {
-            return $this->errorResponse($request, trans_message('ai_assistant.unauthorized', [], 'ru'), 401);
+            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.unauthorized', 'Пользователь не авторизован.'), 401);
         }
 
         $organizationId = (int) $user->current_organization_id;
@@ -51,7 +51,7 @@ class AIAssistantController extends Controller
             if (!$this->usageTracker->canMakeRequest($organizationId)) {
                 return $this->errorResponse(
                     $request,
-                    trans_message('ai_assistant.limit_exceeded', [], 'ru'),
+                    $this->assistantMessage('ai_assistant.limit_exceeded', 'Исчерпан месячный лимит запросов к AI-ассистенту.'),
                     429,
                     ['usage' => $this->usageTracker->getUsageStats($organizationId)]
                 );
@@ -59,7 +59,7 @@ class AIAssistantController extends Controller
 
             $conversationId = $request->integer('conversation_id') ?: null;
             if ($conversationId !== null && !$this->conversationManager->findUserConversation($conversationId, $user, $organizationId)) {
-                return $this->errorResponse($request, trans_message('ai_assistant.conversation_not_found', [], 'ru'), 403);
+                return $this->errorResponse($request, $this->assistantMessage('ai_assistant.conversation_not_found', 'Диалог не найден или недоступен.'), 403);
             }
 
             $result = $this->aiAssistant->ask(
@@ -93,7 +93,7 @@ class AIAssistantController extends Controller
                 'message' => $exception->getMessage(),
             ]);
 
-            return $this->errorResponse($request, trans_message('ai_assistant.request_failed', [], 'ru'), 500);
+            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.request_failed', 'Не удалось выполнить запрос к AI-ассистенту.'), 500);
         }
     }
 
@@ -101,7 +101,7 @@ class AIAssistantController extends Controller
     {
         $user = $request->user();
         if (!$user instanceof User || !$user->current_organization_id) {
-            return $this->errorResponse($request, trans_message('ai_assistant.unauthorized', [], 'ru'), 401);
+            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.unauthorized', 'Пользователь не авторизован.'), 401);
         }
 
         try {
@@ -119,7 +119,7 @@ class AIAssistantController extends Controller
                 'message' => $exception->getMessage(),
             ]);
 
-            return $this->errorResponse($request, trans_message('ai_assistant.load_conversations_failed', [], 'ru'), 500);
+            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.load_conversations_failed', 'Не удалось загрузить список диалогов.'), 500);
         }
     }
 
@@ -127,7 +127,7 @@ class AIAssistantController extends Controller
     {
         $user = $request->user();
         if (!$user instanceof User || !$user->current_organization_id) {
-            return $this->errorResponse($request, trans_message('ai_assistant.unauthorized', [], 'ru'), 401);
+            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.unauthorized', 'Пользователь не авторизован.'), 401);
         }
 
         try {
@@ -148,7 +148,7 @@ class AIAssistantController extends Controller
                 'message' => $exception->getMessage(),
             ]);
 
-            return $this->errorResponse($request, trans_message('ai_assistant.load_conversation_failed', [], 'ru'), 500);
+            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.load_conversation_failed', 'Не удалось загрузить диалог.'), 500);
         }
     }
 
@@ -156,14 +156,14 @@ class AIAssistantController extends Controller
     {
         $user = $request->user();
         if (!$user instanceof User || !$user->current_organization_id) {
-            return $this->errorResponse($request, trans_message('ai_assistant.unauthorized', [], 'ru'), 401);
+            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.unauthorized', 'Пользователь не авторизован.'), 401);
         }
 
         try {
             $this->authorizeConversation($conversation, $user);
             $conversation->delete();
 
-            return $this->successResponse($request, null, trans_message('ai_assistant.conversation_deleted', [], 'ru'));
+            return $this->successResponse($request, null, $this->assistantMessage('ai_assistant.conversation_deleted', 'Диалог удален.'));
         } catch (AuthorizationException $exception) {
             return $this->errorResponse($request, $exception->getMessage(), 403);
         } catch (Throwable $exception) {
@@ -174,7 +174,7 @@ class AIAssistantController extends Controller
                 'message' => $exception->getMessage(),
             ]);
 
-            return $this->errorResponse($request, trans_message('ai_assistant.delete_conversation_failed', [], 'ru'), 500);
+            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.delete_conversation_failed', 'Не удалось удалить диалог.'), 500);
         }
     }
 
@@ -182,7 +182,7 @@ class AIAssistantController extends Controller
     {
         $user = $request->user();
         if (!$user instanceof User || !$user->current_organization_id) {
-            return $this->errorResponse($request, trans_message('ai_assistant.unauthorized', [], 'ru'), 401);
+            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.unauthorized', 'Пользователь не авторизован.'), 401);
         }
 
         try {
@@ -196,7 +196,7 @@ class AIAssistantController extends Controller
                 'message' => $exception->getMessage(),
             ]);
 
-            return $this->errorResponse($request, trans_message('ai_assistant.usage_failed', [], 'ru'), 500);
+            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.usage_failed', 'Не удалось получить статистику использования AI-ассистента.'), 500);
         }
     }
 
@@ -205,8 +205,25 @@ class AIAssistantController extends Controller
         $organizationId = (int) $user->current_organization_id;
 
         if (!$this->permissionChecker->canAccessConversation($user, $conversation, $organizationId)) {
-            throw new AuthorizationException(trans_message('ai_assistant.conversation_not_found', [], 'ru'));
+            throw new AuthorizationException($this->assistantMessage('ai_assistant.conversation_not_found', 'Диалог не найден или недоступен.'));
         }
+    }
+
+    private function assistantMessage(string $key, string $fallback, array $replace = []): string
+    {
+        $translated = trans_message($key, $replace, 'ru');
+
+        if (!is_string($translated)) {
+            return $fallback;
+        }
+
+        $translated = trim($translated);
+
+        if ($translated === '' || $translated === $key) {
+            return $fallback;
+        }
+
+        return $translated;
     }
 
     private function successResponse(Request $request, mixed $data = null, ?string $message = null, int $code = 200): JsonResponse

@@ -235,7 +235,7 @@ class YandexGPTProvider implements LLMProviderInterface
         
         foreach ($tools as $tool) {
             if (isset($tool['type']) && $tool['type'] === 'function') {
-                $parameters = $tool['function']['parameters'] ?? [];
+                $parameters = $this->normalizeSchemaForYandex($tool['function']['parameters'] ?? []);
                 
                 // Важно: YandexGPT ожидает JSON объект (map) для параметров
                 if (empty($parameters)) {
@@ -265,6 +265,58 @@ class YandexGPTProvider implements LLMProviderInterface
         return $yandexTools;
     }
 
+    protected function normalizeSchemaForYandex(array $schema): array|\stdClass
+    {
+        if ($schema === []) {
+            return new \stdClass();
+        }
+
+        $normalized = [];
+
+        foreach ($schema as $key => $value) {
+            if ($key === 'properties' || $key === 'definitions' || $key === '$defs') {
+                $normalized[$key] = $this->normalizeSchemaMap($value);
+                continue;
+            }
+
+            if ($key === 'items' && is_array($value)) {
+                $normalized[$key] = $this->normalizeSchemaForYandex($value);
+                continue;
+            }
+
+            if (is_array($value) && $this->isAssociativeArray($value)) {
+                $normalized[$key] = $this->normalizeSchemaForYandex($value);
+                continue;
+            }
+
+            $normalized[$key] = $value;
+        }
+
+        return $normalized;
+    }
+
+    protected function normalizeSchemaMap(mixed $value): array|\stdClass
+    {
+        if (!is_array($value) || $value === []) {
+            return new \stdClass();
+        }
+
+        $normalized = [];
+
+        foreach ($value as $key => $item) {
+            $normalized[(string) $key] = is_array($item)
+                ? $this->normalizeSchemaForYandex($item)
+                : $item;
+        }
+
+        return $normalized;
+    }
+
+    protected function isAssociativeArray(array $value): bool
+    {
+        return array_keys($value) !== range(0, count($value) - 1);
+    }
+
     public function countTokens(string $text): int
     {
         // Приблизительная оценка для русского текста
@@ -282,4 +334,3 @@ class YandexGPTProvider implements LLMProviderInterface
         return $this->modelUri;
     }
 }
-
