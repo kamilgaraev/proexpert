@@ -186,8 +186,8 @@ class YandexGPTProvider implements LLMProviderInterface
         $message = $alternative['message'] ?? [];
         $usage = $data['result']['usage'] ?? [];
 
-        $inputTokens = $usage['inputTextTokens'] ?? 0;
-        $outputTokens = $usage['completionTokens'] ?? 0;
+        $inputTokens = (int) ($usage['inputTextTokens'] ?? 0);
+        $outputTokens = (int) ($usage['completionTokens'] ?? 0);
         $totalTokens = $inputTokens + $outputTokens;
 
         $result = [
