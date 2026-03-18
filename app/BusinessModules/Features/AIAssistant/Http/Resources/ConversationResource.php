@@ -4,13 +4,15 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Http\Resources;
 
+use App\BusinessModules\Features\AIAssistant\Models\Message;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Http\Resources\MissingValue;
 
 class ConversationResource extends JsonResource
 {
     public function toArray($request): array
     {
-        $lastMessage = $this->whenLoaded('lastMessage');
+        $lastMessage = $this->resolveLastMessage();
         $preview = null;
 
         if ($lastMessage) {
@@ -29,6 +31,17 @@ class ConversationResource extends JsonResource
             'last_message_at' => $lastMessage?->created_at?->toISOString(),
             'messages_count' => $this->whenCounted('messages'),
         ];
+    }
+
+    private function resolveLastMessage(): ?Message
+    {
+        $lastMessage = $this->whenLoaded('lastMessage');
+
+        if ($lastMessage instanceof MissingValue) {
+            return null;
+        }
+
+        return $lastMessage;
     }
 }
 
