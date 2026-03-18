@@ -107,7 +107,6 @@ class AIAssistantController extends Controller
         try {
             $organizationId = (int) $user->current_organization_id;
             $conversations = $this->isAdminRequest($request)
-                && $this->permissionChecker->canAccessOrganizationConversationsInAdmin($user, $organizationId)
                 ? $this->conversationManager->getConversationsByOrganization($organizationId, 20)
                 : $this->conversationManager->getConversationsByUserInOrganization($user, $organizationId, 20);
 
@@ -131,7 +130,7 @@ class AIAssistantController extends Controller
         }
 
         try {
-            $this->authorizeConversation($conversation, $user);
+            $this->authorizeConversation($request, $conversation, $user);
             $messages = $this->conversationManager->getHistory($conversation, 50);
 
             return $this->successResponse($request, [
@@ -160,7 +159,7 @@ class AIAssistantController extends Controller
         }
 
         try {
-            $this->authorizeConversation($conversation, $user);
+            $this->authorizeConversation($request, $conversation, $user);
             $conversation->delete();
 
             return $this->successResponse($request, null, $this->assistantMessage('ai_assistant.conversation_deleted', 'Диалог удален.'));
@@ -200,9 +199,17 @@ class AIAssistantController extends Controller
         }
     }
 
-    private function authorizeConversation(Conversation $conversation, User $user): void
+    private function authorizeConversation(Request $request, Conversation $conversation, User $user): void
     {
         $organizationId = (int) $user->current_organization_id;
+
+        if ($this->isAdminRequest($request)) {
+            if ((int) $conversation->organization_id !== $organizationId) {
+                throw new AuthorizationException($this->assistantMessage('ai_assistant.conversation_not_found', 'Диалог не найден или недоступен.'));
+            }
+
+            return;
+        }
 
         if (!$this->permissionChecker->canAccessConversation($user, $conversation, $organizationId)) {
             throw new AuthorizationException($this->assistantMessage('ai_assistant.conversation_not_found', 'Диалог не найден или недоступен.'));
@@ -211,7 +218,7 @@ class AIAssistantController extends Controller
 
     private function findConversationForRequest(Request $request, int $conversationId, User $user, int $organizationId): ?Conversation
     {
-        if ($this->isAdminRequest($request) && $this->permissionChecker->canAccessOrganizationConversationsInAdmin($user, $organizationId)) {
+        if ($this->isAdminRequest($request)) {
             return $this->conversationManager->findOrganizationConversation($conversationId, $organizationId);
         }
 
