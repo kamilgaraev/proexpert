@@ -107,7 +107,7 @@ class AIAssistantController extends Controller
         try {
             $organizationId = (int) $user->current_organization_id;
             $conversations = $this->isAdminRequest($request)
-                && $this->permissionChecker->canManageOrganizationConversations($user, $organizationId)
+                && $this->permissionChecker->canAccessOrganizationConversationsInAdmin($user, $organizationId)
                 ? $this->conversationManager->getConversationsByOrganization($organizationId, 20)
                 : $this->conversationManager->getConversationsByUserInOrganization($user, $organizationId, 20);
 
@@ -211,7 +211,7 @@ class AIAssistantController extends Controller
 
     private function findConversationForRequest(Request $request, int $conversationId, User $user, int $organizationId): ?Conversation
     {
-        if ($this->isAdminRequest($request) && $this->permissionChecker->canManageOrganizationConversations($user, $organizationId)) {
+        if ($this->isAdminRequest($request) && $this->permissionChecker->canAccessOrganizationConversationsInAdmin($user, $organizationId)) {
             return $this->conversationManager->findOrganizationConversation($conversationId, $organizationId);
         }
 

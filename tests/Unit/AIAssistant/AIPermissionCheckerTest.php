@@ -64,6 +64,7 @@ class AIPermissionCheckerTest extends TestCase
         $user->shouldReceive('belongsToOrganization')->andReturn($belongsToOrganization);
         $user->shouldReceive('isOrganizationAdmin')->andReturn($isAdmin);
         $user->shouldReceive('isOrganizationOwner')->andReturn($isOwner);
+        $user->shouldReceive('isAdminPanelUser')->andReturn($isAdmin || $isOwner);
 
         return $user;
     }
