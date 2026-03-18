@@ -1,7 +1,10 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\AIAssistant\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -30,7 +33,7 @@ class Message extends Model
         return $this->belongsTo(Conversation::class);
     }
 
-    public function scopeByRole($query, string $role)
+    public function scopeByRole(Builder $query, string $role): Builder
     {
         return $query->where('role', $role);
     }
@@ -45,4 +48,3 @@ class Message extends Model
         return $this->role === 'assistant';
     }
 }
-
