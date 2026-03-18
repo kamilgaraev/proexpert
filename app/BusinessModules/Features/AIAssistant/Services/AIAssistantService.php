@@ -205,16 +205,16 @@ class AIAssistantService
 
             // РџРµСЂРµРґР°РµРј РґРµС‚Р°Р»СЊРЅСѓСЋ РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ С‚РѕРєРµРЅР°С… РґР»СЏ РїСЂР°РІРёР»СЊРЅРѕРіРѕ СЂР°СЃС‡РµС‚Р° СЃС‚РѕРёРјРѕСЃС‚Рё
             $cost = $this->usageTracker->calculateCost(
-                $response['tokens_used'],
+                (int) ($response['tokens_used'] ?? 0),
                 $response['model'],
-                $response['input_tokens'] ?? null,
-                $response['output_tokens'] ?? null
+                isset($response['input_tokens']) ? (int) $response['input_tokens'] : null,
+                isset($response['output_tokens']) ? (int) $response['output_tokens'] : null
             );
 
             $this->usageTracker->trackRequest(
                 $organizationId,
                 $user,
-                $response['tokens_used'],
+                (int) ($response['tokens_used'] ?? 0),
                 $cost
             );
 
