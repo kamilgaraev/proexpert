@@ -121,7 +121,7 @@ class AIAssistantController extends Controller
         }
     }
 
-    public function conversation(Request $request, Conversation $conversation): JsonResponse
+    public function conversation(Request $request, int $conversation): JsonResponse
     {
         $user = $request->user();
         $organizationId = $this->resolveOrganizationId($request, $user);
@@ -130,18 +130,20 @@ class AIAssistantController extends Controller
         }
 
         try {
-            $this->authorizeConversation($request, $conversation, $user);
-            $messages = $this->conversationManager->getHistory($conversation, 50);
+            $conversationModel = $this->findConversationForRequest($request, $conversation, $user, $organizationId);
+            if (!$conversationModel) {
+                return $this->errorResponse($request, $this->assistantMessage('ai_assistant.conversation_not_found', 'Р”РёР°Р»РѕРі РЅРµ РЅР°Р№РґРµРЅ РёР»Рё РЅРµРґРѕСЃС‚СѓРїРµРЅ.'), 403);
+            }
+
+            $messages = $this->conversationManager->getHistory($conversationModel, 50);
 
             return $this->successResponse($request, [
-                'conversation' => new ConversationResource($conversation),
+                'conversation' => new ConversationResource($conversationModel),
                 'messages' => MessageResource::collection($messages),
             ]);
-        } catch (AuthorizationException $exception) {
-            return $this->errorResponse($request, $exception->getMessage(), 403);
         } catch (Throwable $exception) {
             Log::error('Failed to load AI assistant conversation', [
-                'conversation_id' => $conversation->id,
+                'conversation_id' => $conversation,
                 'user_id' => $user->id,
                 'organization_id' => $organizationId,
                 'message' => $exception->getMessage(),
@@ -151,7 +153,7 @@ class AIAssistantController extends Controller
         }
     }
 
-    public function deleteConversation(Request $request, Conversation $conversation): JsonResponse
+    public function deleteConversation(Request $request, int $conversation): JsonResponse
     {
         $user = $request->user();
         $organizationId = $this->resolveOrganizationId($request, $user);
@@ -160,15 +162,17 @@ class AIAssistantController extends Controller
         }
 
         try {
-            $this->authorizeConversation($request, $conversation, $user);
-            $conversation->delete();
+            $conversationModel = $this->findConversationForRequest($request, $conversation, $user, $organizationId);
+            if (!$conversationModel) {
+                return $this->errorResponse($request, $this->assistantMessage('ai_assistant.conversation_not_found', 'Р”РёР°Р»РѕРі РЅРµ РЅР°Р№РґРµРЅ РёР»Рё РЅРµРґРѕСЃС‚СѓРїРµРЅ.'), 403);
+            }
+
+            $conversationModel->delete();
 
             return $this->successResponse($request, null, $this->assistantMessage('ai_assistant.conversation_deleted', 'Диалог удален.'));
-        } catch (AuthorizationException $exception) {
-            return $this->errorResponse($request, $exception->getMessage(), 403);
         } catch (Throwable $exception) {
             Log::error('Failed to delete AI assistant conversation', [
-                'conversation_id' => $conversation->id,
+                'conversation_id' => $conversation,
                 'user_id' => $user->id,
                 'organization_id' => $organizationId,
                 'message' => $exception->getMessage(),
