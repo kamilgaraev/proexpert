@@ -58,7 +58,7 @@ class AIAssistantController extends Controller
             }
 
             $conversationId = $request->integer('conversation_id') ?: null;
-            if ($conversationId !== null && !$this->conversationManager->findUserConversation($conversationId, $user, $organizationId)) {
+            if ($conversationId !== null && !$this->findConversationForRequest($request, $conversationId, $user, $organizationId)) {
                 return $this->errorResponse($request, $this->assistantMessage('ai_assistant.conversation_not_found', 'Диалог не найден или недоступен.'), 403);
             }
 
@@ -105,11 +105,11 @@ class AIAssistantController extends Controller
         }
 
         try {
-            $conversations = $this->conversationManager->getConversationsByUserInOrganization(
-                $user,
-                (int) $user->current_organization_id,
-                20
-            );
+            $organizationId = (int) $user->current_organization_id;
+            $conversations = $this->isAdminRequest($request)
+                && $this->permissionChecker->canManageOrganizationConversations($user, $organizationId)
+                ? $this->conversationManager->getConversationsByOrganization($organizationId, 20)
+                : $this->conversationManager->getConversationsByUserInOrganization($user, $organizationId, 20);
 
             return $this->successResponse($request, ConversationResource::collection($conversations));
         } catch (Throwable $exception) {
@@ -207,6 +207,15 @@ class AIAssistantController extends Controller
         if (!$this->permissionChecker->canAccessConversation($user, $conversation, $organizationId)) {
             throw new AuthorizationException($this->assistantMessage('ai_assistant.conversation_not_found', 'Диалог не найден или недоступен.'));
         }
+    }
+
+    private function findConversationForRequest(Request $request, int $conversationId, User $user, int $organizationId): ?Conversation
+    {
+        if ($this->isAdminRequest($request) && $this->permissionChecker->canManageOrganizationConversations($user, $organizationId)) {
+            return $this->conversationManager->findOrganizationConversation($conversationId, $organizationId);
+        }
+
+        return $this->conversationManager->findUserConversation($conversationId, $user, $organizationId);
     }
 
     private function assistantMessage(string $key, string $fallback, array $replace = []): string

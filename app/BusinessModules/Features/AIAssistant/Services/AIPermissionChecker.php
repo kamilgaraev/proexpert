@@ -43,9 +43,28 @@ class AIPermissionChecker
 
     public function canAccessConversation(User $user, Conversation $conversation, int $organizationId): bool
     {
-        return $this->canUseAssistant($user, $organizationId)
-            && (int) $conversation->organization_id === $organizationId
-            && (int) $conversation->user_id === (int) $user->id;
+        if (!$this->canUseAssistant($user, $organizationId)) {
+            return false;
+        }
+
+        if ((int) $conversation->organization_id !== $organizationId) {
+            return false;
+        }
+
+        if ((int) $conversation->user_id === (int) $user->id) {
+            return true;
+        }
+
+        return $this->canManageOrganizationConversations($user, $organizationId);
+    }
+
+    public function canManageOrganizationConversations(User $user, int $organizationId): bool
+    {
+        if (!$this->canUseAssistant($user, $organizationId)) {
+            return false;
+        }
+
+        return $user->isOrganizationAdmin($organizationId) || $user->isOrganizationOwner($organizationId);
     }
 
     public function canExecuteTool(User $user, string $toolName, array $params = []): bool
