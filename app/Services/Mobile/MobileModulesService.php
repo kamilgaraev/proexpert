@@ -35,6 +35,13 @@ class MobileModulesService
             'order' => 30,
         ],
         [
+            'slug' => 'ai-assistant',
+            'icon' => 'spark',
+            'route' => 'ai_assistant',
+            'supported_on_mobile' => true,
+            'order' => 35,
+        ],
+        [
             'slug' => 'workflow-management',
             'icon' => 'hub',
             'route' => null,

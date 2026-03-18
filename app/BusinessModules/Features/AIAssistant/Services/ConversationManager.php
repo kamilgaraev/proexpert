@@ -77,6 +77,8 @@ class ConversationManager
     public function getConversationsByOrganization(int $organizationId, int $limit = 20): Collection
     {
         return Conversation::forOrganization($organizationId)
+            ->with('lastMessage')
+            ->withCount('messages')
             ->orderBy('updated_at', 'desc')
             ->limit($limit)
             ->get();
@@ -85,6 +87,8 @@ class ConversationManager
     public function getConversationsByUser(User $user, int $limit = 20): Collection
     {
         return Conversation::forUser($user->id)
+            ->with('lastMessage')
+            ->withCount('messages')
             ->orderBy('updated_at', 'desc')
             ->limit($limit)
             ->get();
@@ -94,6 +98,8 @@ class ConversationManager
     {
         return Conversation::forUser($user->id)
             ->forOrganization($organizationId)
+            ->with('lastMessage')
+            ->withCount('messages')
             ->orderBy('updated_at', 'desc')
             ->limit($limit)
             ->get();

@@ -9,6 +9,7 @@ use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Logging\LoggingService;
+use Illuminate\Auth\Access\AuthorizationException;
 use RuntimeException;
 use Throwable;
 
@@ -49,6 +50,10 @@ class AIAssistantService
         User $user, 
         ?int $conversationId = null
     ): array {
+        if (!$this->permissionChecker->canUseAssistant($user, $organizationId)) {
+            throw new AuthorizationException(trans_message('ai_assistant.access_denied', [], 'ru'));
+        }
+
         $this->logging->business('ai.assistant.request', [
             'organization_id' => $organizationId,
             'user_id' => $user->id,
@@ -56,46 +61,46 @@ class AIAssistantService
         ]);
 
         if (!$this->usageTracker->canMakeRequest($organizationId)) {
-            throw new \Exception('Исчерпан месячный лимит запросов к AI-ассистенту');
+            throw new RuntimeException(trans_message('ai_assistant.limit_exceeded', [], 'ru'));
         }
 
         $conversation = $this->getOrCreateConversation($conversationId, $organizationId, $user);
 
         $this->conversationManager->addMessage($conversation, 'user', $query);
 
-        // Получаем предыдущий intent из контекста диалога для лучшего распознавания
+        // РџРѕР»СѓС‡Р°РµРј РїСЂРµРґС‹РґСѓС‰РёР№ intent РёР· РєРѕРЅС‚РµРєСЃС‚Р° РґРёР°Р»РѕРіР° РґР»СЏ Р»СѓС‡С€РµРіРѕ СЂР°СЃРїРѕР·РЅР°РІР°РЅРёСЏ
         $previousIntent = $conversation->context['last_intent'] ?? null;
 
-        // Передаем текущий контекст разговора для работы со списками
+        // РџРµСЂРµРґР°РµРј С‚РµРєСѓС‰РёР№ РєРѕРЅС‚РµРєСЃС‚ СЂР°Р·РіРѕРІРѕСЂР° РґР»СЏ СЂР°Р±РѕС‚С‹ СЃРѕ СЃРїРёСЃРєР°РјРё
         $conversationContext = $conversation->context ?? [];
         $context = $this->contextBuilder->buildContext($query, $organizationId, $user->id, $previousIntent, $conversationContext);
         
-        // Логируем что получили из Actions
+        // Р›РѕРіРёСЂСѓРµРј С‡С‚Рѕ РїРѕР»СѓС‡РёР»Рё РёР· Actions
         $this->logging->technical('ai.context.built', [
             'organization_id' => $organizationId,
             'intent' => $context['intent'] ?? 'unknown',
             'context_keys' => array_keys($context),
-            'has_action_data' => count($context) > 2, // больше чем intent и organization
+            'has_action_data' => count($context) > 2, // Р±РѕР»СЊС€Рµ С‡РµРј intent Рё organization
         ]);
 
-        // Сохраняем текущий intent и данные в контекст диалога
+        // РЎРѕС…СЂР°РЅСЏРµРј С‚РµРєСѓС‰РёР№ intent Рё РґР°РЅРЅС‹Рµ РІ РєРѕРЅС‚РµРєСЃС‚ РґРёР°Р»РѕРіР°
         $currentIntent = $context['intent'] ?? null;
         $executedAction = null;
 
         if ($currentIntent) {
             $contextToSave = ['last_intent' => $currentIntent];
 
-            // Если был возвращен список контрактов - сохраняем его в контекст
+            // Р•СЃР»Рё Р±С‹Р» РІРѕР·РІСЂР°С‰РµРЅ СЃРїРёСЃРѕРє РєРѕРЅС‚СЂР°РєС‚РѕРІ - СЃРѕС…СЂР°РЅСЏРµРј РµРіРѕ РІ РєРѕРЅС‚РµРєСЃС‚
             if (isset($context['contract_details']['show_list']) && $context['contract_details']['show_list']) {
                 $contextToSave['last_contracts'] = $context['contract_details']['contracts'] ?? [];
             }
 
-            // Если был возвращен список проектов - сохраняем его в контекст
+            // Р•СЃР»Рё Р±С‹Р» РІРѕР·РІСЂР°С‰РµРЅ СЃРїРёСЃРѕРє РїСЂРѕРµРєС‚РѕРІ - СЃРѕС…СЂР°РЅСЏРµРј РµРіРѕ РІ РєРѕРЅС‚РµРєСЃС‚
             if (isset($context['project_search']['projects'])) {
                 $contextToSave['last_projects'] = $context['project_search']['projects'] ?? [];
             }
 
-            // Если был выполнен Write Action - сохраняем информацию о действии
+            // Р•СЃР»Рё Р±С‹Р» РІС‹РїРѕР»РЅРµРЅ Write Action - СЃРѕС…СЂР°РЅСЏРµРј РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ РґРµР№СЃС‚РІРёРё
             if ($this->isWriteIntent($currentIntent) && isset($context[$currentIntent])) {
                 $executedAction = [
                     'type' => $currentIntent,
@@ -128,9 +133,9 @@ class AIAssistantService
                 throw new RuntimeException(trans_message('ai_assistant.organization_not_found', [], 'ru'));
             }
 
-            // Обработка Function Calling
+            // РћР±СЂР°Р±РѕС‚РєР° Function Calling
             while (!empty($response['tool_calls']) && $loopCount < $maxLoops) {
-                // Добавляем сообщение ассистента с вызовом функции в историю
+                // Р”РѕР±Р°РІР»СЏРµРј СЃРѕРѕР±С‰РµРЅРёРµ Р°СЃСЃРёСЃС‚РµРЅС‚Р° СЃ РІС‹Р·РѕРІРѕРј С„СѓРЅРєС†РёРё РІ РёСЃС‚РѕСЂРёСЋ
                 $messages[] = [
                     'role' => $response['role'],
                     'content' => $response['content'] ?? '',
@@ -156,12 +161,12 @@ class AIAssistantService
                             } else {
                                 $toolResult = $tool->execute($args, $user, $organization);
                             }
-                            // Если инструмент вернул массив с executed_action (для записи стейта)
+                            // Р•СЃР»Рё РёРЅСЃС‚СЂСѓРјРµРЅС‚ РІРµСЂРЅСѓР» РјР°СЃСЃРёРІ СЃ executed_action (РґР»СЏ Р·Р°РїРёСЃРё СЃС‚РµР№С‚Р°)
                             if (is_array($toolResult) && isset($toolResult['_executed_action'])) {
                                 $executedAction = $toolResult['_executed_action'];
                                 unset($toolResult['_executed_action']);
                             }
-                        } catch (\Exception $e) {
+                        } catch (Throwable $e) {
                             $toolResult = ['error' => $e->getMessage()];
                             $this->logging->technical('ai.tool.error', [
                                 'tool' => $toolName,
@@ -172,7 +177,7 @@ class AIAssistantService
                         $toolResult = ['error' => "Tool {$toolName} not found or not registered."];
                     }
                     
-                    // Добавляем результат выполнения инструмента в историю
+                    // Р”РѕР±Р°РІР»СЏРµРј СЂРµР·СѓР»СЊС‚Р°С‚ РІС‹РїРѕР»РЅРµРЅРёСЏ РёРЅСЃС‚СЂСѓРјРµРЅС‚Р° РІ РёСЃС‚РѕСЂРёСЋ
                     $messages[] = [
                         'role' => 'tool',
                         'tool_call_id' => $toolCall['id'],
@@ -181,7 +186,7 @@ class AIAssistantService
                     ];
                 }
                 
-                // Делаем повторный запрос к LLM с результатами работы инструментов
+                // Р”РµР»Р°РµРј РїРѕРІС‚РѕСЂРЅС‹Р№ Р·Р°РїСЂРѕСЃ Рє LLM СЃ СЂРµР·СѓР»СЊС‚Р°С‚Р°РјРё СЂР°Р±РѕС‚С‹ РёРЅСЃС‚СЂСѓРјРµРЅС‚РѕРІ
                 $response = $this->llmProvider->chat($messages, $options);
                 $loopCount++;
             }
@@ -194,7 +199,7 @@ class AIAssistantService
                 $response['model']
             );
 
-            // Передаем детальную информацию о токенах для правильного расчета стоимости
+            // РџРµСЂРµРґР°РµРј РґРµС‚Р°Р»СЊРЅСѓСЋ РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ С‚РѕРєРµРЅР°С… РґР»СЏ РїСЂР°РІРёР»СЊРЅРѕРіРѕ СЂР°СЃС‡РµС‚Р° СЃС‚РѕРёРјРѕСЃС‚Рё
             $cost = $this->usageTracker->calculateCost(
                 $response['tokens_used'],
                 $response['model'],
@@ -229,14 +234,14 @@ class AIAssistantService
                 'usage' => $this->usageTracker->getUsageStats($organizationId),
             ];
 
-            // Добавляем информацию о выполненном действии
+            // Р”РѕР±Р°РІР»СЏРµРј РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ РІС‹РїРѕР»РЅРµРЅРЅРѕРј РґРµР№СЃС‚РІРёРё
             if ($executedAction) {
                 $result['executed_action'] = $executedAction;
             }
 
             return $result;
 
-        } catch (\Exception $e) {
+        } catch (Throwable $e) {
             $this->logging->technical('ai.assistant.error', [
                 'organization_id' => $organizationId,
                 'user_id' => $user->id,
@@ -250,15 +255,18 @@ class AIAssistantService
     protected function getOrCreateConversation(?int $conversationId, int $organizationId, User $user): Conversation
     {
         if ($conversationId) {
-            $conversation = Conversation::find($conversationId);
-            
-            if ($conversation && $conversation->organization_id === $organizationId) {
+            $conversation = $this->conversationManager->findUserConversation($conversationId, $user, $organizationId);
+
+            if ($conversation instanceof Conversation) {
                 return $conversation;
             }
+
+            throw new AuthorizationException(trans_message('ai_assistant.conversation_not_found', [], 'ru'));
         }
 
         return $this->conversationManager->createConversation($organizationId, $user);
     }
+
 
     protected function buildMessages(Conversation $conversation, array $context): array
     {
@@ -287,7 +295,7 @@ class AIAssistantService
     
     protected function formatContextForLLM(array $context): string
     {
-        $formatted = "=== КОНТЕКСТ С ДАННЫМИ ИЗ БАЗЫ ===\n\n";
+        $formatted = "=== РљРћРќРўР•РљРЎРў РЎ Р”РђРќРќР«РњР РР— Р‘РђР—Р« ===\n\n";
         
         foreach ($context as $key => $value) {
             if ($key === 'intent' || $key === 'organization') {
@@ -308,188 +316,188 @@ class AIAssistantService
         
         $output = "";
         
-        // Контракты - список
+        // РљРѕРЅС‚СЂР°РєС‚С‹ - СЃРїРёСЃРѕРє
         if ($key === 'contract_search' && isset($value['contracts'])) {
-            $output .= "📋 СПИСОК КОНТРАКТОВ:\n";
+            $output .= "рџ“‹ РЎРџРРЎРћРљ РљРћРќРўР РђРљРўРћР’:\n";
             foreach ($value['contracts'] as $i => $contract) {
                 $num = $i + 1;
-                $output .= "  {$num}. Контракт №{$contract['number']} от {$contract['date']}\n";
-                $output .= "     Подрядчик: {$contract['contractor']['name']}\n";
-                $output .= "     Сумма: " . number_format($contract['total_amount'], 2, '.', ' ') . " руб.\n";
-                $output .= "     Статус: {$contract['status']}\n";
+                $output .= "  {$num}. РљРѕРЅС‚СЂР°РєС‚ в„–{$contract['number']} РѕС‚ {$contract['date']}\n";
+                $output .= "     РџРѕРґСЂСЏРґС‡РёРє: {$contract['contractor']['name']}\n";
+                $output .= "     РЎСѓРјРјР°: " . number_format($contract['total_amount'], 2, '.', ' ') . " СЂСѓР±.\n";
+                $output .= "     РЎС‚Р°С‚СѓСЃ: {$contract['status']}\n";
                 if ($contract['project']) {
-                    $output .= "     Проект: {$contract['project']['name']}\n";
+                    $output .= "     РџСЂРѕРµРєС‚: {$contract['project']['name']}\n";
                 }
                 $output .= "\n";
             }
-            $output .= "Всего контрактов: {$value['total']}\n";
-            $output .= "Общая сумма: " . number_format($value['total_amount'], 2, '.', ' ') . " руб.\n\n";
+            $output .= "Р’СЃРµРіРѕ РєРѕРЅС‚СЂР°РєС‚РѕРІ: {$value['total']}\n";
+            $output .= "РћР±С‰Р°СЏ СЃСѓРјРјР°: " . number_format($value['total_amount'], 2, '.', ' ') . " СЂСѓР±.\n\n";
         }
         
-        // Детали контракта
+        // Р”РµС‚Р°Р»Рё РєРѕРЅС‚СЂР°РєС‚Р°
         if ($key === 'contract_details' && !isset($value['show_list'])) {
             $c = $value['contract'];
-            $output .= "📄 ДЕТАЛИ КОНТРАКТА:\n\n";
-            $output .= "Номер: {$c['number']}\n";
-            $output .= "Дата: {$c['date']}\n";
+            $output .= "рџ“„ Р”Р•РўРђР›Р РљРћРќРўР РђРљРўРђ:\n\n";
+            $output .= "РќРѕРјРµСЂ: {$c['number']}\n";
+            $output .= "Р”Р°С‚Р°: {$c['date']}\n";
             if (isset($c['type'])) {
-                $output .= "Тип: {$c['type']}\n";
+                $output .= "РўРёРї: {$c['type']}\n";
             }
             if ($c['subject']) {
-                $output .= "Предмет: {$c['subject']}\n";
+                $output .= "РџСЂРµРґРјРµС‚: {$c['subject']}\n";
             }
-            $output .= "Статус: {$c['status']}\n";
-            $output .= "Сумма контракта: " . number_format($c['total_amount'], 2, '.', ' ') . " руб.\n";
+            $output .= "РЎС‚Р°С‚СѓСЃ: {$c['status']}\n";
+            $output .= "РЎСѓРјРјР° РєРѕРЅС‚СЂР°РєС‚Р°: " . number_format($c['total_amount'], 2, '.', ' ') . " СЂСѓР±.\n";
             
-            // Показываем ГП и плановый аванс явно
+            // РџРѕРєР°Р·С‹РІР°РµРј Р“Рџ Рё РїР»Р°РЅРѕРІС‹Р№ Р°РІР°РЅСЃ СЏРІРЅРѕ
             if (isset($c['gp_percentage']) && $c['gp_percentage'] > 0) {
-                $output .= "Валовая прибыль (ГП): {$c['gp_percentage']}% = " . number_format($c['gp_amount'], 2, '.', ' ') . " руб.\n";
-                $output .= "Сумма с ГП: " . number_format($c['total_amount_with_gp'], 2, '.', ' ') . " руб.\n";
+                $output .= "Р’Р°Р»РѕРІР°СЏ РїСЂРёР±С‹Р»СЊ (Р“Рџ): {$c['gp_percentage']}% = " . number_format($c['gp_amount'], 2, '.', ' ') . " СЂСѓР±.\n";
+                $output .= "РЎСѓРјРјР° СЃ Р“Рџ: " . number_format($c['total_amount_with_gp'], 2, '.', ' ') . " СЂСѓР±.\n";
             }
             if (isset($c['planned_advance']) && $c['planned_advance'] > 0) {
-                $output .= "Плановый аванс: " . number_format($c['planned_advance'], 2, '.', ' ') . " руб.\n";
+                $output .= "РџР»Р°РЅРѕРІС‹Р№ Р°РІР°РЅСЃ: " . number_format($c['planned_advance'], 2, '.', ' ') . " СЂСѓР±.\n";
                 if (isset($c['actual_advance']) && $c['actual_advance'] > 0) {
-                    $output .= "Фактически выдано авансом: " . number_format($c['actual_advance'], 2, '.', ' ') . " руб.\n";
+                    $output .= "Р¤Р°РєС‚РёС‡РµСЃРєРё РІС‹РґР°РЅРѕ Р°РІР°РЅСЃРѕРј: " . number_format($c['actual_advance'], 2, '.', ' ') . " СЂСѓР±.\n";
                     if (isset($c['remaining_advance']) && $c['remaining_advance'] > 0) {
-                        $output .= "Остаток аванса к выдаче: " . number_format($c['remaining_advance'], 2, '.', ' ') . " руб.\n";
+                        $output .= "РћСЃС‚Р°С‚РѕРє Р°РІР°РЅСЃР° Рє РІС‹РґР°С‡Рµ: " . number_format($c['remaining_advance'], 2, '.', ' ') . " СЂСѓР±.\n";
                     }
                 }
             }
             
-            $output .= "Сроки: с {$c['start_date']} по {$c['end_date']}\n";
+            $output .= "РЎСЂРѕРєРё: СЃ {$c['start_date']} РїРѕ {$c['end_date']}\n";
             if ($c['payment_terms']) {
-                $output .= "Условия оплаты: {$c['payment_terms']}\n";
+                $output .= "РЈСЃР»РѕРІРёСЏ РѕРїР»Р°С‚С‹: {$c['payment_terms']}\n";
             }
             if ($c['notes']) {
-                $output .= "Примечания: {$c['notes']}\n";
+                $output .= "РџСЂРёРјРµС‡Р°РЅРёСЏ: {$c['notes']}\n";
             }
             $output .= "\n";
             
-            $output .= "👷 ПОДРЯДЧИК:\n";
-            $output .= "  Название: {$value['contractor']['name']}\n";
-            $output .= "  ИНН: {$value['contractor']['inn']}\n";
+            $output .= "рџ‘· РџРћР”Р РЇР”Р§РРљ:\n";
+            $output .= "  РќР°Р·РІР°РЅРёРµ: {$value['contractor']['name']}\n";
+            $output .= "  РРќРќ: {$value['contractor']['inn']}\n";
             if ($value['contractor']['phone']) {
-                $output .= "  Телефон: {$value['contractor']['phone']}\n";
+                $output .= "  РўРµР»РµС„РѕРЅ: {$value['contractor']['phone']}\n";
             }
             if ($value['contractor']['email']) {
                 $output .= "  Email: {$value['contractor']['email']}\n";
             }
             if ($value['contractor']['address']) {
-                $output .= "  Адрес: {$value['contractor']['address']}\n";
+                $output .= "  РђРґСЂРµСЃ: {$value['contractor']['address']}\n";
             }
             $output .= "\n";
             
             if ($value['project']) {
-                $output .= "🏗️ ПРОЕКТ:\n";
-                $output .= "  Название: {$value['project']['name']}\n";
-                $output .= "  Адрес: {$value['project']['address']}\n";
-                $output .= "  Статус: {$value['project']['status']}\n\n";
+                $output .= "рџЏ—пёЏ РџР РћР•РљРў:\n";
+                $output .= "  РќР°Р·РІР°РЅРёРµ: {$value['project']['name']}\n";
+                $output .= "  РђРґСЂРµСЃ: {$value['project']['address']}\n";
+                $output .= "  РЎС‚Р°С‚СѓСЃ: {$value['project']['status']}\n\n";
             }
             
             $f = $value['financial'];
-            $output .= "💰 ФИНАНСЫ И ВЫПОЛНЕНИЕ:\n";
-            $output .= "  Сумма контракта: " . number_format($f['total_amount'], 2, '.', ' ') . " руб. (100%)\n";
-            $output .= "  Выполнено работ по актам: " . number_format($f['total_acted'], 2, '.', ' ') . " руб.\n";
-            $output .= "  Выставлено счетов: " . number_format($f['total_invoiced'], 2, '.', ' ') . " руб.\n";
-            $output .= "  Оплачено по счетам: " . number_format($f['total_paid'], 2, '.', ' ') . " руб.\n";
-            $output .= "  Остаток к оплате: " . number_format($f['remaining'], 2, '.', ' ') . " руб.\n";
-            $output .= "  Процент выполнения работ: {$f['completion_percentage']}%\n\n";
+            $output .= "рџ’° Р¤РРќРђРќРЎР« Р Р’Р«РџРћР›РќР•РќРР•:\n";
+            $output .= "  РЎСѓРјРјР° РєРѕРЅС‚СЂР°РєС‚Р°: " . number_format($f['total_amount'], 2, '.', ' ') . " СЂСѓР±. (100%)\n";
+            $output .= "  Р’С‹РїРѕР»РЅРµРЅРѕ СЂР°Р±РѕС‚ РїРѕ Р°РєС‚Р°Рј: " . number_format($f['total_acted'], 2, '.', ' ') . " СЂСѓР±.\n";
+            $output .= "  Р’С‹СЃС‚Р°РІР»РµРЅРѕ СЃС‡РµС‚РѕРІ: " . number_format($f['total_invoiced'], 2, '.', ' ') . " СЂСѓР±.\n";
+            $output .= "  РћРїР»Р°С‡РµРЅРѕ РїРѕ СЃС‡РµС‚Р°Рј: " . number_format($f['total_paid'], 2, '.', ' ') . " СЂСѓР±.\n";
+            $output .= "  РћСЃС‚Р°С‚РѕРє Рє РѕРїР»Р°С‚Рµ: " . number_format($f['remaining'], 2, '.', ' ') . " СЂСѓР±.\n";
+            $output .= "  РџСЂРѕС†РµРЅС‚ РІС‹РїРѕР»РЅРµРЅРёСЏ СЂР°Р±РѕС‚: {$f['completion_percentage']}%\n\n";
             
             if ($value['acts']['count'] > 0) {
-                $output .= "📝 АКТЫ ВЫПОЛНЕННЫХ РАБОТ ({$value['acts']['count']}):\n";
+                $output .= "рџ“ќ РђРљРўР« Р’Р«РџРћР›РќР•РќРќР«РҐ Р РђР‘РћРў ({$value['acts']['count']}):\n";
                 foreach ($value['acts']['list'] as $act) {
-                    $output .= "  - Акт №{$act['number']} от {$act['date']}: " . number_format($act['amount'], 2, '.', ' ') . " руб. (статус: {$act['status']})\n";
+                    $output .= "  - РђРєС‚ в„–{$act['number']} РѕС‚ {$act['date']}: " . number_format($act['amount'], 2, '.', ' ') . " СЂСѓР±. (СЃС‚Р°С‚СѓСЃ: {$act['status']})\n";
                 }
                 $output .= "\n";
             } else {
-                $output .= "📝 АКТЫ: пока нет актов выполненных работ\n\n";
+                $output .= "рџ“ќ РђРљРўР«: РїРѕРєР° РЅРµС‚ Р°РєС‚РѕРІ РІС‹РїРѕР»РЅРµРЅРЅС‹С… СЂР°Р±РѕС‚\n\n";
             }
             
             if ($value['invoices']['count'] > 0) {
-                $output .= "💳 СЧЕТА НА ОПЛАТУ ({$value['invoices']['count']}):\n";
+                $output .= "рџ’і РЎР§Р•РўРђ РќРђ РћРџР›РђРўРЈ ({$value['invoices']['count']}):\n";
                 foreach ($value['invoices']['list'] as $invoice) {
-                    $output .= "  - Счет №{$invoice['number']} от {$invoice['date']}: " . number_format($invoice['amount'], 2, '.', ' ') . " руб. (статус: {$invoice['status']})";
+                    $output .= "  - РЎС‡РµС‚ в„–{$invoice['number']} РѕС‚ {$invoice['date']}: " . number_format($invoice['amount'], 2, '.', ' ') . " СЂСѓР±. (СЃС‚Р°С‚СѓСЃ: {$invoice['status']})";
                     if ($invoice['payment_date']) {
-                        $output .= " - оплачен {$invoice['payment_date']}";
+                        $output .= " - РѕРїР»Р°С‡РµРЅ {$invoice['payment_date']}";
                     }
                     $output .= "\n";
                 }
                 $output .= "\n";
             } else {
-                $output .= "💳 СЧЕТА: пока нет выставленных счетов\n\n";
+                $output .= "рџ’і РЎР§Р•РўРђ: РїРѕРєР° РЅРµС‚ РІС‹СЃС‚Р°РІР»РµРЅРЅС‹С… СЃС‡РµС‚РѕРІ\n\n";
             }
         }
         
-        // Список для выбора
+        // РЎРїРёСЃРѕРє РґР»СЏ РІС‹Р±РѕСЂР°
         if ($key === 'contract_details' && isset($value['show_list'])) {
-            $output .= "📋 ДОСТУПНЫЕ КОНТРАКТЫ (выберите один):\n";
+            $output .= "рџ“‹ Р”РћРЎРўРЈРџРќР«Р• РљРћРќРўР РђРљРўР« (РІС‹Р±РµСЂРёС‚Рµ РѕРґРёРЅ):\n";
             foreach ($value['contracts'] as $i => $contract) {
                 $num = $i + 1;
-                $output .= "  {$num}. Контракт №{$contract['number']} - {$contract['contractor']} - " . number_format($contract['amount'], 2, '.', ' ') . " руб.\n";
+                $output .= "  {$num}. РљРѕРЅС‚СЂР°РєС‚ в„–{$contract['number']} - {$contract['contractor']} - " . number_format($contract['amount'], 2, '.', ' ') . " СЂСѓР±.\n";
             }
             $output .= "\n";
         }
         
-        // Детали проекта
+        // Р”РµС‚Р°Р»Рё РїСЂРѕРµРєС‚Р°
         if ($key === 'project_details' && isset($value['project'])) {
             $p = $value['project'];
-            $output .= "🏗️ ДЕТАЛИ ПРОЕКТА:\n\n";
+            $output .= "рџЏ—пёЏ Р”Р•РўРђР›Р РџР РћР•РљРўРђ:\n\n";
             $output .= "ID: {$p['id']}\n";
-            $output .= "Название: {$p['name']}\n";
+            $output .= "РќР°Р·РІР°РЅРёРµ: {$p['name']}\n";
             if ($p['address']) {
-                $output .= "Адрес: {$p['address']}\n";
+                $output .= "РђРґСЂРµСЃ: {$p['address']}\n";
             }
-            $output .= "Статус: {$p['status']}\n";
+            $output .= "РЎС‚Р°С‚СѓСЃ: {$p['status']}\n";
             if ($p['description']) {
-                $output .= "Описание: {$p['description']}\n";
+                $output .= "РћРїРёСЃР°РЅРёРµ: {$p['description']}\n";
             }
             $output .= "\n";
             
-            // Заказчик и контракт
+            // Р—Р°РєР°Р·С‡РёРє Рё РєРѕРЅС‚СЂР°РєС‚
             if (!empty($p['customer']) || !empty($p['customer_organization'])) {
-                $output .= "👤 ЗАКАЗЧИК:\n";
+                $output .= "рџ‘¤ Р—РђРљРђР—Р§РРљ:\n";
                 if (!empty($p['customer'])) {
-                    $output .= "  Название: {$p['customer']}\n";
+                    $output .= "  РќР°Р·РІР°РЅРёРµ: {$p['customer']}\n";
                 }
                 if (!empty($p['customer_organization'])) {
-                    $output .= "  Организация: {$p['customer_organization']}\n";
+                    $output .= "  РћСЂРіР°РЅРёР·Р°С†РёСЏ: {$p['customer_organization']}\n";
                 }
                 if (!empty($p['customer_representative'])) {
-                    $output .= "  Представитель: {$p['customer_representative']}\n";
+                    $output .= "  РџСЂРµРґСЃС‚Р°РІРёС‚РµР»СЊ: {$p['customer_representative']}\n";
                 }
                 if (!empty($p['contract_number'])) {
-                    $output .= "  Договор с заказчиком: №{$p['contract_number']}";
+                    $output .= "  Р”РѕРіРѕРІРѕСЂ СЃ Р·Р°РєР°Р·С‡РёРєРѕРј: в„–{$p['contract_number']}";
                     if (!empty($p['contract_date'])) {
-                        $output .= " от {$p['contract_date']}";
+                        $output .= " РѕС‚ {$p['contract_date']}";
                     }
                     $output .= "\n";
                 }
                 if (!empty($p['designer'])) {
-                    $output .= "  Проектировщик: {$p['designer']}\n";
+                    $output .= "  РџСЂРѕРµРєС‚РёСЂРѕРІС‰РёРє: {$p['designer']}\n";
                 }
                 $output .= "\n";
             }
             
-            $output .= "📅 СРОКИ:\n";
-            $output .= "  Начало: {$p['start_date']}\n";
-            $output .= "  Окончание: {$p['end_date']}\n";
+            $output .= "рџ“… РЎР РћРљР:\n";
+            $output .= "  РќР°С‡Р°Р»Рѕ: {$p['start_date']}\n";
+            $output .= "  РћРєРѕРЅС‡Р°РЅРёРµ: {$p['end_date']}\n";
             if (isset($p['days_remaining'])) {
                 if ($p['is_overdue']) {
-                    $output .= "  ⚠️ Просрочен на " . abs($p['days_remaining']) . " дней\n";
+                    $output .= "  вљ пёЏ РџСЂРѕСЃСЂРѕС‡РµРЅ РЅР° " . abs($p['days_remaining']) . " РґРЅРµР№\n";
                 } else {
-                    $output .= "  Осталось: {$p['days_remaining']} дней\n";
+                    $output .= "  РћСЃС‚Р°Р»РѕСЃСЊ: {$p['days_remaining']} РґРЅРµР№\n";
                 }
             }
-            $output .= "  Архивирован: " . ($p['is_archived'] ? 'Да' : 'Нет') . "\n\n";
+            $output .= "  РђСЂС…РёРІРёСЂРѕРІР°РЅ: " . ($p['is_archived'] ? 'Р”Р°' : 'РќРµС‚') . "\n\n";
             
-            $output .= "💰 БЮДЖЕТ:\n";
-            $output .= "  Плановый бюджет: " . number_format($p['budget_amount'], 2, '.', ' ') . " руб.\n";
-            $output .= "  Потрачено: " . number_format($p['spent_amount'], 2, '.', ' ') . " руб.\n";
-            $output .= "  Остаток: " . number_format($p['remaining_budget'], 2, '.', ' ') . " руб.\n";
-            $output .= "  Использовано: {$p['budget_percentage_used']}%\n\n";
+            $output .= "рџ’° Р‘Р®Р”Р–Р•Рў:\n";
+            $output .= "  РџР»Р°РЅРѕРІС‹Р№ Р±СЋРґР¶РµС‚: " . number_format($p['budget_amount'], 2, '.', ' ') . " СЂСѓР±.\n";
+            $output .= "  РџРѕС‚СЂР°С‡РµРЅРѕ: " . number_format($p['spent_amount'], 2, '.', ' ') . " СЂСѓР±.\n";
+            $output .= "  РћСЃС‚Р°С‚РѕРє: " . number_format($p['remaining_budget'], 2, '.', ' ') . " СЂСѓР±.\n";
+            $output .= "  РСЃРїРѕР»СЊР·РѕРІР°РЅРѕ: {$p['budget_percentage_used']}%\n\n";
             
             if (!empty($value['team_members'])) {
-                $output .= "👥 КОМАНДА (" . count($value['team_members']) . "):\n";
+                $output .= "рџ‘Ґ РљРћРњРђРќР”Рђ (" . count($value['team_members']) . "):\n";
                 foreach ($value['team_members'] as $member) {
                     $output .= "  - {$member['name']} ({$member['role']}) - {$member['email']}\n";
                 }
@@ -497,178 +505,178 @@ class AIAssistantService
             }
             
             if (!empty($value['contracts'])) {
-                $output .= "📄 КОНТРАКТЫ С ПОДРЯДЧИКАМИ (" . count($value['contracts']) . "):\n";
+                $output .= "рџ“„ РљРћРќРўР РђРљРўР« РЎ РџРћР”Р РЇР”Р§РРљРђРњР (" . count($value['contracts']) . "):\n";
                 foreach ($value['contracts'] as $contract) {
-                    $output .= "  - №{$contract['number']} от {$contract['date']}: " . number_format($contract['total_amount'], 2, '.', ' ') . " руб. ({$contract['status']})\n";
+                    $output .= "  - в„–{$contract['number']} РѕС‚ {$contract['date']}: " . number_format($contract['total_amount'], 2, '.', ' ') . " СЂСѓР±. ({$contract['status']})\n";
                     if (isset($contract['contractor_name'])) {
-                        $output .= "    Подрядчик: {$contract['contractor_name']}\n";
+                        $output .= "    РџРѕРґСЂСЏРґС‡РёРє: {$contract['contractor_name']}\n";
                     }
                 }
                 $output .= "\n";
             }
             
             if (isset($value['materials'])) {
-                $output .= "📦 МАТЕРИАЛЫ НА ПРОЕКТЕ:\n";
-                $output .= "  Типов материалов: {$value['materials']['types_count']}\n";
-                $output .= "  Всего на складе: " . number_format($value['materials']['total_quantity'], 2, '.', ' ') . "\n";
-                $output .= "  Зарезервировано: " . number_format($value['materials']['reserved_quantity'], 2, '.', ' ') . "\n\n";
+                $output .= "рџ“¦ РњРђРўР•Р РРђР›Р« РќРђ РџР РћР•РљРўР•:\n";
+                $output .= "  РўРёРїРѕРІ РјР°С‚РµСЂРёР°Р»РѕРІ: {$value['materials']['types_count']}\n";
+                $output .= "  Р’СЃРµРіРѕ РЅР° СЃРєР»Р°РґРµ: " . number_format($value['materials']['total_quantity'], 2, '.', ' ') . "\n";
+                $output .= "  Р—Р°СЂРµР·РµСЂРІРёСЂРѕРІР°РЅРѕ: " . number_format($value['materials']['reserved_quantity'], 2, '.', ' ') . "\n\n";
             }
         }
         
-        // Список проектов
+        // РЎРїРёСЃРѕРє РїСЂРѕРµРєС‚РѕРІ
         if ($key === 'project_search' && isset($value['projects'])) {
-            $output .= "🏗️ СПИСОК ПРОЕКТОВ:\n\n";
+            $output .= "рџЏ—пёЏ РЎРџРРЎРћРљ РџР РћР•РљРўРћР’:\n\n";
             foreach ($value['projects'] as $i => $project) {
                 $num = $i + 1;
                 $output .= "  {$num}. {$project['name']}\n";
-                $output .= "     Адрес: {$project['address']}\n";
-                $output .= "     Статус: {$project['status']}\n";
-                $output .= "     Бюджет: " . number_format($project['budget'], 2, '.', ' ') . " руб.\n";
-                $output .= "     Сроки: с {$project['start_date']} по {$project['end_date']}\n";
+                $output .= "     РђРґСЂРµСЃ: {$project['address']}\n";
+                $output .= "     РЎС‚Р°С‚СѓСЃ: {$project['status']}\n";
+                $output .= "     Р‘СЋРґР¶РµС‚: " . number_format($project['budget'], 2, '.', ' ') . " СЂСѓР±.\n";
+                $output .= "     РЎСЂРѕРєРё: СЃ {$project['start_date']} РїРѕ {$project['end_date']}\n";
                 $output .= "\n";
             }
-            $output .= "Всего проектов: {$value['total_projects']}\n\n";
+            $output .= "Р’СЃРµРіРѕ РїСЂРѕРµРєС‚РѕРІ: {$value['total_projects']}\n\n";
         }
         
-        // Материалы
+        // РњР°С‚РµСЂРёР°Р»С‹
         if ($key === 'material_stock' && isset($value['materials'])) {
-            $output .= "📦 ОСТАТКИ МАТЕРИАЛОВ:\n\n";
+            $output .= "рџ“¦ РћРЎРўРђРўРљР РњРђРўР•Р РРђР›РћР’:\n\n";
             
             if ($value['low_stock_count'] > 0) {
-                $output .= "⚠️ НИЗКИЕ ОСТАТКИ ({$value['low_stock_count']}):\n";
+                $output .= "вљ пёЏ РќРР—РљРР• РћРЎРўРђРўРљР ({$value['low_stock_count']}):\n";
                 foreach ($value['low_stock_items'] as $m) {
-                    $output .= "  - {$m['name']}: {$m['available']} {$m['unit']} (зарезерв.: {$m['reserved']})\n";
+                    $output .= "  - {$m['name']}: {$m['available']} {$m['unit']} (Р·Р°СЂРµР·РµСЂРІ.: {$m['reserved']})\n";
                 }
                 $output .= "\n";
             }
             
-            $output .= "ВСЕ МАТЕРИАЛЫ (топ-20):\n";
+            $output .= "Р’РЎР• РњРђРўР•Р РРђР›Р« (С‚РѕРї-20):\n";
             $shown = 0;
             foreach ($value['materials'] as $m) {
                 if ($shown >= 20) break;
                 $output .= "  - {$m['name']}: {$m['available']} {$m['unit']}";
                 if ($m['reserved'] > 0) {
-                    $output .= " (зарезерв.: {$m['reserved']})";
+                    $output .= " (Р·Р°СЂРµР·РµСЂРІ.: {$m['reserved']})";
                 }
-                $output .= " - " . number_format($m['value'], 2, '.', ' ') . " руб.\n";
+                $output .= " - " . number_format($m['value'], 2, '.', ' ') . " СЂСѓР±.\n";
                 $shown++;
             }
             
             $output .= "\n";
-            $output .= "Итого материалов: {$value['total_materials']}\n";
-            $output .= "Общая стоимость: " . number_format($value['total_inventory_value'], 2, '.', ' ') . " руб.\n\n";
+            $output .= "РС‚РѕРіРѕ РјР°С‚РµСЂРёР°Р»РѕРІ: {$value['total_materials']}\n";
+            $output .= "РћР±С‰Р°СЏ СЃС‚РѕРёРјРѕСЃС‚СЊ: " . number_format($value['total_inventory_value'], 2, '.', ' ') . " СЂСѓР±.\n\n";
         }
         
-        // Результаты Write Actions
+        // Р РµР·СѓР»СЊС‚Р°С‚С‹ Write Actions
         if ($key === 'create_measurement_unit' && isset($value['name'])) {
-            $output .= "✅ СОЗДАНА ЕДИНИЦА ИЗМЕРЕНИЯ:\n\n";
+            $output .= "вњ… РЎРћР—Р”РђРќРђ Р•Р”РРќРР¦Рђ РР—РњР•Р Р•РќРРЇ:\n\n";
             $output .= "ID: {$value['id']}\n";
-            $output .= "Название: {$value['name']}\n";
-            $output .= "Сокращение: {$value['short_name']}\n";
+            $output .= "РќР°Р·РІР°РЅРёРµ: {$value['name']}\n";
+            $output .= "РЎРѕРєСЂР°С‰РµРЅРёРµ: {$value['short_name']}\n";
             if (isset($value['type'])) {
-                $output .= "Тип: {$value['type']}\n";
+                $output .= "РўРёРї: {$value['type']}\n";
             }
             if (isset($value['is_default']) && $value['is_default']) {
-                $output .= "По умолчанию: Да\n";
+                $output .= "РџРѕ СѓРјРѕР»С‡Р°РЅРёСЋ: Р”Р°\n";
             }
-            $output .= "\n✅ Готово! Единица измерения \"{$value['name']}\" создана.\n\n";
+            $output .= "\nвњ… Р“РѕС‚РѕРІРѕ! Р•РґРёРЅРёС†Р° РёР·РјРµСЂРµРЅРёСЏ \"{$value['name']}\" СЃРѕР·РґР°РЅР°.\n\n";
         }
 
         if ($key === 'mass_create_measurement_units' && isset($value['created_count'])) {
-            $output .= "✅ МАССОВОЕ СОЗДАНИЕ ЕДИНИЦ ИЗМЕРЕНИЯ:\n\n";
-            $output .= "Запрошено: {$value['total_requested']} единиц\n";
-            $output .= "Создано: {$value['created_count']} единиц\n";
+            $output .= "вњ… РњРђРЎРЎРћР’РћР• РЎРћР—Р”РђРќРР• Р•Р”РРќРР¦ РР—РњР•Р Р•РќРРЇ:\n\n";
+            $output .= "Р—Р°РїСЂРѕС€РµРЅРѕ: {$value['total_requested']} РµРґРёРЅРёС†\n";
+            $output .= "РЎРѕР·РґР°РЅРѕ: {$value['created_count']} РµРґРёРЅРёС†\n";
 
             if ($value['errors_count'] > 0) {
-                $output .= "Ошибок: {$value['errors_count']}\n\n";
+                $output .= "РћС€РёР±РѕРє: {$value['errors_count']}\n\n";
             } else {
                 $output .= "\n";
             }
 
             if (!empty($value['created_units'])) {
-                $output .= "СОЗДАННЫЕ ЕДИНИЦЫ:\n";
+                $output .= "РЎРћР—Р”РђРќРќР«Р• Р•Р”РРќРР¦Р«:\n";
                 foreach ($value['created_units'] as $unit) {
-                    $output .= "• {$unit['name']} ({$unit['short_name']}) - ID: {$unit['id']}\n";
+                    $output .= "вЂў {$unit['name']} ({$unit['short_name']}) - ID: {$unit['id']}\n";
                 }
                 $output .= "\n";
             }
 
             if (!empty($value['errors'])) {
-                $output .= "ОШИБКИ:\n";
+                $output .= "РћРЁРР‘РљР:\n";
                 foreach ($value['errors'] as $error) {
-                    $output .= "• Единица {$error['index']}: {$error['error']}\n";
+                    $output .= "вЂў Р•РґРёРЅРёС†Р° {$error['index']}: {$error['error']}\n";
                 }
                 $output .= "\n";
             }
 
-            $output .= "✅ Готово! Обработано {$value['total_requested']} единиц измерения.\n\n";
+            $output .= "вњ… Р“РѕС‚РѕРІРѕ! РћР±СЂР°Р±РѕС‚Р°РЅРѕ {$value['total_requested']} РµРґРёРЅРёС† РёР·РјРµСЂРµРЅРёСЏ.\n\n";
         }
 
         if ($key === 'update_measurement_unit' && isset($value['name'])) {
-            $output .= "✅ ОБНОВЛЕНА ЕДИНИЦА ИЗМЕРЕНИЯ:\n\n";
+            $output .= "вњ… РћР‘РќРћР’Р›Р•РќРђ Р•Р”РРќРР¦Рђ РР—РњР•Р Р•РќРРЇ:\n\n";
             $output .= "ID: {$value['id']}\n";
-            $output .= "Название: {$value['name']}\n";
-            $output .= "Сокращение: {$value['short_name']}\n";
+            $output .= "РќР°Р·РІР°РЅРёРµ: {$value['name']}\n";
+            $output .= "РЎРѕРєСЂР°С‰РµРЅРёРµ: {$value['short_name']}\n";
             if (isset($value['type'])) {
-                $output .= "Тип: {$value['type']}\n";
+                $output .= "РўРёРї: {$value['type']}\n";
             }
-            $output .= "\n✅ Готово! Единица измерения обновлена.\n\n";
+            $output .= "\nвњ… Р“РѕС‚РѕРІРѕ! Р•РґРёРЅРёС†Р° РёР·РјРµСЂРµРЅРёСЏ РѕР±РЅРѕРІР»РµРЅР°.\n\n";
         }
 
         if ($key === 'delete_measurement_unit' && isset($value['name'])) {
-            $output .= "✅ УДАЛЕНА ЕДИНИЦА ИЗМЕРЕНИЯ:\n\n";
+            $output .= "вњ… РЈР”РђР›Р•РќРђ Р•Р”РРќРР¦Рђ РР—РњР•Р Р•РќРРЇ:\n\n";
             $output .= "ID: {$value['id']}\n";
-            $output .= "Название: {$value['name']}\n";
-            $output .= "Сокращение: {$value['short_name']}\n";
-            $output .= "\n✅ Готово! Единица измерения удалена.\n\n";
+            $output .= "РќР°Р·РІР°РЅРёРµ: {$value['name']}\n";
+            $output .= "РЎРѕРєСЂР°С‰РµРЅРёРµ: {$value['short_name']}\n";
+            $output .= "\nвњ… Р“РѕС‚РѕРІРѕ! Р•РґРёРЅРёС†Р° РёР·РјРµСЂРµРЅРёСЏ СѓРґР°Р»РµРЅР°.\n\n";
         }
 
-        // Список единиц измерения
+        // РЎРїРёСЃРѕРє РµРґРёРЅРёС† РёР·РјРµСЂРµРЅРёСЏ
         if ($key === 'measurement_units_list' && isset($value['units'])) {
-            $output .= "📋 ЕДИНИЦЫ ИЗМЕРЕНИЯ:\n\n";
+            $output .= "рџ“‹ Р•Р”РРќРР¦Р« РР—РњР•Р Р•РќРРЇ:\n\n";
             foreach ($value['units'] as $unit) {
                 $code = $unit['code'] ?? $unit['short_name'] ?? '';
-                $default = $unit['is_default'] ? ' (по умолчанию)' : '';
-                $system = $unit['is_system'] ? ' (системная)' : '';
-                $output .= "• {$unit['name']} ({$code}){$default}{$system}\n";
+                $default = $unit['is_default'] ? ' (РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ)' : '';
+                $system = $unit['is_system'] ? ' (СЃРёСЃС‚РµРјРЅР°СЏ)' : '';
+                $output .= "вЂў {$unit['name']} ({$code}){$default}{$system}\n";
             }
-            $output .= "\nВсего: {$value['total']} единиц\n\n";
+            $output .= "\nР’СЃРµРіРѕ: {$value['total']} РµРґРёРЅРёС†\n\n";
         }
 
-        // Детали единицы измерения
+        // Р”РµС‚Р°Р»Рё РµРґРёРЅРёС†С‹ РёР·РјРµСЂРµРЅРёСЏ
         if ($key === 'measurement_unit_details' && isset($value['name'])) {
-            $output .= "📄 ДЕТАЛИ ЕДИНИЦЫ ИЗМЕРЕНИЯ:\n\n";
+            $output .= "рџ“„ Р”Р•РўРђР›Р Р•Р”РРќРР¦Р« РР—РњР•Р Р•РќРРЇ:\n\n";
             $output .= "ID: {$value['id']}\n";
-            $output .= "Название: {$value['name']}\n";
-            $output .= "Сокращение: {$value['short_name']}\n";
-            $output .= "Тип: {$value['type']}\n";
+            $output .= "РќР°Р·РІР°РЅРёРµ: {$value['name']}\n";
+            $output .= "РЎРѕРєСЂР°С‰РµРЅРёРµ: {$value['short_name']}\n";
+            $output .= "РўРёРї: {$value['type']}\n";
             if ($value['description']) {
-                $output .= "Описание: {$value['description']}\n";
+                $output .= "РћРїРёСЃР°РЅРёРµ: {$value['description']}\n";
             }
-            $output .= "По умолчанию: " . ($value['is_default'] ? 'Да' : 'Нет') . "\n";
-            $output .= "Системная: " . ($value['is_system'] ? 'Да' : 'Нет') . "\n";
-            $output .= "Материалов: {$value['materials_count']}\n";
-            $output .= "Видов работ: {$value['work_types_count']}\n";
+            $output .= "РџРѕ СѓРјРѕР»С‡Р°РЅРёСЋ: " . ($value['is_default'] ? 'Р”Р°' : 'РќРµС‚') . "\n";
+            $output .= "РЎРёСЃС‚РµРјРЅР°СЏ: " . ($value['is_system'] ? 'Р”Р°' : 'РќРµС‚') . "\n";
+            $output .= "РњР°С‚РµСЂРёР°Р»РѕРІ: {$value['materials_count']}\n";
+            $output .= "Р’РёРґРѕРІ СЂР°Р±РѕС‚: {$value['work_types_count']}\n";
             if ($value['created_at']) {
-                $output .= "Создана: {$value['created_at']}\n";
+                $output .= "РЎРѕР·РґР°РЅР°: {$value['created_at']}\n";
             }
             $output .= "\n";
         }
 
-        // Справка о возможностях
+        // РЎРїСЂР°РІРєР° Рѕ РІРѕР·РјРѕР¶РЅРѕСЃС‚СЏС…
         if ($key === 'help' && isset($value['capabilities'])) {
-            $output .= "🤖 ВОЗМОЖНОСТИ ИИ АССИСТЕНТА PROHELPER\n\n";
-            $output .= "Версия: {$value['version']}\n\n";
+            $output .= "рџ¤– Р’РћР—РњРћР–РќРћРЎРўР РР РђРЎРЎРРЎРўР•РќРўРђ PROHELPER\n\n";
+            $output .= "Р’РµСЂСЃРёСЏ: {$value['version']}\n\n";
 
             foreach ($value['capabilities'] as $categoryKey => $category) {
                 $output .= "{$category['title']}\n";
-                $output .= str_repeat('─', mb_strlen($category['title'])) . "\n";
+                $output .= str_repeat('в”Ђ', mb_strlen($category['title'])) . "\n";
                 $output .= "{$category['description']}\n\n";
 
                 foreach ($category['capabilities'] as $capability) {
-                    $output .= "• {$capability['title']}\n";
+                    $output .= "вЂў {$capability['title']}\n";
                     if (isset($capability['examples']) && !empty($capability['examples'])) {
-                        $output .= "  Примеры:\n";
+                        $output .= "  РџСЂРёРјРµСЂС‹:\n";
                         foreach ($capability['examples'] as $example) {
                             $output .= "  - \"{$example}\"\n";
                         }
@@ -678,33 +686,33 @@ class AIAssistantService
             }
 
             if (!empty($value['examples'])) {
-                $output .= "💡 ПОПУЛЯРНЫЕ ЗАПРОСЫ:\n";
+                $output .= "рџ’Ў РџРћРџРЈР›РЇР РќР«Р• Р—РђРџР РћРЎР«:\n";
                 foreach ($value['examples'] as $example) {
-                    $output .= "• {$example}\n";
+                    $output .= "вЂў {$example}\n";
                 }
                 $output .= "\n";
             }
 
             if (!empty($value['tips'])) {
-                $output .= "📝 СОВЕТЫ:\n";
+                $output .= "рџ“ќ РЎРћР’Р•РўР«:\n";
                 foreach ($value['tips'] as $tip) {
-                    $output .= "• {$tip}\n";
+                    $output .= "вЂў {$tip}\n";
                 }
                 $output .= "\n";
             }
 
             if (!empty($value['limitations'])) {
-                $output .= "⚠️ ОГРАНИЧЕНИЯ:\n";
+                $output .= "вљ пёЏ РћР“Р РђРќРР§Р•РќРРЇ:\n";
                 foreach ($value['limitations'] as $limitation) {
-                    $output .= "• {$limitation}\n";
+                    $output .= "вЂў {$limitation}\n";
                 }
                 $output .= "\n";
             }
 
-            $output .= "🔄 Возможности регулярно обновляются!\n\n";
+            $output .= "рџ”„ Р’РѕР·РјРѕР¶РЅРѕСЃС‚Рё СЂРµРіСѓР»СЏСЂРЅРѕ РѕР±РЅРѕРІР»СЏСЋС‚СЃСЏ!\n\n";
         }
 
-        // Если ничего не распознали - просто JSON
+        // Р•СЃР»Рё РЅРёС‡РµРіРѕ РЅРµ СЂР°СЃРїРѕР·РЅР°Р»Рё - РїСЂРѕСЃС‚Рѕ JSON
         if (empty($output)) {
             $output .= strtoupper($key) . ":\n";
             $output .= json_encode($value, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT) . "\n\n";
@@ -714,7 +722,7 @@ class AIAssistantService
     }
 
     /**
-     * Определяет, является ли intent Write Intent
+     * РћРїСЂРµРґРµР»СЏРµС‚, СЏРІР»СЏРµС‚СЃСЏ Р»Рё intent Write Intent
      */
     protected function isWriteIntent(string $intent): bool
     {
@@ -723,8 +731,11 @@ class AIAssistantService
             'mass_create_measurement_units',
             'update_measurement_unit',
             'delete_measurement_unit',
-            // Здесь можно добавить другие write intents в будущем
+            // Р—РґРµСЃСЊ РјРѕР¶РЅРѕ РґРѕР±Р°РІРёС‚СЊ РґСЂСѓРіРёРµ write intents РІ Р±СѓРґСѓС‰РµРј
         ]);
     }
 }
+
+
+
 
