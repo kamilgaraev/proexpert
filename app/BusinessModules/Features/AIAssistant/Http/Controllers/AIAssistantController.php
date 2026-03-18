@@ -14,6 +14,7 @@ use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Http\Responses\LandingResponse;
+use App\Http\Responses\MobileResponse;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
@@ -214,6 +215,10 @@ class AIAssistantController extends Controller
             return AdminResponse::success($data, $message, $code);
         }
 
+        if ($this->isMobileRequest($request)) {
+            return MobileResponse::success($data, $message, $code);
+        }
+
         return LandingResponse::success($data, $message, $code);
     }
 
@@ -223,11 +228,20 @@ class AIAssistantController extends Controller
             return AdminResponse::error($message, $code, $errors);
         }
 
+        if ($this->isMobileRequest($request)) {
+            return MobileResponse::error($message, $code, $errors);
+        }
+
         return LandingResponse::error($message, $code, $errors);
     }
 
     private function isAdminRequest(Request $request): bool
     {
         return $request->is('api/v1/admin/*');
+    }
+
+    private function isMobileRequest(Request $request): bool
+    {
+        return $request->is('api/v1/mobile/*');
     }
 }
