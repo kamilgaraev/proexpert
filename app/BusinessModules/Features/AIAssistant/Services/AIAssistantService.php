@@ -287,7 +287,7 @@ class AIAssistantService
                 return $conversation;
             }
 
-            if ($this->permissionChecker->canManageOrganizationConversations($user, $organizationId)) {
+            if ($this->permissionChecker->canAccessOrganizationConversationsInAdmin($user, $organizationId)) {
                 $conversation = $this->conversationManager->findOrganizationConversation($conversationId, $organizationId);
 
                 if ($conversation instanceof Conversation) {

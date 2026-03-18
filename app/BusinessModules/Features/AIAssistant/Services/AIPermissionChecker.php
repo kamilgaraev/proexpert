@@ -55,7 +55,7 @@ class AIPermissionChecker
             return true;
         }
 
-        return $this->canManageOrganizationConversations($user, $organizationId);
+        return $this->canAccessOrganizationConversationsInAdmin($user, $organizationId);
     }
 
     public function canManageOrganizationConversations(User $user, int $organizationId): bool
@@ -65,6 +65,15 @@ class AIPermissionChecker
         }
 
         return $user->isOrganizationAdmin($organizationId) || $user->isOrganizationOwner($organizationId);
+    }
+
+    public function canAccessOrganizationConversationsInAdmin(User $user, int $organizationId): bool
+    {
+        if (!$this->canUseAssistant($user, $organizationId)) {
+            return false;
+        }
+
+        return $user->isAdminPanelUser($organizationId);
     }
 
     public function canExecuteTool(User $user, string $toolName, array $params = []): bool
