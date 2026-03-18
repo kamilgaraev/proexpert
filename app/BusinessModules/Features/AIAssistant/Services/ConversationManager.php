@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
 use App\BusinessModules\Features\AIAssistant\Models\Conversation;
@@ -20,9 +22,9 @@ class ConversationManager
     }
 
     public function addMessage(
-        Conversation $conversation, 
-        string $role, 
-        string $content, 
+        Conversation $conversation,
+        string $role,
+        string $content,
         int $tokens = 0,
         string $model = 'gpt-4o-mini',
         array $metadata = []
@@ -57,7 +59,7 @@ class ConversationManager
     {
         $messages = $this->getHistory($conversation, $limit);
 
-        return $messages->map(function ($message) {
+        return $messages->map(static function (Message $message): array {
             return [
                 'role' => $message->role,
                 'content' => $message->content,
@@ -87,5 +89,22 @@ class ConversationManager
             ->limit($limit)
             ->get();
     }
-}
 
+    public function getConversationsByUserInOrganization(User $user, int $organizationId, int $limit = 20): Collection
+    {
+        return Conversation::forUser($user->id)
+            ->forOrganization($organizationId)
+            ->orderBy('updated_at', 'desc')
+            ->limit($limit)
+            ->get();
+    }
+
+    public function findUserConversation(int $conversationId, User $user, int $organizationId): ?Conversation
+    {
+        return Conversation::query()
+            ->whereKey($conversationId)
+            ->forUser($user->id)
+            ->forOrganization($organizationId)
+            ->first();
+    }
+}

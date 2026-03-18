@@ -1,11 +1,16 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
-use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Models\Conversation;
+use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
+use App\Models\Organization;
 use App\Models\User;
 use App\Services\Logging\LoggingService;
+use RuntimeException;
+use Throwable;
 
 class AIAssistantService
 {
@@ -16,6 +21,7 @@ class AIAssistantService
     protected UsageTracker $usageTracker;
     protected LoggingService $logging;
     protected AIToolRegistry $toolRegistry;
+    protected AIPermissionChecker $permissionChecker;
 
     public function __construct(
         LLMProviderInterface $llmProvider,
@@ -24,7 +30,8 @@ class AIAssistantService
         IntentRecognizer $intentRecognizer,
         UsageTracker $usageTracker,
         LoggingService $logging,
-        AIToolRegistry $toolRegistry
+        AIToolRegistry $toolRegistry,
+        AIPermissionChecker $permissionChecker
     ) {
         $this->llmProvider = $llmProvider;
         $this->conversationManager = $conversationManager;
@@ -33,6 +40,7 @@ class AIAssistantService
         $this->usageTracker = $usageTracker;
         $this->logging = $logging;
         $this->toolRegistry = $toolRegistry;
+        $this->permissionChecker = $permissionChecker;
     }
 
     public function ask(
@@ -114,7 +122,11 @@ class AIAssistantService
             
             $loopCount = 0;
             $maxLoops = 5;
-            $organization = \App\Models\Organization::find($organizationId);
+            $organization = Organization::find($organizationId);
+
+            if (!$organization instanceof Organization) {
+                throw new RuntimeException(trans_message('ai_assistant.organization_not_found', [], 'ru'));
+            }
 
             // Обработка Function Calling
             while (!empty($response['tool_calls']) && $loopCount < $maxLoops) {
@@ -132,7 +144,18 @@ class AIAssistantService
                     $tool = $this->toolRegistry->getTool($toolName);
                     if ($tool) {
                         try {
-                            $toolResult = $tool->execute($args, $user, $organization);
+                            if (!$this->permissionChecker->canExecuteTool($user, $toolName, $args)) {
+                                $toolResult = [
+                                    'error' => trans_message('ai_assistant.tool_access_denied', ['tool' => $toolName], 'ru'),
+                                ];
+                                $this->logging->technical('ai.tool.denied', [
+                                    'tool' => $toolName,
+                                    'organization_id' => $organizationId,
+                                    'user_id' => $user->id,
+                                ], 'warning');
+                            } else {
+                                $toolResult = $tool->execute($args, $user, $organization);
+                            }
                             // Если инструмент вернул массив с executed_action (для записи стейта)
                             if (is_array($toolResult) && isset($toolResult['_executed_action'])) {
                                 $executedAction = $toolResult['_executed_action'];

@@ -1,12 +1,15 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\AIAssistant\Models;
 
+use App\Models\Organization;
+use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use App\Models\Organization;
-use App\Models\User;
 
 class Conversation extends Model
 {
@@ -38,12 +41,12 @@ class Conversation extends Model
         return $this->hasMany(Message::class);
     }
 
-    public function scopeForOrganization($query, int $organizationId)
+    public function scopeForOrganization(Builder $query, int $organizationId): Builder
     {
         return $query->where('organization_id', $organizationId);
     }
 
-    public function scopeForUser($query, int $userId)
+    public function scopeForUser(Builder $query, int $userId): Builder
     {
         return $query->where('user_id', $userId);
     }
@@ -59,4 +62,3 @@ class Conversation extends Model
         }
     }
 }
-
