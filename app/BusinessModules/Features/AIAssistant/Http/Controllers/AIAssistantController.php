@@ -270,11 +270,19 @@ class AIAssistantController extends Controller
 
     private function isAdminRequest(Request $request): bool
     {
-        return $request->is('api/v1/admin/*');
+        $routeName = (string) optional($request->route())->getName();
+        $path = trim($request->path(), '/');
+
+        return str_starts_with($routeName, 'admin.ai-assistant.')
+            || str_contains($path, 'admin/ai-assistant');
     }
 
     private function isMobileRequest(Request $request): bool
     {
-        return $request->is('api/v1/mobile/*');
+        $routeName = (string) optional($request->route())->getName();
+        $path = trim($request->path(), '/');
+
+        return str_starts_with($routeName, 'mobile.ai-assistant.')
+            || str_contains($path, 'mobile/ai-assistant');
     }
 }
