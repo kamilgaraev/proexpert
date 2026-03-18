@@ -51,7 +51,7 @@ class AIAssistantService
         ?int $conversationId = null
     ): array {
         if (!$this->permissionChecker->canUseAssistant($user, $organizationId)) {
-            throw new AuthorizationException(trans_message('ai_assistant.access_denied', [], 'ru'));
+            throw new AuthorizationException($this->assistantMessage('ai_assistant.access_denied', 'Недостаточно прав для работы с AI-ассистентом.'));
         }
 
         $this->logging->business('ai.assistant.request', [
@@ -61,7 +61,7 @@ class AIAssistantService
         ]);
 
         if (!$this->usageTracker->canMakeRequest($organizationId)) {
-            throw new RuntimeException(trans_message('ai_assistant.limit_exceeded', [], 'ru'));
+            throw new RuntimeException($this->assistantMessage('ai_assistant.limit_exceeded', 'Исчерпан месячный лимит запросов к AI-ассистенту.'));
         }
 
         $conversation = $this->getOrCreateConversation($conversationId, $organizationId, $user);
@@ -123,14 +123,14 @@ class AIAssistantService
                 $options['tools'] = $tools;
             }
 
-            $response = $this->llmProvider->chat($messages, $options);
+            $response = $this->requestAssistantResponse($messages, $options, $organizationId, $user);
             
             $loopCount = 0;
             $maxLoops = 5;
             $organization = Organization::find($organizationId);
 
             if (!$organization instanceof Organization) {
-                throw new RuntimeException(trans_message('ai_assistant.organization_not_found', [], 'ru'));
+                throw new RuntimeException($this->assistantMessage('ai_assistant.organization_not_found', 'Организация для AI-ассистента не найдена.'));
             }
 
             // РћР±СЂР°Р±РѕС‚РєР° Function Calling
@@ -151,7 +151,11 @@ class AIAssistantService
                         try {
                             if (!$this->permissionChecker->canExecuteTool($user, $toolName, $args)) {
                                 $toolResult = [
-                                    'error' => trans_message('ai_assistant.tool_access_denied', ['tool' => $toolName], 'ru'),
+                                    'error' => $this->assistantMessage(
+                                        'ai_assistant.tool_access_denied',
+                                        "Недостаточно прав для выполнения инструмента {$toolName}.",
+                                        ['tool' => $toolName]
+                                    ),
                                 ];
                                 $this->logging->technical('ai.tool.denied', [
                                     'tool' => $toolName,
@@ -187,7 +191,7 @@ class AIAssistantService
                 }
                 
                 // Р”РµР»Р°РµРј РїРѕРІС‚РѕСЂРЅС‹Р№ Р·Р°РїСЂРѕСЃ Рє LLM СЃ СЂРµР·СѓР»СЊС‚Р°С‚Р°РјРё СЂР°Р±РѕС‚С‹ РёРЅСЃС‚СЂСѓРјРµРЅС‚РѕРІ
-                $response = $this->llmProvider->chat($messages, $options);
+                $response = $this->requestAssistantResponse($messages, $options, $organizationId, $user);
                 $loopCount++;
             }
 
@@ -252,6 +256,28 @@ class AIAssistantService
         }
     }
 
+    protected function requestAssistantResponse(array $messages, array $options, int $organizationId, User $user): array
+    {
+        try {
+            return $this->llmProvider->chat($messages, $options);
+        } catch (Throwable $exception) {
+            if (empty($options['tools'])) {
+                throw $exception;
+            }
+
+            $this->logging->technical('ai.assistant.tools_fallback', [
+                'organization_id' => $organizationId,
+                'user_id' => $user->id,
+                'provider' => $this->llmProvider::class,
+                'error' => $exception->getMessage(),
+            ], 'warning');
+
+            unset($options['tools']);
+
+            return $this->llmProvider->chat($messages, $options);
+        }
+    }
+
     protected function getOrCreateConversation(?int $conversationId, int $organizationId, User $user): Conversation
     {
         if ($conversationId) {
@@ -261,10 +287,27 @@ class AIAssistantService
                 return $conversation;
             }
 
-            throw new AuthorizationException(trans_message('ai_assistant.conversation_not_found', [], 'ru'));
+            throw new AuthorizationException($this->assistantMessage('ai_assistant.conversation_not_found', 'Диалог не найден или недоступен.'));
         }
 
         return $this->conversationManager->createConversation($organizationId, $user);
+    }
+
+    protected function assistantMessage(string $key, string $fallback, array $replace = []): string
+    {
+        $translated = trans_message($key, $replace, 'ru');
+
+        if (!is_string($translated)) {
+            return $fallback;
+        }
+
+        $translated = trim($translated);
+
+        if ($translated === '' || $translated === $key) {
+            return $fallback;
+        }
+
+        return $translated;
     }
 
 
