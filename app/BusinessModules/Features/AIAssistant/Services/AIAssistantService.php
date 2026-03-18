@@ -287,6 +287,14 @@ class AIAssistantService
                 return $conversation;
             }
 
+            if ($this->permissionChecker->canManageOrganizationConversations($user, $organizationId)) {
+                $conversation = $this->conversationManager->findOrganizationConversation($conversationId, $organizationId);
+
+                if ($conversation instanceof Conversation) {
+                    return $conversation;
+                }
+            }
+
             throw new AuthorizationException($this->assistantMessage('ai_assistant.conversation_not_found', 'Диалог не найден или недоступен.'));
         }
 
