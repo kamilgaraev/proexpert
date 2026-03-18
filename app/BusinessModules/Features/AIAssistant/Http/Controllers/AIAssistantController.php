@@ -41,11 +41,10 @@ class AIAssistantController extends Controller
         ]);
 
         $user = $request->user();
-        if (!$user instanceof User || !$user->current_organization_id) {
+        $organizationId = $this->resolveOrganizationId($request, $user);
+        if (!$user instanceof User || !$organizationId) {
             return $this->errorResponse($request, $this->assistantMessage('ai_assistant.unauthorized', 'Пользователь не авторизован.'), 401);
         }
-
-        $organizationId = (int) $user->current_organization_id;
 
         try {
             if (!$this->usageTracker->canMakeRequest($organizationId)) {
@@ -100,12 +99,12 @@ class AIAssistantController extends Controller
     public function conversations(Request $request): JsonResponse
     {
         $user = $request->user();
-        if (!$user instanceof User || !$user->current_organization_id) {
+        $organizationId = $this->resolveOrganizationId($request, $user);
+        if (!$user instanceof User || !$organizationId) {
             return $this->errorResponse($request, $this->assistantMessage('ai_assistant.unauthorized', 'Пользователь не авторизован.'), 401);
         }
 
         try {
-            $organizationId = (int) $user->current_organization_id;
             $conversations = $this->isAdminRequest($request)
                 ? $this->conversationManager->getConversationsByOrganization($organizationId, 20)
                 : $this->conversationManager->getConversationsByUserInOrganization($user, $organizationId, 20);
@@ -125,7 +124,8 @@ class AIAssistantController extends Controller
     public function conversation(Request $request, Conversation $conversation): JsonResponse
     {
         $user = $request->user();
-        if (!$user instanceof User || !$user->current_organization_id) {
+        $organizationId = $this->resolveOrganizationId($request, $user);
+        if (!$user instanceof User || !$organizationId) {
             return $this->errorResponse($request, $this->assistantMessage('ai_assistant.unauthorized', 'Пользователь не авторизован.'), 401);
         }
 
@@ -143,7 +143,7 @@ class AIAssistantController extends Controller
             Log::error('Failed to load AI assistant conversation', [
                 'conversation_id' => $conversation->id,
                 'user_id' => $user->id,
-                'organization_id' => $user->current_organization_id,
+                'organization_id' => $organizationId,
                 'message' => $exception->getMessage(),
             ]);
 
@@ -154,7 +154,8 @@ class AIAssistantController extends Controller
     public function deleteConversation(Request $request, Conversation $conversation): JsonResponse
     {
         $user = $request->user();
-        if (!$user instanceof User || !$user->current_organization_id) {
+        $organizationId = $this->resolveOrganizationId($request, $user);
+        if (!$user instanceof User || !$organizationId) {
             return $this->errorResponse($request, $this->assistantMessage('ai_assistant.unauthorized', 'Пользователь не авторизован.'), 401);
         }
 
@@ -169,7 +170,7 @@ class AIAssistantController extends Controller
             Log::error('Failed to delete AI assistant conversation', [
                 'conversation_id' => $conversation->id,
                 'user_id' => $user->id,
-                'organization_id' => $user->current_organization_id,
+                'organization_id' => $organizationId,
                 'message' => $exception->getMessage(),
             ]);
 
@@ -180,18 +181,19 @@ class AIAssistantController extends Controller
     public function usage(Request $request): JsonResponse
     {
         $user = $request->user();
-        if (!$user instanceof User || !$user->current_organization_id) {
+        $organizationId = $this->resolveOrganizationId($request, $user);
+        if (!$user instanceof User || !$organizationId) {
             return $this->errorResponse($request, $this->assistantMessage('ai_assistant.unauthorized', 'Пользователь не авторизован.'), 401);
         }
 
         try {
-            $stats = $this->usageTracker->getUsageStats((int) $user->current_organization_id);
+            $stats = $this->usageTracker->getUsageStats($organizationId);
 
             return $this->successResponse($request, $stats);
         } catch (Throwable $exception) {
             Log::error('Failed to load AI assistant usage', [
                 'user_id' => $user->id,
-                'organization_id' => $user->current_organization_id,
+                'organization_id' => $organizationId,
                 'message' => $exception->getMessage(),
             ]);
 
@@ -201,7 +203,7 @@ class AIAssistantController extends Controller
 
     private function authorizeConversation(Request $request, Conversation $conversation, User $user): void
     {
-        $organizationId = (int) $user->current_organization_id;
+        $organizationId = $this->resolveOrganizationId($request, $user);
 
         if ($this->isAdminRequest($request)) {
             if ((int) $conversation->organization_id !== $organizationId) {
@@ -223,6 +225,20 @@ class AIAssistantController extends Controller
         }
 
         return $this->conversationManager->findUserConversation($conversationId, $user, $organizationId);
+    }
+
+    private function resolveOrganizationId(Request $request, mixed $user): int
+    {
+        $requestOrganizationId = (int) $request->attributes->get('current_organization_id', 0);
+        if ($requestOrganizationId > 0) {
+            return $requestOrganizationId;
+        }
+
+        if ($user instanceof User) {
+            return (int) ($user->current_organization_id ?? 0);
+        }
+
+        return 0;
     }
 
     private function assistantMessage(string $key, string $fallback, array $replace = []): string
