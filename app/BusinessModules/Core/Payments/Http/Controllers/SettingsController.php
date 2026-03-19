@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
 use App\Http\Controllers\Controller;
@@ -7,10 +9,11 @@ use App\Http\Responses\AdminResponse;
 use App\Models\OrganizationModuleActivation;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
+
+use function trans_message;
 
 class SettingsController extends Controller
 {
@@ -25,17 +28,17 @@ class SettingsController extends Controller
     public function show(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
+            $organizationId = (int) $request->attributes->get('current_organization_id');
             
             $settings = $this->getSettings($organizationId);
             
-            return AdminResponse::success($settings);
+            return AdminResponse::success($settings, trans_message('payments.settings.loaded'));
         } catch (\Exception $e) {
             Log::error('payments.settings.show.error', [
                 'error' => $e->getMessage(),
             ]);
 
-            return AdminResponse::error('Не удалось загрузить настройки', 500);
+            return AdminResponse::error(trans_message('payments.settings.load_error'), 500);
         }
     }
     
@@ -46,35 +49,21 @@ class SettingsController extends Controller
      */
     public function update(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'default_payment_terms_days' => 'nullable|integer|min:1|max:365',
-            'enable_auto_overdue' => 'nullable|boolean',
-            'overdue_notification_enabled' => 'nullable|boolean',
-            'overdue_notification_days_before' => 'nullable|integer|min:1|max:30',
-            'allow_partial_payments' => 'nullable|boolean',
-            'require_payment_approval' => 'nullable|boolean',
-            'default_vat_rate' => 'nullable|numeric|min:0|max:100',
-            'default_currency' => 'nullable|string|in:RUB,USD,EUR',
-        ]);
-        
-        if ($validator->fails()) {
-            return AdminResponse::error('Validation error', 422, $validator->errors());
-        }
-        
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
+            $validated = $request->validate([
+                'default_payment_terms_days' => ['nullable', 'integer', 'min:1', 'max:365'],
+                'enable_auto_overdue' => ['nullable', 'boolean'],
+                'overdue_notification_enabled' => ['nullable', 'boolean'],
+                'overdue_notification_days_before' => ['nullable', 'integer', 'min:1', 'max:30'],
+                'allow_partial_payments' => ['nullable', 'boolean'],
+                'require_payment_approval' => ['nullable', 'boolean'],
+                'default_vat_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
+                'default_currency' => ['nullable', 'string', 'in:RUB,USD,EUR'],
+            ]);
+            $organizationId = (int) $request->attributes->get('current_organization_id');
             
             $currentSettings = $this->getSettings($organizationId);
-            $updatedSettings = array_merge($currentSettings, $request->only([
-                'default_payment_terms_days',
-                'enable_auto_overdue',
-                'overdue_notification_enabled',
-                'overdue_notification_days_before',
-                'allow_partial_payments',
-                'require_payment_approval',
-                'default_vat_rate',
-                'default_currency',
-            ]));
+            $updatedSettings = array_merge($currentSettings, $validated);
             
             Cache::put(
                 self::CACHE_KEY_PREFIX . $organizationId,
@@ -84,13 +73,15 @@ class SettingsController extends Controller
 
             $this->persistSettings($organizationId, $updatedSettings);
 
-            return AdminResponse::success($updatedSettings, 'Настройки успешно обновлены');
+            return AdminResponse::success($updatedSettings, trans_message('payments.settings.updated'));
+        } catch (ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Exception $e) {
             Log::error('payments.settings.update.error', [
                 'error' => $e->getMessage(),
             ]);
 
-            return AdminResponse::error('Не удалось обновить настройки', 500);
+            return AdminResponse::error(trans_message('payments.settings.update_error'), 500);
         }
     }
     

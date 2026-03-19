@@ -1,13 +1,19 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
 use App\BusinessModules\Core\Payments\Services\Reports\AgingAnalysisReportService;
 use App\BusinessModules\Core\Payments\Services\Reports\CashFlowReportService;
 use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+
+use function trans_message;
 
 class PaymentReportsController extends Controller
 {
@@ -16,97 +22,83 @@ class PaymentReportsController extends Controller
         private readonly AgingAnalysisReportService $agingService
     ) {}
 
-    /**
-     * Отчет Cash Flow
-     */
     public function cashFlow(Request $request): JsonResponse
     {
         try {
             $validated = $request->validate([
-                'date_from' => 'required|date',
-                'date_to' => 'required|date|after_or_equal:date_from',
+                'date_from' => ['required', 'date'],
+                'date_to' => ['required', 'date', 'after_or_equal:date_from'],
             ]);
 
-            $organizationId = $request->attributes->get('current_organization_id');
-            $dateFrom = Carbon::parse($validated['date_from']);
-            $dateTo = Carbon::parse($validated['date_to']);
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $report = $this->cashFlowService->generate(
+                $organizationId,
+                Carbon::parse($validated['date_from']),
+                Carbon::parse($validated['date_to'])
+            );
 
-            $report = $this->cashFlowService->generate($organizationId, $dateFrom, $dateTo);
-
-            return response()->json([
-                'success' => true,
-                'data' => $report,
-            ]);
+            return AdminResponse::success($report, trans_message('payments.reports.generated'));
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Exception $e) {
-            \Log::error('payment_reports.cash_flow.error', [
+            Log::error('payment_reports.cash_flow.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось сформировать отчет',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.reports.generate_error'), 500);
         }
     }
 
-    /**
-     * Отчет Aging Analysis
-     */
     public function agingAnalysis(Request $request): JsonResponse
     {
         try {
             $validated = $request->validate([
-                'as_of_date' => 'nullable|date',
+                'as_of_date' => ['nullable', 'date'],
             ]);
 
-            $organizationId = $request->attributes->get('current_organization_id');
-            $asOfDate = isset($validated['as_of_date']) 
-                ? Carbon::parse($validated['as_of_date']) 
-                : null;
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $report = $this->agingService->generate(
+                $organizationId,
+                isset($validated['as_of_date']) ? Carbon::parse($validated['as_of_date']) : null
+            );
 
-            $report = $this->agingService->generate($organizationId, $asOfDate);
-
-            return response()->json([
-                'success' => true,
-                'data' => $report,
-            ]);
+            return AdminResponse::success($report, trans_message('payments.reports.generated'));
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Exception $e) {
-            \Log::error('payment_reports.aging_analysis.error', [
+            Log::error('payment_reports.aging_analysis.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось сформировать отчет',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.reports.generate_error'), 500);
         }
     }
 
-    /**
-     * Критические контрагенты (с большой просрочкой)
-     */
     public function criticalContractors(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-            $minDaysOverdue = $request->input('min_days_overdue', 90);
-
-            $report = $this->agingService->getCriticalContractors($organizationId, $minDaysOverdue);
-
-            return response()->json([
-                'success' => true,
-                'data' => $report,
+            $validated = $request->validate([
+                'min_days_overdue' => ['nullable', 'integer', 'min:1'],
             ]);
+
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $report = $this->agingService->getCriticalContractors(
+                $organizationId,
+                (int) ($validated['min_days_overdue'] ?? 90)
+            );
+
+            return AdminResponse::success($report, trans_message('payments.reports.generated'));
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Exception $e) {
-            \Log::error('payment_reports.critical_contractors.error', [
+            Log::error('payment_reports.critical_contractors.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось сформировать отчет',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.reports.generate_error'), 500);
         }
     }
 }
-

@@ -8,6 +8,8 @@ use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
+use function trans_message;
+
 class PaymentScheduleService
 {
     /**
@@ -46,7 +48,7 @@ class PaymentScheduleService
     public function updateSchedule(PaymentSchedule $schedule, array $data): PaymentSchedule
     {
         if ($schedule->isPaid()) {
-            throw new \DomainException('Нельзя изменять оплаченный платёж из графика');
+            throw new \DomainException(trans_message('payments.validation.schedule_paid_edit_forbidden'));
         }
 
         $schedule->update($data);

@@ -1,16 +1,21 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
-use App\Http\Controllers\Controller;
 use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
+use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+
+use function trans_message;
 
 class DashboardController extends Controller
 {
@@ -22,12 +27,10 @@ class DashboardController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-            $period = $request->input('period', '30'); // дней для анализа
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $period = max((int) $request->input('period', 30), 1);
             
-            return response()->json([
-                'success' => true,
-                'data' => [
+            return AdminResponse::success([
                     // Основная финансовая сводка
                     'summary' => $this->getSummary($organizationId),
                     
@@ -61,17 +64,14 @@ class DashboardController extends Controller
                     // Сравнение с контрактами
                     'contract_comparison' => $this->getContractComparison($organizationId),
                 ],
-            ]);
+                trans_message('payments.dashboard.loaded'));
         } catch (\Exception $e) {
             Log::error('payments.dashboard.error', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
             
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить дашборд',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.dashboard.load_error'), 500);
         }
     }
     
@@ -94,10 +94,12 @@ class DashboardController extends Controller
         
         // Просроченные платежи
         $overdueAmount = PaymentDocument::where('organization_id', $organizationId)
-            ->where('overdue_since', '!=', null)
-            ->orWhere(function ($query) {
-                $query->where('due_date', '<', now())
-                    ->whereIn('status', [PaymentDocumentStatus::APPROVED, PaymentDocumentStatus::PARTIALLY_PAID, PaymentDocumentStatus::SCHEDULED]);
+            ->where(function ($query) {
+                $query->whereNotNull('overdue_since')
+                    ->orWhere(function ($query) {
+                        $query->where('due_date', '<', now())
+                            ->whereIn('status', [PaymentDocumentStatus::APPROVED, PaymentDocumentStatus::PARTIALLY_PAID, PaymentDocumentStatus::SCHEDULED]);
+                    });
             })
             ->sum('remaining_amount');
         

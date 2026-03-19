@@ -1,317 +1,323 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
-use App\Http\Controllers\Controller;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
+use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
+use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
+
+use function trans_message;
 
 class TransactionController extends Controller
 {
-    /**
-     * Получить список транзакций
-     * 
-     * GET /api/v1/admin/payments/transactions
-     */
     public function index(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-            
-            $query = PaymentTransaction::where('organization_id', $organizationId)
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $validated = $request->validate([
+                'payment_document_id' => [
+                    'nullable',
+                    'integer',
+                    Rule::exists('payment_documents', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                ],
+                'invoice_id' => [
+                    'nullable',
+                    'integer',
+                    Rule::exists('payment_documents', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                ],
+                'project_id' => [
+                    'nullable',
+                    'integer',
+                    Rule::exists('projects', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                ],
+                'status' => ['nullable', 'string'],
+                'payment_method' => ['nullable', 'string'],
+                'date_from' => ['nullable', 'date'],
+                'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
+                'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+            ]);
+
+            $query = PaymentTransaction::query()
+                ->where('organization_id', $organizationId)
                 ->with(['paymentDocument']);
-            
-            // Фильтры
-            if ($request->has('payment_document_id')) {
-                $query->where('payment_document_id', $request->input('payment_document_id'));
+
+            $paymentDocumentId = $validated['payment_document_id'] ?? $validated['invoice_id'] ?? null;
+            if ($paymentDocumentId !== null) {
+                $query->where('payment_document_id', $paymentDocumentId);
             }
-            
-            // Поддержка старого параметра для обратной совместимости (если нужно)
-            if ($request->has('invoice_id')) {
-                $query->where('payment_document_id', $request->input('invoice_id'));
+
+            if (!empty($validated['project_id'])) {
+                $query->where('project_id', $validated['project_id']);
             }
-            
-            if ($request->has('project_id')) {
-                $query->where('project_id', $request->input('project_id'));
+
+            if (!empty($validated['status'])) {
+                $query->where('status', $validated['status']);
             }
-            
-            if ($request->has('status')) {
-                $query->where('status', $request->input('status'));
+
+            if (!empty($validated['payment_method'])) {
+                $query->where('payment_method', $validated['payment_method']);
             }
-            
-            if ($request->has('payment_method')) {
-                $query->where('payment_method', $request->input('payment_method'));
+
+            if (!empty($validated['date_from'])) {
+                $query->whereDate('transaction_date', '>=', $validated['date_from']);
             }
-            
-            if ($request->has('date_from')) {
-                $query->where('transaction_date', '>=', $request->input('date_from'));
+
+            if (!empty($validated['date_to'])) {
+                $query->whereDate('transaction_date', '<=', $validated['date_to']);
             }
-            
-            if ($request->has('date_to')) {
-                $query->where('transaction_date', '<=', $request->input('date_to'));
-            }
-            
-            $perPage = min($request->input('per_page', 15), 100);
-            $transactions = $query->orderBy('created_at', 'desc')->paginate($perPage);
-            
-            return response()->json([
-                'success' => true,
-                'data' => $transactions->items(),
-                'meta' => [
+
+            $transactions = $query->orderByDesc('created_at')->paginate((int) ($validated['per_page'] ?? 15));
+
+            return AdminResponse::paginated(
+                $transactions->getCollection()->map(fn ($transaction) => $this->formatTransaction($transaction)),
+                [
                     'total' => $transactions->total(),
                     'per_page' => $transactions->perPage(),
                     'current_page' => $transactions->currentPage(),
                     'last_page' => $transactions->lastPage(),
                 ],
-            ]);
+                trans_message('payments.transactions.loaded')
+            );
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Exception $e) {
             Log::error('payments.transactions.index.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
                 'error' => $e->getMessage(),
             ]);
-            
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить транзакции',
-            ], 500);
+
+            return AdminResponse::error(trans_message('payments.transactions.load_error'), 500);
         }
     }
-    
-    /**
-     * Получить транзакцию
-     * 
-     * GET /api/v1/admin/payments/transactions/{id}
-     */
+
     public function show(Request $request, int|string $id): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-            
-            $transaction = PaymentTransaction::where('organization_id', $organizationId)
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $transaction = PaymentTransaction::query()
+                ->where('organization_id', $organizationId)
                 ->with(['paymentDocument', 'createdByUser', 'approvedByUser'])
-                ->findOrFail($id);
-            
-            return response()->json([
-                'success' => true,
-                'data' => $transaction,
-            ]);
+                ->findOrFail((int) $id);
+
+            return AdminResponse::success($this->formatTransaction($transaction, true), trans_message('payments.transactions.loaded'));
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'error' => 'Транзакция не найдена',
-            ], 404);
+            Log::error('payments.transactions.show.error', [
+                'transaction_id' => $id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('payments.transactions.load_error'), 500);
         }
     }
-    
-    /**
-     * Утвердить транзакцию
-     * 
-     * POST /api/v1/admin/payments/transactions/{id}/approve
-     */
+
     public function approve(Request $request, int|string $id): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-            $user = $request->user();
-            
-            $transaction = PaymentTransaction::where('organization_id', $organizationId)
-                ->findOrFail($id);
-            
+            $validated = $request->validate([
+                'notes' => ['nullable', 'string', 'max:1000'],
+            ]);
+
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $transaction = PaymentTransaction::query()
+                ->where('organization_id', $organizationId)
+                ->findOrFail((int) $id);
+
             if ($transaction->status !== 'pending') {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Только транзакции в статусе "pending" могут быть утверждены',
-                ], 422);
+                return AdminResponse::error(trans_message('payments.transactions.pending_only'), 422);
             }
-            
+
             $transaction->update([
                 'status' => 'completed',
-                'approved_by_user_id' => $user->id,
+                'approved_by_user_id' => $request->user()->id,
             ]);
-            
-            if ($request->has('notes')) {
-                $transaction->notes = ($transaction->notes ? $transaction->notes . "\n" : '') . $request->input('notes');
+
+            if (!empty($validated['notes'])) {
+                $transaction->notes = trim((string) $transaction->notes . PHP_EOL . $validated['notes']);
                 $transaction->save();
             }
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Транзакция успешно утверждена',
-                'data' => $transaction,
-            ]);
+
+            return AdminResponse::success(
+                $this->formatTransaction($transaction->fresh(['paymentDocument', 'createdByUser', 'approvedByUser']), true),
+                trans_message('payments.transactions.approved')
+            );
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
         } catch (\Exception $e) {
             Log::error('payments.transaction.approve.error', [
-                'id' => $id,
+                'transaction_id' => $id,
                 'error' => $e->getMessage(),
             ]);
-            
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось утвердить транзакцию',
-            ], 500);
+
+            return AdminResponse::error(trans_message('payments.transactions.approve_error'), 500);
         }
     }
-    
-    /**
-     * Отклонить транзакцию
-     * 
-     * POST /api/v1/admin/payments/transactions/{id}/reject
-     */
+
     public function reject(Request $request, int|string $id): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'reason' => 'required|string|max:500',
-        ]);
-        
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'error' => 'Validation error',
-                'errors' => $validator->errors(),
-            ], 422);
-        }
-        
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-            
-            $transaction = PaymentTransaction::where('organization_id', $organizationId)
-                ->findOrFail($id);
-            
+            $validated = $request->validate([
+                'reason' => ['required', 'string', 'max:500'],
+            ]);
+
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $transaction = PaymentTransaction::query()
+                ->where('organization_id', $organizationId)
+                ->findOrFail((int) $id);
+
             if ($transaction->status !== 'pending') {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Только транзакции в статусе "pending" могут быть отклонены',
-                ], 422);
+                return AdminResponse::error(trans_message('payments.transactions.pending_only'), 422);
             }
-            
-            $transaction->update([
-                'status' => 'failed',
-            ]);
-            
-            $transaction->notes = ($transaction->notes ? $transaction->notes . "\n" : '') . 
-                "Причина отклонения: " . $request->input('reason');
+
+            $transaction->update(['status' => 'failed']);
+            $transaction->notes = trim((string) $transaction->notes . PHP_EOL . 'Причина отклонения: ' . $validated['reason']);
             $transaction->save();
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Транзакция отклонена',
-                'data' => $transaction,
-            ]);
+
+            return AdminResponse::success(
+                $this->formatTransaction($transaction->fresh(['paymentDocument', 'createdByUser', 'approvedByUser']), true),
+                trans_message('payments.transactions.rejected')
+            );
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
         } catch (\Exception $e) {
             Log::error('payments.transaction.reject.error', [
-                'id' => $id,
+                'transaction_id' => $id,
                 'error' => $e->getMessage(),
             ]);
-            
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось отклонить транзакцию',
-            ], 500);
+
+            return AdminResponse::error(trans_message('payments.transactions.reject_error'), 500);
         }
     }
-    
-    /**
-     * Возврат платежа
-     * 
-     * POST /api/v1/admin/payments/transactions/{id}/refund
-     */
+
     public function refund(Request $request, int|string $id): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'amount' => 'nullable|numeric|min:0',
-            'reason' => 'required|string|max:500',
-            'refund_date' => 'nullable|date',
-        ]);
-        
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'error' => 'Validation error',
-                'errors' => $validator->errors(),
-            ], 422);
-        }
-        
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-            $user = $request->user();
-            
-            $originalTransaction = PaymentTransaction::where('organization_id', $organizationId)
-                ->findOrFail($id);
-            
-            if ($originalTransaction->status !== 'completed') {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Возврат возможен только для завершённых транзакций',
-                ], 422);
-            }
-            
-            $refundAmount = $request->input('amount', $originalTransaction->amount);
-            
-            if ($refundAmount > $originalTransaction->amount) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Сумма возврата не может превышать сумму оригинальной транзакции',
-                ], 422);
-            }
-            
-            // Создать транзакцию возврата
-            $refundTransaction = PaymentTransaction::create([
-                'payment_document_id' => $originalTransaction->payment_document_id,
-                'organization_id' => $organizationId,
-                'project_id' => $originalTransaction->project_id,
-                'amount' => -$refundAmount,
-                'currency' => $originalTransaction->currency,
-                'payment_method' => $originalTransaction->payment_method,
-                'transaction_date' => $request->input('refund_date', now()->toDateString()),
-                'status' => 'completed',
-                'notes' => 'Возврат платежа. ' . $request->input('reason'),
-                'created_by_user_id' => $user->id,
-                'approved_by_user_id' => $user->id,
-                'metadata' => [
-                    'original_transaction_id' => $originalTransaction->id,
-                    'refund_reason' => $request->input('reason'),
-                ],
+            $validated = $request->validate([
+                'amount' => ['nullable', 'numeric', 'min:0.01'],
+                'reason' => ['required', 'string', 'max:500'],
+                'refund_date' => ['nullable', 'date'],
             ]);
-            
-            // Обновить оригинальную транзакцию
-            $originalTransaction->update([
-                'status' => 'refunded',
-            ]);
-            
-            // Обновить документ
-            $document = $originalTransaction->paymentDocument;
-            if ($document) {
-                $document->paid_amount -= $refundAmount;
-                $document->remaining_amount += $refundAmount;
-                
-                // Обновить статус через сервис
-                $paymentDocumentService = app(\App\BusinessModules\Core\Payments\Services\PaymentDocumentService::class);
-                $paymentDocumentService->updateStatus($document);
-                
-                $document->save();
-            }
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Платёж успешно возвращён',
-                'data' => [
-                    'original_transaction' => $originalTransaction,
-                    'refund_transaction' => $refundTransaction,
-                ],
-            ]);
+
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $userId = (int) $request->user()->id;
+
+            $payload = DB::transaction(function () use ($organizationId, $userId, $validated, $id): array {
+                $originalTransaction = PaymentTransaction::query()
+                    ->where('organization_id', $organizationId)
+                    ->with('paymentDocument')
+                    ->lockForUpdate()
+                    ->findOrFail((int) $id);
+
+                if ($originalTransaction->status !== 'completed') {
+                    throw new \DomainException(trans_message('payments.transactions.completed_only'));
+                }
+
+                $refundAmount = (float) ($validated['amount'] ?? $originalTransaction->amount);
+                if ($refundAmount > (float) $originalTransaction->amount) {
+                    throw new \DomainException(trans_message('payments.transactions.refund_amount_invalid'));
+                }
+
+                $refundTransaction = PaymentTransaction::create([
+                    'payment_document_id' => $originalTransaction->payment_document_id,
+                    'organization_id' => $organizationId,
+                    'project_id' => $originalTransaction->project_id,
+                    'amount' => -$refundAmount,
+                    'currency' => $originalTransaction->currency,
+                    'payment_method' => $originalTransaction->payment_method,
+                    'transaction_date' => $validated['refund_date'] ?? now()->toDateString(),
+                    'status' => 'completed',
+                    'notes' => 'Возврат платежа. ' . $validated['reason'],
+                    'created_by_user_id' => $userId,
+                    'approved_by_user_id' => $userId,
+                    'metadata' => [
+                        'original_transaction_id' => $originalTransaction->id,
+                        'refund_reason' => $validated['reason'],
+                    ],
+                ]);
+
+                $originalTransaction->update(['status' => 'refunded']);
+
+                if ($originalTransaction->paymentDocument !== null) {
+                    $document = $originalTransaction->paymentDocument;
+                    $document->paid_amount -= $refundAmount;
+                    $document->remaining_amount += $refundAmount;
+
+                    app(PaymentDocumentService::class)->updateStatus($document);
+                    $document->save();
+                }
+
+                return [
+                    'original_transaction' => $originalTransaction->fresh(['paymentDocument', 'createdByUser', 'approvedByUser']),
+                    'refund_transaction' => $refundTransaction->fresh(['paymentDocument', 'createdByUser', 'approvedByUser']),
+                ];
+            });
+
+            return AdminResponse::success([
+                'original_transaction' => $this->formatTransaction($payload['original_transaction'], true),
+                'refund_transaction' => $this->formatTransaction($payload['refund_transaction'], true),
+            ], trans_message('payments.transactions.refunded'));
+        } catch (\DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
         } catch (\Exception $e) {
             Log::error('payments.transaction.refund.error', [
-                'id' => $id,
+                'transaction_id' => $id,
                 'error' => $e->getMessage(),
             ]);
-            
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось выполнить возврат',
-            ], 500);
+
+            return AdminResponse::error(trans_message('payments.transactions.refund_error'), 500);
         }
     }
-}
 
+    private function formatTransaction(PaymentTransaction $transaction, bool $detailed = false): array
+    {
+        $data = [
+            'id' => $transaction->id,
+            'payment_document_id' => $transaction->payment_document_id,
+            'project_id' => $transaction->project_id,
+            'amount' => $transaction->amount,
+            'currency' => $transaction->currency,
+            'status' => $transaction->status,
+            'payment_method' => $transaction->payment_method,
+            'transaction_date' => $transaction->transaction_date?->toDateString(),
+            'notes' => $transaction->notes,
+            'metadata' => $transaction->metadata,
+            'created_at' => $transaction->created_at?->toDateTimeString(),
+        ];
+
+        if ($detailed) {
+            $data['payment_document'] = $transaction->paymentDocument ? [
+                'id' => $transaction->paymentDocument->id,
+                'document_number' => $transaction->paymentDocument->document_number,
+                'status' => $transaction->paymentDocument->status->value,
+                'amount' => $transaction->paymentDocument->amount,
+            ] : null;
+            $data['created_by_user'] = $transaction->createdByUser ? [
+                'id' => $transaction->createdByUser->id,
+                'name' => $transaction->createdByUser->name,
+            ] : null;
+            $data['approved_by_user'] = $transaction->approvedByUser ? [
+                'id' => $transaction->approvedByUser->id,
+                'name' => $transaction->approvedByUser->name,
+            ] : null;
+        }
+
+        return $data;
+    }
+}

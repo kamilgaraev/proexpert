@@ -1,26 +1,28 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Core\Payments\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class StorePaymentDocumentRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     */
     public function authorize(): bool
     {
-        return true; // Авторизация проверяется в middleware
+        $organizationId = $this->getCurrentOrganizationId();
+
+        return $organizationId > 0
+            && (bool) $this->user()?->can('payments.invoice.create', ['organization_id' => $organizationId]);
     }
 
-    /**
-     * Get the validation rules that apply to the request.
-     */
     public function rules(): array
     {
-        // Для авансов, привязанных к контракту, сумма может быть опциональной (будет рассчитана автоматически)
-        $isAdvanceWithContract = $this->input('invoice_type') === 'advance' 
+        $organizationId = $this->getCurrentOrganizationId();
+        $estimateId = $this->integer('estimate_id');
+
+        $isAdvanceWithContract = $this->input('invoice_type') === 'advance'
             && (
                 ($this->input('source_type') === 'App\\Models\\Contract' && $this->input('source_id'))
                 || ($this->input('invoiceable_type') === 'App\\Models\\Contract' && $this->input('invoiceable_id'))
@@ -31,22 +33,78 @@ class StorePaymentDocumentRequest extends FormRequest
             'document_type' => 'required|string|in:payment_request,invoice,payment_order,incoming_payment,expense,offset_act',
             'document_date' => 'nullable|date',
             'due_date' => 'nullable|date',
-            'project_id' => 'nullable|integer|exists:projects,id',
-            'payer_organization_id' => 'nullable|integer|exists:organizations,id',
-            'payer_contractor_id' => 'nullable|integer|exists:contractors,id',
-            'payee_organization_id' => 'nullable|integer|exists:organizations,id',
-            'payee_contractor_id' => 'nullable|integer|exists:contractors,id',
+            'project_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+            ],
+            'payer_organization_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('organizations', 'id'),
+            ],
+            'payer_contractor_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('contractors', 'id')->where('organization_id', $organizationId),
+            ],
+            'payee_organization_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('organizations', 'id'),
+            ],
+            'payee_contractor_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('contractors', 'id')->where('organization_id', $organizationId),
+            ],
             'amount' => $isAdvanceWithContract ? 'nullable|numeric|min:0' : 'required|numeric|min:0.01',
             'currency' => 'nullable|string|size:3',
             'vat_rate' => 'nullable|numeric|min:0|max:100',
-            'source_type' => 'nullable|string',
+            'source_type' => [
+                'nullable',
+                'string',
+                Rule::in([
+                    \App\Models\Contract::class,
+                    \App\Models\ContractPerformanceAct::class,
+                    \App\BusinessModules\Core\Payments\Models\PaymentDocument::class,
+                ]),
+            ],
             'source_id' => 'nullable|integer',
-            'invoiceable_type' => 'nullable|string',
+            'invoiceable_type' => [
+                'nullable',
+                'string',
+                Rule::in([
+                    \App\Models\Contract::class,
+                    \App\Models\ContractPerformanceAct::class,
+                ]),
+            ],
             'invoiceable_id' => 'nullable|integer',
-            'contract_id' => 'nullable|integer|exists:contracts,id',
-            'estimate_id' => 'nullable|integer|exists:estimates,id',
+            'contract_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('contracts', 'id')->where('organization_id', $organizationId),
+            ],
+            'estimate_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('estimates', 'id')->where('organization_id', $organizationId),
+            ],
             'estimate_splits' => 'nullable|array',
-            'estimate_splits.*.estimate_item_id' => 'required_with:estimate_splits|integer|exists:estimate_items,id',
+            'estimate_splits.*.estimate_item_id' => [
+                'required_with:estimate_splits',
+                'integer',
+                Rule::exists('estimate_items', 'id')->where(function ($query) use ($organizationId, $estimateId) {
+                    $query->whereNull('deleted_at')
+                        ->whereExists(function ($estimateQuery) use ($organizationId, $estimateId) {
+                            $estimateQuery->selectRaw('1')
+                                ->from('estimates')
+                                ->whereColumn('estimates.id', 'estimate_items.estimate_id')
+                                ->where('estimates.organization_id', $organizationId)
+                                ->when($estimateId > 0, fn ($builder) => $builder->where('estimates.id', $estimateId));
+                        });
+                }),
+            ],
             'estimate_splits.*.quantity' => 'required_with:estimate_splits|numeric|min:0',
             'estimate_splits.*.unit_price_actual' => 'required_with:estimate_splits|numeric|min:0',
             'estimate_splits.*.amount' => 'nullable|numeric|min:0',
@@ -65,9 +123,6 @@ class StorePaymentDocumentRequest extends FormRequest
         ];
     }
 
-    /**
-     * Get custom messages for validator errors.
-     */
     public function messages(): array
     {
         return [
@@ -85,12 +140,8 @@ class StorePaymentDocumentRequest extends FormRequest
         ];
     }
 
-    /**
-     * Prepare the data for validation.
-     */
     protected function prepareForValidation(): void
     {
-        // Нормализуем числовые поля перед валидацией
         if ($this->has('amount')) {
             $this->merge([
                 'amount' => $this->convertToNumber($this->amount),
@@ -104,45 +155,37 @@ class StorePaymentDocumentRequest extends FormRequest
         }
     }
 
-    /**
-     * Преобразовать строку в число
-     * Поддерживает форматы: "123.45", "123,45", "123 456.78", "123 456,78"
-     */
-    private function convertToNumber($value)
+    private function getCurrentOrganizationId(): int
     {
-        // Если уже число, возвращаем как есть
+        return (int) $this->attributes->get('current_organization_id', 0);
+    }
+
+    private function convertToNumber(mixed $value): mixed
+    {
         if (is_numeric($value)) {
             return $value;
         }
 
-        // Если не строка, возвращаем как есть
         if (!is_string($value)) {
             return $value;
         }
 
-        // Убираем пробелы
         $value = str_replace(' ', '', $value);
 
-        // Если содержит и точку, и запятую - определяем разделитель по позиции
         if (strpos($value, '.') !== false && strpos($value, ',') !== false) {
             $lastDot = strrpos($value, '.');
             $lastComma = strrpos($value, ',');
-            
-            // Последний символ определяет десятичный разделитель
+
             if ($lastDot > $lastComma) {
-                // Точка - десятичный разделитель, запятая - разделитель тысяч
                 $value = str_replace(',', '', $value);
             } else {
-                // Запятая - десятичный разделитель, точка - разделитель тысяч
                 $value = str_replace('.', '', $value);
                 $value = str_replace(',', '.', $value);
             }
         } elseif (strpos($value, ',') !== false) {
-            // Только запятая - заменяем на точку
             $value = str_replace(',', '.', $value);
         }
 
         return is_numeric($value) ? (float) $value : $value;
     }
 }
-

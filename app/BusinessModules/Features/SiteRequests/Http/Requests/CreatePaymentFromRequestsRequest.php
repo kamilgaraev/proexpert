@@ -1,28 +1,38 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\SiteRequests\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class CreatePaymentFromRequestsRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     */
     public function authorize(): bool
     {
-        return true; // Проверка авторизации через middleware
+        $organizationId = $this->getCurrentOrganizationId();
+
+        return $organizationId > 0
+            && (bool) $this->user()?->can('payments.invoice.create', ['organization_id' => $organizationId]);
     }
 
-    /**
-     * Get the validation rules that apply to the request.
-     */
     public function rules(): array
     {
+        $organizationId = $this->getCurrentOrganizationId();
+
         return [
             'request_ids' => 'required|array|min:1',
-            'request_ids.*' => 'required|integer|exists:site_requests,id',
-            'payee_contractor_id' => 'required|integer|exists:contractors,id',
+            'request_ids.*' => [
+                'required',
+                'integer',
+                Rule::exists('site_requests', 'id')->where('organization_id', $organizationId),
+            ],
+            'payee_contractor_id' => [
+                'required',
+                'integer',
+                Rule::exists('contractors', 'id')->where('organization_id', $organizationId),
+            ],
             'amount' => 'required|numeric|min:0.01',
             'currency' => 'sometimes|string|size:3',
             'vat_rate' => 'sometimes|numeric|min:0|max:100',
@@ -34,9 +44,6 @@ class CreatePaymentFromRequestsRequest extends FormRequest
         ];
     }
 
-    /**
-     * Get custom messages for validator errors.
-     */
     public function messages(): array
     {
         return [
@@ -52,5 +59,9 @@ class CreatePaymentFromRequestsRequest extends FormRequest
             'due_date.after_or_equal' => 'Срок оплаты не может быть в прошлом',
         ];
     }
-}
 
+    private function getCurrentOrganizationId(): int
+    {
+        return (int) $this->attributes->get('current_organization_id', 0);
+    }
+}

@@ -1,16 +1,21 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
-use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\PaymentConfirmationService;
 use App\BusinessModules\Core\Payments\Services\PaymentRecipientNotificationService;
 use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
+
+use function trans_message;
 
 class PaymentRecipientController extends Controller
 {
@@ -19,322 +24,221 @@ class PaymentRecipientController extends Controller
         private readonly PaymentRecipientNotificationService $notificationService
     ) {}
 
-    /**
-     * Получить список входящих документов для текущей организации-получателя
-     * 
-     * @group Payment Recipients
-     * @authenticated
-     */
     public function index(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-            
-            if (!$organizationId) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Организация не указана',
-                ], 400);
-            }
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $validated = $request->validate([
+                'status' => ['nullable', 'string'],
+                'project_id' => [
+                    'nullable',
+                    'integer',
+                    Rule::exists('projects', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                ],
+                'date_from' => ['nullable', 'date'],
+                'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
+                'min_amount' => ['nullable', 'numeric', 'min:0'],
+                'max_amount' => ['nullable', 'numeric', 'min:0'],
+                'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+            ]);
 
-            // Фильтры
-            $filters = [
-                'status' => $request->input('status'),
-                'project_id' => $request->input('project_id'),
-                'date_from' => $request->input('date_from'),
-                'date_to' => $request->input('date_to'),
-                'min_amount' => $request->input('min_amount'),
-                'max_amount' => $request->input('max_amount'),
-            ];
-
-            // Получаем документы, где текущая организация является получателем
-            $query = PaymentDocument::query()
-                ->where(function ($q) use ($organizationId) {
-                    // Прямая связь через payee_organization_id
-                    $q->where('payee_organization_id', $organizationId)
-                        // Или через подрядчика, связанного с организацией
-                        ->orWhereHas('payeeContractor', function ($contractorQuery) use ($organizationId) {
-                            $contractorQuery->where('source_organization_id', $organizationId);
-                        })
-                        // Или через recipient_organization_id (кэш)
-                        ->orWhere('recipient_organization_id', $organizationId);
-                })
+            $query = $this->recipientDocumentsQuery($organizationId)
                 ->with(['payerOrganization', 'payerContractor', 'project', 'approvals'])
-                ->orderBy('created_at', 'desc');
+                ->orderByDesc('created_at');
 
-            // Применяем фильтры
-            if (!empty($filters['status'])) {
-                $query->where('status', $filters['status']);
+            if (!empty($validated['status'])) {
+                $query->where('status', $validated['status']);
             }
 
-            if (!empty($filters['project_id'])) {
-                $query->where('project_id', $filters['project_id']);
+            if (!empty($validated['project_id'])) {
+                $query->where('project_id', $validated['project_id']);
             }
 
-            if (!empty($filters['date_from'])) {
-                $query->where('document_date', '>=', $filters['date_from']);
+            if (!empty($validated['date_from'])) {
+                $query->whereDate('document_date', '>=', $validated['date_from']);
             }
 
-            if (!empty($filters['date_to'])) {
-                $query->where('document_date', '<=', $filters['date_to']);
+            if (!empty($validated['date_to'])) {
+                $query->whereDate('document_date', '<=', $validated['date_to']);
             }
 
-            if (!empty($filters['min_amount'])) {
-                $query->where('amount', '>=', $filters['min_amount']);
+            if (!empty($validated['min_amount'])) {
+                $query->where('amount', '>=', $validated['min_amount']);
             }
 
-            if (!empty($filters['max_amount'])) {
-                $query->where('amount', '<=', $filters['max_amount']);
+            if (!empty($validated['max_amount'])) {
+                $query->where('amount', '<=', $validated['max_amount']);
             }
 
-            $perPage = min($request->input('per_page', 15), 100);
-            $documents = $query->paginate($perPage);
+            $documents = $query->paginate((int) ($validated['per_page'] ?? 15));
 
-            return response()->json([
-                'success' => true,
-                'data' => $documents->map(fn($doc) => $this->formatDocument($doc)),
-                'meta' => [
+            return AdminResponse::paginated(
+                $documents->getCollection()->map(fn ($document) => $this->formatDocument($document)),
+                [
                     'current_page' => $documents->currentPage(),
                     'per_page' => $documents->perPage(),
                     'total' => $documents->total(),
                     'last_page' => $documents->lastPage(),
                 ],
-            ]);
-
+                trans_message('payments.recipient.loaded')
+            );
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Exception $e) {
             Log::error('payment_recipient.index.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить входящие документы',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.recipient.load_error'), 500);
         }
     }
 
-    /**
-     * Получить детали входящего документа
-     * 
-     * @group Payment Recipients
-     * @authenticated
-     */
     public function show(Request $request, int|string $documentId): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-            
-            $document = PaymentDocument::where(function ($q) use ($organizationId) {
-                $q->where('payee_organization_id', $organizationId)
-                    ->orWhereHas('payeeContractor', function ($contractorQuery) use ($organizationId) {
-                        $contractorQuery->where('source_organization_id', $organizationId);
-                    })
-                    ->orWhere('recipient_organization_id', $organizationId);
-            })
-            ->with(['payerOrganization', 'payerContractor', 'project', 'approvals', 'transactions'])
-            ->findOrFail($documentId);
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $document = $this->recipientDocumentsQuery($organizationId)
+                ->with(['payerOrganization', 'payerContractor', 'project', 'approvals', 'transactions'])
+                ->findOrFail((int) $documentId);
 
-            return response()->json([
-                'success' => true,
-                'data' => $this->formatDocumentDetailed($document),
-            ]);
-
+            return AdminResponse::success(
+                $this->formatDocumentDetailed($document),
+                trans_message('payments.recipient.loaded')
+            );
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => 'Документ не найден или у вас нет доступа',
-            ], 404);
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
         } catch (\Exception $e) {
             Log::error('payment_recipient.show.error', [
                 'document_id' => $documentId,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить документ',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.recipient.show_error'), 500);
         }
     }
 
-    /**
-     * Отметить документ как просмотренный получателем
-     * 
-     * @group Payment Recipients
-     * @authenticated
-     */
     public function markAsViewed(Request $request, int|string $documentId): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-            $userId = $request->user()->id;
-
-            $document = PaymentDocument::where(function ($q) use ($organizationId) {
-                $q->where('payee_organization_id', $organizationId)
-                    ->orWhereHas('payeeContractor', function ($contractorQuery) use ($organizationId) {
-                        $contractorQuery->where('source_organization_id', $organizationId);
-                    })
-                    ->orWhere('recipient_organization_id', $organizationId);
-            })
-            ->findOrFail($documentId);
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $userId = (int) $request->user()->id;
+            $document = $this->recipientDocumentsQuery($organizationId)->findOrFail((int) $documentId);
 
             if (!$document->hasRegisteredRecipient()) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Получатель не зарегистрирован в системе',
-                ], 422);
+                return AdminResponse::error(trans_message('payments.recipient.recipient_required'), 422);
             }
 
             $document->markAsViewedByRecipient($userId);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Документ отмечен как просмотренный',
-                'data' => [
-                    'viewed_at' => $document->recipient_viewed_at?->toDateTimeString(),
-                ],
-            ]);
-
+            return AdminResponse::success([
+                'viewed_at' => $document->recipient_viewed_at?->toDateTimeString(),
+            ], trans_message('payments.recipient.viewed'));
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => 'Документ не найден или у вас нет доступа',
-            ], 404);
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
         } catch (\Exception $e) {
             Log::error('payment_recipient.mark_viewed.error', [
                 'document_id' => $documentId,
+                'user_id' => $request->user()?->id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось отметить документ как просмотренный',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.recipient.mark_viewed_error'), 500);
         }
     }
 
-    /**
-     * Подтвердить получение платежа получателем
-     * 
-     * @group Payment Recipients
-     * @authenticated
-     */
     public function confirmReceipt(Request $request, int|string $documentId): JsonResponse
     {
         try {
             $validated = $request->validate([
-                'comment' => 'nullable|string|max:1000',
+                'comment' => ['nullable', 'string', 'max:1000'],
             ]);
 
-            $organizationId = $request->attributes->get('current_organization_id');
-            $userId = $request->user()->id;
-
-            $document = PaymentDocument::where(function ($q) use ($organizationId) {
-                $q->where('payee_organization_id', $organizationId)
-                    ->orWhereHas('payeeContractor', function ($contractorQuery) use ($organizationId) {
-                        $contractorQuery->where('source_organization_id', $organizationId);
-                    })
-                    ->orWhere('recipient_organization_id', $organizationId);
-            })
-            ->findOrFail($documentId);
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $userId = (int) $request->user()->id;
+            $document = $this->recipientDocumentsQuery($organizationId)->findOrFail((int) $documentId);
 
             $this->confirmationService->confirmReceipt($document, $userId, $validated['comment'] ?? null);
+            $document = $document->fresh();
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Получение платежа подтверждено',
-                'data' => [
-                    'confirmed_at' => $document->fresh()->recipient_confirmed_at?->toDateTimeString(),
-                    'comment' => $document->fresh()->recipient_confirmation_comment,
-                ],
-            ]);
-
+            return AdminResponse::success([
+                'confirmed_at' => $document?->recipient_confirmed_at?->toDateTimeString(),
+                'comment' => $document?->recipient_confirmation_comment,
+            ], trans_message('payments.recipient.confirmed'));
         } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => 'Документ не найден или у вас нет доступа',
-            ], 404);
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
         } catch (\Exception $e) {
             Log::error('payment_recipient.confirm_receipt.error', [
                 'document_id' => $documentId,
+                'user_id' => $request->user()?->id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось подтвердить получение',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.recipient.confirm_error'), 500);
         }
     }
 
-    /**
-     * Получить статистику входящих платежей
-     * 
-     * @group Payment Recipients
-     * @authenticated
-     */
     public function statistics(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-
-            $query = PaymentDocument::where(function ($q) use ($organizationId) {
-                $q->where('payee_organization_id', $organizationId)
-                    ->orWhereHas('payeeContractor', function ($contractorQuery) use ($organizationId) {
-                        $contractorQuery->where('source_organization_id', $organizationId);
-                    })
-                    ->orWhere('recipient_organization_id', $organizationId);
-            });
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $baseQuery = $this->recipientDocumentsQuery($organizationId);
 
             $stats = [
-                'total' => $query->count(),
-                'total_amount' => $query->sum('amount'),
-                'by_status' => $query->selectRaw('status, COUNT(*) as count, SUM(amount) as total_amount')
+                'total' => (clone $baseQuery)->count(),
+                'total_amount' => (float) (clone $baseQuery)->sum('amount'),
+                'by_status' => (clone $baseQuery)
+                    ->selectRaw('status, COUNT(*) as count, SUM(amount) as total_amount')
                     ->groupBy('status')
                     ->get()
-                    ->keyBy(fn($item) => $item->status instanceof \App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus ? $item->status->value : $item->status)
-                    ->map(fn($item) => [
+                    ->keyBy(fn ($item) => is_object($item->status) ? $item->status->value : $item->status)
+                    ->map(fn ($item) => [
                         'count' => $item->count,
                         'total_amount' => (float) $item->total_amount,
-                    ]),
-                'pending_confirmation' => $query->whereNotNull('approved_at')
+                    ])
+                    ->toArray(),
+                'pending_confirmation' => (clone $baseQuery)
+                    ->whereNotNull('approved_at')
                     ->whereNull('recipient_confirmed_at')
                     ->count(),
-                'pending_confirmation_amount' => $query->whereNotNull('approved_at')
+                'pending_confirmation_amount' => (float) (clone $baseQuery)
+                    ->whereNotNull('approved_at')
                     ->whereNull('recipient_confirmed_at')
                     ->sum('amount'),
-                'confirmed' => $query->whereNotNull('recipient_confirmed_at')
+                'confirmed' => (clone $baseQuery)
+                    ->whereNotNull('recipient_confirmed_at')
                     ->count(),
-                'confirmed_amount' => $query->whereNotNull('recipient_confirmed_at')
+                'confirmed_amount' => (float) (clone $baseQuery)
+                    ->whereNotNull('recipient_confirmed_at')
                     ->sum('amount'),
             ];
 
-            return response()->json([
-                'success' => true,
-                'data' => $stats,
-            ]);
-
+            return AdminResponse::success($stats, trans_message('payments.recipient.loaded'));
         } catch (\Exception $e) {
             Log::error('payment_recipient.statistics.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить статистику',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.recipient.statistics_error'), 500);
         }
     }
 
-    /**
-     * Форматирование документа для списка
-     */
+    private function recipientDocumentsQuery(int $organizationId): Builder
+    {
+        return PaymentDocument::query()->where(function (Builder $query) use ($organizationId): void {
+            $query->where('payee_organization_id', $organizationId)
+                ->orWhereHas('payeeContractor', function (Builder $contractorQuery) use ($organizationId): void {
+                    $contractorQuery->where('source_organization_id', $organizationId);
+                })
+                ->orWhere('recipient_organization_id', $organizationId);
+        });
+    }
+
     private function formatDocument(PaymentDocument $document): array
     {
         return [
@@ -358,14 +262,9 @@ class PaymentRecipientController extends Controller
         ];
     }
 
-    /**
-     * Форматирование документа (детальный формат)
-     */
     private function formatDocumentDetailed(PaymentDocument $document): array
     {
-        $basic = $this->formatDocument($document);
-
-        return array_merge($basic, [
+        return array_merge($this->formatDocument($document), [
             'paid_amount' => $document->paid_amount,
             'remaining_amount' => $document->remaining_amount,
             'project' => $document->project ? [
@@ -379,19 +278,73 @@ class PaymentRecipientController extends Controller
                 'correspondent_account' => $document->bank_correspondent_account,
                 'bank_name' => $document->bank_name,
             ],
-            'confirmation_comment' => $document->recipient_confirmation_comment,
-            'confirmed_by' => $document->recipientConfirmedBy ? [
-                'id' => $document->recipientConfirmedBy->id,
-                'name' => $document->recipientConfirmedBy->name,
-            ] : null,
-            'transactions' => $document->transactions->map(fn($t) => [
-                'id' => $t->id,
-                'amount' => $t->amount,
-                'transaction_date' => $t->transaction_date->format('Y-m-d'),
-                'reference_number' => $t->reference_number,
-                'status' => $t->status->value,
+            'approvals' => $document->approvals->map(fn ($approval) => [
+                'id' => $approval->id,
+                'status' => $approval->status,
+                'status_label' => $approval->getStatusLabel(),
+                'approval_role' => $approval->approval_role,
+                'approval_role_label' => $approval->getRoleLabel(),
+                'approver' => $approval->approver ? [
+                    'id' => $approval->approver->id,
+                    'name' => $approval->approver->name,
+                ] : null,
+                'decided_at' => $approval->decided_at?->toDateTimeString(),
+                'comment' => $approval->decision_comment,
             ]),
+            'transactions' => $document->transactions->map(fn ($transaction) => [
+                'id' => $transaction->id,
+                'amount' => $transaction->amount,
+                'status' => $transaction->status,
+                'transaction_date' => $transaction->transaction_date?->toDateString(),
+                'payment_method' => $transaction->payment_method,
+            ]),
+            'problem_flags' => $this->buildProblemFlags($document),
+            'workflow_summary' => $this->buildWorkflowSummary($document),
         ]);
     }
-}
 
+    private function buildProblemFlags(PaymentDocument $document): array
+    {
+        return [
+            'is_overdue' => $document->isOverdue(),
+            'is_unviewed' => $document->recipient_viewed_at === null,
+            'awaiting_confirmation' => $document->recipient_confirmed_at === null && $document->approved_at !== null,
+            'missing_bank_details' => empty($document->bank_account) || empty($document->bank_bik),
+            'partially_paid' => (float) $document->paid_amount > 0 && (float) $document->remaining_amount > 0,
+        ];
+    }
+
+    private function buildWorkflowSummary(PaymentDocument $document): array
+    {
+        $nextAction = null;
+        $currentStage = 'created';
+        $blockers = [];
+
+        if ($document->recipient_confirmed_at !== null) {
+            $currentStage = 'receipt_confirmed';
+        } elseif ($document->approved_at !== null) {
+            $currentStage = 'awaiting_recipient_confirmation';
+            $nextAction = 'confirm_receipt';
+        } elseif ($document->recipient_viewed_at !== null) {
+            $currentStage = 'viewed_by_recipient';
+        } elseif ($document->submitted_at !== null) {
+            $currentStage = 'sent_to_recipient';
+            $nextAction = 'mark_as_viewed';
+        }
+
+        if (empty($document->bank_account) || empty($document->bank_bik)) {
+            $blockers[] = 'missing_bank_details';
+        }
+
+        if (!$document->hasRegisteredRecipient()) {
+            $blockers[] = 'recipient_not_registered';
+        }
+
+        return [
+            'current_stage' => $currentStage,
+            'next_action' => $nextAction,
+            'is_blocked' => $blockers !== [],
+            'blockers' => $blockers,
+        ];
+    }
+}

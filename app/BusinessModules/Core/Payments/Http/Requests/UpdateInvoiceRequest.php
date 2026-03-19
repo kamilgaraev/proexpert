@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Core\Payments\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
@@ -8,7 +10,10 @@ class UpdateInvoiceRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;
+        $organizationId = (int) $this->attributes->get('current_organization_id', 0);
+
+        return $organizationId > 0
+            && (bool) $this->user()?->can('payments.invoice.edit', ['organization_id' => $organizationId]);
     }
 
     public function rules(): array
@@ -28,12 +33,10 @@ class UpdateInvoiceRequest extends FormRequest
 
     public function prepareForValidation(): void
     {
-        // Конвертировать пустые строки в null
         $this->merge(
             collect($this->all())
-                ->map(fn($value) => $value === '' ? null : $value)
+                ->map(fn ($value) => $value === '' ? null : $value)
                 ->toArray()
         );
     }
 }
-

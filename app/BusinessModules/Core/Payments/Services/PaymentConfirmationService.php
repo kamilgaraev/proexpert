@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Core\Payments\Services;
 
 use App\BusinessModules\Core\Payments\Events\PaymentReceiptConfirmed;
@@ -7,6 +9,8 @@ use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+
+use function trans_message;
 
 class PaymentConfirmationService
 {
@@ -28,12 +32,12 @@ class PaymentConfirmationService
         try {
             // Проверяем, зарегистрирован ли получатель
             if (!$document->hasRegisteredRecipient()) {
-                throw new \DomainException('Получатель не зарегистрирован в системе');
+                throw new \DomainException(trans_message('payments.validation.recipient_not_registered'));
             }
 
             // Проверяем, что текущая организация является получателем
             $recipientOrgId = $document->getRecipientOrganizationId();
-            $user = User::findOrFail($userId);
+            $user = User::query()->findOrFail($userId);
 
             // Проверяем, что пользователь принадлежит организации-получателю
             if (!$user->isOrganizationOwner($recipientOrgId) && 
@@ -42,7 +46,7 @@ class PaymentConfirmationService
                 
                 // Проверяем конкретное разрешение
                 if (!$user->can('payments.view', ['organization_id' => $recipientOrgId])) {
-                    throw new \DomainException('У вас нет прав на подтверждение получения платежа');
+                    throw new \DomainException(trans_message('payments.validation.recipient_confirm_forbidden'));
                 }
             }
 
@@ -73,7 +77,10 @@ class PaymentConfirmationService
                 'error' => $e->getMessage(),
             ]);
 
-            throw new \RuntimeException('Не удалось подтвердить получение платежа: ' . $e->getMessage());
+            throw new \RuntimeException(sprintf(
+                trans_message('payments.validation.recipient_confirm_runtime_error'),
+                $e->getMessage()
+            ));
         }
     }
 }

@@ -10,6 +10,8 @@ use App\BusinessModules\Core\Payments\Events\PaymentDocumentRejected;
 use App\BusinessModules\Core\Payments\Events\PaymentDocumentPaid;
 use Illuminate\Support\Facades\Log;
 
+use function trans_message;
+
 class PaymentDocumentStateMachine
 {
     /**
@@ -147,7 +149,7 @@ class PaymentDocumentStateMachine
     public function registerPartialPayment(PaymentDocument $document, float $amount): PaymentDocument
     {
         if ($amount <= 0) {
-            throw new \InvalidArgumentException('Сумма оплаты должна быть положительной');
+            throw new \InvalidArgumentException(trans_message('payments.validation.payment_amount_positive'));
         }
 
         $document->paid_amount += $amount;
