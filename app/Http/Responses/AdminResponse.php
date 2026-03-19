@@ -41,6 +41,7 @@ class AdminResponse
         $response = [
             'success' => false,
             'message' => $message,
+            'error' => $message,
         ];
 
         if (!is_null($errors)) {
@@ -48,6 +49,25 @@ class AdminResponse
         }
 
         return response()->json($response, $code);
+    }
+
+    /**
+     * Return a paginated response for Admin API.
+     *
+     * @param mixed $data
+     * @param array<string, mixed> $meta
+     * @param string|null $message
+     * @param int $code
+     * @return JsonResponse
+     */
+    public static function paginated(mixed $data, array $meta, string $message = null, int $code = 200): JsonResponse
+    {
+        return response()->json([
+            'success' => true,
+            'message' => $message,
+            'data' => self::transformData($data),
+            'meta' => $meta,
+        ], $code);
     }
 
     /**
@@ -59,7 +79,8 @@ class AdminResponse
     protected static function transformData(mixed $data): mixed
     {
         if ($data instanceof ResourceCollection) {
-            return $data->response()->getData(true);
+            $resolved = $data->response()->getData(true);
+            return $resolved['data'] ?? $resolved;
         }
 
         if ($data instanceof JsonResource) {

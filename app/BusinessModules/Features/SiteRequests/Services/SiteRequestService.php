@@ -40,7 +40,17 @@ class SiteRequestService
     public function find(int $id, int $organizationId): ?SiteRequest
     {
         return SiteRequest::forOrganization($organizationId)
-            ->with(['project', 'user', 'assignedUser', 'files', 'calendarEvent', 'group'])
+            ->with([
+                'project',
+                'user',
+                'assignedUser',
+                'files',
+                'calendarEvent',
+                'group',
+                'purchaseRequests.assignedUser',
+                'purchaseRequests.purchaseOrders.supplier',
+                'purchaseOrders.supplier',
+            ])
             ->find($id);
     }
 

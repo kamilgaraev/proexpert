@@ -26,6 +26,16 @@
     "personnel": ["personnel.view"],
     "time-tracking": ["time-tracking.view"],
     "site-requests": ["site-requests.view"],
+    "procurement": [
+      "procurement.view",
+      "procurement.purchase_requests.view",
+      "procurement.purchase_orders.view",
+      "procurement.supplier_proposals.view",
+      "procurement.contracts.view",
+      "procurement.dashboard.view",
+      "procurement.statistics.view",
+      "procurement.settings.view"
+    ],
     "contractor-portal": ["contractor_invitations.view"],
     "file-management": ["personal_files.view"],
     "system-logs": ["logs.view"],

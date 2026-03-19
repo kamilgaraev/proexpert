@@ -1,19 +1,16 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\Procurement\Observers;
 
-use Illuminate\Database\Eloquent\Model;
 use App\BusinessModules\Features\Procurement\Models\ProcurementAuditLog;
+use Illuminate\Database\Eloquent\Model;
 
-/**
- * Observer для автоматического логирования изменений
- * в моделях модуля закупок
- */
 class ProcurementAuditObserver
 {
-    /**
-     * При создании модели
-     */
+    private static array $pendingChanges = [];
+
     public function created(Model $model): void
     {
         ProcurementAuditLog::logAction(
@@ -22,43 +19,53 @@ class ProcurementAuditObserver
             null,
             $model->toArray(),
             auth()->id(),
-            "Запись создана"
+            'Запись создана'
         );
     }
 
-    /**
-     * При обновлении модели
-     */
-    public function updated(Model $model): void
+    public function updating(Model $model): void
     {
-        // Получаем только измененные атрибуты
         $dirty = $model->getDirty();
-        
+
         if (empty($dirty)) {
             return;
         }
 
         $oldValues = [];
-        $newValues = [];
 
-        foreach ($dirty as $key => $newValue) {
+        foreach (array_keys($dirty) as $key) {
             $oldValues[$key] = $model->getOriginal($key);
-            $newValues[$key] = $newValue;
         }
+
+        self::$pendingChanges[spl_object_id($model)] = [
+            'old' => $oldValues,
+        ];
+    }
+
+    public function updated(Model $model): void
+    {
+        $key = spl_object_id($model);
+        $changes = $model->getChanges();
+
+        if (empty($changes)) {
+            unset(self::$pendingChanges[$key]);
+            return;
+        }
+
+        $oldValues = self::$pendingChanges[$key]['old'] ?? [];
 
         ProcurementAuditLog::logAction(
             $model,
             'updated',
             $oldValues,
-            $newValues,
+            $changes,
             auth()->id(),
-            "Запись обновлена"
+            'Запись обновлена'
         );
+
+        unset(self::$pendingChanges[$key]);
     }
 
-    /**
-     * При удалении модели
-     */
     public function deleted(Model $model): void
     {
         ProcurementAuditLog::logAction(
@@ -67,13 +74,10 @@ class ProcurementAuditObserver
             $model->toArray(),
             null,
             auth()->id(),
-            "Запись удалена"
+            'Запись удалена'
         );
     }
 
-    /**
-     * При восстановлении модели (soft delete)
-     */
     public function restored(Model $model): void
     {
         ProcurementAuditLog::logAction(
@@ -82,8 +86,7 @@ class ProcurementAuditObserver
             null,
             $model->toArray(),
             auth()->id(),
-            "Запись восстановлена"
+            'Запись восстановлена'
         );
     }
 }
-
