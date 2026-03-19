@@ -9,6 +9,8 @@ use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
 use Illuminate\Support\Facades\DB;
 
+use function trans_message;
+
 class PaymentTransactionService
 {
     public function __construct(
@@ -22,11 +24,11 @@ class PaymentTransactionService
     {
         // Валидация суммы
         if ($data['amount'] <= 0) {
-            throw new \InvalidArgumentException('Сумма платежа должна быть положительной');
+            throw new \InvalidArgumentException(trans_message('payments.validation.payment_amount_positive'));
         }
 
         if ($data['amount'] > $document->remaining_amount) {
-            throw new \DomainException('Сумма платежа превышает остаток по документу');
+            throw new \DomainException(trans_message('payments.validation.payment_amount_exceeds_document_remaining'));
         }
 
         return DB::transaction(function () use ($document, $data) {
@@ -89,7 +91,7 @@ class PaymentTransactionService
                 ->exists();
 
             if ($duplicate) {
-                throw new \DomainException('Платёж с таким номером уже существует');
+                throw new \DomainException(trans_message('payments.validation.transaction_duplicate_reference'));
             }
         }
 
@@ -102,11 +104,11 @@ class PaymentTransactionService
     public function refundPayment(PaymentTransaction $transaction, float $amount, string $reason): PaymentTransaction
     {
         if (!$transaction->canBeRefunded()) {
-            throw new \DomainException('Транзакция не может быть возвращена');
+            throw new \DomainException(trans_message('payments.validation.transaction_refund_forbidden'));
         }
 
         if ($amount > $transaction->amount) {
-            throw new \DomainException('Сумма возврата превышает сумму платежа');
+            throw new \DomainException(trans_message('payments.validation.transaction_refund_amount_exceeds'));
         }
 
         return DB::transaction(function () use ($transaction, $amount, $reason) {

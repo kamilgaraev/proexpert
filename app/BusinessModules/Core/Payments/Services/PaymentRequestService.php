@@ -11,6 +11,8 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
+use function trans_message;
+
 /**
  * Сервис для работы с платежными требованиями
  * Сценарий: Подрядчик -> Генподрядчик (Заказчик)
@@ -36,7 +38,9 @@ class PaymentRequestService
             // Получаем информацию о контракте
             $contract = null;
             if (isset($data['contract_id'])) {
-                $contract = Contract::findOrFail($data['contract_id']);
+                $contract = Contract::query()
+                    ->forOrganization($data['organization_id'])
+                    ->findOrFail($data['contract_id']);
             }
 
             // Формируем данные документа
@@ -146,7 +150,7 @@ class PaymentRequestService
     public function submitRequest(PaymentDocument $document): PaymentDocument
     {
         if ($document->document_type !== PaymentDocumentType::PAYMENT_REQUEST) {
-            throw new \DomainException('Можно отправлять только платежные требования');
+            throw new \DomainException(trans_message('payments.validation.request_submit_only_payment_requests'));
         }
 
         // Отправляем на утверждение
@@ -166,7 +170,7 @@ class PaymentRequestService
                 // Workflow утверждения был инициирован при submit
                 // Здесь мы просто проверяем, что он утвержден
                 if ($document->status->value !== 'approved') {
-                    throw new \DomainException('Требование должно быть утверждено');
+                    throw new \DomainException(trans_message('payments.validation.request_must_be_approved'));
                 }
             }
 
@@ -199,7 +203,7 @@ class PaymentRequestService
     public function rejectRequest(PaymentDocument $document, string $reason, ?\App\Models\User $user = null): PaymentDocument
     {
         if ($document->document_type !== PaymentDocumentType::PAYMENT_REQUEST) {
-            throw new \DomainException('Можно отклонять только платежные требования');
+            throw new \DomainException(trans_message('payments.validation.request_reject_only_payment_requests'));
         }
 
         return $this->documentService->cancel($document, "Отклонено: {$reason}", $user);
@@ -355,18 +359,23 @@ class PaymentRequestService
 
         foreach ($required as $field) {
             if (!isset($data[$field]) || empty($data[$field])) {
-                throw new \InvalidArgumentException("Поле '{$field}' обязательно для платежного требования");
+                throw new \InvalidArgumentException(sprintf(
+                    trans_message('payments.validation.request_required_field'),
+                    $field
+                ));
             }
         }
 
         if ($data['amount'] <= 0) {
-            throw new \InvalidArgumentException('Сумма должна быть больше 0');
+            throw new \InvalidArgumentException(trans_message('payments.validation.amount_positive'));
         }
 
         // Проверка контрагента
-        $contractor = Contractor::find($data['contractor_id']);
+        $contractor = Contractor::query()
+            ->where('organization_id', $data['organization_id'])
+            ->find($data['contractor_id']);
         if (!$contractor) {
-            throw new \InvalidArgumentException('Контрагент не найден');
+            throw new \InvalidArgumentException(trans_message('payments.validation.contractor_not_found'));
         }
 
         // Проверка блокировки
@@ -376,7 +385,7 @@ class PaymentRequestService
             ->first();
 
         if ($account && $account->is_blocked) {
-            throw new \DomainException('Контрагент заблокирован. Платежные требования от него не принимаются');
+            throw new \DomainException(trans_message('payments.validation.contractor_blocked'));
         }
     }
 

@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
@@ -15,8 +17,13 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use App\BusinessModules\Core\Payments\Http\Requests\BulkActionRequest;
 use App\BusinessModules\Core\Payments\Http\Requests\StorePaymentDocumentRequest;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use App\Http\Responses\AdminResponse;
+
+use function trans_message;
 
 class PaymentDocumentController extends Controller
 {
@@ -33,11 +40,12 @@ class PaymentDocumentController extends Controller
     public function bulkAction(BulkActionRequest $request): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
+            $organizationId = (int) $request->attributes->get('current_organization_id');
             $ids = $request->validated('ids');
             $action = $request->validated('action');
             
             $results = [
+                'total_requested' => count($ids),
                 'success' => 0,
                 'failed' => 0,
                 'errors' => [],
@@ -90,22 +98,16 @@ class PaymentDocumentController extends Controller
                 }
             });
 
-            return response()->json([
-                'success' => true,
-                'message' => "Обработано: {$results['success']}, Ошибок: {$results['failed']}",
-                'data' => $results,
-            ]);
+            $results['processed'] = $results['success'] + $results['failed'];
 
+            return AdminResponse::success($results, trans_message('payments.documents.bulk_processed'));
         } catch (\Exception $e) {
             Log::error('payment_document.bulk_action.error', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Ошибка при выполнении массовой операции',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.documents.bulk_error'), 500);
         }
     }
 
@@ -115,40 +117,57 @@ class PaymentDocumentController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
+            $organizationId = (int) $request->attributes->get('current_organization_id');
 
-            $filters = [
-                'document_type' => $request->input('document_type'),
-                'status' => $request->input('status'),
-                'project_id' => $request->input('project_id'),
-                'contract_id' => $request->input('contract_id'),
-                'date_from' => $request->input('date_from'),
-                'date_to' => $request->input('date_to'),
-                'amount_from' => $request->input('amount_from'),
-                'amount_to' => $request->input('amount_to'),
-                'search' => $request->input('search'),
-                'sort_by' => $request->input('sort_by', 'created_at'),
-                'sort_order' => $request->input('sort_order', 'desc'),
-            ];
+            $filters = $request->validate([
+                'document_type' => ['nullable', 'string'],
+                'status' => ['nullable', 'string'],
+                'project_id' => [
+                    'nullable',
+                    'integer',
+                    Rule::exists('projects', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                ],
+                'contract_id' => [
+                    'nullable',
+                    'integer',
+                    Rule::exists('contracts', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                ],
+                'date_from' => ['nullable', 'date'],
+                'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
+                'amount_from' => ['nullable', 'numeric', 'min:0'],
+                'amount_to' => ['nullable', 'numeric', 'min:0'],
+                'search' => ['nullable', 'string'],
+                'sort_by' => ['nullable', 'string'],
+                'sort_order' => ['nullable', 'in:asc,desc'],
+            ]);
+            $filters['sort_by'] = $filters['sort_by'] ?? 'created_at';
+            $filters['sort_order'] = $filters['sort_order'] ?? 'desc';
 
             $documents = $this->service->getForOrganization($organizationId, $filters);
 
-            return response()->json([
-                'success' => true,
-                'data' => $documents->map(fn($doc) => $this->formatDocument($doc)),
-                'meta' => [
+            return AdminResponse::paginated(
+                $documents->map(fn ($document) => $this->formatDocument($document)),
+                [
                     'total' => $documents->count(),
-                ],
-            ]);
+                    'total_amount' => (float) $documents->sum('amount'),
+                    'remaining_amount' => (float) $documents->sum('remaining_amount'),
+                    'by_status' => $documents
+                        ->groupBy(fn ($document) => $document->status->value)
+                        ->map(fn ($items) => [
+                            'count' => $items->count(),
+                            'amount' => (float) $items->sum('amount'),
+                        ])
+                        ->toArray(),
+                ]
+            );
+        } catch (ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Exception $e) {
             Log::error('payment_document.index.error', [
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить документы',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.documents.load_error'), 500);
         }
     }
 
@@ -158,7 +177,7 @@ class PaymentDocumentController extends Controller
     public function show(Request $request, int|string $id): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
+            $organizationId = (int) $request->attributes->get('current_organization_id');
 
             try {
                 $document = PaymentDocument::forOrganization($organizationId)
@@ -171,6 +190,7 @@ class PaymentDocumentController extends Controller
                         'source', 
                         'approvals', 
                         'transactions',
+                        'siteRequests',
                         'invoiceable', // Загружаем связанную сущность (Contract, Act и т.д.)
                         'estimateSplits.estimateItem.measurementUnit' // Загружаем сплиты и позиции сметы с единицами измерения
                     ])
@@ -179,7 +199,7 @@ class PaymentDocumentController extends Controller
                 // Если ошибка при загрузке invoiceable (класс Invoice не найден)
                 // Загружаем документ без eager loading invoiceable
                 $document = PaymentDocument::forOrganization($organizationId)
-                    ->with(['project', 'payerOrganization', 'payeeOrganization', 'payerContractor', 'payeeContractor', 'source', 'approvals', 'transactions', 'estimateSplits.estimateItem'])
+                    ->with(['project', 'payerOrganization', 'payeeOrganization', 'payerContractor', 'payeeContractor', 'source', 'approvals', 'transactions', 'siteRequests', 'estimateSplits.estimateItem'])
                     ->where(function($query) {
                         $query->whereNull('invoiceable_type')
                               ->orWhere('invoiceable_type', '!=', 'App\\BusinessModules\\Core\\Payments\\Models\\Invoice')
@@ -188,20 +208,16 @@ class PaymentDocumentController extends Controller
                     ->findOrFail($id);
             }
 
-            return response()->json([
-                'success' => true,
-                'data' => $this->formatDocumentDetailed($document),
-            ]);
+            return AdminResponse::success($this->formatDocumentDetailed($document));
+        } catch (ModelNotFoundException $e) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
         } catch (\Exception $e) {
             Log::error('payment_document.show.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Документ не найден',
-            ], 404);
+            return AdminResponse::error(trans_message('payments.documents.load_error'), 500);
         }
     }
 
@@ -213,8 +229,8 @@ class PaymentDocumentController extends Controller
         try {
             $validated = $request->validated();
 
-            $organizationId = $request->attributes->get('current_organization_id');
-            $userId = $request->user()->id;
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $userId = (int) $request->user()->id;
 
             $validated['organization_id'] = $organizationId;
             $validated['created_by_user_id'] = $userId;
@@ -256,7 +272,10 @@ class PaymentDocumentController extends Controller
                         'organization_id' => $organizationId,
                         'validated' => $validated,
                     ]);
-                    throw new \DomainException("Контракт с ID {$contractId} не найден");
+                    throw new \DomainException(sprintf(
+                        trans_message('payments.validation.contract_not_found_by_id'),
+                        $contractId
+                    ));
                 }
                 
                 Log::info('payment_document.store.calculating_advance', [
@@ -306,10 +325,10 @@ class PaymentDocumentController extends Controller
                         
                         // Если сумма не указана и не может быть рассчитана - требуем указать вручную
                         $contractNumber = $contract->number ?? $contractId;
-                        throw new \DomainException(
-                            "Не удалось автоматически определить сумму аванса для контракта №{$contractNumber}. " .
-                            "Пожалуйста, укажите сумму вручную или проверьте, что у контракта указана сумма (base_amount, total_amount или planned_advance_amount)."
-                        );
+                        throw new \DomainException(sprintf(
+                            trans_message('payments.validation.advance_amount_auto_detect_failed'),
+                            $contractNumber
+                        ));
                     }
                 }
                 
@@ -326,16 +345,14 @@ class PaymentDocumentController extends Controller
                 $deviationAnalysis = $this->service->analyzePriceDeviation($validated['estimate_splits']);
                 
                 if ($deviationAnalysis['is_blocked'] && empty($validated['overprice_justification'])) {
-                    return response()->json([
-                        'success' => false,
-                        'error' => 'Обнаружена существенная переплата (более 25%). Пожалуйста, укажите обоснование переплаты.',
+                    return AdminResponse::error(trans_message('payments.documents.deviation_justification_required'), 422, [
                         'requires_justification' => true,
                         'deviation_data' => $deviationAnalysis,
-                    ], 422);
+                    ]);
                 }
 
                 if ($deviationAnalysis['requires_approval']) {
-                    $warnings[] = 'Внимание: обнаружено превышение плановой цены более чем на 15%';
+                    $warnings[] = trans_message('payments.documents.deviation_warning');
                 }
             }
 
@@ -351,38 +368,24 @@ class PaymentDocumentController extends Controller
             // Загружаем splits для ответа
             $document->load('estimateSplits.estimateItem');
 
-            $responseData = [
-                'success' => true,
-                'message' => 'Платежный документ создан',
-                'data' => $this->formatDocumentDetailed($document),
-            ];
-
-            if (!empty($warnings)) {
-                $responseData['warnings'] = $warnings;
-            }
-
-            return response()->json($responseData, 201);
+            return AdminResponse::success(
+                array_merge($this->formatDocumentDetailed($document), [
+                    'warnings' => $warnings,
+                ]),
+                trans_message('payments.documents.created'),
+                201
+            );
         } catch (ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage() ?: 'Данные не прошли валидацию',
-                'errors' => $e->errors(),
-            ], 422);
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\DomainException | \InvalidArgumentException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return AdminResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
             Log::error('payment_document.store.error', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось создать документ',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.documents.create_error'), 500);
         }
     }
 
@@ -399,7 +402,12 @@ class PaymentDocumentController extends Controller
             $validated = $request->validate([
                 'document_date' => 'sometimes|date',
                 'due_date' => 'sometimes|date',
-                'project_id' => 'sometimes|nullable|integer|exists:projects,id',
+                'project_id' => [
+                    'sometimes',
+                    'nullable',
+                    'integer',
+                    Rule::exists('projects', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                ],
                 'amount' => 'sometimes|numeric|min:0.01',
                 'vat_rate' => 'sometimes|numeric|min:0|max:100',
                 'description' => 'sometimes|nullable|string',
@@ -414,26 +422,23 @@ class PaymentDocumentController extends Controller
 
             $updated = $this->service->update($document, $validated);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Документ обновлен',
-                'data' => $this->formatDocumentDetailed($updated),
-            ]);
+            return AdminResponse::success(
+                $this->formatDocumentDetailed($updated),
+                trans_message('payments.documents.updated')
+            );
         } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (ModelNotFoundException $e) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
+        } catch (ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Exception $e) {
             Log::error('payment_document.update.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось обновить документ',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.documents.update_error'), 500);
         }
     }
 
@@ -451,26 +456,21 @@ class PaymentDocumentController extends Controller
 
             $submitted = $this->service->submit($document);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Документ отправлен на утверждение',
-                'data' => $this->formatDocumentDetailed($submitted),
-            ]);
+            return AdminResponse::success(
+                $this->formatDocumentDetailed($submitted),
+                trans_message('payments.documents.submitted')
+            );
         } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (ModelNotFoundException $e) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
         } catch (\Exception $e) {
             Log::error('payment_document.submit.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось отправить на утверждение',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.documents.submit_error'), 500);
         }
     }
 
@@ -516,20 +516,16 @@ class PaymentDocumentController extends Controller
             $type = PaymentDocumentType::from($validated['document_type']);
             $purpose = $this->purposeGenerator->generate($type, $validated['data']);
 
-            return response()->json([
-                'success' => true,
+            return AdminResponse::success([
                 'purpose' => $purpose,
-            ]);
+            ], trans_message('payments.documents.purpose_generated'));
         } catch (\Exception $e) {
             Log::error('payment_document.generate_purpose.error', [
                 'document_type' => $validated['document_type'] ?? null,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 400);
+            return AdminResponse::error($e->getMessage() ?: trans_message('payments.documents.purpose_error'), 400);
         }
     }
 
@@ -552,26 +548,23 @@ class PaymentDocumentController extends Controller
 
             $scheduled = $this->service->schedule($document, $scheduledAt);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Платеж запланирован',
-                'data' => $this->formatDocumentDetailed($scheduled),
-            ]);
+            return AdminResponse::success(
+                $this->formatDocumentDetailed($scheduled),
+                trans_message('payments.documents.scheduled')
+            );
         } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (ModelNotFoundException $e) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
+        } catch (ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Exception $e) {
             Log::error('payment_document.schedule.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось запланировать платеж',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.documents.schedule_error'), 500);
         }
     }
 
@@ -580,26 +573,7 @@ class PaymentDocumentController extends Controller
      */
     public function registerPayment(Request $request, int|string $id): JsonResponse
     {
-        // Принудительное логирование через несколько каналов
-        $logData = [
-            'id' => $id,
-            'request_data' => $request->all(),
-            'timestamp' => now()->toIso8601String(),
-        ];
-        
-        Log::info('payment_document.controller.register_payment.started', $logData);
-        
-        // Дополнительно пишем в error_log для гарантии
-        error_log('[PaymentDocument] register_payment started: ' . json_encode($logData));
-        
-        // Записываем в stderr
-        file_put_contents('php://stderr', '[PaymentDocument] register_payment started: ' . json_encode($logData) . PHP_EOL);
-
         try {
-            Log::info('payment_document.controller.validating', [
-                'id' => $id,
-            ]);
-
             $validated = $request->validate([
                 'amount' => 'required|numeric|min:0.01',
                 'payment_method' => 'nullable|string',
@@ -611,31 +585,10 @@ class PaymentDocumentController extends Controller
                 'metadata' => 'nullable|array',
             ]);
 
-            Log::info('payment_document.controller.validated', [
-                'id' => $id,
-                'validated' => $validated,
-            ]);
-
             $organizationId = $request->attributes->get('current_organization_id');
             $userId = $request->user()->id;
 
-            Log::info('payment_document.controller.context', [
-                'id' => $id,
-                'organization_id' => $organizationId,
-                'user_id' => $userId,
-            ]);
-
-            Log::info('payment_document.controller.finding_document', [
-                'id' => $id,
-            ]);
-
             $document = PaymentDocument::forOrganization($organizationId)->findOrFail($id);
-
-            Log::info('payment_document.controller.document_found', [
-                'id' => $id,
-                'document_id' => $document->id,
-                'status' => $document->status->value,
-            ]);
 
             // Поддержка обоих полей: payment_date и transaction_date
             if (!isset($validated['transaction_date']) && isset($validated['payment_date'])) {
@@ -644,35 +597,20 @@ class PaymentDocumentController extends Controller
 
             $validated['created_by_user_id'] = $userId;
 
-            Log::info('payment_document.controller.calling_service', [
-                'id' => $id,
-                'amount' => $validated['amount'],
-            ]);
-
             $paid = $this->service->registerPayment($document, $validated['amount'], $validated);
 
-            Log::info('payment_document.controller.service_completed', [
-                'id' => $id,
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Платеж зарегистрирован',
-                'data' => $this->formatDocumentDetailed($paid),
-            ]);
+            return AdminResponse::success(
+                $this->formatDocumentDetailed($paid),
+                trans_message('payments.documents.registered')
+            );
         } catch (\DomainException $e) {
-            Log::warning('payment_document.controller.domain_exception', [
-                'id' => $id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (ModelNotFoundException $e) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
+        } catch (ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Exception $e) {
-            $errorData = [
+            Log::error('payment_document.register_payment.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
@@ -680,24 +618,13 @@ class PaymentDocumentController extends Controller
                 'file' => $e->getFile(),
                 'request_data' => $request->all(),
                 'timestamp' => now()->toIso8601String(),
-            ];
-            
-            Log::error('payment_document.register_payment.error', $errorData);
-            
-            // Принудительное логирование через несколько каналов
-            error_log('[PaymentDocument] register_payment ERROR: ' . json_encode($errorData));
-            file_put_contents('php://stderr', '[PaymentDocument] register_payment ERROR: ' . json_encode($errorData) . PHP_EOL);
+            ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось зарегистрировать платеж',
-                'debug' => config('app.debug') ? $e->getMessage() : null,
-                'error_details' => config('app.debug') ? [
-                    'message' => $e->getMessage(),
-                    'file' => $e->getFile(),
-                    'line' => $e->getLine(),
-                ] : null,
-            ], 500);
+            return AdminResponse::error(trans_message('payments.documents.register_error'), 500, config('app.debug') ? [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ] : null);
         }
     }
 
@@ -716,26 +643,23 @@ class PaymentDocumentController extends Controller
 
             $cancelled = $this->service->cancel($document, $validated['reason'], $request->user());
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Документ отменен',
-                'data' => $this->formatDocumentDetailed($cancelled),
-            ]);
+            return AdminResponse::success(
+                $this->formatDocumentDetailed($cancelled),
+                trans_message('payments.documents.cancelled')
+            );
         } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (ModelNotFoundException $e) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
+        } catch (ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Exception $e) {
             Log::error('payment_document.cancel.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось отменить документ',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.documents.cancel_error'), 500);
         }
     }
 
@@ -750,25 +674,18 @@ class PaymentDocumentController extends Controller
 
             $this->service->delete($document);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Документ удален',
-            ]);
+            return AdminResponse::success(null, trans_message('payments.documents.deleted'));
         } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (ModelNotFoundException $e) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
         } catch (\Exception $e) {
             Log::error('payment_document.destroy.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось удалить документ',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.documents.delete_error'), 500);
         }
     }
 
@@ -781,23 +698,19 @@ class PaymentDocumentController extends Controller
             $organizationId = $request->attributes->get('current_organization_id');
             $documents = $this->service->getOverdue($organizationId);
 
-            return response()->json([
-                'success' => true,
-                'data' => $documents->map(fn($doc) => $this->formatDocument($doc)),
-                'meta' => [
+            return AdminResponse::paginated(
+                $documents->map(fn($doc) => $this->formatDocument($doc)),
+                [
                     'total' => $documents->count(),
                     'total_amount' => $documents->sum('remaining_amount'),
-                ],
-            ]);
+                ]
+            );
         } catch (\Exception $e) {
             Log::error('payment_document.overdue.error', [
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить просроченные документы',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.documents.load_error'), 500);
         }
     }
 
@@ -812,24 +725,20 @@ class PaymentDocumentController extends Controller
 
             $documents = $this->service->getUpcoming($organizationId, $days);
 
-            return response()->json([
-                'success' => true,
-                'data' => $documents->map(fn($doc) => $this->formatDocument($doc)),
-                'meta' => [
+            return AdminResponse::paginated(
+                $documents->map(fn($doc) => $this->formatDocument($doc)),
+                [
                     'total' => $documents->count(),
                     'total_amount' => $documents->sum('remaining_amount'),
                     'days' => $days,
-                ],
-            ]);
+                ]
+            );
         } catch (\Exception $e) {
             Log::error('payment_document.upcoming.error', [
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить предстоящие платежи',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.documents.load_error'), 500);
         }
     }
 
@@ -842,19 +751,13 @@ class PaymentDocumentController extends Controller
             $organizationId = $request->attributes->get('current_organization_id');
             $stats = $this->service->getStatistics($organizationId);
 
-            return response()->json([
-                'success' => true,
-                'data' => $stats,
-            ]);
+            return AdminResponse::success($stats);
         } catch (\Exception $e) {
             Log::error('payment_document.statistics.error', [
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить статистику',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.documents.load_error'), 500);
         }
     }
 
@@ -893,6 +796,9 @@ class PaymentDocumentController extends Controller
             'is_overdue' => $document->isOverdue(),
             'days_until_due' => $document->getDaysUntilDue(),
             'payment_percentage' => $document->getPaymentPercentage(),
+            'site_requests_count' => (int) ($document->site_requests_count ?? 0),
+            'problem_flags' => $this->buildProblemFlags($document),
+            'workflow_summary' => $this->buildWorkflowSummary($document, $this->buildProblemFlags($document), []),
             'can_be_cancelled' => $canBeCancelled,
             'created_at' => $document->created_at->toDateTimeString(),
         ];
@@ -1009,6 +915,18 @@ class PaymentDocumentController extends Controller
         }
         
 
+        $relatedSiteRequests = $document->relationLoaded('siteRequests')
+            ? $document->siteRequests->map(fn($siteRequest) => [
+                'id' => $siteRequest->id,
+                'title' => $siteRequest->title,
+                'status' => is_object($siteRequest->status) ? $siteRequest->status->value : $siteRequest->status,
+                'project_id' => $siteRequest->project_id,
+                'payment_amount' => $siteRequest->pivot?->amount,
+            ])->values()->all()
+            : [];
+        $problemFlags = $this->buildProblemFlags($document);
+        $workflowSummary = $this->buildWorkflowSummary($document, $problemFlags, $relatedSiteRequests);
+
         return array_merge($basic, [
             'description' => $document->description,
             'payment_purpose' => $document->payment_purpose,
@@ -1063,10 +981,88 @@ class PaymentDocumentController extends Controller
                 'scheduled_at' => $document->scheduled_at?->toDateTimeString(),
                 'paid_at' => $document->paid_at?->toDateTimeString(),
             ],
+            'workflow_summary' => $workflowSummary,
+            'problem_flags' => $problemFlags,
+            'related_site_requests' => $relatedSiteRequests,
             'approvals_count' => $document->approvals?->count() ?? 0,
             'transactions_count' => $document->transactions?->count() ?? 0,
             'updated_at' => $document->updated_at->toDateTimeString(),
         ]);
     }
-}
 
+    private function buildProblemFlags(PaymentDocument $document): array
+    {
+        $flags = [];
+
+        if ($document->document_type->isOutgoing() && (!$document->bank_account || !$document->bank_bik)) {
+            $flags[] = 'missing_bank_details';
+        }
+
+        if (!$document->payee_contractor_id && !$document->payee_organization_id) {
+            $flags[] = 'missing_counterparty';
+        }
+
+        if ($document->status === PaymentDocumentStatus::DRAFT) {
+            $flags[] = 'awaiting_submission';
+        }
+
+        if (in_array($document->status, [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::PENDING_APPROVAL], true)) {
+            $flags[] = 'awaiting_approval';
+        }
+
+        if ($document->status === PaymentDocumentStatus::APPROVED) {
+            $flags[] = 'awaiting_schedule';
+        }
+
+        if (in_array($document->status, [PaymentDocumentStatus::APPROVED, PaymentDocumentStatus::SCHEDULED], true)
+            && (float) $document->remaining_amount > 0) {
+            $flags[] = 'awaiting_payment';
+        }
+
+        if ($document->status === PaymentDocumentStatus::PARTIALLY_PAID) {
+            $flags[] = 'partially_paid';
+        }
+
+        if ($document->isOverdue()) {
+            $flags[] = 'overdue';
+        }
+
+        if ($document->relationLoaded('estimateSplits') && $document->estimateSplits->contains(fn($split) => (float) $split->price_deviation > 0)) {
+            $flags[] = 'has_estimate_deviation';
+        }
+
+        return array_values(array_unique($flags));
+    }
+
+    private function buildWorkflowSummary(PaymentDocument $document, array $problemFlags, array $relatedSiteRequests): array
+    {
+        $currentStage = match ($document->status) {
+            PaymentDocumentStatus::DRAFT => 'draft',
+            PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::PENDING_APPROVAL => 'approval',
+            PaymentDocumentStatus::APPROVED => 'approved',
+            PaymentDocumentStatus::SCHEDULED => 'scheduled',
+            PaymentDocumentStatus::PARTIALLY_PAID => 'partial_payment',
+            PaymentDocumentStatus::PAID => 'paid',
+            PaymentDocumentStatus::REJECTED => 'rejected',
+            PaymentDocumentStatus::CANCELLED => 'cancelled',
+            default => 'unknown',
+        };
+
+        $nextAction = match ($document->status) {
+            PaymentDocumentStatus::DRAFT => 'submit',
+            PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::PENDING_APPROVAL => 'approve_or_reject',
+            PaymentDocumentStatus::APPROVED => 'schedule_payment',
+            PaymentDocumentStatus::SCHEDULED => 'register_payment',
+            PaymentDocumentStatus::PARTIALLY_PAID => 'complete_payment',
+            default => null,
+        };
+
+        return [
+            'current_stage' => $currentStage,
+            'next_action' => $nextAction,
+            'is_blocked' => !empty($problemFlags),
+            'blockers' => $problemFlags,
+            'related_site_requests' => $relatedSiteRequests,
+        ];
+    }
+}

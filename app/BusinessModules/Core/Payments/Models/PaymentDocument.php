@@ -19,6 +19,8 @@ use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Carbon;
 
+use function trans_message;
+
 class PaymentDocument extends Model
 {
     use HasFactory, SoftDeletes;
@@ -502,7 +504,7 @@ class PaymentDocument extends Model
     public function confirmByRecipient(int $userId, ?string $comment = null): bool
     {
         if (!$this->hasRegisteredRecipient()) {
-            throw new \DomainException('Получатель не зарегистрирован в системе');
+            throw new \DomainException(trans_message('payments.validation.recipient_not_registered'));
         }
 
         // Можно подтверждать только документы в статусах approved, scheduled, paid
@@ -514,9 +516,10 @@ class PaymentDocument extends Model
         ];
 
         if (!in_array($this->status, $allowedStatuses)) {
-            throw new \DomainException(
-                "Документ в статусе '{$this->status->label()}' не может быть подтвержден получателем"
-            );
+            throw new \DomainException(sprintf(
+                trans_message('payments.validation.recipient_confirm_status_invalid'),
+                $this->status->label()
+            ));
         }
 
         $this->recipient_confirmed_at = now();

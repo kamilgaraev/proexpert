@@ -60,8 +60,12 @@ Route::prefix('api/v1/admin/site-requests')
         // Платежи из заявок (ПЕРЕД CRUD)
         // ============================================
         Route::prefix('payment')->name('payment.')->group(function () {
-            Route::get('/available', [SiteRequestPaymentController::class, 'getAvailableForPayment'])->name('available');
-            Route::post('/create', [SiteRequestPaymentController::class, 'createPayment'])->name('create');
+            Route::get('/available', [SiteRequestPaymentController::class, 'getAvailableForPayment'])
+                ->middleware('authorize:site_requests.view')
+                ->name('available');
+            Route::post('/create', [SiteRequestPaymentController::class, 'createPayment'])
+                ->middleware('authorize:payments.invoice.create')
+                ->name('create');
         });
 
         // ============================================

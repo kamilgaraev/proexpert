@@ -11,6 +11,8 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
+use function trans_message;
+
 class ApprovalWorkflowService
 {
     public function __construct(
@@ -311,7 +313,10 @@ class ApprovalWorkflowService
                             'document_id' => $document->id,
                             'status' => $document->status->value,
                         ]);
-                        throw new \DomainException("Документ находится в статусе '{$document->status->label()}' и не требует утверждения");
+                        throw new \DomainException(sprintf(
+                            trans_message('payments.validation.approval_not_required_for_status'),
+                            $document->status->label()
+                        ));
                     }
                 }
                 
@@ -321,17 +326,17 @@ class ApprovalWorkflowService
                     'is_admin' => $isAdmin,
                     'has_approval' => false,
                 ]);
-                throw new \DomainException('У вас нет прав на утверждение этого документа или он не требует утверждения');
+                throw new \DomainException(trans_message('payments.validation.approval_forbidden'));
             }
 
             // Проверка лимита суммы (пропускаем для админов)
             if (!$isAdmin && !$approval->canApproveAmount($document->amount)) {
-                throw new \DomainException('Сумма документа превышает ваш лимит утверждения');
+                throw new \DomainException(trans_message('payments.validation.approval_limit_exceeded'));
             }
 
             // Проверить условия (пропускаем для админов)
             if (!$isAdmin && !$approval->checkConditions($document)) {
-                throw new \DomainException('Документ не соответствует условиям утверждения');
+                throw new \DomainException(trans_message('payments.validation.approval_conditions_invalid'));
             }
 
             // Утвердить конкретный шаг
@@ -403,7 +408,7 @@ class ApprovalWorkflowService
                 ->first();
 
             if (!$approval) {
-                throw new \DomainException('У вас нет прав на отклонение этого документа');
+                throw new \DomainException(trans_message('payments.validation.approval_reject_forbidden'));
             }
 
             // Отклонить

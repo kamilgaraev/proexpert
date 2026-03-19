@@ -1,12 +1,19 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\OffsetService;
 use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
+
+use function trans_message;
 
 class OffsetController extends Controller
 {
@@ -14,124 +21,112 @@ class OffsetController extends Controller
         private readonly OffsetService $offsetService
     ) {}
 
-    /**
-     * Получить возможности для взаимозачета
-     */
     public function opportunities(Request $request): JsonResponse
     {
         try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
             $validated = $request->validate([
-                'contractor_id' => 'required|integer|exists:contractors,id',
+                'contractor_id' => [
+                    'required',
+                    'integer',
+                    Rule::exists('contractors', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                ],
             ]);
 
-            $organizationId = $request->attributes->get('current_organization_id');
-            
             $opportunities = $this->offsetService->getOffsetOpportunities(
                 $organizationId,
-                $validated['contractor_id']
+                (int) $validated['contractor_id']
             );
 
-            return response()->json([
-                'success' => true,
-                'data' => $opportunities,
-            ]);
+            return AdminResponse::success($opportunities, trans_message('payments.offsets.opportunities_loaded'));
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
+            Log::error('offset.opportunities.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
                 'error' => $e->getMessage(),
-            ], 500);
+            ]);
+
+            return AdminResponse::error(trans_message('payments.offsets.opportunities_error'), 500);
         }
     }
 
-    /**
-     * Выполнить взаимозачет
-     */
     public function perform(Request $request): JsonResponse
     {
         try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
             $validated = $request->validate([
-                'receivable_id' => 'required|integer|exists:payment_documents,id',
-                'payable_id' => 'required|integer|exists:payment_documents,id',
-                'amount' => 'required|numeric|min:0.01',
-                'notes' => 'nullable|string|max:500',
+                'receivable_id' => [
+                    'required',
+                    'integer',
+                    Rule::exists('payment_documents', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                ],
+                'payable_id' => [
+                    'required',
+                    'integer',
+                    Rule::exists('payment_documents', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                ],
+                'amount' => ['required', 'numeric', 'min:0.01'],
+                'notes' => ['nullable', 'string', 'max:500'],
             ]);
 
-            $organizationId = $request->attributes->get('current_organization_id');
-            
-            $receivable = PaymentDocument::findOrFail($validated['receivable_id']);
-            $payable = PaymentDocument::findOrFail($validated['payable_id']);
-
-            // Проверка принадлежности к организации
-            if ($receivable->organization_id !== $organizationId || $payable->organization_id !== $organizationId) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Документы не принадлежат текущей организации',
-                ], 403);
-            }
-
+            $receivable = PaymentDocument::query()->forOrganization($organizationId)->findOrFail((int) $validated['receivable_id']);
+            $payable = PaymentDocument::query()->forOrganization($organizationId)->findOrFail((int) $validated['payable_id']);
             $result = $this->offsetService->performOffset(
                 $receivable,
                 $payable,
-                $validated['amount'],
-                $validated['notes'] ?? ''
+                (float) $validated['amount'],
+                (string) ($validated['notes'] ?? '')
             );
 
-            return response()->json([
-                'success' => true,
-                'data' => $result,
-                'message' => 'Взаимозачет выполнен успешно',
-            ]);
-
+            return AdminResponse::success($result, trans_message('payments.offsets.performed'));
         } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
         } catch (\Exception $e) {
-            \Log::error('offset.perform.error', [
+            Log::error('offset.perform.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось выполнить взаимозачет',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.offsets.perform_error'), 500);
         }
     }
 
-    /**
-     * Автоматический взаимозачет для контрагента
-     */
     public function auto(Request $request): JsonResponse
     {
         try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
             $validated = $request->validate([
-                'contractor_id' => 'required|integer|exists:contractors,id',
+                'contractor_id' => [
+                    'required',
+                    'integer',
+                    Rule::exists('contractors', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                ],
             ]);
 
-            $organizationId = $request->attributes->get('current_organization_id');
-            
             $result = $this->offsetService->autoOffsetForContractor(
                 $organizationId,
-                $validated['contractor_id']
+                (int) $validated['contractor_id']
             );
 
-            return response()->json([
-                'success' => $result['success'],
-                'data' => $result,
-                'message' => $result['message'],
-            ]);
+            if (!($result['success'] ?? false)) {
+                return AdminResponse::error((string) ($result['message'] ?? trans_message('payments.offsets.auto_error')), 422, $result);
+            }
 
+            return AdminResponse::success($result, trans_message('payments.offsets.auto_performed'));
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Exception $e) {
-            \Log::error('offset.auto.error', [
+            Log::error('offset.auto.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось выполнить автоматический взаимозачет',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.offsets.auto_error'), 500);
         }
     }
 }
-

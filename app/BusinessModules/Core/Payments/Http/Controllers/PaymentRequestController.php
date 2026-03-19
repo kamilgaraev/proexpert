@@ -1,11 +1,19 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\PaymentRequestService;
 use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
+
+use function trans_message;
 
 class PaymentRequestController extends Controller
 {
@@ -13,261 +21,241 @@ class PaymentRequestController extends Controller
         private readonly PaymentRequestService $requestService
     ) {}
 
-    /**
-     * Получить входящие платежные требования
-     */
     public function incoming(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $validated = $request->validate([
+                'status' => ['nullable', 'string'],
+                'project_id' => [
+                    'nullable',
+                    'integer',
+                    Rule::exists('projects', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                ],
+                'contractor_id' => [
+                    'nullable',
+                    'integer',
+                    Rule::exists('contractors', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                ],
+                'date_from' => ['nullable', 'date'],
+                'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
+            ]);
 
-            $filters = [
-                'status' => $request->input('status'),
-                'project_id' => $request->input('project_id'),
-                'contractor_id' => $request->input('contractor_id'),
-                'date_from' => $request->input('date_from'),
-                'date_to' => $request->input('date_to'),
-            ];
+            $requests = $this->requestService->getIncomingRequests($organizationId, $validated);
 
-            $requests = $this->requestService->getIncomingRequests($organizationId, $filters);
-
-            return response()->json([
-                'success' => true,
-                'data' => $requests->map(fn($doc) => [
-                    'id' => $doc->id,
-                    'document_number' => $doc->document_number,
-                    'document_date' => $doc->document_date->format('Y-m-d'),
-                    'due_date' => $doc->due_date?->format('Y-m-d'),
-                    'status' => $doc->status->value,
-                    'status_label' => $doc->status->label(),
-                    'amount' => $doc->amount,
-                    'currency' => $doc->currency,
-                    'contractor' => [
-                        'id' => $doc->payee_contractor_id,
-                        'name' => $doc->getPayeeName(),
-                    ],
-                    'description' => $doc->description,
-                    'created_at' => $doc->created_at->toDateTimeString(),
-                ]),
-                'meta' => [
+            return AdminResponse::paginated(
+                $requests->map(fn ($document) => $this->formatRequest($document)),
+                [
                     'total' => $requests->count(),
                     'total_amount' => $requests->sum('amount'),
                 ],
-            ]);
+                trans_message('payments.requests.loaded')
+            );
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Exception $e) {
-            \Log::error('payment_request.incoming.error', [
+            Log::error('payment_request.incoming.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить входящие требования',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.requests.load_error'), 500);
         }
     }
 
-    /**
-     * Создать платежное требование
-     */
     public function store(Request $request): JsonResponse
     {
         try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
             $validated = $request->validate([
-                'contractor_id' => 'required|integer|exists:contractors,id',
-                'project_id' => 'nullable|integer|exists:projects,id',
-                'contract_id' => 'nullable|integer|exists:contracts,id',
-                'amount' => 'required|numeric|min:0.01',
-                'currency' => 'nullable|string|size:3',
-                'vat_rate' => 'nullable|numeric|min:0|max:100',
-                'document_date' => 'nullable|date',
-                'due_date' => 'nullable|date',
-                'description' => 'nullable|string',
-                'bank_account' => 'nullable|string|size:20',
-                'bank_bik' => 'nullable|string|size:9',
-                'bank_correspondent_account' => 'nullable|string|size:20',
-                'bank_name' => 'nullable|string',
-                'attached_documents' => 'nullable|array',
-                'metadata' => 'nullable|array',
+                'contractor_id' => [
+                    'required',
+                    'integer',
+                    Rule::exists('contractors', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                ],
+                'project_id' => [
+                    'nullable',
+                    'integer',
+                    Rule::exists('projects', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                ],
+                'contract_id' => [
+                    'nullable',
+                    'integer',
+                    Rule::exists('contracts', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                ],
+                'amount' => ['required', 'numeric', 'min:0.01'],
+                'currency' => ['nullable', 'string', 'size:3'],
+                'vat_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
+                'document_date' => ['nullable', 'date'],
+                'due_date' => ['nullable', 'date'],
+                'description' => ['nullable', 'string'],
+                'bank_account' => ['nullable', 'string', 'size:20'],
+                'bank_bik' => ['nullable', 'string', 'size:9'],
+                'bank_correspondent_account' => ['nullable', 'string', 'size:20'],
+                'bank_name' => ['nullable', 'string'],
+                'attached_documents' => ['nullable', 'array'],
+                'metadata' => ['nullable', 'array'],
             ]);
-
-            $organizationId = $request->attributes->get('current_organization_id');
-            $userId = $request->user()->id;
 
             $validated['organization_id'] = $organizationId;
-            $validated['created_by_user_id'] = $userId;
-
+            $validated['created_by_user_id'] = (int) $request->user()->id;
             $document = $this->requestService->createFromContractor($validated);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Платежное требование создано',
-                'data' => [
-                    'id' => $document->id,
-                    'document_number' => $document->document_number,
-                    'status' => $document->status->value,
-                ],
-            ], 201);
+            return AdminResponse::success([
+                'id' => $document->id,
+                'document_number' => $document->document_number,
+                'status' => $document->status->value,
+            ], trans_message('payments.requests.created'), 201);
         } catch (\DomainException | \InvalidArgumentException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Exception $e) {
-            \Log::error('payment_request.store.error', [
+            Log::error('payment_request.store.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось создать требование',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.requests.create_error'), 500);
         }
     }
 
-    /**
-     * Принять платежное требование
-     */
     public function accept(Request $request, int|string $id): JsonResponse
     {
         try {
             $validated = $request->validate([
-                'scheduled_at' => 'nullable|date',
+                'scheduled_at' => ['nullable', 'date'],
             ]);
 
-            $organizationId = $request->attributes->get('current_organization_id');
-            
-            $document = \App\BusinessModules\Core\Payments\Models\PaymentDocument::forOrganization($organizationId)
-                ->findOrFail($id);
-
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $document = PaymentDocument::query()
+                ->forOrganization($organizationId)
+                ->findOrFail((int) $id);
             $paymentOrder = $this->requestService->acceptRequest($document, $validated);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Требование принято, создано платежное поручение',
-                'data' => [
-                    'request_id' => $document->id,
-                    'payment_order_id' => $paymentOrder->id,
-                    'payment_order_number' => $paymentOrder->document_number,
-                ],
-            ]);
+            return AdminResponse::success([
+                'request_id' => $document->id,
+                'payment_order_id' => $paymentOrder->id,
+                'payment_order_number' => $paymentOrder->document_number,
+            ], trans_message('payments.requests.accepted'));
         } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
         } catch (\Exception $e) {
-            \Log::error('payment_request.accept.error', [
-                'id' => $id,
+            Log::error('payment_request.accept.error', [
+                'request_id' => $id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось принять требование',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.requests.accept_error'), 500);
         }
     }
 
-    /**
-     * Отклонить платежное требование
-     */
     public function reject(Request $request, int|string $id): JsonResponse
     {
         try {
             $validated = $request->validate([
-                'reason' => 'required|string|min:3',
+                'reason' => ['required', 'string', 'min:3'],
             ]);
 
-            $organizationId = $request->attributes->get('current_organization_id');
-            
-            $document = \App\BusinessModules\Core\Payments\Models\PaymentDocument::forOrganization($organizationId)
-                ->findOrFail($id);
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $document = PaymentDocument::query()
+                ->forOrganization($organizationId)
+                ->findOrFail((int) $id);
 
             $this->requestService->rejectRequest($document, $validated['reason'], $request->user());
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Требование отклонено',
-            ]);
+            return AdminResponse::success(null, trans_message('payments.requests.rejected'));
         } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
         } catch (\Exception $e) {
-            \Log::error('payment_request.reject.error', [
-                'id' => $id,
+            Log::error('payment_request.reject.error', [
+                'request_id' => $id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось отклонить требование',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.requests.reject_error'), 500);
         }
     }
 
-    /**
-     * Получить требования от контрагента
-     */
     public function fromContractor(Request $request, int|string $contractorId): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-            $requests = $this->requestService->getRequestsFromContractor($organizationId, $contractorId);
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            validator(
+                ['contractor_id' => $contractorId],
+                [
+                    'contractor_id' => [
+                        'required',
+                        'integer',
+                        Rule::exists('contractors', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                    ],
+                ]
+            )->validate();
 
-            return response()->json([
-                'success' => true,
-                'data' => $requests->map(fn($doc) => [
-                    'id' => $doc->id,
-                    'document_number' => $doc->document_number,
-                    'document_date' => $doc->document_date->format('Y-m-d'),
-                    'status' => $doc->status->value,
-                    'status_label' => $doc->status->label(),
-                    'amount' => $doc->amount,
-                    'description' => $doc->description,
-                ]),
-                'meta' => [
+            $requests = $this->requestService->getRequestsFromContractor($organizationId, (int) $contractorId);
+
+            return AdminResponse::paginated(
+                $requests->map(fn ($document) => $this->formatRequest($document)),
+                [
                     'total' => $requests->count(),
                     'total_amount' => $requests->sum('amount'),
                 ],
-            ]);
+                trans_message('payments.requests.loaded')
+            );
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Exception $e) {
-            \Log::error('payment_request.from_contractor.error', [
+            Log::error('payment_request.from_contractor.error', [
                 'contractor_id' => $contractorId,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить требования',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.requests.load_error'), 500);
         }
     }
 
-    /**
-     * Статистика по платежным требованиям
-     */
     public function statistics(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
+            $organizationId = (int) $request->attributes->get('current_organization_id');
             $stats = $this->requestService->getStatistics($organizationId);
 
-            return response()->json([
-                'success' => true,
-                'data' => $stats,
-            ]);
+            return AdminResponse::success($stats, trans_message('payments.requests.loaded'));
         } catch (\Exception $e) {
-            \Log::error('payment_request.statistics.error', [
+            Log::error('payment_request.statistics.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить статистику',
-            ], 500);
+            return AdminResponse::error(trans_message('payments.requests.statistics_error'), 500);
         }
     }
-}
 
+    private function formatRequest(PaymentDocument $document): array
+    {
+        return [
+            'id' => $document->id,
+            'document_number' => $document->document_number,
+            'document_date' => $document->document_date->format('Y-m-d'),
+            'due_date' => $document->due_date?->format('Y-m-d'),
+            'status' => $document->status->value,
+            'status_label' => $document->status->label(),
+            'amount' => $document->amount,
+            'currency' => $document->currency,
+            'contractor' => [
+                'id' => $document->payee_contractor_id,
+                'name' => $document->getPayeeName(),
+            ],
+            'description' => $document->description,
+            'created_at' => $document->created_at->toDateTimeString(),
+        ];
+    }
+}

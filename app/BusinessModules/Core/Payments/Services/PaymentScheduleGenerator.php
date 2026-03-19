@@ -10,6 +10,8 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
+use function trans_message;
+
 /**
  * Генератор графиков платежей
  */
@@ -175,7 +177,7 @@ class PaymentScheduleGenerator
         $milestones = $config['milestones'] ?? [];
 
         if (empty($milestones)) {
-            throw new \InvalidArgumentException('Не указаны этапы (milestones)');
+            throw new \InvalidArgumentException(trans_message('payments.validation.schedule_milestones_required'));
         }
 
         // Проверка что сумма этапов не превышает общую сумму
@@ -210,13 +212,13 @@ class PaymentScheduleGenerator
         $installments = $config['installments'] ?? [];
 
         if (empty($installments)) {
-            throw new \InvalidArgumentException('Не указаны платежи для кастомного графика');
+            throw new \InvalidArgumentException(trans_message('payments.validation.schedule_custom_installments_required'));
         }
 
         // Валидация
         foreach ($installments as $installment) {
             if (!isset($installment['amount']) || !isset($installment['due_date'])) {
-                throw new \InvalidArgumentException('Каждый платеж должен содержать amount и due_date');
+                throw new \InvalidArgumentException(trans_message('payments.validation.schedule_custom_installment_invalid'));
             }
         }
 
@@ -242,12 +244,12 @@ class PaymentScheduleGenerator
     private function generateFromContract(PaymentDocument $document, array $config): array
     {
         if (!$document->source_type || $document->source_type !== Contract::class) {
-            throw new \InvalidArgumentException('Документ не привязан к договору');
+            throw new \InvalidArgumentException(trans_message('payments.validation.schedule_contract_required'));
         }
 
         $contract = Contract::find($document->source_id);
         if (!$contract) {
-            throw new \InvalidArgumentException('Договор не найден');
+            throw new \InvalidArgumentException(trans_message('payments.validation.contract_not_found'));
         }
 
         // Проверяем, есть ли в договоре условия оплаты
@@ -324,7 +326,7 @@ class PaymentScheduleGenerator
     public function markPaid(PaymentSchedule $schedule, float $amount, ?int $transactionId = null): PaymentSchedule
     {
         if ($schedule->status === 'paid') {
-            throw new \DomainException('Платеж уже оплачен');
+            throw new \DomainException(trans_message('payments.validation.schedule_already_paid'));
         }
 
         $schedule->status = 'paid';

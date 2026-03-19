@@ -10,6 +10,8 @@ use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
+use function trans_message;
+
 class PaymentValidationService
 {
     /**
@@ -87,7 +89,10 @@ class PaymentValidationService
         }
 
         if (!empty($errors)) {
-            throw new \DomainException('Ошибки валидации: ' . implode('; ', $errors));
+            throw new \DomainException(sprintf(
+                trans_message('payments.validation.errors_prefix'),
+                implode('; ', $errors)
+            ));
         }
     }
 
@@ -100,7 +105,10 @@ class PaymentValidationService
 
         foreach ($required as $field) {
             if (!isset($data[$field]) || empty($data[$field])) {
-                throw new \InvalidArgumentException("Поле '{$field}' обязательно");
+                throw new \InvalidArgumentException(sprintf(
+                    trans_message('payments.validation.required_field'),
+                    $field
+                ));
             }
         }
     }
@@ -111,19 +119,19 @@ class PaymentValidationService
     private function validateAmounts(array $data): void
     {
         if (isset($data['amount']) && $data['amount'] <= 0) {
-            throw new \InvalidArgumentException('Сумма должна быть больше 0');
+            throw new \InvalidArgumentException(trans_message('payments.validation.amount_positive'));
         }
 
         if (isset($data['vat_rate']) && ($data['vat_rate'] < 0 || $data['vat_rate'] > 100)) {
-            throw new \InvalidArgumentException('НДС должен быть от 0 до 100%');
+            throw new \InvalidArgumentException(trans_message('payments.validation.vat_rate_invalid'));
         }
 
         if (isset($data['paid_amount']) && $data['paid_amount'] < 0) {
-            throw new \InvalidArgumentException('Оплаченная сумма не может быть отрицательной');
+            throw new \InvalidArgumentException(trans_message('payments.validation.paid_amount_negative'));
         }
 
         if (isset($data['amount']) && isset($data['paid_amount']) && $data['paid_amount'] > $data['amount']) {
-            throw new \InvalidArgumentException('Оплаченная сумма не может превышать общую сумму');
+            throw new \InvalidArgumentException(trans_message('payments.validation.paid_amount_exceeds_total'));
         }
     }
 
@@ -139,7 +147,7 @@ class PaymentValidationService
 
             // Дата документа не может быть в далеком будущем (более 30 дней)
             if ($docDate->gt(now()->addDays(30))) {
-                throw new \InvalidArgumentException('Дата документа не может быть более чем на 30 дней вперед');
+                throw new \InvalidArgumentException(trans_message('payments.validation.document_date_too_far'));
             }
         }
 
@@ -153,7 +161,7 @@ class PaymentValidationService
                 : $data['due_date'];
 
             if ($dueDate->lt($docDate)) {
-                throw new \InvalidArgumentException('Срок оплаты не может быть раньше даты документа');
+                throw new \InvalidArgumentException(trans_message('payments.validation.due_date_before_document'));
             }
         }
     }
@@ -163,39 +171,41 @@ class PaymentValidationService
      */
     private function validateParties(array $data): void
     {
+        $organizationId = (int) ($data['organization_id'] ?? 0);
+
         // Проверка что указан хотя бы один плательщик
         if (!isset($data['payer_organization_id']) && !isset($data['payer_contractor_id'])) {
-            throw new \InvalidArgumentException('Не указан плательщик');
+            throw new \InvalidArgumentException(trans_message('payments.validation.payer_required'));
         }
 
         // Проверка что указан хотя бы один получатель
         if (!isset($data['payee_organization_id']) && !isset($data['payee_contractor_id'])) {
-            throw new \InvalidArgumentException('Не указан получатель');
+            throw new \InvalidArgumentException(trans_message('payments.validation.payee_required'));
         }
 
         // Проверка существования организаций
         if (isset($data['payer_organization_id'])) {
-            if (!Organization::find($data['payer_organization_id'])) {
-                throw new \InvalidArgumentException('Организация-плательщик не найдена');
+            if (!Organization::query()->whereKey($data['payer_organization_id'])->exists()) {
+                throw new \InvalidArgumentException(trans_message('payments.validation.payer_organization_not_found'));
             }
         }
 
         if (isset($data['payee_organization_id'])) {
-            if (!Organization::find($data['payee_organization_id'])) {
-                throw new \InvalidArgumentException('Организация-получатель не найдена');
+            if (!Organization::query()->whereKey($data['payee_organization_id'])->exists()) {
+                throw new \InvalidArgumentException(trans_message('payments.validation.payee_organization_not_found'));
             }
         }
 
         // Проверка существования контрагентов
         if (isset($data['payer_contractor_id'])) {
-            if (!Contractor::find($data['payer_contractor_id'])) {
-                throw new \InvalidArgumentException('Контрагент-плательщик не найден');
+            if (!$this->contractorExistsForOrganization((int) $data['payer_contractor_id'], $organizationId)) {
+                throw new \InvalidArgumentException(trans_message('payments.validation.payer_contractor_not_found'));
             }
         }
 
         if (isset($data['payee_contractor_id'])) {
-            if (!Contractor::find($data['payee_contractor_id'])) {
-                throw new \InvalidArgumentException('Контрагент-получатель не найден');
+            if (!$this->contractorExistsForOrganization((int) $data['payee_contractor_id'], $organizationId)) {
+                throw new \InvalidArgumentException(trans_message('payments.validation.payee_contractor_not_found'));
             }
         }
     }
@@ -238,21 +248,21 @@ class PaymentValidationService
         // БИК должен быть 9 цифр
         if (isset($data['bank_bik'])) {
             if (!preg_match('/^\d{9}$/', $data['bank_bik'])) {
-                throw new \InvalidArgumentException('БИК должен содержать 9 цифр');
+                throw new \InvalidArgumentException(trans_message('payments.validation.bik_invalid'));
             }
         }
 
         // Расчетный счет должен быть 20 цифр
         if (isset($data['bank_account'])) {
             if (!preg_match('/^\d{20}$/', $data['bank_account'])) {
-                throw new \InvalidArgumentException('Расчетный счет должен содержать 20 цифр');
+                throw new \InvalidArgumentException(trans_message('payments.validation.bank_account_invalid'));
             }
         }
 
         // Корр. счет должен быть 20 цифр
         if (isset($data['bank_correspondent_account'])) {
             if (!preg_match('/^\d{20}$/', $data['bank_correspondent_account'])) {
-                throw new \InvalidArgumentException('Корреспондентский счет должен содержать 20 цифр');
+                throw new \InvalidArgumentException(trans_message('payments.validation.correspondent_account_invalid'));
             }
         }
     }
@@ -262,10 +272,20 @@ class PaymentValidationService
      */
     private function validateSource(string $sourceType, int $sourceId, array $data): void
     {
-        $source = $sourceType::find($sourceId);
+        $organizationId = (int) ($data['organization_id'] ?? 0);
+
+        if (!in_array($sourceType, [
+            Contract::class,
+            \App\Models\ContractPerformanceAct::class,
+            PaymentDocument::class,
+        ], true)) {
+            throw new \InvalidArgumentException(trans_message('payments.validation.source_invalid'));
+        }
+
+        $source = $this->resolveScopedSource($sourceType, $sourceId, $organizationId);
 
         if (!$source) {
-            throw new \InvalidArgumentException('Источник документа не найден');
+            throw new \InvalidArgumentException(trans_message('payments.validation.source_not_found'));
         }
 
         // Проверка для договоров
@@ -437,7 +457,7 @@ class PaymentValidationService
             $statusValue = is_object($source->status) ? $source->status->value : $source->status;
             
             if (!in_array($statusValue, ['active', 'draft'])) {
-                throw new \DomainException('Договор должен быть активным или в статусе черновика');
+                throw new \DomainException(trans_message('payments.validation.contract_status_invalid'));
             }
         }
     }
@@ -449,12 +469,12 @@ class PaymentValidationService
     {
         // Если есть оплаты, новая сумма не может быть меньше оплаченной
         if ($newAmount < $document->paid_amount) {
-            throw new \DomainException('Новая сумма не может быть меньше уже оплаченной суммы');
+            throw new \DomainException(trans_message('payments.validation.new_amount_below_paid'));
         }
 
         // Если документ утвержден или оплачен, нельзя менять сумму
         if (in_array($document->status->value, ['approved', 'scheduled', 'paid', 'partially_paid'])) {
-            throw new \DomainException('Нельзя изменить сумму утвержденного или оплаченного документа');
+            throw new \DomainException(trans_message('payments.validation.amount_change_forbidden'));
         }
     }
 
@@ -535,7 +555,9 @@ class PaymentValidationService
      */
     private function checkContractBalance(PaymentDocument $document, array &$errors): void
     {
-        $contract = Contract::find($document->source_id);
+        $contract = Contract::query()
+            ->forOrganization($document->organization_id)
+            ->find($document->source_id);
 
         if (!$contract || $contract->total_amount <= 0) {
             return;
@@ -654,6 +676,45 @@ class PaymentValidationService
                 $document->amount
             );
         }
+    }
+
+    private function contractorExistsForOrganization(int $contractorId, int $organizationId): bool
+    {
+        return Contractor::query()
+            ->where('organization_id', $organizationId)
+            ->whereKey($contractorId)
+            ->exists();
+    }
+
+    private function resolveScopedSource(string $sourceType, int $sourceId, int $organizationId): mixed
+    {
+        if ($sourceType === Contract::class) {
+            return Contract::query()
+                ->forOrganization($organizationId)
+                ->find($sourceId);
+        }
+
+        if ($sourceType === PaymentDocument::class) {
+            return PaymentDocument::query()
+                ->forOrganization($organizationId)
+                ->find($sourceId);
+        }
+
+        $source = $sourceType::query()->find($sourceId);
+
+        if (!$source) {
+            return null;
+        }
+
+        if (isset($source->organization_id) && (int) $source->organization_id === $organizationId) {
+            return $source;
+        }
+
+        if (method_exists($source, 'contract') && $source->contract && (int) $source->contract->organization_id === $organizationId) {
+            return $source;
+        }
+
+        return null;
     }
     
     /**

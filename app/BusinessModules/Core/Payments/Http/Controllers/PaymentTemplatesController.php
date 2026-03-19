@@ -1,26 +1,25 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
 use App\Http\Controllers\Controller;
-use App\BusinessModules\Core\Payments\Enums\InvoiceType;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
+
+use function trans_message;
 
 class PaymentTemplatesController extends Controller
 {
-    /**
-     * Получить шаблоны типов платежей
-     * 
-     * GET /api/v1/admin/payments/templates
-     */
     public function index(): JsonResponse
     {
         try {
             $templates = [
-                // Авансы с автоматическим расчетом
                 [
                     'id' => 'advance_30',
                     'name' => 'Аванс 30%',
@@ -59,20 +58,16 @@ class PaymentTemplatesController extends Controller
                     'invoice_type' => 'advance',
                     'percentage' => null,
                     'auto_calculate' => false,
-                    'description' => 'Авансовый платеж произвольной суммы (сумма вводится вручную)',
+                    'description' => 'Авансовый платеж произвольной суммы',
                 ],
-                
-                // Промежуточные платежи
                 [
                     'id' => 'progress',
                     'name' => 'Промежуточный платеж',
                     'invoice_type' => 'progress',
                     'percentage' => null,
                     'auto_calculate' => false,
-                    'description' => 'Промежуточный платеж по этапу работ (сумма вводится вручную)',
+                    'description' => 'Промежуточный платеж по этапу работ',
                 ],
-                
-                // Финальные расчеты
                 [
                     'id' => 'final_100',
                     'name' => 'Финальный расчет 100%',
@@ -87,10 +82,8 @@ class PaymentTemplatesController extends Controller
                     'invoice_type' => 'final',
                     'percentage' => null,
                     'auto_calculate' => false,
-                    'description' => 'Финальный расчет произвольной суммы (сумма вводится вручную)',
+                    'description' => 'Финальный расчет произвольной суммы',
                 ],
-                
-                // По актам
                 [
                     'id' => 'act',
                     'name' => 'По акту выполненных работ',
@@ -100,60 +93,40 @@ class PaymentTemplatesController extends Controller
                     'description' => 'Оплата по факту выполненных работ согласно акту',
                 ],
             ];
-            
-            return response()->json([
-                'success' => true,
-                'data' => $templates,
-            ]);
+
+            return AdminResponse::success($templates, trans_message('payments.templates.loaded'));
         } catch (\Exception $e) {
             Log::error('payments.templates.index.error', [
                 'error' => $e->getMessage(),
             ]);
-            
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить шаблоны',
-            ], 500);
+
+            return AdminResponse::error(trans_message('payments.templates.load_error'), 500);
         }
     }
 
-    /**
-     * Рассчитать сумму платежа по шаблону
-     * 
-     * POST /api/v1/admin/payments/calculate
-     * 
-     * Body:
-     * {
-     *   "contract_id": 72,
-     *   "template_id": "advance_30"
-     * }
-     */
     public function calculate(Request $request): JsonResponse
     {
-        $request->validate([
-            'contract_id' => 'required|integer|exists:contracts,id',
+        $organizationId = (int) $request->attributes->get('current_organization_id');
+
+        $validated = $request->validate([
+            'contract_id' => [
+                'required',
+                'integer',
+                Rule::exists('contracts', 'id')->where('organization_id', $organizationId),
+            ],
             'template_id' => 'required|string|in:advance_30,advance_50,advance_70,advance_100,final_100',
         ]);
 
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-            $contractId = $request->input('contract_id');
-            $templateId = $request->input('template_id');
-
-            // Получить сумму контракта
             $contract = DB::table('contracts')
-                ->where('id', $contractId)
+                ->where('id', $validated['contract_id'])
                 ->where('organization_id', $organizationId)
                 ->first(['id', 'total_amount']);
 
             if (!$contract) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Контракт не найден',
-                ], 404);
+                return AdminResponse::error(trans_message('payments.templates.contract_not_found'), 404);
             }
 
-            // Определить процент по шаблону
             $percentageMap = [
                 'advance_30' => 30,
                 'advance_50' => 50,
@@ -162,39 +135,29 @@ class PaymentTemplatesController extends Controller
                 'final_100' => 100,
             ];
 
-            $percentage = $percentageMap[$templateId] ?? null;
-            
+            $percentage = $percentageMap[$validated['template_id']] ?? null;
+
             if ($percentage === null) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Данный шаблон не поддерживает автоматический расчет',
-                ], 422);
+                return AdminResponse::error(trans_message('payments.templates.template_not_supported'), 422);
             }
-            
+
             $calculatedAmount = round(($contract->total_amount * $percentage) / 100, 2);
 
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'contract_id' => $contractId,
-                    'contract_total_amount' => (float) $contract->total_amount,
-                    'template_id' => $templateId,
-                    'percentage' => $percentage,
-                    'calculated_amount' => $calculatedAmount,
-                ],
-            ]);
+            return AdminResponse::success([
+                'contract_id' => (int) $validated['contract_id'],
+                'contract_total_amount' => (float) $contract->total_amount,
+                'template_id' => $validated['template_id'],
+                'percentage' => $percentage,
+                'calculated_amount' => $calculatedAmount,
+            ], trans_message('payments.templates.calculated'));
         } catch (\Exception $e) {
             Log::error('payments.calculate.error', [
                 'error' => $e->getMessage(),
                 'contract_id' => $request->input('contract_id'),
                 'template_id' => $request->input('template_id'),
             ]);
-            
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось рассчитать сумму',
-            ], 500);
+
+            return AdminResponse::error(trans_message('payments.templates.calculate_error'), 500);
         }
     }
 }
-

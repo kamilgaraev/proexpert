@@ -17,6 +17,8 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
+use function trans_message;
+
 class PaymentDocumentService
 {
     public function __construct(
@@ -124,7 +126,10 @@ class PaymentDocumentService
             }
         }
 
-        throw new \Exception("Не удалось создать документ после {$maxAttempts} попыток. Пожалуйста, попробуйте еще раз.");
+        throw new \Exception(sprintf(
+            trans_message('payments.validation.document_create_attempts_exceeded'),
+            $maxAttempts
+        ));
     }
 
     /**
@@ -133,7 +138,7 @@ class PaymentDocumentService
     public function update(PaymentDocument $document, array $data): PaymentDocument
     {
         if (!$document->canBeEdited()) {
-            throw new \DomainException('Документ нельзя редактировать в текущем статусе');
+            throw new \DomainException(trans_message('payments.validation.document_edit_forbidden'));
         }
 
         DB::beginTransaction();
@@ -245,7 +250,7 @@ class PaymentDocumentService
     public function schedule(PaymentDocument $document, ?\DateTime $scheduledAt = null): PaymentDocument
     {
         if ($document->status !== PaymentDocumentStatus::APPROVED) {
-            throw new \DomainException('Можно планировать только утвержденные документы');
+            throw new \DomainException(trans_message('payments.validation.schedule_only_approved'));
         }
 
         $this->stateMachine->schedule($document, $scheduledAt);
@@ -275,7 +280,7 @@ class PaymentDocumentService
                 'status' => $document->status->value,
                 'remaining_amount' => $document->remaining_amount,
             ]);
-            throw new \DomainException('Документ нельзя оплатить в текущем статусе');
+            throw new \DomainException(trans_message('payments.validation.document_pay_forbidden'));
         }
 
         DB::beginTransaction();
@@ -292,7 +297,7 @@ class PaymentDocumentService
                     'amount' => $amount,
                     'remaining_amount' => $document->remaining_amount,
                 ]);
-                throw new \DomainException('Сумма платежа превышает остаток к оплате');
+                throw new \DomainException(trans_message('payments.validation.payment_amount_exceeds_remaining'));
             }
 
             Log::info('payment_document.register_payment.preparing_data', [
@@ -455,7 +460,7 @@ class PaymentDocumentService
         }
 
         if (!$isOrganizationOwner && !$document->canBeCancelled()) {
-            throw new \DomainException('Документ нельзя отменить в текущем статусе');
+            throw new \DomainException(trans_message('payments.validation.document_cancel_forbidden'));
         }
 
         $this->stateMachine->cancel($document, $reason);
@@ -477,12 +482,12 @@ class PaymentDocumentService
     {
         // Проверяем, что документ не оплачен
         if ($document->status === PaymentDocumentStatus::PAID) {
-            throw new \DomainException('Нельзя удалить оплаченный документ');
+            throw new \DomainException(trans_message('payments.validation.document_delete_paid_forbidden'));
         }
 
         // Проверяем, что нет транзакций
         if ($document->transactions()->count() > 0) {
-            throw new \DomainException('Нельзя удалить документ с транзакциями');
+            throw new \DomainException(trans_message('payments.validation.document_delete_has_transactions'));
         }
 
         $documentNumber = $document->document_number;
@@ -502,7 +507,8 @@ class PaymentDocumentService
     public function getForOrganization(int $organizationId, array $filters = []): Collection
     {
         $query = PaymentDocument::forOrganization($organizationId)
-            ->with(['project', 'payerOrganization', 'payeeOrganization', 'payerContractor', 'payeeContractor']);
+            ->with(['project', 'payerOrganization', 'payeeOrganization', 'payerContractor', 'payeeContractor'])
+            ->withCount('siteRequests');
 
         // Применяем фильтры
         if (isset($filters['document_type'])) {
@@ -864,9 +870,14 @@ class PaymentDocumentService
         $affectedEstimateIds = [];
 
         foreach ($splits as $splitData) {
-            $estimateItem = \App\Models\EstimateItem::find($splitData['estimate_item_id']);
+            $estimateItemId = (int) ($splitData['estimate_item_id'] ?? 0);
+            $estimateItem = $this->resolveEstimateItemForDocument($document, $estimateItemId);
+
             if (!$estimateItem) {
-                continue;
+                throw new \DomainException(sprintf(
+                    trans_message('payments.validation.estimate_item_not_found'),
+                    $estimateItemId
+                ));
             }
 
             $quantity = (float) ($splitData['quantity'] ?? 0);
@@ -906,6 +917,23 @@ class PaymentDocumentService
             'splits_count' => count($splits),
             'invalidated_estimates' => array_keys($affectedEstimateIds),
         ]);
+    }
+
+    private function resolveEstimateItemForDocument(PaymentDocument $document, int $estimateItemId): ?\App\Models\EstimateItem
+    {
+        if ($estimateItemId <= 0) {
+            return null;
+        }
+
+        return \App\Models\EstimateItem::query()
+            ->whereKey($estimateItemId)
+            ->whereNull('estimate_items.deleted_at')
+            ->whereHas('estimate', function ($query) use ($document) {
+                $query->where('organization_id', $document->organization_id)
+                    ->when($document->estimate_id, fn ($builder) => $builder->where('id', $document->estimate_id))
+                    ->when($document->project_id, fn ($builder) => $builder->where('project_id', $document->project_id));
+            })
+            ->first();
     }
 
     public function analyzePriceDeviation(array $splits): array

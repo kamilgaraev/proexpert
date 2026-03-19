@@ -9,6 +9,8 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
+use function trans_message;
+
 /**
  * Сервис взаимозачета (Offset/Netting)
  */
@@ -49,7 +51,7 @@ class OffsetService
             $secondDoc = PaymentDocument::where('id', $secondId)->lockForUpdate()->first();
 
             if (!$firstDoc || !$secondDoc) {
-                throw new \InvalidArgumentException('Один из документов не найден');
+                throw new \InvalidArgumentException(trans_message('payments.validation.offset_documents_not_found'));
             }
 
             // Распределяем обратно по переменным
@@ -215,7 +217,7 @@ class OffsetService
     ): void {
         // Проверка организации
         if ($receivable->organization_id !== $payable->organization_id) {
-            throw new \InvalidArgumentException('Документы принадлежат разным организациям');
+            throw new \InvalidArgumentException(trans_message('payments.validation.offset_organization_mismatch'));
         }
 
         // Проверка контрагента
@@ -223,22 +225,28 @@ class OffsetService
         $payableContractor = $payable->payee_contractor_id;
         
         if ($receivableContractor !== $payableContractor) {
-            throw new \InvalidArgumentException('Документы относятся к разным контрагентам');
+            throw new \InvalidArgumentException(trans_message('payments.validation.offset_contractor_mismatch'));
         }
 
         // Проверка статусов
         $allowedStatuses = ['approved', 'scheduled', 'partially_paid'];
         if (!in_array($receivable->status->value, $allowedStatuses)) {
-            throw new \DomainException('Дебиторский документ не может участвовать в взаимозачете (статус: ' . $receivable->status->label() . ')');
+            throw new \DomainException(sprintf(
+                trans_message('payments.validation.offset_receivable_status_invalid'),
+                $receivable->status->label()
+            ));
         }
 
         if (!in_array($payable->status->value, $allowedStatuses)) {
-            throw new \DomainException('Кредиторский документ не может участвовать в взаимозачете (статус: ' . $payable->status->label() . ')');
+            throw new \DomainException(sprintf(
+                trans_message('payments.validation.offset_payable_status_invalid'),
+                $payable->status->label()
+            ));
         }
 
         // Проверка сумм
         if ($amount <= 0.009) { // Защита от float near zero
-            throw new \InvalidArgumentException('Сумма взаимозачета должна быть больше нуля');
+            throw new \InvalidArgumentException(trans_message('payments.validation.offset_amount_positive'));
         }
 
         // Используем bccomp для сравнения float денег, если bcmath доступен, или epsilon
@@ -255,7 +263,7 @@ class OffsetService
 
         // Проверка валют
         if ($receivable->currency !== $payable->currency) {
-            throw new \InvalidArgumentException('Документы в разных валютах. Необходима конвертация');
+            throw new \InvalidArgumentException(trans_message('payments.validation.offset_currency_mismatch'));
         }
     }
 
