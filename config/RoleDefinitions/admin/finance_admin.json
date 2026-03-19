@@ -37,6 +37,16 @@
     "materials": [
       "materials.view"
     ],
+    "procurement": [
+      "procurement.view",
+      "procurement.purchase_requests.view",
+      "procurement.purchase_orders.view",
+      "procurement.purchase_orders.confirm",
+      "procurement.contracts.view",
+      "procurement.contracts.create",
+      "procurement.dashboard.view",
+      "procurement.statistics.view"
+    ],
     "advance-accounts": [
       "advance-accounts.view",
       "advance-accounts.manage"

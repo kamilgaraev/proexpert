@@ -152,6 +152,68 @@ class SiteRequestResource extends JsonResource
             ] : null),
 
             // Даты
+            'purchase_requests' => $this->whenLoaded('purchaseRequests', fn() => $this->purchaseRequests->map(fn($purchaseRequest) => [
+                'id' => $purchaseRequest->id,
+                'request_number' => $purchaseRequest->request_number,
+                'status' => $purchaseRequest->status->value,
+                'status_label' => $purchaseRequest->status->label(),
+                'created_at' => $purchaseRequest->created_at?->toIso8601String(),
+                'assigned_user' => $purchaseRequest->relationLoaded('assignedUser') && $purchaseRequest->assignedUser ? [
+                    'id' => $purchaseRequest->assignedUser->id,
+                    'name' => $purchaseRequest->assignedUser->name,
+                ] : null,
+                'purchase_orders_count' => $purchaseRequest->relationLoaded('purchaseOrders')
+                    ? $purchaseRequest->purchaseOrders->count()
+                    : null,
+            ])->values()),
+            'purchase_orders' => $this->whenLoaded('purchaseOrders', fn() => $this->purchaseOrders->map(fn($purchaseOrder) => [
+                'id' => $purchaseOrder->id,
+                'purchase_request_id' => $purchaseOrder->purchase_request_id,
+                'order_number' => $purchaseOrder->order_number,
+                'status' => $purchaseOrder->status->value,
+                'status_label' => $purchaseOrder->status->label(),
+                'order_date' => $purchaseOrder->order_date?->format('Y-m-d'),
+                'delivery_date' => $purchaseOrder->delivery_date?->format('Y-m-d'),
+                'sent_at' => $purchaseOrder->sent_at?->toIso8601String(),
+                'confirmed_at' => $purchaseOrder->confirmed_at?->toIso8601String(),
+                'contract_id' => $purchaseOrder->contract_id,
+                'created_at' => $purchaseOrder->created_at?->toIso8601String(),
+                'supplier' => $purchaseOrder->relationLoaded('supplier') && $purchaseOrder->supplier ? [
+                    'id' => $purchaseOrder->supplier->id,
+                    'name' => $purchaseOrder->supplier->name,
+                ] : null,
+            ])->values()),
+            'purchaseRequests' => $this->whenLoaded('purchaseRequests', fn() => $this->purchaseRequests->map(fn($purchaseRequest) => [
+                'id' => $purchaseRequest->id,
+                'request_number' => $purchaseRequest->request_number,
+                'status' => $purchaseRequest->status->value,
+                'status_label' => $purchaseRequest->status->label(),
+                'created_at' => $purchaseRequest->created_at?->toIso8601String(),
+                'assigned_user' => $purchaseRequest->relationLoaded('assignedUser') && $purchaseRequest->assignedUser ? [
+                    'id' => $purchaseRequest->assignedUser->id,
+                    'name' => $purchaseRequest->assignedUser->name,
+                ] : null,
+                'purchase_orders_count' => $purchaseRequest->relationLoaded('purchaseOrders')
+                    ? $purchaseRequest->purchaseOrders->count()
+                    : null,
+            ])->values()),
+            'purchaseOrders' => $this->whenLoaded('purchaseOrders', fn() => $this->purchaseOrders->map(fn($purchaseOrder) => [
+                'id' => $purchaseOrder->id,
+                'purchase_request_id' => $purchaseOrder->purchase_request_id,
+                'order_number' => $purchaseOrder->order_number,
+                'status' => $purchaseOrder->status->value,
+                'status_label' => $purchaseOrder->status->label(),
+                'order_date' => $purchaseOrder->order_date?->format('Y-m-d'),
+                'delivery_date' => $purchaseOrder->delivery_date?->format('Y-m-d'),
+                'sent_at' => $purchaseOrder->sent_at?->toIso8601String(),
+                'confirmed_at' => $purchaseOrder->confirmed_at?->toIso8601String(),
+                'contract_id' => $purchaseOrder->contract_id,
+                'created_at' => $purchaseOrder->created_at?->toIso8601String(),
+                'supplier' => $purchaseOrder->relationLoaded('supplier') && $purchaseOrder->supplier ? [
+                    'id' => $purchaseOrder->supplier->id,
+                    'name' => $purchaseOrder->supplier->name,
+                ] : null,
+            ])->values()),
             'created_at' => $this->created_at->toIso8601String(),
             'updated_at' => $this->updated_at->toIso8601String(),
         ];

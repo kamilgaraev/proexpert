@@ -1,30 +1,28 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\Procurement\Services;
 
-use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
-use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
+use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
+use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Pagination\LengthAwarePaginator;
+use function trans_message;
 
-/**
- * Сервис для работы с заявками на закупку
- */
 class PurchaseRequestService
 {
     private const CACHE_TTL = 3600;
 
     public function __construct(
         private readonly PurchaseRequestNumberGenerator $numberGenerator
-    ) {}
+    ) {
+    }
 
-    /**
-     * Получить заявку по ID
-     */
     public function find(int $id, int $organizationId): ?PurchaseRequest
     {
         return PurchaseRequest::forOrganization($organizationId)
@@ -32,9 +30,6 @@ class PurchaseRequestService
             ->find($id);
     }
 
-    /**
-     * Получить список заявок с пагинацией
-     */
     public function paginate(
         int $organizationId,
         int $perPage = 15,
@@ -43,7 +38,6 @@ class PurchaseRequestService
         $query = PurchaseRequest::forOrganization($organizationId)
             ->with(['siteRequest.project', 'assignedUser', 'purchaseOrders']);
 
-        // Применяем фильтры
         if (isset($filters['status'])) {
             $query->withStatus($filters['status']);
         }
@@ -56,7 +50,6 @@ class PurchaseRequestService
             $query->where('assigned_to', $filters['assigned_to']);
         }
 
-        // Сортировка
         $sortBy = $filters['sort_by'] ?? 'created_at';
         $sortDir = $filters['sort_dir'] ?? 'desc';
         $query->orderBy($sortBy, $sortDir);
@@ -64,23 +57,25 @@ class PurchaseRequestService
         return $query->paginate($perPage);
     }
 
-    /**
-     * Создать заявку на закупку из заявки с объекта
-     */
     public function createFromSiteRequest(SiteRequest $siteRequest, ?int $assignedTo = null): PurchaseRequest
     {
         $allowedTypes = ['material_request', 'equipment_request', 'personnel_request'];
-        if (!in_array($siteRequest->request_type->value, $allowedTypes)) {
-            throw new \DomainException('Заявка на закупку может быть создана только из заявки на материалы, технику или персонал');
+
+        if (!in_array($siteRequest->request_type->value, $allowedTypes, true)) {
+            throw new \DomainException(trans_message('procurement.purchase_requests.invalid_site_request_type'));
+        }
+
+        $existingRequest = $this->findExistingBySiteRequest($siteRequest->organization_id, $siteRequest->id);
+        if ($existingRequest) {
+            return $existingRequest->fresh(['siteRequest.project', 'assignedUser', 'purchaseOrders.supplier']);
         }
 
         DB::beginTransaction();
+
         try {
-            // Генерируем номер заявки
             $requestNumber = $this->numberGenerator->generate($siteRequest->organization_id);
 
-            // Формируем описание типа заявки
-            $requestTypeLabel = match($siteRequest->request_type->value) {
+            $requestTypeLabel = match ($siteRequest->request_type->value) {
                 'material_request' => 'заявки на материалы',
                 'equipment_request' => 'заявки на технику',
                 'personnel_request' => 'заявки на персонал',
@@ -98,10 +93,8 @@ class PurchaseRequestService
 
             DB::commit();
 
-            // Инвалидация кеша
             $this->invalidateCache($siteRequest->organization_id);
 
-            // Отправляем событие
             event(new \App\BusinessModules\Features\Procurement\Events\PurchaseRequestCreated($purchaseRequest));
 
             Log::info('procurement.purchase_request.created', [
@@ -110,28 +103,30 @@ class PurchaseRequestService
                 'organization_id' => $siteRequest->organization_id,
             ]);
 
-            return $purchaseRequest->fresh(['siteRequest', 'assignedUser']);
+            return $purchaseRequest->fresh(['siteRequest.project', 'assignedUser', 'purchaseOrders.supplier']);
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;
         }
     }
 
-    /**
-     * Создать заявку на закупку вручную
-     */
     public function create(int $organizationId, array $data): PurchaseRequest
     {
-        // Проверяем лимиты организации
         $this->checkLimits($organizationId);
 
+        $siteRequestId = isset($data['site_request_id']) ? (int) $data['site_request_id'] : null;
+        if ($siteRequestId && $this->findExistingBySiteRequest($organizationId, $siteRequestId)) {
+            throw new \DomainException(trans_message('procurement.purchase_requests.duplicate_site_request'));
+        }
+
         DB::beginTransaction();
+
         try {
             $requestNumber = $this->numberGenerator->generate($organizationId);
 
             $purchaseRequest = PurchaseRequest::create([
                 'organization_id' => $organizationId,
-                'site_request_id' => $data['site_request_id'] ?? null,
+                'site_request_id' => $siteRequestId,
                 'assigned_to' => $data['assigned_to'] ?? null,
                 'request_number' => $requestNumber,
                 'status' => PurchaseRequestStatusEnum::DRAFT,
@@ -145,56 +140,21 @@ class PurchaseRequestService
 
             event(new \App\BusinessModules\Features\Procurement\Events\PurchaseRequestCreated($purchaseRequest));
 
-            return $purchaseRequest->fresh(['siteRequest', 'assignedUser']);
+            return $purchaseRequest->fresh(['siteRequest.project', 'assignedUser', 'purchaseOrders.supplier']);
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;
         }
     }
 
-    /**
-     * Проверить лимиты организации
-     */
-    private function checkLimits(int $organizationId): void
-    {
-        $module = app(\App\BusinessModules\Features\Procurement\ProcurementModule::class);
-        $limits = $module->getLimits();
-
-        // Проверяем лимит заявок на закупку в месяц
-        if ($limits['max_purchase_requests_per_month']) {
-            $count = PurchaseRequest::forOrganization($organizationId)
-                ->whereMonth('created_at', now()->month)
-                ->whereYear('created_at', now()->year)
-                ->count();
-
-            if ($count >= $limits['max_purchase_requests_per_month']) {
-                throw new \DomainException('Достигнут лимит заявок на закупку в текущем месяце');
-            }
-        }
-
-        // Проверяем лимит заказов поставщикам в месяц
-        if ($limits['max_purchase_orders_per_month']) {
-            $ordersCount = \App\BusinessModules\Features\Procurement\Models\PurchaseOrder::forOrganization($organizationId)
-                ->whereMonth('created_at', now()->month)
-                ->whereYear('created_at', now()->year)
-                ->count();
-
-            if ($ordersCount >= $limits['max_purchase_orders_per_month']) {
-                throw new \DomainException('Достигнут лимит заказов поставщикам в текущем месяце');
-            }
-        }
-    }
-
-    /**
-     * Одобрить заявку
-     */
     public function approve(PurchaseRequest $request, int $userId): PurchaseRequest
     {
         if (!$request->canBeApproved()) {
-            throw new \DomainException('Заявка не может быть одобрена в текущем статусе');
+            throw new \DomainException(trans_message('procurement.purchase_requests.approve_invalid_status'));
         }
 
         DB::beginTransaction();
+
         try {
             $request->update([
                 'status' => PurchaseRequestStatusEnum::APPROVED,
@@ -206,23 +166,21 @@ class PurchaseRequestService
 
             event(new \App\BusinessModules\Features\Procurement\Events\PurchaseRequestApproved($request, $userId));
 
-            return $request->fresh();
+            return $request->fresh(['siteRequest.project', 'assignedUser', 'purchaseOrders.supplier']);
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;
         }
     }
 
-    /**
-     * Отклонить заявку
-     */
     public function reject(PurchaseRequest $request, int $userId, string $reason): PurchaseRequest
     {
         if (!$request->canBeRejected()) {
-            throw new \DomainException('Заявка не может быть отклонена в текущем статусе');
+            throw new \DomainException(trans_message('procurement.purchase_requests.reject_invalid_status'));
         }
 
         DB::beginTransaction();
+
         try {
             $request->update([
                 'status' => PurchaseRequestStatusEnum::REJECTED,
@@ -233,34 +191,63 @@ class PurchaseRequestService
 
             $this->invalidateCache($request->organization_id);
 
-            return $request->fresh();
+            return $request->fresh(['siteRequest.project', 'assignedUser', 'purchaseOrders.supplier']);
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;
         }
     }
 
-    /**
-     * Создать заказ поставщику из заявки
-     */
     public function assignToSupplier(PurchaseRequest $request, int $supplierId): PurchaseOrder
     {
         if ($request->status !== PurchaseRequestStatusEnum::APPROVED) {
-            throw new \DomainException('Заявка должна быть одобрена перед созданием заказа');
+            throw new \DomainException(trans_message('procurement.purchase_requests.order_requires_approved_request'));
         }
 
-        $orderService = app(PurchaseOrderService::class);
-        return $orderService->create($request, $supplierId, []);
+        if ($request->purchaseOrders()->exists()) {
+            throw new \DomainException(trans_message('procurement.purchase_requests.order_already_exists'));
+        }
+
+        return app(PurchaseOrderService::class)->create($request, $supplierId, []);
     }
 
-    // generateRequestNumber removed in favor of PurchaseRequestNumberGenerator
+    private function checkLimits(int $organizationId): void
+    {
+        $module = app(\App\BusinessModules\Features\Procurement\ProcurementModule::class);
+        $limits = $module->getLimits();
 
-    /**
-     * Инвалидация кеша
-     */
+        if ($limits['max_purchase_requests_per_month']) {
+            $count = PurchaseRequest::forOrganization($organizationId)
+                ->whereMonth('created_at', now()->month)
+                ->whereYear('created_at', now()->year)
+                ->count();
+
+            if ($count >= $limits['max_purchase_requests_per_month']) {
+                throw new \DomainException(trans_message('procurement.purchase_requests.monthly_limit_reached'));
+            }
+        }
+
+        if ($limits['max_purchase_orders_per_month']) {
+            $ordersCount = PurchaseOrder::forOrganization($organizationId)
+                ->whereMonth('created_at', now()->month)
+                ->whereYear('created_at', now()->year)
+                ->count();
+
+            if ($ordersCount >= $limits['max_purchase_orders_per_month']) {
+                throw new \DomainException(trans_message('procurement.purchase_requests.orders_monthly_limit_reached'));
+            }
+        }
+    }
+
+    private function findExistingBySiteRequest(int $organizationId, int $siteRequestId): ?PurchaseRequest
+    {
+        return PurchaseRequest::forOrganization($organizationId)
+            ->where('site_request_id', $siteRequestId)
+            ->first();
+    }
+
     private function invalidateCache(int $organizationId): void
     {
         Cache::forget("procurement_purchase_requests_{$organizationId}");
     }
 }
-

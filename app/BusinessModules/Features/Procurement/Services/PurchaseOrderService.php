@@ -1,32 +1,46 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\Procurement\Services;
 
-use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
-use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
+use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
-use App\Models\Supplier;
+use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
+use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
+use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\Models\Contract;
-use Illuminate\Support\Facades\DB;
+use App\Models\Supplier;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use function trans_message;
 
-/**
- * Сервис для работы с заказами поставщикам
- */
 class PurchaseOrderService
 {
     public function __construct(
         private readonly PurchaseOrderPdfService $pdfService
-    ) {}
+    ) {
+    }
 
-    /**
-     * Создать заказ из заявки на закупку
-     */
     public function create(PurchaseRequest $request, int $supplierId, array $data): PurchaseOrder
     {
-        $supplier = Supplier::findOrFail($supplierId);
+        if ($request->purchaseOrders()->exists()) {
+            throw new \DomainException(trans_message('procurement.purchase_orders.already_exists_for_request'));
+        }
+
+        $supplier = Supplier::query()
+            ->where('organization_id', $request->organization_id)
+            ->where('id', $supplierId)
+            ->first();
+
+        if (!$supplier) {
+            throw new \DomainException(trans_message('procurement.purchase_orders.supplier_not_found'));
+        }
 
         DB::beginTransaction();
+
         try {
             $orderNumber = $this->generateOrderNumber($request->organization_id);
 
@@ -44,7 +58,6 @@ class PurchaseOrderService
                 'metadata' => $data['metadata'] ?? null,
             ]);
 
-            // Копируем позиции из заявки с объекта
             $siteRequest = $request->siteRequest;
             if ($siteRequest && ($siteRequest->material_id || $siteRequest->material_name)) {
                 $order->items()->create([
@@ -70,23 +83,20 @@ class PurchaseOrderService
         }
     }
 
-    /**
-     * Отправить заказ поставщику
-     */
     public function sendToSupplier(PurchaseOrder $order): PurchaseOrder
     {
         if (!$order->canBeSent()) {
-            throw new \DomainException('Заказ не может быть отправлен в текущем статусе');
+            throw new \DomainException(trans_message('procurement.purchase_orders.invalid_status_for_send'));
         }
 
         if (!$order->supplier || !$order->supplier->email) {
-            throw new \DomainException('У поставщика не указан контактный email');
+            throw new \DomainException(trans_message('procurement.purchase_orders.supplier_email_missing'));
         }
 
         DB::beginTransaction();
+
         try {
             $pdfPath = $this->pdfService->store($order);
-            
             $temporaryUrl = $this->pdfService->getTemporaryUrl($order, $pdfPath, 1440);
 
             \Illuminate\Support\Facades\Mail::to($order->supplier->email)
@@ -99,7 +109,7 @@ class PurchaseOrderService
                     'pdf_path' => $pdfPath,
                     'pdf_temporary_url' => $temporaryUrl,
                     'email_sent_to' => $order->supplier->email,
-                    'sent_by_user_id' => auth()->id()
+                    'sent_by_user_id' => auth()->id(),
                 ]),
             ]);
 
@@ -116,16 +126,14 @@ class PurchaseOrderService
         }
     }
 
-    /**
-     * Подтвердить заказ с КП
-     */
     public function confirm(PurchaseOrder $order, array $proposalData): PurchaseOrder
     {
         if (!$order->canBeConfirmed()) {
-            throw new \DomainException('Заказ не может быть подтвержден в текущем статусе');
+            throw new \DomainException(trans_message('procurement.purchase_orders.invalid_status_for_confirm'));
         }
 
         DB::beginTransaction();
+
         try {
             $order->update([
                 'status' => PurchaseOrderStatusEnum::CONFIRMED,
@@ -133,10 +141,8 @@ class PurchaseOrderService
                 'total_amount' => $proposalData['total_amount'] ?? $order->total_amount,
             ]);
 
-            // Создаем КП, если передано
             if (isset($proposalData['items'])) {
-                $proposalService = app(SupplierProposalService::class);
-                $proposalService->createFromOrder($order, $proposalData);
+                app(SupplierProposalService::class)->createFromOrder($order, $proposalData);
             }
 
             DB::commit();
@@ -150,75 +156,78 @@ class PurchaseOrderService
         }
     }
 
-    /**
-     * Получить материалы от поставщика
-     * 
-     * @param PurchaseOrder $order
-     * @param int $warehouseId ID склада для приема материалов
-     * @param array $items Массив позиций с данными о полученных материалах
-     *        [['item_id' => 1, 'quantity_received' => 10, 'price' => 100.50], ...]
-     * @param int $userId ID пользователя, принимающего материалы
-     * @return PurchaseOrder
-     */
     public function receiveMaterials(
         PurchaseOrder $order,
         int $warehouseId,
         array $items,
         int $userId
     ): PurchaseOrder {
-        // Проверяем что заказ может быть доставлен
         if (!in_array($order->status, [
             PurchaseOrderStatusEnum::CONFIRMED,
-            PurchaseOrderStatusEnum::IN_DELIVERY
-        ])) {
-            throw new \DomainException('Материалы можно принять только для подтвержденных заказов или заказов в доставке');
+            PurchaseOrderStatusEnum::IN_DELIVERY,
+        ], true)) {
+            throw new \DomainException(trans_message('procurement.purchase_orders.invalid_status_for_receive'));
         }
 
-        DB::beginTransaction();
-        try {
-            // Обновляем статус заказа на "Доставлен"
-            $order->update([
-                'status' => PurchaseOrderStatusEnum::DELIVERED,
-            ]);
+        $warehouse = OrganizationWarehouse::query()
+            ->where('organization_id', $order->organization_id)
+            ->where('id', $warehouseId)
+            ->where('is_active', true)
+            ->first();
 
-            // Отправляем событие для обновления склада
+        if (!$warehouse) {
+            throw new \DomainException(trans_message('procurement.purchase_orders.warehouse_not_found'));
+        }
+
+        $orderItems = $this->resolveOrderItems($order, $items);
+
+        DB::beginTransaction();
+
+        try {
             event(new \App\BusinessModules\Features\Procurement\Events\MaterialReceivedFromSupplier(
                 $order,
-                $warehouseId,
+                $warehouse->id,
                 $items,
                 $userId
             ));
 
+            $order->update([
+                'status' => PurchaseOrderStatusEnum::DELIVERED,
+            ]);
+
             DB::commit();
 
-            \Log::info('procurement.materials_received', [
+            $this->invalidateCache($order->organization_id);
+
+            Log::info('procurement.materials_received', [
                 'purchase_order_id' => $order->id,
-                'warehouse_id' => $warehouseId,
-                'items_count' => count($items),
+                'warehouse_id' => $warehouse->id,
+                'items_count' => $orderItems->count(),
                 'user_id' => $userId,
             ]);
 
             return $order->fresh(['items', 'supplier', 'purchaseRequest']);
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error('procurement.materials_receive_failed', [
+
+            Log::error('procurement.materials_receive_failed', [
                 'purchase_order_id' => $order->id,
+                'warehouse_id' => $warehouse->id,
                 'error' => $e->getMessage(),
             ]);
+
             throw $e;
         }
     }
 
-    /**
-     * Перевести заказ в статус "В доставке"
-     */
     public function markInDelivery(PurchaseOrder $order): PurchaseOrder
     {
         if ($order->status !== PurchaseOrderStatusEnum::CONFIRMED) {
-            throw new \DomainException('Только подтвержденные заказы могут быть переведены в доставку');
+            throw new \DomainException(trans_message('procurement.purchase_orders.invalid_status_for_delivery'));
         }
 
         DB::beginTransaction();
+
         try {
             $order->update([
                 'status' => PurchaseOrderStatusEnum::IN_DELIVERY,
@@ -228,7 +237,7 @@ class PurchaseOrderService
 
             $this->invalidateCache($order->organization_id);
 
-            \Log::info('procurement.purchase_order.in_delivery', [
+            Log::info('procurement.purchase_order.in_delivery', [
                 'purchase_order_id' => $order->id,
             ]);
 
@@ -239,22 +248,35 @@ class PurchaseOrderService
         }
     }
 
-    /**
-     * Создать договор поставки из заказа
-     */
     public function createContractFromOrder(PurchaseOrder $order): Contract
     {
         if ($order->hasContract()) {
-            throw new \DomainException('Договор уже создан для этого заказа');
+            throw new \DomainException(trans_message('procurement.purchase_orders.contract_already_exists'));
         }
 
-        $contractService = app(PurchaseContractService::class);
-        return $contractService->createFromOrder($order);
+        return app(PurchaseContractService::class)->createFromOrder($order);
     }
 
-    /**
-     * Генерировать номер заказа
-     */
+    private function resolveOrderItems(PurchaseOrder $order, array $items): Collection
+    {
+        $orderItemIds = collect($items)
+            ->pluck('item_id')
+            ->map(static fn ($value) => (int) $value)
+            ->unique()
+            ->values();
+
+        $orderItems = $order->items()
+            ->whereIn('id', $orderItemIds)
+            ->get()
+            ->keyBy('id');
+
+        if ($orderItems->count() !== $orderItemIds->count()) {
+            throw new \DomainException(trans_message('procurement.purchase_orders.item_not_found'));
+        }
+
+        return $orderItems->values();
+    }
+
     private function generateOrderNumber(int $organizationId): string
     {
         $year = date('Y');
@@ -263,23 +285,19 @@ class PurchaseOrderService
         $lastOrder = PurchaseOrder::where('organization_id', $organizationId)
             ->whereYear('created_at', $year)
             ->whereMonth('created_at', $month)
-            ->orderBy('id', 'desc')
+            ->orderByDesc('id')
             ->first();
 
         $nextNumber = 1;
         if ($lastOrder && preg_match('/(\d+)$/', $lastOrder->order_number, $matches)) {
-            $nextNumber = intval($matches[1]) + 1;
+            $nextNumber = ((int) $matches[1]) + 1;
         }
 
         return sprintf('ЗП-%s%s-%04d', $year, $month, $nextNumber);
     }
 
-    /**
-     * Инвалидация кеша
-     */
     private function invalidateCache(int $organizationId): void
     {
         Cache::forget("procurement_purchase_orders_{$organizationId}");
     }
 }
-
