@@ -39,7 +39,8 @@ scope:
   allowed: []
 
 # Co-Author settings
-co_author:`r`n  enabled: false
+co_author:
+  enabled: false
 
 # Forbidden file patterns (commit warnings)
 forbidden_patterns:
