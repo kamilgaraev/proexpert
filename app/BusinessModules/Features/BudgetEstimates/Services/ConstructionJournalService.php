@@ -1,25 +1,34 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\BudgetEstimates\Services;
 
+use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
+use App\Enums\ConstructionJournal\JournalStatusEnum;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
+use App\Models\Contract;
+use App\Models\Estimate;
+use App\Models\EstimateItem;
+use App\Models\Material;
+use App\Models\MeasurementUnit;
 use App\Models\Project;
+use App\Models\ScheduleTask;
 use App\Models\User;
-use App\Enums\ConstructionJournal\JournalStatusEnum;
-use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
+use App\Models\WorkType;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\DB;
+use DomainException;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\DB;
 
 class ConstructionJournalService
 {
-    /**
-     * Создать новый журнал работ для проекта
-     */
     public function createJournal(Project $project, array $data, User $user): ConstructionJournal
     {
-        return DB::transaction(function () use ($project, $data, $user) {
+        return DB::transaction(function () use ($project, $data, $user): ConstructionJournal {
+            $this->assertContractScope($project, $data['contract_id'] ?? null);
+
             $journal = ConstructionJournal::create([
                 'organization_id' => $project->organization_id,
                 'project_id' => $project->id,
@@ -36,32 +45,27 @@ class ConstructionJournalService
         });
     }
 
-    /**
-     * Обновить журнал работ
-     */
     public function updateJournal(ConstructionJournal $journal, array $data): ConstructionJournal
     {
+        if (array_key_exists('contract_id', $data)) {
+            $this->assertContractScope($journal->project, $data['contract_id']);
+        }
+
         $journal->update($data);
+
         return $journal->fresh(['project', 'contract', 'createdBy']);
     }
 
-    /**
-     * Удалить журнал работ
-     */
     public function deleteJournal(ConstructionJournal $journal): bool
     {
-        return DB::transaction(function () use ($journal) {
-            // Записи удалятся автоматически через cascade
-            return $journal->delete();
-        });
+        return DB::transaction(fn (): bool => (bool) $journal->delete());
     }
 
-    /**
-     * Создать запись в журнале работ
-     */
     public function createEntry(ConstructionJournal $journal, array $data, User $user): ConstructionJournalEntry
     {
-        return DB::transaction(function () use ($journal, $data, $user) {
+        return DB::transaction(function () use ($journal, $data, $user): ConstructionJournalEntry {
+            $this->assertEntryScope($journal, $data);
+
             $entryNumber = $data['entry_number'] ?? $journal->getNextEntryNumber();
 
             $entry = ConstructionJournalEntry::create([
@@ -80,7 +84,6 @@ class ConstructionJournalService
                 'quality_notes' => $data['quality_notes'] ?? null,
             ]);
 
-            // Добавить связанные данные
             if (isset($data['work_volumes']) && is_array($data['work_volumes'])) {
                 $this->attachWorkVolumes($entry, $data['work_volumes']);
             }
@@ -100,142 +103,140 @@ class ConstructionJournalService
             return $entry->load([
                 'journal',
                 'scheduleTask',
+                'estimate',
                 'createdBy',
-                'workVolumes',
+                'workVolumes.estimateItem',
+                'workVolumes.workType',
+                'workVolumes.measurementUnit',
                 'workers',
                 'equipment',
-                'materials'
+                'materials.material',
             ]);
         });
     }
 
-    /**
-     * Обновить запись журнала
-     */
     public function updateEntry(ConstructionJournalEntry $entry, array $data): ConstructionJournalEntry
     {
-        return DB::transaction(function () use ($entry, $data) {
-            // Обновить основные данные
+        return DB::transaction(function () use ($entry, $data): ConstructionJournalEntry {
+            $this->assertEntryScope($entry->journal, $data, $entry);
+
             $updateData = [];
-            if (isset($data['schedule_task_id'])) {
+
+            if (array_key_exists('schedule_task_id', $data)) {
                 $updateData['schedule_task_id'] = $data['schedule_task_id'];
             }
-            if (isset($data['estimate_id'])) {
+
+            if (array_key_exists('estimate_id', $data)) {
                 $updateData['estimate_id'] = $data['estimate_id'];
             }
-            if (isset($data['entry_date'])) {
+
+            if (array_key_exists('entry_date', $data)) {
                 $updateData['entry_date'] = $data['entry_date'];
             }
-            if (isset($data['work_description'])) {
+
+            if (array_key_exists('work_description', $data)) {
                 $updateData['work_description'] = $data['work_description'];
             }
-            if (isset($data['weather_conditions'])) {
+
+            if (array_key_exists('weather_conditions', $data)) {
                 $updateData['weather_conditions'] = $data['weather_conditions'];
             }
-            if (isset($data['problems_description'])) {
+
+            if (array_key_exists('problems_description', $data)) {
                 $updateData['problems_description'] = $data['problems_description'];
             }
-            if (isset($data['safety_notes'])) {
+
+            if (array_key_exists('safety_notes', $data)) {
                 $updateData['safety_notes'] = $data['safety_notes'];
             }
-            if (isset($data['visitors_notes'])) {
+
+            if (array_key_exists('visitors_notes', $data)) {
                 $updateData['visitors_notes'] = $data['visitors_notes'];
             }
-            if (isset($data['quality_notes'])) {
+
+            if (array_key_exists('quality_notes', $data)) {
                 $updateData['quality_notes'] = $data['quality_notes'];
             }
-            
-            if (!empty($updateData)) {
+
+            if ($updateData !== []) {
                 $entry->update($updateData);
             }
 
-            // Обновить связанные данные если указаны
-            if (isset($data['work_volumes'])) {
+            if (array_key_exists('work_volumes', $data)) {
                 $entry->workVolumes()->delete();
-                $this->attachWorkVolumes($entry, $data['work_volumes']);
+                $this->attachWorkVolumes($entry, $data['work_volumes'] ?? []);
             }
 
-            if (isset($data['workers'])) {
+            if (array_key_exists('workers', $data)) {
                 $entry->workers()->delete();
-                $this->attachWorkers($entry, $data['workers']);
+                $this->attachWorkers($entry, $data['workers'] ?? []);
             }
 
-            if (isset($data['equipment'])) {
+            if (array_key_exists('equipment', $data)) {
                 $entry->equipment()->delete();
-                $this->attachEquipment($entry, $data['equipment']);
+                $this->attachEquipment($entry, $data['equipment'] ?? []);
             }
 
-            if (isset($data['materials'])) {
+            if (array_key_exists('materials', $data)) {
                 $entry->materials()->delete();
-                $this->attachMaterials($entry, $data['materials']);
+                $this->attachMaterials($entry, $data['materials'] ?? []);
             }
 
             return $entry->fresh([
                 'journal',
                 'scheduleTask',
+                'estimate',
                 'createdBy',
-                'workVolumes',
+                'approvedBy',
+                'workVolumes.estimateItem',
+                'workVolumes.workType',
+                'workVolumes.measurementUnit',
                 'workers',
                 'equipment',
-                'materials'
+                'materials.material',
             ]);
         });
     }
 
-    /**
-     * Удалить запись журнала
-     */
     public function deleteEntry(ConstructionJournalEntry $entry): bool
     {
-        return DB::transaction(function () use ($entry) {
-            // Связанные данные удалятся автоматически через cascade
-            return $entry->delete();
-        });
+        return DB::transaction(fn (): bool => (bool) $entry->delete());
     }
 
-    /**
-     * Получить записи за конкретную дату
-     */
     public function getDailyEntries(ConstructionJournal $journal, Carbon $date): Collection
     {
         return $journal->entries()
             ->byDate($date)
             ->with([
                 'scheduleTask',
+                'estimate',
                 'createdBy',
                 'approvedBy',
                 'workVolumes.estimateItem',
                 'workers',
                 'equipment',
-                'materials'
+                'materials.material',
             ])
             ->get();
     }
 
-    /**
-     * Получить записи за период
-     */
     public function getEntriesForPeriod(ConstructionJournal $journal, Carbon $from, Carbon $to): Collection
     {
         return $journal->entries()
             ->byDateRange($from, $to)
             ->with([
                 'scheduleTask',
+                'estimate',
                 'createdBy',
                 'approvedBy',
                 'workVolumes.estimateItem',
                 'workers',
                 'equipment',
-                'materials'
+                'materials.material',
             ])
             ->get();
     }
 
-    // === PROTECTED METHODS ===
-
-    /**
-     * Прикрепить объемы работ к записи
-     */
     protected function attachWorkVolumes(ConstructionJournalEntry $entry, array $volumes): void
     {
         foreach ($volumes as $volume) {
@@ -249,9 +250,6 @@ class ConstructionJournalService
         }
     }
 
-    /**
-     * Прикрепить рабочих к записи
-     */
     protected function attachWorkers(ConstructionJournalEntry $entry, array $workers): void
     {
         foreach ($workers as $worker) {
@@ -263,9 +261,6 @@ class ConstructionJournalService
         }
     }
 
-    /**
-     * Прикрепить оборудование к записи
-     */
     protected function attachEquipment(ConstructionJournalEntry $entry, array $equipment): void
     {
         foreach ($equipment as $item) {
@@ -278,9 +273,6 @@ class ConstructionJournalService
         }
     }
 
-    /**
-     * Прикрепить материалы к записи
-     */
     protected function attachMaterials(ConstructionJournalEntry $entry, array $materials): void
     {
         foreach ($materials as $material) {
@@ -294,9 +286,6 @@ class ConstructionJournalService
         }
     }
 
-    /**
-     * Сгенерировать номер журнала
-     */
     protected function generateJournalNumber(Project $project): string
     {
         $year = now()->year;
@@ -304,7 +293,174 @@ class ConstructionJournalService
             ->whereYear('created_at', $year)
             ->count() + 1;
 
-        return "ОЖР-{$project->id}-{$year}-{$count}";
+        return "РћР–Р -{$project->id}-{$year}-{$count}";
+    }
+
+    protected function assertContractScope(Project $project, ?int $contractId): void
+    {
+        if (!$contractId) {
+            return;
+        }
+
+        $contract = Contract::query()
+            ->where('id', $contractId)
+            ->where('organization_id', $project->organization_id)
+            ->where(function ($query) use ($project): void {
+                $query->where('project_id', $project->id)
+                    ->orWhereHas('projects', function ($projectsQuery) use ($project): void {
+                        $projectsQuery->where('projects.id', $project->id);
+                    });
+            })
+            ->first();
+
+        if (!$contract) {
+            throw new DomainException(trans_message('construction_journal.errors.invalid_contract'));
+        }
+    }
+
+    protected function assertEntryScope(ConstructionJournal $journal, array $data, ?ConstructionJournalEntry $entry = null): void
+    {
+        $estimateId = $data['estimate_id'] ?? $entry?->estimate_id;
+        $scheduleTaskId = $data['schedule_task_id'] ?? $entry?->schedule_task_id;
+
+        $this->assertEstimateScope($journal, $estimateId);
+        $this->assertScheduleTaskScope($journal, $scheduleTaskId, $estimateId);
+
+        foreach (($data['work_volumes'] ?? []) as $volume) {
+            $this->assertEstimateItemScope($journal, $volume['estimate_item_id'] ?? null, $estimateId);
+            $this->assertWorkTypeScope($journal, $volume['work_type_id'] ?? null);
+            $this->assertMeasurementUnitScope($journal, $volume['measurement_unit_id'] ?? null);
+        }
+
+        foreach (($data['materials'] ?? []) as $material) {
+            $this->assertMaterialScope($journal, $material['material_id'] ?? null);
+        }
+    }
+
+    protected function assertEstimateScope(ConstructionJournal $journal, ?int $estimateId): void
+    {
+        if (!$estimateId) {
+            return;
+        }
+
+        $estimate = Estimate::query()
+            ->where('id', $estimateId)
+            ->where('organization_id', $journal->organization_id)
+            ->where('project_id', $journal->project_id)
+            ->first();
+
+        if (!$estimate) {
+            throw new DomainException(trans_message('construction_journal.errors.invalid_estimate'));
+        }
+    }
+
+    protected function assertScheduleTaskScope(ConstructionJournal $journal, ?int $scheduleTaskId, ?int $estimateId): void
+    {
+        if (!$scheduleTaskId) {
+            return;
+        }
+
+        $task = ScheduleTask::query()
+            ->where('id', $scheduleTaskId)
+            ->where('organization_id', $journal->organization_id)
+            ->whereHas('schedule', function ($query) use ($journal): void {
+                $query->where('project_id', $journal->project_id);
+            })
+            ->first();
+
+        if (!$task) {
+            throw new DomainException(trans_message('construction_journal.errors.invalid_schedule_task'));
+        }
+
+        if ($estimateId && $task->estimate_item_id) {
+            $estimateItem = EstimateItem::query()
+                ->where('id', $task->estimate_item_id)
+                ->whereHas('estimate', function ($query) use ($estimateId): void {
+                    $query->where('id', $estimateId);
+                })
+                ->first();
+
+            if (!$estimateItem) {
+                throw new DomainException(trans_message('construction_journal.errors.schedule_task_estimate_mismatch'));
+            }
+        }
+    }
+
+    protected function assertEstimateItemScope(ConstructionJournal $journal, ?int $estimateItemId, ?int $estimateId): void
+    {
+        if (!$estimateItemId) {
+            return;
+        }
+
+        $item = EstimateItem::query()
+            ->where('id', $estimateItemId)
+            ->whereHas('estimate', function ($query) use ($journal, $estimateId): void {
+                $query->where('organization_id', $journal->organization_id)
+                    ->where('project_id', $journal->project_id);
+
+                if ($estimateId) {
+                    $query->where('id', $estimateId);
+                }
+            })
+            ->first();
+
+        if (!$item) {
+            throw new DomainException(trans_message('construction_journal.errors.invalid_estimate_item'));
+        }
+    }
+
+    protected function assertMaterialScope(ConstructionJournal $journal, ?int $materialId): void
+    {
+        if (!$materialId) {
+            return;
+        }
+
+        $material = Material::query()
+            ->where('id', $materialId)
+            ->where('organization_id', $journal->organization_id)
+            ->first();
+
+        if (!$material) {
+            throw new DomainException(trans_message('construction_journal.errors.invalid_material'));
+        }
+    }
+
+    protected function assertWorkTypeScope(ConstructionJournal $journal, ?int $workTypeId): void
+    {
+        if (!$workTypeId) {
+            return;
+        }
+
+        $workType = WorkType::query()
+            ->where('id', $workTypeId)
+            ->where(function ($query) use ($journal): void {
+                $query->where('organization_id', $journal->organization_id)
+                    ->orWhereNull('organization_id');
+            })
+            ->first();
+
+        if (!$workType) {
+            throw new DomainException(trans_message('construction_journal.errors.invalid_work_type'));
+        }
+    }
+
+    protected function assertMeasurementUnitScope(ConstructionJournal $journal, ?int $measurementUnitId): void
+    {
+        if (!$measurementUnitId) {
+            return;
+        }
+
+        $unit = MeasurementUnit::query()
+            ->where('id', $measurementUnitId)
+            ->where(function ($query) use ($journal): void {
+                $query->where('organization_id', $journal->organization_id)
+                    ->orWhereNull('organization_id')
+                    ->orWhere('is_system', true);
+            })
+            ->first();
+
+        if (!$unit) {
+            throw new DomainException(trans_message('construction_journal.errors.invalid_measurement_unit'));
+        }
     }
 }
-

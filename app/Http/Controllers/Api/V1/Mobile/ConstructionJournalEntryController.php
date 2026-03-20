@@ -2,15 +2,16 @@
 
 declare(strict_types=1);
 
-namespace App\Http\Controllers\Api;
+namespace App\Http\Controllers\Api\V1\Mobile;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalPayloadService;
 use App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalService;
 use App\BusinessModules\Features\BudgetEstimates\Services\JournalApprovalService;
 use App\Http\Controllers\Controller;
-use App\Http\Responses\AdminResponse;
+use App\Http\Responses\MobileResponse;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
+use App\Services\Mobile\MobileConstructionJournalService;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -19,29 +20,36 @@ use Illuminate\Support\Facades\Log;
 class ConstructionJournalEntryController extends Controller
 {
     public function __construct(
-        protected ConstructionJournalService $journalService,
-        protected JournalApprovalService $approvalService,
-        protected ConstructionJournalPayloadService $payloadService
+        private readonly MobileConstructionJournalService $mobileJournalService,
+        private readonly ConstructionJournalService $journalService,
+        private readonly JournalApprovalService $approvalService,
+        private readonly ConstructionJournalPayloadService $payloadService
     ) {
     }
 
-    public function store(Request $request, ConstructionJournal $journal): JsonResponse
+    public function store(ConstructionJournal $journal, Request $request): JsonResponse
     {
         try {
+            $user = $request->user();
+            if (!$user) {
+                return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
+            }
+
+            $this->mobileJournalService->assertJournalAccess($user, $journal);
             $this->authorize('create', [ConstructionJournalEntry::class, $journal]);
 
             $validated = $request->validate($this->entryRules());
-            $entry = $this->journalService->createEntry($journal, $validated, $request->user());
+            $entry = $this->journalService->createEntry($journal, $validated, $user);
 
-            return AdminResponse::success(
-                $this->payloadService->mapEntry($entry, $request->user()),
+            return MobileResponse::success(
+                $this->payloadService->mapEntry($entry, $user),
                 trans_message('construction_journal.messages.entry_created'),
                 201
             );
         } catch (DomainException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422);
+            return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
-            Log::error('construction_journal_entry.store.error', [
+            Log::error('mobile.construction_journal_entry.store.error', [
                 'user_id' => $request->user()?->id,
                 'organization_id' => $request->user()?->current_organization_id,
                 'journal_id' => $journal->id,
@@ -49,13 +57,19 @@ class ConstructionJournalEntryController extends Controller
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error(trans_message('construction_journal.errors.entry_create_failed'), 500);
+            return MobileResponse::error(trans_message('mobile_construction_journal.errors.entry_create_failed'), 500);
         }
     }
 
-    public function show(Request $request, ConstructionJournalEntry $entry): JsonResponse
+    public function show(ConstructionJournalEntry $entry, Request $request): JsonResponse
     {
         try {
+            $user = $request->user();
+            if (!$user) {
+                return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
+            }
+
+            $this->mobileJournalService->assertJournalAccess($user, $entry->journal);
             $this->authorize('view', $entry);
 
             $entry->load([
@@ -74,41 +88,47 @@ class ConstructionJournalEntryController extends Controller
                 'materials.material',
             ]);
 
-            return AdminResponse::success($this->payloadService->mapEntry($entry, $request->user()));
+            return MobileResponse::success($this->payloadService->mapEntry($entry, $user));
         } catch (DomainException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422);
+            return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
-            Log::error('construction_journal_entry.show.error', [
+            Log::error('mobile.construction_journal_entry.show.error', [
                 'user_id' => $request->user()?->id,
                 'organization_id' => $request->user()?->current_organization_id,
                 'entry_id' => $entry->id,
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error(trans_message('construction_journal.errors.load_failed'), 500);
+            return MobileResponse::error(trans_message('mobile_construction_journal.errors.load_failed'), 500);
         }
     }
 
-    public function update(Request $request, ConstructionJournalEntry $entry): JsonResponse
+    public function update(ConstructionJournalEntry $entry, Request $request): JsonResponse
     {
         try {
+            $user = $request->user();
+            if (!$user) {
+                return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
+            }
+
+            $this->mobileJournalService->assertJournalAccess($user, $entry->journal);
             $this->authorize('update', $entry);
 
             if (!$entry->canBeEdited()) {
-                return AdminResponse::error(trans_message('construction_journal.errors.entry_edit_forbidden_status'), 422);
+                return MobileResponse::error(trans_message('construction_journal.errors.entry_edit_forbidden_status'), 422);
             }
 
             $validated = $request->validate($this->entryRules(true));
             $entry = $this->journalService->updateEntry($entry, $validated);
 
-            return AdminResponse::success(
-                $this->payloadService->mapEntry($entry, $request->user()),
+            return MobileResponse::success(
+                $this->payloadService->mapEntry($entry, $user),
                 trans_message('construction_journal.messages.entry_updated')
             );
         } catch (DomainException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422);
+            return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
-            Log::error('construction_journal_entry.update.error', [
+            Log::error('mobile.construction_journal_entry.update.error', [
                 'user_id' => $request->user()?->id,
                 'organization_id' => $request->user()?->current_organization_id,
                 'entry_id' => $entry->id,
@@ -116,69 +136,56 @@ class ConstructionJournalEntryController extends Controller
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error(trans_message('construction_journal.errors.entry_update_failed'), 500);
+            return MobileResponse::error(trans_message('mobile_construction_journal.errors.entry_update_failed'), 500);
         }
     }
 
-    public function destroy(Request $request, ConstructionJournalEntry $entry): JsonResponse
+    public function destroy(ConstructionJournalEntry $entry, Request $request): JsonResponse
     {
         try {
+            $user = $request->user();
+            if (!$user) {
+                return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
+            }
+
+            $this->mobileJournalService->assertJournalAccess($user, $entry->journal);
             $this->authorize('delete', $entry);
 
             if (!$entry->canBeEdited()) {
-                return AdminResponse::error(trans_message('construction_journal.errors.entry_delete_forbidden_status'), 422);
+                return MobileResponse::error(trans_message('construction_journal.errors.entry_delete_forbidden_status'), 422);
             }
 
             $this->journalService->deleteEntry($entry);
 
-            return AdminResponse::success(null, trans_message('construction_journal.messages.entry_deleted'));
+            return MobileResponse::success(null, trans_message('construction_journal.messages.entry_deleted'));
         } catch (DomainException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422);
+            return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
-            Log::error('construction_journal_entry.destroy.error', [
+            Log::error('mobile.construction_journal_entry.destroy.error', [
                 'user_id' => $request->user()?->id,
                 'organization_id' => $request->user()?->current_organization_id,
                 'entry_id' => $entry->id,
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error(trans_message('construction_journal.errors.entry_delete_failed'), 500);
+            return MobileResponse::error(trans_message('mobile_construction_journal.errors.entry_delete_failed'), 500);
         }
     }
 
-    public function submit(Request $request, ConstructionJournalEntry $entry): JsonResponse
+    public function submit(ConstructionJournalEntry $entry, Request $request): JsonResponse
     {
         try {
+            $user = $request->user();
+            if (!$user) {
+                return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
+            }
+
+            $this->mobileJournalService->assertJournalAccess($user, $entry->journal);
             $this->authorize('update', $entry);
 
             $entry = $this->approvalService->submitForApproval($entry->load(['journal', 'createdBy', 'workVolumes']));
 
-            return AdminResponse::success(
-                $this->payloadService->mapEntry($entry->load(['journal', 'createdBy', 'approvedBy', 'workVolumes']), $request->user()),
-                trans_message('construction_journal.messages.entry_submitted')
-            );
-        } catch (DomainException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422);
-        } catch (\Throwable $exception) {
-            Log::error('construction_journal_entry.submit.error', [
-                'user_id' => $request->user()?->id,
-                'organization_id' => $request->user()?->current_organization_id,
-                'entry_id' => $entry->id,
-                'error' => $exception->getMessage(),
-            ]);
-
-            return AdminResponse::error(trans_message('construction_journal.errors.submit_failed'), 500);
-        }
-    }
-
-    public function approve(Request $request, ConstructionJournalEntry $entry): JsonResponse
-    {
-        try {
-            $this->authorize('approve', $entry);
-
-            $entry = $this->approvalService->approve($entry->load(['journal', 'createdBy', 'scheduleTask', 'workVolumes']), $request->user());
-
-            return AdminResponse::success(
+            return MobileResponse::success(
                 $this->payloadService->mapEntry($entry->load([
                     'journal',
                     'scheduleTask',
@@ -191,35 +198,84 @@ class ConstructionJournalEntryController extends Controller
                     'workers',
                     'equipment',
                     'materials.material',
-                ]), $request->user()),
-                trans_message('construction_journal.messages.entry_approved')
+                ]), $user),
+                trans_message('construction_journal.messages.entry_submitted')
             );
         } catch (DomainException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422);
+            return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
-            Log::error('construction_journal_entry.approve.error', [
+            Log::error('mobile.construction_journal_entry.submit.error', [
                 'user_id' => $request->user()?->id,
                 'organization_id' => $request->user()?->current_organization_id,
                 'entry_id' => $entry->id,
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error(trans_message('construction_journal.errors.approve_failed'), 500);
+            return MobileResponse::error(trans_message('mobile_construction_journal.errors.submit_failed'), 500);
         }
     }
 
-    public function reject(Request $request, ConstructionJournalEntry $entry): JsonResponse
+    public function approve(ConstructionJournalEntry $entry, Request $request): JsonResponse
     {
         try {
+            $user = $request->user();
+            if (!$user) {
+                return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
+            }
+
+            $this->mobileJournalService->assertJournalAccess($user, $entry->journal);
+            $this->authorize('approve', $entry);
+
+            $entry = $this->approvalService->approve($entry->load(['journal', 'createdBy', 'scheduleTask', 'workVolumes']), $user);
+
+            return MobileResponse::success(
+                $this->payloadService->mapEntry($entry->load([
+                    'journal',
+                    'scheduleTask',
+                    'estimate',
+                    'createdBy',
+                    'approvedBy',
+                    'workVolumes.estimateItem',
+                    'workVolumes.workType',
+                    'workVolumes.measurementUnit',
+                    'workers',
+                    'equipment',
+                    'materials.material',
+                ]), $user),
+                trans_message('construction_journal.messages.entry_approved')
+            );
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            Log::error('mobile.construction_journal_entry.approve.error', [
+                'user_id' => $request->user()?->id,
+                'organization_id' => $request->user()?->current_organization_id,
+                'entry_id' => $entry->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return MobileResponse::error(trans_message('mobile_construction_journal.errors.approve_failed'), 500);
+        }
+    }
+
+    public function reject(ConstructionJournalEntry $entry, Request $request): JsonResponse
+    {
+        try {
+            $user = $request->user();
+            if (!$user) {
+                return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
+            }
+
+            $this->mobileJournalService->assertJournalAccess($user, $entry->journal);
             $this->authorize('approve', $entry);
 
             $validated = $request->validate([
                 'reason' => 'required|string|min:10',
             ]);
 
-            $entry = $this->approvalService->reject($entry->load(['journal', 'createdBy']), $request->user(), $validated['reason']);
+            $entry = $this->approvalService->reject($entry->load(['journal', 'createdBy']), $user, $validated['reason']);
 
-            return AdminResponse::success(
+            return MobileResponse::success(
                 $this->payloadService->mapEntry($entry->load([
                     'journal',
                     'scheduleTask',
@@ -232,13 +288,13 @@ class ConstructionJournalEntryController extends Controller
                     'workers',
                     'equipment',
                     'materials.material',
-                ]), $request->user()),
+                ]), $user),
                 trans_message('construction_journal.messages.entry_rejected')
             );
         } catch (DomainException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422);
+            return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
-            Log::error('construction_journal_entry.reject.error', [
+            Log::error('mobile.construction_journal_entry.reject.error', [
                 'user_id' => $request->user()?->id,
                 'organization_id' => $request->user()?->current_organization_id,
                 'entry_id' => $entry->id,
@@ -246,7 +302,7 @@ class ConstructionJournalEntryController extends Controller
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error(trans_message('construction_journal.errors.reject_failed'), 500);
+            return MobileResponse::error(trans_message('mobile_construction_journal.errors.reject_failed'), 500);
         }
     }
 

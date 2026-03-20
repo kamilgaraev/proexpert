@@ -1,144 +1,111 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\BudgetEstimates\Services;
 
+use App\BusinessModules\Features\BudgetEstimates\Events\JournalEntryApproved;
+use App\BusinessModules\Features\BudgetEstimates\Events\JournalEntryRejected;
+use App\BusinessModules\Features\BudgetEstimates\Events\JournalEntrySubmitted;
+use App\BusinessModules\Features\BudgetEstimates\Services\Integration\JournalScheduleIntegrationService;
+use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
 use App\Models\ConstructionJournalEntry;
 use App\Models\User;
-use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
+use App\Notifications\Journal\JournalEntryApprovedNotification;
+use App\Notifications\Journal\JournalEntryRejectedNotification;
+use DomainException;
 use Illuminate\Support\Facades\DB;
 
 class JournalApprovalService
 {
-    /**
-     * Отправить запись на утверждение
-     */
+    public function __construct(
+        private readonly JournalScheduleIntegrationService $journalScheduleIntegrationService
+    ) {
+    }
+
     public function submitForApproval(ConstructionJournalEntry $entry): ConstructionJournalEntry
     {
         if (!$entry->status->canSubmit()) {
-            throw new \DomainException('Запись не может быть отправлена на утверждение в текущем статусе');
+            throw new DomainException(trans_message('construction_journal.errors.submit_invalid_status'));
         }
 
-        // Валидация: проверить что заполнены обязательные поля
         $this->validateEntryForSubmission($entry);
 
         $entry->submit();
-        
-        // Отправить событие
-        event(new \App\BusinessModules\Features\BudgetEstimates\Events\JournalEntrySubmitted($entry));
+
+        event(new JournalEntrySubmitted($entry));
 
         return $entry->fresh();
     }
 
-    /**
-     * Утвердить запись
-     */
     public function approve(ConstructionJournalEntry $entry, User $approver): ConstructionJournalEntry
     {
         if (!$entry->status->canApprove()) {
-            throw new \DomainException('Запись не может быть утверждена в текущем статусе');
+            throw new DomainException(trans_message('construction_journal.errors.approve_invalid_status'));
         }
 
         if (!$this->canApprove($approver, $entry)) {
-            throw new \DomainException('У вас нет прав на утверждение этой записи');
+            throw new DomainException(trans_message('construction_journal.errors.approve_forbidden'));
         }
 
-        return DB::transaction(function () use ($entry, $approver) {
+        return DB::transaction(function () use ($entry, $approver): ConstructionJournalEntry {
             $entry->approve($approver);
+            $this->journalScheduleIntegrationService->updateTaskProgressFromEntry($entry->fresh(['scheduleTask.estimateItem', 'workVolumes']));
 
-            // Обновить прогресс связанной задачи графика
-            $entry->updateScheduleProgress();
+            event(new JournalEntryApproved($entry));
 
-            // Отправить событие
-            event(new \App\BusinessModules\Features\BudgetEstimates\Events\JournalEntryApproved($entry));
+            if ($entry->createdBy) {
+                $entry->createdBy->notify(new JournalEntryApprovedNotification($entry));
+            }
 
-            // Уведомить создателя записи
-            $entry->createdBy->notify(new \App\Notifications\Journal\JournalEntryApprovedNotification($entry));
-
-            return $entry->fresh(['approvedBy', 'scheduleTask']);
+            return $entry->fresh(['approvedBy', 'scheduleTask', 'createdBy']);
         });
     }
 
-    /**
-     * Отклонить запись
-     */
     public function reject(ConstructionJournalEntry $entry, User $approver, string $reason): ConstructionJournalEntry
     {
         if (!$entry->status->canReject()) {
-            throw new \DomainException('Запись не может быть отклонена в текущем статусе');
+            throw new DomainException(trans_message('construction_journal.errors.reject_invalid_status'));
         }
 
         if (!$this->canApprove($approver, $entry)) {
-            throw new \DomainException('У вас нет прав на отклонение этой записи');
+            throw new DomainException(trans_message('construction_journal.errors.reject_forbidden'));
         }
 
-        if (empty($reason)) {
-            throw new \InvalidArgumentException('Необходимо указать причину отклонения');
+        if (trim($reason) === '') {
+            throw new DomainException(trans_message('construction_journal.errors.reject_reason_required'));
         }
 
-        return DB::transaction(function () use ($entry, $approver, $reason) {
+        return DB::transaction(function () use ($entry, $approver, $reason): ConstructionJournalEntry {
             $entry->reject($approver, $reason);
 
-            // Отправить событие
-            event(new \App\BusinessModules\Features\BudgetEstimates\Events\JournalEntryRejected($entry, $reason));
+            event(new JournalEntryRejected($entry, $reason));
 
-            // Уведомить создателя записи
-            $entry->createdBy->notify(new \App\Notifications\Journal\JournalEntryRejectedNotification($entry, $reason));
+            if ($entry->createdBy) {
+                $entry->createdBy->notify(new JournalEntryRejectedNotification($entry, $reason));
+            }
 
-            return $entry->fresh(['approvedBy']);
+            return $entry->fresh(['approvedBy', 'createdBy']);
         });
     }
 
-    /**
-     * Проверить может ли пользователь утверждать запись
-     */
     public function canApprove(User $user, ConstructionJournalEntry $entry): bool
     {
-        // Нельзя утверждать свою собственную запись
         if ($entry->created_by_user_id === $user->id) {
             return false;
         }
 
-        // Проверить что пользователь из той же организации
         $journal = $entry->journal;
-        if ($journal->organization_id !== $user->current_organization_id) {
+        if (!$journal || $journal->organization_id !== $user->current_organization_id) {
             return false;
         }
 
-        // Проверить права доступа
         return $user->can('construction-journal.approve');
     }
 
-    /**
-     * Валидировать запись перед отправкой на утверждение
-     */
-    protected function validateEntryForSubmission(ConstructionJournalEntry $entry): void
-    {
-        $errors = [];
-
-        if (empty($entry->work_description)) {
-            $errors[] = 'Необходимо указать описание выполненных работ';
-        }
-
-        if (!$entry->entry_date) {
-            $errors[] = 'Необходимо указать дату записи';
-        }
-
-        // Проверить что есть хотя бы один объем работ
-        if ($entry->workVolumes()->count() === 0) {
-            $errors[] = 'Необходимо указать хотя бы один объем выполненных работ';
-        }
-
-        if (!empty($errors)) {
-            throw new \InvalidArgumentException('Запись не готова к отправке на утверждение: ' . implode('; ', $errors));
-        }
-    }
-
-    /**
-     * Получить статистику по утверждениям для пользователя
-     */
     public function getApprovalStats(User $user): array
     {
-        $journal = $user->current_organization_id 
+        $journal = $user->current_organization_id
             ? \App\Models\ConstructionJournal::where('organization_id', $user->current_organization_id)->first()
             : null;
 
@@ -170,5 +137,27 @@ class JournalApprovalService
             'rejected_today' => $rejectedToday,
         ];
     }
-}
 
+    protected function validateEntryForSubmission(ConstructionJournalEntry $entry): void
+    {
+        $errors = [];
+
+        if (trim((string) $entry->work_description) === '') {
+            $errors[] = trans_message('construction_journal.errors.validation_work_description');
+        }
+
+        if (!$entry->entry_date) {
+            $errors[] = trans_message('construction_journal.errors.validation_entry_date');
+        }
+
+        if ($entry->workVolumes()->count() === 0) {
+            $errors[] = trans_message('construction_journal.errors.validation_work_volumes');
+        }
+
+        if ($errors !== []) {
+            throw new DomainException(
+                trans_message('construction_journal.errors.submit_validation_prefix') . ': ' . implode('; ', $errors)
+            );
+        }
+    }
+}

@@ -185,7 +185,6 @@ class ConstructionJournalEntry extends Model
         }
 
         // Логика обновления будет в JournalScheduleIntegrationService
-        event(new \App\BusinessModules\Features\BudgetEstimates\Events\JournalEntryApproved($this));
     }
 
     /**
