@@ -24,6 +24,8 @@ use App\Models\ReportTemplate;
 use App\Services\Report\MaterialReportService;
 use App\Services\RateCoefficient\RateCoefficientService;
 use App\Enums\RateCoefficient\RateCoefficientAppliesToEnum;
+use App\Models\TimeEntry;
+use function trans_message;
 
 class ReportService
 {
@@ -1213,114 +1215,163 @@ class ReportService
     {
         $organizationId = $this->getCurrentOrgId($request);
         $format = $request->query('format', 'json');
-        
-        // Безопасный парсинг дат
+
         try {
-            $dateFrom = $request->query('date_from') ? Carbon::parse($request->query('date_from'))->startOfDay() : now()->startOfMonth();
-            $dateTo = $request->query('date_to') ? Carbon::parse($request->query('date_to'))->endOfDay() : now()->endOfDay();
+            $dateFrom = $request->query('date_from')
+                ? Carbon::parse($request->query('date_from'))->startOfDay()
+                : now()->startOfMonth();
+            $dateTo = $request->query('date_to')
+                ? Carbon::parse($request->query('date_to'))->endOfDay()
+                : now()->endOfDay();
         } catch (\Throwable $e) {
             $dateFrom = now()->startOfMonth();
             $dateTo = now()->endOfDay();
         }
-        
+
+        $filters = $request->only([
+            'user_id',
+            'project_id',
+            'work_type_id',
+            'status',
+            'worker_type',
+            'worker_name',
+            'is_billable',
+            'group_by',
+            'date_from',
+            'date_to',
+        ]);
+
         $this->logging->business('report.time_tracking.requested', [
             'organization_id' => $organizationId,
             'date_from' => $dateFrom->toDateTimeString(),
             'date_to' => $dateTo->toDateTimeString(),
-            'user_id' => $request->user()?->id
+            'user_id' => $request->user()?->id,
+            'filters' => $filters,
         ]);
 
-        $query = DB::table('time_entries')
-            ->leftJoin('users', 'time_entries.user_id', '=', 'users.id')
-            ->leftJoin('projects', 'time_entries.project_id', '=', 'projects.id')
-            ->leftJoin('work_types', 'time_entries.work_type_id', '=', 'work_types.id')
-            ->where('time_entries.organization_id', $organizationId)
-            ->whereBetween('time_entries.work_date', [$dateFrom->toDateString(), $dateTo->toDateString()])
-            ->select(
-                'time_entries.id',
-                'time_entries.work_date',
-                'time_entries.hours_worked',
-                'time_entries.status',
-                'time_entries.is_billable',
-                'time_entries.hourly_rate',
-                'time_entries.title',
-                'time_entries.worker_type',
-                DB::raw('COALESCE(users.name, time_entries.worker_name) as worker_display_name'),
-                'projects.name as project_name',
-                'work_types.name as work_type_name',
-                DB::raw('(time_entries.hours_worked * COALESCE(time_entries.hourly_rate, 0)) as total_cost')
-            );
+        $query = TimeEntry::query()
+            ->with(['user:id,name', 'project:id,name', 'workType:id,name'])
+            ->forOrganization($organizationId)
+            ->forDateRange($dateFrom->toDateString(), $dateTo->toDateString())
+            ->orderByDesc('work_date')
+            ->orderByDesc('created_at');
 
         if ($request->filled('user_id')) {
-            $query->where('time_entries.user_id', $request->query('user_id'));
+            $selectedUserId = (int) $request->query('user_id');
+            $selectedUser = User::query()
+                ->select(['id', 'name'])
+                ->find($selectedUserId);
+
+            $query->where(function ($userQuery) use ($selectedUserId, $selectedUser) {
+                $userQuery->where('user_id', $selectedUserId);
+
+                if ($selectedUser?->name) {
+                    $userQuery->orWhere(function ($legacyUserQuery) use ($selectedUser) {
+                        $legacyUserQuery
+                            ->where('worker_type', 'user')
+                            ->whereNull('user_id')
+                            ->where('worker_name', $selectedUser->name);
+                    });
+                }
+            });
         }
+
         if ($request->filled('project_id')) {
-            $query->where('time_entries.project_id', $request->query('project_id'));
+            $query->forProject((int) $request->query('project_id'));
         }
+
         if ($request->filled('work_type_id')) {
-            $query->where('time_entries.work_type_id', $request->query('work_type_id'));
+            $query->where('work_type_id', (int) $request->query('work_type_id'));
         }
+
         if ($request->filled('status')) {
-            $query->where('time_entries.status', $request->query('status'));
+            $query->byStatus((string) $request->query('status'));
         }
+
         if ($request->filled('worker_type')) {
-            $query->where('time_entries.worker_type', $request->query('worker_type'));
+            $query->forWorkerType((string) $request->query('worker_type'));
         }
+
         if ($request->filled('worker_name')) {
-            $query->where('time_entries.worker_name', $request->query('worker_name'));
-        }
-        if ($request->has('is_billable')) {
-            $query->where('time_entries.is_billable', $request->boolean('is_billable'));
+            $query->forWorkerName((string) $request->query('worker_name'));
         }
 
-        $entries = $query->orderBy('time_entries.work_date', 'desc')->get();
-
-        $groupBy = $request->query('group_by');
-        $grouped = null;
-
-        if ($groupBy === 'user') {
-            $grouped = $entries->groupBy('worker_display_name')->map(function ($group) {
-                return [
-                    'user' => $group->first()->worker_display_name ?? 'Не указан',
-                    'total_hours' => $group->sum('hours_worked'),
-                    'total_cost' => $group->sum('total_cost'),
-                    'entries_count' => $group->count(),
-                ];
-            })->values();
-        } elseif ($groupBy === 'project') {
-            $grouped = $entries->groupBy('project_name')->map(function ($group) {
-                return [
-                    'project' => $group->first()->project_name ?? 'Без проекта',
-                    'total_hours' => $group->sum('hours_worked'),
-                    'total_cost' => $group->sum('total_cost'),
-                    'entries_count' => $group->count(),
-                ];
-            })->values();
+        if ($request->query('is_billable') !== null && $request->query('is_billable') !== '') {
+            $query->billable($request->boolean('is_billable'));
         }
 
-        $data = $entries->map(function ($entry) {
+        /** @var \Illuminate\Support\Collection<int, TimeEntry> $entries */
+        $entries = $query->get();
+
+        $data = $entries->map(function (TimeEntry $entry) {
             return [
                 'id' => $entry->id,
-                'date' => $entry->work_date,
+                'date' => $entry->work_date?->format('Y-m-d'),
                 'user' => $entry->worker_display_name,
                 'type' => $entry->worker_type,
-                'project' => $entry->project_name,
-                'work_type' => $entry->work_type_name,
+                'project' => $entry->project?->name,
+                'work_type' => $entry->workType?->name,
                 'title' => $entry->title,
-                'hours' => (float)$entry->hours_worked,
-                'rate' => (float)$entry->hourly_rate,
-                'total_cost' => (float)$entry->total_cost,
+                'hours' => (float) $entry->hours_worked,
+                'hourly_rate' => (float) ($entry->hourly_rate ?? 0),
+                'total_cost' => (float) $entry->total_cost,
                 'status' => $entry->status,
-                'billable' => (bool)$entry->is_billable,
+                'is_billable' => (bool) $entry->is_billable,
             ];
-        });
+        })->values();
+
+        $groupBy = (string) $request->query('group_by', '');
+
+        $groupedData = match ($groupBy) {
+            'user' => $entries->groupBy(
+                fn (TimeEntry $entry) => $entry->worker_display_name ?: 'Не указан'
+            )->map(function ($group) {
+                return [
+                    'user' => $group->first()?->worker_display_name ?: 'Не указан',
+                    'total_hours' => (float) $group->sum('hours_worked'),
+                    'total_cost' => (float) $group->sum('total_cost'),
+                    'entries_count' => $group->count(),
+                ];
+            })->values(),
+            'project' => $entries->groupBy(
+                fn (TimeEntry $entry) => $entry->project?->name ?: 'Без проекта'
+            )->map(function ($group) {
+                return [
+                    'project' => $group->first()?->project?->name ?: 'Без проекта',
+                    'total_hours' => (float) $group->sum('hours_worked'),
+                    'total_cost' => (float) $group->sum('total_cost'),
+                    'entries_count' => $group->count(),
+                ];
+            })->values(),
+            'date' => $entries->groupBy(
+                fn (TimeEntry $entry) => $entry->work_date?->format('Y-m-d') ?: 'Без даты'
+            )->map(function ($group, $date) {
+                return [
+                    'date' => $date,
+                    'total_hours' => (float) $group->sum('hours_worked'),
+                    'total_cost' => (float) $group->sum('total_cost'),
+                    'entries_count' => $group->count(),
+                ];
+            })->values(),
+            'work_type' => $entries->groupBy(
+                fn (TimeEntry $entry) => $entry->workType?->name ?: 'Без типа работ'
+            )->map(function ($group) {
+                return [
+                    'work_type' => $group->first()?->workType?->name ?: 'Без типа работ',
+                    'total_hours' => (float) $group->sum('hours_worked'),
+                    'total_cost' => (float) $group->sum('total_cost'),
+                    'entries_count' => $group->count(),
+                ];
+            })->values(),
+            default => collect(),
+        };
 
         $totals = [
             'total_entries' => $data->count(),
-            'total_hours' => $data->sum('hours'),
-            'total_cost' => $data->sum('total_cost'),
-            'billable_hours' => $data->where('billable', true)->sum('hours'),
-            'approved_hours' => $data->where('status', 'approved')->sum('hours'),
+            'total_hours' => (float) $data->sum('hours'),
+            'total_cost' => (float) $data->sum('total_cost'),
+            'billable_hours' => (float) $data->where('is_billable', true)->sum('hours'),
+            'approved_hours' => (float) $data->where('status', 'approved')->sum('hours'),
         ];
 
         if ($format === 'excel') {
@@ -1332,13 +1383,19 @@ class ReportService
                 'Вид работ' => 'work_type',
                 'Описание' => 'title',
                 'Часов' => 'hours',
-                'Ставка' => 'rate',
+                'Ставка' => 'hourly_rate',
                 'Стоимость' => 'total_cost',
                 'Статус' => 'status',
-                'Оплачиваемо' => 'billable',
+                'Оплачиваемо' => 'is_billable',
             ];
+
             $exportable = $this->excelExporter->prepareDataForExport($data->toArray(), $columns);
-            return $this->excelExporter->streamDownload('time_tracking_report_' . now()->format('d-m-Y_H-i') . '.xlsx', $exportable['headers'], $exportable['data']);
+
+            return $this->excelExporter->streamDownload(
+                'time_tracking_report_' . now()->format('d-m-Y_H-i') . '.xlsx',
+                $exportable['headers'],
+                $exportable['data']
+            );
         }
 
         if ($format === 'pdf') {
@@ -1350,11 +1407,11 @@ class ReportService
                     'date_to' => $dateTo->format('d.m.Y'),
                     'entries' => $data,
                     'summary' => [
-                        'total_hours' => $data->sum('hours'),
-                        'total_cost' => $data->sum('total_cost'),
-                        'total_entries' => $data->count()
+                        'total_hours' => $totals['total_hours'],
+                        'total_cost' => $totals['total_cost'],
+                        'total_entries' => $totals['total_entries'],
                     ],
-                    'generated_at' => Carbon::now()->format('d.m.Y H:i')
+                    'generated_at' => Carbon::now()->format('d.m.Y H:i'),
                 ],
                 'time_tracking_report.pdf'
             );
@@ -1362,10 +1419,12 @@ class ReportService
 
         return [
             'title' => 'Отчет по учету рабочего времени',
-            'data' => $data->values(),
-            'grouped_data' => $grouped,
+            'data' => $data->toArray(),
+            'grouped_data' => $groupedData->toArray(),
             'totals' => $totals,
-            'filters' => $request->only(['user_id', 'project_id', 'work_type_id', 'status', 'date_from', 'date_to', 'worker_type', 'worker_name']),
+            'filters' => $filters,
+            'has_data' => $data->isNotEmpty(),
+            'empty_state_message' => $data->isEmpty() ? trans_message('reports.empty') : null,
             'generated_at' => Carbon::now(),
         ];
     }
