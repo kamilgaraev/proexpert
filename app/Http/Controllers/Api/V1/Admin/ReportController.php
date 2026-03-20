@@ -10,6 +10,7 @@ use Illuminate\Http\JsonResponse;
 use App\Services\Report\ReportService;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 // Request классы для валидации
 use App\Http\Requests\Api\V1\Admin\Report\WorkCompletionReportRequest;
@@ -248,26 +249,56 @@ class ReportController extends Controller
         try {
             $reportOutput = $reportGenerator();
 
-            // Если это StreamedResponse (файл для скачивания) - возвращаем как есть
             if ($reportOutput instanceof StreamedResponse) {
                 return $reportOutput;
             }
 
-            // Иначе оборачиваем в AdminResponse
             return AdminResponse::success(
                 $reportOutput,
-                trans_message('reports.generated')
+                $this->resolveReportMessage($reportOutput)
             );
         } catch (\Throwable $e) {
-        Log::error('[ReportController] Ошибка генерации отчёта', [
-            'error' => $e->getMessage(),
-            'trace' => $e->getTraceAsString()
-        ]);
-        
-        return AdminResponse::error(
-            trans_message('reports.generation_failed'),
-            500
-        );
+            Log::error('[ReportController] Ошибка генерации отчета', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return AdminResponse::error(
+                trans_message('reports.generation_failed'),
+                500
+            );
         }
+    }
+
+    protected function resolveReportMessage(mixed $reportOutput): string
+    {
+        if ($this->isEmptyReportPayload($reportOutput)) {
+            return trans_message('reports.empty');
+        }
+
+        return trans_message('reports.generated');
+    }
+
+    protected function isEmptyReportPayload(mixed $reportOutput): bool
+    {
+        if (!is_array($reportOutput)) {
+            return false;
+        }
+
+        if (($reportOutput['has_data'] ?? null) === false) {
+            return true;
+        }
+
+        $data = $reportOutput['data'] ?? null;
+        $groupedData = $reportOutput['grouped_data'] ?? null;
+
+        $hasDataRows = is_array($data) && $data !== [];
+        $hasGroupedRows = is_array($groupedData) && $groupedData !== [];
+
+        if ($hasDataRows || $hasGroupedRows) {
+            return false;
+        }
+
+        return array_key_exists('data', $reportOutput) || array_key_exists('grouped_data', $reportOutput);
     }
 }

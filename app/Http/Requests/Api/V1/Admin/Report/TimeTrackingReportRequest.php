@@ -15,6 +15,8 @@ class TimeTrackingReportRequest extends FormRequest
     {
         return [
             'user_id' => 'nullable|integer|exists:users,id',
+            'worker_type' => 'nullable|string|in:user,virtual,brigade,equipment',
+            'worker_name' => 'nullable|string|max:255',
             'project_id' => 'nullable|integer|exists:projects,id',
             'work_type_id' => 'nullable|integer|exists:work_types,id',
             'date_from' => 'required|date',
