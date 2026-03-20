@@ -39,10 +39,7 @@ scope:
   allowed: []
 
 # Co-Author settings
-co_author:
-  enabled: true
-  name: "First Fluke"
-  email: "our.first.fluke@gmail.com"
+co_author:`r`n  enabled: false
 
 # Forbidden file patterns (commit warnings)
 forbidden_patterns:
