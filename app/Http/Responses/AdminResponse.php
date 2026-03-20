@@ -60,14 +60,20 @@ class AdminResponse
      * @param int $code
      * @return JsonResponse
      */
-    public static function paginated(mixed $data, array $meta, string $message = null, int $code = 200): JsonResponse
+    public static function paginated(mixed $data, array $meta, ?string $message = null, int $code = 200, ?array $summary = null): JsonResponse
     {
-        return response()->json([
+        $response = [
             'success' => true,
             'message' => $message,
             'data' => self::transformData($data),
             'meta' => $meta,
-        ], $code);
+        ];
+
+        if ($summary !== null) {
+            $response['summary'] = $summary;
+        }
+
+        return response()->json($response, $code);
     }
 
     /**

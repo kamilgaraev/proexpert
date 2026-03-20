@@ -2,13 +2,14 @@
 
 declare(strict_types=1);
 
-namespace App\Http\Controllers\Api;
+namespace App\Http\Controllers\Api\V1\Mobile;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\OfficialFormsExportService;
 use App\Http\Controllers\Controller;
-use App\Http\Responses\AdminResponse;
+use App\Http\Responses\MobileResponse;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
+use App\Services\Mobile\MobileConstructionJournalService;
 use Carbon\Carbon;
 use DomainException;
 use Illuminate\Http\JsonResponse;
@@ -18,13 +19,20 @@ use Illuminate\Support\Facades\Log;
 class JournalExportController extends Controller
 {
     public function __construct(
-        protected OfficialFormsExportService $exportService
+        private readonly OfficialFormsExportService $exportService,
+        private readonly MobileConstructionJournalService $mobileJournalService
     ) {
     }
 
-    public function exportKS6(Request $request, ConstructionJournal $journal): JsonResponse
+    public function exportKS6(ConstructionJournal $journal, Request $request): JsonResponse
     {
         try {
+            $user = $request->user();
+            if (!$user) {
+                return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
+            }
+
+            $this->mobileJournalService->assertJournalAccess($user, $journal);
             $this->authorize('export', $journal);
 
             $validated = $request->validate([
@@ -35,20 +43,19 @@ class JournalExportController extends Controller
 
             $from = Carbon::parse($validated['date_from']);
             $to = Carbon::parse($validated['date_to']);
-            $format = $validated['format'];
 
-            $path = $format === 'pdf'
+            $path = $validated['format'] === 'pdf'
                 ? $this->exportService->exportKS6ToPdf($journal, $from, $to)
                 : $this->exportService->exportKS6ToExcel($journal, $from, $to);
 
-            return AdminResponse::success(
+            return MobileResponse::success(
                 $this->buildExportPayload($path),
                 trans_message('construction_journal.messages.export_ready')
             );
         } catch (DomainException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422);
+            return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
-            Log::error('construction_journal_export.ks6.error', [
+            Log::error('mobile.construction_journal_export.ks6.error', [
                 'user_id' => $request->user()?->id,
                 'organization_id' => $request->user()?->current_organization_id,
                 'journal_id' => $journal->id,
@@ -56,38 +63,19 @@ class JournalExportController extends Controller
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error(trans_message('construction_journal.errors.export_failed'), 500);
+            return MobileResponse::error(trans_message('mobile_construction_journal.errors.export_failed'), 500);
         }
     }
 
-    public function exportDailyReport(Request $request, ConstructionJournalEntry $entry): JsonResponse
+    public function exportExtended(ConstructionJournal $journal, Request $request): JsonResponse
     {
         try {
-            $this->authorize('export', $entry->journal);
+            $user = $request->user();
+            if (!$user) {
+                return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
+            }
 
-            $path = $this->exportService->exportDailyReportToPdf($entry);
-
-            return AdminResponse::success(
-                $this->buildExportPayload($path),
-                trans_message('construction_journal.messages.export_ready')
-            );
-        } catch (DomainException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422);
-        } catch (\Throwable $exception) {
-            Log::error('construction_journal_export.daily.error', [
-                'user_id' => $request->user()?->id,
-                'organization_id' => $request->user()?->current_organization_id,
-                'entry_id' => $entry->id,
-                'error' => $exception->getMessage(),
-            ]);
-
-            return AdminResponse::error(trans_message('construction_journal.errors.export_failed'), 500);
-        }
-    }
-
-    public function exportExtended(Request $request, ConstructionJournal $journal): JsonResponse
-    {
-        try {
+            $this->mobileJournalService->assertJournalAccess($user, $journal);
             $this->authorize('export', $journal);
 
             $validated = $request->validate([
@@ -108,14 +96,14 @@ class JournalExportController extends Controller
 
             $path = $this->exportService->exportExtendedReportToExcel($journal, $options);
 
-            return AdminResponse::success(
+            return MobileResponse::success(
                 $this->buildExportPayload($path),
                 trans_message('construction_journal.messages.export_ready')
             );
         } catch (DomainException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422);
+            return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
-            Log::error('construction_journal_export.extended.error', [
+            Log::error('mobile.construction_journal_export.extended.error', [
                 'user_id' => $request->user()?->id,
                 'organization_id' => $request->user()?->current_organization_id,
                 'journal_id' => $journal->id,
@@ -123,11 +111,42 @@ class JournalExportController extends Controller
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error(trans_message('construction_journal.errors.export_failed'), 500);
+            return MobileResponse::error(trans_message('mobile_construction_journal.errors.export_failed'), 500);
         }
     }
 
-    protected function buildExportPayload(string $path): array
+    public function exportDailyReport(ConstructionJournalEntry $entry, Request $request): JsonResponse
+    {
+        try {
+            $user = $request->user();
+            if (!$user) {
+                return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
+            }
+
+            $this->mobileJournalService->assertJournalAccess($user, $entry->journal);
+            $this->authorize('export', $entry->journal);
+
+            $path = $this->exportService->exportDailyReportToPdf($entry);
+
+            return MobileResponse::success(
+                $this->buildExportPayload($path),
+                trans_message('construction_journal.messages.export_ready')
+            );
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            Log::error('mobile.construction_journal_export.daily.error', [
+                'user_id' => $request->user()?->id,
+                'organization_id' => $request->user()?->current_organization_id,
+                'entry_id' => $entry->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return MobileResponse::error(trans_message('mobile_construction_journal.errors.export_failed'), 500);
+        }
+    }
+
+    private function buildExportPayload(string $path): array
     {
         $expiresAt = now()->addMinutes(15);
 

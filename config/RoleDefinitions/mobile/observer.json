@@ -33,7 +33,12 @@
     "report-templates": [],
     "data-filters": ["filters.quick_stats.view"],
     "dashboard-widgets": ["dashboard.view"],
-    "schedule-management": ["schedule.view"]
+    "schedule-management": ["schedule.view"],
+    "budget-estimates": [
+      "construction-journal.view",
+      "construction-journal.approve",
+      "construction-journal.export"
+    ]
   },
   
   "interface_access": ["mobile"],

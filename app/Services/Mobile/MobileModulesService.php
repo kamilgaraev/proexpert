@@ -57,9 +57,9 @@ class MobileModulesService
         ],
         [
             'slug' => 'budget-estimates',
-            'icon' => 'calculate',
-            'route' => null,
-            'supported_on_mobile' => false,
+            'icon' => 'journal',
+            'route' => 'construction_journal',
+            'supported_on_mobile' => true,
             'order' => 60,
         ],
     ];
