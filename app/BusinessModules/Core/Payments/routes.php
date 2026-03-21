@@ -190,6 +190,9 @@ Route::prefix('api/v1/admin/payments')
             Route::get('/incoming', [PaymentRequestController::class, 'incoming'])
                 ->middleware('authorize:payments.invoice.view')
                 ->name('incoming');
+            Route::get('/outgoing', [PaymentRequestController::class, 'outgoing'])
+                ->middleware('authorize:payments.invoice.view')
+                ->name('outgoing');
             Route::post('/', [PaymentRequestController::class, 'store'])
                 ->middleware('authorize:payments.invoice.create')
                 ->name('store');

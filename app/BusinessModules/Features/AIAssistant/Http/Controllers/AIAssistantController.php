@@ -8,6 +8,7 @@ use App\BusinessModules\Features\AIAssistant\Http\Resources\ConversationResource
 use App\BusinessModules\Features\AIAssistant\Http\Resources\MessageResource;
 use App\BusinessModules\Features\AIAssistant\Models\Conversation;
 use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantActionService;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\ConversationManager;
 use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
@@ -27,6 +28,7 @@ class AIAssistantController extends Controller
 {
     public function __construct(
         private readonly AIAssistantService $aiAssistant,
+        private readonly AssistantActionService $assistantActionService,
         private readonly ConversationManager $conversationManager,
         private readonly UsageTracker $usageTracker,
         private readonly AIPermissionChecker $permissionChecker
@@ -38,6 +40,18 @@ class AIAssistantController extends Controller
         $request->validate([
             'message' => 'required|string|max:4000',
             'conversation_id' => 'nullable|integer|exists:ai_conversations,id',
+            'goal' => 'nullable|string|max:120',
+            'desired_mode' => 'nullable|string|max:120',
+            'allow_actions' => 'nullable|boolean',
+            'context' => 'nullable|array',
+            'context.source_module' => 'nullable|string|max:120',
+            'context.source_route' => 'nullable|string|max:255',
+            'context.entity_refs' => 'nullable|array',
+            'context.entity_refs.*.type' => 'nullable|string|max:80',
+            'context.entity_refs.*.label' => 'nullable|string|max:255',
+            'context.period' => 'nullable',
+            'context.filters' => 'nullable|array',
+            'context.ui_state' => 'nullable|array',
         ]);
 
         $user = $request->user();
@@ -65,7 +79,13 @@ class AIAssistantController extends Controller
                 $request->string('message')->toString(),
                 $organizationId,
                 $user,
-                $conversationId
+                $conversationId,
+                [
+                    'goal' => $request->input('goal'),
+                    'context' => $request->input('context', []),
+                    'desired_mode' => $request->input('desired_mode'),
+                    'allow_actions' => $request->boolean('allow_actions', false),
+                ]
             );
 
             return $this->successResponse($request, $result);
@@ -202,6 +222,129 @@ class AIAssistantController extends Controller
             ]);
 
             return $this->errorResponse($request, $this->assistantMessage('ai_assistant.usage_failed', 'Не удалось получить статистику использования AI-ассистента.'), 500);
+        }
+    }
+
+    public function previewAction(Request $request): JsonResponse
+    {
+        $request->validate([
+            'conversation_id' => 'nullable|integer|exists:ai_conversations,id',
+            'action' => 'required|array',
+            'action.id' => 'nullable|string|max:120',
+            'action.type' => 'required|string|max:60',
+            'action.label' => 'required|string|max:255',
+            'action.allowed' => 'nullable|boolean',
+            'action.reason_if_disabled' => 'nullable|string|max:1000',
+            'action.requires_confirmation' => 'nullable|boolean',
+            'action.action_class' => 'nullable|string|max:60',
+            'action.tool_name' => 'nullable|string|max:120',
+            'action.arguments' => 'nullable|array',
+            'action.required_permissions' => 'nullable|array',
+            'action.target' => 'nullable|array',
+            'action.target.route' => 'nullable|string|max:255',
+            'action.target.anchor' => 'nullable|string|max:255',
+            'action.target.state' => 'nullable|array',
+        ]);
+
+        $user = $request->user();
+        $organizationId = $this->resolveOrganizationId($request, $user);
+        if (!$user instanceof User || !$organizationId) {
+            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.unauthorized', 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ Р°РІС‚РѕСЂРёР·РѕРІР°РЅ.'), 401);
+        }
+
+        try {
+            $conversationId = $request->integer('conversation_id') ?: null;
+            if ($conversationId !== null && !$this->findConversationForRequest($request, $conversationId, $user, $organizationId)) {
+                return $this->errorResponse($request, $this->assistantMessage('ai_assistant.conversation_not_found', 'Р”РёР°Р»РѕРі РЅРµ РЅР°Р№РґРµРЅ РёР»Рё РЅРµРґРѕСЃС‚СѓРїРµРЅ.'), 403);
+            }
+
+            $result = $this->assistantActionService->preview(
+                $request->input('action', []),
+                $organizationId,
+                $user
+            );
+
+            return $this->successResponse($request, $result);
+        } catch (AuthorizationException $exception) {
+            return $this->errorResponse($request, $exception->getMessage(), 403);
+        } catch (RuntimeException $exception) {
+            return $this->errorResponse($request, $exception->getMessage(), 422);
+        } catch (Throwable $exception) {
+            Log::error('AI assistant action preview failed', [
+                'user_id' => $user->id,
+                'organization_id' => $organizationId,
+                'message' => $exception->getMessage(),
+            ]);
+
+            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.action_preview_failed', 'Не удалось подготовить действие ассистента.'), 500);
+        }
+    }
+
+    public function executeAction(Request $request): JsonResponse
+    {
+        $request->validate([
+            'conversation_id' => 'nullable|integer|exists:ai_conversations,id',
+            'confirmed' => 'nullable|boolean',
+            'action' => 'required|array',
+            'action.id' => 'nullable|string|max:120',
+            'action.type' => 'required|string|max:60',
+            'action.label' => 'required|string|max:255',
+            'action.allowed' => 'nullable|boolean',
+            'action.reason_if_disabled' => 'nullable|string|max:1000',
+            'action.requires_confirmation' => 'nullable|boolean',
+            'action.action_class' => 'nullable|string|max:60',
+            'action.tool_name' => 'nullable|string|max:120',
+            'action.arguments' => 'nullable|array',
+            'action.required_permissions' => 'nullable|array',
+            'action.target' => 'nullable|array',
+            'action.target.route' => 'nullable|string|max:255',
+            'action.target.anchor' => 'nullable|string|max:255',
+            'action.target.state' => 'nullable|array',
+        ]);
+
+        $user = $request->user();
+        $organizationId = $this->resolveOrganizationId($request, $user);
+        if (!$user instanceof User || !$organizationId) {
+            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.unauthorized', 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ Р°РІС‚РѕСЂРёР·РѕРІР°РЅ.'), 401);
+        }
+
+        try {
+            $conversationId = $request->integer('conversation_id') ?: null;
+            $conversation = null;
+            if ($conversationId !== null) {
+                $conversation = $this->findConversationForRequest($request, $conversationId, $user, $organizationId);
+                if (!$conversation) {
+                    return $this->errorResponse($request, $this->assistantMessage('ai_assistant.conversation_not_found', 'Р”РёР°Р»РѕРі РЅРµ РЅР°Р№РґРµРЅ РёР»Рё РЅРµРґРѕСЃС‚СѓРїРµРЅ.'), 403);
+                }
+            }
+
+            $result = $this->assistantActionService->execute(
+                array_merge($request->input('action', []), [
+                    'confirmed' => $request->boolean('confirmed', false),
+                ]),
+                $organizationId,
+                $user,
+                $conversation
+            );
+
+            if (isset($result['message_resource'])) {
+                $result['message'] = (new MessageResource($result['message_resource']))->toArray($request);
+                unset($result['message_resource']);
+            }
+
+            return $this->successResponse($request, $result);
+        } catch (AuthorizationException $exception) {
+            return $this->errorResponse($request, $exception->getMessage(), 403);
+        } catch (RuntimeException $exception) {
+            return $this->errorResponse($request, $exception->getMessage(), 422);
+        } catch (Throwable $exception) {
+            Log::error('AI assistant action execution failed', [
+                'user_id' => $user->id,
+                'organization_id' => $organizationId,
+                'message' => $exception->getMessage(),
+            ]);
+
+            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.action_execute_failed', 'Не удалось выполнить действие ассистента.'), 500);
         }
     }
 

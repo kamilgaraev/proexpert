@@ -13,6 +13,8 @@ Route::middleware(['auth:api', 'organization.context'])
     ->name('lk.ai-assistant.')
     ->group(function () {
         Route::post('/chat', [AIAssistantController::class, 'chat'])->name('chat');
+        Route::post('/actions/preview', [AIAssistantController::class, 'previewAction'])->name('actions.preview');
+        Route::post('/actions/execute', [AIAssistantController::class, 'executeAction'])->name('actions.execute');
         Route::get('/conversations', [AIAssistantController::class, 'conversations'])->name('conversations');
         Route::get('/conversations/{conversation}', [AIAssistantController::class, 'conversation'])->name('conversation');
         Route::delete('/conversations/{conversation}', [AIAssistantController::class, 'deleteConversation'])->name('deleteConversation');
@@ -27,6 +29,8 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
     ->name('admin.ai-assistant.')
     ->group(function () {
         Route::post('/chat', [AIAssistantController::class, 'chat'])->name('chat');
+        Route::post('/actions/preview', [AIAssistantController::class, 'previewAction'])->name('actions.preview');
+        Route::post('/actions/execute', [AIAssistantController::class, 'executeAction'])->name('actions.execute');
         Route::get('/conversations', [AIAssistantController::class, 'conversations'])->name('conversations');
         Route::get('/conversations/{conversation}', [AIAssistantController::class, 'conversation'])->name('conversation');
         Route::delete('/conversations/{conversation}', [AIAssistantController::class, 'deleteConversation'])->name('deleteConversation');
@@ -41,6 +45,8 @@ Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.conte
     ->name('mobile.ai-assistant.')
     ->group(function () {
         Route::post('/chat', [AIAssistantController::class, 'chat'])->name('chat');
+        Route::post('/actions/preview', [AIAssistantController::class, 'previewAction'])->name('actions.preview');
+        Route::post('/actions/execute', [AIAssistantController::class, 'executeAction'])->name('actions.execute');
         Route::get('/conversations', [AIAssistantController::class, 'conversations'])->name('conversations');
         Route::get('/conversations/{conversation}', [AIAssistantController::class, 'conversation'])->name('conversation');
         Route::delete('/conversations/{conversation}', [AIAssistantController::class, 'deleteConversation'])->name('deleteConversation');

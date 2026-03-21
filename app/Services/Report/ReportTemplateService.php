@@ -10,6 +10,8 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 
+use function trans_message;
+
 class ReportTemplateService
 {
     protected ReportTemplateRepositoryInterface $reportTemplateRepository;
@@ -23,7 +25,7 @@ class ReportTemplateService
     {
         $organizationId = $request->user()->current_organization_id;
         if (!$organizationId) {
-            throw new BusinessLogicException('Контекст организации не определен.', 400);
+            throw new BusinessLogicException(trans_message('report_templates.load_failed'), 400);
         }
         return $organizationId;
     }
@@ -40,7 +42,7 @@ class ReportTemplateService
         $organizationId = $this->getCurrentOrgId($request);
         $template = $this->reportTemplateRepository->findByIdForOrganization($templateId, $organizationId);
         if (!$template) {
-            throw new BusinessLogicException('Шаблон отчета не найден.', 404);
+            throw new BusinessLogicException(trans_message('report_templates.not_found'), 404);
         }
         return $template;
     }
@@ -55,17 +57,17 @@ class ReportTemplateService
 
         // Валидация columns_config (базовая)
         if (empty($data['columns_config']) || !is_array($data['columns_config'])) {
-            throw new BusinessLogicException('Конфигурация колонок должна быть непустым массивом.', 422);
+            throw new BusinessLogicException(trans_message('report_templates.invalid_columns_config'), 422);
         }
         foreach ($data['columns_config'] as $column) {
             if (!isset($column['header']) || !isset($column['data_key']) || !isset($column['order'])) {
-                throw new BusinessLogicException('Каждая колонка должна содержать header, data_key и order.', 422);
+                throw new BusinessLogicException(trans_message('report_templates.invalid_column_definition'), 422);
             }
         }
         
         $template = $this->reportTemplateRepository->create($data);
         if (!$template) {
-             throw new BusinessLogicException('Не удалось создать шаблон отчета.', 500);
+             throw new BusinessLogicException(trans_message('report_templates.create_failed'), 500);
         }
         
         if ($template->is_default) {
@@ -80,23 +82,23 @@ class ReportTemplateService
         $template = $this->reportTemplateRepository->findByIdForOrganization($templateId, $organizationId);
 
         if (!$template) {
-            throw new BusinessLogicException('Шаблон отчета не найден.', 404);
+            throw new BusinessLogicException(trans_message('report_templates.not_found'), 404);
         }
 
         // Валидация columns_config (если передано)
         if (isset($data['columns_config'])) {
             if (empty($data['columns_config']) || !is_array($data['columns_config'])) {
-                throw new BusinessLogicException('Конфигурация колонок должна быть непустым массивом.', 422);
+                throw new BusinessLogicException(trans_message('report_templates.invalid_columns_config'), 422);
             }
             foreach ($data['columns_config'] as $column) {
                 if (!isset($column['header']) || !isset($column['data_key']) || !isset($column['order'])) {
-                    throw new BusinessLogicException('Каждая колонка должна содержать header, data_key и order.', 422);
+                    throw new BusinessLogicException(trans_message('report_templates.invalid_column_definition'), 422);
                 }
             }
         }
 
         if (!$this->reportTemplateRepository->update($templateId, $data)) {
-            throw new BusinessLogicException('Не удалось обновить шаблон отчета.', 500);
+            throw new BusinessLogicException(trans_message('report_templates.update_failed'), 500);
         }
         
         $updatedTemplate = $this->reportTemplateRepository->findByIdForOrganization($templateId, $organizationId);
@@ -113,7 +115,7 @@ class ReportTemplateService
         $template = $this->reportTemplateRepository->findByIdForOrganization($templateId, $organizationId);
 
         if (!$template) {
-            throw new BusinessLogicException('Шаблон отчета не найден.', 404);
+            throw new BusinessLogicException(trans_message('report_templates.not_found'), 404);
         }
         return $this->reportTemplateRepository->deleteById($templateId);
     }
@@ -123,7 +125,7 @@ class ReportTemplateService
         $organizationId = $this->getCurrentOrgId($request);
         $template = $this->reportTemplateRepository->findByIdForOrganization($templateId, $organizationId);
         if (!$template) {
-            throw new BusinessLogicException('Шаблон отчета не найден.', 404);
+            throw new BusinessLogicException(trans_message('report_templates.not_found'), 404);
         }
         return $this->reportTemplateRepository->setDefault($template);
     }
