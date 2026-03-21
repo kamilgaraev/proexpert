@@ -186,7 +186,7 @@ class SiteBuilderDataService
             'published_at' => optional($block->published_at)?->toISOString(),
             'schema' => SiteContentBlock::getContentSchema($normalizedType),
             'default_content' => SiteContentBlock::getDefaultContent($normalizedType),
-            'can_delete' => !in_array($normalizedType, ['hero', 'lead_form', 'contacts'], true),
+            'can_delete' => true,
             'is_renderable' => $this->hasRenderableContent($normalizedType, $resolvedContent),
             'assets' => $block->assets->map(fn (SiteAsset $asset) => $this->serializeAsset($asset))->values()->all(),
         ];

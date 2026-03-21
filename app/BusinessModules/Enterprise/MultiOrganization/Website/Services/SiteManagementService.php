@@ -6,6 +6,7 @@ use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\Holdi
 use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\SiteContentBlock;
 use App\Models\OrganizationGroup;
 use App\Models\User;
+use InvalidArgumentException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
@@ -92,7 +93,7 @@ class SiteManagementService
 
         $validationErrors = $this->validateSiteForPublishing($site);
         if (!empty($validationErrors)) {
-            throw new \RuntimeException(implode(' ', $validationErrors));
+            throw new InvalidArgumentException(implode(' ', $validationErrors));
         }
 
         $snapshot = $this->builderDataService->buildLiveDraftPayload($site);
@@ -185,17 +186,9 @@ class SiteManagementService
     private function validateSiteForPublishing(HoldingSite $site): array
     {
         $errors = [];
-        $payload = $this->builderDataService->buildLiveDraftPayload($site);
-        $blockTypes = collect($payload['blocks'] ?? [])->pluck('type')->all();
 
-        if (empty($site->title)) {
-            $errors[] = 'Site title is required.';
-        }
-
-        foreach (['hero', 'lead_form', 'contacts'] as $requiredBlock) {
-            if (!in_array($requiredBlock, $blockTypes, true)) {
-                $errors[] = sprintf('Required block "%s" is missing or empty.', $requiredBlock);
-            }
+        if (trim((string) $site->title) === '') {
+            $errors[] = trans_message('holding_site_builder.site_title_required');
         }
 
         return $errors;

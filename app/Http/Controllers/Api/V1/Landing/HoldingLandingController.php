@@ -130,6 +130,17 @@ class HoldingLandingController extends Controller
                 $this->builderDataService->getEditorPayload($site->fresh()),
                 trans_message('holding_site_builder.published')
             );
+        } catch (\InvalidArgumentException $e) {
+            Log::warning('Holding site builder publish validation failed', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => Auth::id(),
+                'error' => $e->getMessage(),
+            ]);
+
+            return LandingResponse::error(
+                $e->getMessage() ?: trans_message('holding_site_builder.validation_error'),
+                422
+            );
         } catch (\Throwable $e) {
             Log::error('Holding site builder publish failed', [
                 'organization_id' => $request->attributes->get('current_organization_id'),

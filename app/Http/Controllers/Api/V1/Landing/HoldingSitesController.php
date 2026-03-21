@@ -11,6 +11,7 @@ use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\SiteC
 use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\SiteAsset;
 use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\SiteTemplate;
 use App\Models\OrganizationGroup;
+use App\Http\Responses\LandingResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -271,17 +272,25 @@ class HoldingSitesController extends Controller
                 ->firstOrFail();
 
             $user = Auth::user();
-            $published = $this->siteService->publishSite($site, $user);
+            $this->siteService->publishSite($site, $user);
+            $freshSite = $site->fresh();
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Сайт успешно опубликован',
-                'data' => [
-                    'url' => $site->getUrl(),
-                    'published_at' => $site->published_at
-                ]
+            return LandingResponse::success([
+                'url' => $freshSite?->getUrl(),
+                'published_at' => optional($freshSite?->published_at)->toISOString(),
+            ], trans_message('holding_site_builder.published'));
+        } catch (\InvalidArgumentException $e) {
+            Log::warning('Holding site publish validation failed', [
+                'holding_id' => $holdingId,
+                'site_id' => $siteId,
+                'error' => $e->getMessage(),
+                'user_id' => Auth::id(),
             ]);
 
+            return LandingResponse::error(
+                $e->getMessage() ?: trans_message('holding_site_builder.validation_error'),
+                422
+            );
         } catch (\Exception $e) {
             Log::error('Error publishing holding site', [
                 'holding_id' => $holdingId,
@@ -290,10 +299,10 @@ class HoldingSitesController extends Controller
                 'user_id' => Auth::id()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage()
-            ], 500);
+            return LandingResponse::error(
+                $e->getMessage() ?: trans_message('holding_site_builder.publish_error'),
+                500
+            );
         }
     }
 
