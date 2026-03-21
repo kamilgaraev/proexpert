@@ -18,15 +18,19 @@ Route::get('/projects/available-cost-categories', [ProjectController::class, 'ge
 
 Route::get('projects/{project}', [ProjectController::class, 'show'])
     ->middleware('authorize:admin.projects.view')
+    ->whereNumber('project')
     ->name('projects.show');
 Route::put('projects/{project}', [ProjectController::class, 'update'])
     ->middleware('authorize:admin.projects.edit')
+    ->whereNumber('project')
     ->name('projects.update');
 Route::patch('projects/{project}', [ProjectController::class, 'update'])
     ->middleware('authorize:admin.projects.edit')
+    ->whereNumber('project')
     ->name('projects.patch');
 Route::delete('projects/{project}', [ProjectController::class, 'destroy'])
     ->middleware('authorize:admin.projects.edit')
+    ->whereNumber('project')
     ->name('projects.destroy');
 
 // Дополнительные маршруты для проекта

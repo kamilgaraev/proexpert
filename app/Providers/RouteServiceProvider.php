@@ -211,7 +211,9 @@ class RouteServiceProvider extends ServiceProvider
                      require base_path('routes/api/v1/mobile/projects.php');
                      require base_path('routes/api/v1/mobile/warehouse.php');
                      require base_path('routes/api/v1/mobile/schedule.php');
-                     require base_path('routes/api/v1/mobile/construction_journal.php');
+                     if (file_exists(base_path('routes/api/v1/mobile/construction_journal.php'))) {
+                         require base_path('routes/api/v1/mobile/construction_journal.php');
+                     }
                      // require base_path('routes/api/v1/mobile/catalogs.php'); // Removed
                 });
 

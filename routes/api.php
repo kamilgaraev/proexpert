@@ -191,6 +191,7 @@ Route::prefix('v1/admin')->name('admin.')->group(function () {
         }
         // Подключаем маршруты для уведомлений
         require __DIR__ . '/api/v1/admin/notifications.php';
+        require __DIR__ . '/api/v1/admin/geocoding.php';
         // Подключаем существующие файлы маршрутов для админки
         require __DIR__ . '/api/v1/admin/projects.php';
         require __DIR__ . '/api/v1/admin/catalogs.php';
