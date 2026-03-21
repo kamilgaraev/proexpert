@@ -90,10 +90,25 @@ class SiteBuilderDataService
         return $this->buildPayload($site, $blocks, 'draft');
     }
 
+    public function buildPublicationSnapshot(HoldingSite $site): array
+    {
+        $context = $this->getBindingsContext($site);
+        $blocks = $site->contentBlocks()
+            ->with('assets')
+            ->orderBy('sort_order')
+            ->get()
+            ->map(fn (SiteContentBlock $block) => $this->serializePublicBlock($block, $context))
+            ->filter()
+            ->values()
+            ->all();
+
+        return $this->buildPayload($site, $blocks, 'published');
+    }
+
     public function buildPublishedPayload(HoldingSite $site): array
     {
         if ($site->hasPublishedSnapshot()) {
-            return $site->getPublishedPayload();
+            return $this->normalizePublishedSnapshot($site, $site->getPublishedPayload());
         }
 
         $context = $this->getBindingsContext($site);
@@ -140,29 +155,62 @@ class SiteBuilderDataService
         return [
             'site' => $this->serializeSite($site),
             'blocks' => $blocks,
-            'organization' => [
-                'holding' => [
-                    'id' => $site->organizationGroup->id,
-                    'name' => $site->organizationGroup->name,
-                    'slug' => $site->organizationGroup->slug,
-                    'description' => $site->organizationGroup->description,
-                ],
-                'organization' => [
-                    'id' => $site->organizationGroup->parentOrganization?->id,
-                    'name' => $site->organizationGroup->parentOrganization?->name,
-                    'description' => $site->organizationGroup->parentOrganization?->description,
-                    'phone' => $site->organizationGroup->parentOrganization?->phone,
-                    'email' => $site->organizationGroup->parentOrganization?->email,
-                    'address' => $site->organizationGroup->parentOrganization?->address,
-                    'city' => $site->organizationGroup->parentOrganization?->city,
-                ],
-            ],
+            'organization' => $this->buildOrganizationPayload($site),
             'runtime' => [
                 'mode' => $mode,
                 'lead_endpoint' => '/api/site-leads',
                 'generated_at' => now()->toISOString(),
             ],
         ];
+    }
+
+    private function buildOrganizationPayload(HoldingSite $site): array
+    {
+        return [
+            'holding' => [
+                'id' => $site->organizationGroup->id,
+                'name' => $site->organizationGroup->name,
+                'slug' => $site->organizationGroup->slug,
+                'description' => $site->organizationGroup->description,
+            ],
+            'organization' => [
+                'id' => $site->organizationGroup->parentOrganization?->id,
+                'name' => $site->organizationGroup->parentOrganization?->name,
+                'description' => $site->organizationGroup->parentOrganization?->description,
+                'phone' => $site->organizationGroup->parentOrganization?->phone,
+                'email' => $site->organizationGroup->parentOrganization?->email,
+                'address' => $site->organizationGroup->parentOrganization?->address,
+                'city' => $site->organizationGroup->parentOrganization?->city,
+            ],
+        ];
+    }
+
+    private function normalizePublishedSnapshot(HoldingSite $site, array $snapshot): array
+    {
+        if (!isset($snapshot['site']) || !is_array($snapshot['site'])) {
+            $snapshot['site'] = $this->serializeSite($site);
+        }
+
+        if (!isset($snapshot['organization']) || !is_array($snapshot['organization'])) {
+            $snapshot['organization'] = $this->buildOrganizationPayload($site);
+        }
+
+        if (!isset($snapshot['blocks']) || !is_array($snapshot['blocks'])) {
+            $snapshot['blocks'] = [];
+        }
+
+        $runtime = is_array($snapshot['runtime'] ?? null) ? $snapshot['runtime'] : [];
+        $snapshot['runtime'] = array_merge(
+            [
+                'mode' => 'published',
+                'lead_endpoint' => '/api/site-leads',
+                'generated_at' => now()->toISOString(),
+            ],
+            $runtime,
+            ['mode' => 'published']
+        );
+
+        return $snapshot;
     }
 
     private function serializeEditorBlock(SiteContentBlock $block, array $context): array

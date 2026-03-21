@@ -96,7 +96,7 @@ class SiteManagementService
             throw new InvalidArgumentException(implode(' ', $validationErrors));
         }
 
-        $snapshot = $this->builderDataService->buildLiveDraftPayload($site);
+        $snapshot = $this->builderDataService->buildPublicationSnapshot($site);
 
         return $site->publish($user, $snapshot);
     }
