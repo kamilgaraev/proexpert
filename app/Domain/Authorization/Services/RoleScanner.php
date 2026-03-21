@@ -77,6 +77,11 @@ class RoleScanner
         return $permissions;
     }
 
+    public function getSystemRolePermissions(string $roleSlug): array
+    {
+        return $this->getSystemPermissions($roleSlug);
+    }
+
     /**
      * Получить модульные права роли
      */

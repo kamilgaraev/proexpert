@@ -473,7 +473,7 @@ class AuthorizationService
         // 1. Пытаемся получить системные права из файлов (если тип system или если не уверены)
         $permissions = [];
         if ($roleType === UserRoleAssignment::TYPE_SYSTEM || empty($roleType)) {
-            $permissions = $this->roleScanner->getSystemRolePermissions($roleSlug);
+            $permissions = $this->roleScanner->getSystemPermissions($roleSlug);
         }
 
         // 2. Если системных прав нет, ищем в кастомных ролях в БД
