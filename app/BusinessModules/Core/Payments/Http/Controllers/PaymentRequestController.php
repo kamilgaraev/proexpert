@@ -8,8 +8,11 @@ use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\PaymentRequestService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use App\Models\Contract;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 
@@ -25,36 +28,34 @@ class PaymentRequestController extends Controller
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $validated = $request->validate([
-                'status' => ['nullable', 'string'],
-                'project_id' => [
-                    'nullable',
-                    'integer',
-                    Rule::exists('projects', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
-                ],
-                'contractor_id' => [
-                    'nullable',
-                    'integer',
-                    Rule::exists('contractors', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
-                ],
-                'date_from' => ['nullable', 'date'],
-                'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
-            ]);
+            $filters = $this->validateListFilters($request, $organizationId);
+            $requests = $this->requestService->getIncomingRequests($organizationId, $filters);
 
-            $requests = $this->requestService->getIncomingRequests($organizationId, $validated);
-
-            return AdminResponse::paginated(
-                $requests->map(fn ($document) => $this->formatRequest($document)),
-                [
-                    'total' => $requests->count(),
-                    'total_amount' => $requests->sum('amount'),
-                ],
-                trans_message('payments.requests.loaded')
-            );
+            return $this->buildRequestsResponse($requests, trans_message('payments.requests.loaded'));
         } catch (\Illuminate\Validation\ValidationException $e) {
             return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('payment_request.incoming.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('payments.requests.load_error'), 500);
+        }
+    }
+
+    public function outgoing(Request $request): JsonResponse
+    {
+        try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $filters = $this->validateListFilters($request, $organizationId);
+            $requests = $this->requestService->getOutgoingRequests($organizationId, $filters);
+
+            return $this->buildRequestsResponse($requests, trans_message('payments.requests.loaded'));
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
+        } catch (\Throwable $e) {
+            Log::error('payment_request.outgoing.error', [
                 'organization_id' => $request->attributes->get('current_organization_id'),
                 'error' => $e->getMessage(),
             ]);
@@ -89,6 +90,7 @@ class PaymentRequestController extends Controller
                 'document_date' => ['nullable', 'date'],
                 'due_date' => ['nullable', 'date'],
                 'description' => ['nullable', 'string'],
+                'payment_purpose' => ['required', 'string', 'max:1000'],
                 'bank_account' => ['nullable', 'string', 'size:20'],
                 'bank_bik' => ['nullable', 'string', 'size:9'],
                 'bank_correspondent_account' => ['nullable', 'string', 'size:20'],
@@ -100,17 +102,18 @@ class PaymentRequestController extends Controller
             $validated['organization_id'] = $organizationId;
             $validated['created_by_user_id'] = (int) $request->user()->id;
             $document = $this->requestService->createFromContractor($validated);
+            $document->loadMissing(['payeeContractor', 'project']);
 
-            return AdminResponse::success([
-                'id' => $document->id,
-                'document_number' => $document->document_number,
-                'status' => $document->status->value,
-            ], trans_message('payments.requests.created'), 201);
+            return AdminResponse::success(
+                $this->formatRequest($document),
+                trans_message('payments.requests.created'),
+                201
+            );
         } catch (\DomainException | \InvalidArgumentException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Illuminate\Validation\ValidationException $e) {
             return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('payment_request.store.error', [
                 'organization_id' => $request->attributes->get('current_organization_id'),
                 'error' => $e->getMessage(),
@@ -131,12 +134,21 @@ class PaymentRequestController extends Controller
             $document = PaymentDocument::query()
                 ->forOrganization($organizationId)
                 ->findOrFail((int) $id);
+
             $paymentOrder = $this->requestService->acceptRequest($document, $validated);
+            $document->loadMissing(['payeeContractor', 'project']);
 
             return AdminResponse::success([
-                'request_id' => $document->id,
-                'payment_order_id' => $paymentOrder->id,
-                'payment_order_number' => $paymentOrder->document_number,
+                'request' => $this->formatRequest($document),
+                'payment_order' => [
+                    'id' => $paymentOrder->id,
+                    'document_number' => $paymentOrder->document_number,
+                    'status' => $paymentOrder->status->value,
+                    'status_label' => $paymentOrder->status->label(),
+                    'amount' => (float) $paymentOrder->amount,
+                    'currency' => $paymentOrder->currency,
+                    'created_at' => $paymentOrder->created_at?->toISOString(),
+                ],
             ], trans_message('payments.requests.accepted'));
         } catch (\DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
@@ -144,7 +156,7 @@ class PaymentRequestController extends Controller
             return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return AdminResponse::error(trans_message('payments.not_found'), 404);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('payment_request.accept.error', [
                 'request_id' => $id,
                 'error' => $e->getMessage(),
@@ -166,16 +178,20 @@ class PaymentRequestController extends Controller
                 ->forOrganization($organizationId)
                 ->findOrFail((int) $id);
 
-            $this->requestService->rejectRequest($document, $validated['reason'], $request->user());
+            $rejectedDocument = $this->requestService->rejectRequest($document, $validated['reason'], $request->user());
+            $rejectedDocument->loadMissing(['payeeContractor', 'project']);
 
-            return AdminResponse::success(null, trans_message('payments.requests.rejected'));
+            return AdminResponse::success(
+                $this->formatRequest($rejectedDocument),
+                trans_message('payments.requests.rejected')
+            );
         } catch (\DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Illuminate\Validation\ValidationException $e) {
             return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return AdminResponse::error(trans_message('payments.not_found'), 404);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('payment_request.reject.error', [
                 'request_id' => $id,
                 'error' => $e->getMessage(),
@@ -202,17 +218,10 @@ class PaymentRequestController extends Controller
 
             $requests = $this->requestService->getRequestsFromContractor($organizationId, (int) $contractorId);
 
-            return AdminResponse::paginated(
-                $requests->map(fn ($document) => $this->formatRequest($document)),
-                [
-                    'total' => $requests->count(),
-                    'total_amount' => $requests->sum('amount'),
-                ],
-                trans_message('payments.requests.loaded')
-            );
+            return $this->buildRequestsResponse($requests, trans_message('payments.requests.loaded'));
         } catch (\Illuminate\Validation\ValidationException $e) {
             return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('payment_request.from_contractor.error', [
                 'contractor_id' => $contractorId,
                 'error' => $e->getMessage(),
@@ -229,7 +238,7 @@ class PaymentRequestController extends Controller
             $stats = $this->requestService->getStatistics($organizationId);
 
             return AdminResponse::success($stats, trans_message('payments.requests.loaded'));
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('payment_request.statistics.error', [
                 'organization_id' => $request->attributes->get('current_organization_id'),
                 'error' => $e->getMessage(),
@@ -239,23 +248,87 @@ class PaymentRequestController extends Controller
         }
     }
 
+    private function validateListFilters(Request $request, int $organizationId): array
+    {
+        return $request->validate([
+            'status' => ['nullable', 'string'],
+            'project_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('projects', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+            ],
+            'contractor_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('contractors', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+            ],
+            'date_from' => ['nullable', 'date'],
+            'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
+        ]);
+    }
+
+    private function buildRequestsResponse(Collection $requests, string $message): JsonResponse
+    {
+        if ($requests instanceof EloquentCollection) {
+            $requests->loadMissing(['payeeContractor', 'project']);
+        }
+
+        $items = $requests->map(fn (PaymentDocument $document) => $this->formatRequest($document))->values();
+
+        return AdminResponse::paginated(
+            $items,
+            [
+                'current_page' => 1,
+                'per_page' => $items->count(),
+                'total' => $items->count(),
+                'last_page' => 1,
+            ],
+            $message,
+            200,
+            [
+                'total_amount' => (float) $requests->sum('amount'),
+            ]
+        );
+    }
+
     private function formatRequest(PaymentDocument $document): array
     {
+        $contractId = $document->source_type === Contract::class ? (int) $document->source_id : null;
+        $hasBankDetails = $document->bank_name || $document->bank_bik || $document->bank_account;
+
         return [
             'id' => $document->id,
             'document_number' => $document->document_number,
-            'document_date' => $document->document_date->format('Y-m-d'),
+            'document_date' => $document->document_date?->format('Y-m-d'),
             'due_date' => $document->due_date?->format('Y-m-d'),
             'status' => $document->status->value,
             'status_label' => $document->status->label(),
-            'amount' => $document->amount,
+            'amount' => (float) $document->amount,
             'currency' => $document->currency,
+            'total_amount' => (float) $document->amount,
+            'payment_purpose' => $document->payment_purpose,
+            'description' => $document->description,
+            'notes' => $document->notes,
+            'project_id' => $document->project_id,
+            'contract_id' => $contractId,
+            'source_type' => $document->source_type,
+            'source_id' => $document->source_id,
+            'created_at' => $document->created_at?->toISOString(),
+            'updated_at' => $document->updated_at?->toISOString(),
+            'bank_details' => $hasBankDetails ? [
+                'bank_name' => $document->bank_name,
+                'bank_bik' => $document->bank_bik,
+                'bank_account' => $document->bank_account,
+                'bank_correspondent_account' => $document->bank_correspondent_account,
+            ] : null,
             'contractor' => [
                 'id' => $document->payee_contractor_id,
                 'name' => $document->getPayeeName(),
             ],
-            'description' => $document->description,
-            'created_at' => $document->created_at->toDateTimeString(),
+            'project' => $document->project ? [
+                'id' => $document->project->id,
+                'name' => $document->project->name,
+            ] : null,
         ];
     }
 }

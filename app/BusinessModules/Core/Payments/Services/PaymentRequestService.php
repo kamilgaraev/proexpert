@@ -70,7 +70,7 @@ class PaymentRequestService
                 
                 // Детали
                 'description' => $data['description'] ?? 'Платежное требование от подрядчика',
-                'payment_purpose' => $this->generatePaymentPurpose($data, $contract),
+                'payment_purpose' => $data['payment_purpose'] ?? $this->generatePaymentPurpose($data, $contract),
                 
                 // Банковские реквизиты подрядчика
                 'bank_account' => $data['bank_account'] ?? null,

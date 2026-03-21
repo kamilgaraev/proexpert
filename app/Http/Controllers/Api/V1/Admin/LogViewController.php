@@ -1,56 +1,64 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1\Admin;
 
-use App\Http\Controllers\Controller;
-use App\Services\Admin\LogViewingService;
-use Illuminate\Http\Request;
-use Illuminate\Http\JsonResponse;
-use App\Http\Resources\Api\V1\Admin\Log\WorkCompletionLogResource;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use App\Exceptions\BusinessLogicException;
+use App\Http\Controllers\Controller;
+use App\Http\Resources\Api\V1\Admin\Log\WorkCompletionLogResource;
+use App\Http\Responses\AdminResponse;
+use App\Services\Admin\LogViewingService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+
+use function trans_message;
 
 class LogViewController extends Controller
 {
-    protected LogViewingService $logViewingService;
+    public function __construct(
+        protected LogViewingService $logViewingService
+    ) {}
 
-    public function __construct(LogViewingService $logViewingService)
-    {
-        $this->logViewingService = $logViewingService;
-    }
-
-    /**
-     * Получить пагинированный список логов использования материалов.
-     * 
-     * @deprecated Функциональность больше не поддерживается.
-     *             Используйте модуль складского учета.
-     */
     public function getMaterialLogs(Request $request): JsonResponse
     {
-        throw new BusinessLogicException(
-            'Логи использования материалов больше не поддерживаются. Используйте модуль складского учета.',
-            410
-        );
+        return AdminResponse::error(trans_message('logs.material_usage_deprecated'), 410);
     }
 
-    /**
-     * Получить пагинированный список логов выполнения работ.
-     */
-    public function getWorkLogs(Request $request): AnonymousResourceCollection | JsonResponse
+    public function getWorkLogs(Request $request): JsonResponse
     {
         try {
             $logs = $this->logViewingService->getWorkCompletionLogs($request);
-            return WorkCompletionLogResource::collection($logs);
+
+            return AdminResponse::paginated(
+                WorkCompletionLogResource::collection($logs->getCollection()),
+                [
+                    'current_page' => $logs->currentPage(),
+                    'per_page' => $logs->perPage(),
+                    'total' => $logs->total(),
+                    'last_page' => $logs->lastPage(),
+                ],
+                trans_message('logs.work_loaded')
+            );
         } catch (BusinessLogicException $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: 400);
-        } catch (\Throwable $e) {
-            Log::error('[LogViewController@getWorkLogs] Unexpected error', [
+            Log::error('logs.work.business_error', [
+                'user_id' => $request->user()?->id,
+                'code' => $e->getCode(),
                 'message' => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
             ]);
-            return response()->json(['success' => false, 'message' => 'Внутренняя ошибка сервера при запросе логов работ.'], 500);
+
+            return AdminResponse::error(
+                $e->getCode() >= 500 ? trans_message('logs.work_load_error') : $e->getMessage(),
+                $e->getCode() >= 400 ? $e->getCode() : 400
+            );
+        } catch (\Throwable $e) {
+            Log::error('logs.work.error', [
+                'user_id' => $request->user()?->id,
+                'message' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('logs.work_load_error'), 500);
         }
     }
 
@@ -58,25 +66,35 @@ class LogViewController extends Controller
     {
         try {
             $logs = $this->logViewingService->getSystemLogs($request);
-            return response()->json([
-                'success' => true,
-                'data' => $logs['data'],
-                'pagination' => [
+
+            return AdminResponse::paginated(
+                $logs['data'],
+                [
                     'current_page' => $logs['current_page'],
                     'per_page' => $logs['per_page'],
                     'total' => $logs['total'],
                     'last_page' => $logs['last_page'],
-                ]
-            ]);
+                ],
+                trans_message('logs.system_loaded')
+            );
         } catch (BusinessLogicException $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: 400);
-        } catch (\Throwable $e) {
-            Log::error('[LogViewController@getSystemLogs] Unexpected error', [
+            Log::error('logs.system.business_error', [
+                'user_id' => $request->user()?->id,
+                'code' => $e->getCode(),
                 'message' => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
             ]);
-            return response()->json(['success' => false, 'message' => 'Внутренняя ошибка сервера при запросе системных логов.'], 500);
+
+            return AdminResponse::error(
+                $e->getCode() >= 500 ? trans_message('logs.system_load_error') : $e->getMessage(),
+                $e->getCode() >= 400 ? $e->getCode() : 400
+            );
+        } catch (\Throwable $e) {
+            Log::error('logs.system.error', [
+                'user_id' => $request->user()?->id,
+                'message' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('logs.system_load_error'), 500);
         }
     }
-} 
+}
