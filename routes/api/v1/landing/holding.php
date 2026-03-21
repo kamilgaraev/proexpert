@@ -7,6 +7,16 @@ use App\Http\Controllers\Api\V1\Landing\SiteAssetsController;
 use App\Http\Controllers\Api\V1\Landing\SiteLeadsController;
 use App\Http\Controllers\Api\V1\Landing\HoldingReportsController;
 
+Route::prefix('holding/public')
+    ->name('holding.public.')
+    ->group(function () {
+        Route::get('/site-data', [HoldingLandingController::class, 'publicSiteData'])
+            ->name('siteData');
+
+        Route::post('/site-leads', [SiteLeadsController::class, 'storeByDomain'])
+            ->name('siteLeads');
+    });
+
 // ============================================================================
 // API УПРАВЛЕНИЯ ХОЛДИНГОМ В ЛК
 // Требуют авторизации и активный модуль multi-organization
@@ -148,4 +158,3 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context', 'modu
                 ->name('clearCache');
         });
     });
-

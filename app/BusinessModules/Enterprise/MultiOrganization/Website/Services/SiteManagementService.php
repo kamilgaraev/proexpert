@@ -103,10 +103,28 @@ class SiteManagementService
 
     public function getSiteByDomain(string $domain): ?HoldingSite
     {
-        $cacheKey = 'site_by_domain:' . $domain;
+        $normalizedDomain = trim(strtolower($domain));
+        $normalizedDomain = preg_replace('#^https?://#', '', $normalizedDomain);
+        $normalizedDomain = trim($normalizedDomain, '/');
 
-        return Cache::remember($cacheKey, 300, function () use ($domain) {
-            $slug = str_replace('.prohelper.pro', '', $domain);
+        if ($normalizedDomain === '') {
+            return null;
+        }
+
+        $cacheKey = 'site_by_domain:' . $normalizedDomain;
+
+        return Cache::remember($cacheKey, 300, function () use ($normalizedDomain) {
+            $site = HoldingSite::query()
+                ->where('domain', $normalizedDomain)
+                ->where('is_active', true)
+                ->with(['organizationGroup.parentOrganization'])
+                ->first();
+
+            if ($site) {
+                return $site;
+            }
+
+            $slug = str_replace('.prohelper.pro', '', $normalizedDomain);
 
             return HoldingSite::query()
                 ->whereHas('organizationGroup', function ($query) use ($slug) {

@@ -6,6 +6,7 @@ use App\BusinessModules\Enterprise\MultiOrganization\Website\Services\SiteBuilde
 use App\BusinessModules\Enterprise\MultiOrganization\Website\Services\SiteManagementService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\LandingResponse;
+use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\HoldingSite;
 use App\Models\OrganizationGroup;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -152,6 +153,38 @@ class HoldingLandingController extends Controller
         }
     }
 
+    public function publicSiteData(Request $request): JsonResponse
+    {
+        try {
+            $site = $this->resolvePublicSiteFromRequest($request);
+
+            if (!$site) {
+                return LandingResponse::error(trans_message('holding_site_builder.public.not_found'), 404);
+            }
+
+            if ($this->isValidPreview($request, $site)) {
+                return LandingResponse::success($this->builderDataService->buildLiveDraftPayload($site));
+            }
+
+            $payload = $this->builderDataService->buildPublishedPayload($site);
+
+            if (empty($payload['blocks'])) {
+                return LandingResponse::error(trans_message('holding_site_builder.public.not_published'), 404);
+            }
+
+            return LandingResponse::success($payload);
+        } catch (\Throwable $e) {
+            Log::error('Holding public site data load failed', [
+                'site_domain' => $request->query('site_domain'),
+                'origin' => $request->headers->get('origin'),
+                'referer' => $request->headers->get('referer'),
+                'error' => $e->getMessage(),
+            ]);
+
+            return LandingResponse::error(trans_message('holding_site_builder.public.load_error'), 500);
+        }
+    }
+
     private function resolveOrganizationGroup(Request $request): OrganizationGroup
     {
         $organizationId = $request->attributes->get('current_organization_id');
@@ -167,5 +200,60 @@ class HoldingLandingController extends Controller
             ->wherePivot('user_id', $user->id)
             ->wherePivot('is_owner', true)
             ->exists();
+    }
+
+    private function resolvePublicSiteFromRequest(Request $request)
+    {
+        $siteDomain = $this->resolvePublicDomain($request);
+
+        if (!$siteDomain) {
+            return null;
+        }
+
+        return $this->siteService->getSiteByDomain($siteDomain);
+    }
+
+    private function resolvePublicDomain(Request $request): ?string
+    {
+        $siteDomain = trim((string) $request->input('site_domain', $request->query('site_domain', '')));
+        if ($siteDomain !== '') {
+            return $siteDomain;
+        }
+
+        $sourceUrl = (string) $request->input('source_url', '');
+        if ($sourceUrl !== '') {
+            $host = parse_url($sourceUrl, PHP_URL_HOST);
+            if (is_string($host) && $host !== '') {
+                return $host;
+            }
+        }
+
+        foreach (['origin', 'referer'] as $headerName) {
+            $headerValue = (string) $request->headers->get($headerName, '');
+            if ($headerValue === '') {
+                continue;
+            }
+
+            $host = parse_url($headerValue, PHP_URL_HOST);
+            if (is_string($host) && $host !== '') {
+                return $host;
+            }
+        }
+
+        return null;
+    }
+
+    private function isValidPreview(Request $request, HoldingSite $site): bool
+    {
+        if ($request->get('preview') !== 'true') {
+            return false;
+        }
+
+        $token = $request->get('token');
+        if (!$token) {
+            return false;
+        }
+
+        return $site->isValidPreviewToken($token);
     }
 }
