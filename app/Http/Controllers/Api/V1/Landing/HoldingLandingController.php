@@ -2,252 +2,159 @@
 
 namespace App\Http\Controllers\Api\V1\Landing;
 
-use App\Http\Controllers\Controller;
+use App\BusinessModules\Enterprise\MultiOrganization\Website\Services\SiteBuilderDataService;
 use App\BusinessModules\Enterprise\MultiOrganization\Website\Services\SiteManagementService;
-use App\BusinessModules\Enterprise\MultiOrganization\Website\Services\ContentManagementService;
-use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\HoldingSite;
+use App\Http\Controllers\Controller;
+use App\Http\Responses\LandingResponse;
 use App\Models\OrganizationGroup;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 
-/**
- * Контроллер для управления лендингом холдинга (упрощенная Тильда)
- * Один лендинг на холдинг с блочной системой
- */
 class HoldingLandingController extends Controller
 {
-    private SiteManagementService $siteService;
-    private ContentManagementService $contentService;
-
     public function __construct(
-        SiteManagementService $siteService,
-        ContentManagementService $contentService
+        private readonly SiteManagementService $siteService,
+        private readonly SiteBuilderDataService $builderDataService
     ) {
-        $this->siteService = $siteService;
-        $this->contentService = $contentService;
     }
 
-    /**
-     * Получить лендинг холдинга (создать если не существует)
-     * Холдинг определяется автоматически из контекста текущей организации
-     */
     public function show(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-            
-            $organizationGroup = OrganizationGroup::where('parent_organization_id', $organizationId)->firstOrFail();
+            $organizationGroup = $this->resolveOrganizationGroup($request);
             $user = Auth::user();
 
             if (!$this->canUserEditLanding($user, $organizationGroup)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Недостаточно прав для просмотра лендинга'
-                ], 403);
+                return LandingResponse::error(trans_message('holding_site_builder.access_denied'), 403);
             }
 
-            // Ищем существующий лендинг или создаем новый
-            $site = HoldingSite::where('organization_group_id', $organizationGroup->id)->first();
-            
-            if (!$site) {
-                // Автоматически создаем лендинг для холдинга
-                $site = $this->siteService->getOrCreateHoldingLanding($organizationGroup, $user);
-            }
+            $site = $this->siteService->getOrCreateHoldingLanding($organizationGroup, $user);
 
-            $landingData = [
-                'id' => $site->id,
-                'domain' => $site->domain,
-                'title' => $site->title,
-                'description' => $site->description,
-                'logo_url' => $site->logo_url,
-                'favicon_url' => $site->favicon_url,
-                'theme_config' => $site->theme_config ?? $this->getDefaultTheme(),
-                'seo_meta' => $site->seo_meta ?? $this->getDefaultSeoMeta($organizationGroup),
-                'analytics_config' => $site->analytics_config,
-                'status' => $site->status,
-                'url' => $site->getUrl(),
-                'preview_url' => $site->getPreviewUrl(),
-                'is_published' => $site->isPublished(),
-                'blocks' => $this->contentService->getBlocksForEditing($site),
-                'assets_count' => $site->assets()->count(),
-                'created_at' => $site->created_at,
-                'updated_at' => $site->updated_at
-            ];
-
-            return response()->json([
-                'success' => true,
-                'data' => $landingData
-            ]);
-
-        } catch (\Exception $e) {
-            Log::error('Error getting holding landing', [
-                'organization_id' => $organizationId ?? null,
+            return LandingResponse::success(
+                $this->builderDataService->getEditorPayload($site)
+            );
+        } catch (\Throwable $e) {
+            Log::error('Holding site builder load failed', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => Auth::id(),
                 'error' => $e->getMessage(),
-                'user_id' => Auth::id()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка получения лендинга'
-            ], 500);
+            return LandingResponse::error(trans_message('holding_site_builder.load_error'), 500);
         }
     }
 
-    /**
-     * Обновить настройки лендинга
-     * Холдинг определяется автоматически из контекста текущей организации
-     */
     public function update(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-            $organizationGroup = OrganizationGroup::where('parent_organization_id', $organizationId)->firstOrFail();
-            
-            $site = HoldingSite::where('organization_group_id', $organizationGroup->id)->firstOrFail();
+            $organizationGroup = $this->resolveOrganizationGroup($request);
+            $site = $this->siteService->getOrCreateHoldingLanding($organizationGroup, Auth::user());
             $user = Auth::user();
 
-            if (!$this->canUserEditLanding($user, $site->organizationGroup)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Недостаточно прав для редактирования лендинга'
-                ], 403);
+            if (!$site->canUserEdit($user)) {
+                return LandingResponse::error(trans_message('holding_site_builder.access_denied'), 403);
             }
 
-            // Валидация данных
             $validator = Validator::make($request->all(), [
+                'domain' => [
+                    'sometimes',
+                    'nullable',
+                    'string',
+                    'max:255',
+                    Rule::unique('holding_sites', 'domain')->ignore($site->id),
+                ],
                 'title' => 'sometimes|required|string|max:255',
                 'description' => 'nullable|string|max:1000',
+                'logo_url' => 'nullable|string|max:2048',
+                'favicon_url' => 'nullable|string|max:2048',
                 'theme_config' => 'nullable|array',
-                'theme_config.primary_color' => 'nullable|string|regex:/^#[a-fA-F0-9]{6}$/',
-                'theme_config.secondary_color' => 'nullable|string|regex:/^#[a-fA-F0-9]{6}$/',
+                'theme_config.primary_color' => 'nullable|string|max:32',
+                'theme_config.secondary_color' => 'nullable|string|max:32',
+                'theme_config.accent_color' => 'nullable|string|max:32',
+                'theme_config.background_color' => 'nullable|string|max:32',
+                'theme_config.text_color' => 'nullable|string|max:32',
                 'theme_config.font_family' => 'nullable|string|max:100',
                 'seo_meta' => 'nullable|array',
-                'seo_meta.title' => 'nullable|string|max:60',
-                'seo_meta.description' => 'nullable|string|max:160',
-                'seo_meta.keywords' => 'nullable|string|max:255',
+                'seo_meta.title' => 'nullable|string|max:255',
+                'seo_meta.description' => 'nullable|string|max:500',
+                'seo_meta.keywords' => 'nullable|string|max:500',
+                'seo_meta.og_title' => 'nullable|string|max:255',
+                'seo_meta.og_description' => 'nullable|string|max:500',
+                'seo_meta.og_image' => 'nullable|string|max:2048',
                 'analytics_config' => 'nullable|array',
             ]);
 
             if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Ошибки валидации',
-                    'errors' => $validator->errors()
-                ], 422);
+                return LandingResponse::error(
+                    trans_message('holding_site_builder.validation_error'),
+                    422,
+                    $validator->errors()
+                );
             }
 
-            $updated = $this->siteService->updateSiteSettings($site, $request->all(), $user);
+            $this->siteService->updateSiteSettings($site, $validator->validated(), $user);
 
-            if ($updated) {
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Настройки лендинга обновлены'
-                ]);
-            } else {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Не удалось обновить настройки'
-                ], 500);
-            }
-
-        } catch (\Exception $e) {
-            Log::error('Error updating holding landing', [
-                'organization_id' => $organizationId ?? null,
+            return LandingResponse::success(
+                $this->builderDataService->getEditorPayload($site->fresh()),
+                trans_message('holding_site_builder.updated')
+            );
+        } catch (\Throwable $e) {
+            Log::error('Holding site builder update failed', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => Auth::id(),
                 'error' => $e->getMessage(),
-                'user_id' => Auth::id()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка обновления лендинга'
-            ], 500);
+            return LandingResponse::error(trans_message('holding_site_builder.update_error'), 500);
         }
     }
 
-    /**
-     * Опубликовать лендинг
-     * Холдинг определяется автоматически из контекста текущей организации
-     */
     public function publish(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-            $organizationGroup = OrganizationGroup::where('parent_organization_id', $organizationId)->firstOrFail();
-            
-            $site = HoldingSite::where('organization_group_id', $organizationGroup->id)->firstOrFail();
+            $organizationGroup = $this->resolveOrganizationGroup($request);
+            $site = $this->siteService->getOrCreateHoldingLanding($organizationGroup, Auth::user());
             $user = Auth::user();
 
-            $published = $this->siteService->publishSite($site, $user);
+            if (!$site->canUserEdit($user)) {
+                return LandingResponse::error(trans_message('holding_site_builder.access_denied'), 403);
+            }
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Лендинг успешно опубликован',
-                'data' => [
-                    'url' => $site->getUrl(),
-                    'published_at' => $site->published_at
-                ]
-            ]);
+            $this->siteService->publishSite($site, $user);
 
-        } catch (\Exception $e) {
-            Log::error('Error publishing holding landing', [
-                'organization_id' => $organizationId ?? null,
+            return LandingResponse::success(
+                $this->builderDataService->getEditorPayload($site->fresh()),
+                trans_message('holding_site_builder.published')
+            );
+        } catch (\Throwable $e) {
+            Log::error('Holding site builder publish failed', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => Auth::id(),
                 'error' => $e->getMessage(),
-                'user_id' => Auth::id()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage()
-            ], 500);
+            return LandingResponse::error($e->getMessage() ?: trans_message('holding_site_builder.publish_error'), 500);
         }
     }
 
-    /**
-     * Проверить может ли пользователь редактировать лендинг
-     */
+    private function resolveOrganizationGroup(Request $request): OrganizationGroup
+    {
+        $organizationId = $request->attributes->get('current_organization_id');
+
+        return OrganizationGroup::query()
+            ->where('parent_organization_id', $organizationId)
+            ->firstOrFail();
+    }
+
     private function canUserEditLanding($user, OrganizationGroup $organizationGroup): bool
     {
-        $parentOrganization = $organizationGroup->parentOrganization;
-        
-        return $parentOrganization->users()
+        return $organizationGroup->parentOrganization->users()
             ->wherePivot('user_id', $user->id)
             ->wherePivot('is_owner', true)
             ->exists();
-    }
-
-    /**
-     * Получить тему по умолчанию (как в Тильде)
-     */
-    private function getDefaultTheme(): array
-    {
-        return [
-            'primary_color' => '#2563eb',
-            'secondary_color' => '#64748b',
-            'accent_color' => '#f59e0b',
-            'background_color' => '#ffffff',
-            'text_color' => '#1f2937',
-            'font_family' => 'Inter, sans-serif',
-            'font_size_base' => '16px',
-            'border_radius' => '8px',
-            'shadow_style' => 'modern'
-        ];
-    }
-
-    /**
-     * Получить SEO по умолчанию
-     */
-    private function getDefaultSeoMeta(OrganizationGroup $organizationGroup): array
-    {
-        return [
-            'title' => $organizationGroup->name,
-            'description' => "Официальный сайт {$organizationGroup->name}",
-            'keywords' => $organizationGroup->name,
-            'og_title' => $organizationGroup->name,
-            'og_description' => "Официальный сайт {$organizationGroup->name}",
-            'og_image' => ''
-        ];
     }
 }

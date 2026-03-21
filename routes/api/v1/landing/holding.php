@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Landing\HoldingLandingController;
 use App\Http\Controllers\Api\V1\Landing\SiteBlocksController;
 use App\Http\Controllers\Api\V1\Landing\SiteAssetsController;
+use App\Http\Controllers\Api\V1\Landing\SiteLeadsController;
 use App\Http\Controllers\Api\V1\Landing\HoldingReportsController;
 
 // ============================================================================
@@ -98,6 +99,16 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context', 'modu
                 Route::delete('/{assetId}', [SiteAssetsController::class, 'destroyForHolding'])
                     ->middleware(['authorize:multi-organization.website.assets.manage'])
                     ->name('destroy');
+            });
+
+            Route::prefix('leads')->name('leads.')->group(function () {
+                Route::get('/', [SiteLeadsController::class, 'indexForHolding'])
+                    ->middleware(['authorize:multi-organization.website.view'])
+                    ->name('index');
+
+                Route::get('/summary', [SiteLeadsController::class, 'summaryForHolding'])
+                    ->middleware(['authorize:multi-organization.website.view'])
+                    ->name('summary');
             });
         });
         

@@ -2,61 +2,61 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
+use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\HoldingSite;
+use App\BusinessModules\Enterprise\MultiOrganization\Website\Services\SiteBuilderDataService;
+use App\Http\Responses\LandingResponse;
 use App\Models\OrganizationGroup;
 use App\Services\Landing\MultiOrganizationService;
-use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\HoldingSite;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
 class HoldingController extends Controller
 {
-    protected MultiOrganizationService $multiOrgService;
-
-    public function __construct(MultiOrganizationService $multiOrgService)
-    {
-        $this->multiOrgService = $multiOrgService;
+    public function __construct(
+        protected MultiOrganizationService $multiOrgService,
+        protected SiteBuilderDataService $builderDataService
+    ) {
     }
 
-    public function getSiteData(Request $request)
+    public function getSiteData(Request $request): JsonResponse
     {
         $holding = $request->attributes->get('holding');
-        
+
         if (!$holding) {
-            abort(404, 'Холдинг не найден');
+            return LandingResponse::error(trans_message('holding_site_builder.public.not_found'), 404);
         }
 
-        $site = HoldingSite::where('organization_group_id', $holding->id)
+        $site = HoldingSite::query()
+            ->where('organization_group_id', $holding->id)
             ->where('is_active', true)
             ->first();
 
         if (!$site) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Лендинг холдинга еще не создан',
-                'data' => null
-            ], 404);
+            return LandingResponse::error(trans_message('holding_site_builder.public.not_found'), 404);
         }
 
-        if (!$site->isPublished() && !$this->isValidPreview($request, $site)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Лендинг не опубликован',
-                'data' => null
-            ], 404);
+        $isPreview = $this->isValidPreview($request, $site);
+
+        if ($isPreview) {
+            return LandingResponse::success($this->builderDataService->buildLiveDraftPayload($site));
         }
 
-        return response()->json([
-            'success' => true,
-            'data' => $site->getFullSiteData()
-        ]);
+        $payload = $this->builderDataService->buildPublishedPayload($site);
+
+        if (empty($payload['blocks'])) {
+            return LandingResponse::error(trans_message('holding_site_builder.public.not_published'), 404);
+        }
+
+        return LandingResponse::success($payload);
     }
 
-    public function index(Request $request)
+    public function index(Request $request): JsonResponse
     {
         $holding = $request->attributes->get('holding');
-        
+
         if (!$holding) {
-            abort(404, 'Холдинг не найден');
+            abort(404, 'Holding not found');
         }
 
         $data = [
@@ -68,32 +68,32 @@ class HoldingController extends Controller
         return response()->json([
             'success' => true,
             'data' => $data,
-            'view' => 'holding.dashboard'
+            'view' => 'holding.dashboard',
         ]);
     }
 
-    public function dashboard(Request $request)
+    public function dashboard(Request $request): JsonResponse
     {
         $user = Auth::user();
         $holding = $request->attributes->get('holding');
-        
+
         if (!$user) {
             return response()->json([
                 'success' => false,
-                'message' => 'Необходима авторизация',
-                'redirect' => '/login'
+                'message' => 'Authorization required',
+                'redirect' => '/login',
             ], 401);
         }
 
         if (!$this->multiOrgService->hasAccessToOrganization($user, $holding->parent_organization_id)) {
             return response()->json([
                 'success' => false,
-                'message' => 'Нет доступа к данному холдингу'
+                'message' => 'Access denied',
             ], 403);
         }
 
         $hierarchy = $this->multiOrgService->getOrganizationHierarchy($holding->parent_organization_id);
-        
+
         return response()->json([
             'success' => true,
             'data' => [
@@ -101,19 +101,19 @@ class HoldingController extends Controller
                 'hierarchy' => $hierarchy,
                 'user' => $user,
                 'consolidated_stats' => $this->getConsolidatedStats($holding),
-            ]
+            ],
         ]);
     }
 
-    public function childOrganizations(Request $request)
+    public function childOrganizations(Request $request): JsonResponse
     {
         $user = Auth::user();
         $holding = $request->attributes->get('holding');
-        
+
         if (!$this->multiOrgService->hasAccessToOrganization($user, $holding->parent_organization_id)) {
             return response()->json([
                 'success' => false,
-                'message' => 'Нет доступа к данному холдингу'
+                'message' => 'Access denied',
             ], 403);
         }
 
@@ -133,13 +133,13 @@ class HoldingController extends Controller
                         'active_contracts_value' => $org->contracts()
                             ->where('status', 'active')
                             ->sum('total_amount'),
-                    ]
+                    ],
                 ];
             });
 
         return response()->json([
             'success' => true,
-            'data' => $childOrganizations
+            'data' => $childOrganizations,
         ]);
     }
 
@@ -150,21 +150,17 @@ class HoldingController extends Controller
 
         return [
             'total_child_organizations' => $childOrgs->count(),
-            'total_users' => $childOrgs->sum(fn($org) => $org->users()->count()) + $parentOrg->users()->count(),
-            'total_projects' => $childOrgs->sum(fn($org) => $org->projects()->count()) + $parentOrg->projects()->count(),
-            'total_contracts_value' => $childOrgs->sum(fn($org) => $org->contracts()->sum('total_amount')) + $parentOrg->contracts()->sum('total_amount'),
-            'active_contracts_count' => $childOrgs->sum(fn($org) => $org->contracts()->where('status', 'active')->count()) + $parentOrg->contracts()->where('status', 'active')->count(),
+            'total_users' => $childOrgs->sum(fn ($org) => $org->users()->count()) + $parentOrg->users()->count(),
+            'total_projects' => $childOrgs->sum(fn ($org) => $org->projects()->count()) + $parentOrg->projects()->count(),
+            'total_contracts_value' => $childOrgs->sum(fn ($org) => $org->contracts()->sum('total_amount')) + $parentOrg->contracts()->sum('total_amount'),
+            'active_contracts_count' => $childOrgs->sum(fn ($org) => $org->contracts()->where('status', 'active')->count()) + $parentOrg->contracts()->where('status', 'active')->count(),
         ];
     }
 
     private function getConsolidatedStats(OrganizationGroup $holding): array
     {
-        $stats = $this->getHoldingStats($holding);
-        
-        $recentActivity = $this->getRecentActivity($holding);
-        
-        return array_merge($stats, [
-            'recent_activity' => $recentActivity,
+        return array_merge($this->getHoldingStats($holding), [
+            'recent_activity' => $this->getRecentActivity($holding),
             'performance_metrics' => $this->getPerformanceMetrics($holding),
         ]);
     }
@@ -185,7 +181,7 @@ class HoldingController extends Controller
 
     private function isValidPreview(Request $request, HoldingSite $site): bool
     {
-        if (!$request->has('preview') || $request->get('preview') !== 'true') {
+        if ($request->get('preview') !== 'true') {
             return false;
         }
 
@@ -196,4 +192,4 @@ class HoldingController extends Controller
 
         return $site->isValidPreviewToken($token);
     }
-} 
+}

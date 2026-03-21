@@ -2,18 +2,14 @@
 
 namespace App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models;
 
+use App\Models\OrganizationGroup;
+use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
-use App\Models\OrganizationGroup;
-use App\Models\User;
-use Carbon\Carbon;
 
-/**
- * Доменная модель сайта холдинга
- */
 class HoldingSite extends Model
 {
     protected $table = 'holding_sites';
@@ -28,6 +24,7 @@ class HoldingSite extends Model
         'theme_config',
         'seo_meta',
         'analytics_config',
+        'published_payload',
         'status',
         'is_active',
         'published_at',
@@ -39,29 +36,21 @@ class HoldingSite extends Model
         'theme_config' => 'array',
         'seo_meta' => 'array',
         'analytics_config' => 'array',
+        'published_payload' => 'array',
         'is_active' => 'boolean',
         'published_at' => 'datetime',
     ];
 
-    /**
-     * Холдинг-владелец сайта
-     */
     public function organizationGroup(): BelongsTo
     {
         return $this->belongsTo(OrganizationGroup::class);
     }
 
-    /**
-     * Блоки контента сайта
-     */
     public function contentBlocks(): HasMany
     {
         return $this->hasMany(SiteContentBlock::class)->orderBy('sort_order');
     }
 
-    /**
-     * Активные опубликованные блоки
-     */
     public function publishedBlocks(): HasMany
     {
         return $this->contentBlocks()
@@ -69,175 +58,128 @@ class HoldingSite extends Model
             ->where('is_active', true);
     }
 
-    /**
-     * Файлы и медиа
-     */
     public function assets(): HasMany
     {
         return $this->hasMany(SiteAsset::class);
     }
 
-    /**
-     * Создатель сайта
-     */
+    public function leads(): HasMany
+    {
+        return $this->hasMany(HoldingSiteLead::class, 'holding_site_id')->latest('submitted_at');
+    }
+
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by_user_id');
     }
 
-    /**
-     * Последний редактор
-     */
     public function updater(): BelongsTo
     {
         return $this->belongsTo(User::class, 'updated_by_user_id');
     }
 
-    /**
-     * Получить полную структуру сайта для рендеринга
-     */
-    public function getFullSiteData(): array
+    public function publish(User $user, ?array $snapshot = null): bool
     {
-        $cacheKey = "holding_site_data:{$this->id}:{$this->updated_at->timestamp}";
-        
-        return Cache::remember($cacheKey, 3600, function () {
-            return [
-                'site' => [
-                    'id' => $this->id,
-                    'domain' => $this->getDomain(),
-                    'title' => $this->title,
-                    'description' => $this->description,
-                    'logo_url' => $this->logo_url,
-                    'favicon_url' => $this->favicon_url,
-                    'theme_config' => $this->theme_config,
-                    'seo_meta' => $this->seo_meta,
-                    'analytics_config' => $this->analytics_config,
-                ],
-                'blocks' => $this->publishedBlocks()
-                    ->with('assets')
-                    ->get()
-                    ->map(fn($block) => $block->toPublicArray())
-                    ->toArray(),
-                'organization' => [
-                    'name' => $this->organizationGroup->name,
-                    'slug' => $this->organizationGroup->slug,
-                ],
-                'last_updated' => $this->updated_at->toISOString(),
-            ];
-        });
-    }
+        $snapshot = $snapshot ?? $this->published_payload ?? [];
 
-    /**
-     * Опубликовать сайт
-     */
-    public function publish(User $user): bool
-    {
         $this->update([
+            'status' => 'published',
+            'published_payload' => $snapshot,
+            'published_at' => now(),
+            'updated_by_user_id' => $user->id,
+        ]);
+
+        $this->contentBlocks()->update([
             'status' => 'published',
             'published_at' => now(),
             'updated_by_user_id' => $user->id,
         ]);
 
-        // Публикуем все черновые блоки
-        $this->contentBlocks()
-            ->where('status', 'draft')
-            ->update([
-                'status' => 'published',
-                'published_at' => now(),
-                'updated_by_user_id' => $user->id,
-            ]);
-
         $this->clearCache();
-        
+
         return true;
     }
 
-    /**
-     * Очистить кэш сайта
-     */
+    public function hasPublishedSnapshot(): bool
+    {
+        return is_array($this->published_payload) && !empty($this->published_payload);
+    }
+
+    public function getPublishedPayload(): array
+    {
+        return $this->published_payload ?? [];
+    }
+
     public function clearCache(): void
     {
-        Cache::forget("holding_site_data:{$this->id}:{$this->updated_at->timestamp}");
-        
-        // Проверяем поддержку тегов кэша
+        $keys = [
+            "holding_site_data:{$this->id}",
+            "holding_site_published:{$this->id}",
+            "site_data_{$this->id}",
+            "site_blocks_{$this->id}",
+        ];
+
+        foreach ($keys as $key) {
+            Cache::forget($key);
+        }
+
         try {
             if (method_exists(Cache::getStore(), 'tags')) {
                 Cache::tags(['holding_sites', "site_{$this->id}"])->flush();
-            } else {
-                // Для драйверов без поддержки тегов очищаем специфичные ключи
-                Cache::forget("holding_site_data:{$this->id}");
-                Cache::forget("site_data_{$this->id}");
-                Cache::forget("site_blocks_{$this->id}");
             }
-        } catch (\Exception $e) {
-            // Логируем, но не ломаем функциональность
-            Log::warning('Cache clearing failed for site', [
+        } catch (\Throwable $e) {
+            Log::warning('Holding site cache clear failed', [
                 'site_id' => $this->id,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ]);
         }
     }
 
-    /**
-     * Проверить может ли пользователь редактировать сайт
-     */
     public function canUserEdit(User $user): bool
     {
-        $organizationGroup = $this->organizationGroup;
-        $parentOrganization = $organizationGroup->parentOrganization;
-        
-        // Проверяем является ли пользователь владельцем родительской организации
+        $parentOrganization = $this->organizationGroup->parentOrganization;
+
         return $parentOrganization->users()
             ->wherePivot('user_id', $user->id)
             ->wherePivot('is_owner', true)
             ->exists();
     }
 
-    /**
-     * Получить домен сайта
-     */
     public function getDomain(): string
     {
-        return $this->domain ?? ($this->organizationGroup->slug . '.prohelper.pro');
+        $domain = $this->domain ?: ($this->organizationGroup->slug . '.prohelper.pro');
+
+        if (str_contains($domain, '.')) {
+            return $domain;
+        }
+
+        return $domain . '.prohelper.pro';
     }
 
-    /**
-     * Получить URL сайта
-     */
     public function getUrl(): string
     {
-        return "https://{$this->getDomain()}";
+        return 'https://' . $this->getDomain();
     }
 
-    /**
-     * Проверить статус публикации
-     */
     public function isPublished(): bool
     {
-        return $this->status === 'published' && $this->is_active;
+        return $this->status === 'published' && $this->is_active && $this->hasPublishedSnapshot();
     }
 
-    /**
-     * Получить превью URL для черновика
-     */
     public function getPreviewUrl(): string
     {
         return $this->getUrl() . '?preview=true&token=' . $this->generatePreviewToken();
     }
 
-    /**
-     * Генерировать токен для превью
-     */
-    private function generatePreviewToken(): string
-    {
-        return hash('sha256', $this->id . $this->updated_at->timestamp . config('app.key'));
-    }
-
-    /**
-     * Проверить токен превью
-     */
     public function isValidPreviewToken(string $token): bool
     {
         return hash_equals($this->generatePreviewToken(), $token);
+    }
+
+    private function generatePreviewToken(): string
+    {
+        $updatedAt = $this->updated_at?->timestamp ?? now()->timestamp;
+
+        return hash('sha256', $this->id . $updatedAt . config('app.key'));
     }
 }

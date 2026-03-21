@@ -1,14 +1,18 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1\Landing;
 
-use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
-use Illuminate\Http\JsonResponse;
-use App\Services\Organization\OrganizationProfileService;
+use App\Domain\Organization\ValueObjects\OrganizationProfile;
 use App\Enums\OrganizationCapability;
-use Illuminate\Support\Facades\Validator;
+use App\Http\Controllers\Controller;
+use App\Models\Organization;
+use App\Services\Organization\OrganizationProfileService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 
 class OrganizationProfileController extends Controller
 {
@@ -19,48 +23,27 @@ class OrganizationProfileController extends Controller
         $this->profileService = $profileService;
     }
 
-    /**
-     * Получить текущий профиль организации
-     * 
-     * GET /api/v1/landing/organization/profile
-     */
     public function getProfile(Request $request): JsonResponse
     {
         try {
-            $user = $request->user();
-            $organization = $user->currentOrganization;
-            
-            if (!$organization) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Организация не найдена',
-                ], 404);
+            $organization = $request->user()?->currentOrganization;
+
+            if (!$organization instanceof Organization) {
+                return $this->notFoundResponse();
             }
-            
+
             $profile = $this->profileService->getProfile($organization);
-            
+
             return response()->json([
                 'success' => true,
-                'data' => [
-                    'organization_id' => $organization->id,
-                        'name' => $organization->name,
-                    'inn' => $organization->inn ?? $organization->tax_number,
-                    'capabilities' => $profile->getCapabilities(),
-                    'primary_business_type' => $profile->getPrimaryBusinessType()?->value,
-                    'specializations' => $profile->getSpecializations(),
-                    'certifications' => $profile->getCertifications(),
-                    'profile_completeness' => $profile->getProfileCompleteness(),
-                    'onboarding_completed' => $profile->isOnboardingCompleted(),
-                    'onboarding_completed_at' => $profile->getOnboardingCompletedAt()?->format('Y-m-d H:i:s'),
-                    'recommended_modules' => $profile->getRecommendedModules(),
-                ],
+                'data' => $this->buildProfilePayload($organization, $profile),
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Failed to get organization profile', [
                 'user_id' => $request->user()?->id,
                 'error' => $e->getMessage(),
             ]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to retrieve profile',
@@ -68,18 +51,13 @@ class OrganizationProfileController extends Controller
         }
     }
 
-    /**
-     * Обновить capabilities организации
-     * 
-     * PUT /api/v1/landing/organization/profile/capabilities
-     */
     public function updateCapabilities(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
             'capabilities' => 'required|array',
-            'capabilities.*' => 'string|in:' . implode(',', array_map(fn($c) => $c->value, OrganizationCapability::cases())),
+            'capabilities.*' => 'string|in:' . implode(',', array_map(fn ($capability) => $capability->value, OrganizationCapability::cases())),
         ]);
-        
+
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
@@ -87,39 +65,31 @@ class OrganizationProfileController extends Controller
                 'errors' => $validator->errors(),
             ], 422);
         }
-        
+
         try {
-            $user = $request->user();
-            $organization = $user->currentOrganization;
-            
-            if (!$organization) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Организация не найдена',
-                ], 404);
+            $organization = $request->user()?->currentOrganization;
+
+            if (!$organization instanceof Organization) {
+                return $this->notFoundResponse();
             }
-            
-            $updatedOrg = $this->profileService->updateCapabilities(
+
+            $updatedOrganization = $this->profileService->updateCapabilities(
                 $organization,
-                $request->input('capabilities')
+                $request->input('capabilities', [])
             );
-            
-            $profile = $this->profileService->getProfile($updatedOrg);
-            
+            $profile = $this->profileService->getProfile($updatedOrganization);
+
             return response()->json([
                 'success' => true,
                 'message' => 'Capabilities успешно обновлены',
-                'data' => [
-                    'profile_completeness' => $profile->getProfileCompleteness(),
-                    'recommended_modules' => $profile->getRecommendedModules(),
-                ],
+                'data' => $this->buildProfileUpdatePayload($profile),
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Failed to update capabilities', [
                 'user_id' => $request->user()?->id,
                 'error' => $e->getMessage(),
             ]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to update capabilities',
@@ -127,17 +97,12 @@ class OrganizationProfileController extends Controller
         }
     }
 
-    /**
-     * Обновить основной тип деятельности
-     * 
-     * PUT /api/v1/landing/organization/profile/business-type
-     */
     public function updateBusinessType(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'primary_business_type' => 'required|string|in:' . implode(',', array_map(fn($c) => $c->value, OrganizationCapability::cases())),
+            'primary_business_type' => 'required|string|in:' . implode(',', array_map(fn ($capability) => $capability->value, OrganizationCapability::cases())),
         ]);
-        
+
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
@@ -145,39 +110,36 @@ class OrganizationProfileController extends Controller
                 'errors' => $validator->errors(),
             ], 422);
         }
-        
+
         try {
-            $user = $request->user();
-            $organization = $user->currentOrganization;
-            
-            if (!$organization) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Организация не найдена',
-                ], 404);
+            $organization = $request->user()?->currentOrganization;
+
+            if (!$organization instanceof Organization) {
+                return $this->notFoundResponse();
             }
-            
-            $updatedOrg = $this->profileService->updatePrimaryBusinessType(
+
+            $updatedOrganization = $this->profileService->updatePrimaryBusinessType(
                 $organization,
-                $request->input('primary_business_type')
+                (string) $request->input('primary_business_type')
             );
-            
-            $profile = $this->profileService->getProfile($updatedOrg);
-            
+            $profile = $this->profileService->getProfile($updatedOrganization);
+
             return response()->json([
                 'success' => true,
                 'message' => 'Основной тип деятельности обновлен',
-                'data' => [
-                    'profile_completeness' => $profile->getProfileCompleteness(),
-                    'recommended_modules' => $profile->getRecommendedModules(),
-                ],
+                'data' => $this->buildProfileUpdatePayload($profile),
             ]);
-        } catch (\Exception $e) {
+        } catch (\InvalidArgumentException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 422);
+        } catch (\Throwable $e) {
             Log::error('Failed to update business type', [
                 'user_id' => $request->user()?->id,
                 'error' => $e->getMessage(),
             ]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to update business type',
@@ -185,18 +147,13 @@ class OrganizationProfileController extends Controller
         }
     }
 
-    /**
-     * Обновить специализации
-     * 
-     * PUT /api/v1/landing/organization/profile/specializations
-     */
     public function updateSpecializations(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
             'specializations' => 'required|array',
             'specializations.*' => 'string|max:255',
         ]);
-        
+
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
@@ -204,39 +161,31 @@ class OrganizationProfileController extends Controller
                 'errors' => $validator->errors(),
             ], 422);
         }
-        
+
         try {
-            $user = $request->user();
-            $organization = $user->currentOrganization;
-            
-            if (!$organization) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Организация не найдена',
-                ], 404);
+            $organization = $request->user()?->currentOrganization;
+
+            if (!$organization instanceof Organization) {
+                return $this->notFoundResponse();
             }
-            
-            $updatedOrg = $this->profileService->updateSpecializations(
+
+            $updatedOrganization = $this->profileService->updateSpecializations(
                 $organization,
-                $request->input('specializations')
+                $request->input('specializations', [])
             );
-            
-            $profile = $this->profileService->getProfile($updatedOrg);
-            
+            $profile = $this->profileService->getProfile($updatedOrganization);
+
             return response()->json([
                 'success' => true,
                 'message' => 'Специализации обновлены',
-                'data' => [
-                    'profile_completeness' => $profile->getProfileCompleteness(),
-                    'recommended_modules' => $profile->getRecommendedModules(),
-                ],
+                'data' => $this->buildProfileUpdatePayload($profile),
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Failed to update specializations', [
                 'user_id' => $request->user()?->id,
                 'error' => $e->getMessage(),
             ]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to update specializations',
@@ -244,18 +193,13 @@ class OrganizationProfileController extends Controller
         }
     }
 
-    /**
-     * Обновить сертификаты/лицензии
-     * 
-     * PUT /api/v1/landing/organization/profile/certifications
-     */
     public function updateCertifications(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
             'certifications' => 'required|array',
             'certifications.*' => 'string|max:255',
         ]);
-        
+
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
@@ -263,39 +207,31 @@ class OrganizationProfileController extends Controller
                 'errors' => $validator->errors(),
             ], 422);
         }
-        
+
         try {
-            $user = $request->user();
-            $organization = $user->currentOrganization;
-            
-            if (!$organization) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Организация не найдена',
-                ], 404);
+            $organization = $request->user()?->currentOrganization;
+
+            if (!$organization instanceof Organization) {
+                return $this->notFoundResponse();
             }
-            
-            $updatedOrg = $this->profileService->updateCertifications(
+
+            $updatedOrganization = $this->profileService->updateCertifications(
                 $organization,
-                $request->input('certifications')
+                $request->input('certifications', [])
             );
-            
-            $profile = $this->profileService->getProfile($updatedOrg);
-            
+            $profile = $this->profileService->getProfile($updatedOrganization);
+
             return response()->json([
                 'success' => true,
                 'message' => 'Сертификаты обновлены',
-                'data' => [
-                    'profile_completeness' => $profile->getProfileCompleteness(),
-                    'recommended_modules' => $profile->getRecommendedModules(),
-                ],
+                'data' => $this->buildProfileUpdatePayload($profile),
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Failed to update certifications', [
                 'user_id' => $request->user()?->id,
                 'error' => $e->getMessage(),
             ]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to update certifications',
@@ -303,27 +239,17 @@ class OrganizationProfileController extends Controller
         }
     }
 
-    /**
-     * Завершить onboarding
-     * 
-     * POST /api/v1/landing/organization/profile/complete-onboarding
-     */
     public function completeOnboarding(Request $request): JsonResponse
     {
         try {
-            $user = $request->user();
-            $organization = $user->currentOrganization;
-            
-            if (!$organization) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Организация не найдена',
-                ], 404);
+            $organization = $request->user()?->currentOrganization;
+
+            if (!$organization instanceof Organization) {
+                return $this->notFoundResponse();
             }
-            
-            // Проверяем минимальную заполненность профиля
+
             $profile = $this->profileService->getProfile($organization);
-            
+
             if ($profile->getProfileCompleteness() < 50) {
                 return response()->json([
                     'success' => false,
@@ -332,31 +258,32 @@ class OrganizationProfileController extends Controller
                         'completeness' => $profile->getProfileCompleteness(),
                         'required_fields' => [
                             'capabilities' => empty($profile->getCapabilities()),
-                            'business_type' => empty($profile->getPrimaryBusinessType()),
+                            'business_type' => $profile->getPrimaryBusinessType() === null,
                         ],
                     ],
                 ], 400);
             }
-            
-            $updatedOrg = $this->profileService->completeOnboarding($organization);
-            $profile = $this->profileService->getProfile($updatedOrg);
-            
+
+            $updatedOrganization = $this->profileService->completeOnboarding($organization);
+            $updatedProfile = $this->profileService->getProfile($updatedOrganization);
+
             return response()->json([
                 'success' => true,
                 'message' => 'Onboarding успешно завершен',
-                'data' => [
-                    'onboarding_completed' => $profile->isOnboardingCompleted(),
-                    'onboarding_completed_at' => $profile->getOnboardingCompletedAt()?->format('Y-m-d H:i:s'),
-                    'profile_completeness' => $profile->getProfileCompleteness(),
-                    'recommended_modules' => $profile->getRecommendedModules(),
-                ],
+                'data' => array_merge(
+                    [
+                        'onboarding_completed' => $updatedProfile->isOnboardingCompleted(),
+                        'onboarding_completed_at' => $updatedProfile->getOnboardingCompletedAt()?->format('Y-m-d H:i:s'),
+                    ],
+                    $this->buildProfileUpdatePayload($updatedProfile)
+                ),
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Failed to complete onboarding', [
                 'user_id' => $request->user()?->id,
                 'error' => $e->getMessage(),
             ]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to complete onboarding',
@@ -364,16 +291,47 @@ class OrganizationProfileController extends Controller
         }
     }
 
-    /**
-     * Получить список доступных capabilities с описаниями
-     * 
-     * GET /api/v1/landing/organization/capabilities
-     */
     public function getAvailableCapabilities(): JsonResponse
     {
         return response()->json([
             'success' => true,
             'data' => OrganizationCapability::toArray(),
         ]);
+    }
+
+    private function buildProfilePayload(Organization $organization, OrganizationProfile $profile): array
+    {
+        return [
+            'organization_id' => $organization->id,
+            'name' => $organization->name,
+            'inn' => $organization->inn ?? $organization->tax_number,
+            'capabilities' => $profile->getCapabilities(),
+            'primary_business_type' => $profile->getPrimaryBusinessType()?->value,
+            'specializations' => $profile->getSpecializations(),
+            'certifications' => $profile->getCertifications(),
+            'profile_completeness' => $profile->getProfileCompleteness(),
+            'onboarding_completed' => $profile->isOnboardingCompleted(),
+            'onboarding_completed_at' => $profile->getOnboardingCompletedAt()?->format('Y-m-d H:i:s'),
+            'recommended_modules' => $profile->getRecommendedModules(),
+            'workspace_profile' => $profile->getWorkspaceProfile(),
+        ];
+    }
+
+    private function buildProfileUpdatePayload(OrganizationProfile $profile): array
+    {
+        return [
+            'primary_business_type' => $profile->getPrimaryBusinessType()?->value,
+            'profile_completeness' => $profile->getProfileCompleteness(),
+            'recommended_modules' => $profile->getRecommendedModules(),
+            'workspace_profile' => $profile->getWorkspaceProfile(),
+        ];
+    }
+
+    private function notFoundResponse(): JsonResponse
+    {
+        return response()->json([
+            'success' => false,
+            'message' => 'Организация не найдена',
+        ], 404);
     }
 }

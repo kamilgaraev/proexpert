@@ -1,28 +1,32 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services\Organization;
 
-use App\Models\Organization;
-use App\Enums\OrganizationCapability;
 use App\Domain\Organization\ValueObjects\OrganizationProfile;
-use App\Events\OrganizationProfileUpdated;
+use App\Enums\OrganizationCapability;
 use App\Events\OrganizationOnboardingCompleted;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
+use App\Events\OrganizationProfileUpdated;
+use App\Models\Organization;
+use App\Support\Organization\OrganizationWorkspaceProfileCatalog;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 
 class OrganizationProfileService
 {
     public function updateCapabilities(Organization $organization, array $capabilities): Organization
     {
         $oldCapabilities = $organization->capabilities ?? [];
-        
-        $validCapabilities = array_filter($capabilities, function ($capability) {
-            return OrganizationCapability::tryFrom($capability) !== null;
-        });
+        $validCapabilities = $this->normalizeCapabilities($capabilities);
+        $normalizedPrimaryBusinessType = OrganizationWorkspaceProfileCatalog::normalizePrimaryProfile(
+            $validCapabilities,
+            $organization->primary_business_type
+        );
 
         $organization->update([
             'capabilities' => $validCapabilities,
+            'primary_business_type' => $normalizedPrimaryBusinessType,
         ]);
 
         $this->calculateProfileCompleteness($organization);
@@ -31,8 +35,7 @@ class OrganizationProfileService
             'organization_id' => $organization->id,
             'capabilities' => $validCapabilities,
         ]);
-        
-        // Dispatch event
+
         event(new OrganizationProfileUpdated(
             $organization,
             'capabilities',
@@ -46,8 +49,17 @@ class OrganizationProfileService
 
     public function updatePrimaryBusinessType(Organization $organization, string $businessType): Organization
     {
+        $capabilities = $this->normalizeCapabilities($organization->capabilities ?? []);
+
+        if ($capabilities !== [] && !in_array($businessType, $capabilities, true)) {
+            throw new \InvalidArgumentException('Primary business type must be one of selected capabilities.');
+        }
+
         $organization->update([
-            'primary_business_type' => $businessType,
+            'primary_business_type' => OrganizationWorkspaceProfileCatalog::normalizePrimaryProfile(
+                $capabilities,
+                $businessType
+            ),
         ]);
 
         $this->calculateProfileCompleteness($organization);
@@ -109,18 +121,23 @@ class OrganizationProfileService
     public function hasCapability(Organization $organization, OrganizationCapability $capability): bool
     {
         $capabilities = $organization->capabilities ?? [];
-        return in_array($capability->value, $capabilities);
+
+        return in_array($capability->value, $capabilities, true);
     }
 
     public function addCapability(Organization $organization, OrganizationCapability $capability): Organization
     {
-        $capabilities = $organization->capabilities ?? [];
-        
-        if (!in_array($capability->value, $capabilities)) {
+        $capabilities = $this->normalizeCapabilities($organization->capabilities ?? []);
+
+        if (!in_array($capability->value, $capabilities, true)) {
             $capabilities[] = $capability->value;
-            
+
             $organization->update([
                 'capabilities' => $capabilities,
+                'primary_business_type' => OrganizationWorkspaceProfileCatalog::normalizePrimaryProfile(
+                    $capabilities,
+                    $organization->primary_business_type
+                ),
             ]);
 
             $this->calculateProfileCompleteness($organization);
@@ -136,11 +153,15 @@ class OrganizationProfileService
 
     public function removeCapability(Organization $organization, OrganizationCapability $capability): Organization
     {
-        $capabilities = $organization->capabilities ?? [];
-        $capabilities = array_values(array_filter($capabilities, fn($cap) => $cap !== $capability->value));
+        $capabilities = $this->normalizeCapabilities($organization->capabilities ?? []);
+        $capabilities = array_values(array_filter($capabilities, fn ($cap) => $cap !== $capability->value));
 
         $organization->update([
             'capabilities' => $capabilities,
+            'primary_business_type' => OrganizationWorkspaceProfileCatalog::normalizePrimaryProfile(
+                $capabilities,
+                $organization->primary_business_type
+            ),
         ]);
 
         $this->calculateProfileCompleteness($organization);
@@ -155,13 +176,18 @@ class OrganizationProfileService
 
     public function calculateProfileCompleteness(Organization $organization): int
     {
+        $normalizedPrimaryBusinessType = OrganizationWorkspaceProfileCatalog::normalizePrimaryProfile(
+            $organization->capabilities ?? [],
+            $organization->primary_business_type
+        );
+
         $completeness = 0;
 
         if (!empty($organization->capabilities)) {
             $completeness += 30;
         }
 
-        if (!empty($organization->primary_business_type)) {
+        if (!empty($normalizedPrimaryBusinessType)) {
             $completeness += 30;
         }
 
@@ -174,6 +200,7 @@ class OrganizationProfileService
         }
 
         $organization->update([
+            'primary_business_type' => $normalizedPrimaryBusinessType,
             'profile_completeness' => min($completeness, 100),
         ]);
 
@@ -194,8 +221,7 @@ class OrganizationProfileService
         Log::info('Organization onboarding completed', [
             'organization_id' => $organization->id,
         ]);
-        
-        // Dispatch event
+
         event(new OrganizationOnboardingCompleted($organization, Auth::user()));
 
         return $organization->fresh();
@@ -219,58 +245,47 @@ class OrganizationProfileService
         Organization $organization,
         \App\Enums\ProjectOrganizationRole $role
     ): \App\Domain\Common\ValidationResult {
-        $capabilities = array_map(
-            fn($cap) => OrganizationCapability::tryFrom($cap),
-            $organization->capabilities ?? []
-        );
+        $capabilityValues = $this->normalizeCapabilities($organization->capabilities ?? []);
 
-        $capabilities = array_filter($capabilities);
+        if ($capabilityValues === []) {
+            $isFallbackRole = in_array($role, [
+                \App\Enums\ProjectOrganizationRole::CUSTOMER,
+                \App\Enums\ProjectOrganizationRole::OBSERVER,
+            ], true);
 
-        $errors = [];
-
-        switch ($role) {
-            case \App\Enums\ProjectOrganizationRole::CUSTOMER:
-                break;
-
-            case \App\Enums\ProjectOrganizationRole::GENERAL_CONTRACTOR:
-                if (!in_array(OrganizationCapability::GENERAL_CONTRACTING, $capabilities)) {
-                    $errors[] = 'Организация не имеет capability "general_contracting"';
-                }
-                break;
-
-            case \App\Enums\ProjectOrganizationRole::CONTRACTOR:
-                if (!in_array(OrganizationCapability::GENERAL_CONTRACTING, $capabilities) &&
-                    !in_array(OrganizationCapability::SUBCONTRACTING, $capabilities)) {
-                    $errors[] = 'Организация не имеет capability "general_contracting" или "subcontracting"';
-                }
-                break;
-                
-            case \App\Enums\ProjectOrganizationRole::SUBCONTRACTOR:
-                if (!in_array(OrganizationCapability::SUBCONTRACTING, $capabilities)) {
-                    $errors[] = 'Организация не имеет capability "subcontracting"';
-                }
-                break;
-
-            case \App\Enums\ProjectOrganizationRole::CONSTRUCTION_SUPERVISION:
-                if (!in_array(OrganizationCapability::CONSTRUCTION_SUPERVISION, $capabilities)) {
-                    $errors[] = 'Организация не имеет capability "construction_supervision"';
-                }
-                break;
-
-            case \App\Enums\ProjectOrganizationRole::DESIGNER:
-                if (!in_array(OrganizationCapability::DESIGN, $capabilities)) {
-                    $errors[] = 'Организация не имеет capability "design"';
-                }
-                break;
-
-            case \App\Enums\ProjectOrganizationRole::OBSERVER:
-                break;
+            return new \App\Domain\Common\ValidationResult(
+                isValid: $isFallbackRole,
+                errors: $isFallbackRole
+                    ? []
+                    : ['Организация не настроила направления деятельности для выбранной роли проекта.']
+            );
         }
 
+        $allowedRoles = OrganizationWorkspaceProfileCatalog::allowedProjectRoles($capabilityValues);
+        $isValid = in_array($role->value, $allowedRoles, true);
+
         return new \App\Domain\Common\ValidationResult(
-            isValid: count($errors) === 0,
-            errors: $errors
+            isValid: $isValid,
+            errors: $isValid
+                ? []
+                : ['Организация не может выполнять роль "' . $role->value . '" с текущими capabilities.']
         );
     }
-}
 
+    private function normalizeCapabilities(array $capabilities): array
+    {
+        $normalized = [];
+
+        foreach ($capabilities as $capability) {
+            if (!is_string($capability) || OrganizationCapability::tryFrom($capability) === null) {
+                continue;
+            }
+
+            if (!in_array($capability, $normalized, true)) {
+                $normalized[] = $capability;
+            }
+        }
+
+        return $normalized;
+    }
+}

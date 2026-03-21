@@ -1,13 +1,14 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Services\Contractor\OrganizationDiscoveryService;
-use App\Http\Resources\Api\V1\Admin\Organization\OrganizationSearchResource;
-use App\Http\Resources\Api\V1\Admin\Organization\OrganizationSearchCollection;
-use Illuminate\Http\Request;
+use App\Support\Organization\OrganizationWorkspaceProfileCatalog;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
 class OrganizationSearchController extends Controller
@@ -23,7 +24,7 @@ class OrganizationSearchController extends Controller
     {
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
-        
+
         if (!$organizationId) {
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
@@ -43,7 +44,7 @@ class OrganizationSearchController extends Controller
         $validated['exclude_invited'] = isset($validated['exclude_invited']) ? filter_var($validated['exclude_invited'], FILTER_VALIDATE_BOOLEAN) : null;
         $validated['exclude_existing_contractors'] = isset($validated['exclude_existing_contractors']) ? filter_var($validated['exclude_existing_contractors'], FILTER_VALIDATE_BOOLEAN) : null;
 
-        $filters = collect($validated)->except(['sort_by', 'per_page'])->filter(fn($value) => $value !== null)->toArray();
+        $filters = collect($validated)->except(['sort_by', 'per_page'])->filter(fn ($value) => $value !== null)->toArray();
         $sortBy = $validated['sort_by'] ?? 'relevance';
         $perPage = $validated['per_page'] ?? 20;
 
@@ -55,29 +56,13 @@ class OrganizationSearchController extends Controller
                 $sortBy
             );
 
-            $organizationIds = $organizations->pluck('id')->toArray();
-            $availabilityStatuses = [];
-            
-            if (!empty($organizationIds)) {
-                $availabilityStatuses = $this->discoveryService->getBulkAvailabilityStatus(
-                    $organizationId,
-                    $organizationIds
-                );
-            }
+            $availabilityStatuses = $this->resolveAvailabilityStatuses($organizationId, collect($organizations->items())->pluck('id')->all());
 
             return response()->json([
                 'success' => true,
-                'data' => $organizations->map(function ($org) use ($availabilityStatuses) {
-                    $orgArray = $org->toArray();
-                    $orgArray['availability_status'] = $availabilityStatuses[$org->id] ?? [
-                        'can_invite' => true,
-                        'existing_invitation' => null,
-                        'existing_contractor' => null,
-                        'reverse_invitation' => null,
-                        'is_mutual' => false,
-                    ];
-                    return $orgArray;
-                }),
+                'data' => $organizations->getCollection()->map(function ($organization) use ($availabilityStatuses) {
+                    return $this->decorateOrganizationPayload($organization->toArray(), $availabilityStatuses[$organization->id] ?? null);
+                })->values(),
                 'meta' => [
                     'current_page' => $organizations->currentPage(),
                     'last_page' => $organizations->lastPage(),
@@ -87,8 +72,7 @@ class OrganizationSearchController extends Controller
                     'sort_by' => $sortBy,
                 ],
             ]);
-
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Failed to search organizations', [
                 'error' => $e->getMessage(),
                 'organization_id' => $organizationId,
@@ -97,7 +81,7 @@ class OrganizationSearchController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при поиске организаций'
+                'message' => 'Ошибка при поиске организаций',
             ], 500);
         }
     }
@@ -106,7 +90,7 @@ class OrganizationSearchController extends Controller
     {
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
-        
+
         if (!$organizationId) {
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
@@ -125,10 +109,9 @@ class OrganizationSearchController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $suggestions,
+                'data' => array_map(fn (array $suggestion) => $this->decorateOrganizationPayload($suggestion), $suggestions),
             ]);
-
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Failed to get organization suggestions', [
                 'error' => $e->getMessage(),
                 'organization_id' => $organizationId,
@@ -137,7 +120,7 @@ class OrganizationSearchController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении подсказок'
+                'message' => 'Ошибка при получении подсказок',
             ], 500);
         }
     }
@@ -146,7 +129,7 @@ class OrganizationSearchController extends Controller
     {
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
-        
+
         if (!$organizationId) {
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
@@ -160,34 +143,19 @@ class OrganizationSearchController extends Controller
                 $organizationId,
                 $validated['limit'] ?? 10
             );
-
-            $organizationIds = collect($recommendations)->pluck('id')->toArray();
-            $availabilityStatuses = [];
-            
-            if (!empty($organizationIds)) {
-                $availabilityStatuses = $this->discoveryService->getBulkAvailabilityStatus(
-                    $organizationId,
-                    $organizationIds
-                );
-            }
-
-            $recommendationsWithStatus = collect($recommendations)->map(function ($org) use ($availabilityStatuses) {
-                $org['availability_status'] = $availabilityStatuses[$org['id']] ?? [
-                    'can_invite' => true,
-                    'existing_invitation' => null,
-                    'existing_contractor' => null,
-                    'reverse_invitation' => null,
-                    'is_mutual' => false,
-                ];
-                return $org;
-            })->toArray();
+            $availabilityStatuses = $this->resolveAvailabilityStatuses($organizationId, collect($recommendations)->pluck('id')->all());
 
             return response()->json([
                 'success' => true,
-                'data' => $recommendationsWithStatus,
+                'data' => array_map(
+                    fn (array $organization) => $this->decorateOrganizationPayload(
+                        $organization,
+                        $availabilityStatuses[$organization['id']] ?? null
+                    ),
+                    $recommendations
+                ),
             ]);
-
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Failed to get organization recommendations', [
                 'error' => $e->getMessage(),
                 'organization_id' => $organizationId,
@@ -195,7 +163,7 @@ class OrganizationSearchController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении рекомендаций'
+                'message' => 'Ошибка при получении рекомендаций',
             ], 500);
         }
     }
@@ -204,7 +172,7 @@ class OrganizationSearchController extends Controller
     {
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
-        
+
         if (!$organizationId) {
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
@@ -219,8 +187,7 @@ class OrganizationSearchController extends Controller
                 'success' => true,
                 'data' => $status,
             ]);
-
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Failed to check organization availability', [
                 'error' => $e->getMessage(),
                 'organization_id' => $organizationId,
@@ -229,8 +196,34 @@ class OrganizationSearchController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при проверке доступности организации'
+                'message' => 'Ошибка при проверке доступности организации',
             ], 500);
         }
+    }
+
+    private function resolveAvailabilityStatuses(int $organizationId, array $targetOrganizationIds): array
+    {
+        if ($targetOrganizationIds === []) {
+            return [];
+        }
+
+        return $this->discoveryService->getBulkAvailabilityStatus($organizationId, $targetOrganizationIds);
+    }
+
+    private function decorateOrganizationPayload(array $organization, ?array $availabilityStatus = null): array
+    {
+        $capabilities = array_values(array_filter($organization['capabilities'] ?? [], 'is_string'));
+
+        $organization['capabilities'] = $capabilities;
+        $organization['allowed_project_roles'] = OrganizationWorkspaceProfileCatalog::allowedProjectRoles($capabilities);
+        $organization['availability_status'] = $availabilityStatus ?? ($organization['availability_status'] ?? [
+            'can_invite' => true,
+            'existing_invitation' => null,
+            'existing_contractor' => null,
+            'reverse_invitation' => null,
+            'is_mutual' => false,
+        ]);
+
+        return $organization;
     }
 }

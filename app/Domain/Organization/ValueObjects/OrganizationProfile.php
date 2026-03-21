@@ -1,9 +1,12 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Domain\Organization\ValueObjects;
 
 use App\Enums\OrganizationCapability;
 use App\Enums\ProjectOrganizationRole;
+use App\Support\Organization\OrganizationWorkspaceProfileCatalog;
 
 class OrganizationProfile
 {
@@ -17,159 +20,133 @@ class OrganizationProfile
         private bool $onboardingCompleted,
         private ?\DateTime $onboardingCompletedAt = null,
     ) {}
-    
-    /**
-     * Есть ли capability
-     */
+
     public function hasCapability(OrganizationCapability $capability): bool
     {
-        return in_array($capability->value, $this->capabilities);
+        return in_array($capability->value, $this->capabilities, true);
     }
-    
-    /**
-     * Может ли организация выполнять роль в проекте
-     */
+
     public function canPerformRole(ProjectOrganizationRole $role): bool
     {
-        // Если нет capabilities - можем выполнять любую роль (для обратной совместимости)
         if (empty($this->capabilities)) {
             return true;
         }
-        
-        // Проверяем каждую capability
-        foreach ($this->capabilities as $capabilityValue) {
-            $capability = OrganizationCapability::tryFrom($capabilityValue);
-            
-            if ($capability && $capability->supportsProjectRole($role)) {
-                return true;
-            }
-        }
-        
-        // Observer может быть любой
-        if ($role === ProjectOrganizationRole::OBSERVER) {
-            return true;
-        }
-        
-        return false;
+
+        return in_array($role->value, $this->getAllowedProjectRoles(), true);
     }
-    
-    /**
-     * Получить рекомендуемые модули на основе capabilities
-     */
+
     public function getRecommendedModules(): array
     {
-        $modules = [];
-        
-        foreach ($this->capabilities as $capabilityValue) {
-            $capability = OrganizationCapability::tryFrom($capabilityValue);
-            
-            if ($capability) {
-                $modules = array_merge($modules, $capability->recommendedModules());
-            }
-        }
-        
-        return \App\Helpers\ModuleHelper::formatModules($modules);
+        return OrganizationWorkspaceProfileCatalog::recommendedModules(
+            $this->capabilities,
+            $this->primaryBusinessType
+        );
     }
-    
-    /**
-     * Рассчитать заполненность профиля (0-100%)
-     */
+
+    public function getWorkspaceProfile(): array
+    {
+        return OrganizationWorkspaceProfileCatalog::buildWorkspaceProfile(
+            $this->capabilities,
+            $this->primaryBusinessType
+        );
+    }
+
+    public function getAllowedProjectRoles(): array
+    {
+        return OrganizationWorkspaceProfileCatalog::allowedProjectRoles($this->capabilities);
+    }
+
     public function calculateCompleteness(): int
     {
         $score = 0;
-        
+
         if (!empty($this->capabilities)) {
             $score += 30;
         }
-        
-        if ($this->primaryBusinessType) {
+
+        if ($this->getPrimaryBusinessType() !== null) {
             $score += 20;
         }
-        
+
         if (!empty($this->specializations)) {
             $score += 20;
         }
-        
+
         if (!empty($this->certifications)) {
             $score += 30;
         }
-        
+
         return $score;
     }
-    
+
     public function getOrganizationId(): int
     {
         return $this->organizationId;
     }
-    
+
     public function getCapabilities(): array
     {
         return $this->capabilities;
     }
-    
-    /**
-     * Получить primary business type как enum
-     */
+
     public function getPrimaryBusinessType(): ?OrganizationCapability
     {
-        if (!$this->primaryBusinessType) {
-            return null;
-        }
-        
-        return OrganizationCapability::tryFrom($this->primaryBusinessType);
+        return OrganizationWorkspaceProfileCatalog::resolvePrimaryProfile(
+            $this->capabilities,
+            $this->primaryBusinessType
+        );
     }
-    
+
     public function getSpecializations(): array
     {
         return $this->specializations;
     }
-    
+
     public function getCertifications(): array
     {
         return $this->certifications;
     }
-    
+
     public function getProfileCompleteness(): int
     {
         return $this->profileCompleteness;
     }
-    
+
     public function isOnboardingCompleted(): bool
     {
         return $this->onboardingCompleted;
     }
-    
+
     public function getOnboardingCompletedAt(): ?\DateTime
     {
         return $this->onboardingCompletedAt;
     }
-    
+
     public function toArray(): array
     {
         return [
             'organization_id' => $this->organizationId,
             'capabilities' => $this->capabilities,
-            'primary_business_type' => $this->primaryBusinessType,
+            'primary_business_type' => $this->getPrimaryBusinessType()?->value,
             'specializations' => $this->specializations,
             'certifications' => $this->certifications,
             'profile_completeness' => $this->profileCompleteness,
             'onboarding_completed' => $this->onboardingCompleted,
             'onboarding_completed_at' => $this->onboardingCompletedAt?->format('Y-m-d H:i:s'),
+            'recommended_modules' => $this->getRecommendedModules(),
+            'workspace_profile' => $this->getWorkspaceProfile(),
         ];
     }
-    
-    /**
-     * Создать из массива
-     */
+
     public static function fromArray(array $data): self
     {
         $onboardingCompletedAt = null;
         if (!empty($data['onboarding_completed_at'])) {
-            $onboardingCompletedAt = $data['onboarding_completed_at'] instanceof \DateTime 
-                ? $data['onboarding_completed_at'] 
+            $onboardingCompletedAt = $data['onboarding_completed_at'] instanceof \DateTime
+                ? $data['onboarding_completed_at']
                 : new \DateTime($data['onboarding_completed_at']);
         }
-        
+
         return new self(
             organizationId: $data['organization_id'] ?? 0,
             capabilities: $data['capabilities'] ?? [],
@@ -182,4 +159,3 @@ class OrganizationProfile
         );
     }
 }
-

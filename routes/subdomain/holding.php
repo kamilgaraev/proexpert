@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\HoldingController;
 use App\Http\Controllers\Api\V1\Landing\MultiOrganizationController;
+use App\Http\Controllers\Api\V1\Landing\SiteLeadsController;
 
 // ============================================================================
 // ПУБЛИЧНЫЕ РОУТЫ НА ПОДДОМЕНЕ ХОЛДИНГА
@@ -15,6 +16,7 @@ Route::get('/', [HoldingController::class, 'index'])->name('holding.home');
 
 // API для получения данных лендинга (для SPA фронтенда)
 Route::get('/api/site-data', [HoldingController::class, 'getSiteData'])->name('holding.api.siteData');
+Route::post('/api/site-leads', [SiteLeadsController::class, 'storePublic'])->name('holding.api.siteLeads');
 
 // ============================================================================
 // ЗАЩИЩЕННЫЕ РОУТЫ (требуют авторизации)

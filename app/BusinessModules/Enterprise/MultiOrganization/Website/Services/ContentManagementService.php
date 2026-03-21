@@ -7,56 +7,63 @@ use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\SiteC
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 
-/**
- * Сервис управления контентом сайтов
- */
 class ContentManagementService
 {
-    /**
-     * Создать новый блок контента
-     */
     public function createBlock(HoldingSite $site, array $data, User $creator): SiteContentBlock
     {
-        // Автоматически определяем порядок сортировки
+        $blockType = SiteContentBlock::normalizeBlockType($data['block_type']);
+        $content = $data['content'] ?? SiteContentBlock::getDefaultContent($blockType);
+        $settings = array_merge(
+            SiteContentBlock::getDefaultSettings($blockType),
+            $data['settings'] ?? []
+        );
+        $bindings = array_merge(
+            SiteContentBlock::getDefaultBindings($blockType),
+            $data['bindings'] ?? []
+        );
+
         if (!isset($data['sort_order'])) {
-            $data['sort_order'] = $site->contentBlocks()->max('sort_order') + 1;
+            $data['sort_order'] = ((int) $site->contentBlocks()->max('sort_order')) + 1;
         }
 
-        // Генерируем уникальный ключ блока
         if (!isset($data['block_key'])) {
-            $data['block_key'] = $this->generateBlockKey($site, $data['block_type']);
+            $data['block_key'] = $this->generateBlockKey($site, $blockType);
         }
 
         return SiteContentBlock::create([
             'holding_site_id' => $site->id,
-            'block_type' => $data['block_type'],
+            'block_type' => $blockType,
             'block_key' => $data['block_key'],
-            'title' => $data['title'] ?? '',
-            'content' => $data['content'] ?? [],
-            'settings' => $data['settings'] ?? [],
+            'title' => $data['title'] ?? ucfirst(str_replace('_', ' ', $blockType)),
+            'content' => $content,
+            'settings' => $settings,
+            'bindings' => $bindings,
             'sort_order' => $data['sort_order'],
             'is_active' => $data['is_active'] ?? true,
             'status' => 'draft',
             'created_by_user_id' => $creator->id,
+            'updated_by_user_id' => $creator->id,
         ]);
     }
 
-    /**
-     * Обновить блок контента
-     */
     public function updateBlock(SiteContentBlock $block, array $data, User $user): bool
     {
         $updateData = array_filter([
             'title' => $data['title'] ?? null,
             'content' => $data['content'] ?? null,
-            'settings' => $data['settings'] ?? null,
+            'settings' => isset($data['settings'])
+                ? array_merge($block->settings ?? [], $data['settings'])
+                : null,
+            'bindings' => isset($data['bindings'])
+                ? array_merge($block->bindings ?? [], $data['bindings'])
+                : null,
             'sort_order' => $data['sort_order'] ?? null,
             'is_active' => $data['is_active'] ?? null,
             'updated_by_user_id' => $user->id,
-        ], fn($value) => $value !== null);
+        ], static fn ($value) => $value !== null);
 
         $updated = $block->update($updateData);
-        
+
         if ($updated) {
             $block->holdingSite->clearCache();
         }
@@ -64,14 +71,12 @@ class ContentManagementService
         return $updated;
     }
 
-    /**
-     * Изменить порядок блоков
-     */
     public function reorderBlocks(HoldingSite $site, array $blockOrder, User $user): bool
     {
         return DB::transaction(function () use ($site, $blockOrder, $user) {
-            foreach ($blockOrder as $index => $blockId) {
-                SiteContentBlock::where('id', $blockId)
+            foreach (array_values($blockOrder) as $index => $blockId) {
+                SiteContentBlock::query()
+                    ->where('id', $blockId)
                     ->where('holding_site_id', $site->id)
                     ->update([
                         'sort_order' => $index + 1,
@@ -80,27 +85,22 @@ class ContentManagementService
             }
 
             $site->clearCache();
+
             return true;
         });
     }
 
-    /**
-     * Опубликовать блок
-     */
     public function publishBlock(SiteContentBlock $block, User $user): bool
     {
         return $block->publish($user);
     }
 
-    /**
-     * Дублировать блок
-     */
     public function duplicateBlock(SiteContentBlock $block, User $user): SiteContentBlock
     {
         $newBlock = $block->replicate();
         $newBlock->block_key = $this->generateBlockKey($block->holdingSite, $block->block_type);
-        $newBlock->title = $block->title . ' (копия)';
-        $newBlock->sort_order = $block->holdingSite->contentBlocks()->max('sort_order') + 1;
+        $newBlock->title = $block->title . ' copy';
+        $newBlock->sort_order = ((int) $block->holdingSite->contentBlocks()->max('sort_order')) + 1;
         $newBlock->status = 'draft';
         $newBlock->published_at = null;
         $newBlock->created_by_user_id = $user->id;
@@ -110,14 +110,11 @@ class ContentManagementService
         return $newBlock;
     }
 
-    /**
-     * Удалить блок
-     */
-    public function deleteBlock(SiteContentBlock $block, User $user): bool
+    public function deleteBlock(SiteContentBlock $block): bool
     {
         $site = $block->holdingSite;
         $deleted = $block->delete();
-        
+
         if ($deleted) {
             $site->clearCache();
         }
@@ -125,64 +122,49 @@ class ContentManagementService
         return $deleted;
     }
 
-    /**
-     * Получить блоки для редактирования
-     */
     public function getBlocksForEditing(HoldingSite $site): array
     {
         return $site->contentBlocks()
             ->orderBy('sort_order')
             ->get()
-            ->map(function ($block) {
-                return [
-                    'id' => $block->id,
-                    'type' => $block->block_type,
-                    'key' => $block->block_key,
-                    'title' => $block->title,
-                    'content' => $block->content,
-                    'settings' => $block->settings,
-                    'sort_order' => $block->sort_order,
-                    'is_active' => $block->is_active,
-                    'status' => $block->status,
-                    'published_at' => $block->published_at,
-                    'schema' => SiteContentBlock::getContentSchema($block->block_type),
-                    'can_delete' => !in_array($block->block_type, ['hero', 'contacts']), // Некоторые блоки нельзя удалять
-                ];
-            })
-            ->toArray();
+            ->map(fn (SiteContentBlock $block) => [
+                'id' => $block->id,
+                'type' => SiteContentBlock::normalizeBlockType($block->block_type),
+                'key' => $block->block_key,
+                'title' => $block->title,
+                'content' => $block->content ?? [],
+                'settings' => $block->settings ?? [],
+                'bindings' => $block->bindings ?? [],
+                'sort_order' => $block->sort_order,
+                'is_active' => $block->is_active,
+                'status' => $block->status,
+                'published_at' => optional($block->published_at)?->toISOString(),
+                'schema' => SiteContentBlock::getContentSchema($block->block_type),
+            ])
+            ->values()
+            ->all();
     }
 
-    /**
-     * Получить проекты организации для блока проектов
-     */
-    public function getOrganizationProjects(HoldingSite $site, int $limit = 6): array
+    public function validateBlockData(string $blockType, array $content): array
     {
-        $organization = $site->organizationGroup->parentOrganization;
-        
-        $projects = $organization->projects()
-            ->where('is_archived', false)
-            ->where('status', 'completed')
-            ->orderBy('end_date', 'desc')
-            ->limit($limit)
-            ->get(['id', 'name', 'description', 'address', 'budget_amount', 'end_date']);
+        $schema = SiteContentBlock::getContentSchema($blockType);
+        $errors = [];
 
-        return $projects->map(function ($project) {
-            return [
-                'id' => $project->id,
-                'name' => $project->name,
-                'description' => $project->description,
-                'address' => $project->address,
-                'budget' => $project->budget_amount,
-                'completed_date' => $project->end_date?->format('Y-m-d'),
-                // TODO: Добавить изображения проектов в будущем
-                'image' => null,
-            ];
-        })->toArray();
+        foreach ($schema as $field => $rules) {
+            if (($rules['required'] ?? false) && SiteContentBlock::isEmptyValue($content[$field] ?? null)) {
+                $errors[] = sprintf('Field "%s" is required.', $field);
+            }
+
+            if (!array_key_exists($field, $content) || SiteContentBlock::isEmptyValue($content[$field])) {
+                continue;
+            }
+
+            $errors = array_merge($errors, $this->validateFieldType($field, $content[$field], $rules['type'] ?? 'string'));
+        }
+
+        return $errors;
     }
 
-    /**
-     * Генерировать уникальный ключ блока
-     */
     private function generateBlockKey(HoldingSite $site, string $blockType): string
     {
         $baseKey = $blockType;
@@ -197,52 +179,14 @@ class ContentManagementService
         return $key;
     }
 
-    /**
-     * Валидировать данные блока
-     */
-    public function validateBlockData(string $blockType, array $content): array
+    private function validateFieldType(string $field, mixed $value, string $type): array
     {
-        $schema = SiteContentBlock::getContentSchema($blockType);
-        $errors = [];
-
-        foreach ($schema as $field => $rules) {
-            if ($rules['required'] && empty($content[$field])) {
-                $errors[] = "Поле '{$field}' обязательно для заполнения";
-            }
-
-            if (!empty($content[$field])) {
-                $errors = array_merge($errors, $this->validateFieldType($field, $content[$field], $rules['type']));
-            }
-        }
-
-        return $errors;
-    }
-
-    /**
-     * Валидировать тип поля
-     */
-    private function validateFieldType(string $field, $value, string $type): array
-    {
-        $errors = [];
-
-        switch ($type) {
-            case 'email':
-                if (!filter_var($value, FILTER_VALIDATE_EMAIL)) {
-                    $errors[] = "Поле '{$field}' должно содержать корректный email";
-                }
-                break;
-            case 'url':
-                if (!filter_var($value, FILTER_VALIDATE_URL)) {
-                    $errors[] = "Поле '{$field}' должно содержать корректный URL";
-                }
-                break;
-            case 'number':
-                if (!is_numeric($value)) {
-                    $errors[] = "Поле '{$field}' должно быть числом";
-                }
-                break;
-        }
-
-        return $errors;
+        return match ($type) {
+            'email' => filter_var($value, FILTER_VALIDATE_EMAIL) ? [] : [sprintf('Field "%s" must contain a valid email.', $field)],
+            'url' => filter_var($value, FILTER_VALIDATE_URL) ? [] : [sprintf('Field "%s" must contain a valid URL.', $field)],
+            'number' => is_numeric($value) ? [] : [sprintf('Field "%s" must be numeric.', $field)],
+            'array' => is_array($value) ? [] : [sprintf('Field "%s" must be an array.', $field)],
+            default => [],
+        };
     }
 }

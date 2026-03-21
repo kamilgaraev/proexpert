@@ -121,10 +121,14 @@ class ProjectOrganizationController extends Controller
             
             return AdminResponse::success([
                 'participants' => array_map(function ($participant) {
+                    $profile = $this->organizationProfileService->getProfile($participant['organization']);
+
                     return [
                         'id' => $participant['organization']->id,
                         'name' => $participant['organization']->name,
                         'inn' => $participant['organization']->inn,
+                        'capabilities' => $profile->getCapabilities(),
+                        'allowed_project_roles' => $profile->getAllowedProjectRoles(),
                         'role' => [
                             'value' => $participant['role']->value,
                             'label' => $participant['role']->label(),
