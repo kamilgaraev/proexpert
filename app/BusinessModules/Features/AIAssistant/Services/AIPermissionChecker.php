@@ -9,6 +9,25 @@ use App\Models\User;
 
 class AIPermissionChecker
 {
+    private const TOOL_PERMISSION_MAP = [
+        'generate_profitability_report' => ['reports.view', 'admin.reports.view'],
+        'generate_work_completion_report' => ['reports.view', 'admin.reports.view'],
+        'generate_material_movements_report' => ['reports.view', 'admin.reports.view'],
+        'generate_contractor_settlements_report' => ['reports.view', 'admin.reports.view'],
+        'generate_warehouse_stock_report' => ['reports.view', 'warehouse.view', 'admin.reports.view'],
+        'generate_time_tracking_report' => ['reports.view', 'time_tracking.view', 'admin.reports.view'],
+        'generate_contract_payments_report' => ['reports.view', 'admin.reports.view'],
+        'generate_project_timelines_report' => ['reports.view', 'schedule-management.view', 'admin.reports.view'],
+        'search_projects' => ['projects.view'],
+        'search_warehouse' => ['warehouse.view'],
+        'search_materials' => ['materials.view'],
+        'search_users' => ['users.view'],
+        'search_contractors' => ['admin.organizations.view', 'contractors.view'],
+        'create_schedule_task' => ['schedule-management.edit'],
+        'update_task_status' => ['schedule-management.edit'],
+        'send_project_notification' => ['projects.edit'],
+    ];
+
     private const MEMBER_TOOLS = [
         'generate_profitability_report',
         'generate_work_completion_report',
@@ -86,12 +105,33 @@ class AIPermissionChecker
             return false;
         }
 
+        foreach (self::TOOL_PERMISSION_MAP[$toolName] ?? [] as $permission) {
+            if ($user->hasPermission($permission)) {
+                return true;
+            }
+        }
+
         if (in_array($toolName, self::MEMBER_TOOLS, true)) {
             return true;
         }
 
-        if (in_array($toolName, self::PRIVILEGED_TOOLS, true)) {
+        if (in_array($toolName, self::PRIVILEGED_TOOLS, true) || $this->isMutationTool($toolName)) {
             return $user->isOrganizationAdmin($organizationId) || $user->isOrganizationOwner($organizationId);
+        }
+
+        return false;
+    }
+
+    public function isMutationTool(string $toolName): bool
+    {
+        if (in_array($toolName, self::PRIVILEGED_TOOLS, true)) {
+            return true;
+        }
+
+        foreach (['create_', 'update_', 'delete_', 'approve_', 'send_'] as $prefix) {
+            if (str_starts_with($toolName, $prefix)) {
+                return true;
+            }
         }
 
         return false;

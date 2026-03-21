@@ -39,6 +39,14 @@ class AIPermissionCheckerTest extends TestCase
         $this->assertTrue($checker->canExecuteTool($user, 'create_schedule_task'));
     }
 
+    public function test_mutation_tool_is_detected_by_name(): void
+    {
+        $checker = new AIPermissionChecker();
+
+        $this->assertTrue($checker->isMutationTool('update_task_status'));
+        $this->assertFalse($checker->isMutationTool('search_projects'));
+    }
+
     public function test_conversation_access_requires_same_user_and_organization(): void
     {
         $checker = new AIPermissionChecker();
@@ -65,6 +73,7 @@ class AIPermissionCheckerTest extends TestCase
         $user->shouldReceive('isOrganizationAdmin')->andReturn($isAdmin);
         $user->shouldReceive('isOrganizationOwner')->andReturn($isOwner);
         $user->shouldReceive('isAdminPanelUser')->andReturn($isAdmin || $isOwner);
+        $user->shouldReceive('hasPermission')->andReturn(false);
 
         return $user;
     }
