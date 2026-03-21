@@ -48,4 +48,35 @@ class AssistantAccessContextResolverTest extends TestCase
         $this->assertTrue($resolver->hasPermission($context, 'projects.view'));
         $this->assertFalse($resolver->hasPermission($context, 'projects.edit'));
     }
+
+    public function test_owner_style_module_wildcards_are_treated_as_full_domain_access(): void
+    {
+        $authorizationService = Mockery::mock(AuthorizationService::class);
+        $authorizationService
+            ->shouldReceive('getUserPermissionsStructured')
+            ->once()
+            ->andReturn([
+                'system' => ['admin.*'],
+                'modules' => [
+                    'projects' => ['*'],
+                    'schedule-management' => ['*'],
+                ],
+            ]);
+
+        $user = Mockery::mock(User::class)->makePartial();
+        $user->shouldReceive('getPermissions')->once()->andReturn([
+            'organization.view',
+            'admin.*',
+        ]);
+        $user->shouldReceive('belongsToOrganization')->once()->with(39)->andReturn(true);
+
+        $resolver = new AssistantAccessContextResolver($authorizationService);
+        $context = $resolver->resolve($user, 39);
+
+        $this->assertFalse($context['is_read_only']);
+        $this->assertTrue($resolver->hasPermission($context, 'projects.view'));
+        $this->assertTrue($resolver->hasPermission($context, 'projects.edit'));
+        $this->assertTrue($resolver->hasPermission($context, 'schedule-management.view'));
+        $this->assertTrue($resolver->hasPermission($context, 'schedules.view'));
+    }
 }
