@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
 use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
@@ -40,11 +42,23 @@ class AIToolRegistry
      * Format all registered tools into the standard JSON Schema array 
      * expected by OpenAI and YandexGPT for Function Calling.
      */
-    public function getToolsDefinitions(): array
+    public function getToolsDefinitions(?array $allowedToolNames = null): array
     {
         $definitions = [];
+        $allowed = null;
+
+        if (is_array($allowedToolNames)) {
+            $allowed = array_fill_keys(array_values(array_filter(
+                $allowedToolNames,
+                static fn (mixed $toolName): bool => is_string($toolName) && $toolName !== ''
+            )), true);
+        }
 
         foreach ($this->tools as $tool) {
+            if (is_array($allowed) && !isset($allowed[$tool->getName()])) {
+                continue;
+            }
+
             $definitions[] = [
                 'type' => 'function',
                 'function' => [

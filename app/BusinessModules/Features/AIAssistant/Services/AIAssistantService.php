@@ -15,6 +15,23 @@ use Throwable;
 
 class AIAssistantService
 {
+    private const HISTORY_MESSAGE_LIMIT = 6;
+    private const HISTORY_TOTAL_CHARS = 4000;
+    private const HISTORY_USER_MESSAGE_CHARS = 500;
+    private const HISTORY_ASSISTANT_MESSAGE_CHARS = 900;
+    private const LEGACY_CONTEXT_CHARS = 3500;
+    private const STRUCTURED_CONTEXT_CHARS = 2500;
+    private const MESSAGE_CHAR_BUDGET = 18000;
+    private const STRICT_MESSAGE_CHAR_BUDGET = 12000;
+    private const SYSTEM_PROMPT_CHAR_LIMIT = 8000;
+    private const USER_MESSAGE_CHAR_LIMIT = 1200;
+    private const ASSISTANT_MESSAGE_CHAR_LIMIT = 1800;
+    private const TOOL_MESSAGE_CHAR_LIMIT = 1400;
+    private const PROVIDER_INPUT_TOKEN_BUDGET = 12000;
+    private const CONTEXT_MAX_DEPTH = 3;
+    private const CONTEXT_LIST_LIMIT = 5;
+    private const CONTEXT_MAP_LIMIT = 8;
+
     protected LLMProviderInterface $llmProvider;
     protected ConversationManager $conversationManager;
     protected ContextBuilder $contextBuilder;
@@ -135,7 +152,7 @@ class AIAssistantService
 
         try {
             $options = [];
-            $tools = $this->toolRegistry->getToolsDefinitions();
+            $tools = $this->resolveToolDefinitions($taskPlan);
             if (!empty($tools)) {
                 $options['tools'] = $tools;
             }
@@ -396,14 +413,16 @@ class AIAssistantService
 
     protected function requestAssistantResponse(array $messages, array $options, int $organizationId, User $user): array
     {
+        [$preparedMessages, $preparedOptions, $budgetDegraded] = $this->prepareProviderPayload($messages, $options, $organizationId, $user);
+
         try {
             return [
-                'response' => $this->llmProvider->chat($messages, $options),
-                'degraded_mode' => false,
+                'response' => $this->llmProvider->chat($preparedMessages, $preparedOptions),
+                'degraded_mode' => $budgetDegraded,
                 'fallback_reason' => null,
             ];
         } catch (Throwable $exception) {
-            if (empty($options['tools'])) {
+            if (empty($preparedOptions['tools'])) {
                 throw $exception;
             }
 
@@ -414,10 +433,10 @@ class AIAssistantService
                 'error' => $exception->getMessage(),
             ], 'warning');
 
-            unset($options['tools']);
+            unset($preparedOptions['tools']);
 
             return [
-                'response' => $this->llmProvider->chat($messages, $options),
+                'response' => $this->llmProvider->chat($preparedMessages, $preparedOptions),
                 'degraded_mode' => true,
                 'fallback_reason' => $this->assistantMessage('ai_assistant.tools_fallback', 'Часть инструментов оказалась недоступна, ответ сформирован в упрощенном режиме.'),
             ];
@@ -467,24 +486,31 @@ class AIAssistantService
     protected function buildMessages(Conversation $conversation, array $context, array $taskPlan): array
     {
         $messages = [];
-        $systemPrompt = $this->contextBuilder->buildSystemPrompt();
+        $systemSections = [$this->contextBuilder->buildSystemPrompt()];
 
         if (!empty($context)) {
-            $systemPrompt .= "\n\n" . $this->formatContextForLLM($context);
+            $systemSections[] = $this->formatContextForLLM($context);
         }
 
-        $systemPrompt .= "\n\n" . $this->formatStructuredContextForLLM($taskPlan);
+        $systemSections[] = $this->formatStructuredContextForLLM($taskPlan);
+        $systemPrompt = $this->truncateText(implode("\n\n", array_filter($systemSections)), self::SYSTEM_PROMPT_CHAR_LIMIT);
 
         $messages[] = [
             'role' => 'system',
             'content' => $systemPrompt,
         ];
 
-        foreach ($this->conversationManager->getMessagesForContext($conversation, 10) as $message) {
+        foreach ($this->conversationManager->getMessagesForContextWithBudget(
+            $conversation,
+            self::HISTORY_MESSAGE_LIMIT,
+            self::HISTORY_TOTAL_CHARS,
+            self::HISTORY_USER_MESSAGE_CHARS,
+            self::HISTORY_ASSISTANT_MESSAGE_CHARS
+        ) as $message) {
             $messages[] = $message;
         }
 
-        return $messages;
+        return $this->enforceMessageBudget($messages, self::MESSAGE_CHAR_BUDGET);
     }
 
     protected function formatContextForLLM(array $context): string
@@ -496,10 +522,13 @@ class AIAssistantService
                 continue;
             }
 
-            $payload[$key] = $value;
+            $payload[$key] = $this->compactValueForLLM($value);
         }
 
-        return "=== LEGACY CONTEXT ===\n" . $this->formatValueForLLM($payload);
+        return $this->truncateText(
+            "=== LEGACY CONTEXT ===\n" . $this->formatValueForLLM($payload),
+            self::LEGACY_CONTEXT_CHARS
+        );
     }
 
     protected function formatStructuredContextForLLM(array $taskPlan): string
@@ -507,9 +536,75 @@ class AIAssistantService
         $structuredContext = [
             'task_type' => $taskPlan['task_type'] ?? 'summary',
             'capability' => $taskPlan['capability']['label'] ?? null,
-            'request' => $taskPlan['request'] ?? [],
-            'access_context' => $taskPlan['access_context_public'] ?? [],
-            'navigation_target' => $taskPlan['navigation_target'] ?? null,
+            'request' => [
+                'goal' => $taskPlan['request']['goal'] ?? null,
+                'desired_mode' => $taskPlan['request']['desired_mode'] ?? null,
+                'allow_actions' => (bool) ($taskPlan['request']['allow_actions'] ?? false),
+                'source_module' => $taskPlan['request']['context']['source_module'] ?? null,
+                'entity_refs' => array_slice($taskPlan['request']['context']['entity_refs'] ?? [], 0, 3),
+                'period' => $taskPlan['request']['context']['period'] ?? null,
+                'filters_count' => is_array($taskPlan['request']['context']['filters'] ?? null)
+                    ? count($taskPlan['request']['context']['filters'])
+                    : 0,
+                'assistant_path' => $taskPlan['request']['context']['ui_state']['assistant_path'] ?? null,
+            ],
+            'access_context' => [
+                'available_modules' => array_slice($taskPlan['access_context_public']['available_modules'] ?? [], 0, 6),
+                'permission_count' => $taskPlan['access_context_public']['permission_count'] ?? 0,
+                'is_read_only' => (bool) ($taskPlan['access_context_public']['is_read_only'] ?? true),
+                'allowed_action_types' => array_slice($taskPlan['access_context_public']['allowed_action_types'] ?? [], 0, 6),
+            ],
+            'navigation_target' => $this->compactValueForLLM($taskPlan['navigation_target'] ?? null),
+            'next_actions' => array_values(array_filter(array_map(
+                static fn (mixed $action): ?string => is_array($action) && isset($action['label'])
+                    ? trim((string) $action['label'])
+                    : null,
+                array_slice($taskPlan['next_actions'] ?? [], 0, 3)
+            ))),
+        ];
+
+        $policy = "=== RESPONSE POLICY ===\n"
+            . "1. Опирайся только на подтвержденные данные и доступный контекст.\n"
+            . "2. Если данных или прав не хватает, прямо скажи об ограничении.\n"
+            . "3. Не придумывай технические причины отказа и обходные пути.\n"
+            . "4. Отвечай коротко и по делу, затем предлагай конкретный следующий шаг.\n";
+
+        return $this->truncateText(
+            "=== STRUCTURED WORKSPACE CONTEXT ===\n"
+            . $this->formatValueForLLM($this->compactValueForLLM($structuredContext))
+            . "\n\n"
+            . $policy,
+            self::STRUCTURED_CONTEXT_CHARS
+        );
+
+        $structuredContext = [
+            'task_type' => $taskPlan['task_type'] ?? 'summary',
+            'capability' => $taskPlan['capability']['label'] ?? null,
+            'request' => [
+                'goal' => $taskPlan['request']['goal'] ?? null,
+                'desired_mode' => $taskPlan['request']['desired_mode'] ?? null,
+                'allow_actions' => (bool) ($taskPlan['request']['allow_actions'] ?? false),
+                'source_module' => $taskPlan['request']['context']['source_module'] ?? null,
+                'entity_refs' => array_slice($taskPlan['request']['context']['entity_refs'] ?? [], 0, 3),
+                'period' => $taskPlan['request']['context']['period'] ?? null,
+                'filters_count' => is_array($taskPlan['request']['context']['filters'] ?? null)
+                    ? count($taskPlan['request']['context']['filters'])
+                    : 0,
+                'assistant_path' => $taskPlan['request']['context']['ui_state']['assistant_path'] ?? null,
+            ],
+            'access_context' => [
+                'available_modules' => array_slice($taskPlan['access_context_public']['available_modules'] ?? [], 0, 6),
+                'permission_count' => $taskPlan['access_context_public']['permission_count'] ?? 0,
+                'is_read_only' => (bool) ($taskPlan['access_context_public']['is_read_only'] ?? true),
+                'allowed_action_types' => array_slice($taskPlan['access_context_public']['allowed_action_types'] ?? [], 0, 6),
+            ],
+            'navigation_target' => $this->compactValueForLLM($taskPlan['navigation_target'] ?? null),
+            'next_actions' => array_values(array_filter(array_map(
+                static fn (mixed $action): ?string => is_array($action) && isset($action['label'])
+                    ? trim((string) $action['label'])
+                    : null,
+                array_slice($taskPlan['next_actions'] ?? [], 0, 3)
+            ))),
         ];
 
         return "=== STRUCTURED WORKSPACE CONTEXT ===\n"
@@ -523,6 +618,43 @@ class AIAssistantService
 
     protected function formatValueForLLM(mixed $value, int $depth = 0): string
     {
+        if ($depth > self::CONTEXT_MAX_DEPTH) {
+            return '[truncated]';
+        }
+
+        if ($value === null) {
+            return 'null';
+        }
+
+        if (is_string($value)) {
+            return $this->normalizeText($value);
+        }
+
+        if (is_bool($value)) {
+            return $value ? 'true' : 'false';
+        }
+
+        if (is_int($value) || is_float($value)) {
+            return (string) $value;
+        }
+
+        if (!is_array($value)) {
+            return $this->normalizeText((string) json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        }
+
+        $lines = [];
+        foreach ($value as $key => $item) {
+            $prefix = str_repeat('  ', $depth);
+            $formattedKey = is_string($key) ? $key : (string) $key;
+            $formattedValue = is_array($item)
+                ? "\n" . $this->formatValueForLLM($item, $depth + 1)
+                : $this->formatValueForLLM($item, $depth + 1);
+
+            $lines[] = "{$prefix}{$formattedKey}: {$formattedValue}";
+        }
+
+        return implode("\n", $lines);
+
         if ($depth > 3) {
             return '[truncated]';
         }
@@ -547,6 +679,280 @@ class AIAssistantService
         }
 
         return implode("\n", $lines);
+    }
+
+    protected function compactValueForLLM(mixed $value, int $depth = 0): mixed
+    {
+        if ($depth > self::CONTEXT_MAX_DEPTH) {
+            return '[truncated]';
+        }
+
+        if ($value === null || is_bool($value) || is_int($value) || is_float($value)) {
+            return $value;
+        }
+
+        if (is_string($value)) {
+            return $this->truncateText($this->normalizeText($value), $depth === 0 ? 300 : 180);
+        }
+
+        if (!is_array($value)) {
+            return $this->truncateText(
+                $this->normalizeText((string) json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)),
+                200
+            );
+        }
+
+        $isList = array_is_list($value);
+        $limit = $isList ? self::CONTEXT_LIST_LIMIT : self::CONTEXT_MAP_LIMIT;
+        $compacted = [];
+        $items = array_slice($value, 0, $limit, true);
+
+        foreach ($items as $key => $item) {
+            $compacted[$key] = $this->compactValueForLLM($item, $depth + 1);
+        }
+
+        $remaining = count($value) - count($items);
+        if ($remaining > 0) {
+            $compacted['__truncated'] = $isList
+                ? "Еще {$remaining} элементов"
+                : "Еще {$remaining} полей";
+        }
+
+        return $compacted;
+    }
+
+    protected function resolveToolDefinitions(array $taskPlan): array
+    {
+        return $this->toolRegistry->getToolsDefinitions($this->resolveRelevantToolNames($taskPlan));
+    }
+
+    protected function resolveRelevantToolNames(array $taskPlan): array
+    {
+        $taskType = (string) ($taskPlan['task_type'] ?? 'summary');
+        $capabilityId = $taskPlan['capability']['id'] ?? null;
+
+        $capabilityTools = match ($capabilityId) {
+            'projects' => ['search_projects', 'generate_profitability_report', 'generate_work_completion_report', 'generate_project_timelines_report'],
+            'contracts' => ['search_contractors', 'generate_contract_payments_report', 'generate_contractor_settlements_report'],
+            'reports' => ['generate_profitability_report', 'generate_work_completion_report', 'generate_material_movements_report', 'generate_contractor_settlements_report', 'generate_contract_payments_report', 'generate_project_timelines_report', 'generate_time_tracking_report', 'generate_warehouse_stock_report'],
+            'warehouse' => ['search_warehouse', 'search_materials', 'generate_warehouse_stock_report', 'generate_material_movements_report'],
+            'payments' => ['approve_payment_request', 'generate_contract_payments_report'],
+            'schedules' => ['search_projects', 'create_schedule_task', 'update_schedule_task_status', 'generate_project_timelines_report', 'generate_work_completion_report'],
+            'procurement' => ['search_materials', 'search_contractors'],
+            'notifications' => ['search_projects', 'search_users', 'send_project_notification'],
+            default => [],
+        };
+
+        $toolNames = $capabilityTools;
+
+        if ($taskType === 'find') {
+            $toolNames = array_merge($toolNames, [
+                'search_projects',
+                'search_contractors',
+                'search_materials',
+                'search_users',
+                'search_warehouse',
+            ]);
+        }
+
+        if (in_array($taskType, ['act', 'wizard'], true)) {
+            $toolNames = array_merge($toolNames, [
+                'create_schedule_task',
+                'update_schedule_task_status',
+                'send_project_notification',
+                'approve_payment_request',
+            ]);
+        }
+
+        if ($capabilityId === null && in_array($taskType, ['summary', 'analyze'], true)) {
+            return [];
+        }
+
+        return array_values(array_unique(array_filter(
+            $toolNames,
+            static fn (mixed $toolName): bool => is_string($toolName) && $toolName !== ''
+        )));
+    }
+
+    protected function prepareProviderPayload(array $messages, array $options, int $organizationId, User $user): array
+    {
+        $preparedMessages = $this->prepareMessagesForProvider($messages);
+        $preparedOptions = $options;
+        $degraded = false;
+
+        $estimatedTokens = $this->estimateProviderInputTokens($preparedMessages, $preparedOptions);
+
+        if ($estimatedTokens > self::PROVIDER_INPUT_TOKEN_BUDGET && !empty($preparedOptions['tools'])) {
+            unset($preparedOptions['tools']);
+            $degraded = true;
+
+            $this->logging->technical('ai.assistant.tools_budget_limited', [
+                'organization_id' => $organizationId,
+                'user_id' => $user->id,
+                'estimated_tokens' => $estimatedTokens,
+            ], 'warning');
+
+            $estimatedTokens = $this->estimateProviderInputTokens($preparedMessages, $preparedOptions);
+        }
+
+        if ($estimatedTokens > self::PROVIDER_INPUT_TOKEN_BUDGET) {
+            $preparedMessages = $this->enforceMessageBudget($preparedMessages, self::STRICT_MESSAGE_CHAR_BUDGET);
+            $estimatedTokens = $this->estimateProviderInputTokens($preparedMessages, $preparedOptions);
+            $degraded = true;
+        }
+
+        if ($estimatedTokens > self::PROVIDER_INPUT_TOKEN_BUDGET) {
+            throw new RuntimeException($this->assistantMessage(
+                'ai_assistant.prompt_too_large',
+                'Запрос получился слишком широким. Уточни объект, период или задачу.'
+            ));
+        }
+
+        return [$preparedMessages, $preparedOptions, $degraded];
+    }
+
+    protected function prepareMessagesForProvider(array $messages): array
+    {
+        $prepared = [];
+
+        foreach ($messages as $message) {
+            $normalized = $this->normalizeMessageForProvider($message);
+            if ($normalized !== null) {
+                $prepared[] = $normalized;
+            }
+        }
+
+        return $this->enforceMessageBudget($prepared, self::MESSAGE_CHAR_BUDGET);
+    }
+
+    protected function normalizeMessageForProvider(array $message): ?array
+    {
+        $role = (string) ($message['role'] ?? 'user');
+        $normalized = $message;
+        $content = (string) ($message['content'] ?? '');
+
+        $limit = match ($role) {
+            'system' => self::SYSTEM_PROMPT_CHAR_LIMIT,
+            'assistant' => self::ASSISTANT_MESSAGE_CHAR_LIMIT,
+            'tool' => self::TOOL_MESSAGE_CHAR_LIMIT,
+            default => self::USER_MESSAGE_CHAR_LIMIT,
+        };
+
+        if ($role === 'tool') {
+            $decoded = json_decode($content, true);
+            if (is_array($decoded)) {
+                $content = $this->formatValueForLLM($this->compactValueForLLM($decoded));
+            }
+        }
+
+        $normalized['content'] = $this->truncateText($this->normalizeText($content), $limit);
+
+        if ($normalized['content'] === '' && empty($normalized['tool_calls'])) {
+            return null;
+        }
+
+        return $normalized;
+    }
+
+    protected function enforceMessageBudget(array $messages, int $maxChars): array
+    {
+        if ($messages === []) {
+            return [];
+        }
+
+        $systemMessage = null;
+        if (($messages[0]['role'] ?? null) === 'system') {
+            $systemMessage = $messages[0];
+            array_shift($messages);
+        }
+
+        $selected = [];
+        $usedChars = $systemMessage !== null
+            ? mb_strlen((string) ($systemMessage['content'] ?? ''))
+            : 0;
+
+        $lastUserIndex = null;
+        for ($index = count($messages) - 1; $index >= 0; $index--) {
+            if (($messages[$index]['role'] ?? null) === 'user') {
+                $lastUserIndex = $index;
+                break;
+            }
+        }
+
+        if ($lastUserIndex !== null) {
+            $selected[$lastUserIndex] = $messages[$lastUserIndex];
+            $usedChars += mb_strlen((string) ($messages[$lastUserIndex]['content'] ?? ''));
+        }
+
+        for ($index = count($messages) - 1; $index >= 0; $index--) {
+            if (isset($selected[$index])) {
+                continue;
+            }
+
+            $messageChars = mb_strlen((string) ($messages[$index]['content'] ?? ''));
+            if ($usedChars + $messageChars > $maxChars && $selected !== []) {
+                continue;
+            }
+
+            $selected[$index] = $messages[$index];
+            $usedChars += $messageChars;
+        }
+
+        ksort($selected);
+        $result = array_values($selected);
+
+        if ($systemMessage !== null) {
+            array_unshift($result, $systemMessage);
+        }
+
+        return $result;
+    }
+
+    protected function estimateProviderInputTokens(array $messages, array $options = []): int
+    {
+        $payload = '';
+
+        foreach ($messages as $message) {
+            $payload .= (string) ($message['role'] ?? 'user');
+            $payload .= "\n";
+            $payload .= (string) ($message['content'] ?? '');
+            $payload .= "\n";
+
+            if (!empty($message['tool_calls'])) {
+                $payload .= (string) json_encode($message['tool_calls'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                $payload .= "\n";
+            }
+        }
+
+        if (!empty($options['tools'])) {
+            $payload .= (string) json_encode($options['tools'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        }
+
+        return (int) ceil(mb_strlen($payload) / 2);
+    }
+
+    protected function normalizeText(string $value): string
+    {
+        $normalized = preg_replace('/\s+/u', ' ', trim($value));
+
+        return is_string($normalized) ? $normalized : trim($value);
+    }
+
+    protected function truncateText(string $value, int $maxChars): string
+    {
+        if ($maxChars <= 0) {
+            return '';
+        }
+
+        if (mb_strlen($value) <= $maxChars) {
+            return $value;
+        }
+
+        if ($maxChars <= 3) {
+            return mb_substr($value, 0, $maxChars);
+        }
+
+        return rtrim(mb_substr($value, 0, $maxChars - 3)) . '...';
     }
 
     protected function humanizeToolName(string $toolName): string
