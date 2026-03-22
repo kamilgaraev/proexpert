@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Enterprise\MultiOrganization\Website\Services;
 
 use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\HoldingSite;
+use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\HoldingSitePage;
 use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\SiteAsset;
 use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\SiteContentBlock;
 use Illuminate\Support\Arr;
@@ -12,18 +13,67 @@ use Illuminate\Support\Collection;
 
 class SiteBuilderDataService
 {
+    public function __construct(
+        private readonly SiteCollaboratorService $collaboratorService,
+        private readonly SiteRevisionService $revisionService,
+        private readonly HoldingSiteBlogService $blogService,
+        private readonly SitePageService $pageService
+    ) {
+    }
+
     public function getEditorPayload(HoldingSite $site): array
     {
+        $site->loadMissing([
+            'organizationGroup.parentOrganization.childOrganizations',
+            'organizationGroup.parentOrganization.users',
+            'organizationGroup.parentOrganization.projects',
+            'pages.sections.assets',
+            'assets.uploader',
+            'collaborators.user',
+            'revisions.creator',
+        ]);
+
+        $this->pageService->getOrCreateHomePage($site, $site->creator);
+
+        $context = $this->getBindingsContext($site);
+        $pages = $site->pages()
+            ->with('sections.assets')
+            ->orderBy('sort_order')
+            ->get()
+            ->map(fn (HoldingSitePage $page) => $this->serializeEditorPage($page, $context))
+            ->values()
+            ->all();
+
+        $homePage = collect($pages)->firstWhere('is_home', true);
+        $homeSections = is_array($homePage) ? ($homePage['sections'] ?? []) : [];
+        $articles = $this->blogService->listArticles($site->organizationGroup, false);
+        $defaultCategory = $this->blogService->defaultCategory($site->organizationGroup);
+
         return [
             'site' => $this->serializeSite($site),
-            'blocks' => $this->getEditorBlocks($site),
+            'pages' => $pages,
+            'blocks' => $homeSections,
             'assets' => $this->serializeAssets($site),
-            'templates' => $this->getTemplatePresets(),
+            'templates' => $this->getSectionPresets(),
+            'page_templates' => $this->getPageTemplates(),
+            'section_presets' => $this->getSectionPresets(),
+            'collaborators' => $this->collaboratorService->listForSite($site),
+            'revisions' => $this->revisionService->listForSite($site),
+            'blog' => [
+                'articles' => $articles,
+                'default_category' => [
+                    'id' => $defaultCategory->id,
+                    'name' => $defaultCategory->name,
+                ],
+            ],
             'summary' => [
-                'blocks_count' => $site->contentBlocks()->count(),
-                'active_blocks_count' => $site->contentBlocks()->where('is_active', true)->count(),
+                'pages_count' => count($pages),
+                'blocks_count' => collect($pages)->sum(fn (array $page) => count($page['sections'] ?? [])),
+                'active_blocks_count' => collect($pages)->sum(fn (array $page) => collect($page['sections'] ?? [])->where('is_active', true)->count()),
                 'assets_count' => $site->assets()->count(),
                 'leads_count' => $site->leads()->count(),
+                'collaborators_count' => $site->collaborators()->count(),
+                'blog_articles_count' => count($articles),
                 'last_published_at' => optional($site->published_at)?->toISOString(),
             ],
             'publication' => [
@@ -43,6 +93,8 @@ class SiteBuilderDataService
             'id' => $site->id,
             'organization_group_id' => $site->organization_group_id,
             'domain' => $site->getDomain(),
+            'default_locale' => $site->default_locale ?: 'ru',
+            'enabled_locales' => $site->getEnabledLocales(),
             'title' => $site->title,
             'description' => $site->description,
             'logo_url' => $site->logo_url,
@@ -62,106 +114,292 @@ class SiteBuilderDataService
         ];
     }
 
-    public function getEditorBlocks(HoldingSite $site): array
+    public function buildLiveDraftPayload(HoldingSite $site, string $path = '/', ?string $requestedLocale = null): array
     {
-        $context = $this->getBindingsContext($site);
+        $snapshot = $this->buildSiteSnapshot($site, 'draft', false);
 
-        return $site->contentBlocks()
-            ->with('assets')
-            ->orderBy('sort_order')
-            ->get()
-            ->map(fn (SiteContentBlock $block) => $this->serializeEditorBlock($block, $context))
-            ->values()
-            ->all();
-    }
-
-    public function buildLiveDraftPayload(HoldingSite $site): array
-    {
-        $context = $this->getBindingsContext($site);
-        $blocks = $site->contentBlocks()
-            ->with('assets')
-            ->orderBy('sort_order')
-            ->get()
-            ->map(fn (SiteContentBlock $block) => $this->serializePublicBlock($block, $context))
-            ->filter()
-            ->values()
-            ->all();
-
-        return $this->buildPayload($site, $blocks, 'draft');
+        return $this->resolveRuntimePayload($site, $snapshot, $path, $requestedLocale, true);
     }
 
     public function buildPublicationSnapshot(HoldingSite $site): array
     {
-        $context = $this->getBindingsContext($site);
-        $blocks = $site->contentBlocks()
-            ->with('assets')
-            ->orderBy('sort_order')
-            ->get()
-            ->map(fn (SiteContentBlock $block) => $this->serializePublicBlock($block, $context))
-            ->filter()
-            ->values()
-            ->all();
-
-        return $this->buildPayload($site, $blocks, 'published');
+        return $this->buildSiteSnapshot($site, 'published', true);
     }
 
-    public function buildPublishedPayload(HoldingSite $site): array
+    public function buildPublishedPayload(HoldingSite $site, string $path = '/', ?string $requestedLocale = null): array
     {
-        if ($site->hasPublishedSnapshot()) {
-            return $this->normalizePublishedSnapshot($site, $site->getPublishedPayload());
-        }
+        $snapshot = $site->hasPublishedSnapshot()
+            ? $this->normalizePublishedSnapshot($site, $site->getPublishedPayload())
+            : $this->buildSiteSnapshot($site, 'published', true);
 
-        $context = $this->getBindingsContext($site);
-        $blocks = $site->contentBlocks()
-            ->with('assets')
-            ->where('status', 'published')
-            ->where('is_active', true)
-            ->orderBy('sort_order')
-            ->get()
-            ->map(fn (SiteContentBlock $block) => $this->serializePublicBlock($block, $context))
-            ->filter()
-            ->values()
-            ->all();
-
-        return $this->buildPayload($site, $blocks, 'published');
+        return $this->resolveRuntimePayload($site, $snapshot, $path, $requestedLocale, false);
     }
 
-    public function getTemplatePresets(): array
+    public function getPageTemplates(): array
     {
         return [
             [
-                'id' => 'corporate',
-                'name' => 'Corporate',
-                'description' => 'Hero, about, services, cases, team, lead form and contacts.',
-                'blocks' => ['hero', 'stats', 'about', 'services', 'projects', 'team', 'lead_form', 'contacts'],
+                'id' => 'corporate-site',
+                'name' => 'Корпоративный сайт',
+                'description' => 'Главная, о компании, услуги, проекты, блог и контакты.',
+                'pages' => [
+                    ['page_type' => 'home', 'slug' => '/', 'title' => 'Главная'],
+                    ['page_type' => 'about', 'slug' => '/about', 'title' => 'О компании'],
+                    ['page_type' => 'services', 'slug' => '/services', 'title' => 'Услуги'],
+                    ['page_type' => 'projects', 'slug' => '/projects', 'title' => 'Проекты'],
+                    ['page_type' => 'blog_index', 'slug' => '/blog', 'title' => 'Блог'],
+                    ['page_type' => 'contacts', 'slug' => '/contacts', 'title' => 'Контакты'],
+                ],
             ],
             [
-                'id' => 'portfolio',
-                'name' => 'Portfolio',
-                'description' => 'Hero, proof, cases gallery and lead capture.',
-                'blocks' => ['hero', 'stats', 'projects', 'gallery', 'testimonials', 'lead_form', 'contacts'],
-            ],
-            [
-                'id' => 'growth',
-                'name' => 'Growth',
-                'description' => 'Hero, services, FAQ and conversion-oriented CTA.',
-                'blocks' => ['hero', 'services', 'faq', 'lead_form', 'contacts'],
+                'id' => 'compact-presence',
+                'name' => 'Компактное присутствие',
+                'description' => 'Быстрый многостраничный сайт с конверсионной главной.',
+                'pages' => [
+                    ['page_type' => 'home', 'slug' => '/', 'title' => 'Главная'],
+                    ['page_type' => 'services', 'slug' => '/services', 'title' => 'Услуги'],
+                    ['page_type' => 'contacts', 'slug' => '/contacts', 'title' => 'Контакты'],
+                ],
             ],
         ];
     }
 
-    private function buildPayload(HoldingSite $site, array $blocks, string $mode): array
+    public function getSectionPresets(): array
     {
         return [
+            [
+                'id' => 'hero',
+                'name' => 'Hero',
+                'description' => 'Первый экран с заголовком, CTA и медиа.',
+                'blocks' => ['hero'],
+            ],
+            [
+                'id' => 'corporate',
+                'name' => 'Corporate',
+                'description' => 'Hero, proof, услуги, кейсы, команда и лид-форма.',
+                'blocks' => ['hero', 'stats', 'about', 'services', 'projects', 'team', 'lead_form', 'contacts'],
+            ],
+            [
+                'id' => 'content-led',
+                'name' => 'Content-led',
+                'description' => 'О компании, сервисы, FAQ, галерея и контакты.',
+                'blocks' => ['about', 'services', 'faq', 'gallery', 'contacts'],
+            ],
+        ];
+    }
+
+    private function buildSiteSnapshot(HoldingSite $site, string $mode, bool $onlyPublishedArticles): array
+    {
+        $site->loadMissing([
+            'organizationGroup.parentOrganization.childOrganizations',
+            'organizationGroup.parentOrganization.users',
+            'organizationGroup.parentOrganization.projects',
+            'pages.sections.assets',
+        ]);
+
+        $this->pageService->getOrCreateHomePage($site, $site->creator);
+        $context = $this->getBindingsContext($site);
+        $pages = $site->pages()
+            ->with('sections.assets')
+            ->where('is_active', true)
+            ->orderBy('sort_order')
+            ->get()
+            ->map(fn (HoldingSitePage $page) => $this->serializePublicPage($page, $context))
+            ->values()
+            ->all();
+
+        return [
             'site' => $this->serializeSite($site),
-            'blocks' => $blocks,
+            'navigation' => $this->serializeNavigation($pages),
+            'pages' => $pages,
             'organization' => $this->buildOrganizationPayload($site),
+            'blog' => [
+                'articles' => $this->blogService->listArticles($site->organizationGroup, $onlyPublishedArticles),
+            ],
             'runtime' => [
                 'mode' => $mode,
                 'lead_endpoint' => '/api/site-leads',
                 'generated_at' => now()->toISOString(),
             ],
         ];
+    }
+
+    private function resolveRuntimePayload(
+        HoldingSite $site,
+        array $snapshot,
+        string $path,
+        ?string $requestedLocale,
+        bool $isPreview
+    ): array {
+        [$locale, $normalizedPath] = $this->resolveLocaleAndPath(
+            $requestedLocale,
+            $path,
+            $snapshot['site']['default_locale'] ?? ($site->default_locale ?: 'ru'),
+            $snapshot['site']['enabled_locales'] ?? $site->getEnabledLocales()
+        );
+
+        $pages = is_array($snapshot['pages'] ?? null) ? $snapshot['pages'] : [];
+        $currentPage = collect($pages)->first(fn (array $page) => $this->pageMatchesPath($page, $normalizedPath));
+        $blog = is_array($snapshot['blog'] ?? null) ? $snapshot['blog'] : ['articles' => []];
+        $blogArticle = $this->resolveBlogArticleContext($pages, $blog, $normalizedPath);
+
+        if (!$currentPage && $blogArticle !== null) {
+            $currentPage = $blogArticle['page'];
+            $blog['current_article'] = $blogArticle['article'];
+        }
+
+        if (!$currentPage) {
+            $currentPage = collect($pages)->firstWhere('is_home', true) ?? null;
+        }
+
+        $currentPage = is_array($currentPage) ? $this->localizePage($currentPage, $locale) : null;
+        $blocks = is_array($currentPage['sections'] ?? null) ? $currentPage['sections'] : [];
+
+        return [
+            'site' => array_merge($snapshot['site'] ?? [], [
+                'current_locale' => $locale,
+            ]),
+            'navigation' => $snapshot['navigation'] ?? [],
+            'pages' => $pages,
+            'page' => $currentPage,
+            'current_page' => $currentPage,
+            'blocks' => $blocks,
+            'organization' => $snapshot['organization'] ?? $this->buildOrganizationPayload($site),
+            'blog' => $blog,
+            'runtime' => array_merge($snapshot['runtime'] ?? [], [
+                'mode' => $isPreview ? 'draft' : 'published',
+                'path' => $normalizedPath,
+                'locale' => $locale,
+            ]),
+        ];
+    }
+
+    private function serializeEditorPage(HoldingSitePage $page, array $context): array
+    {
+        $sections = $page->sections
+            ->sortBy('sort_order')
+            ->map(fn (SiteContentBlock $section) => $this->serializeEditorSection($section, $context))
+            ->values()
+            ->all();
+
+        return [
+            'id' => $page->id,
+            'page_type' => $page->page_type,
+            'slug' => $page->getNormalizedSlug(),
+            'navigation_label' => $page->navigation_label,
+            'title' => $page->title,
+            'description' => $page->description,
+            'seo_meta' => $page->seo_meta ?? [],
+            'layout_config' => $page->layout_config ?? [],
+            'locale_content' => $page->locale_content ?? [],
+            'visibility' => $page->visibility,
+            'sort_order' => $page->sort_order,
+            'is_home' => $page->is_home,
+            'is_active' => $page->is_active,
+            'sections' => $sections,
+        ];
+    }
+
+    private function serializePublicPage(HoldingSitePage $page, array $context): array
+    {
+        $sections = $page->sections
+            ->sortBy('sort_order')
+            ->map(fn (SiteContentBlock $section) => $this->serializePublicSection($section, $context))
+            ->filter()
+            ->values()
+            ->all();
+
+        return [
+            'id' => $page->id,
+            'page_type' => $page->page_type,
+            'slug' => $page->getNormalizedSlug(),
+            'navigation_label' => $page->navigation_label,
+            'title' => $page->title,
+            'description' => $page->description,
+            'seo_meta' => $page->seo_meta ?? [],
+            'layout_config' => $page->layout_config ?? [],
+            'locale_content' => $page->locale_content ?? [],
+            'visibility' => $page->visibility,
+            'sort_order' => $page->sort_order,
+            'is_home' => $page->is_home,
+            'is_active' => $page->is_active,
+            'sections' => $sections,
+        ];
+    }
+
+    private function serializeEditorSection(SiteContentBlock $section, array $context): array
+    {
+        $resolvedContent = $this->resolveBindings($section->content ?? [], $section->bindings ?? [], $context);
+        $type = SiteContentBlock::normalizeBlockType($section->block_type);
+
+        return [
+            'id' => $section->id,
+            'page_id' => $section->holding_site_page_id,
+            'type' => $type,
+            'source_type' => $section->block_type,
+            'key' => $section->block_key,
+            'title' => $section->title,
+            'content' => $section->content ?? [],
+            'resolved_content' => $resolvedContent,
+            'settings' => $section->settings ?? [],
+            'bindings' => $section->bindings ?? [],
+            'locale_content' => $section->locale_content ?? [],
+            'style_config' => $section->style_config ?? [],
+            'sort_order' => $section->sort_order,
+            'is_active' => $section->is_active,
+            'status' => $section->status,
+            'published_at' => optional($section->published_at)?->toISOString(),
+            'schema' => SiteContentBlock::getContentSchema($type),
+            'default_content' => SiteContentBlock::getDefaultContent($type),
+            'can_delete' => true,
+            'is_renderable' => $this->hasRenderableContent($type, $resolvedContent),
+            'assets' => $section->assets->map(fn (SiteAsset $asset) => $this->serializeAsset($asset))->values()->all(),
+            'elements' => $this->buildSectionElements($type, $resolvedContent, $section->bindings ?? []),
+        ];
+    }
+
+    private function serializePublicSection(SiteContentBlock $section, array $context): ?array
+    {
+        if (!$section->is_active) {
+            return null;
+        }
+
+        $type = SiteContentBlock::normalizeBlockType($section->block_type);
+        $resolvedContent = $this->resolveBindings($section->content ?? [], $section->bindings ?? [], $context);
+
+        if (!$this->hasRenderableContent($type, $resolvedContent)) {
+            return null;
+        }
+
+        return [
+            'id' => $section->id,
+            'page_id' => $section->holding_site_page_id,
+            'type' => $type,
+            'key' => $section->block_key,
+            'title' => $section->title,
+            'content' => $resolvedContent,
+            'settings' => $section->settings ?? [],
+            'bindings' => $section->bindings ?? [],
+            'style_config' => $section->style_config ?? [],
+            'sort_order' => $section->sort_order,
+            'assets' => $section->assets->map(fn (SiteAsset $asset) => $this->serializeAsset($asset))->values()->all(),
+            'elements' => $this->buildSectionElements($type, $resolvedContent, $section->bindings ?? []),
+        ];
+    }
+
+    private function serializeNavigation(array $pages): array
+    {
+        return collect($pages)
+            ->filter(fn (array $page) => ($page['visibility'] ?? 'public') === 'public')
+            ->map(static fn (array $page) => [
+                'id' => $page['id'],
+                'slug' => $page['slug'],
+                'label' => $page['navigation_label'] ?: $page['title'],
+                'page_type' => $page['page_type'],
+                'is_home' => $page['is_home'],
+            ])
+            ->values()
+            ->all();
     }
 
     private function buildOrganizationPayload(HoldingSite $site): array
@@ -187,82 +425,27 @@ class SiteBuilderDataService
 
     private function normalizePublishedSnapshot(HoldingSite $site, array $snapshot): array
     {
-        if (!isset($snapshot['site']) || !is_array($snapshot['site'])) {
-            $snapshot['site'] = $this->serializeSite($site);
-        }
-
-        if (!isset($snapshot['organization']) || !is_array($snapshot['organization'])) {
-            $snapshot['organization'] = $this->buildOrganizationPayload($site);
-        }
-
-        if (!isset($snapshot['blocks']) || !is_array($snapshot['blocks'])) {
-            $snapshot['blocks'] = [];
-        }
-
-        $runtime = is_array($snapshot['runtime'] ?? null) ? $snapshot['runtime'] : [];
-        $snapshot['runtime'] = array_merge(
+        $normalized = $snapshot;
+        $normalized['site'] = is_array($snapshot['site'] ?? null) ? $snapshot['site'] : $this->serializeSite($site);
+        $normalized['organization'] = is_array($snapshot['organization'] ?? null)
+            ? $snapshot['organization']
+            : $this->buildOrganizationPayload($site);
+        $normalized['pages'] = is_array($snapshot['pages'] ?? null) ? $snapshot['pages'] : [];
+        $normalized['navigation'] = is_array($snapshot['navigation'] ?? null)
+            ? $snapshot['navigation']
+            : $this->serializeNavigation($normalized['pages']);
+        $normalized['blog'] = is_array($snapshot['blog'] ?? null) ? $snapshot['blog'] : ['articles' => []];
+        $normalized['runtime'] = array_merge(
             [
                 'mode' => 'published',
                 'lead_endpoint' => '/api/site-leads',
                 'generated_at' => now()->toISOString(),
             ],
-            $runtime,
+            is_array($snapshot['runtime'] ?? null) ? $snapshot['runtime'] : [],
             ['mode' => 'published']
         );
 
-        return $snapshot;
-    }
-
-    private function serializeEditorBlock(SiteContentBlock $block, array $context): array
-    {
-        $resolvedContent = $this->resolveBindings($block->content ?? [], $block->bindings ?? [], $context);
-        $normalizedType = SiteContentBlock::normalizeBlockType($block->block_type);
-
-        return [
-            'id' => $block->id,
-            'type' => $normalizedType,
-            'source_type' => $block->block_type,
-            'key' => $block->block_key,
-            'title' => $block->title,
-            'content' => $block->content ?? [],
-            'resolved_content' => $resolvedContent,
-            'settings' => $block->settings ?? [],
-            'bindings' => $block->bindings ?? [],
-            'sort_order' => $block->sort_order,
-            'is_active' => $block->is_active,
-            'status' => $block->status,
-            'published_at' => optional($block->published_at)?->toISOString(),
-            'schema' => SiteContentBlock::getContentSchema($normalizedType),
-            'default_content' => SiteContentBlock::getDefaultContent($normalizedType),
-            'can_delete' => true,
-            'is_renderable' => $this->hasRenderableContent($normalizedType, $resolvedContent),
-            'assets' => $block->assets->map(fn (SiteAsset $asset) => $this->serializeAsset($asset))->values()->all(),
-        ];
-    }
-
-    private function serializePublicBlock(SiteContentBlock $block, array $context): ?array
-    {
-        if (!$block->is_active) {
-            return null;
-        }
-
-        $type = SiteContentBlock::normalizeBlockType($block->block_type);
-        $resolvedContent = $this->resolveBindings($block->content ?? [], $block->bindings ?? [], $context);
-
-        if (!$this->hasRenderableContent($type, $resolvedContent)) {
-            return null;
-        }
-
-        return [
-            'id' => $block->id,
-            'type' => $type,
-            'key' => $block->block_key,
-            'title' => $block->title,
-            'content' => $resolvedContent,
-            'settings' => $block->settings ?? [],
-            'sort_order' => $block->sort_order,
-            'assets' => $block->assets->map(fn (SiteAsset $asset) => $this->serializeAsset($asset))->values()->all(),
-        ];
+        return $normalized;
     }
 
     private function serializeAssets(HoldingSite $site): array
@@ -279,6 +462,8 @@ class SiteBuilderDataService
     private function serializeAsset(SiteAsset $asset): array
     {
         $optimized = $asset->optimized_variants ?? [];
+        $metadata = $asset->metadata ?? [];
+        $usageMap = $this->buildAssetUsageMap($asset->holding_site_id, $asset->public_url);
 
         return [
             'id' => $asset->id,
@@ -296,14 +481,43 @@ class SiteBuilderDataService
             'human_size' => $asset->getHumanReadableSize(),
             'asset_type' => $asset->asset_type,
             'usage_context' => $asset->usage_context,
-            'metadata' => $asset->metadata ?? [],
+            'metadata' => $metadata,
             'is_optimized' => $asset->is_optimized,
             'uploaded_at' => optional($asset->created_at)?->toISOString(),
             'uploader' => [
                 'id' => $asset->uploader?->id,
                 'name' => $asset->uploader?->name,
             ],
+            'usage_map' => $usageMap,
+            'safe_delete' => count($usageMap) === 0,
         ];
+    }
+
+    private function buildAssetUsageMap(int $siteId, string $assetUrl): array
+    {
+        return SiteContentBlock::query()
+            ->where('holding_site_id', $siteId)
+            ->get()
+            ->flatMap(function (SiteContentBlock $section) use ($assetUrl) {
+                $content = $section->content ?? [];
+                $matches = [];
+
+                array_walk_recursive($content, function ($value, $key) use (&$matches, $section, $assetUrl) {
+                    if ($value === $assetUrl) {
+                        $matches[] = [
+                            'type' => 'section',
+                            'field' => $key,
+                            'block_id' => $section->id,
+                            'block_key' => $section->block_key,
+                            'block_type' => SiteContentBlock::normalizeBlockType($section->block_type),
+                        ];
+                    }
+                });
+
+                return $matches;
+            })
+            ->values()
+            ->all();
     }
 
     private function getBindingsContext(HoldingSite $site): array
@@ -428,6 +642,150 @@ class SiteBuilderDataService
         return $resolved;
     }
 
+    private function buildSectionElements(string $type, array $content, array $bindings): array
+    {
+        $elements = [];
+        $schema = SiteContentBlock::getContentSchema($type);
+
+        foreach ($schema as $field => $definition) {
+            $fieldType = $definition['type'] ?? 'string';
+            $elementType = match ($fieldType) {
+                'image' => 'image',
+                'url' => 'button',
+                'array' => 'repeater',
+                'html' => 'rich_text',
+                'number' => 'metric',
+                default => 'text',
+            };
+
+            $elements[] = [
+                'id' => sprintf('%s:%s', $type, $field),
+                'type' => $elementType,
+                'label' => $field,
+                'path' => sprintf('content.%s', $field),
+                'props' => [
+                    'value' => Arr::get($content, $field),
+                ],
+                'bindings' => $bindings[$field] ?? ['mode' => 'manual'],
+                'style' => [],
+                'responsive' => [],
+                'animation' => ['preset' => 'none'],
+            ];
+        }
+
+        return $elements;
+    }
+
+    private function pageMatchesPath(array $page, string $path): bool
+    {
+        $slug = trim((string) ($page['slug'] ?? '/'));
+        $slug = $slug === '' ? '/' : '/' . trim($slug, '/');
+        $normalizedPath = trim($path);
+        $normalizedPath = $normalizedPath === '' ? '/' : '/' . trim($normalizedPath, '/');
+
+        return $slug === $normalizedPath;
+    }
+
+    private function resolveBlogArticleContext(array $pages, array $blog, string $path): ?array
+    {
+        $blogPage = collect($pages)->first(fn (array $page) => ($page['page_type'] ?? null) === 'blog_index');
+        if (!is_array($blogPage)) {
+            return null;
+        }
+
+        $blogSlug = trim((string) ($blogPage['slug'] ?? '/blog'));
+        $blogSlug = $blogSlug === '' ? '/blog' : '/' . trim($blogSlug, '/');
+        if ($path === $blogSlug || !str_starts_with($path, $blogSlug . '/')) {
+            return null;
+        }
+
+        $articleSlug = trim(substr($path, strlen($blogSlug)), '/');
+        if ($articleSlug === '') {
+            return null;
+        }
+
+        $article = collect($blog['articles'] ?? [])->firstWhere('slug', $articleSlug);
+        if (!is_array($article)) {
+            return null;
+        }
+
+        $page = [
+            'id' => 'blog-post:' . ($article['id'] ?? $articleSlug),
+            'page_type' => 'blog_post',
+            'slug' => $path,
+            'navigation_label' => $article['title'] ?? 'Статья',
+            'title' => $article['title'] ?? 'Статья',
+            'description' => $article['excerpt'] ?? '',
+            'seo_meta' => [
+                'title' => $article['meta_title'] ?? ($article['title'] ?? ''),
+                'description' => $article['meta_description'] ?? ($article['excerpt'] ?? ''),
+            ],
+            'layout_config' => ['variant' => 'article'],
+            'locale_content' => [],
+            'visibility' => 'public',
+            'sort_order' => 999,
+            'is_home' => false,
+            'is_active' => true,
+            'sections' => [],
+        ];
+
+        return [
+            'page' => $page,
+            'article' => $article,
+        ];
+    }
+
+    private function localizePage(array $page, string $locale): array
+    {
+        $localized = $page;
+        $localeContent = is_array($page['locale_content'] ?? null) ? ($page['locale_content'][$locale] ?? null) : null;
+
+        if (is_array($localeContent)) {
+            $localized['title'] = $localeContent['title'] ?? $localized['title'];
+            $localized['description'] = $localeContent['description'] ?? $localized['description'];
+            $localized['seo_meta'] = array_merge($localized['seo_meta'] ?? [], $localeContent['seo_meta'] ?? []);
+        }
+
+        $localized['sections'] = collect($page['sections'] ?? [])
+            ->map(fn (array $section) => $this->localizeSection($section, $locale))
+            ->values()
+            ->all();
+
+        return $localized;
+    }
+
+    private function localizeSection(array $section, string $locale): array
+    {
+        $localized = $section;
+        $localeContent = is_array($section['locale_content'] ?? null) ? ($section['locale_content'][$locale] ?? null) : null;
+
+        if (is_array($localeContent)) {
+            $localized['content'] = array_replace_recursive($localized['content'] ?? [], $localeContent);
+        }
+
+        return $localized;
+    }
+
+    private function resolveLocaleAndPath(?string $requestedLocale, string $path, string $defaultLocale, array $enabledLocales): array
+    {
+        $locale = $requestedLocale ?: $defaultLocale;
+        $normalizedPath = trim($path) === '' ? '/' : '/' . trim($path, '/');
+        $segments = array_values(array_filter(explode('/', trim($normalizedPath, '/'))));
+
+        if (isset($segments[0]) && in_array($segments[0], $enabledLocales, true)) {
+            $locale = $segments[0];
+            array_shift($segments);
+            $normalizedPath = '/' . implode('/', $segments);
+            $normalizedPath = $normalizedPath === '/' || $normalizedPath === '' ? '/' : $normalizedPath;
+        }
+
+        if (!in_array($locale, $enabledLocales, true)) {
+            $locale = $defaultLocale;
+        }
+
+        return [$locale, $normalizedPath];
+    }
+
     private function hasRenderableContent(string $type, array $content): bool
     {
         return match ($type) {
@@ -458,10 +816,13 @@ class SiteBuilderDataService
             'accent_color' => '#f59e0b',
             'background_color' => '#ffffff',
             'text_color' => '#111827',
-            'font_family' => 'Inter, sans-serif',
+            'font_family' => 'Manrope, sans-serif',
             'font_size_base' => '16px',
-            'border_radius' => '16px',
+            'border_radius' => '24px',
             'shadow_style' => 'soft',
+            'surface_style' => 'clean',
+            'container_width' => '1240px',
+            'section_spacing' => '120px',
         ], $themeConfig);
     }
 
@@ -474,6 +835,8 @@ class SiteBuilderDataService
             'og_title' => $seoMeta['og_title'] ?? $site->title,
             'og_description' => $seoMeta['og_description'] ?? $site->description,
             'og_image' => $seoMeta['og_image'] ?? $site->logo_url,
+            'canonical' => $seoMeta['canonical'] ?? $site->getUrl(),
+            'noindex' => $seoMeta['noindex'] ?? false,
         ];
     }
 

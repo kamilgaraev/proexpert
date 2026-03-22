@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models;
 
 use App\Models\OrganizationGroup;
@@ -17,6 +19,8 @@ class HoldingSite extends Model
     protected $fillable = [
         'organization_group_id',
         'domain',
+        'default_locale',
+        'enabled_locales',
         'title',
         'description',
         'logo_url',
@@ -37,6 +41,7 @@ class HoldingSite extends Model
         'seo_meta' => 'array',
         'analytics_config' => 'array',
         'published_payload' => 'array',
+        'enabled_locales' => 'array',
         'is_active' => 'boolean',
         'published_at' => 'datetime',
     ];
@@ -49,6 +54,21 @@ class HoldingSite extends Model
     public function contentBlocks(): HasMany
     {
         return $this->hasMany(SiteContentBlock::class)->orderBy('sort_order');
+    }
+
+    public function pages(): HasMany
+    {
+        return $this->hasMany(HoldingSitePage::class)->orderBy('sort_order');
+    }
+
+    public function revisions(): HasMany
+    {
+        return $this->hasMany(HoldingSiteRevision::class)->latest('created_at');
+    }
+
+    public function collaborators(): HasMany
+    {
+        return $this->hasMany(HoldingSiteCollaborator::class);
     }
 
     public function publishedBlocks(): HasMany
@@ -66,6 +86,11 @@ class HoldingSite extends Model
     public function leads(): HasMany
     {
         return $this->hasMany(HoldingSiteLead::class, 'holding_site_id')->latest('submitted_at');
+    }
+
+    public function homePage(): ?HoldingSitePage
+    {
+        return $this->pages()->where('is_home', true)->first();
     }
 
     public function creator(): BelongsTo
@@ -137,12 +162,33 @@ class HoldingSite extends Model
 
     public function canUserEdit(User $user): bool
     {
-        $parentOrganization = $this->organizationGroup->parentOrganization;
+        return $this->userIsOwnerByOrganization($user)
+            || $this->hasCollaboratorRole($user, [
+                HoldingSiteCollaborator::ROLE_OWNER,
+                HoldingSiteCollaborator::ROLE_EDITOR,
+                HoldingSiteCollaborator::ROLE_PUBLISHER,
+            ]);
+    }
 
-        return $parentOrganization->users()
-            ->wherePivot('user_id', $user->id)
-            ->wherePivot('is_owner', true)
-            ->exists();
+    public function canUserView(User $user): bool
+    {
+        return $this->userIsOwnerByOrganization($user)
+            || $this->hasCollaboratorRole($user, HoldingSiteCollaborator::ROLES);
+    }
+
+    public function canUserPublish(User $user): bool
+    {
+        return $this->userIsOwnerByOrganization($user)
+            || $this->hasCollaboratorRole($user, [
+                HoldingSiteCollaborator::ROLE_OWNER,
+                HoldingSiteCollaborator::ROLE_PUBLISHER,
+            ]);
+    }
+
+    public function canManageCollaborators(User $user): bool
+    {
+        return $this->userIsOwnerByOrganization($user)
+            || $this->hasCollaboratorRole($user, [HoldingSiteCollaborator::ROLE_OWNER]);
     }
 
     public function getDomain(): string
@@ -166,6 +212,17 @@ class HoldingSite extends Model
         return $this->status === 'published' && $this->is_active && $this->hasPublishedSnapshot();
     }
 
+    public function getEnabledLocales(): array
+    {
+        $locales = $this->enabled_locales ?? [];
+
+        if (!is_array($locales) || empty($locales)) {
+            return [$this->default_locale ?: 'ru'];
+        }
+
+        return array_values(array_unique(array_filter($locales, static fn ($value) => is_string($value) && $value !== '')));
+    }
+
     public function getPreviewUrl(): string
     {
         return $this->getUrl() . '?preview=true&token=' . $this->generatePreviewToken();
@@ -181,5 +238,23 @@ class HoldingSite extends Model
         $updatedAt = $this->updated_at?->timestamp ?? now()->timestamp;
 
         return hash('sha256', $this->id . $updatedAt . config('app.key'));
+    }
+
+    private function userIsOwnerByOrganization(User $user): bool
+    {
+        $parentOrganization = $this->organizationGroup->parentOrganization;
+
+        return $parentOrganization->users()
+            ->wherePivot('user_id', $user->id)
+            ->wherePivot('is_owner', true)
+            ->exists();
+    }
+
+    private function hasCollaboratorRole(User $user, array $roles): bool
+    {
+        return $this->collaborators()
+            ->where('user_id', $user->id)
+            ->whereIn('role', $roles)
+            ->exists();
     }
 }

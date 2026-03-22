@@ -30,7 +30,7 @@ class SiteLeadsController extends Controller
             $site = $this->resolveHoldingSiteFromRequest($request);
             $user = Auth::user();
 
-            if (!$site->canUserEdit($user)) {
+            if (!$site->canUserView($user)) {
                 return LandingResponse::error(trans_message('holding_site_builder.access_denied'), 403);
             }
 
@@ -55,7 +55,7 @@ class SiteLeadsController extends Controller
             $site = $this->resolveHoldingSiteFromRequest($request);
             $user = Auth::user();
 
-            if (!$site->canUserEdit($user)) {
+            if (!$site->canUserView($user)) {
                 return LandingResponse::error(trans_message('holding_site_builder.access_denied'), 403);
             }
 
@@ -142,7 +142,10 @@ class SiteLeadsController extends Controller
             'email' => 'nullable|email|max:255',
             'phone' => 'nullable|string|max:100',
             'message' => 'nullable|string|max:5000',
+            'holding_site_page_id' => 'nullable|integer|exists:holding_site_pages,id',
             'block_key' => 'nullable|string|max:255',
+            'section_key' => 'nullable|string|max:255',
+            'locale_code' => 'nullable|string|max:12',
             'source_page' => 'nullable|string|max:255',
             'source_url' => 'nullable|string|max:2048',
             'form_payload' => 'nullable|array',

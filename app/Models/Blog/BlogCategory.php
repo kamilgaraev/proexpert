@@ -5,13 +5,16 @@ namespace App\Models\Blog;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Str;
+use App\Models\OrganizationGroup;
 
 class BlogCategory extends Model
 {
     use HasFactory;
 
     protected $fillable = [
+        'organization_group_id',
         'name',
         'slug',
         'description',
@@ -31,6 +34,11 @@ class BlogCategory extends Model
     public function articles(): HasMany
     {
         return $this->hasMany(BlogArticle::class, 'category_id');
+    }
+
+    public function organizationGroup(): BelongsTo
+    {
+        return $this->belongsTo(OrganizationGroup::class, 'organization_group_id');
     }
 
     public function publishedArticles(): HasMany

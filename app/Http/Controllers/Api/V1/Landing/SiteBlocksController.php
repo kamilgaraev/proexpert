@@ -28,13 +28,15 @@ class SiteBlocksController extends Controller
     {
         try {
             $site = $this->resolveHoldingSite($request);
+            $homePage = $site->homePage();
 
             if (!$site->canUserEdit(Auth::user())) {
                 return LandingResponse::error(trans_message('holding_site_builder.access_denied'), 403);
             }
 
             return LandingResponse::success(
-                $this->builderDataService->getEditorPayload($site)['blocks'],
+                collect($this->builderDataService->getEditorPayload($site)['pages'])
+                    ->firstWhere('id', $homePage?->id)['sections'] ?? [],
                 trans_message('holding_site_builder.blocks.loaded')
             );
         } catch (\Throwable $e) {
@@ -112,9 +114,11 @@ class SiteBlocksController extends Controller
     {
         try {
             $site = $this->resolveHoldingSite($request);
+            $homePage = $site->homePage();
             $block = SiteContentBlock::query()
                 ->where('id', $blockId)
                 ->where('holding_site_id', $site->id)
+                ->where('holding_site_page_id', $homePage?->id)
                 ->firstOrFail();
 
             if (!$site->canUserEdit(Auth::user())) {
@@ -169,9 +173,11 @@ class SiteBlocksController extends Controller
     {
         try {
             $site = $this->resolveHoldingSite($request);
+            $homePage = $site->homePage();
             $block = SiteContentBlock::query()
                 ->where('id', $blockId)
                 ->where('holding_site_id', $site->id)
+                ->where('holding_site_page_id', $homePage?->id)
                 ->firstOrFail();
 
             $this->contentService->publishBlock($block, Auth::user());
@@ -196,9 +202,11 @@ class SiteBlocksController extends Controller
     {
         try {
             $site = $this->resolveHoldingSite($request);
+            $homePage = $site->homePage();
             $block = SiteContentBlock::query()
                 ->where('id', $blockId)
                 ->where('holding_site_id', $site->id)
+                ->where('holding_site_page_id', $homePage?->id)
                 ->firstOrFail();
 
             if (!$site->canUserEdit(Auth::user())) {
@@ -228,9 +236,11 @@ class SiteBlocksController extends Controller
     {
         try {
             $site = $this->resolveHoldingSite($request);
+            $homePage = $site->homePage();
             $block = SiteContentBlock::query()
                 ->where('id', $blockId)
                 ->where('holding_site_id', $site->id)
+                ->where('holding_site_page_id', $homePage?->id)
                 ->firstOrFail();
 
             if (!$site->canUserEdit(Auth::user())) {
@@ -262,6 +272,7 @@ class SiteBlocksController extends Controller
     {
         try {
             $site = $this->resolveHoldingSite($request);
+            $homePage = $site->homePage();
 
             if (!$site->canUserEdit(Auth::user())) {
                 return LandingResponse::error(trans_message('holding_site_builder.access_denied'), 403);
@@ -271,7 +282,9 @@ class SiteBlocksController extends Controller
                 'block_order' => 'required|array',
                 'block_order.*' => [
                     'integer',
-                    Rule::exists('site_content_blocks', 'id')->where('holding_site_id', $site->id),
+                    Rule::exists('site_content_blocks', 'id')
+                        ->where('holding_site_id', $site->id)
+                        ->where('holding_site_page_id', $homePage?->id),
                 ],
             ]);
 
@@ -283,7 +296,7 @@ class SiteBlocksController extends Controller
                 );
             }
 
-            $this->contentService->reorderBlocks($site, $validator->validated()['block_order'], Auth::user());
+            $this->contentService->reorderPageSections($homePage, $validator->validated()['block_order'], Auth::user());
 
             return LandingResponse::success(
                 $this->builderDataService->getEditorPayload($site->fresh())['blocks'],

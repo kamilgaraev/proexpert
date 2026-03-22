@@ -1,8 +1,11 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Enterprise\MultiOrganization\Website\Services;
 
 use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\HoldingSite;
+use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\HoldingSitePage;
 use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\SiteContentBlock;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -10,6 +13,13 @@ use Illuminate\Support\Facades\DB;
 class ContentManagementService
 {
     public function createBlock(HoldingSite $site, array $data, User $creator): SiteContentBlock
+    {
+        $page = $site->homePage() ?? app(SitePageService::class)->getOrCreateHomePage($site, $creator);
+
+        return $this->createBlockForPage($page, $data, $creator);
+    }
+
+    public function createBlockForPage(HoldingSitePage $page, array $data, User $creator): SiteContentBlock
     {
         $blockType = SiteContentBlock::normalizeBlockType($data['block_type']);
         $content = $data['content'] ?? SiteContentBlock::getDefaultContent($blockType);
@@ -23,21 +33,24 @@ class ContentManagementService
         );
 
         if (!isset($data['sort_order'])) {
-            $data['sort_order'] = ((int) $site->contentBlocks()->max('sort_order')) + 1;
+            $data['sort_order'] = ((int) $page->sections()->max('sort_order')) + 1;
         }
 
         if (!isset($data['block_key'])) {
-            $data['block_key'] = $this->generateBlockKey($site, $blockType);
+            $data['block_key'] = $this->generateBlockKey($page->site, $blockType);
         }
 
         return SiteContentBlock::create([
-            'holding_site_id' => $site->id,
+            'holding_site_id' => $page->holding_site_id,
+            'holding_site_page_id' => $page->id,
             'block_type' => $blockType,
             'block_key' => $data['block_key'],
             'title' => $data['title'] ?? ucfirst(str_replace('_', ' ', $blockType)),
             'content' => $content,
             'settings' => $settings,
             'bindings' => $bindings,
+            'locale_content' => $data['locale_content'] ?? [],
+            'style_config' => $data['style_config'] ?? ['spacing' => 'default'],
             'sort_order' => $data['sort_order'],
             'is_active' => $data['is_active'] ?? true,
             'status' => 'draft',
@@ -56,6 +69,12 @@ class ContentManagementService
                 : null,
             'bindings' => isset($data['bindings'])
                 ? array_merge($block->bindings ?? [], $data['bindings'])
+                : null,
+            'locale_content' => isset($data['locale_content'])
+                ? array_merge($block->locale_content ?? [], $data['locale_content'])
+                : null,
+            'style_config' => isset($data['style_config'])
+                ? array_merge($block->style_config ?? [], $data['style_config'])
                 : null,
             'sort_order' => $data['sort_order'] ?? null,
             'is_active' => $data['is_active'] ?? null,
@@ -85,6 +104,25 @@ class ContentManagementService
             }
 
             $site->clearCache();
+
+            return true;
+        });
+    }
+
+    public function reorderPageSections(HoldingSitePage $page, array $sectionOrder, User $user): bool
+    {
+        return DB::transaction(function () use ($page, $sectionOrder, $user) {
+            foreach (array_values($sectionOrder) as $index => $sectionId) {
+                SiteContentBlock::query()
+                    ->where('id', $sectionId)
+                    ->where('holding_site_page_id', $page->id)
+                    ->update([
+                        'sort_order' => $index + 1,
+                        'updated_by_user_id' => $user->id,
+                    ]);
+            }
+
+            $page->site->clearCache();
 
             return true;
         });
@@ -129,12 +167,15 @@ class ContentManagementService
             ->get()
             ->map(fn (SiteContentBlock $block) => [
                 'id' => $block->id,
+                'page_id' => $block->holding_site_page_id,
                 'type' => SiteContentBlock::normalizeBlockType($block->block_type),
                 'key' => $block->block_key,
                 'title' => $block->title,
                 'content' => $block->content ?? [],
                 'settings' => $block->settings ?? [],
                 'bindings' => $block->bindings ?? [],
+                'locale_content' => $block->locale_content ?? [],
+                'style_config' => $block->style_config ?? [],
                 'sort_order' => $block->sort_order,
                 'is_active' => $block->is_active,
                 'status' => $block->status,

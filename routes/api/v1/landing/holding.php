@@ -4,7 +4,11 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Landing\HoldingLandingController;
 use App\Http\Controllers\Api\V1\Landing\SiteBlocksController;
 use App\Http\Controllers\Api\V1\Landing\SiteAssetsController;
+use App\Http\Controllers\Api\V1\Landing\SiteBlogArticlesController;
+use App\Http\Controllers\Api\V1\Landing\SiteCollaboratorsController;
 use App\Http\Controllers\Api\V1\Landing\SiteLeadsController;
+use App\Http\Controllers\Api\V1\Landing\SitePagesController;
+use App\Http\Controllers\Api\V1\Landing\SiteRevisionsController;
 use App\Http\Controllers\Api\V1\Landing\HoldingReportsController;
 
 Route::prefix('holding/public')
@@ -47,6 +51,92 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context', 'modu
             Route::post('/publish', [HoldingLandingController::class, 'publish'])
                 ->middleware(['authorize:multi-organization.website.publish'])
                 ->name('publish');
+
+            Route::get('/revisions', [SiteRevisionsController::class, 'index'])
+                ->middleware(['authorize:multi-organization.website.view'])
+                ->name('revisions.index');
+
+            Route::post('/rollback/{revisionId}', [SiteRevisionsController::class, 'rollback'])
+                ->middleware(['authorize:multi-organization.website.publish'])
+                ->name('revisions.rollback');
+
+            Route::prefix('pages')->name('pages.')->group(function () {
+                Route::get('/', [SitePagesController::class, 'index'])
+                    ->middleware(['authorize:multi-organization.website.view'])
+                    ->name('index');
+
+                Route::post('/', [SitePagesController::class, 'store'])
+                    ->middleware(['authorize:multi-organization.website.edit'])
+                    ->name('store');
+
+                Route::put('/reorder', [SitePagesController::class, 'reorder'])
+                    ->middleware(['authorize:multi-organization.website.edit'])
+                    ->name('reorder');
+
+                Route::put('/{pageId}', [SitePagesController::class, 'update'])
+                    ->middleware(['authorize:multi-organization.website.edit'])
+                    ->name('update');
+
+                Route::delete('/{pageId}', [SitePagesController::class, 'destroy'])
+                    ->middleware(['authorize:multi-organization.website.edit'])
+                    ->name('destroy');
+
+                Route::post('/{pageId}/sections', [SitePagesController::class, 'storeSection'])
+                    ->middleware(['authorize:multi-organization.website.edit'])
+                    ->name('sections.store');
+
+                Route::put('/{pageId}/sections/reorder', [SitePagesController::class, 'reorderSections'])
+                    ->middleware(['authorize:multi-organization.website.edit'])
+                    ->name('sections.reorder');
+
+                Route::put('/{pageId}/sections/{sectionId}', [SitePagesController::class, 'updateSection'])
+                    ->middleware(['authorize:multi-organization.website.edit'])
+                    ->name('sections.update');
+
+                Route::delete('/{pageId}/sections/{sectionId}', [SitePagesController::class, 'destroySection'])
+                    ->middleware(['authorize:multi-organization.website.edit'])
+                    ->name('sections.destroy');
+            });
+
+            Route::post('/sections/{sectionId}/duplicate', [SitePagesController::class, 'duplicateSection'])
+                ->middleware(['authorize:multi-organization.website.edit'])
+                ->name('sections.duplicate');
+
+            Route::prefix('collaborators')->name('collaborators.')->group(function () {
+                Route::get('/', [SiteCollaboratorsController::class, 'index'])
+                    ->middleware(['authorize:multi-organization.website.view'])
+                    ->name('index');
+
+                Route::post('/', [SiteCollaboratorsController::class, 'store'])
+                    ->middleware(['authorize:multi-organization.website.publish'])
+                    ->name('store');
+
+                Route::put('/{collaboratorId}', [SiteCollaboratorsController::class, 'update'])
+                    ->middleware(['authorize:multi-organization.website.publish'])
+                    ->name('update');
+
+                Route::delete('/{collaboratorId}', [SiteCollaboratorsController::class, 'destroy'])
+                    ->middleware(['authorize:multi-organization.website.publish'])
+                    ->name('destroy');
+            });
+
+            Route::prefix('blog/articles')->name('blog.articles.')->group(function () {
+                Route::get('/', [SiteBlogArticlesController::class, 'index'])
+                    ->middleware(['authorize:multi-organization.website.view'])
+                    ->name('index');
+
+                Route::post('/', [SiteBlogArticlesController::class, 'store'])
+                    ->middleware(['authorize:multi-organization.website.edit'])
+                    ->name('store');
+
+                Route::put('/{articleId}', [SiteBlogArticlesController::class, 'update'])
+                    ->middleware(['authorize:multi-organization.website.edit'])
+                    ->name('update');
+
+                Route::delete('/{articleId}', [SiteBlogArticlesController::class, 'destroy'])
+                    ->middleware(['authorize:multi-organization.website.edit'])
+                    ->name('destroy');
+            });
             
             // === БЛОКИ КОНТЕНТА ===
             

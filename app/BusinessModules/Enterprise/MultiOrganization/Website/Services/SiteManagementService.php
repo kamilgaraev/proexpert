@@ -3,6 +3,8 @@
 namespace App\BusinessModules\Enterprise\MultiOrganization\Website\Services;
 
 use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\HoldingSite;
+use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\HoldingSiteCollaborator;
+use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\HoldingSitePage;
 use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\SiteContentBlock;
 use App\Models\OrganizationGroup;
 use App\Models\User;
@@ -15,7 +17,10 @@ class SiteManagementService
     public function __construct(
         private readonly ContentManagementService $contentService,
         private readonly AssetManagerService $assetService,
-        private readonly SiteBuilderDataService $builderDataService
+        private readonly SiteBuilderDataService $builderDataService,
+        private readonly SitePageService $pageService,
+        private readonly SiteRevisionService $revisionService,
+        private readonly SiteCollaboratorService $collaboratorService
     ) {
     }
 
@@ -24,6 +29,12 @@ class SiteManagementService
         $existingSite = HoldingSite::query()->where('organization_group_id', $organizationGroup->id)->first();
 
         if ($existingSite) {
+            $this->pageService->getOrCreateHomePage($existingSite, $creator);
+
+            if (!$existingSite->collaborators()->where('user_id', $creator->id)->exists()) {
+                $this->collaboratorService->addCollaborator($existingSite, $creator, HoldingSiteCollaborator::ROLE_OWNER, $creator);
+            }
+
             return $existingSite;
         }
 
@@ -41,6 +52,8 @@ class SiteManagementService
             $site = HoldingSite::create([
                 'organization_group_id' => $organizationGroup->id,
                 'domain' => $this->normalizeDomain($data['domain'] ?? ($organizationGroup->slug . '.prohelper.pro')),
+                'default_locale' => $data['default_locale'] ?? 'ru',
+                'enabled_locales' => $data['enabled_locales'] ?? ['ru'],
                 'title' => $data['title'] ?? $organizationGroup->name,
                 'description' => $data['description'] ?? ('Official website of ' . $organizationGroup->name),
                 'theme_config' => $data['theme_config'] ?? $this->getDefaultThemeConfig(),
@@ -52,7 +65,9 @@ class SiteManagementService
                 'updated_by_user_id' => $creator->id,
             ]);
 
-            $this->createDefaultBlocks($site, $creator);
+            $homePage = $this->pageService->getOrCreateHomePage($site, $creator);
+            $this->collaboratorService->addCollaborator($site, $creator, HoldingSiteCollaborator::ROLE_OWNER, $creator);
+            $this->createDefaultBlocks($homePage, $creator);
 
             return $site;
         });
@@ -66,6 +81,8 @@ class SiteManagementService
 
         $updateData = array_filter([
             'domain' => isset($data['domain']) ? $this->normalizeDomain((string) $data['domain']) : null,
+            'default_locale' => $data['default_locale'] ?? null,
+            'enabled_locales' => $data['enabled_locales'] ?? null,
             'title' => $data['title'] ?? null,
             'description' => $data['description'] ?? null,
             'logo_url' => $data['logo_url'] ?? null,
@@ -87,7 +104,7 @@ class SiteManagementService
 
     public function publishSite(HoldingSite $site, User $user): bool
     {
-        if (!$site->canUserEdit($user)) {
+        if (!$site->canUserPublish($user)) {
             throw new \RuntimeException('Access denied for site publish.');
         }
 
@@ -98,7 +115,13 @@ class SiteManagementService
 
         $snapshot = $this->builderDataService->buildPublicationSnapshot($site);
 
-        return $site->publish($user, $snapshot);
+        $published = $site->publish($user, $snapshot);
+
+        if ($published) {
+            $this->revisionService->createPublishedRevision($site->fresh(), $snapshot, $user);
+        }
+
+        return $published;
     }
 
     public function getSiteByDomain(string $domain): ?HoldingSite
@@ -117,7 +140,7 @@ class SiteManagementService
             $site = HoldingSite::query()
                 ->where('domain', $normalizedDomain)
                 ->where('is_active', true)
-                ->with(['organizationGroup.parentOrganization'])
+                ->with(['organizationGroup.parentOrganization', 'pages.sections.assets'])
                 ->first();
 
             if ($site) {
@@ -131,7 +154,7 @@ class SiteManagementService
                     $query->where('slug', $slug);
                 })
                 ->where('is_active', true)
-                ->with(['organizationGroup.parentOrganization'])
+                ->with(['organizationGroup.parentOrganization', 'pages.sections.assets'])
                 ->first();
         });
     }
@@ -167,6 +190,9 @@ class SiteManagementService
             }
 
             $site->contentBlocks()->delete();
+            $site->pages()->delete();
+            $site->collaborators()->delete();
+            $site->revisions()->delete();
             $site->leads()->delete();
             $site->clearCache();
 
@@ -174,7 +200,7 @@ class SiteManagementService
         });
     }
 
-    private function createDefaultBlocks(HoldingSite $site, User $creator): void
+    private function createDefaultBlocks(HoldingSitePage $homePage, User $creator): void
     {
         $defaults = [
             ['block_type' => 'hero', 'sort_order' => 1],
@@ -189,7 +215,7 @@ class SiteManagementService
 
         foreach ($defaults as $definition) {
             $blockType = $definition['block_type'];
-            $this->contentService->createBlock($site, [
+            $this->contentService->createBlockForPage($homePage, [
                 'block_type' => $blockType,
                 'title' => SiteContentBlock::BLOCK_TYPES[$blockType] ?? ucfirst($blockType),
                 'content' => SiteContentBlock::getDefaultContent($blockType),

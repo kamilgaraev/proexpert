@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models;
 
 use App\Models\User;
@@ -14,12 +16,15 @@ class SiteContentBlock extends Model
 
     protected $fillable = [
         'holding_site_id',
+        'holding_site_page_id',
         'block_type',
         'block_key',
         'title',
         'content',
         'settings',
         'bindings',
+        'locale_content',
+        'style_config',
         'sort_order',
         'is_active',
         'status',
@@ -32,6 +37,8 @@ class SiteContentBlock extends Model
         'content' => 'array',
         'settings' => 'array',
         'bindings' => 'array',
+        'locale_content' => 'array',
+        'style_config' => 'array',
         'is_active' => 'boolean',
         'sort_order' => 'integer',
         'published_at' => 'datetime',
@@ -59,6 +66,11 @@ class SiteContentBlock extends Model
         return $this->belongsTo(HoldingSite::class);
     }
 
+    public function page(): BelongsTo
+    {
+        return $this->belongsTo(HoldingSitePage::class, 'holding_site_page_id');
+    }
+
     public function assets(): HasMany
     {
         return $this->hasMany(SiteAsset::class, 'holding_site_id', 'holding_site_id')
@@ -84,6 +96,7 @@ class SiteContentBlock extends Model
             'title' => $this->title,
             'content' => $this->content ?? [],
             'settings' => $this->settings ?? [],
+            'style_config' => $this->style_config ?? [],
             'sort_order' => $this->sort_order,
             'assets' => $this->assets->map(fn ($asset) => [
                 'id' => $asset->id,

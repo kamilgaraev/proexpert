@@ -8,6 +8,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use App\Models\LandingAdmin;
+use App\Models\OrganizationGroup;
+use App\Models\User;
 use App\Enums\Blog\BlogArticleStatusEnum;
 use Illuminate\Support\Str;
 use Carbon\Carbon;
@@ -17,8 +19,11 @@ class BlogArticle extends Model
     use HasFactory;
 
     protected $fillable = [
+        'organization_group_id',
         'category_id',
         'author_id',
+        'created_by_user_id',
+        'updated_by_user_id',
         'title',
         'slug',
         'excerpt',
@@ -69,9 +74,24 @@ class BlogArticle extends Model
         return $this->belongsTo(BlogCategory::class, 'category_id');
     }
 
+    public function organizationGroup(): BelongsTo
+    {
+        return $this->belongsTo(OrganizationGroup::class, 'organization_group_id');
+    }
+
     public function author(): BelongsTo
     {
         return $this->belongsTo(LandingAdmin::class, 'author_id');
+    }
+
+    public function creator(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by_user_id');
+    }
+
+    public function updater(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'updated_by_user_id');
     }
 
     public function tags(): BelongsToMany
@@ -102,6 +122,11 @@ class BlogArticle extends Model
     {
         return $query->where('status', BlogArticleStatusEnum::PUBLISHED)
             ->where('published_at', '<=', now());
+    }
+
+    public function scopeForOrganizationGroup($query, int $organizationGroupId)
+    {
+        return $query->where('organization_group_id', $organizationGroupId);
     }
 
     public function scopeFeatured($query)

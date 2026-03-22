@@ -14,7 +14,10 @@ class SiteLeadService
     public function submitLead(HoldingSite $site, array $data, Request $request): HoldingSiteLead
     {
         return $site->leads()->create([
+            'holding_site_page_id' => $data['holding_site_page_id'] ?? null,
             'block_key' => $data['block_key'] ?? null,
+            'section_key' => $data['section_key'] ?? ($data['block_key'] ?? null),
+            'locale_code' => $data['locale_code'] ?? null,
             'contact_name' => $data['name'] ?? null,
             'company_name' => $data['company'] ?? null,
             'email' => $data['email'] ?? null,
@@ -64,6 +67,9 @@ class SiteLeadService
         return [
             'id' => $lead->id,
             'block_key' => $lead->block_key,
+            'section_key' => $lead->section_key,
+            'locale_code' => $lead->locale_code,
+            'page_id' => $lead->holding_site_page_id,
             'name' => $lead->contact_name,
             'company' => $lead->company_name,
             'email' => $lead->email,

@@ -28,12 +28,11 @@ class HoldingLandingController extends Controller
         try {
             $organizationGroup = $this->resolveOrganizationGroup($request);
             $user = Auth::user();
+            $site = $this->siteService->getOrCreateHoldingLanding($organizationGroup, $user);
 
-            if (!$this->canUserEditLanding($user, $organizationGroup)) {
+            if (!$site->canUserView($user) && !$this->canUserEditLanding($user, $organizationGroup)) {
                 return LandingResponse::error(trans_message('holding_site_builder.access_denied'), 403);
             }
-
-            $site = $this->siteService->getOrCreateHoldingLanding($organizationGroup, $user);
 
             return LandingResponse::success(
                 $this->builderDataService->getEditorPayload($site)
@@ -56,7 +55,7 @@ class HoldingLandingController extends Controller
             $site = $this->siteService->getOrCreateHoldingLanding($organizationGroup, Auth::user());
             $user = Auth::user();
 
-            if (!$site->canUserEdit($user)) {
+            if (!$site->canUserPublish($user)) {
                 return LandingResponse::error(trans_message('holding_site_builder.access_denied'), 403);
             }
 
@@ -162,13 +161,16 @@ class HoldingLandingController extends Controller
                 return LandingResponse::error(trans_message('holding_site_builder.public.not_found'), 404);
             }
 
+            $path = (string) $request->query('path', '/');
+            $requestedLocale = $request->query('locale');
+
             if ($this->isValidPreview($request, $site)) {
-                return LandingResponse::success($this->builderDataService->buildLiveDraftPayload($site));
+                return LandingResponse::success($this->builderDataService->buildLiveDraftPayload($site, $path, is_string($requestedLocale) ? $requestedLocale : null));
             }
 
-            $payload = $this->builderDataService->buildPublishedPayload($site);
+            $payload = $this->builderDataService->buildPublishedPayload($site, $path, is_string($requestedLocale) ? $requestedLocale : null);
 
-            if (empty($payload['blocks'])) {
+            if (empty($payload['page']) && empty($payload['blocks']) && empty($payload['blog']['current_article'])) {
                 return LandingResponse::error(trans_message('holding_site_builder.public.not_published'), 404);
             }
 

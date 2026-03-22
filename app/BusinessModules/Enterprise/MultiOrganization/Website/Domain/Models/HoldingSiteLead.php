@@ -13,7 +13,10 @@ class HoldingSiteLead extends Model
 
     protected $fillable = [
         'holding_site_id',
+        'holding_site_page_id',
         'block_key',
+        'section_key',
+        'locale_code',
         'contact_name',
         'company_name',
         'email',
@@ -40,5 +43,10 @@ class HoldingSiteLead extends Model
     public function site(): BelongsTo
     {
         return $this->belongsTo(HoldingSite::class, 'holding_site_id');
+    }
+
+    public function page(): BelongsTo
+    {
+        return $this->belongsTo(HoldingSitePage::class, 'holding_site_page_id');
     }
 }
