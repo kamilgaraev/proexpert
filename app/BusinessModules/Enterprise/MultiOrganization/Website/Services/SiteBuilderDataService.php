@@ -431,6 +431,15 @@ class SiteBuilderDataService
             ? $snapshot['organization']
             : $this->buildOrganizationPayload($site);
         $normalized['pages'] = is_array($snapshot['pages'] ?? null) ? $snapshot['pages'] : [];
+        if (empty($normalized['pages'])) {
+            $legacyBlocks = $this->normalizeLegacyPublishedBlocks($snapshot['blocks'] ?? []);
+
+            if (!empty($legacyBlocks)) {
+                $normalized['pages'] = [
+                    $this->buildLegacyHomePageSnapshot($site, $legacyBlocks),
+                ];
+            }
+        }
         $normalized['navigation'] = is_array($snapshot['navigation'] ?? null)
             ? $snapshot['navigation']
             : $this->serializeNavigation($normalized['pages']);
@@ -446,6 +455,70 @@ class SiteBuilderDataService
         );
 
         return $normalized;
+    }
+
+    private function normalizeLegacyPublishedBlocks(mixed $blocks): array
+    {
+        if (!is_array($blocks)) {
+            return [];
+        }
+
+        return collect($blocks)
+            ->filter(static fn ($block) => is_array($block))
+            ->map(function (array $block, int $index) {
+                $type = SiteContentBlock::normalizeBlockType((string) ($block['type'] ?? $block['block_type'] ?? 'custom_html'));
+
+                return [
+                    'id' => $block['id'] ?? ('legacy-' . $index),
+                    'page_id' => $block['page_id'] ?? 'legacy-home',
+                    'type' => $type,
+                    'key' => $block['key'] ?? $block['block_key'] ?? sprintf('%s_%d', $type, $index + 1),
+                    'title' => $block['title'] ?? (SiteContentBlock::BLOCK_TYPES[$type] ?? ucfirst($type)),
+                    'content' => is_array($block['content'] ?? null) ? $block['content'] : [],
+                    'settings' => is_array($block['settings'] ?? null) ? $block['settings'] : SiteContentBlock::getDefaultSettings($type),
+                    'bindings' => is_array($block['bindings'] ?? null) ? $block['bindings'] : [],
+                    'style_config' => is_array($block['style_config'] ?? null) ? $block['style_config'] : [],
+                    'sort_order' => (int) ($block['sort_order'] ?? ($index + 1)),
+                    'assets' => is_array($block['assets'] ?? null) ? $block['assets'] : [],
+                    'elements' => is_array($block['elements'] ?? null)
+                        ? $block['elements']
+                        : $this->buildSectionElements(
+                            $type,
+                            is_array($block['content'] ?? null) ? $block['content'] : [],
+                            is_array($block['bindings'] ?? null) ? $block['bindings'] : []
+                        ),
+                    'locale_content' => is_array($block['locale_content'] ?? null) ? $block['locale_content'] : [],
+                    'is_active' => $block['is_active'] ?? true,
+                ];
+            })
+            ->sortBy('sort_order')
+            ->values()
+            ->all();
+    }
+
+    private function buildLegacyHomePageSnapshot(HoldingSite $site, array $blocks): array
+    {
+        $title = $site->title ?: $site->organizationGroup->name;
+        $description = $site->description ?: ($site->organizationGroup->description ?? '');
+
+        return [
+            'id' => 'legacy-home',
+            'page_type' => 'home',
+            'slug' => '/',
+            'navigation_label' => $title,
+            'title' => $title,
+            'description' => $description,
+            'seo_meta' => $this->normalizeSeoMeta($site->seo_meta ?? [], $site),
+            'layout_config' => [
+                'variant' => 'legacy',
+            ],
+            'locale_content' => [],
+            'visibility' => 'public',
+            'sort_order' => 1,
+            'is_home' => true,
+            'is_active' => true,
+            'sections' => $blocks,
+        ];
     }
 
     private function serializeAssets(HoldingSite $site): array
