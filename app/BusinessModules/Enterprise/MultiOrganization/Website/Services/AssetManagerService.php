@@ -21,13 +21,13 @@ class AssetManagerService
     {
         $organization = $site->organizationGroup->parentOrganization;
         $directory = sprintf('holding-sites/site-%d/%s', $site->id, $usageContext ?: 'general');
-        $storagePath = $this->fileService->upload($file, $directory, null, 'public', $organization);
+        $storagePath = $this->fileService->upload($file, $directory, null, 'public', $organization, true);
 
         if (!$storagePath) {
             throw new \RuntimeException('Failed to upload asset to S3.');
         }
 
-        $publicUrl = $this->fileService->url($storagePath, $organization) ?? '';
+        $publicUrl = $this->resolvePublicUrl($site, $storagePath);
 
         return SiteAsset::create([
             'holding_site_id' => $site->id,
@@ -98,19 +98,24 @@ class AssetManagerService
 
     public function serializeAsset(HoldingSite $site, SiteAsset $asset): array
     {
+        $publicUrl = $this->resolvePublicUrl($site, $asset->storage_path);
         $optimized = $asset->optimized_variants ?? [];
-        $usageMap = $this->getAssetUsageMap($site, $asset);
+        $usageMap = $this->buildAssetUsageMap($site, $asset, $publicUrl);
+
+        if ($publicUrl !== '' && $asset->public_url !== $publicUrl) {
+            $asset->forceFill(['public_url' => $publicUrl])->saveQuietly();
+        }
 
         return [
             'id' => $asset->id,
             'filename' => $asset->filename,
-            'public_url' => $asset->public_url,
+            'public_url' => $publicUrl,
             'optimized_url' => [
-                'thumbnail' => $optimized['thumbnail'] ?? $asset->public_url,
-                'small' => $optimized['small'] ?? $asset->public_url,
-                'medium' => $optimized['medium'] ?? $asset->public_url,
-                'large' => $optimized['large'] ?? $asset->public_url,
-                'original' => $asset->public_url,
+                'thumbnail' => $optimized['thumbnail'] ?? $publicUrl,
+                'small' => $optimized['small'] ?? $publicUrl,
+                'medium' => $optimized['medium'] ?? $publicUrl,
+                'large' => $optimized['large'] ?? $publicUrl,
+                'original' => $publicUrl,
             ],
             'mime_type' => $asset->mime_type,
             'file_size' => $asset->file_size,
@@ -131,8 +136,13 @@ class AssetManagerService
 
     public function getAssetUsageMap(HoldingSite $site, SiteAsset $asset): array
     {
+        return $this->buildAssetUsageMap($site, $asset, $asset->public_url);
+    }
+
+    private function buildAssetUsageMap(HoldingSite $site, SiteAsset $asset, string $publicUrl): array
+    {
         $needles = array_filter([
-            $asset->public_url,
+            $publicUrl,
             $asset->storage_path,
             (string) $asset->id,
         ]);
@@ -210,6 +220,15 @@ class AssetManagerService
     public static function getMaxFileSize(): int
     {
         return 10 * 1024 * 1024;
+    }
+
+    private function resolvePublicUrl(HoldingSite $site, string $storagePath): string
+    {
+        $organization = $site->organizationGroup->parentOrganization;
+
+        return $this->fileService->publicUrl($storagePath, $organization)
+            ?? $this->fileService->url($storagePath, $organization)
+            ?? '';
     }
 
     private function searchInPayload(array $needles, array $payload, array $baseMeta, string $path = ''): array

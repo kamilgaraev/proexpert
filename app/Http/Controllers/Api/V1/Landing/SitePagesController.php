@@ -73,7 +73,7 @@ class SitePagesController extends Controller
                 'layout_config' => 'nullable|array',
                 'locale_content' => 'nullable|array',
                 'visibility' => 'nullable|string|max:32',
-                'sort_order' => 'nullable|integer|min:1',
+                'sort_order' => 'nullable|integer|min:0',
                 'is_home' => 'nullable|boolean',
                 'is_active' => 'nullable|boolean',
             ]);
@@ -122,7 +122,7 @@ class SitePagesController extends Controller
                 'layout_config' => 'nullable|array',
                 'locale_content' => 'nullable|array',
                 'visibility' => 'nullable|string|max:32',
-                'sort_order' => 'nullable|integer|min:1',
+                'sort_order' => 'nullable|integer|min:0',
                 'is_home' => 'nullable|boolean',
                 'is_active' => 'nullable|boolean',
             ]);
@@ -226,7 +226,7 @@ class SitePagesController extends Controller
                 'bindings' => 'nullable|array',
                 'locale_content' => 'nullable|array',
                 'style_config' => 'nullable|array',
-                'sort_order' => 'nullable|integer|min:1',
+                'sort_order' => 'nullable|integer|min:0',
                 'is_active' => 'nullable|boolean',
             ]);
 
@@ -267,7 +267,7 @@ class SitePagesController extends Controller
                 'bindings' => 'nullable|array',
                 'locale_content' => 'nullable|array',
                 'style_config' => 'nullable|array',
-                'sort_order' => 'nullable|integer|min:1',
+                'sort_order' => 'nullable|integer|min:0',
                 'is_active' => 'nullable|boolean',
             ]);
 

@@ -74,7 +74,9 @@ class SitePageService
                 'layout_config' => $data['layout_config'] ?? ['variant' => 'default'],
                 'locale_content' => $data['locale_content'] ?? [],
                 'visibility' => $data['visibility'] ?? 'public',
-                'sort_order' => $data['sort_order'] ?? (((int) $site->pages()->max('sort_order')) + 1),
+                'sort_order' => isset($data['sort_order'])
+                    ? max(1, (int) $data['sort_order'])
+                    : (((int) $site->pages()->max('sort_order')) + 1),
                 'is_home' => $isHome,
                 'is_active' => $data['is_active'] ?? true,
                 'created_by_user_id' => $user->id,
@@ -107,7 +109,7 @@ class SitePageService
                 'layout_config' => array_key_exists('layout_config', $data) ? $data['layout_config'] : null,
                 'locale_content' => array_key_exists('locale_content', $data) ? $data['locale_content'] : null,
                 'visibility' => $data['visibility'] ?? null,
-                'sort_order' => $data['sort_order'] ?? null,
+                'sort_order' => array_key_exists('sort_order', $data) ? max(1, (int) $data['sort_order']) : null,
                 'is_home' => $isHome,
                 'is_active' => $data['is_active'] ?? null,
                 'updated_by_user_id' => $user->id,

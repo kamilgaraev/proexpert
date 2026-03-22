@@ -34,6 +34,8 @@ class ContentManagementService
 
         if (!isset($data['sort_order'])) {
             $data['sort_order'] = ((int) $page->sections()->max('sort_order')) + 1;
+        } else {
+            $data['sort_order'] = max(1, (int) $data['sort_order']);
         }
 
         if (!isset($data['block_key'])) {
@@ -76,7 +78,7 @@ class ContentManagementService
             'style_config' => isset($data['style_config'])
                 ? array_merge($block->style_config ?? [], $data['style_config'])
                 : null,
-            'sort_order' => $data['sort_order'] ?? null,
+            'sort_order' => array_key_exists('sort_order', $data) ? max(1, (int) $data['sort_order']) : null,
             'is_active' => $data['is_active'] ?? null,
             'updated_by_user_id' => $user->id,
         ], static fn ($value) => $value !== null);

@@ -38,7 +38,8 @@ class FileService
         string $directory,
         ?string $existingPath = null,
         string $visibility = 'public',
-        ?Organization $organization = null
+        ?Organization $organization = null,
+        bool $respectRequestedVisibility = false
     ): string|false {
         $disk = $this->disk($organization);
         
@@ -47,7 +48,7 @@ class FileService
 
         // Для Яндекс S3 с организациями используем private доступ (временные URL)
         $useVisibility = $visibility;
-        if ($organization) {
+        if ($organization && !$respectRequestedVisibility) {
             $useVisibility = null; // private по умолчанию
         }
 
@@ -388,6 +389,40 @@ class FileService
             'url' => $url,
         ]);
         return $url;
+    }
+
+    public function setVisibility(?string $path, string $visibility, ?Organization $organization = null): bool
+    {
+        if (!$path) {
+            return false;
+        }
+
+        $disk = $this->disk($organization);
+
+        try {
+            $disk->setVisibility($path, $visibility);
+
+            return true;
+        } catch (\Throwable $e) {
+            Log::warning('[FileService] setVisibility() failed', [
+                'path' => $path,
+                'visibility' => $visibility,
+                'error' => $e->getMessage(),
+            ]);
+
+            return false;
+        }
+    }
+
+    public function publicUrl(?string $path, ?Organization $organization = null): ?string
+    {
+        if (!$path) {
+            return null;
+        }
+
+        $this->setVisibility($path, 'public', $organization);
+
+        return $this->url($path, $organization);
     }
 
     public function temporaryUrl(?string $path, int $minutes = 5, ?Organization $organization = null): ?string

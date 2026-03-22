@@ -17,7 +17,8 @@ class SiteBuilderDataService
         private readonly SiteCollaboratorService $collaboratorService,
         private readonly SiteRevisionService $revisionService,
         private readonly HoldingSiteBlogService $blogService,
-        private readonly SitePageService $pageService
+        private readonly SitePageService $pageService,
+        private readonly AssetManagerService $assetManagerService
     ) {
     }
 
@@ -116,6 +117,7 @@ class SiteBuilderDataService
 
     public function buildLiveDraftPayload(HoldingSite $site, string $path = '/', ?string $requestedLocale = null): array
     {
+        $this->ensurePublicAssetAccess($site);
         $snapshot = $this->buildSiteSnapshot($site, 'draft', false);
 
         return $this->resolveRuntimePayload($site, $snapshot, $path, $requestedLocale, true);
@@ -128,6 +130,7 @@ class SiteBuilderDataService
 
     public function buildPublishedPayload(HoldingSite $site, string $path = '/', ?string $requestedLocale = null): array
     {
+        $this->ensurePublicAssetAccess($site);
         $snapshot = $site->hasPublishedSnapshot()
             ? $this->normalizePublishedSnapshot($site, $site->getPublishedPayload())
             : $this->buildSiteSnapshot($site, 'published', true);
@@ -339,7 +342,7 @@ class SiteBuilderDataService
             'layout_config' => $page->layout_config ?? [],
             'locale_content' => $page->locale_content ?? [],
             'visibility' => $page->visibility,
-            'sort_order' => $page->sort_order,
+            'sort_order' => max(1, (int) $page->sort_order),
             'is_home' => $page->is_home,
             'is_active' => $page->is_active,
             'sections' => $sections,
@@ -366,7 +369,7 @@ class SiteBuilderDataService
             'layout_config' => $page->layout_config ?? [],
             'locale_content' => $page->locale_content ?? [],
             'visibility' => $page->visibility,
-            'sort_order' => $page->sort_order,
+            'sort_order' => max(1, (int) $page->sort_order),
             'is_home' => $page->is_home,
             'is_active' => $page->is_active,
             'sections' => $sections,
@@ -391,7 +394,7 @@ class SiteBuilderDataService
             'bindings' => $section->bindings ?? [],
             'locale_content' => $section->locale_content ?? [],
             'style_config' => $section->style_config ?? [],
-            'sort_order' => $section->sort_order,
+            'sort_order' => max(1, (int) $section->sort_order),
             'is_active' => $section->is_active,
             'status' => $section->status,
             'published_at' => optional($section->published_at)?->toISOString(),
@@ -399,7 +402,7 @@ class SiteBuilderDataService
             'default_content' => SiteContentBlock::getDefaultContent($type),
             'can_delete' => true,
             'is_renderable' => $this->hasRenderableContent($type, $resolvedContent),
-            'assets' => $section->assets->map(fn (SiteAsset $asset) => $this->serializeAsset($asset))->values()->all(),
+            'assets' => $section->assets->map(fn (SiteAsset $asset) => $this->assetManagerService->serializeAsset($section->holdingSite, $asset))->values()->all(),
             'elements' => $this->buildSectionElements($type, $resolvedContent, $section->bindings ?? []),
         ];
     }
@@ -427,8 +430,8 @@ class SiteBuilderDataService
             'settings' => $section->settings ?? [],
             'bindings' => $section->bindings ?? [],
             'style_config' => $section->style_config ?? [],
-            'sort_order' => $section->sort_order,
-            'assets' => $section->assets->map(fn (SiteAsset $asset) => $this->serializeAsset($asset))->values()->all(),
+            'sort_order' => max(1, (int) $section->sort_order),
+            'assets' => $section->assets->map(fn (SiteAsset $asset) => $this->assetManagerService->serializeAsset($section->holdingSite, $asset))->values()->all(),
             'elements' => $this->buildSectionElements($type, $resolvedContent, $section->bindings ?? []),
         ];
     }
@@ -564,9 +567,18 @@ class SiteBuilderDataService
             ->with('uploader')
             ->orderByDesc('created_at')
             ->get()
-            ->map(fn (SiteAsset $asset) => $this->serializeAsset($asset))
+            ->map(fn (SiteAsset $asset) => $this->assetManagerService->serializeAsset($site, $asset))
             ->values()
             ->all();
+    }
+
+    private function ensurePublicAssetAccess(HoldingSite $site): void
+    {
+        $site->loadMissing('assets.uploader');
+
+        foreach ($site->assets as $asset) {
+            $this->assetManagerService->serializeAsset($site, $asset);
+        }
     }
 
     private function serializeAsset(SiteAsset $asset): array
