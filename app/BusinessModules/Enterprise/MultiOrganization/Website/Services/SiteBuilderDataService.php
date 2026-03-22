@@ -164,6 +164,52 @@ class SiteBuilderDataService
         ];
     }
 
+    public function publishedSnapshotNeedsUpgrade(HoldingSite $site): bool
+    {
+        if (!$site->hasPublishedSnapshot()) {
+            return false;
+        }
+
+        $snapshot = $site->getPublishedPayload();
+
+        return !is_array($snapshot['pages'] ?? null)
+            && is_array($snapshot['blocks'] ?? null)
+            && !empty($snapshot['blocks']);
+    }
+
+    public function upgradeLegacyPublishedSnapshot(HoldingSite $site): array
+    {
+        $snapshot = $site->getPublishedPayload();
+
+        if (!$this->publishedSnapshotNeedsUpgrade($site)) {
+            return $this->normalizePublishedSnapshot($site, $snapshot);
+        }
+
+        $legacyBlocks = $this->normalizeLegacyPublishedBlocks($snapshot['blocks'] ?? []);
+        $upgradedSnapshot = [
+            'site' => is_array($snapshot['site'] ?? null) ? $snapshot['site'] : $this->serializeSite($site),
+            'pages' => [
+                $this->buildLegacyHomePageSnapshot($site, $legacyBlocks),
+            ],
+            'organization' => is_array($snapshot['organization'] ?? null)
+                ? $snapshot['organization']
+                : $this->buildOrganizationPayload($site),
+            'blog' => is_array($snapshot['blog'] ?? null) ? $snapshot['blog'] : ['articles' => []],
+            'runtime' => array_merge(
+                [
+                    'mode' => 'published',
+                    'lead_endpoint' => '/api/site-leads',
+                    'generated_at' => now()->toISOString(),
+                ],
+                is_array($snapshot['runtime'] ?? null) ? $snapshot['runtime'] : [],
+                ['mode' => 'published']
+            ),
+        ];
+        $upgradedSnapshot['navigation'] = $this->serializeNavigation($upgradedSnapshot['pages']);
+
+        return $this->normalizePublishedSnapshot($site, $upgradedSnapshot);
+    }
+
     public function getSectionPresets(): array
     {
         return [
@@ -431,15 +477,6 @@ class SiteBuilderDataService
             ? $snapshot['organization']
             : $this->buildOrganizationPayload($site);
         $normalized['pages'] = is_array($snapshot['pages'] ?? null) ? $snapshot['pages'] : [];
-        if (empty($normalized['pages'])) {
-            $legacyBlocks = $this->normalizeLegacyPublishedBlocks($snapshot['blocks'] ?? []);
-
-            if (!empty($legacyBlocks)) {
-                $normalized['pages'] = [
-                    $this->buildLegacyHomePageSnapshot($site, $legacyBlocks),
-                ];
-            }
-        }
         $normalized['navigation'] = is_array($snapshot['navigation'] ?? null)
             ? $snapshot['navigation']
             : $this->serializeNavigation($normalized['pages']);

@@ -55,7 +55,7 @@ class HoldingLandingController extends Controller
             $site = $this->siteService->getOrCreateHoldingLanding($organizationGroup, Auth::user());
             $user = Auth::user();
 
-            if (!$site->canUserPublish($user)) {
+            if (!$site->canUserEdit($user)) {
                 return LandingResponse::error(trans_message('holding_site_builder.access_denied'), 403);
             }
 
@@ -120,7 +120,7 @@ class HoldingLandingController extends Controller
             $site = $this->siteService->getOrCreateHoldingLanding($organizationGroup, Auth::user());
             $user = Auth::user();
 
-            if (!$site->canUserEdit($user)) {
+            if (!$site->canUserPublish($user)) {
                 return LandingResponse::error(trans_message('holding_site_builder.access_denied'), 403);
             }
 

@@ -9,7 +9,6 @@ use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\SiteC
 use App\Models\OrganizationGroup;
 use App\Models\User;
 use InvalidArgumentException;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 class SiteManagementService
@@ -30,6 +29,7 @@ class SiteManagementService
 
         if ($existingSite) {
             $this->pageService->getOrCreateHomePage($existingSite, $creator);
+            $this->upgradePublishedSnapshotIfNeeded($existingSite);
 
             if (!$existingSite->collaborators()->where('user_id', $creator->id)->exists()) {
                 $this->collaboratorService->addCollaborator($existingSite, $creator, HoldingSiteCollaborator::ROLE_OWNER, $creator);
@@ -134,29 +134,31 @@ class SiteManagementService
             return null;
         }
 
-        $cacheKey = 'site_by_domain:' . $normalizedDomain;
+        $site = HoldingSite::query()
+            ->where('domain', $normalizedDomain)
+            ->where('is_active', true)
+            ->with(['organizationGroup.parentOrganization', 'pages.sections.assets'])
+            ->first();
 
-        return Cache::remember($cacheKey, 300, function () use ($normalizedDomain) {
-            $site = HoldingSite::query()
-                ->where('domain', $normalizedDomain)
-                ->where('is_active', true)
-                ->with(['organizationGroup.parentOrganization', 'pages.sections.assets'])
-                ->first();
-
-            if ($site) {
-                return $site;
-            }
-
+        if (!$site) {
             $slug = str_replace('.prohelper.pro', '', $normalizedDomain);
 
-            return HoldingSite::query()
+            $site = HoldingSite::query()
                 ->whereHas('organizationGroup', function ($query) use ($slug) {
                     $query->where('slug', $slug);
                 })
                 ->where('is_active', true)
                 ->with(['organizationGroup.parentOrganization', 'pages.sections.assets'])
                 ->first();
-        });
+        }
+
+        if (!$site) {
+            return null;
+        }
+
+        $this->upgradePublishedSnapshotIfNeeded($site);
+
+        return $site->fresh(['organizationGroup.parentOrganization', 'pages.sections.assets']);
     }
 
     public function getHoldingLanding(OrganizationGroup $organizationGroup): ?HoldingSite
@@ -276,5 +278,24 @@ class SiteManagementService
             'og_description' => 'Official website of ' . $organizationGroup->name,
             'og_image' => null,
         ];
+    }
+
+    private function upgradePublishedSnapshotIfNeeded(HoldingSite $site): void
+    {
+        if (!$site->is_active || !$site->hasPublishedSnapshot()) {
+            return;
+        }
+
+        if (!$this->builderDataService->publishedSnapshotNeedsUpgrade($site)) {
+            return;
+        }
+
+        $snapshot = $this->builderDataService->upgradeLegacyPublishedSnapshot($site);
+
+        $site->update([
+            'published_payload' => $snapshot,
+        ]);
+
+        $site->clearCache();
     }
 }

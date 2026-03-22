@@ -142,6 +142,7 @@ class HoldingSite extends Model
             "holding_site_published:{$this->id}",
             "site_data_{$this->id}",
             "site_blocks_{$this->id}",
+            'site_by_domain:' . $this->getDomain(),
         ];
 
         foreach ($keys as $key) {
