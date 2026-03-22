@@ -215,6 +215,13 @@ class OrganizationSearchController extends Controller
         $capabilities = array_values(array_filter($organization['capabilities'] ?? [], 'is_string'));
 
         $organization['capabilities'] = $capabilities;
+        $organization['primary_business_type'] = OrganizationWorkspaceProfileCatalog::normalizePrimaryProfile(
+            $capabilities,
+            is_string($organization['primary_business_type'] ?? null)
+                ? $organization['primary_business_type']
+                : null
+        );
+        $organization['interaction_modes'] = OrganizationWorkspaceProfileCatalog::interactionModes($capabilities);
         $organization['allowed_project_roles'] = OrganizationWorkspaceProfileCatalog::allowedProjectRoles($capabilities);
         $organization['availability_status'] = $availabilityStatus ?? ($organization['availability_status'] ?? [
             'can_invite' => true,

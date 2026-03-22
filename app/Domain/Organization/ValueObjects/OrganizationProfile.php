@@ -56,6 +56,11 @@ class OrganizationProfile
         return OrganizationWorkspaceProfileCatalog::allowedProjectRoles($this->capabilities);
     }
 
+    public function getInteractionModes(): array
+    {
+        return OrganizationWorkspaceProfileCatalog::interactionModes($this->capabilities);
+    }
+
     public function calculateCompleteness(): int
     {
         $score = 0;

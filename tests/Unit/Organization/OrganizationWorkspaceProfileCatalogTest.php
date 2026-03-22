@@ -39,10 +39,13 @@ class OrganizationWorkspaceProfileCatalogTest extends TestCase
 
         $this->assertSame(
             [
-                'project-management',
-                'contract-management',
+                'procurement',
+                'payments',
                 'basic-warehouse',
                 'catalog-management',
+                'contractor-portal',
+                'project-management',
+                'contract-management',
                 'schedule-management',
                 'time-tracking',
             ],
@@ -68,8 +71,25 @@ class OrganizationWorkspaceProfileCatalogTest extends TestCase
         $this->assertSame('general_contracting', $workspaceProfile['primary_profile']);
         $this->assertCount(2, $workspaceProfile['workspace_options']);
         $this->assertSame(
-            ['create_project', 'open_projects', 'open_modules', 'open_invitations'],
+            ['open_projects', 'open_invitations', 'open_modules', 'open_settings'],
             array_column($workspaceProfile['recommended_actions'], 'key')
+        );
+    }
+
+    public function test_it_aggregates_interaction_modes_for_hybrid_profiles(): void
+    {
+        $interactionModes = OrganizationWorkspaceProfileCatalog::interactionModes([
+            'facility_management',
+            'materials_supply',
+        ]);
+
+        $this->assertSame(
+            [
+                OrganizationWorkspaceProfileCatalog::INTERACTION_PROJECT_PARTICIPANT,
+                OrganizationWorkspaceProfileCatalog::INTERACTION_SERVICE_COUNTERPARTY,
+                OrganizationWorkspaceProfileCatalog::INTERACTION_PROCUREMENT_COUNTERPARTY,
+            ],
+            $interactionModes
         );
     }
 }

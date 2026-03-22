@@ -29,25 +29,33 @@ final class OrganizationWorkspaceProfileCatalog
             'recommended_modules' => [
                 'project-management',
                 'contract-management',
+                'procurement',
                 'basic-warehouse',
                 'schedule-management',
                 'time-tracking',
+                'contractor-portal',
+                'payments',
             ],
             'recommended_actions' => [
-                [
-                    'key' => 'create_project',
-                    'label' => 'Создать проект',
-                    'route' => '/dashboard/projects/create',
-                ],
                 [
                     'key' => 'open_projects',
                     'label' => 'Открыть проекты',
                     'route' => '/dashboard/projects',
                 ],
                 [
+                    'key' => 'open_invitations',
+                    'label' => 'Управлять связями',
+                    'route' => '/dashboard/contractor-invitations',
+                ],
+                [
                     'key' => 'open_modules',
                     'label' => 'Проверить модули',
                     'route' => '/dashboard/modules',
+                ],
+                [
+                    'key' => 'open_settings',
+                    'label' => 'Настроить профиль',
+                    'route' => '/dashboard/organization/settings',
                 ],
             ],
         ],
@@ -67,6 +75,8 @@ final class OrganizationWorkspaceProfileCatalog
                 'contract-management',
                 'basic-warehouse',
                 'time-tracking',
+                'contractor-portal',
+                'payments',
             ],
             'recommended_actions' => [
                 [
@@ -84,6 +94,11 @@ final class OrganizationWorkspaceProfileCatalog
                     'label' => 'Проверить модули',
                     'route' => '/dashboard/modules',
                 ],
+                [
+                    'key' => 'open_settings',
+                    'label' => 'Настроить профиль',
+                    'route' => '/dashboard/organization/settings',
+                ],
             ],
         ],
         OrganizationCapability::DESIGN->value => [
@@ -99,6 +114,7 @@ final class OrganizationWorkspaceProfileCatalog
             'recommended_modules' => [
                 'project-management',
                 'workflow-management',
+                'reports',
             ],
             'recommended_actions' => [
                 [
@@ -110,6 +126,11 @@ final class OrganizationWorkspaceProfileCatalog
                     'key' => 'open_settings',
                     'label' => 'Настроить профиль',
                     'route' => '/dashboard/organization/settings',
+                ],
+                [
+                    'key' => 'open_modules',
+                    'label' => 'Посмотреть модули',
+                    'route' => '/dashboard/modules',
                 ],
             ],
         ],
@@ -126,6 +147,7 @@ final class OrganizationWorkspaceProfileCatalog
             'recommended_modules' => [
                 'project-management',
                 'workflow-management',
+                'reports',
             ],
             'recommended_actions' => [
                 [
@@ -137,6 +159,11 @@ final class OrganizationWorkspaceProfileCatalog
                     'key' => 'open_settings',
                     'label' => 'Настроить профиль',
                     'route' => '/dashboard/organization/settings',
+                ],
+                [
+                    'key' => 'open_modules',
+                    'label' => 'Посмотреть модули',
+                    'route' => '/dashboard/modules',
                 ],
             ],
         ],
@@ -150,8 +177,9 @@ final class OrganizationWorkspaceProfileCatalog
                 ProjectOrganizationRole::OBSERVER->value,
             ],
             'recommended_modules' => [
-                'project-management',
                 'contract-management',
+                'payments',
+                'contractor-portal',
             ],
             'recommended_actions' => [
                 [
@@ -160,9 +188,19 @@ final class OrganizationWorkspaceProfileCatalog
                     'route' => '/dashboard/modules',
                 ],
                 [
+                    'key' => 'open_billing',
+                    'label' => 'Открыть финансы',
+                    'route' => '/dashboard/billing',
+                ],
+                [
                     'key' => 'open_settings',
                     'label' => 'Настроить профиль',
                     'route' => '/dashboard/organization/settings',
+                ],
+                [
+                    'key' => 'open_invitations',
+                    'label' => 'Управлять связями',
+                    'route' => '/dashboard/contractor-invitations',
                 ],
             ],
         ],
@@ -176,10 +214,11 @@ final class OrganizationWorkspaceProfileCatalog
                 ProjectOrganizationRole::OBSERVER->value,
             ],
             'recommended_modules' => [
-                'project-management',
-                'contract-management',
+                'procurement',
+                'payments',
                 'basic-warehouse',
                 'catalog-management',
+                'contractor-portal',
             ],
             'recommended_actions' => [
                 [
@@ -188,9 +227,19 @@ final class OrganizationWorkspaceProfileCatalog
                     'route' => '/dashboard/modules',
                 ],
                 [
+                    'key' => 'open_billing',
+                    'label' => 'Открыть финансы',
+                    'route' => '/dashboard/billing',
+                ],
+                [
                     'key' => 'open_settings',
                     'label' => 'Настроить профиль',
                     'route' => '/dashboard/organization/settings',
+                ],
+                [
+                    'key' => 'open_invitations',
+                    'label' => 'Управлять связями',
+                    'route' => '/dashboard/contractor-invitations',
                 ],
             ],
         ],
@@ -205,17 +254,23 @@ final class OrganizationWorkspaceProfileCatalog
             ],
             'recommended_modules' => [
                 'project-management',
+                'reports',
             ],
             'recommended_actions' => [
+                [
+                    'key' => 'open_settings',
+                    'label' => 'Настроить профиль',
+                    'route' => '/dashboard/organization/settings',
+                ],
                 [
                     'key' => 'open_projects',
                     'label' => 'Открыть проекты',
                     'route' => '/dashboard/projects',
                 ],
                 [
-                    'key' => 'open_settings',
-                    'label' => 'Настроить профиль',
-                    'route' => '/dashboard/organization/settings',
+                    'key' => 'open_modules',
+                    'label' => 'Посмотреть модули',
+                    'route' => '/dashboard/modules',
                 ],
             ],
         ],
@@ -232,6 +287,8 @@ final class OrganizationWorkspaceProfileCatalog
             'recommended_modules' => [
                 'project-management',
                 'schedule-management',
+                'workflow-management',
+                'reports',
             ],
             'recommended_actions' => [
                 [
@@ -243,6 +300,11 @@ final class OrganizationWorkspaceProfileCatalog
                     'key' => 'open_modules',
                     'label' => 'Проверить модули',
                     'route' => '/dashboard/modules',
+                ],
+                [
+                    'key' => 'open_settings',
+                    'label' => 'Настроить профиль',
+                    'route' => '/dashboard/organization/settings',
                 ],
             ],
         ],
@@ -301,6 +363,26 @@ final class OrganizationWorkspaceProfileCatalog
                 'recommended_modules' => ModuleHelper::formatModules($definition['recommended_modules']),
             ];
         }, self::normalizeCapabilityValues($capabilityValues))));
+    }
+
+    public static function interactionModes(array $capabilityValues): array
+    {
+        $modes = [];
+
+        foreach (self::workspaceOptions($capabilityValues) as $workspaceOption) {
+            foreach ($workspaceOption['interaction_modes'] as $interactionMode) {
+                if (!in_array($interactionMode, $modes, true)) {
+                    $modes[] = $interactionMode;
+                }
+            }
+        }
+
+        return $modes;
+    }
+
+    public static function supportsInteractionMode(array $capabilityValues, string $interactionMode): bool
+    {
+        return in_array($interactionMode, self::interactionModes($capabilityValues), true);
     }
 
     public static function recommendedModules(array $capabilityValues, ?string $primaryBusinessType): array

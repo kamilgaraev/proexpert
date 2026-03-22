@@ -1,18 +1,23 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Helpers;
 
-class ModuleHelper
+final class ModuleHelper
 {
     private static array $moduleMap = [
         'project-management' => 'Управление проектами',
         'contract-management' => 'Управление контрактами',
         'basic-warehouse' => 'Базовое управление складом',
         'schedule-management' => 'Управление графиком',
-
         'time-tracking' => 'Учет рабочего времени',
         'workflow-management' => 'Управление процессами',
         'catalog-management' => 'Управление каталогом',
+        'contractor-portal' => 'Портал контрагентов',
+        'payments' => 'Финансы и платежи',
+        'procurement' => 'Закупки и снабжение',
+        'reports' => 'Отчеты',
     ];
 
     public static function formatModules(array $moduleSlugs): array
@@ -30,4 +35,3 @@ class ModuleHelper
         return self::$moduleMap[$slug] ?? ucfirst(str_replace('-', ' ', $slug));
     }
 }
- 

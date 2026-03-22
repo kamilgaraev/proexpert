@@ -128,6 +128,8 @@ class ProjectOrganizationController extends Controller
                         'name' => $participant['organization']->name,
                         'inn' => $participant['organization']->inn,
                         'capabilities' => $profile->getCapabilities(),
+                        'primary_business_type' => $profile->getPrimaryBusinessType()?->value,
+                        'interaction_modes' => $profile->getInteractionModes(),
                         'allowed_project_roles' => $profile->getAllowedProjectRoles(),
                         'role' => [
                             'value' => $participant['role']->value,
