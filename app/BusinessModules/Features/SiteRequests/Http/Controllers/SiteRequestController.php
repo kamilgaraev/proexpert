@@ -13,9 +13,13 @@ use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestResource
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestCollection;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestGroupResource;
 use App\Http\Responses\AdminResponse;
+use App\Models\File;
+use App\Services\Storage\FileService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
+
+use function trans_message;
 
 /**
  * Admin API контроллер для заявок
@@ -24,7 +28,8 @@ class SiteRequestController extends Controller
 {
     public function __construct(
         private readonly SiteRequestService $service,
-        private readonly SiteRequestWorkflowService $workflowService
+        private readonly SiteRequestWorkflowService $workflowService,
+        private readonly FileService $fileService
     ) {}
 
     /**
@@ -82,7 +87,7 @@ class SiteRequestController extends Controller
             }
 
             // Загружаем историю
-            $siteRequest->load('history.user');
+            $siteRequest->load(['history.user', 'files']);
 
             $resource = (new SiteRequestResource($siteRequest))->resolve($request);
             $resource['available_transitions'] = $this->workflowService->getAvailableTransitions($siteRequest);
@@ -101,6 +106,109 @@ class SiteRequestController extends Controller
     /**
      * Показать группу заявок
      */
+    public function uploadFile(Request $request, int $id): JsonResponse
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            $siteRequest = $this->service->find($id, $organizationId);
+
+            if (!$siteRequest) {
+                return AdminResponse::error(trans_message('site_requests.not_found'), 404);
+            }
+
+            $validated = $request->validate([
+                'file' => ['required', 'file', 'max:10240'],
+            ]);
+
+            $uploadedFile = $validated['file'];
+            $path = $this->fileService->upload(
+                $uploadedFile,
+                'site-requests/' . $siteRequest->id,
+                null,
+                'private',
+                $siteRequest->organization
+            );
+
+            if ($path === false) {
+                Log::error('site_requests.upload_file.storage_failed', [
+                    'site_request_id' => $siteRequest->id,
+                    'organization_id' => $organizationId,
+                    'user_id' => auth()->id(),
+                    'original_name' => $uploadedFile->getClientOriginalName(),
+                ]);
+
+                return AdminResponse::error(trans_message('files.upload_failed'), 500);
+            }
+
+            $file = $siteRequest->files()->create([
+                'organization_id' => $organizationId,
+                'user_id' => auth()->id(),
+                'name' => $uploadedFile->getClientOriginalName(),
+                'original_name' => $uploadedFile->getClientOriginalName(),
+                'path' => $path,
+                'mime_type' => $uploadedFile->getClientMimeType(),
+                'size' => $uploadedFile->getSize(),
+                'disk' => 's3',
+                'type' => 'attachment',
+            ]);
+
+            return AdminResponse::success([
+                'id' => $file->id,
+                'name' => $file->name,
+                'url' => $this->fileService->temporaryUrl($file->path, 60, $siteRequest->organization),
+                'size' => $file->size,
+                'mime_type' => $file->mime_type,
+                'created_at' => $file->created_at?->toIso8601String(),
+            ], trans_message('files.uploaded'));
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('files.validation_failed'), 422, $e->errors());
+        } catch (\Exception $e) {
+            Log::error('site_requests.upload_file.error', [
+                'site_request_id' => $id,
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => auth()->id(),
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('files.upload_failed'), 500);
+        }
+    }
+
+    public function deleteFile(Request $request, int $id, int $fileId): JsonResponse
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            $siteRequest = $this->service->find($id, $organizationId);
+
+            if (!$siteRequest) {
+                return AdminResponse::error(trans_message('site_requests.not_found'), 404);
+            }
+
+            $file = $siteRequest->files()
+                ->where('organization_id', $organizationId)
+                ->find($fileId);
+
+            if (!$file instanceof File) {
+                return AdminResponse::error(trans_message('files.not_found'), 404);
+            }
+
+            $this->fileService->delete($file->path, $siteRequest->organization);
+            $file->delete();
+
+            return AdminResponse::success(null, trans_message('files.deleted'));
+        } catch (\Exception $e) {
+            Log::error('site_requests.delete_file.error', [
+                'site_request_id' => $id,
+                'file_id' => $fileId,
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => auth()->id(),
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('files.delete_failed'), 500);
+        }
+    }
+
     public function showGroup(Request $request, int $id): JsonResponse
     {
         try {

@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Features\SiteRequests\Http\Resources;
 
 use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
+use App\Services\Storage\FileService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -107,9 +108,10 @@ class SiteRequestResource extends JsonResource
             'files' => $this->whenLoaded('files', fn() => $this->files->map(fn($file) => [
                 'id' => $file->id,
                 'name' => $file->name,
-                'url' => $file->url,
+                'url' => app(FileService::class)->temporaryUrl($file->path, 60, $this->organization),
                 'size' => $file->size,
                 'mime_type' => $file->mime_type,
+                'created_at' => $file->created_at?->toIso8601String(),
             ])),
             'calendar_event' => $this->whenLoaded('calendarEvent', fn() => $this->calendarEvent ? [
                 'id' => $this->calendarEvent->id,

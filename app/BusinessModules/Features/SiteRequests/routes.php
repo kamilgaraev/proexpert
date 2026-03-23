@@ -78,6 +78,8 @@ Route::prefix('api/v1/admin/site-requests')
         Route::put('/groups/{id}', [SiteRequestController::class, 'updateGroup'])->name('update_group'); // Обновление группы
         Route::put('/{id}', [SiteRequestController::class, 'update'])->name('update');
         Route::delete('/{id}', [SiteRequestController::class, 'destroy'])->name('destroy');
+        Route::post('/{id}/files', [SiteRequestController::class, 'uploadFile'])->name('upload_file');
+        Route::delete('/{id}/files/{fileId}', [SiteRequestController::class, 'deleteFile'])->name('delete_file');
 
         // ============================================
         // Действия с заявками
