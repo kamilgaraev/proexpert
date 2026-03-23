@@ -23,6 +23,8 @@ class EstimateService
 
     public function create(array $data): Estimate
     {
+        unset($data['contract_id']);
+
         // Retry mechanism for race condition protection
         $maxAttempts = 3;
         $attempt = 0;
@@ -101,6 +103,8 @@ class EstimateService
 
     public function update(Estimate $estimate, array $data): Estimate
     {
+        unset($data['contract_id']);
+
         return DB::transaction(function () use ($estimate, $data) {
             $this->repository->update($estimate, $data);
             
@@ -299,4 +303,3 @@ class EstimateService
         return $number;
     }
 }
-

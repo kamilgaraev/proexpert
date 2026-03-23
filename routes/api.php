@@ -234,6 +234,7 @@ Route::prefix('v1/admin')->name('admin.')->group(function () {
         require __DIR__ . '/api/v1/admin/contractor_invitations.php';
         require __DIR__ . '/api/v1/admin/custom-reports.php';
         require __DIR__ . '/api/v1/admin/estimates.php';
+        require __DIR__ . '/api/v1/admin/schedules.php';
         
         // PROJECT-BASED ROUTES with ProjectContext Middleware
         require __DIR__ . '/api/v1/admin/project-based.php';

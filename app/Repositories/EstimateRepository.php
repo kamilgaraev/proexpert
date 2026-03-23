@@ -10,13 +10,13 @@ class EstimateRepository
 {
     public function find(int $id): ?Estimate
     {
-        return Estimate::with(['organization', 'project', 'contract', 'sections', 'items', 'approvedBy'])
+        return Estimate::with(['organization', 'project', 'sections', 'items', 'approvedBy'])
             ->find($id);
     }
 
     public function findOrFail(int $id): Estimate
     {
-        return Estimate::with(['organization', 'project', 'contract', 'sections', 'items', 'approvedBy'])
+        return Estimate::with(['organization', 'project', 'sections', 'items', 'approvedBy'])
             ->findOrFail($id);
     }
 
@@ -37,7 +37,7 @@ class EstimateRepository
 
     public function getByOrganization(int $organizationId, array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
-        $query = Estimate::with(['project', 'contract', 'approvedBy'])
+        $query = Estimate::with(['project', 'approvedBy'])
             ->where('organization_id', $organizationId)
             ->whereNull('parent_estimate_id');
 
@@ -54,7 +54,9 @@ class EstimateRepository
         }
 
         if (isset($filters['contract_id'])) {
-            $query->where('contract_id', $filters['contract_id']);
+            $query->whereHas('items.contractLinks', function ($linkQuery) use ($filters) {
+                $linkQuery->where('contract_id', $filters['contract_id']);
+            });
         }
 
         if (isset($filters['search'])) {
@@ -80,7 +82,9 @@ class EstimateRepository
     public function getByContract(int $contractId): Collection
     {
         return Estimate::with(['sections', 'items'])
-            ->where('contract_id', $contractId)
+            ->whereHas('items.contractLinks', function ($query) use ($contractId) {
+                $query->where('contract_id', $contractId);
+            })
             ->whereNull('parent_estimate_id')
             ->orderBy('created_at', 'desc')
             ->get();

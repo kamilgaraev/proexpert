@@ -102,6 +102,7 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
                 Route::put('/', [EstimateContractController::class, 'linkContract'])->name('link');
                 Route::delete('/', [EstimateContractController::class, 'unlinkContract'])->name('unlink');
                 Route::get('/validation', [EstimateContractController::class, 'validateContractAmount'])->name('validation');
+                Route::get('/coverage', [EstimateContractController::class, 'getCoverage'])->name('coverage');
             });
             
             // Экспорт смет
@@ -132,4 +133,3 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
             Route::post('/extended-report', [EstimateExportController::class, 'exportExtendedReport'])->name('extended');
         });
     });
-

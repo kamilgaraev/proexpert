@@ -12,6 +12,7 @@ use App\Http\Resources\Api\V1\Admin\Estimate\EstimateResource;
 use App\Http\Resources\Api\V1\Admin\Estimate\EstimateListResource;
 use App\Http\Responses\AdminResponse;
 use App\Repositories\EstimateRepository;
+use App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService;
 use App\Models\Estimate;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -25,7 +26,8 @@ class EstimateController extends Controller
     public function __construct(
         protected EstimateService $estimateService,
         protected EstimateCalculationService $calculationService,
-        protected EstimateRepository $repository
+        protected EstimateRepository $repository,
+        protected EstimateCoverageService $coverageService
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -46,14 +48,13 @@ class EstimateController extends Controller
             $request->input('per_page', 15)
         );
         
-        return AdminResponse::success(
+        return AdminResponse::paginated(
             EstimateListResource::collection($estimates),
-            null,
-            Response::HTTP_OK,
             [
                 'current_page' => $estimates->currentPage(),
                 'per_page' => $estimates->perPage(),
                 'total' => $estimates->total(),
+                'last_page' => $estimates->lastPage(),
             ]
         );
     }
@@ -94,7 +95,7 @@ class EstimateController extends Controller
         $this->authorize('view', $estimateModel);
 
         // Грузим только плоские связи для меты. Не грузим sections.items!
-        $estimateModel->load(['project', 'contract', 'approvedBy']);
+        $estimateModel->load(['project', 'approvedBy']);
 
         // Если снапшот есть - стримим его с огромной экономией RAM
         if ($estimateModel->structure_cache_path && \Illuminate\Support\Facades\Storage::disk('s3')->exists($estimateModel->structure_cache_path)) {
@@ -257,7 +258,7 @@ class EstimateController extends Controller
             ]),
             'related' => [
                 'project' => $estimateModel->project,
-                'contract' => $estimateModel->contract,
+                'coverage' => $this->coverageService->getCoverageForEstimate($estimateModel),
             ],
         ]);
     }
