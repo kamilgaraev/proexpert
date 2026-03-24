@@ -1,42 +1,33 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Responses;
 
-use Illuminate\Http\JsonResponse;
 use Illuminate\Contracts\Support\Arrayable;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Http\Resources\Json\ResourceCollection;
 
 class AdminResponse
 {
-    /**
-     * Return a success response for Admin API.
-     *
-     * @param mixed $data
-     * @param string|null $message
-     * @param int $code
-     * @return JsonResponse
-     */
-    public static function success(mixed $data = null, string $message = null, int $code = 200): JsonResponse
+    public static function success(mixed $data = null, ?string $message = null, int $code = 200): JsonResponse
     {
         $response = [
             'success' => true,
             'message' => $message,
-            'data'    => self::transformData($data),
+            'data' => self::transformData($data),
         ];
 
         return response()->json($response, $code);
     }
 
-    /**
-     * Return an error response for Admin API.
-     *
-     * @param string $message
-     * @param int $code
-     * @param mixed $errors
-     * @return JsonResponse
-     */
-    public static function error(string $message, int $code = 400, mixed $errors = null): JsonResponse
+    public static function error(
+        string $message,
+        int $code = 400,
+        mixed $errors = null,
+        array $extra = []
+    ): JsonResponse
     {
         $response = [
             'success' => false,
@@ -44,24 +35,29 @@ class AdminResponse
             'error' => $message,
         ];
 
-        if (!is_null($errors)) {
+        if ($errors !== null) {
             $response['errors'] = $errors;
+        }
+
+        foreach ($extra as $key => $value) {
+            if (in_array($key, ['success', 'message', 'error', 'errors'], true)) {
+                continue;
+            }
+
+            $response[$key] = $value;
         }
 
         return response()->json($response, $code);
     }
 
-    /**
-     * Return a paginated response for Admin API.
-     *
-     * @param mixed $data
-     * @param array<string, mixed> $meta
-     * @param string|null $message
-     * @param int $code
-     * @return JsonResponse
-     */
-    public static function paginated(mixed $data, array $meta, ?string $message = null, int $code = 200, ?array $summary = null): JsonResponse
-    {
+    public static function paginated(
+        mixed $data,
+        array $meta,
+        ?string $message = null,
+        int $code = 200,
+        ?array $summary = null,
+        ?array $links = null
+    ): JsonResponse {
         $response = [
             'success' => true,
             'message' => $message,
@@ -73,19 +69,18 @@ class AdminResponse
             $response['summary'] = $summary;
         }
 
+        if ($links !== null) {
+            $response['links'] = $links;
+        }
+
         return response()->json($response, $code);
     }
 
-    /**
-     * Transform data to array if needed.
-     *
-     * @param mixed $data
-     * @return mixed
-     */
     protected static function transformData(mixed $data): mixed
     {
         if ($data instanceof ResourceCollection) {
             $resolved = $data->response()->getData(true);
+
             return $resolved['data'] ?? $resolved;
         }
 

@@ -1,73 +1,67 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\SiteRequests\Http\Controllers;
 
-use App\Http\Controllers\Controller;
-use App\BusinessModules\Features\SiteRequests\Services\SiteRequestService;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestResource;
-use Illuminate\Http\Request;
+use App\BusinessModules\Features\SiteRequests\Services\SiteRequestService;
+use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\Response;
+use function trans_message;
 
-/**
- * Контроллер дашборда для заявок
- */
 class SiteRequestDashboardController extends Controller
 {
     public function __construct(
         private readonly SiteRequestService $service
-    ) {}
+    ) {
+    }
 
-    /**
-     * Статистика по заявкам
-     */
     public function statistics(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
+            $organizationId = (int) $request->attributes->get('current_organization_id');
 
-            $stats = $this->service->getStatistics($organizationId);
-
-            return response()->json([
-                'success' => true,
-                'data' => $stats,
-            ]);
-        } catch (\Exception $e) {
-            \Log::error('site_requests.statistics.error', [
-                'error' => $e->getMessage(),
+            return AdminResponse::success($this->service->getStatistics($organizationId));
+        } catch (\Throwable $e) {
+            Log::error('[SiteRequestDashboardController.statistics] Unexpected error', [
+                'message' => $e->getMessage(),
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => $request->user()?->id,
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить статистику',
-            ], 500);
+            return AdminResponse::error(
+                trans_message('site_requests.statistics_load_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
-    /**
-     * Просроченные заявки
-     */
     public function overdue(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-
+            $organizationId = (int) $request->attributes->get('current_organization_id');
             $overdue = $this->service->getOverdueRequests($organizationId);
 
-            return response()->json([
-                'success' => true,
-                'data' => SiteRequestResource::collection($overdue),
+            return AdminResponse::success([
+                'items' => SiteRequestResource::collection($overdue)->resolve(),
                 'count' => $overdue->count(),
             ]);
-        } catch (\Exception $e) {
-            \Log::error('site_requests.overdue.error', [
-                'error' => $e->getMessage(),
+        } catch (\Throwable $e) {
+            Log::error('[SiteRequestDashboardController.overdue] Unexpected error', [
+                'message' => $e->getMessage(),
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => $request->user()?->id,
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить просроченные заявки',
-            ], 500);
+            return AdminResponse::error(
+                trans_message('site_requests.overdue_load_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 }
-

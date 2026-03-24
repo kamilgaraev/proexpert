@@ -73,7 +73,8 @@ class DashboardController extends Controller
         $projectId = (int)$request->input('project_id');
 
         $summary = $this->dashboardService->getSummary($organizationId, $projectId);
-        return response()->json(['success' => true, 'data' => $summary]);
+
+        return AdminResponse::success($summary);
     }
 
     /**
@@ -87,7 +88,8 @@ class DashboardController extends Controller
         $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
         
         $data = $this->dashboardService->getTimeseries($metric, $period, $organizationId, $projectId);
-        return response()->json(['success' => true, 'data' => $data]);
+
+        return AdminResponse::success($data);
     }
 
     /**
@@ -103,7 +105,8 @@ class DashboardController extends Controller
         $sortBy = $request->input('sort_by', 'amount');
         
         $data = $this->dashboardService->getTopEntities($entity, $period, $organizationId, $projectId, $limit, $sortBy);
-        return response()->json(['success' => true, 'data' => $data]);
+
+        return AdminResponse::success($data);
     }
 
     /**
@@ -118,7 +121,8 @@ class DashboardController extends Controller
         $status = $request->input('status');
         
         $data = $this->dashboardService->getHistory($type, $limit, $organizationId, $projectId, $status);
-        return response()->json(['success' => true, 'data' => $data]);
+
+        return AdminResponse::success($data);
     }
 
     /**
@@ -128,7 +132,8 @@ class DashboardController extends Controller
     {
         $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
         $data = $this->dashboardService->getLimits($organizationId);
-        return response()->json(['success' => true, 'data' => $data]);
+
+        return AdminResponse::success($data);
     }
 
     /**

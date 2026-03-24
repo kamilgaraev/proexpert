@@ -46,6 +46,7 @@ return Application::configure(basePath: dirname(__DIR__))
             // Дополнительные middleware
             'request.dedup' => \App\Http\Middleware\RequestDedupMiddleware::class,
             'subscription.limit' => \App\Http\Middleware\CheckSubscriptionLimitsMiddleware::class,
+            'admin.response' => \App\Http\Middleware\NormalizeAdminResponse::class,
             'module.access' => \App\Modules\Middleware\ModuleAccessMiddleware::class,
             'module.permission' => \App\Modules\Middleware\ModulePermissionMiddleware::class,
             'holding.subdomain' => \App\Http\Middleware\DetectHoldingSubdomain::class,

@@ -3,112 +3,110 @@
 namespace App\BusinessModules\Features\BudgetEstimates\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use App\Models\LaborResource;
-use Illuminate\Http\Request;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\Log;
 
-/**
- * Контроллер справочника трудовых ресурсов
- */
+use function trans_message;
+
 class LaborResourceController extends Controller
 {
-    /**
-     * Список трудовых ресурсов
-     */
     public function index(Request $request): JsonResponse
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
-            
+
             $query = LaborResource::where('organization_id', $organizationId);
-            
-            // Фильтры
+
             if ($request->has('is_active')) {
                 $query->where('is_active', $request->boolean('is_active'));
             }
-            
+
             if ($request->filled('category')) {
                 $query->where('category', $request->input('category'));
             }
-            
+
             if ($request->filled('profession')) {
                 $query->where('profession', $request->input('profession'));
             }
-            
+
             if ($request->filled('skill_level')) {
                 $query->where('skill_level', $request->input('skill_level'));
             }
-            
-            // Поиск
+
             if ($request->filled('search')) {
                 $search = $request->input('search');
-                $query->where(function($q) use ($search) {
-                    $q->where('name', 'ILIKE', "%{$search}%")
-                      ->orWhere('code', 'ILIKE', "%{$search}%")
-                      ->orWhere('profession', 'ILIKE', "%{$search}%");
+                $query->where(function ($builder) use ($search): void {
+                    $builder->where('name', 'ILIKE', "%{$search}%")
+                        ->orWhere('code', 'ILIKE', "%{$search}%")
+                        ->orWhere('profession', 'ILIKE', "%{$search}%");
                 });
             }
-            
-            // Сортировка
+
             $sortBy = $request->input('sort_by', 'name');
             $sortOrder = $request->input('sort_order', 'asc');
+
             $query->orderBy($sortBy, $sortOrder);
-            
-            $perPage = min($request->input('per_page', 15), 100);
+
+            $perPage = min((int) $request->input('per_page', 15), 100);
             $resources = $query->with('measurementUnit')->paginate($perPage);
-            
-            return response()->json([
-                'success' => true,
-                'data' => $resources->items(),
-                'meta' => [
+
+            return AdminResponse::paginated(
+                $resources->items(),
+                [
                     'current_page' => $resources->currentPage(),
                     'per_page' => $resources->perPage(),
                     'total' => $resources->total(),
                     'last_page' => $resources->lastPage(),
-                ],
-            ]);
+                ]
+            );
         } catch (\Exception $e) {
-            \Log::error('labor_resources.index.error', ['error' => $e->getMessage()]);
-            
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить список трудовых ресурсов',
-            ], 500);
+            Log::error('labor_resources.index.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => $request->user()?->id,
+                'query' => $request->query(),
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return AdminResponse::error(trans_message('budget_estimates.labor_resources.list_error'), 500);
         }
     }
 
-    /**
-     * Получить ресурс по ID
-     */
     public function show(Request $request, int $id): JsonResponse
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
-            
+
             $resource = LaborResource::where('organization_id', $organizationId)
                 ->with('measurementUnit')
                 ->findOrFail($id);
-            
-            return response()->json([
-                'success' => true,
-                'data' => $resource,
-            ]);
+
+            return AdminResponse::success($resource);
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('budget_estimates.labor_resources.not_found'), 404);
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'error' => 'Трудовой ресурс не найден',
-            ], 404);
+            Log::error('labor_resources.show.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => $request->user()?->id,
+                'labor_resource_id' => $id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return AdminResponse::error(trans_message('budget_estimates.labor_resources.show_error'), 500);
         }
     }
 
-    /**
-     * Создать ресурс
-     */
     public function store(Request $request): JsonResponse
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
-            
+
             $validated = $request->validate([
                 'code' => 'required|string|max:100',
                 'name' => 'required|string|max:255',
@@ -125,47 +123,46 @@ class LaborResourceController extends Controller
                 'work_hours_per_shift' => 'nullable|numeric',
                 'is_active' => 'nullable|boolean',
             ]);
-            
+
             $exists = LaborResource::where('organization_id', $organizationId)
                 ->where('code', $validated['code'])
                 ->exists();
-            
+
             if ($exists) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Трудовой ресурс с таким кодом уже существует',
-                ], 422);
+                return AdminResponse::error(trans_message('budget_estimates.labor_resources.code_exists'), 422);
             }
-            
+
             $resource = LaborResource::create(array_merge($validated, [
                 'organization_id' => $organizationId,
             ]));
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Трудовой ресурс успешно создан',
-                'data' => $resource->load('measurementUnit'),
-            ], 201);
+
+            return AdminResponse::success(
+                $resource->load('measurementUnit'),
+                trans_message('budget_estimates.labor_resources.created'),
+                201
+            );
+        } catch (ValidationException $e) {
+            return AdminResponse::error(trans_message('budget_estimates.validation_error'), 422, $e->errors());
         } catch (\Exception $e) {
-            \Log::error('labor_resources.store.error', ['error' => $e->getMessage()]);
-            
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось создать трудовой ресурс',
-            ], 500);
+            Log::error('labor_resources.store.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => $request->user()?->id,
+                'payload' => $request->all(),
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return AdminResponse::error(trans_message('budget_estimates.labor_resources.create_error'), 500);
         }
     }
 
-    /**
-     * Обновить ресурс
-     */
     public function update(Request $request, int $id): JsonResponse
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
-            
+
             $resource = LaborResource::where('organization_id', $organizationId)->findOrFail($id);
-            
+
             $validated = $request->validate([
                 'code' => 'sometimes|string|max:100',
                 'name' => 'sometimes|string|max:255',
@@ -182,141 +179,155 @@ class LaborResourceController extends Controller
                 'work_hours_per_shift' => 'nullable|numeric',
                 'is_active' => 'nullable|boolean',
             ]);
-            
+
             if (isset($validated['code']) && $validated['code'] !== $resource->code) {
                 $exists = LaborResource::where('organization_id', $organizationId)
                     ->where('code', $validated['code'])
                     ->where('id', '!=', $id)
                     ->exists();
-                
+
                 if ($exists) {
-                    return response()->json([
-                        'success' => false,
-                        'error' => 'Трудовой ресурс с таким кодом уже существует',
-                    ], 422);
+                    return AdminResponse::error(trans_message('budget_estimates.labor_resources.code_exists'), 422);
                 }
             }
-            
+
             $resource->update($validated);
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Трудовой ресурс успешно обновлен',
-                'data' => $resource->load('measurementUnit'),
-            ]);
+
+            return AdminResponse::success(
+                $resource->load('measurementUnit'),
+                trans_message('budget_estimates.labor_resources.updated')
+            );
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('budget_estimates.labor_resources.not_found'), 404);
+        } catch (ValidationException $e) {
+            return AdminResponse::error(trans_message('budget_estimates.validation_error'), 422, $e->errors());
         } catch (\Exception $e) {
-            \Log::error('labor_resources.update.error', ['error' => $e->getMessage()]);
-            
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось обновить трудовой ресурс',
-            ], 500);
+            Log::error('labor_resources.update.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => $request->user()?->id,
+                'labor_resource_id' => $id,
+                'payload' => $request->all(),
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return AdminResponse::error(trans_message('budget_estimates.labor_resources.update_error'), 500);
         }
     }
 
-    /**
-     * Удалить ресурс
-     */
     public function destroy(Request $request, int $id): JsonResponse
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
-            
+
             $resource = LaborResource::where('organization_id', $organizationId)->findOrFail($id);
-            
             $usedInEstimates = $resource->estimateItems()->count();
-            
+
             if ($usedInEstimates > 0) {
-                return response()->json([
-                    'success' => false,
-                    'error' => "Трудовой ресурс используется в {$usedInEstimates} позициях смет и не может быть удален",
-                ], 422);
+                return AdminResponse::error(
+                    trans_message('budget_estimates.labor_resources.used_in_estimates', ['count' => $usedInEstimates]),
+                    422
+                );
             }
-            
+
             $resource->delete();
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Трудовой ресурс успешно удален',
-            ]);
+
+            return AdminResponse::success(null, trans_message('budget_estimates.labor_resources.deleted'));
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('budget_estimates.labor_resources.not_found'), 404);
         } catch (\Exception $e) {
-            \Log::error('labor_resources.destroy.error', ['error' => $e->getMessage()]);
-            
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось удалить трудовой ресурс',
-            ], 500);
+            Log::error('labor_resources.destroy.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => $request->user()?->id,
+                'labor_resource_id' => $id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return AdminResponse::error(trans_message('budget_estimates.labor_resources.delete_error'), 500);
         }
     }
 
-    /**
-     * Получить список профессий
-     */
     public function professions(Request $request): JsonResponse
     {
-        $organizationId = $request->attributes->get('current_organization_id');
-        
-        $professions = LaborResource::where('organization_id', $organizationId)
-            ->whereNotNull('profession')
-            ->distinct('profession')
-            ->pluck('profession');
-        
-        return response()->json([
-            'success' => true,
-            'data' => $professions,
-        ]);
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+
+            $professions = LaborResource::where('organization_id', $organizationId)
+                ->whereNotNull('profession')
+                ->distinct('profession')
+                ->pluck('profession');
+
+            return AdminResponse::success($professions);
+        } catch (\Exception $e) {
+            Log::error('labor_resources.professions.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => $request->user()?->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return AdminResponse::error(trans_message('budget_estimates.labor_resources.professions_error'), 500);
+        }
     }
 
-    /**
-     * Получить список категорий
-     */
     public function categories(Request $request): JsonResponse
     {
-        $organizationId = $request->attributes->get('current_organization_id');
-        
-        $categories = LaborResource::where('organization_id', $organizationId)
-            ->whereNotNull('category')
-            ->distinct('category')
-            ->pluck('category');
-        
-        return response()->json([
-            'success' => true,
-            'data' => $categories,
-        ]);
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+
+            $categories = LaborResource::where('organization_id', $organizationId)
+                ->whereNotNull('category')
+                ->distinct('category')
+                ->pluck('category');
+
+            return AdminResponse::success($categories);
+        } catch (\Exception $e) {
+            Log::error('labor_resources.categories.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => $request->user()?->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return AdminResponse::error(trans_message('budget_estimates.labor_resources.categories_error'), 500);
+        }
     }
 
-    /**
-     * Статистика
-     */
     public function statistics(Request $request): JsonResponse
     {
-        $organizationId = $request->attributes->get('current_organization_id');
-        
-        $total = LaborResource::where('organization_id', $organizationId)->count();
-        $active = LaborResource::where('organization_id', $organizationId)->active()->count();
-        
-        $byCategory = LaborResource::where('organization_id', $organizationId)
-            ->selectRaw('category, COUNT(*) as count')
-            ->whereNotNull('category')
-            ->groupBy('category')
-            ->pluck('count', 'category');
-        
-        $bySkillLevel = LaborResource::where('organization_id', $organizationId)
-            ->selectRaw('skill_level, COUNT(*) as count')
-            ->whereNotNull('skill_level')
-            ->groupBy('skill_level')
-            ->pluck('count', 'skill_level');
-        
-        return response()->json([
-            'success' => true,
-            'data' => [
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+
+            $total = LaborResource::where('organization_id', $organizationId)->count();
+            $active = LaborResource::where('organization_id', $organizationId)->active()->count();
+            $byCategory = LaborResource::where('organization_id', $organizationId)
+                ->selectRaw('category, COUNT(*) as count')
+                ->whereNotNull('category')
+                ->groupBy('category')
+                ->pluck('count', 'category');
+            $bySkillLevel = LaborResource::where('organization_id', $organizationId)
+                ->selectRaw('skill_level, COUNT(*) as count')
+                ->whereNotNull('skill_level')
+                ->groupBy('skill_level')
+                ->pluck('count', 'skill_level');
+
+            return AdminResponse::success([
                 'total' => $total,
                 'active' => $active,
                 'inactive' => $total - $active,
                 'by_category' => $byCategory,
                 'by_skill_level' => $bySkillLevel,
-            ],
-        ]);
+            ]);
+        } catch (\Exception $e) {
+            Log::error('labor_resources.statistics.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => $request->user()?->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return AdminResponse::error(trans_message('budget_estimates.labor_resources.statistics_error'), 500);
+        }
     }
 }
-

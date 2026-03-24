@@ -1,25 +1,29 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\ScheduleManagement\Http\Controllers;
 
-use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\ScheduleManagement\Models\ProjectEvent;
 use App\BusinessModules\Features\ScheduleManagement\Services\ProjectEventService;
-use Illuminate\Http\Request;
-use Illuminate\Http\JsonResponse;
+use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use Carbon\Carbon;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpFoundation\Response;
+use function trans_message;
 
 class ProjectEventController extends Controller
 {
     public function __construct(
         private readonly ProjectEventService $eventService
-    ) {}
+    ) {
+    }
 
-    /**
-     * Получить события в виде календаря
-     * 
-     * @group Schedule Events
-     */
     public function calendar(Request $request, int $projectId): JsonResponse
     {
         try {
@@ -35,69 +39,54 @@ class ProjectEventController extends Controller
                 'is_blocking' => 'sometimes|boolean',
             ]);
 
-            $startDate = Carbon::parse($validated['start_date']);
-            $endDate = Carbon::parse($validated['end_date']);
-
-            $filters = [
-                'event_types' => $validated['event_types'] ?? [],
-                'statuses' => $validated['statuses'] ?? [],
-                'priorities' => $validated['priorities'] ?? [],
-                'is_blocking' => $validated['is_blocking'] ?? null,
-            ];
-
             $events = $this->eventService->getCalendarEvents(
                 $projectId,
-                $startDate,
-                $endDate,
-                $filters
+                Carbon::parse($validated['start_date']),
+                Carbon::parse($validated['end_date']),
+                [
+                    'event_types' => $validated['event_types'] ?? [],
+                    'statuses' => $validated['statuses'] ?? [],
+                    'priorities' => $validated['priorities'] ?? [],
+                    'is_blocking' => $validated['is_blocking'] ?? null,
+                ]
             );
 
-            return response()->json([
-                'success' => true,
-                'data' => $events->map(function ($event) {
-                    return [
-                        'id' => $event->id,
-                        'title' => $event->title,
-                        'description' => $event->description,
-                        'start' => $event->getStartDateTimeAttribute()->toIso8601String(),
-                        'end' => $event->getEndDateTimeAttribute()->toIso8601String(),
-                        'allDay' => $event->is_all_day,
-                        'color' => $event->event_color,
-                        'type' => $event->event_type,
-                        'status' => $event->status,
-                        'priority' => $event->priority,
-                        'is_blocking' => $event->is_blocking,
-                        'location' => $event->location,
-                        'icon' => $event->event_icon,
-                        'related_task_id' => $event->related_task_id,
-                        'participants' => $event->participants,
-                    ];
-                }),
-            ]);
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => 'Ошибка валидации',
-                'errors' => $e->errors(),
-            ], 422);
-        } catch (\Exception $e) {
-            \Log::error('schedule.event.calendar.error', [
-                'project_id' => $projectId,
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить календарь событий',
-            ], 500);
+            return AdminResponse::success($events->map(function ($event) {
+                return [
+                    'id' => $event->id,
+                    'title' => $event->title,
+                    'description' => $event->description,
+                    'start' => $event->getStartDateTimeAttribute()->toIso8601String(),
+                    'end' => $event->getEndDateTimeAttribute()->toIso8601String(),
+                    'allDay' => $event->is_all_day,
+                    'color' => $event->event_color,
+                    'type' => $event->event_type,
+                    'status' => $event->status,
+                    'priority' => $event->priority,
+                    'is_blocking' => $event->is_blocking,
+                    'location' => $event->location,
+                    'icon' => $event->event_icon,
+                    'related_task_id' => $event->related_task_id,
+                    'participants' => $event->participants,
+                ];
+            })->values());
+        } catch (ValidationException $e) {
+            return AdminResponse::error(
+                trans_message('schedule_management.validation_error'),
+                Response::HTTP_UNPROCESSABLE_ENTITY,
+                $e->errors()
+            );
+        } catch (\Throwable $e) {
+            return $this->handleUnexpectedError(
+                'calendar',
+                $e,
+                $request,
+                trans_message('schedule_management.calendar_load_error'),
+                ['project_id' => $projectId]
+            );
         }
     }
 
-    /**
-     * Список событий с пагинацией
-     * 
-     * @group Schedule Events
-     */
     public function index(Request $request, int $projectId): JsonResponse
     {
         try {
@@ -109,87 +98,79 @@ class ProjectEventController extends Controller
                 'date_to' => 'sometimes|date',
             ]);
 
-            $perPage = $validated['per_page'] ?? 15;
-            $filters = [
+            $events = $this->eventService->getPaginatedEvents($projectId, $validated['per_page'] ?? 15, [
                 'event_type' => $validated['event_type'] ?? null,
                 'status' => $validated['status'] ?? null,
                 'date_from' => $validated['date_from'] ?? null,
                 'date_to' => $validated['date_to'] ?? null,
-            ];
+            ]);
 
-            $events = $this->eventService->getPaginatedEvents($projectId, $perPage, $filters);
-
-            return response()->json([
-                'success' => true,
-                'data' => $events->items(),
-                'meta' => [
+            return AdminResponse::paginated(
+                $events->items(),
+                [
                     'current_page' => $events->currentPage(),
+                    'from' => $events->firstItem(),
                     'last_page' => $events->lastPage(),
+                    'path' => $events->path(),
                     'per_page' => $events->perPage(),
+                    'to' => $events->lastItem(),
                     'total' => $events->total(),
                 ],
-            ]);
-        } catch (\Exception $e) {
-            \Log::error('schedule.event.index.error', [
-                'project_id' => $projectId,
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить список событий',
-            ], 500);
+                null,
+                Response::HTTP_OK,
+                null,
+                [
+                    'first' => $events->url(1),
+                    'last' => $events->url($events->lastPage()),
+                    'prev' => $events->previousPageUrl(),
+                    'next' => $events->nextPageUrl(),
+                ]
+            );
+        } catch (ValidationException $e) {
+            return AdminResponse::error(
+                trans_message('schedule_management.validation_error'),
+                Response::HTTP_UNPROCESSABLE_ENTITY,
+                $e->errors()
+            );
+        } catch (\Throwable $e) {
+            return $this->handleUnexpectedError(
+                'index',
+                $e,
+                $request,
+                trans_message('schedule_management.events_load_error'),
+                ['project_id' => $projectId]
+            );
         }
     }
 
-    /**
-     * Показать конкретное событие
-     * 
-     * @group Schedule Events
-     */
     public function show(Request $request, int $projectId, int $eventId): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
+            $organizationId = (int) $request->attributes->get('current_organization_id');
 
             $event = ProjectEvent::with(['createdBy', 'project'])
                 ->where('project_id', $projectId)
                 ->where('organization_id', $organizationId)
                 ->findOrFail($eventId);
 
-            return response()->json([
-                'success' => true,
-                'data' => $event,
-            ]);
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => 'Событие не найдено',
-            ], 404);
-        } catch (\Exception $e) {
-            \Log::error('schedule.event.show.error', [
-                'project_id' => $projectId,
-                'event_id' => $eventId,
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить событие',
-            ], 500);
+            return AdminResponse::success($event);
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('schedule_management.event_not_found'), Response::HTTP_NOT_FOUND);
+        } catch (\Throwable $e) {
+            return $this->handleUnexpectedError(
+                'show',
+                $e,
+                $request,
+                trans_message('schedule_management.event_load_error'),
+                ['project_id' => $projectId, 'event_id' => $eventId]
+            );
         }
     }
 
-    /**
-     * Создать новое событие
-     * 
-     * @group Schedule Events
-     */
     public function store(Request $request, int $projectId): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-
+            $organizationId = (int) $request->attributes->get('current_organization_id');
             $validated = $request->validate([
                 'event_type' => 'required|string|in:inspection,delivery,meeting,maintenance,weather,other',
                 'title' => 'required|string|max:255',
@@ -222,47 +203,36 @@ class ProjectEventController extends Controller
 
             $event = $this->eventService->createEvent($projectId, $organizationId, $validated);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Событие успешно создано',
-                'data' => $event->load(['createdBy']),
-            ], 201);
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => 'Ошибка валидации',
-                'errors' => $e->errors(),
-            ], 422);
+            return AdminResponse::success(
+                $event->load(['createdBy']),
+                trans_message('schedule_management.event_created'),
+                Response::HTTP_CREATED
+            );
+        } catch (ValidationException $e) {
+            return AdminResponse::error(
+                trans_message('schedule_management.validation_error'),
+                Response::HTTP_UNPROCESSABLE_ENTITY,
+                $e->errors()
+            );
         } catch (\InvalidArgumentException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
-        } catch (\Exception $e) {
-            \Log::error('schedule.event.store.error', [
-                'project_id' => $projectId,
-                'data' => $request->all(),
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось создать событие',
-            ], 500);
+            return AdminResponse::error($e->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY);
+        } catch (\Throwable $e) {
+            return $this->handleUnexpectedError(
+                'store',
+                $e,
+                $request,
+                trans_message('schedule_management.event_create_error'),
+                ['project_id' => $projectId]
+            );
         }
     }
 
-    /**
-     * Обновить событие
-     * 
-     * @group Schedule Events
-     */
     public function update(Request $request, int $projectId, int $eventId): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-
-            $event = ProjectEvent::where('project_id', $projectId)
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $event = ProjectEvent::query()
+                ->where('project_id', $projectId)
                 ->where('organization_id', $organizationId)
                 ->findOrFail($eventId);
 
@@ -294,89 +264,56 @@ class ProjectEventController extends Controller
                 'icon' => 'nullable|string|max:50',
             ]);
 
-            $updatedEvent = $this->eventService->updateEvent($event, $validated);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Событие успешно обновлено',
-                'data' => $updatedEvent->load(['createdBy']),
-            ]);
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => 'Событие не найдено',
-            ], 404);
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => 'Ошибка валидации',
-                'errors' => $e->errors(),
-            ], 422);
+            return AdminResponse::success(
+                $this->eventService->updateEvent($event, $validated)->load(['createdBy']),
+                trans_message('schedule_management.event_updated')
+            );
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('schedule_management.event_not_found'), Response::HTTP_NOT_FOUND);
+        } catch (ValidationException $e) {
+            return AdminResponse::error(
+                trans_message('schedule_management.validation_error'),
+                Response::HTTP_UNPROCESSABLE_ENTITY,
+                $e->errors()
+            );
         } catch (\InvalidArgumentException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
-        } catch (\Exception $e) {
-            \Log::error('schedule.event.update.error', [
-                'project_id' => $projectId,
-                'event_id' => $eventId,
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось обновить событие',
-            ], 500);
+            return AdminResponse::error($e->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY);
+        } catch (\Throwable $e) {
+            return $this->handleUnexpectedError(
+                'update',
+                $e,
+                $request,
+                trans_message('schedule_management.event_update_error'),
+                ['project_id' => $projectId, 'event_id' => $eventId]
+            );
         }
     }
 
-    /**
-     * Удалить событие
-     * 
-     * @group Schedule Events
-     */
     public function destroy(Request $request, int $projectId, int $eventId): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-
-            $event = ProjectEvent::where('project_id', $projectId)
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $event = ProjectEvent::query()
+                ->where('project_id', $projectId)
                 ->where('organization_id', $organizationId)
                 ->findOrFail($eventId);
 
-            $deleteRecurring = $request->input('delete_recurring', false);
+            $this->eventService->deleteEvent($event, (bool) $request->input('delete_recurring', false));
 
-            $this->eventService->deleteEvent($event, $deleteRecurring);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Событие успешно удалено',
-            ]);
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => 'Событие не найдено',
-            ], 404);
-        } catch (\Exception $e) {
-            \Log::error('schedule.event.destroy.error', [
-                'project_id' => $projectId,
-                'event_id' => $eventId,
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось удалить событие',
-            ], 500);
+            return AdminResponse::success(null, trans_message('schedule_management.event_deleted'));
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('schedule_management.event_not_found'), Response::HTTP_NOT_FOUND);
+        } catch (\Throwable $e) {
+            return $this->handleUnexpectedError(
+                'destroy',
+                $e,
+                $request,
+                trans_message('schedule_management.event_delete_error'),
+                ['project_id' => $projectId, 'event_id' => $eventId]
+            );
         }
     }
 
-    /**
-     * Получить ближайшие события
-     * 
-     * @group Schedule Events
-     */
     public function upcoming(Request $request, int $projectId): JsonResponse
     {
         try {
@@ -384,59 +321,41 @@ class ProjectEventController extends Controller
                 'days' => 'sometimes|integer|min:1|max:30',
             ]);
 
-            $days = $validated['days'] ?? 7;
-
-            $events = $this->eventService->getUpcomingEvents($projectId, $days);
-
-            return response()->json([
-                'success' => true,
-                'data' => $events,
-            ]);
-        } catch (\Exception $e) {
-            \Log::error('schedule.event.upcoming.error', [
-                'project_id' => $projectId,
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить ближайшие события',
-            ], 500);
+            return AdminResponse::success(
+                $this->eventService->getUpcomingEvents($projectId, $validated['days'] ?? 7)
+            );
+        } catch (ValidationException $e) {
+            return AdminResponse::error(
+                trans_message('schedule_management.validation_error'),
+                Response::HTTP_UNPROCESSABLE_ENTITY,
+                $e->errors()
+            );
+        } catch (\Throwable $e) {
+            return $this->handleUnexpectedError(
+                'upcoming',
+                $e,
+                $request,
+                trans_message('schedule_management.upcoming_load_error'),
+                ['project_id' => $projectId]
+            );
         }
     }
 
-    /**
-     * Получить события сегодня
-     * 
-     * @group Schedule Events
-     */
     public function today(Request $request, int $projectId): JsonResponse
     {
         try {
-            $events = $this->eventService->getTodayEvents($projectId);
-
-            return response()->json([
-                'success' => true,
-                'data' => $events,
-            ]);
-        } catch (\Exception $e) {
-            \Log::error('schedule.event.today.error', [
-                'project_id' => $projectId,
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить события сегодня',
-            ], 500);
+            return AdminResponse::success($this->eventService->getTodayEvents($projectId));
+        } catch (\Throwable $e) {
+            return $this->handleUnexpectedError(
+                'today',
+                $e,
+                $request,
+                trans_message('schedule_management.today_load_error'),
+                ['project_id' => $projectId]
+            );
         }
     }
 
-    /**
-     * Получить статистику событий
-     * 
-     * @group Schedule Events
-     */
     public function statistics(Request $request, int $projectId): JsonResponse
     {
         try {
@@ -445,65 +364,67 @@ class ProjectEventController extends Controller
                 'end_date' => 'required|date|after_or_equal:start_date',
             ]);
 
-            $startDate = Carbon::parse($validated['start_date']);
-            $endDate = Carbon::parse($validated['end_date']);
-
-            $statistics = $this->eventService->getEventsStatistics($projectId, $startDate, $endDate);
-
-            return response()->json([
-                'success' => true,
-                'data' => $statistics,
-            ]);
-        } catch (\Exception $e) {
-            \Log::error('schedule.event.statistics.error', [
-                'project_id' => $projectId,
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить статистику',
-            ], 500);
+            return AdminResponse::success(
+                $this->eventService->getEventsStatistics(
+                    $projectId,
+                    Carbon::parse($validated['start_date']),
+                    Carbon::parse($validated['end_date'])
+                )
+            );
+        } catch (ValidationException $e) {
+            return AdminResponse::error(
+                trans_message('schedule_management.validation_error'),
+                Response::HTTP_UNPROCESSABLE_ENTITY,
+                $e->errors()
+            );
+        } catch (\Throwable $e) {
+            return $this->handleUnexpectedError(
+                'statistics',
+                $e,
+                $request,
+                trans_message('schedule_management.event_statistics_load_error'),
+                ['project_id' => $projectId]
+            );
         }
     }
 
-    /**
-     * Проверить конфликты события
-     * 
-     * @group Schedule Events
-     */
     public function checkConflicts(Request $request, int $projectId, int $eventId): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-
-            $event = ProjectEvent::where('project_id', $projectId)
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $event = ProjectEvent::query()
+                ->where('project_id', $projectId)
                 ->where('organization_id', $organizationId)
                 ->findOrFail($eventId);
 
-            $result = $this->eventService->checkEventConflicts($event);
-
-            return response()->json([
-                'success' => true,
-                'data' => $result,
-            ]);
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => 'Событие не найдено',
-            ], 404);
-        } catch (\Exception $e) {
-            \Log::error('schedule.event.check_conflicts.error', [
-                'project_id' => $projectId,
-                'event_id' => $eventId,
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось проверить конфликты',
-            ], 500);
+            return AdminResponse::success($this->eventService->checkEventConflicts($event));
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('schedule_management.event_not_found'), Response::HTTP_NOT_FOUND);
+        } catch (\Throwable $e) {
+            return $this->handleUnexpectedError(
+                'checkConflicts',
+                $e,
+                $request,
+                trans_message('schedule_management.event_conflicts_load_error'),
+                ['project_id' => $projectId, 'event_id' => $eventId]
+            );
         }
     }
-}
 
+    private function handleUnexpectedError(
+        string $action,
+        \Throwable $e,
+        Request $request,
+        string $message,
+        array $context = []
+    ): JsonResponse {
+        Log::error("[ProjectEventController.{$action}] Unexpected error", [
+            'message' => $e->getMessage(),
+            'organization_id' => $request->attributes->get('current_organization_id'),
+            'user_id' => $request->user()?->id,
+            ...$context,
+        ]);
+
+        return AdminResponse::error($message, Response::HTTP_INTERNAL_SERVER_ERROR);
+    }
+}

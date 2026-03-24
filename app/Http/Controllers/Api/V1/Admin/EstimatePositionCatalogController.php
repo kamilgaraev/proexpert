@@ -1,39 +1,36 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Http\Responses\AdminResponse;
-use App\Services\EstimatePositionCatalog\EstimatePositionCatalogService;
 use App\Http\Requests\Api\V1\Admin\EstimatePosition\StoreEstimatePositionRequest;
 use App\Http\Requests\Api\V1\Admin\EstimatePosition\UpdateEstimatePositionRequest;
 use App\Http\Resources\Api\V1\Admin\EstimatePosition\EstimatePositionResource;
-use App\Http\Resources\Api\V1\Admin\EstimatePosition\EstimatePositionCollection;
-use Illuminate\Http\Request;
+use App\Http\Responses\AdminResponse;
+use App\Services\EstimatePositionCatalog\EstimatePositionCatalogService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Log;
-
+use Throwable;
 use function trans_message;
 
 class EstimatePositionCatalogController extends Controller
 {
-    public function __construct(
-        private readonly EstimatePositionCatalogService $service
-    ) {}
+    public function __construct(private readonly EstimatePositionCatalogService $service)
+    {
+    }
 
-    /**
-     * Получить список позиций
-     */
     public function index(Request $request): JsonResponse
     {
         try {
             $organizationId = $request->user()->current_organization_id;
-
             $perPage = (int) $request->input('per_page', 15);
             $sortBy = $request->input('sort_by', 'name');
             $sortDirection = $request->input('sort_direction', 'asc');
-
             $filters = $request->only([
                 'category_id',
                 'item_type',
@@ -49,8 +46,8 @@ class EstimatePositionCatalogController extends Controller
                 $sortDirection
             );
 
-            return response()->json(new EstimatePositionCollection($positions));
-        } catch (\Exception $e) {
+            return $this->paginatedResponse($positions);
+        } catch (Throwable $e) {
             Log::error('estimate_position_catalog.index.error', [
                 'error' => $e->getMessage(),
             ]);
@@ -62,14 +59,10 @@ class EstimatePositionCatalogController extends Controller
         }
     }
 
-    /**
-     * Показать конкретную позицию
-     */
     public function show(Request $request, int $id): JsonResponse
     {
         try {
             $organizationId = $request->user()->current_organization_id;
-
             $position = $this->service->getPositionById($id, $organizationId);
 
             if (!$position) {
@@ -80,7 +73,7 @@ class EstimatePositionCatalogController extends Controller
             }
 
             return AdminResponse::success(new EstimatePositionResource($position));
-        } catch (\Exception $e) {
+        } catch (Throwable $e) {
             Log::error('estimate_position_catalog.show.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
@@ -93,9 +86,6 @@ class EstimatePositionCatalogController extends Controller
         }
     }
 
-    /**
-     * Создать новую позицию
-     */
     public function store(StoreEstimatePositionRequest $request): JsonResponse
     {
         try {
@@ -113,7 +103,7 @@ class EstimatePositionCatalogController extends Controller
                 trans_message('estimate.catalog_position_created'),
                 Response::HTTP_CREATED
             );
-        } catch (\Exception $e) {
+        } catch (Throwable $e) {
             Log::error('estimate_position_catalog.store.error', [
                 'data' => $request->validated(),
                 'error' => $e->getMessage(),
@@ -126,9 +116,6 @@ class EstimatePositionCatalogController extends Controller
         }
     }
 
-    /**
-     * Обновить позицию
-     */
     public function update(UpdateEstimatePositionRequest $request, int $id): JsonResponse
     {
         try {
@@ -147,11 +134,8 @@ class EstimatePositionCatalogController extends Controller
                 trans_message('estimate.catalog_position_updated')
             );
         } catch (\RuntimeException $e) {
-            return AdminResponse::error(
-                $e->getMessage(),
-                Response::HTTP_NOT_FOUND
-            );
-        } catch (\Exception $e) {
+            return AdminResponse::error($e->getMessage(), Response::HTTP_NOT_FOUND);
+        } catch (Throwable $e) {
             Log::error('estimate_position_catalog.update.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
@@ -164,28 +148,18 @@ class EstimatePositionCatalogController extends Controller
         }
     }
 
-    /**
-     * Удалить позицию
-     */
     public function destroy(Request $request, int $id): JsonResponse
     {
         try {
             $organizationId = $request->user()->current_organization_id;
-
             $this->service->deletePosition($id, $organizationId);
 
             return AdminResponse::success(null, trans_message('estimate.catalog_position_deleted'));
         } catch (\DomainException $e) {
-            return AdminResponse::error(
-                $e->getMessage(),
-                Response::HTTP_UNPROCESSABLE_ENTITY
-            );
+            return AdminResponse::error($e->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY);
         } catch (\RuntimeException $e) {
-            return AdminResponse::error(
-                $e->getMessage(),
-                Response::HTTP_NOT_FOUND
-            );
-        } catch (\Exception $e) {
+            return AdminResponse::error($e->getMessage(), Response::HTTP_NOT_FOUND);
+        } catch (Throwable $e) {
             Log::error('estimate_position_catalog.destroy.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
@@ -198,16 +172,13 @@ class EstimatePositionCatalogController extends Controller
         }
     }
 
-    /**
-     * Поиск позиций
-     */
     public function search(Request $request): JsonResponse
     {
         try {
             $organizationId = $request->user()->current_organization_id;
             $query = $request->input('q', '');
 
-            if (empty($query)) {
+            if ($query === '') {
                 return AdminResponse::error(
                     trans_message('estimate.catalog_search_query_empty'),
                     Response::HTTP_UNPROCESSABLE_ENTITY
@@ -215,11 +186,10 @@ class EstimatePositionCatalogController extends Controller
             }
 
             $filters = $request->only(['category_id', 'item_type', 'is_active']);
-
             $positions = $this->service->search($organizationId, $query, $filters);
 
-            return response()->json(new EstimatePositionCollection($positions));
-        } catch (\Exception $e) {
+            return $this->paginatedResponse($positions);
+        } catch (Throwable $e) {
             Log::error('estimate_position_catalog.search.error', [
                 'error' => $e->getMessage(),
             ]);
@@ -230,5 +200,28 @@ class EstimatePositionCatalogController extends Controller
             );
         }
     }
-}
 
+    private function paginatedResponse(LengthAwarePaginator $positions): JsonResponse
+    {
+        return AdminResponse::paginated(
+            EstimatePositionResource::collection($positions->getCollection())->resolve(),
+            [
+                'total' => $positions->total(),
+                'per_page' => $positions->perPage(),
+                'current_page' => $positions->currentPage(),
+                'last_page' => $positions->lastPage(),
+                'from' => $positions->firstItem(),
+                'to' => $positions->lastItem(),
+            ],
+            null,
+            Response::HTTP_OK,
+            null,
+            [
+                'first' => $positions->url(1),
+                'last' => $positions->url($positions->lastPage()),
+                'prev' => $positions->previousPageUrl(),
+                'next' => $positions->nextPageUrl(),
+            ]
+        );
+    }
+}

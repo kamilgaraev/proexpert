@@ -1,134 +1,106 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\SiteRequests\Http\Controllers;
 
-use App\Http\Controllers\Controller;
-use App\BusinessModules\Features\SiteRequests\Services\SiteRequestTemplateService;
-use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestTemplateResource;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestResource;
-use Illuminate\Http\Request;
+use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestTemplateResource;
+use App\BusinessModules\Features\SiteRequests\Services\SiteRequestTemplateService;
+use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpFoundation\Response;
+use function trans_message;
 
-/**
- * Контроллер шаблонов заявок
- */
 class SiteRequestTemplateController extends Controller
 {
     public function __construct(
         private readonly SiteRequestTemplateService $templateService
-    ) {}
+    ) {
+    }
 
-    /**
-     * Список шаблонов
-     */
     public function index(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-
-            $perPage = min($request->input('per_page', 15), 100);
-
-            $filters = $request->only([
-                'request_type',
-                'is_active',
-                'user_id',
-                'search',
-            ]);
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $perPage = min((int) $request->input('per_page', 15), 100);
+            $filters = $request->only(['request_type', 'is_active', 'user_id', 'search']);
 
             $templates = $this->templateService->paginate($organizationId, $perPage, $filters);
+            $payload = SiteRequestTemplateResource::collection($templates)->response()->getData(true);
 
-            return response()->json([
-                'success' => true,
-                'data' => SiteRequestTemplateResource::collection($templates),
-                'meta' => [
-                    'current_page' => $templates->currentPage(),
-                    'per_page' => $templates->perPage(),
-                    'total' => $templates->total(),
-                    'last_page' => $templates->lastPage(),
-                ],
-            ]);
-        } catch (\Exception $e) {
-            \Log::error('site_requests.templates.index.error', [
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить шаблоны',
-            ], 500);
+            return AdminResponse::paginated(
+                $payload['data'] ?? [],
+                $payload['meta'] ?? [],
+                null,
+                Response::HTTP_OK,
+                null,
+                $payload['links'] ?? null
+            );
+        } catch (\Throwable $e) {
+            return $this->handleUnexpectedError(
+                'index',
+                $e,
+                $request,
+                trans_message('site_requests.templates_load_error')
+            );
         }
     }
 
-    /**
-     * Популярные шаблоны
-     */
     public function popular(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-            $limit = min($request->input('limit', 10), 20);
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $limit = min((int) $request->input('limit', 10), 20);
 
-            $templates = $this->templateService->getPopularTemplates($organizationId, $limit);
-
-            return response()->json([
-                'success' => true,
-                'data' => SiteRequestTemplateResource::collection($templates),
-            ]);
-        } catch (\Exception $e) {
-            \Log::error('site_requests.templates.popular.error', [
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить популярные шаблоны',
-            ], 500);
+            return AdminResponse::success(
+                SiteRequestTemplateResource::collection(
+                    $this->templateService->getPopularTemplates($organizationId, $limit)
+                )
+            );
+        } catch (\Throwable $e) {
+            return $this->handleUnexpectedError(
+                'popular',
+                $e,
+                $request,
+                trans_message('site_requests.popular_templates_load_error')
+            );
         }
     }
 
-    /**
-     * Показать шаблон
-     */
     public function show(Request $request, int $id): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-
+            $organizationId = (int) $request->attributes->get('current_organization_id');
             $template = $this->templateService->find($id, $organizationId);
 
             if (!$template) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Шаблон не найден',
-                ], 404);
+                return AdminResponse::error(
+                    trans_message('site_requests.template_not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
             }
 
-            return response()->json([
-                'success' => true,
-                'data' => new SiteRequestTemplateResource($template),
-            ]);
-        } catch (\Exception $e) {
-            \Log::error('site_requests.templates.show.error', [
-                'id' => $id,
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить шаблон',
-            ], 500);
+            return AdminResponse::success(new SiteRequestTemplateResource($template));
+        } catch (\Throwable $e) {
+            return $this->handleUnexpectedError(
+                'show',
+                $e,
+                $request,
+                trans_message('site_requests.template_load_error'),
+                ['template_id' => $id]
+            );
         }
     }
 
-    /**
-     * Создать шаблон
-     */
     public function store(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-            $userId = auth()->id();
-
+            $organizationId = (int) $request->attributes->get('current_organization_id');
             $validated = $request->validate([
                 'name' => ['required', 'string', 'max:255'],
                 'description' => ['nullable', 'string'],
@@ -137,45 +109,46 @@ class SiteRequestTemplateController extends Controller
                 'is_active' => ['nullable', 'boolean'],
             ]);
 
-            $template = $this->templateService->create($organizationId, $userId, $validated);
+            $template = $this->templateService->create(
+                $organizationId,
+                (int) $request->user()->id,
+                $validated
+            );
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Шаблон успешно создан',
-                'data' => new SiteRequestTemplateResource($template),
-            ], 201);
+            return AdminResponse::success(
+                new SiteRequestTemplateResource($template),
+                trans_message('site_requests.template_created'),
+                Response::HTTP_CREATED
+            );
+        } catch (ValidationException $e) {
+            return AdminResponse::error(
+                trans_message('site_requests.validation_error'),
+                Response::HTTP_UNPROCESSABLE_ENTITY,
+                $e->errors()
+            );
         } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
-        } catch (\Exception $e) {
-            \Log::error('site_requests.templates.store.error', [
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось создать шаблон',
-            ], 500);
+            return AdminResponse::error($e->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY);
+        } catch (\Throwable $e) {
+            return $this->handleUnexpectedError(
+                'store',
+                $e,
+                $request,
+                trans_message('site_requests.template_create_error')
+            );
         }
     }
 
-    /**
-     * Обновить шаблон
-     */
     public function update(Request $request, int $id): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-
+            $organizationId = (int) $request->attributes->get('current_organization_id');
             $template = $this->templateService->find($id, $organizationId);
 
             if (!$template) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Шаблон не найден',
-                ], 404);
+                return AdminResponse::error(
+                    trans_message('site_requests.template_not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
             }
 
             $validated = $request->validate([
@@ -185,71 +158,58 @@ class SiteRequestTemplateController extends Controller
                 'is_active' => ['nullable', 'boolean'],
             ]);
 
-            $updated = $this->templateService->update($template, $validated);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Шаблон успешно обновлен',
-                'data' => new SiteRequestTemplateResource($updated),
-            ]);
-        } catch (\Exception $e) {
-            \Log::error('site_requests.templates.update.error', [
-                'id' => $id,
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось обновить шаблон',
-            ], 500);
+            return AdminResponse::success(
+                new SiteRequestTemplateResource($this->templateService->update($template, $validated)),
+                trans_message('site_requests.template_updated')
+            );
+        } catch (ValidationException $e) {
+            return AdminResponse::error(
+                trans_message('site_requests.validation_error'),
+                Response::HTTP_UNPROCESSABLE_ENTITY,
+                $e->errors()
+            );
+        } catch (\Throwable $e) {
+            return $this->handleUnexpectedError(
+                'update',
+                $e,
+                $request,
+                trans_message('site_requests.template_update_error'),
+                ['template_id' => $id]
+            );
         }
     }
 
-    /**
-     * Удалить шаблон
-     */
     public function destroy(Request $request, int $id): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-
+            $organizationId = (int) $request->attributes->get('current_organization_id');
             $template = $this->templateService->find($id, $organizationId);
 
             if (!$template) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Шаблон не найден',
-                ], 404);
+                return AdminResponse::error(
+                    trans_message('site_requests.template_not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
             }
 
             $this->templateService->delete($template);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Шаблон успешно удален',
-            ]);
-        } catch (\Exception $e) {
-            \Log::error('site_requests.templates.destroy.error', [
-                'id' => $id,
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось удалить шаблон',
-            ], 500);
+            return AdminResponse::success(null, trans_message('site_requests.template_deleted'));
+        } catch (\Throwable $e) {
+            return $this->handleUnexpectedError(
+                'destroy',
+                $e,
+                $request,
+                trans_message('site_requests.template_delete_error'),
+                ['template_id' => $id]
+            );
         }
     }
 
-    /**
-     * Создать заявку из шаблона
-     */
     public function createFromTemplate(Request $request, int $templateId): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-            $userId = auth()->id();
-
+            $organizationId = (int) $request->attributes->get('current_organization_id');
             $validated = $request->validate([
                 'project_id' => ['required', 'integer', 'exists:projects,id'],
             ]);
@@ -257,32 +217,49 @@ class SiteRequestTemplateController extends Controller
             $siteRequest = $this->templateService->createFromTemplate(
                 $templateId,
                 $organizationId,
-                $userId,
-                $validated['project_id'],
+                (int) $request->user()->id,
+                (int) $validated['project_id'],
                 $request->except(['project_id'])
             );
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Заявка создана из шаблона',
-                'data' => new SiteRequestResource($siteRequest),
-            ], 201);
-        } catch (\InvalidArgumentException | \DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
-        } catch (\Exception $e) {
-            \Log::error('site_requests.templates.create_from.error', [
-                'template_id' => $templateId,
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось создать заявку из шаблона',
-            ], 500);
+            return AdminResponse::success(
+                new SiteRequestResource($siteRequest),
+                trans_message('site_requests.request_created_from_template'),
+                Response::HTTP_CREATED
+            );
+        } catch (ValidationException $e) {
+            return AdminResponse::error(
+                trans_message('site_requests.validation_error'),
+                Response::HTTP_UNPROCESSABLE_ENTITY,
+                $e->errors()
+            );
+        } catch (\InvalidArgumentException|\DomainException $e) {
+            return AdminResponse::error($e->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY);
+        } catch (\Throwable $e) {
+            return $this->handleUnexpectedError(
+                'createFromTemplate',
+                $e,
+                $request,
+                trans_message('site_requests.request_create_from_template_error'),
+                ['template_id' => $templateId]
+            );
         }
     }
-}
 
+    private function handleUnexpectedError(
+        string $action,
+        \Throwable $e,
+        Request $request,
+        string $message,
+        array $context = []
+    ): JsonResponse {
+        Log::error("[SiteRequestTemplateController.{$action}] Unexpected error", [
+            'message' => $e->getMessage(),
+            'organization_id' => $request->attributes->get('current_organization_id'),
+            'user_id' => $request->user()?->id,
+            ...$context,
+        ]);
+
+        return AdminResponse::error($message, Response::HTTP_INTERNAL_SERVER_ERROR);
+    }
+}

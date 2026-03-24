@@ -2,20 +2,17 @@
 
 namespace App\BusinessModules\Features\Procurement\Http\Controllers;
 
-use App\Http\Controllers\Controller;
 use App\Enums\Contract\ContractStatusEnum;
-use Illuminate\Http\Request;
+use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
-/**
- * Контроллер дашборда модуля закупок
- */
+use function trans_message;
+
 class ProcurementDashboardController extends Controller
 {
-    /**
-     * Получить данные дашборда
-     */
     public function index(Request $request): JsonResponse
     {
         try {
@@ -54,30 +51,24 @@ class ProcurementDashboardController extends Controller
                 ],
             ];
 
-            return response()->json([
-                'success' => true,
-                'data' => $data,
-            ]);
+            return AdminResponse::success($data);
         } catch (\Exception $e) {
-            \Log::error('procurement.dashboard.index.error', [
+            Log::error('procurement.dashboard.index.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => $request->user()?->id,
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить данные дашборда',
-            ], 500);
+            return AdminResponse::error(trans_message('procurement.dashboard_load_error'), 500);
         }
     }
 
-    /**
-     * Получить статистику
-     */
     public function statistics(Request $request): JsonResponse
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
-            $period = $request->input('period', '30d'); // 7d, 30d, 90d, 1y
+            $period = $request->input('period', '30d');
 
             $dateFrom = match ($period) {
                 '7d' => now()->subDays(7),
@@ -100,20 +91,17 @@ class ProcurementDashboardController extends Controller
                     ->where('created_at', '>=', $dateFrom)->count(),
             ];
 
-            return response()->json([
-                'success' => true,
-                'data' => $stats,
-            ]);
+            return AdminResponse::success($stats);
         } catch (\Exception $e) {
-            \Log::error('procurement.dashboard.statistics.error', [
+            Log::error('procurement.dashboard.statistics.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => $request->user()?->id,
+                'period' => $request->input('period'),
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить статистику',
-            ], 500);
+            return AdminResponse::error(trans_message('procurement.statistics_load_error'), 500);
         }
     }
 }
-

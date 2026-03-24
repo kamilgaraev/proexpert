@@ -1,10 +1,18 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Requests\Api\V1\Admin\Agreement;
 
-use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rule;
 use App\DTOs\SupplementaryAgreementDTO;
+use App\Http\Responses\AdminResponse;
+use Illuminate\Contracts\Validation\Validator;
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Http\Exceptions\HttpResponseException;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
+
+use function trans_message;
 
 class UpdateSupplementaryAgreementRequest extends FormRequest
 {
@@ -17,12 +25,12 @@ class UpdateSupplementaryAgreementRequest extends FormRequest
     {
         $agreementId = $this->route('agreement');
         $contractId = null;
-        
+
         if ($agreementId) {
             $agreement = \App\Models\SupplementaryAgreement::find($agreementId);
             $contractId = $agreement?->contract_id;
         }
-        
+
         return [
             'number' => [
                 'sometimes',
@@ -42,15 +50,16 @@ class UpdateSupplementaryAgreementRequest extends FormRequest
                 'required',
                 'integer',
                 'exists:supplementary_agreements,id',
-                function ($attribute, $value, $fail) {
+                function (string $attribute, mixed $value, callable $fail): void {
                     $currentAgreement = $this->route('agreement');
-                    $contractId = $currentAgreement 
-                        ? \App\Models\SupplementaryAgreement::find($currentAgreement)?->contract_id 
+                    $contractId = $currentAgreement
+                        ? \App\Models\SupplementaryAgreement::find($currentAgreement)?->contract_id
                         : null;
+
                     if ($contractId) {
                         $agreement = \App\Models\SupplementaryAgreement::find($value);
-                        if ($agreement && $agreement->contract_id != $contractId) {
-                            $fail("Дополнительное соглашение #{$value} не принадлежит указанному контракту.");
+                        if ($agreement && (int) $agreement->contract_id !== (int) $contractId) {
+                            $fail(trans_message('agreements.validation.agreement_belongs_to_contract', ['id' => $value]));
                         }
                     }
                 },
@@ -60,7 +69,6 @@ class UpdateSupplementaryAgreementRequest extends FormRequest
             'subcontract_changes' => ['sometimes', 'nullable', 'array'],
             'gp_changes' => ['sometimes', 'nullable', 'array'],
             'advance_changes' => ['sometimes', 'nullable', 'array'],
-            // Используем новую таблицу invoices
             'advance_changes.*.payment_id' => ['required', 'integer', 'exists:invoices,id'],
             'advance_changes.*.new_amount' => ['required', 'numeric', 'min:0'],
         ];
@@ -69,9 +77,22 @@ class UpdateSupplementaryAgreementRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'number.unique' => 'Дополнительное соглашение с таким номером уже существует для этого контракта',
-            'supersede_agreement_ids.*.exists' => 'Одно из указанных дополнительных соглашений не найдено',
+            'number.unique' => trans_message('agreements.validation.number_unique'),
+            'supersede_agreement_ids.*.exists' => trans_message('agreements.validation.superseded_not_found'),
         ];
+    }
+
+    protected function failedValidation(Validator $validator): void
+    {
+        $errors = (new ValidationException($validator))->errors();
+
+        throw new HttpResponseException(
+            AdminResponse::error(
+                trans_message('agreements.validation_error'),
+                422,
+                $errors
+            )
+        );
     }
 
     public function toDto(int $contractId): SupplementaryAgreementDTO
@@ -93,4 +114,4 @@ class UpdateSupplementaryAgreementRequest extends FormRequest
             supersede_agreement_ids: $supersedeIds,
         );
     }
-} 
+}

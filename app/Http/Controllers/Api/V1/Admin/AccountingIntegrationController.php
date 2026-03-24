@@ -1,147 +1,164 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use App\Services\AccountingIntegrationService;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\Response;
 
 class AccountingIntegrationController extends Controller
 {
-    protected $integrationService;
-
-    /**
-     * Конструктор контроллера.
-     *
-     * @param AccountingIntegrationService $integrationService
-     */
-    public function __construct(AccountingIntegrationService $integrationService)
-    {
-        $this->integrationService = $integrationService;
-        // Авторизация настроена на уровне роутов через middleware стек
+    public function __construct(
+        protected AccountingIntegrationService $integrationService
+    ) {
     }
 
-    /**
-     * Импортировать пользователей из бухгалтерской системы.
-     *
-     * @param Request $request
-     * @return JsonResponse
-     */
     public function importUsers(Request $request): JsonResponse
     {
-        $organizationId = Auth::user()->current_organization_id;
+        $organizationId = $this->resolveOrganizationId();
 
-        if (!$organizationId) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Organization ID is required'
-            ], 400);
+        if ($organizationId === null) {
+            return AdminResponse::error(
+                trans_message('accounting_integration.organization_required'),
+                Response::HTTP_BAD_REQUEST
+            );
         }
 
-        $result = $this->integrationService->importUsers($organizationId);
-        
-        return response()->json($result);
+        return $this->respondWithIntegrationResult(
+            $this->integrationService->importUsers($organizationId),
+            trans_message('accounting_integration.users_import_completed'),
+            'users',
+            $organizationId
+        );
     }
 
-    /**
-     * Импортировать проекты из бухгалтерской системы.
-     *
-     * @param Request $request
-     * @return JsonResponse
-     */
     public function importProjects(Request $request): JsonResponse
     {
-        $organizationId = Auth::user()->current_organization_id;
+        $organizationId = $this->resolveOrganizationId();
 
-        if (!$organizationId) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Organization ID is required'
-            ], 400);
+        if ($organizationId === null) {
+            return AdminResponse::error(
+                trans_message('accounting_integration.organization_required'),
+                Response::HTTP_BAD_REQUEST
+            );
         }
 
-        $result = $this->integrationService->importProjects($organizationId);
-        
-        return response()->json($result);
+        return $this->respondWithIntegrationResult(
+            $this->integrationService->importProjects($organizationId),
+            trans_message('accounting_integration.projects_import_completed'),
+            'projects',
+            $organizationId
+        );
     }
 
-    /**
-     * Импортировать материалы из бухгалтерской системы.
-     *
-     * @param Request $request
-     * @return JsonResponse
-     */
     public function importMaterials(Request $request): JsonResponse
     {
-        $organizationId = Auth::user()->current_organization_id;
+        $organizationId = $this->resolveOrganizationId();
 
-        if (!$organizationId) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Organization ID is required'
-            ], 400);
+        if ($organizationId === null) {
+            return AdminResponse::error(
+                trans_message('accounting_integration.organization_required'),
+                Response::HTTP_BAD_REQUEST
+            );
         }
 
-        $result = $this->integrationService->importMaterials($organizationId);
-        
-        return response()->json($result);
+        return $this->respondWithIntegrationResult(
+            $this->integrationService->importMaterials($organizationId),
+            trans_message('accounting_integration.materials_import_completed'),
+            'materials',
+            $organizationId
+        );
     }
 
-    /**
-     * Экспортировать транзакции в бухгалтерскую систему.
-     *
-     * @param Request $request
-     * @return JsonResponse
-     */
     public function exportTransactions(Request $request): JsonResponse
     {
-        $organizationId = Auth::user()->current_organization_id;
-        $startDate = $request->input('start_date');
-        $endDate = $request->input('end_date');
+        $organizationId = $this->resolveOrganizationId();
 
-        if (!$organizationId) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Organization ID is required'
-            ], 400);
+        if ($organizationId === null) {
+            return AdminResponse::error(
+                trans_message('accounting_integration.organization_required'),
+                Response::HTTP_BAD_REQUEST
+            );
         }
 
-        $result = $this->integrationService->exportTransactions($organizationId, $startDate, $endDate);
-        
-        return response()->json($result);
+        return $this->respondWithIntegrationResult(
+            $this->integrationService->exportTransactions(
+                $organizationId,
+                $request->input('start_date'),
+                $request->input('end_date')
+            ),
+            trans_message('accounting_integration.transactions_export_completed'),
+            'transactions',
+            $organizationId
+        );
     }
 
-    /**
-     * Получить статус синхронизации с бухгалтерской системой.
-     *
-     * @param Request $request
-     * @return JsonResponse
-     */
     public function getSyncStatus(Request $request): JsonResponse
     {
-        $organizationId = Auth::user()->current_organization_id;
+        $organizationId = $this->resolveOrganizationId();
 
-        if (!$organizationId) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Organization ID is required'
-            ], 400);
+        if ($organizationId === null) {
+            return AdminResponse::error(
+                trans_message('accounting_integration.organization_required'),
+                Response::HTTP_BAD_REQUEST
+            );
         }
 
-        // Эта функция пока не реализована в сервисе, поэтому возвращаем заглушку
-        return response()->json([
-            'success' => true,
-            'message' => 'Синхронизация работает нормально',
-            'last_sync' => [
-                'timestamp' => now()->format('Y-m-d H:i:s'),
-                'status' => 'completed',
-                'users_synced' => true,
-                'projects_synced' => true,
-                'materials_synced' => true,
-                'transactions_synced' => true
-            ]
-        ]);
+        return AdminResponse::success(
+            [
+                'last_sync' => [
+                    'timestamp' => now()->format('Y-m-d H:i:s'),
+                    'status' => 'completed',
+                    'users_synced' => true,
+                    'projects_synced' => true,
+                    'materials_synced' => true,
+                    'transactions_synced' => true,
+                ],
+            ],
+            trans_message('accounting_integration.status_ok')
+        );
     }
-} 
+
+    private function respondWithIntegrationResult(
+        array $result,
+        string $successMessage,
+        string $scope,
+        int $organizationId
+    ): JsonResponse {
+        if (($result['success'] ?? false) === true) {
+            $data = $result;
+            unset($data['success'], $data['message']);
+
+            return AdminResponse::success(
+                $data === [] ? null : $data,
+                $successMessage
+            );
+        }
+
+        Log::error('Accounting integration request failed', [
+            'scope' => $scope,
+            'organization_id' => $organizationId,
+            'message' => $result['message'] ?? null,
+        ]);
+
+        return AdminResponse::error(
+            trans_message('accounting_integration.integration_error'),
+            Response::HTTP_INTERNAL_SERVER_ERROR,
+            isset($result['message']) ? ['details' => $result['message']] : null
+        );
+    }
+
+    private function resolveOrganizationId(): ?int
+    {
+        $organizationId = Auth::user()?->current_organization_id;
+
+        return $organizationId ? (int) $organizationId : null;
+    }
+}

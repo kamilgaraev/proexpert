@@ -1,324 +1,273 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\ScheduleManagement\Http\Controllers;
 
-use App\Http\Controllers\Controller;
-use App\BusinessModules\Features\ScheduleManagement\Services\EstimateScheduleImportService;
-use App\BusinessModules\Features\ScheduleManagement\Services\EstimateSyncService;
 use App\BusinessModules\Features\ScheduleManagement\Http\Requests\CreateScheduleFromEstimateRequest;
 use App\BusinessModules\Features\ScheduleManagement\Http\Requests\SyncScheduleWithEstimateRequest;
-use App\BusinessModules\Features\ScheduleManagement\Http\Resources\ScheduleWithEstimateResource;
 use App\BusinessModules\Features\ScheduleManagement\Http\Resources\EstimateSyncStatusResource;
-use App\Models\ProjectSchedule;
+use App\BusinessModules\Features\ScheduleManagement\Http\Resources\ScheduleWithEstimateResource;
+use App\BusinessModules\Features\ScheduleManagement\Services\EstimateScheduleImportService;
+use App\BusinessModules\Features\ScheduleManagement\Services\EstimateSyncService;
+use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use App\Models\Estimate;
-use Illuminate\Http\Request;
+use App\Models\ProjectSchedule;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\Response;
+use function trans_message;
 
 class ScheduleEstimateController extends Controller
 {
     public function __construct(
         private readonly EstimateScheduleImportService $importService,
         private readonly EstimateSyncService $syncService
-    ) {}
+    ) {
+    }
 
-    /**
-     * Создать график работ из сметы
-     * 
-     * @group Schedule Estimate Integration
-     * @authenticated
-     */
     public function createFromEstimate(CreateScheduleFromEstimateRequest $request): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-            
-            // Проверяем доступ к модулю смет
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+
             $accessController = app(\App\Modules\Core\AccessController::class);
             if (!$accessController->hasModuleAccess($organizationId, 'budget-estimates')) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Модуль смет не активен для вашей организации',
-                ], 403);
+                return AdminResponse::error(
+                    trans_message('schedule_management.estimate_module_inactive'),
+                    Response::HTTP_FORBIDDEN
+                );
             }
 
             $validated = $request->validated();
-            
-            // Получаем смету
-            $estimate = Estimate::where('id', $validated['estimate_id'])
+            $estimate = Estimate::query()
+                ->where('id', $validated['estimate_id'])
                 ->where('organization_id', $organizationId)
                 ->first();
 
             if (!$estimate) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Смета не найдена',
-                ], 404);
+                return AdminResponse::error(
+                    trans_message('schedule_management.estimate_not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
             }
 
-            // Создаем график из сметы
             $schedule = $this->importService->createScheduleFromEstimate(
                 $estimate,
                 $validated['options'] ?? []
             );
 
-            return response()->json([
-                'success' => true,
-                'message' => 'График работ успешно создан из сметы',
-                'data' => new ScheduleWithEstimateResource($schedule),
-            ], 201);
-
+            return AdminResponse::success(
+                new ScheduleWithEstimateResource($schedule),
+                trans_message('schedule_management.schedule_created_from_estimate'),
+                Response::HTTP_CREATED
+            );
         } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
-        } catch (\Exception $e) {
-            \Log::error('schedule.create_from_estimate.error', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось создать график из сметы',
-            ], 500);
+            return AdminResponse::error($e->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY);
+        } catch (\Throwable $e) {
+            return $this->handleUnexpectedError(
+                'createFromEstimate',
+                $e,
+                $request,
+                trans_message('schedule_management.schedule_create_from_estimate_error')
+            );
         }
     }
 
-    /**
-     * Синхронизировать график со сметой (обновить данные из сметы)
-     * 
-     * @group Schedule Estimate Integration
-     * @authenticated
-     */
-    public function syncFromEstimate(
-        SyncScheduleWithEstimateRequest $request,
-        int $scheduleId
-    ): JsonResponse {
+    public function syncFromEstimate(SyncScheduleWithEstimateRequest $request, int $scheduleId): JsonResponse
+    {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-            
-            $schedule = ProjectSchedule::where('id', $scheduleId)
-                ->where('organization_id', $organizationId)
-                ->first();
+            $schedule = $this->findScheduleForOrganization(
+                (int) $request->attributes->get('current_organization_id'),
+                $scheduleId
+            );
 
             if (!$schedule) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'График не найден',
-                ], 404);
+                return AdminResponse::error(
+                    trans_message('schedule_management.schedule_not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
             }
 
             if (!$schedule->estimate_id) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'График не связан со сметой',
-                ], 422);
+                return AdminResponse::error(
+                    trans_message('schedule_management.schedule_estimate_missing'),
+                    Response::HTTP_UNPROCESSABLE_ENTITY
+                );
             }
 
-            $validated = $request->validated();
-            $force = $validated['force'] ?? false;
+            $results = $this->syncService->syncScheduleWithEstimate(
+                $schedule,
+                (bool) ($request->validated()['force'] ?? false)
+            );
 
-            // Синхронизируем
-            $results = $this->syncService->syncScheduleWithEstimate($schedule, $force);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Синхронизация выполнена успешно',
-                'data' => [
-                    'schedule' => new ScheduleWithEstimateResource($schedule->fresh(['estimate', 'tasks'])),
-                    'sync_results' => $results,
-                ],
-            ]);
-
+            return AdminResponse::success([
+                'schedule' => new ScheduleWithEstimateResource($schedule->fresh(['estimate', 'tasks'])),
+                'sync_results' => $results,
+            ], trans_message('schedule_management.schedule_synced_from_estimate'));
         } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
-        } catch (\Exception $e) {
-            \Log::error('schedule.sync_from_estimate.error', [
-                'schedule_id' => $scheduleId,
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось синхронизировать график со сметой',
-            ], 500);
+            return AdminResponse::error($e->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY);
+        } catch (\Throwable $e) {
+            return $this->handleUnexpectedError(
+                'syncFromEstimate',
+                $e,
+                $request,
+                trans_message('schedule_management.schedule_sync_from_estimate_error'),
+                ['schedule_id' => $scheduleId]
+            );
         }
     }
 
-    /**
-     * Синхронизировать прогресс выполнения в смету
-     * 
-     * @group Schedule Estimate Integration
-     * @authenticated
-     */
     public function syncToEstimate(Request $request, int $scheduleId): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-            
-            $schedule = ProjectSchedule::where('id', $scheduleId)
-                ->where('organization_id', $organizationId)
-                ->first();
+            $schedule = $this->findScheduleForOrganization(
+                (int) $request->attributes->get('current_organization_id'),
+                $scheduleId
+            );
 
             if (!$schedule) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'График не найден',
-                ], 404);
+                return AdminResponse::error(
+                    trans_message('schedule_management.schedule_not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
             }
 
             if (!$schedule->estimate_id) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'График не связан со сметой',
-                ], 422);
+                return AdminResponse::error(
+                    trans_message('schedule_management.schedule_estimate_missing'),
+                    Response::HTTP_UNPROCESSABLE_ENTITY
+                );
             }
 
-            // Синхронизируем прогресс
-            $results = $this->syncService->syncEstimateProgress($schedule);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Прогресс выполнения синхронизирован в смету',
-                'data' => $results,
-            ]);
-
+            return AdminResponse::success(
+                $this->syncService->syncEstimateProgress($schedule),
+                trans_message('schedule_management.schedule_synced_to_estimate')
+            );
         } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
-        } catch (\Exception $e) {
-            \Log::error('schedule.sync_to_estimate.error', [
-                'schedule_id' => $scheduleId,
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось синхронизировать прогресс в смету',
-            ], 500);
+            return AdminResponse::error($e->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY);
+        } catch (\Throwable $e) {
+            return $this->handleUnexpectedError(
+                'syncToEstimate',
+                $e,
+                $request,
+                trans_message('schedule_management.schedule_sync_to_estimate_error'),
+                ['schedule_id' => $scheduleId]
+            );
         }
     }
 
-    /**
-     * Получить конфликты между графиком и сметой
-     * 
-     * @group Schedule Estimate Integration
-     * @authenticated
-     */
     public function getConflicts(Request $request, int $scheduleId): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-            
-            $schedule = ProjectSchedule::where('id', $scheduleId)
-                ->where('organization_id', $organizationId)
-                ->first();
+            $schedule = $this->findScheduleForOrganization(
+                (int) $request->attributes->get('current_organization_id'),
+                $scheduleId
+            );
 
             if (!$schedule) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'График не найден',
-                ], 404);
+                return AdminResponse::error(
+                    trans_message('schedule_management.schedule_not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
             }
 
             if (!$schedule->estimate_id) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'График не связан со сметой',
-                ], 422);
+                return AdminResponse::error(
+                    trans_message('schedule_management.schedule_estimate_missing'),
+                    Response::HTTP_UNPROCESSABLE_ENTITY
+                );
             }
 
-            // Обнаруживаем конфликты
             $conflicts = $this->syncService->detectConflicts($schedule);
 
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'conflicts_count' => count($conflicts),
-                    'conflicts' => $conflicts,
-                    'has_conflicts' => count($conflicts) > 0,
-                ],
+            return AdminResponse::success([
+                'conflicts_count' => count($conflicts),
+                'conflicts' => $conflicts,
+                'has_conflicts' => count($conflicts) > 0,
             ]);
-
-        } catch (\Exception $e) {
-            \Log::error('schedule.get_conflicts.error', [
-                'schedule_id' => $scheduleId,
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось проверить конфликты',
-            ], 500);
+        } catch (\Throwable $e) {
+            return $this->handleUnexpectedError(
+                'getConflicts',
+                $e,
+                $request,
+                trans_message('schedule_management.estimate_conflicts_load_error'),
+                ['schedule_id' => $scheduleId]
+            );
         }
     }
 
-    /**
-     * Получить информацию о связанной смете
-     * 
-     * @group Schedule Estimate Integration
-     * @authenticated
-     */
     public function getEstimateInfo(Request $request, int $scheduleId): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-            
-            $schedule = ProjectSchedule::where('id', $scheduleId)
-                ->where('organization_id', $organizationId)
+            $schedule = ProjectSchedule::query()
+                ->where('id', $scheduleId)
+                ->where('organization_id', (int) $request->attributes->get('current_organization_id'))
                 ->with('estimate')
                 ->first();
 
             if (!$schedule) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'График не найден',
-                ], 404);
+                return AdminResponse::error(
+                    trans_message('schedule_management.schedule_not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
             }
 
             if (!$schedule->estimate_id) {
-                return response()->json([
-                    'success' => true,
-                    'data' => [
-                        'has_estimate' => false,
-                        'estimate' => null,
-                    ],
+                return AdminResponse::success([
+                    'has_estimate' => false,
+                    'estimate' => null,
+                    'sync_status' => null,
                 ]);
             }
 
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'has_estimate' => true,
-                    'estimate' => [
-                        'id' => $schedule->estimate->id,
-                        'number' => $schedule->estimate->number,
-                        'name' => $schedule->estimate->name,
-                        'status' => $schedule->estimate->status,
-                        'total_amount' => $schedule->estimate->total_amount,
-                        'updated_at' => $schedule->estimate->updated_at,
-                    ],
-                    'sync_status' => new EstimateSyncStatusResource($schedule),
+            return AdminResponse::success([
+                'has_estimate' => true,
+                'estimate' => [
+                    'id' => $schedule->estimate->id,
+                    'number' => $schedule->estimate->number,
+                    'name' => $schedule->estimate->name,
+                    'status' => $schedule->estimate->status,
+                    'total_amount' => $schedule->estimate->total_amount,
+                    'updated_at' => $schedule->estimate->updated_at,
                 ],
+                'sync_status' => new EstimateSyncStatusResource($schedule),
             ]);
-
-        } catch (\Exception $e) {
-            \Log::error('schedule.get_estimate_info.error', [
-                'schedule_id' => $scheduleId,
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось получить информацию о смете',
-            ], 500);
+        } catch (\Throwable $e) {
+            return $this->handleUnexpectedError(
+                'getEstimateInfo',
+                $e,
+                $request,
+                trans_message('schedule_management.estimate_info_load_error'),
+                ['schedule_id' => $scheduleId]
+            );
         }
     }
-}
 
+    private function findScheduleForOrganization(int $organizationId, int $scheduleId): ?ProjectSchedule
+    {
+        return ProjectSchedule::query()
+            ->where('id', $scheduleId)
+            ->where('organization_id', $organizationId)
+            ->first();
+    }
+
+    private function handleUnexpectedError(
+        string $action,
+        \Throwable $e,
+        Request $request,
+        string $message,
+        array $context = []
+    ): JsonResponse {
+        Log::error("[ScheduleEstimateController.{$action}] Unexpected error", [
+            'message' => $e->getMessage(),
+            'organization_id' => $request->attributes->get('current_organization_id'),
+            'user_id' => $request->user()?->id,
+            ...$context,
+        ]);
+
+        return AdminResponse::error($message, Response::HTTP_INTERNAL_SERVER_ERROR);
+    }
+}

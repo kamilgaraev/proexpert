@@ -2,12 +2,15 @@
 
 namespace App\BusinessModules\Features\BudgetEstimates\Http\Controllers;
 
-use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\BudgetEstimates\BudgetEstimatesModule;
 use App\BusinessModules\Features\BudgetEstimates\Http\Requests\UpdateBudgetEstimatesSettingsRequest;
-use Illuminate\Http\Request;
+use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+
+use function trans_message;
 
 class BudgetEstimatesSettingsController extends Controller
 {
@@ -15,138 +18,94 @@ class BudgetEstimatesSettingsController extends Controller
         private readonly BudgetEstimatesModule $module
     ) {}
 
-    /**
-     * Получить настройки модуля
-     * 
-     * @group Budget Estimates Settings
-     * @authenticated
-     */
     public function show(Request $request): JsonResponse
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
-            
-            $settings = $this->module->getSettings($organizationId);
-            
-            return response()->json([
-                'success' => true,
-                'data' => $settings,
-            ]);
+
+            return AdminResponse::success($this->module->getSettings($organizationId));
         } catch (\Exception $e) {
             Log::error('budget_estimates.settings.show.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => $request->user()?->id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
-            
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить настройки модуля',
-            ], 500);
+
+            return AdminResponse::error(trans_message('budget_estimates.settings.load_error'), 500);
         }
     }
 
-    /**
-     * Обновить настройки модуля
-     * 
-     * @group Budget Estimates Settings
-     * @authenticated
-     */
     public function update(UpdateBudgetEstimatesSettingsRequest $request): JsonResponse
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
-            
+
             $this->module->applySettings($organizationId, $request->validated());
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Настройки успешно обновлены',
-                'data' => $this->module->getSettings($organizationId),
-            ]);
+
+            return AdminResponse::success(
+                $this->module->getSettings($organizationId),
+                trans_message('budget_estimates.settings.updated')
+            );
         } catch (\InvalidArgumentException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return AdminResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
             Log::error('budget_estimates.settings.update.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => $request->user()?->id,
                 'data' => $request->validated(),
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
-            
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось обновить настройки модуля',
-            ], 500);
+
+            return AdminResponse::error(trans_message('budget_estimates.settings.update_error'), 500);
         }
     }
 
-    /**
-     * Сбросить настройки к значениям по умолчанию
-     * 
-     * @group Budget Estimates Settings
-     * @authenticated
-     */
     public function reset(Request $request): JsonResponse
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
-            
             $defaultSettings = $this->module->getDefaultSettings();
+
             $this->module->applySettings($organizationId, $defaultSettings);
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Настройки сброшены к значениям по умолчанию',
-                'data' => $defaultSettings,
-            ]);
+
+            return AdminResponse::success($defaultSettings, trans_message('budget_estimates.settings.reset'));
         } catch (\Exception $e) {
             Log::error('budget_estimates.settings.reset.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => $request->user()?->id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
-            
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось сбросить настройки',
-            ], 500);
+
+            return AdminResponse::error(trans_message('budget_estimates.settings.reset_error'), 500);
         }
     }
 
-    /**
-     * Получить информацию о модуле
-     * 
-     * @group Budget Estimates Settings
-     * @authenticated
-     */
     public function info(Request $request): JsonResponse
     {
         try {
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'name' => $this->module->getName(),
-                    'slug' => $this->module->getSlug(),
-                    'version' => $this->module->getVersion(),
-                    'description' => $this->module->getDescription(),
-                    'type' => $this->module->getType()->value,
-                    'billing_model' => $this->module->getBillingModel()->value,
-                    'features' => $this->module->getFeatures(),
-                    'permissions' => $this->module->getPermissions(),
-                    'limits' => $this->module->getLimits(),
-                ],
+            return AdminResponse::success([
+                'name' => $this->module->getName(),
+                'slug' => $this->module->getSlug(),
+                'version' => $this->module->getVersion(),
+                'description' => $this->module->getDescription(),
+                'type' => $this->module->getType()->value,
+                'billing_model' => $this->module->getBillingModel()->value,
+                'features' => $this->module->getFeatures(),
+                'permissions' => $this->module->getPermissions(),
+                'limits' => $this->module->getLimits(),
             ]);
         } catch (\Exception $e) {
             Log::error('budget_estimates.settings.info.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => $request->user()?->id,
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
-            
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить информацию о модуле',
-            ], 500);
+
+            return AdminResponse::error(trans_message('budget_estimates.info_load_error'), 500);
         }
     }
 }
-

@@ -1,111 +1,79 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\SiteRequests\Http\Controllers;
 
-use App\Http\Controllers\Controller;
-use App\BusinessModules\Features\SiteRequests\Services\SiteRequestPaymentService;
+use App\BusinessModules\Core\Payments\Http\Resources\PaymentDocumentResource;
 use App\BusinessModules\Features\SiteRequests\Http\Requests\CreatePaymentFromRequestsRequest;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestResource;
-use App\BusinessModules\Core\Payments\Http\Resources\PaymentDocumentResource;
-use Illuminate\Http\Request;
+use App\BusinessModules\Features\SiteRequests\Services\SiteRequestPaymentService;
+use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\Response;
+use function trans_message;
 
-/**
- * Контроллер для создания платежей из заявок
- */
 class SiteRequestPaymentController extends Controller
 {
     public function __construct(
         private readonly SiteRequestPaymentService $paymentService
-    ) {}
+    ) {
+    }
 
-    /**
-     * Получить список заявок, доступных для создания платежей
-     *
-     * @group SiteRequests Payment
-     * @authenticated
-     */
     public function getAvailableForPayment(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
+            $requests = $this->paymentService->getAvailableForPayment(
+                (int) $request->attributes->get('current_organization_id'),
+                $request->only(['project_id', 'request_type', 'search'])
+            );
 
-            $filters = $request->only([
-                'project_id',
-                'request_type',
-                'search',
-            ]);
-
-            $requests = $this->paymentService->getAvailableForPayment($organizationId, $filters);
-
-            return response()->json([
-                'success' => true,
-                'data' => SiteRequestResource::collection($requests),
+            return AdminResponse::success([
+                'items' => SiteRequestResource::collection($requests)->resolve(),
                 'count' => $requests->count(),
             ]);
-        } catch (\Exception $e) {
-            \Log::error('site_requests.payment.available.error', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
+        } catch (\Throwable $e) {
+            Log::error('[SiteRequestPaymentController.getAvailableForPayment] Unexpected error', [
+                'message' => $e->getMessage(),
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => $request->user()?->id,
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить доступные заявки',
-            ], 500);
+            return AdminResponse::error(trans_message('site_requests.payment_available_load_error'), 500);
         }
     }
 
-    /**
-     * Создать платеж из заявок
-     *
-     * @group SiteRequests Payment
-     * @authenticated
-     */
     public function createPayment(CreatePaymentFromRequestsRequest $request): JsonResponse
     {
         try {
-            $organizationId = $request->attributes->get('current_organization_id');
-            $userId = auth()->id();
-
             $validated = $request->validated();
-
-            // Добавляем ID пользователя в данные платежа
-            $validated['created_by_user_id'] = $userId;
+            $validated['created_by_user_id'] = $request->user()?->id;
 
             $paymentDocument = $this->paymentService->createPaymentFromRequests(
-                $organizationId,
+                (int) $request->attributes->get('current_organization_id'),
                 $validated['request_ids'],
                 $validated
             );
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Платеж успешно создан из заявок',
-                'data' => new PaymentDocumentResource($paymentDocument),
-            ], 201);
-        } catch (\InvalidArgumentException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
-        } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
-        } catch (\Exception $e) {
-            \Log::error('site_requests.payment.create.error', [
-                'request_data' => $request->validated(),
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
+            return AdminResponse::success(
+                new PaymentDocumentResource($paymentDocument),
+                trans_message('site_requests.payment_created'),
+                Response::HTTP_CREATED
+            );
+        } catch (\InvalidArgumentException|\DomainException $e) {
+            return AdminResponse::error($e->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY);
+        } catch (\Throwable $e) {
+            Log::error('[SiteRequestPaymentController.createPayment] Unexpected error', [
+                'message' => $e->getMessage(),
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => $request->user()?->id,
+                'request_ids' => $request->validated()['request_ids'] ?? [],
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось создать платеж из заявок',
-            ], 500);
+            return AdminResponse::error(trans_message('site_requests.payment_create_error'), 500);
         }
     }
 }
-

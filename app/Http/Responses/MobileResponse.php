@@ -38,7 +38,12 @@ class MobileResponse
      * @param mixed $errors
      * @return JsonResponse
      */
-    public static function error(string $message, int $code = 400, mixed $errors = null): JsonResponse
+    public static function error(
+        string $message,
+        int $code = 400,
+        mixed $errors = null,
+        array $extra = []
+    ): JsonResponse
     {
         $response = [
             'success' => false,
@@ -47,6 +52,14 @@ class MobileResponse
 
         if (!is_null($errors)) {
             $response['errors'] = $errors;
+        }
+
+        foreach ($extra as $key => $value) {
+            if (in_array($key, ['success', 'message', 'errors'], true)) {
+                continue;
+            }
+
+            $response[$key] = $value;
         }
 
         return response()->json($response, $code);

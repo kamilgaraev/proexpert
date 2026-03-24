@@ -173,7 +173,7 @@ Route::prefix('v1')->group(function () {
 });
 
 // --- Admin Panel API ---
-Route::prefix('v1/admin')->name('admin.')->group(function () {
+Route::prefix('v1/admin')->middleware('admin.response')->name('admin.')->group(function () {
     // Публичные маршруты аутентификации админки
     require __DIR__ . '/api/v1/admin/auth.php';
     

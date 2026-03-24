@@ -1,147 +1,124 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Traits;
 
-use App\Repositories\Interfaces\ProjectScheduleRepositoryInterface;
-use App\Services\Schedule\CriticalPathService;
+use App\Exceptions\Schedule\CircularDependencyException;
+use App\Exceptions\Schedule\ScheduleNotFoundException;
+use App\Exceptions\Schedule\ScheduleValidationException;
 use App\Http\Requests\Api\V1\Schedule\CreateProjectScheduleRequest;
-use App\Http\Requests\Api\V1\Schedule\UpdateProjectScheduleRequest;
 use App\Http\Requests\Api\V1\Schedule\CreateScheduleTaskRequest;
 use App\Http\Requests\Api\V1\Schedule\CreateTaskDependencyRequest;
+use App\Http\Requests\Api\V1\Schedule\UpdateProjectScheduleRequest;
 use App\Http\Requests\Api\V1\Schedule\UpdateTaskDependencyRequest;
 use App\Http\Resources\Api\V1\Schedule\ProjectScheduleResource;
-use App\Http\Resources\Api\V1\Schedule\ProjectScheduleCollection;
 use App\Http\Resources\Api\V1\Schedule\ScheduleTaskResource;
+use App\Http\Responses\AdminResponse;
 use App\Models\ScheduleTask;
 use App\Models\TaskDependency;
-use App\Exceptions\Schedule\ScheduleNotFoundException;
-use App\Exceptions\Schedule\CircularDependencyException;
-use App\Exceptions\Schedule\ScheduleValidationException;
-use App\Http\Responses\AdminResponse;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\DB;
+use function trans_message;
 
 trait HasScheduleOperations
 {
-    /**
-     * Получить график или выбросить исключение
-     */
     protected function findScheduleOrFail(int $scheduleId, callable $finder): object
     {
         $schedule = $finder($scheduleId);
-        
+
         if (!$schedule) {
             throw new ScheduleNotFoundException($scheduleId);
         }
-        
+
         return $schedule;
     }
 
-    /**
-     * Создать график проекта
-     */
     protected function createSchedule(CreateProjectScheduleRequest $request, int $organizationId): JsonResponse
     {
         $data = $request->validated();
         $data['organization_id'] = $organizationId;
         $data['created_by_user_id'] = $request->user()->id;
-
-        // Устанавливаем значения по умолчанию
         $data['status'] = $data['status'] ?? 'draft';
         $data['overall_progress_percent'] = 0;
         $data['critical_path_calculated'] = false;
 
         $schedule = $this->scheduleRepository->create($data);
 
-        return response()->json([
-            'message' => 'График проекта успешно создан',
-            'data' => new ProjectScheduleResource($schedule->load(['project', 'createdBy']))
-        ], 201);
+        return AdminResponse::success(
+            new ProjectScheduleResource($schedule->load(['project', 'createdBy'])),
+            trans_message('schedule_management.schedule_created'),
+            201
+        );
     }
 
-    /**
-     * Обновить график проекта
-     */
-    protected function updateSchedule(int $scheduleId, UpdateProjectScheduleRequest $request, callable $finder): JsonResponse
-    {
+    protected function updateSchedule(
+        int $scheduleId,
+        UpdateProjectScheduleRequest $request,
+        callable $finder
+    ): JsonResponse {
         $schedule = $this->findScheduleOrFail($scheduleId, $finder);
 
         $data = $request->validated();
-        
-        // Не позволяем изменять organization_id и created_by_user_id через update
         unset($data['organization_id'], $data['created_by_user_id']);
-        
-        if (isset($data['is_template']) && $data['is_template']) {
-            unset($data['project_id']); // Шаблоны не привязаны к проектам (для organization-based)
+
+        if (($data['is_template'] ?? false) === true) {
+            unset($data['project_id']);
         }
 
         $this->scheduleRepository->update($schedule->id, $data);
         $schedule = $this->scheduleRepository->find($schedule->id);
 
-        return response()->json([
-            'message' => 'График проекта обновлен',
-            'data' => new ProjectScheduleResource($schedule->load(['project', 'createdBy']))
-        ]);
+        return AdminResponse::success(
+            new ProjectScheduleResource($schedule->load(['project', 'createdBy'])),
+            trans_message('schedule_management.schedule_updated')
+        );
     }
 
-    /**
-     * Удалить график проекта
-     */
     protected function deleteSchedule(int $scheduleId, callable $finder): JsonResponse
     {
         $schedule = $this->findScheduleOrFail($scheduleId, $finder);
 
         $this->scheduleRepository->delete($schedule->id);
 
-        return response()->json(['message' => 'График проекта удален'], 200);
+        return AdminResponse::success(null, trans_message('schedule_management.schedule_deleted'));
     }
 
-    /**
-     * Рассчитать критический путь для графика
-     */
     protected function calculateCriticalPathForSchedule(int $scheduleId, callable $finder): JsonResponse
     {
         $schedule = $this->findScheduleOrFail($scheduleId, $finder);
 
         try {
             $criticalPath = $this->criticalPathService->calculateCriticalPath($schedule);
-            
-            // Обновляем флаг что критический путь рассчитан
+
             $this->scheduleRepository->update($schedule->id, [
                 'critical_path_calculated' => true,
-                'critical_path_duration_days' => $criticalPath['duration']
+                'critical_path_duration_days' => $criticalPath['duration'],
             ]);
 
-            return response()->json([
-                'message' => 'Критический путь рассчитан',
-                'data' => $criticalPath
-            ]);
+            return AdminResponse::success(
+                $criticalPath,
+                trans_message('schedule_management.critical_path_calculated')
+            );
         } catch (CircularDependencyException $e) {
-            Log::warning('Обнаружены циклические зависимости при расчете критического пути', [
+            Log::warning('[HasScheduleOperations.calculateCriticalPathForSchedule] Circular dependency detected', [
                 'schedule_id' => $scheduleId,
-                'cycle_tasks' => $e->getCycleTasks()
+                'cycle_tasks' => $e->getCycleTasks(),
             ]);
-            return response()->json([
+
+            return AdminResponse::error($e->getMessage(), 422, ['cycle_tasks' => $e->getCycleTasks()]);
+        } catch (\Throwable $e) {
+            Log::error('[HasScheduleOperations.calculateCriticalPathForSchedule] Unexpected error', [
+                'schedule_id' => $scheduleId,
                 'message' => $e->getMessage(),
-                'cycle_tasks' => $e->getCycleTasks()
-            ], 422);
-        } catch (\Exception $e) {
-            Log::error('Ошибка при расчете критического пути', [
-                'schedule_id' => $scheduleId,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
-            return response()->json([
-                'message' => 'Внутренняя ошибка сервера при расчете критического пути'
-            ], 500);
+
+            return AdminResponse::error(trans_message('schedule_management.critical_path_error'), 500);
         }
     }
 
-    /**
-     * Сохранить базовый план графика
-     */
     protected function saveBaselineForSchedule(int $scheduleId, Request $request, callable $finder): JsonResponse
     {
         $schedule = $this->findScheduleOrFail($scheduleId, $finder);
@@ -149,24 +126,18 @@ trait HasScheduleOperations
         try {
             $this->scheduleRepository->saveBaseline($schedule->id, $request->user()->id);
 
-            return response()->json([
-                'message' => 'Базовый план сохранен'
-            ]);
-        } catch (\Exception $e) {
-            Log::error('Ошибка при сохранении базового плана', [
+            return AdminResponse::success(null, trans_message('schedule_management.baseline_saved'));
+        } catch (\Throwable $e) {
+            Log::error('[HasScheduleOperations.saveBaselineForSchedule] Unexpected error', [
                 'schedule_id' => $scheduleId,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
-            return response()->json([
-                'message' => 'Внутренняя ошибка сервера при сохранении базового плана'
-            ], 500);
+
+            return AdminResponse::error(trans_message('schedule_management.baseline_save_error'), 500);
         }
     }
 
-    /**
-     * Очистить базовый план графика
-     */
     protected function clearBaselineForSchedule(int $scheduleId, callable $finder): JsonResponse
     {
         $schedule = $this->findScheduleOrFail($scheduleId, $finder);
@@ -174,62 +145,39 @@ trait HasScheduleOperations
         try {
             $this->scheduleRepository->clearBaseline($schedule->id);
 
-            return response()->json([
-                'message' => 'Базовый план очищен'
-            ]);
-        } catch (\Exception $e) {
-            Log::error('Ошибка при очистке базового плана', [
+            return AdminResponse::success(null, trans_message('schedule_management.baseline_cleared'));
+        } catch (\Throwable $e) {
+            Log::error('[HasScheduleOperations.clearBaselineForSchedule] Unexpected error', [
                 'schedule_id' => $scheduleId,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
-            return response()->json([
-                'message' => 'Внутренняя ошибка сервера при очистке базового плана'
-            ], 500);
+
+            return AdminResponse::error(trans_message('schedule_management.baseline_clear_error'), 500);
         }
     }
 
-    /**
-     * Получить задачи расписания
-     */
     protected function getScheduleTasks(int $scheduleId, callable $finder): JsonResponse
     {
         $schedule = $this->findScheduleOrFail($scheduleId, $finder);
-
         $tasks = $schedule->tasks()->with(['assignedUser', 'workType'])->get();
 
-        return response()->json([
-            'data' => $tasks
-        ]);
+        return AdminResponse::success($tasks);
     }
 
-    /**
-     * Создать новую задачу в расписании
-     */
-    protected function createScheduleTask(int $scheduleId, CreateScheduleTaskRequest $request, int $organizationId, callable $finder): JsonResponse
-    {
-        Log::info('[ScheduleTask] Начало создания задачи', [
+    protected function createScheduleTask(
+        int $scheduleId,
+        CreateScheduleTaskRequest $request,
+        int $organizationId,
+        callable $finder
+    ): JsonResponse {
+        Log::info('[HasScheduleOperations.createScheduleTask] Started', [
             'schedule_id' => $scheduleId,
             'organization_id' => $organizationId,
             'user_id' => $request->user()->id,
         ]);
 
-        try {
-            $schedule = $this->findScheduleOrFail($scheduleId, $finder);
-            
-            Log::info('[ScheduleTask] График найден', [
-                'schedule_id' => $schedule->id,
-                'schedule_name' => $schedule->name,
-            ]);
-        } catch (\Exception $e) {
-            Log::error('[ScheduleTask] График не найден', [
-                'schedule_id' => $scheduleId,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-            throw $e;
-        }
-
+        $schedule = $this->findScheduleOrFail($scheduleId, $finder);
         $data = $request->validated();
         $data['schedule_id'] = $schedule->id;
         $data['organization_id'] = $organizationId;
@@ -253,61 +201,43 @@ trait HasScheduleOperations
             );
         }
 
-        Log::info('[ScheduleTask] Данные для создания задачи', [
-            'data' => $data,
-        ]);
-
         try {
-            Log::info('[ScheduleTask] Попытка создания модели ScheduleTask');
             $task = ScheduleTask::create($data);
-            
-            Log::info('[ScheduleTask] Модель создана успешно', [
-                'task_id' => $task->id,
-                'task_name' => $task->name,
-            ]);
-            
-            // Синхронизируем интервалы (если они есть в запросе)
+
             if (array_key_exists('intervals', $data)) {
                 $scheduleTaskService = app(\App\Services\Schedule\ScheduleTaskService::class);
                 $scheduleTaskService->syncTaskIntervals($task, $data['intervals']);
                 $task->refresh();
             }
 
-            // Загружаем связанные данные для ответа
-            Log::info('[ScheduleTask] Загрузка связанных данных');
             $task->load(['assignedUser', 'workType', 'parentTask', 'intervals']);
-            
-            Log::info('[ScheduleTask] Задача успешно создана', [
-                'task_id' => $task->id,
-            ]);
 
-            return AdminResponse::success(new ScheduleTaskResource($task), 'Задача успешно создана', 201);
+            return AdminResponse::success(
+                new ScheduleTaskResource($task),
+                trans_message('schedule_management.task_created'),
+                201
+            );
         } catch (ScheduleValidationException $e) {
-            Log::warning('[ScheduleTask] Ошибка валидации задачи', [
+            Log::warning('[HasScheduleOperations.createScheduleTask] Validation failed', [
                 'schedule_id' => $scheduleId,
                 'errors' => $e->getErrors(),
-                'error' => $e->getMessage()
+                'message' => $e->getMessage(),
             ]);
+
             return AdminResponse::error($e->getMessage(), 422, $e->getErrors());
-        } catch (\Exception $e) {
-            Log::error('[ScheduleTask] ОШИБКА при создании задачи', [
+        } catch (\Throwable $e) {
+            Log::error('[HasScheduleOperations.createScheduleTask] Unexpected error', [
                 'schedule_id' => $scheduleId,
                 'organization_id' => $organizationId,
-                'error_message' => $e->getMessage(),
-                'error_class' => get_class($e),
-                'error_file' => $e->getFile(),
-                'error_line' => $e->getLine(),
+                'message' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
                 'data' => $data,
             ]);
 
-            return AdminResponse::error('Внутренняя ошибка сервера при создании задачи', 500);
+            return AdminResponse::error(trans_message('schedule_management.task_create_error'), 500);
         }
     }
 
-    /**
-     * Получить зависимости расписания
-     */
     protected function getScheduleDependencies(int $scheduleId, callable $finder): JsonResponse
     {
         $schedule = $this->findScheduleOrFail($scheduleId, $finder);
@@ -316,30 +246,26 @@ trait HasScheduleOperations
             ->with(['predecessorTask', 'successorTask'])
             ->get();
 
-        return response()->json([
-            'data' => $dependencies
-        ]);
+        return AdminResponse::success($dependencies);
     }
 
-    /**
-     * Создать новую зависимость между задачами
-     */
-    protected function createScheduleDependency(int $scheduleId, CreateTaskDependencyRequest $request, int $organizationId, callable $finder): JsonResponse
-    {
+    protected function createScheduleDependency(
+        int $scheduleId,
+        CreateTaskDependencyRequest $request,
+        int $organizationId,
+        callable $finder
+    ): JsonResponse {
         $schedule = $this->findScheduleOrFail($scheduleId, $finder);
 
         $data = $request->validated();
         $data['schedule_id'] = $schedule->id;
         $data['organization_id'] = $organizationId;
         $data['created_by_user_id'] = $request->user()->id;
-        
-        // Устанавливаем значения по умолчанию
         $data['is_active'] = true;
         $data['validation_status'] = 'valid';
 
         try {
             $dependency = TaskDependency::create($data);
-
             $dependency->load(['predecessorTask', 'successorTask', 'createdBy']);
 
             return AdminResponse::success([
@@ -372,53 +298,57 @@ trait HasScheduleOperations
                     'name' => $dependency->createdBy->name,
                     'email' => $dependency->createdBy->email,
                 ],
-            ], 'Зависимость между задачами успешно создана', 201);
+            ], trans_message('schedule_management.dependency_created'), 201);
         } catch (CircularDependencyException $e) {
-            Log::warning('Попытка создания циклической зависимости', [
+            Log::warning('[HasScheduleOperations.createScheduleDependency] Circular dependency detected', [
                 'schedule_id' => $scheduleId,
                 'cycle_tasks' => $e->getCycleTasks(),
-                'error' => $e->getMessage()
+                'message' => $e->getMessage(),
             ]);
+
             return AdminResponse::error($e->getMessage(), 422, ['cycle_tasks' => $e->getCycleTasks()]);
         } catch (ScheduleValidationException $e) {
-            Log::warning('Ошибка валидации зависимости', [
+            Log::warning('[HasScheduleOperations.createScheduleDependency] Validation failed', [
                 'schedule_id' => $scheduleId,
                 'errors' => $e->getErrors(),
-                'error' => $e->getMessage()
+                'message' => $e->getMessage(),
             ]);
+
             return AdminResponse::error($e->getMessage(), 422, $e->getErrors());
-        } catch (\Exception $e) {
-            Log::error('Ошибка при создании зависимости', [
+        } catch (\Throwable $e) {
+            Log::error('[HasScheduleOperations.createScheduleDependency] Unexpected error', [
                 'schedule_id' => $scheduleId,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
-            return AdminResponse::error('Внутренняя ошибка сервера при создании зависимости', 500);
+
+            return AdminResponse::error(trans_message('schedule_management.dependency_create_error'), 500);
         }
     }
 
-    /**
-     * Обновить зависимость между задачами
-     */
-    protected function updateScheduleDependency(int $scheduleId, int $dependencyId, UpdateTaskDependencyRequest $request, int $organizationId, callable $finder): JsonResponse
-    {
+    protected function updateScheduleDependency(
+        int $scheduleId,
+        int $dependencyId,
+        UpdateTaskDependencyRequest $request,
+        int $organizationId,
+        callable $finder
+    ): JsonResponse {
         $schedule = $this->findScheduleOrFail($scheduleId, $finder);
 
-        $dependency = TaskDependency::where('id', $dependencyId)
+        $dependency = TaskDependency::query()
+            ->where('id', $dependencyId)
             ->where('schedule_id', $schedule->id)
             ->first();
 
         if (!$dependency) {
-            return AdminResponse::error('Зависимость не найдена', 404);
+            return AdminResponse::error(trans_message('schedule_management.dependency_not_found'), 404);
         }
 
         $data = $request->validated();
-        
+
         try {
             $dependency->update($data);
-
             $schedule->update(['critical_path_calculated' => false]);
-
             $dependency->load(['predecessorTask', 'successorTask', 'createdBy']);
 
             return AdminResponse::success([
@@ -451,113 +381,106 @@ trait HasScheduleOperations
                     'name' => $dependency->createdBy->name ?? null,
                     'email' => $dependency->createdBy->email ?? null,
                 ],
-            ], 'Зависимость успешно обновлена');
+            ], trans_message('schedule_management.dependency_updated'));
         } catch (CircularDependencyException $e) {
-            Log::warning('Попытка создания циклической зависимости при обновлении', [
+            Log::warning('[HasScheduleOperations.updateScheduleDependency] Circular dependency detected', [
                 'schedule_id' => $scheduleId,
                 'dependency_id' => $dependencyId,
-                'error' => $e->getMessage()
+                'message' => $e->getMessage(),
             ]);
+
             return AdminResponse::error($e->getMessage(), 422, ['cycle_tasks' => $e->getCycleTasks()]);
-        } catch (\Exception $e) {
-            Log::error('Ошибка при обновлении зависимости', [
+        } catch (\Throwable $e) {
+            Log::error('[HasScheduleOperations.updateScheduleDependency] Unexpected error', [
                 'schedule_id' => $scheduleId,
                 'dependency_id' => $dependencyId,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'organization_id' => $organizationId,
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
-            return AdminResponse::error('Внутренняя ошибка сервера при обновлении зависимости', 500);
+
+            return AdminResponse::error(trans_message('schedule_management.dependency_update_error'), 500);
         }
     }
 
-    /**
-     * Удалить зависимость между задачами
-     */
     protected function deleteScheduleDependency(int $scheduleId, int $dependencyId, callable $finder): JsonResponse
     {
         $schedule = $this->findScheduleOrFail($scheduleId, $finder);
 
-        $dependency = TaskDependency::where('id', $dependencyId)
+        $dependency = TaskDependency::query()
+            ->where('id', $dependencyId)
             ->where('schedule_id', $schedule->id)
             ->first();
 
         if (!$dependency) {
-            return AdminResponse::error('Зависимость не найдена', 404);
+            return AdminResponse::error(trans_message('schedule_management.dependency_not_found'), 404);
         }
 
         try {
             $dependency->delete();
-
             $schedule->update(['critical_path_calculated' => false]);
 
-            return AdminResponse::success(null, 'Зависимость успешно удалена');
-        } catch (\Exception $e) {
-            Log::error('Ошибка при удалении зависимости', [
+            return AdminResponse::success(null, trans_message('schedule_management.dependency_deleted'));
+        } catch (\Throwable $e) {
+            Log::error('[HasScheduleOperations.deleteScheduleDependency] Unexpected error', [
                 'schedule_id' => $scheduleId,
                 'dependency_id' => $dependencyId,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
-            return AdminResponse::error('Внутренняя ошибка сервера при удалении зависимости', 500);
+
+            return AdminResponse::error(trans_message('schedule_management.dependency_delete_error'), 500);
         }
     }
 
-    /**
-     * Получить конфликты ресурсов в расписании
-     */
     protected function getResourceConflicts(int $scheduleId, int $organizationId, callable $finder): JsonResponse
     {
         $schedule = $this->findScheduleOrFail($scheduleId, $finder);
 
         try {
-            // Загружаем детальную информацию о конфликтах
             $schedule->load([
                 'tasks' => function ($query) {
-                    $query->whereHas('resources', function ($q) {
-                        $q->where('has_conflicts', true);
+                    $query->whereHas('resources', function ($resourceQuery) {
+                        $resourceQuery->where('has_conflicts', true);
                     })->with(['resources', 'assignedUser']);
                 },
                 'resources' => function ($query) {
                     $query->where('has_conflicts', true);
-                }
+                },
             ]);
 
             $hasConflicts = $schedule->tasks->isNotEmpty() || $schedule->resources->isNotEmpty();
 
             if (!$hasConflicts) {
-                return response()->json([
-                    'data' => [],
-                    'meta' => [
-                        'conflicts_count' => 0,
-                        'has_conflicts' => false,
-                        'message' => 'Конфликтов ресурсов не обнаружено'
-                    ]
+                return AdminResponse::success([
+                    'schedule_id' => $schedule->id,
+                    'schedule_name' => $schedule->name,
+                    'conflicted_tasks' => [],
+                    'conflicted_resources' => [],
+                    'conflicts_count' => 0,
+                    'has_conflicts' => false,
+                    'message' => trans_message('schedule_management.resource_conflicts_none'),
                 ]);
             }
 
-            return response()->json([
-                'data' => [
-                    'schedule_id' => $schedule->id,
-                    'schedule_name' => $schedule->name,
-                    'conflicted_tasks' => $schedule->tasks,
-                    'conflicted_resources' => $schedule->resources,
-                ],
-                'meta' => [
-                    'conflicts_count' => $schedule->tasks->count() + $schedule->resources->count(),
-                    'has_conflicts' => true,
-                    'message' => 'Обнаружены конфликты ресурсов'
-                ]
+            return AdminResponse::success([
+                'schedule_id' => $schedule->id,
+                'schedule_name' => $schedule->name,
+                'conflicted_tasks' => $schedule->tasks,
+                'conflicted_resources' => $schedule->resources,
+                'conflicts_count' => $schedule->tasks->count() + $schedule->resources->count(),
+                'has_conflicts' => true,
+                'message' => trans_message('schedule_management.resource_conflicts_found'),
             ]);
-        } catch (\Exception $e) {
-            Log::error('Ошибка при получении конфликтов ресурсов', [
+        } catch (\Throwable $e) {
+            Log::error('[HasScheduleOperations.getResourceConflicts] Unexpected error', [
                 'schedule_id' => $scheduleId,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'organization_id' => $organizationId,
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
-            return response()->json([
-                'message' => 'Внутренняя ошибка сервера при получении конфликтов ресурсов'
-            ], 500);
+
+            return AdminResponse::error(trans_message('schedule_management.resource_conflicts_details_error'), 500);
         }
     }
 }
-

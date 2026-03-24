@@ -128,6 +128,7 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         Route::get('/{agreement}', [AgreementController::class, 'show']);
         Route::put('/{agreement}', [AgreementController::class, 'update']);
         Route::delete('/{agreement}', [AgreementController::class, 'destroy']);
+        Route::post('/{agreement}/apply-changes', [AgreementController::class, 'applyChanges']);
     });
     
     // === SCHEDULES ===
@@ -202,4 +203,3 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         Route::get('/{event}/conflicts', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ProjectEventController::class, 'conflicts']);
     });
 });
-

@@ -309,14 +309,37 @@ class SupplementaryAgreementService
         return $this->repository->find($id);
     }
 
-    public function paginateByContract(int $contractId, int $perPage = 15)
+    public function paginateByContract(
+        int $contractId,
+        int $perPage = 15,
+        array $filters = [],
+        string $sortBy = 'agreement_date',
+        string $sortDirection = 'desc'
+    )
     {
-        return $this->repository->paginateByContract($contractId, $perPage);
+        return $this->repository->paginateByContract($contractId, $perPage, $filters, $sortBy, $sortDirection);
     }
 
-    public function paginate(int $perPage = 15)
+    public function paginateByProject(
+        int $projectId,
+        int $organizationId,
+        int $perPage = 15,
+        array $filters = [],
+        string $sortBy = 'agreement_date',
+        string $sortDirection = 'desc'
+    )
     {
-        return $this->repository->paginate($perPage);
+        return $this->repository->paginateByProject($projectId, $organizationId, $perPage, $filters, $sortBy, $sortDirection);
+    }
+
+    public function paginate(
+        int $perPage = 15,
+        array $filters = [],
+        string $sortBy = 'agreement_date',
+        string $sortDirection = 'desc'
+    )
+    {
+        return $this->repository->paginate($perPage, $filters, $sortBy, $sortDirection);
     }
 
     public function applyChangesToContract(int $agreementId): bool

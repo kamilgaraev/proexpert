@@ -5,28 +5,30 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use App\Services\Contractor\OrganizationDiscoveryService;
 use App\Support\Organization\OrganizationWorkspaceProfileCatalog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\Response;
 
 class OrganizationSearchController extends Controller
 {
-    protected OrganizationDiscoveryService $discoveryService;
-
-    public function __construct(OrganizationDiscoveryService $discoveryService)
-    {
-        $this->discoveryService = $discoveryService;
+    public function __construct(
+        protected OrganizationDiscoveryService $discoveryService
+    ) {
     }
 
     public function search(Request $request): JsonResponse
     {
-        $user = $request->user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        $organizationId = $this->resolveOrganizationId($request);
 
-        if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
+        if ($organizationId === null) {
+            return AdminResponse::error(
+                trans_message('organization_search.organization_context_missing'),
+                Response::HTTP_BAD_REQUEST
+            );
         }
 
         $validated = $request->validate([
@@ -42,11 +44,16 @@ class OrganizationSearchController extends Controller
 
         $validated['verified'] = isset($validated['verified']) ? filter_var($validated['verified'], FILTER_VALIDATE_BOOLEAN) : null;
         $validated['exclude_invited'] = isset($validated['exclude_invited']) ? filter_var($validated['exclude_invited'], FILTER_VALIDATE_BOOLEAN) : null;
-        $validated['exclude_existing_contractors'] = isset($validated['exclude_existing_contractors']) ? filter_var($validated['exclude_existing_contractors'], FILTER_VALIDATE_BOOLEAN) : null;
+        $validated['exclude_existing_contractors'] = isset($validated['exclude_existing_contractors'])
+            ? filter_var($validated['exclude_existing_contractors'], FILTER_VALIDATE_BOOLEAN)
+            : null;
 
-        $filters = collect($validated)->except(['sort_by', 'per_page'])->filter(fn ($value) => $value !== null)->toArray();
+        $filters = collect($validated)
+            ->except(['sort_by', 'per_page'])
+            ->filter(static fn (mixed $value): bool => $value !== null)
+            ->toArray();
         $sortBy = $validated['sort_by'] ?? 'relevance';
-        $perPage = $validated['per_page'] ?? 20;
+        $perPage = (int) ($validated['per_page'] ?? 20);
 
         try {
             $organizations = $this->discoveryService->searchOrganizations(
@@ -56,22 +63,44 @@ class OrganizationSearchController extends Controller
                 $sortBy
             );
 
-            $availabilityStatuses = $this->resolveAvailabilityStatuses($organizationId, collect($organizations->items())->pluck('id')->all());
+            $availabilityStatuses = $this->resolveAvailabilityStatuses(
+                $organizationId,
+                collect($organizations->items())->pluck('id')->all()
+            );
 
-            return response()->json([
-                'success' => true,
-                'data' => $organizations->getCollection()->map(function ($organization) use ($availabilityStatuses) {
-                    return $this->decorateOrganizationPayload($organization->toArray(), $availabilityStatuses[$organization->id] ?? null);
-                })->values(),
-                'meta' => [
+            $data = $organizations->getCollection()
+                ->map(function ($organization) use ($availabilityStatuses): array {
+                    return $this->decorateOrganizationPayload(
+                        $organization->toArray(),
+                        $availabilityStatuses[$organization->id] ?? null
+                    );
+                })
+                ->values()
+                ->all();
+
+            return AdminResponse::paginated(
+                $data,
+                [
                     'current_page' => $organizations->currentPage(),
+                    'from' => $organizations->firstItem(),
                     'last_page' => $organizations->lastPage(),
+                    'path' => $organizations->path(),
                     'per_page' => $organizations->perPage(),
+                    'to' => $organizations->lastItem(),
                     'total' => $organizations->total(),
                     'filters' => $filters,
                     'sort_by' => $sortBy,
                 ],
-            ]);
+                null,
+                Response::HTTP_OK,
+                null,
+                [
+                    'first' => $organizations->url(1),
+                    'last' => $organizations->url($organizations->lastPage()),
+                    'prev' => $organizations->previousPageUrl(),
+                    'next' => $organizations->nextPageUrl(),
+                ]
+            );
         } catch (\Throwable $e) {
             Log::error('Failed to search organizations', [
                 'error' => $e->getMessage(),
@@ -79,20 +108,22 @@ class OrganizationSearchController extends Controller
                 'filters' => $filters,
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при поиске организаций',
-            ], 500);
+            return AdminResponse::error(
+                trans_message('organization_search.search_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
     public function suggestions(Request $request): JsonResponse
     {
-        $user = $request->user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        $organizationId = $this->resolveOrganizationId($request);
 
-        if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
+        if ($organizationId === null) {
+            return AdminResponse::error(
+                trans_message('organization_search.organization_context_missing'),
+                Response::HTTP_BAD_REQUEST
+            );
         }
 
         $validated = $request->validate([
@@ -104,13 +135,15 @@ class OrganizationSearchController extends Controller
             $suggestions = $this->discoveryService->getSearchSuggestions(
                 $validated['query'],
                 $organizationId,
-                $validated['limit'] ?? 10
+                (int) ($validated['limit'] ?? 10)
             );
 
-            return response()->json([
-                'success' => true,
-                'data' => array_map(fn (array $suggestion) => $this->decorateOrganizationPayload($suggestion), $suggestions),
-            ]);
+            return AdminResponse::success(
+                array_map(
+                    fn (array $suggestion): array => $this->decorateOrganizationPayload($suggestion),
+                    $suggestions
+                )
+            );
         } catch (\Throwable $e) {
             Log::error('Failed to get organization suggestions', [
                 'error' => $e->getMessage(),
@@ -118,20 +151,22 @@ class OrganizationSearchController extends Controller
                 'query' => $validated['query'],
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при получении подсказок',
-            ], 500);
+            return AdminResponse::error(
+                trans_message('organization_search.suggestions_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
     public function recommendations(Request $request): JsonResponse
     {
-        $user = $request->user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        $organizationId = $this->resolveOrganizationId($request);
 
-        if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
+        if ($organizationId === null) {
+            return AdminResponse::error(
+                trans_message('organization_search.organization_context_missing'),
+                Response::HTTP_BAD_REQUEST
+            );
         }
 
         $validated = $request->validate([
@@ -141,52 +176,53 @@ class OrganizationSearchController extends Controller
         try {
             $recommendations = $this->discoveryService->getRecommendedOrganizations(
                 $organizationId,
-                $validated['limit'] ?? 10
+                (int) ($validated['limit'] ?? 10)
             );
-            $availabilityStatuses = $this->resolveAvailabilityStatuses($organizationId, collect($recommendations)->pluck('id')->all());
+            $availabilityStatuses = $this->resolveAvailabilityStatuses(
+                $organizationId,
+                collect($recommendations)->pluck('id')->all()
+            );
 
-            return response()->json([
-                'success' => true,
-                'data' => array_map(
-                    fn (array $organization) => $this->decorateOrganizationPayload(
+            return AdminResponse::success(
+                array_map(
+                    fn (array $organization): array => $this->decorateOrganizationPayload(
                         $organization,
                         $availabilityStatuses[$organization['id']] ?? null
                     ),
                     $recommendations
-                ),
-            ]);
+                )
+            );
         } catch (\Throwable $e) {
             Log::error('Failed to get organization recommendations', [
                 'error' => $e->getMessage(),
                 'organization_id' => $organizationId,
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при получении рекомендаций',
-            ], 500);
+            return AdminResponse::error(
+                trans_message('organization_search.recommendations_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
     public function checkAvailability(int $targetOrganizationId, Request $request): JsonResponse
     {
-        $user = $request->user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        $organizationId = $this->resolveOrganizationId($request);
 
-        if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
+        if ($organizationId === null) {
+            return AdminResponse::error(
+                trans_message('organization_search.organization_context_missing'),
+                Response::HTTP_BAD_REQUEST
+            );
         }
 
         try {
-            $status = $this->discoveryService->getOrganizationAvailabilityStatus(
-                $organizationId,
-                $targetOrganizationId
+            return AdminResponse::success(
+                $this->discoveryService->getOrganizationAvailabilityStatus(
+                    $organizationId,
+                    $targetOrganizationId
+                )
             );
-
-            return response()->json([
-                'success' => true,
-                'data' => $status,
-            ]);
         } catch (\Throwable $e) {
             Log::error('Failed to check organization availability', [
                 'error' => $e->getMessage(),
@@ -194,10 +230,10 @@ class OrganizationSearchController extends Controller
                 'target_organization_id' => $targetOrganizationId,
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при проверке доступности организации',
-            ], 500);
+            return AdminResponse::error(
+                trans_message('organization_search.availability_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -232,5 +268,13 @@ class OrganizationSearchController extends Controller
         ]);
 
         return $organization;
+    }
+
+    private function resolveOrganizationId(Request $request): ?int
+    {
+        $user = $request->user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
+
+        return $organizationId ? (int) $organizationId : null;
     }
 }

@@ -1,10 +1,18 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Requests\Api\V1\Admin\Agreement;
 
-use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rule;
 use App\DTOs\SupplementaryAgreementDTO;
+use App\Http\Responses\AdminResponse;
+use Illuminate\Contracts\Validation\Validator;
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Http\Exceptions\HttpResponseException;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
+
+use function trans_message;
 
 class StoreSupplementaryAgreementRequest extends FormRequest
 {
@@ -29,19 +37,16 @@ class StoreSupplementaryAgreementRequest extends FormRequest
             ],
             'agreement_date' => ['required', 'date_format:Y-m-d'],
             'change_amount' => ['nullable', 'numeric'],
-            'supersede_agreement_ids' => [
-                'nullable',
-                'array',
-            ],
+            'supersede_agreement_ids' => ['nullable', 'array'],
             'supersede_agreement_ids.*' => [
                 'required',
                 'integer',
                 'exists:supplementary_agreements,id',
-                function ($attribute, $value, $fail) use ($contractId) {
-                    // Проверяем, что ДС принадлежит тому же контракту
+                function (string $attribute, mixed $value, callable $fail) use ($contractId): void {
                     $agreement = \App\Models\SupplementaryAgreement::find($value);
-                    if ($agreement && $contractId && $agreement->contract_id != $contractId) {
-                        $fail("Дополнительное соглашение #{$value} не принадлежит указанному контракту.");
+
+                    if ($agreement && $contractId && (int) $agreement->contract_id !== (int) $contractId) {
+                        $fail(trans_message('agreements.validation.agreement_belongs_to_contract', ['id' => $value]));
                     }
                 },
             ],
@@ -50,7 +55,6 @@ class StoreSupplementaryAgreementRequest extends FormRequest
             'subcontract_changes' => ['nullable', 'array'],
             'gp_changes' => ['nullable', 'array'],
             'advance_changes' => ['nullable', 'array'],
-            // Используем новую таблицу invoices
             'advance_changes.*.payment_id' => ['required', 'integer', 'exists:invoices,id'],
             'advance_changes.*.new_amount' => ['required', 'numeric', 'min:0'],
         ];
@@ -59,32 +63,22 @@ class StoreSupplementaryAgreementRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'number.unique' => 'Дополнительное соглашение с таким номером уже существует для этого контракта',
-            'supersede_agreement_ids.*.exists' => 'Одно из указанных дополнительных соглашений не найдено',
+            'number.unique' => trans_message('agreements.validation.number_unique'),
+            'supersede_agreement_ids.*.exists' => trans_message('agreements.validation.superseded_not_found'),
         ];
     }
 
-    /**
-     * Дополнительная валидация
-     * 
-     * BUSINESS LOGIC:
-     * Дополнительное соглашение может быть создано в следующих сценариях:
-     * 1. С изменением суммы контракта (change_amount != 0)
-     * 2. С аннулированием предыдущих ДС (supersede_agreement_ids)
-     * 3. Без изменения суммы - для изменения неценовых условий:
-     *    - Изменение сроков выполнения работ
-     *    - Замена материалов/работ на эквивалентные
-     *    - Изменение реквизитов, контактных лиц
-     *    - Изменение спецификации без изменения стоимости
-     *    - Изменение графика платежей
-     *    - Изменение условий гарантии и т.д.
-     * 
-     * В любом случае должен быть указан subject_changes (предмет изменений) - это обязательное поле.
-     */
-    public function withValidator($validator)
+    protected function failedValidation(Validator $validator): void
     {
-        // Валидация убрана - subject_changes является обязательным и достаточным
-        // для создания ДС без изменения суммы или аннулирования других ДС
+        $errors = (new ValidationException($validator))->errors();
+
+        throw new HttpResponseException(
+            AdminResponse::error(
+                trans_message('agreements.validation_error'),
+                422,
+                $errors
+            )
+        );
     }
 
     public function toDto(): SupplementaryAgreementDTO
@@ -106,4 +100,4 @@ class StoreSupplementaryAgreementRequest extends FormRequest
             supersede_agreement_ids: $supersedeIds,
         );
     }
-} 
+}

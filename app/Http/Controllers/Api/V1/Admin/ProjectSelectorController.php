@@ -1,52 +1,49 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
-use Illuminate\Http\JsonResponse;
+use App\Http\Responses\AdminResponse;
 use App\Services\Project\ProjectContextService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\Response;
+use Throwable;
+use function trans_message;
 
 class ProjectSelectorController extends Controller
 {
-    protected ProjectContextService $projectContextService;
-
-    public function __construct(ProjectContextService $projectContextService)
+    public function __construct(private readonly ProjectContextService $projectContextService)
     {
-        $this->projectContextService = $projectContextService;
     }
 
-    /**
-     * Получить список доступных проектов для выбора в админке
-     * 
-     * GET /api/v1/admin/available-projects
-     */
     public function availableProjects(Request $request): JsonResponse
     {
         try {
             $user = $request->user();
-            $organization = $user->currentOrganization;
-            
+            $organization = $user?->currentOrganization;
+
             if (!$organization) {
-                Log::warning('User has no current organization', [
-                    'user_id' => $user->id,
-                    'current_organization_id' => $user->current_organization_id,
+                Log::warning('project_selector.organization_not_found', [
+                    'user_id' => $user?->id,
+                    'current_organization_id' => $user?->current_organization_id,
                 ]);
-                
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Организация не найдена',
-                ], 404);
+
+                return AdminResponse::error(
+                    trans_message('project_selector.organization_not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
             }
-            
+
             $projects = $this->projectContextService->getAccessibleProjects($organization);
-            
-            $projectsData = array_map(function ($projectData) {
+            $projectsData = array_map(function (array $projectData) {
                 $project = $projectData['project'];
                 $role = $projectData['role'];
                 $isOwner = $projectData['is_owner'];
-                
+
                 return [
                     'id' => $project->id,
                     'name' => $project->name,
@@ -58,42 +55,37 @@ class ProjectSelectorController extends Controller
                     'role' => $role->value,
                     'role_label' => $role->label(),
                     'is_owner' => $isOwner,
-                    // Дополнительная информация для карточек
                     'created_at' => $project->created_at->format('Y-m-d'),
                 ];
             }, $projects);
-            
-            // Группируем по типу участия
+
             $groupedProjects = [
-                'owned' => array_values(array_filter($projectsData, fn($p) => $p['is_owner'])),
-                'participant' => array_values(array_filter($projectsData, fn($p) => !$p['is_owner'])),
+                'owned' => array_values(array_filter($projectsData, fn (array $project) => $project['is_owner'])),
+                'participant' => array_values(array_filter($projectsData, fn (array $project) => !$project['is_owner'])),
             ];
-            
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'projects' => array_values($projectsData),
-                    'grouped' => $groupedProjects,
-                    'totals' => [
-                        'all' => count($projectsData),
-                        'owned' => count($groupedProjects['owned']),
-                        'participant' => count($groupedProjects['participant']),
-                        'active' => count(array_filter($projectsData, fn($p) => !$p['is_archived'])),
-                        'archived' => count(array_filter($projectsData, fn($p) => $p['is_archived'])),
-                    ],
+
+            return AdminResponse::success([
+                'projects' => array_values($projectsData),
+                'grouped' => $groupedProjects,
+                'totals' => [
+                    'all' => count($projectsData),
+                    'owned' => count($groupedProjects['owned']),
+                    'participant' => count($groupedProjects['participant']),
+                    'active' => count(array_filter($projectsData, fn (array $project) => !$project['is_archived'])),
+                    'archived' => count(array_filter($projectsData, fn (array $project) => $project['is_archived'])),
                 ],
             ]);
-        } catch (\Exception $e) {
-            Log::error('Failed to get available projects for admin', [
+        } catch (Throwable $e) {
+            Log::error('project_selector.available_projects.error', [
                 'user_id' => $request->user()?->id,
-                'error' => $e->getMessage(),
+                'message' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to retrieve available projects',
-            ], 500);
+
+            return AdminResponse::error(
+                trans_message('project_selector.load_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 }

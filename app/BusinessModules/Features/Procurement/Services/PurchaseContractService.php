@@ -3,33 +3,70 @@
 namespace App\BusinessModules\Features\Procurement\Services;
 
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
-use App\Models\Contract;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
-use Illuminate\Support\Facades\DB;
+use App\Models\Contract;
 use App\Modules\Core\AccessController;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
-/**
- * Сервис для работы с договорами поставки
- */
 class PurchaseContractService
 {
-    /**
-     * Создать договор поставки из заказа
-     */
+    public function createManualContract(array $data, int $organizationId): Contract
+    {
+        $this->validateProcurementContractCreation($data, $organizationId);
+
+        DB::beginTransaction();
+
+        try {
+            $contract = Contract::create([
+                'organization_id' => $organizationId,
+                'project_id' => $data['project_id'] ?? null,
+                'supplier_id' => $data['supplier_id'],
+                'contract_category' => 'procurement',
+                'number' => $data['number'] ?? $this->generateContractNumber($organizationId),
+                'date' => $data['date'],
+                'subject' => $data['subject'],
+                'work_type_category' => ContractWorkTypeCategoryEnum::SUPPLY,
+                'base_amount' => $data['total_amount'],
+                'total_amount' => $data['total_amount'],
+                'status' => ContractStatusEnum::DRAFT,
+                'start_date' => $data['start_date'] ?? null,
+                'end_date' => $data['end_date'] ?? null,
+                'notes' => $data['notes'] ?? null,
+                'is_fixed_amount' => true,
+            ]);
+
+            try {
+                app(\App\Services\Contract\ContractStateEventService::class)
+                    ->createContractCreatedEvent($contract);
+            } catch (\Exception $e) {
+                Log::warning('Failed to create contract state event for manual procurement contract', [
+                    'contract_id' => $contract->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+
+            DB::commit();
+
+            return $contract->fresh(['supplier', 'project', 'organization']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
     public function createFromOrder(PurchaseOrder $order): Contract
     {
-        // Подготавливаем данные для валидации
         $validationData = [
             'supplier_id' => $order->supplier_id,
         ];
 
-        // Проверяем активацию модулей и данные
         $this->validateProcurementContractCreation($validationData, $order->organization_id);
 
         DB::beginTransaction();
+
         try {
-            // Генерируем номер договора
             $contractNumber = $this->generateContractNumber($order->organization_id);
 
             $contract = Contract::create([
@@ -44,20 +81,19 @@ class PurchaseContractService
                 'base_amount' => $order->total_amount,
                 'total_amount' => $order->total_amount,
                 'status' => ContractStatusEnum::DRAFT,
-                'currency' => $order->currency,
                 'notes' => "Создан из заказа поставщику: {$order->order_number}",
-                'uses_event_sourcing' => true,
+                'is_fixed_amount' => true,
             ]);
 
             $order->update(['contract_id' => $contract->id]);
 
             try {
-                $stateEventService = app(\App\Services\Contract\ContractStateEventService::class);
-                $stateEventService->createContractCreatedEvent($contract);
+                app(\App\Services\Contract\ContractStateEventService::class)
+                    ->createContractCreatedEvent($contract);
             } catch (\Exception $e) {
-                \Illuminate\Support\Facades\Log::warning('Failed to create contract state event for procurement', [
+                Log::warning('Failed to create contract state event for procurement', [
                     'contract_id' => $contract->id,
-                    'error' => $e->getMessage()
+                    'error' => $e->getMessage(),
                 ]);
             }
 
@@ -72,48 +108,37 @@ class PurchaseContractService
         }
     }
 
-    /**
-     * Валидация создания договора поставки
-     */
     public function validateProcurementContractCreation(array $data, int $organizationId): void
     {
         $accessController = app(AccessController::class);
 
-        // Проверяем активацию модуля procurement
         if (!$accessController->hasModuleAccess($organizationId, 'procurement')) {
             throw new \DomainException(
                 'Модуль "Управление закупками" не активирован. Активируйте модуль для создания договоров поставки.'
             );
         }
 
-        // Проверяем активацию модуля basic-warehouse
         if (!$accessController->hasModuleAccess($organizationId, 'basic-warehouse')) {
             throw new \DomainException(
                 'Модуль "Базовое управление складом" не активирован. Он необходим для работы с договорами поставки.'
             );
         }
 
-        // Проверяем, что либо contractor_id, либо supplier_id заполнен
         if (empty($data['supplier_id']) && empty($data['contractor_id'])) {
-            // Для обратной совместимости или если данные не переданы (хотя в createFromOrder мы их передаем)
-            // Но ошибка "Необходимо указать..." возникает именно здесь если массив пустой
             throw new \InvalidArgumentException(
                 'Необходимо указать поставщика (supplier_id) для создания договора поставки'
             );
         }
 
-        // Если указан supplier_id, проверяем существование поставщика
         if (!empty($data['supplier_id'])) {
             $supplier = \App\Models\Supplier::find($data['supplier_id']);
+
             if (!$supplier || $supplier->organization_id !== $organizationId) {
                 throw new \InvalidArgumentException('Поставщик не найден или не принадлежит организации');
             }
         }
     }
 
-    /**
-     * Связать договор с заказом
-     */
     public function linkToPurchaseOrder(Contract $contract, PurchaseOrder $order): void
     {
         if ($order->contract_id && $order->contract_id !== $contract->id) {
@@ -121,6 +146,7 @@ class PurchaseContractService
         }
 
         DB::beginTransaction();
+
         try {
             $order->update(['contract_id' => $contract->id]);
             $contract->update(['supplier_id' => $order->supplier_id]);
@@ -132,9 +158,6 @@ class PurchaseContractService
         }
     }
 
-    /**
-     * Генерировать номер договора поставки
-     */
     private function generateContractNumber(int $organizationId): string
     {
         $year = date('Y');
@@ -148,11 +171,11 @@ class PurchaseContractService
             ->first();
 
         $nextNumber = 1;
+
         if ($lastContract && preg_match('/(\d+)$/', $lastContract->number, $matches)) {
-            $nextNumber = intval($matches[1]) + 1;
+            $nextNumber = (int) $matches[1] + 1;
         }
 
         return sprintf('ДП-%s%s-%04d', $year, $month, $nextNumber);
     }
 }
-
