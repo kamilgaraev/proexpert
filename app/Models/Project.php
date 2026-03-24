@@ -262,7 +262,7 @@ class Project extends Model
                 ->orWhereHas('organizations', function ($organizationQuery) use ($organizationId) {
                     $organizationQuery
                         ->where('organizations.id', $organizationId)
-                        ->wherePivot('is_active', true);
+                        ->where('project_organization.is_active', true);
                 });
         });
     }
