@@ -14,12 +14,14 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationFeedb
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationExcelExportService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Illuminate\Support\Facades\Log;
 
@@ -31,6 +33,7 @@ class EstimateGenerationController extends Controller
         protected EstimateGenerationOrchestrator $orchestrator,
         protected DocumentParsingService $documentParsingService,
         protected EstimateDraftPersistenceService $draftPersistenceService,
+        protected EstimateGenerationExcelExportService $excelExportService,
     ) {}
 
     public function index(Request $request, Project $project): JsonResponse
@@ -168,45 +171,64 @@ class EstimateGenerationController extends Controller
         return AdminResponse::success($session->draft_payload ?? []);
     }
 
-    public function export(Request $request, Project $project, EstimateGenerationSession $session): StreamedResponse
+    public function export(Request $request, Project $project, EstimateGenerationSession $session): Response|StreamedResponse|JsonResponse
     {
-        $this->guardSession($request, $project, $session);
+        try {
+            $this->guardSession($request, $project, $session);
 
-        $draft = $session->draft_payload ?? [];
-        $format = (string) $request->query('format', 'json');
+            $draft = $session->draft_payload ?? [];
+            $format = (string) $request->query('format', 'excel');
 
-        if ($format === 'csv') {
-            return response()->streamDownload(function () use ($draft): void {
-                $handle = fopen('php://output', 'w');
-                fputcsv($handle, ['Локальная смета', 'Раздел', 'Работа', 'Ед.', 'Кол-во', 'Итого', 'Основание']);
+            if ($format === 'csv') {
+                return response()->streamDownload(function () use ($draft): void {
+                    $handle = fopen('php://output', 'w');
+                    fputcsv($handle, ['Локальная смета', 'Раздел', 'Работа', 'Ед.', 'Кол-во', 'Итого', 'Основание']);
 
-                foreach ($draft['local_estimates'] ?? [] as $localEstimate) {
-                    foreach ($localEstimate['sections'] ?? [] as $section) {
-                        foreach ($section['work_items'] ?? [] as $workItem) {
-                            fputcsv($handle, [
-                                $localEstimate['title'] ?? '',
-                                $section['title'] ?? '',
-                                $workItem['name'] ?? '',
-                                $workItem['unit'] ?? '',
-                                $workItem['quantity'] ?? '',
-                                $workItem['total_cost'] ?? '',
-                                $workItem['quantity_basis'] ?? '',
-                            ]);
+                    foreach ($draft['local_estimates'] ?? [] as $localEstimate) {
+                        foreach ($localEstimate['sections'] ?? [] as $section) {
+                            foreach ($section['work_items'] ?? [] as $workItem) {
+                                fputcsv($handle, [
+                                    $localEstimate['title'] ?? '',
+                                    $section['title'] ?? '',
+                                    $workItem['name'] ?? '',
+                                    $workItem['unit'] ?? '',
+                                    $workItem['quantity'] ?? '',
+                                    $workItem['total_cost'] ?? '',
+                                    $workItem['quantity_basis'] ?? '',
+                                ]);
+                            }
                         }
                     }
-                }
 
-                fclose($handle);
-            }, 'estimate-generation-draft-' . $session->id . '.csv', [
-                'Content-Type' => 'text/csv; charset=UTF-8',
+                    fclose($handle);
+                }, 'estimate-generation-draft-' . $session->id . '.csv', [
+                    'Content-Type' => 'text/csv; charset=UTF-8',
+                ]);
+            }
+
+            if ($format === 'json') {
+                return response()->streamDownload(function () use ($draft): void {
+                    echo json_encode($draft, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                }, 'estimate-generation-draft-' . $session->id . '.json', [
+                    'Content-Type' => 'application/json; charset=UTF-8',
+                ]);
+            }
+
+            $result = $this->excelExportService->export($session->loadMissing(['project.organization', 'organization']));
+            $filename = $result['filename'];
+            $encodedFilename = rawurlencode($filename);
+
+            return response($result['content'])
+                ->header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                ->header('Content-Disposition', "attachment; filename=\"{$filename}\"; filename*=UTF-8''{$encodedFilename}");
+        } catch (\Throwable $e) {
+            Log::error('[EstimateGeneration] Export failed', [
+                'error' => $e->getMessage(),
+                'session_id' => $session->id,
             ]);
-        }
 
-        return response()->streamDownload(function () use ($draft): void {
-            echo json_encode($draft, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        }, 'estimate-generation-draft-' . $session->id . '.json', [
-            'Content-Type' => 'application/json; charset=UTF-8',
-        ]);
+            return AdminResponse::error(trans_message('estimate_generation.export_error'), 500);
+        }
     }
 
     public function apply(ApplyEstimateGenerationDraftRequest $request, Project $project, EstimateGenerationSession $session): JsonResponse

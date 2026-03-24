@@ -9,11 +9,13 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticP
 use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecompositionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationExcelExportService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\WorkItemGenerationService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Export\ExcelEstimateBuilder;
 use Illuminate\Support\ServiceProvider;
 
 class EstimateGenerationServiceProvider extends ServiceProvider
@@ -30,6 +32,9 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(EstimatePricingService::class);
         $this->app->singleton(EstimateValidationService::class);
         $this->app->singleton(EstimateDraftPersistenceService::class);
+        $this->app->singleton(EstimateGenerationExcelExportService::class, fn () => new EstimateGenerationExcelExportService(
+            app(ExcelEstimateBuilder::class)
+        ));
         $this->app->singleton(EstimateGenerationOrchestrator::class);
     }
 
