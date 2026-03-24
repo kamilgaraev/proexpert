@@ -54,6 +54,11 @@ class SystemAnalysisService
      */
     public function analyzeProject(int $projectId, int $organizationId, User $user, array $options = []): array
     {
+        Project::query()
+            ->accessibleByOrganization($organizationId)
+            ->whereKey($projectId)
+            ->firstOrFail();
+
         // Проверяем кеш
         $cacheKey = "system_analysis:project:{$projectId}";
         $cacheTags = ['system_analysis', "project:{$projectId}", "org:{$organizationId}"];

@@ -47,6 +47,8 @@ class SystemAnalysisController extends Controller
             );
 
             return AdminResponse::success($result);
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('errors.resource_not_found'), 404);
         } catch (Throwable $e) {
             Log::error('system_analysis.analyze_project_failed', [
                 'project_id' => $projectId,
