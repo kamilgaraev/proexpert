@@ -56,6 +56,7 @@ class SystemAnalysisController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
+            report($e);
 
             return AdminResponse::error(trans_message('ai_assistant.system_analysis.analyze_project_error'), 500);
         }
@@ -91,6 +92,7 @@ class SystemAnalysisController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
+            report($e);
 
             return AdminResponse::error(trans_message('ai_assistant.system_analysis.analyze_organization_error'), 500);
         }
@@ -148,6 +150,7 @@ class SystemAnalysisController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
+            report($e);
 
             return AdminResponse::error(trans_message('ai_assistant.system_analysis.reports_load_error'), 500);
         }
@@ -166,6 +169,7 @@ class SystemAnalysisController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
+            report($e);
 
             return AdminResponse::error(trans_message('ai_assistant.system_analysis.report_load_error'), 500);
         }
@@ -187,6 +191,7 @@ class SystemAnalysisController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
+            report($e);
 
             return AdminResponse::error(trans_message('ai_assistant.system_analysis.recalculate_error'), 500);
         }
@@ -208,6 +213,7 @@ class SystemAnalysisController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
+            report($e);
 
             return AdminResponse::error(trans_message('ai_assistant.system_analysis.export_error'), 500);
         }
@@ -227,6 +233,7 @@ class SystemAnalysisController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
+            report($e);
 
             return AdminResponse::error(trans_message('ai_assistant.system_analysis.compare_error'), 500);
         }
@@ -248,6 +255,7 @@ class SystemAnalysisController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
+            report($e);
 
             return AdminResponse::error(trans_message('ai_assistant.system_analysis.delete_error'), 500);
         }
