@@ -103,6 +103,8 @@ class AppServiceProvider extends ServiceProvider
                 $app->make(\App\Services\Landing\OrganizationSubscriptionService::class)
             );
         });
+
+        $this->app->scoped(\App\Services\Schedule\AutoSchedulingService::class);
         
         // Репозиторий дашборда ЛК
         $this->app->bind(\App\Repositories\Landing\OrganizationDashboardRepositoryInterface::class, \App\Repositories\Landing\EloquentOrganizationDashboardRepository::class);
