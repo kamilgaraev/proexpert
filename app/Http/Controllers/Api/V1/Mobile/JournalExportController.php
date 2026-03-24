@@ -12,6 +12,7 @@ use App\Models\ConstructionJournalEntry;
 use App\Services\Mobile\MobileConstructionJournalService;
 use Carbon\Carbon;
 use DomainException;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -52,6 +53,8 @@ class JournalExportController extends Controller
                 $this->buildExportPayload($path),
                 trans_message('construction_journal.messages.export_ready')
             );
+        } catch (AuthorizationException $exception) {
+            return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -100,6 +103,8 @@ class JournalExportController extends Controller
                 $this->buildExportPayload($path),
                 trans_message('construction_journal.messages.export_ready')
             );
+        } catch (AuthorizationException $exception) {
+            return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -132,6 +137,8 @@ class JournalExportController extends Controller
                 $this->buildExportPayload($path),
                 trans_message('construction_journal.messages.export_ready')
             );
+        } catch (AuthorizationException $exception) {
+            return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {

@@ -2,133 +2,132 @@
 
 namespace App\Policies;
 
-use App\Models\User;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
+use App\Models\Project;
+use App\Models\User;
 
 class ConstructionJournalEntryPolicy
 {
-    /**
-     * Проверка наличия прав модуля
-     */
-    private function hasModulePermission(User $user, array $permissions): bool
+    private function hasProjectAccess(User $user, Project $project): bool
     {
+        $organizationId = $user->current_organization_id;
+
+        if (!$organizationId) {
+            return false;
+        }
+
+        return $project->hasOrganization($organizationId);
+    }
+
+    private function hasModulePermission(User $user, array $permissions, ?Project $project = null): bool
+    {
+        $organizationId = $project?->organization_id ?? $user->current_organization_id;
+
+        if (!$organizationId) {
+            return false;
+        }
+
         foreach ($permissions as $permission) {
-            if ($user->hasPermission("construction-journal.{$permission}")) {
+            if ($project && $user->hasPermission("construction-journal.{$permission}", [
+                'organization_id' => $organizationId,
+                'project_id' => $project->id,
+            ])) {
+                return true;
+            }
+
+            if ($user->hasPermission("construction-journal.{$permission}", [
+                'organization_id' => $organizationId,
+            ])) {
                 return true;
             }
         }
-        
+
         return false;
     }
 
-    /**
-     * Просмотр записи журнала
-     */
     public function view(User $user, ConstructionJournalEntry $entry): bool
     {
-        $journal = $entry->journal;
-        
-        // Проверить что журнал принадлежит текущей организации
-        if ($journal->organization_id !== $user->current_organization_id) {
+        $project = $entry->journal?->project;
+
+        if (!$project || !$this->hasProjectAccess($user, $project)) {
             return false;
         }
 
-        return $this->hasModulePermission($user, ['view', '*']);
+        return $this->hasModulePermission($user, ['view', '*'], $project);
     }
 
-    /**
-     * Создание записи в журнале
-     */
     public function create(User $user, ConstructionJournal $journal): bool
     {
-        // Проверить что журнал принадлежит текущей организации
-        if ($journal->organization_id !== $user->current_organization_id) {
+        $project = $journal->project;
+
+        if (!$project || !$this->hasProjectAccess($user, $project)) {
             return false;
         }
 
-        // Нельзя создавать записи в закрытом журнале
         if (!$journal->canBeEdited()) {
             return false;
         }
 
-        return $this->hasModulePermission($user, ['create', '*']);
+        return $this->hasModulePermission($user, ['create', '*'], $project);
     }
 
-    /**
-     * Обновление записи
-     */
     public function update(User $user, ConstructionJournalEntry $entry): bool
     {
-        $journal = $entry->journal;
-        
-        // Проверить что журнал принадлежит текущей организации
-        if ($journal->organization_id !== $user->current_organization_id) {
+        $project = $entry->journal?->project;
+
+        if (!$project || !$this->hasProjectAccess($user, $project)) {
             return false;
         }
 
-        // Можно редактировать только свои записи или если есть право редактирования всех
         $isOwner = $entry->created_by_user_id === $user->id;
-        $canEditAll = $this->hasModulePermission($user, ['edit_all', '*']);
+        $canEditAll = $this->hasModulePermission($user, ['edit_all', '*'], $project);
 
         if (!$isOwner && !$canEditAll) {
             return false;
         }
 
-        // Нельзя редактировать утвержденные или отклоненные записи
         if (!$entry->canBeEdited()) {
             return false;
         }
 
-        return $this->hasModulePermission($user, ['edit', '*']);
+        return $this->hasModulePermission($user, ['edit', '*'], $project);
     }
 
-    /**
-     * Удаление записи
-     */
     public function delete(User $user, ConstructionJournalEntry $entry): bool
     {
-        $journal = $entry->journal;
-        
-        // Проверить что журнал принадлежит текущей организации
-        if ($journal->organization_id !== $user->current_organization_id) {
+        $project = $entry->journal?->project;
+
+        if (!$project || !$this->hasProjectAccess($user, $project)) {
             return false;
         }
 
-        // Можно удалять только свои записи или если есть право удаления всех
         $isOwner = $entry->created_by_user_id === $user->id;
-        $canDeleteAll = $this->hasModulePermission($user, ['delete_all', '*']);
+        $canDeleteAll = $this->hasModulePermission($user, ['delete_all', '*'], $project);
 
         if (!$isOwner && !$canDeleteAll) {
             return false;
         }
 
-        // Нельзя удалять утвержденные записи
         if (!$entry->canBeEdited()) {
             return false;
         }
 
-        return $this->hasModulePermission($user, ['delete', '*']);
+        return $this->hasModulePermission($user, ['delete', '*'], $project);
     }
 
-    /**
-     * Утверждение/отклонение записи
-     */
     public function approve(User $user, ConstructionJournalEntry $entry): bool
     {
-        $journal = $entry->journal;
-        
-        // Проверить что журнал принадлежит текущей организации
-        if ($journal->organization_id !== $user->current_organization_id) {
+        $project = $entry->journal?->project;
+
+        if (!$project || !$this->hasProjectAccess($user, $project)) {
             return false;
         }
 
-        // Нельзя утверждать свою собственную запись
         if ($entry->created_by_user_id === $user->id) {
             return false;
         }
 
-        return $this->hasModulePermission($user, ['approve', '*']);
+        return $this->hasModulePermission($user, ['approve', '*'], $project);
     }
 }
-

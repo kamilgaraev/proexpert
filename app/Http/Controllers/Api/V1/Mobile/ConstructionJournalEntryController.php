@@ -13,6 +13,7 @@ use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
 use App\Services\Mobile\MobileConstructionJournalService;
 use DomainException;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -46,6 +47,8 @@ class ConstructionJournalEntryController extends Controller
                 trans_message('construction_journal.messages.entry_created'),
                 201
             );
+        } catch (AuthorizationException $exception) {
+            return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -89,6 +92,8 @@ class ConstructionJournalEntryController extends Controller
             ]);
 
             return MobileResponse::success($this->payloadService->mapEntry($entry, $user));
+        } catch (AuthorizationException $exception) {
+            return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -125,6 +130,8 @@ class ConstructionJournalEntryController extends Controller
                 $this->payloadService->mapEntry($entry, $user),
                 trans_message('construction_journal.messages.entry_updated')
             );
+        } catch (AuthorizationException $exception) {
+            return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -158,6 +165,8 @@ class ConstructionJournalEntryController extends Controller
             $this->journalService->deleteEntry($entry);
 
             return MobileResponse::success(null, trans_message('construction_journal.messages.entry_deleted'));
+        } catch (AuthorizationException $exception) {
+            return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -201,6 +210,8 @@ class ConstructionJournalEntryController extends Controller
                 ]), $user),
                 trans_message('construction_journal.messages.entry_submitted')
             );
+        } catch (AuthorizationException $exception) {
+            return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -244,6 +255,8 @@ class ConstructionJournalEntryController extends Controller
                 ]), $user),
                 trans_message('construction_journal.messages.entry_approved')
             );
+        } catch (AuthorizationException $exception) {
+            return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -291,6 +304,8 @@ class ConstructionJournalEntryController extends Controller
                 ]), $user),
                 trans_message('construction_journal.messages.entry_rejected')
             );
+        } catch (AuthorizationException $exception) {
+            return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {

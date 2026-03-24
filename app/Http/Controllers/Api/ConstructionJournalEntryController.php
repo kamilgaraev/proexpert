@@ -12,6 +12,7 @@ use App\Http\Responses\AdminResponse;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
 use DomainException;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -38,6 +39,8 @@ class ConstructionJournalEntryController extends Controller
                 trans_message('construction_journal.messages.entry_created'),
                 201
             );
+        } catch (AuthorizationException $exception) {
+            return AdminResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -75,6 +78,8 @@ class ConstructionJournalEntryController extends Controller
             ]);
 
             return AdminResponse::success($this->payloadService->mapEntry($entry, $request->user()));
+        } catch (AuthorizationException $exception) {
+            return AdminResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -105,6 +110,8 @@ class ConstructionJournalEntryController extends Controller
                 $this->payloadService->mapEntry($entry, $request->user()),
                 trans_message('construction_journal.messages.entry_updated')
             );
+        } catch (AuthorizationException $exception) {
+            return AdminResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -132,6 +139,8 @@ class ConstructionJournalEntryController extends Controller
             $this->journalService->deleteEntry($entry);
 
             return AdminResponse::success(null, trans_message('construction_journal.messages.entry_deleted'));
+        } catch (AuthorizationException $exception) {
+            return AdminResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -157,6 +166,8 @@ class ConstructionJournalEntryController extends Controller
                 $this->payloadService->mapEntry($entry->load(['journal', 'createdBy', 'approvedBy', 'workVolumes']), $request->user()),
                 trans_message('construction_journal.messages.entry_submitted')
             );
+        } catch (AuthorizationException $exception) {
+            return AdminResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -194,6 +205,8 @@ class ConstructionJournalEntryController extends Controller
                 ]), $request->user()),
                 trans_message('construction_journal.messages.entry_approved')
             );
+        } catch (AuthorizationException $exception) {
+            return AdminResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -235,6 +248,8 @@ class ConstructionJournalEntryController extends Controller
                 ]), $request->user()),
                 trans_message('construction_journal.messages.entry_rejected')
             );
+        } catch (AuthorizationException $exception) {
+            return AdminResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {

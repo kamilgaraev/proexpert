@@ -11,6 +11,7 @@ use App\Http\Responses\MobileResponse;
 use App\Models\ConstructionJournal;
 use App\Services\Mobile\MobileConstructionJournalService;
 use DomainException;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -43,6 +44,8 @@ class ConstructionJournalController extends Controller
                     $request->string('status')->toString() ?: null
                 )
             );
+        } catch (AuthorizationException $exception) {
+            return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -85,6 +88,8 @@ class ConstructionJournalController extends Controller
                 trans_message('construction_journal.messages.created'),
                 201
             );
+        } catch (AuthorizationException $exception) {
+            return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -139,6 +144,8 @@ class ConstructionJournalController extends Controller
             ]);
 
             return MobileResponse::success($this->payloadService->mapJournal($journal, $user, true));
+        } catch (AuthorizationException $exception) {
+            return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -178,6 +185,8 @@ class ConstructionJournalController extends Controller
                 $this->payloadService->mapJournal($journal, $user),
                 trans_message('construction_journal.messages.updated')
             );
+        } catch (AuthorizationException $exception) {
+            return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -214,6 +223,8 @@ class ConstructionJournalController extends Controller
                     'per_page',
                 ]))
             );
+        } catch (AuthorizationException $exception) {
+            return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {

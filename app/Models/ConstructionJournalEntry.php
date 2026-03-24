@@ -2,13 +2,13 @@
 
 namespace App\Models;
 
+use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
-use Carbon\Carbon;
 
 class ConstructionJournalEntry extends Model
 {
@@ -39,8 +39,6 @@ class ConstructionJournalEntry extends Model
         'weather_conditions' => 'array',
         'status' => JournalEntryStatusEnum::class,
     ];
-
-    // === RELATIONSHIPS ===
 
     public function journal(): BelongsTo
     {
@@ -87,8 +85,6 @@ class ConstructionJournalEntry extends Model
         return $this->hasMany(JournalMaterial::class, 'journal_entry_id');
     }
 
-    // === SCOPES ===
-
     public function scopeDraft($query)
     {
         return $query->where('status', JournalEntryStatusEnum::DRAFT);
@@ -119,11 +115,6 @@ class ConstructionJournalEntry extends Model
         return $query->whereBetween('entry_date', [$from, $to]);
     }
 
-    // === METHODS ===
-
-    /**
-     * Отправить запись на утверждение
-     */
     public function submit(): bool
     {
         if (!$this->status->canSubmit()) {
@@ -133,9 +124,6 @@ class ConstructionJournalEntry extends Model
         return $this->update(['status' => JournalEntryStatusEnum::SUBMITTED]);
     }
 
-    /**
-     * Утвердить запись
-     */
     public function approve(User $approver): bool
     {
         if (!$this->status->canApprove()) {
@@ -150,9 +138,6 @@ class ConstructionJournalEntry extends Model
         ]);
     }
 
-    /**
-     * Отклонить запись
-     */
     public function reject(User $approver, string $reason): bool
     {
         if (!$this->status->canReject()) {
@@ -167,58 +152,44 @@ class ConstructionJournalEntry extends Model
         ]);
     }
 
-    /**
-     * Проверить возможность редактирования записи
-     */
     public function canBeEdited(): bool
     {
         return $this->status->canEdit();
     }
 
-    /**
-     * Обновить прогресс связанной задачи графика
-     */
     public function updateScheduleProgress(): void
     {
         if (!$this->schedule_task_id || $this->status !== JournalEntryStatusEnum::APPROVED) {
             return;
         }
-
-        // Логика обновления будет в JournalScheduleIntegrationService
     }
 
-    /**
-     * Получить общий объем выполненных работ
-     */
     public function getTotalWorkVolume(): float
     {
         return $this->workVolumes()->sum('quantity');
     }
 
-    /**
-     * Получить общее количество рабочих
-     */
     public function getTotalWorkersCount(): int
     {
         return $this->workers()->sum('workers_count');
     }
 
-    /**
-     * Resolve route binding with organization check
-     */
     public function resolveRouteBinding($value, $field = null)
     {
-        $entry = static::where($this->getRouteKeyName(), $value)->firstOrFail();
-        
+        $entry = static::query()
+            ->with('journal.project.organizations')
+            ->where($field ?? $this->getRouteKeyName(), $value)
+            ->firstOrFail();
+
         $user = request()->user();
         if ($user && $user->current_organization_id) {
-            $journal = $entry->journal;
-            if ($journal && $journal->organization_id !== $user->current_organization_id) {
+            $project = $entry->journal?->project;
+
+            if (!$project || !$project->hasOrganization($user->current_organization_id)) {
                 abort(403, 'У вас нет доступа к этой записи журнала');
             }
         }
-        
+
         return $entry;
     }
 }
-
