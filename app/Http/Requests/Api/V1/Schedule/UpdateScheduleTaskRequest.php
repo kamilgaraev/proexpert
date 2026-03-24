@@ -85,6 +85,7 @@ class UpdateScheduleTaskRequest extends FormRequest
             'custom_fields' => 'sometimes|array|nullable',
             'tags' => 'sometimes|array|nullable',
             'sort_order' => 'sometimes|integer|min:0',
+            'propagate_children_dates' => 'sometimes|boolean',
 
             // Интервалы
             'intervals' => 'sometimes|array|nullable',

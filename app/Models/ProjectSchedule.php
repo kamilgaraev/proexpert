@@ -194,11 +194,16 @@ class ProjectSchedule extends Model
             return false;
         }
 
+        $displaySettings = array_merge($this->display_settings ?? [], [
+            'show_baseline' => true,
+        ]);
+
         $this->update([
             'baseline_start_date' => $this->planned_start_date,
             'baseline_end_date' => $this->planned_end_date,
             'baseline_saved_at' => now(),
             'baseline_saved_by_user_id' => $user?->id ?? Auth::id(),
+            'display_settings' => $displaySettings,
         ]);
 
         // Сохраняем базовые даты для всех задач
@@ -213,11 +218,16 @@ class ProjectSchedule extends Model
 
     public function clearBaseline(): bool
     {
+        $displaySettings = array_merge($this->display_settings ?? [], [
+            'show_baseline' => false,
+        ]);
+
         $this->update([
             'baseline_start_date' => null,
             'baseline_end_date' => null,
             'baseline_saved_at' => null,
             'baseline_saved_by_user_id' => null,
+            'display_settings' => $displaySettings,
         ]);
 
         // Очищаем базовые даты для всех задач

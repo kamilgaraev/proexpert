@@ -1,129 +1,158 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Resources\Api\V1\Schedule;
 
+use App\Models\ProjectSchedule;
+use App\Models\ScheduleTask;
+use App\Models\TaskDependency;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Collection;
 
+/**
+ * @mixin ProjectSchedule
+ */
 class ScheduleGanttResource extends JsonResource
 {
-    /**
-     * Resource для полного графика работ в формате Gantt-диаграммы
-     * Включает все задачи с иерархией, зависимости, даты для отрисовки
-     */
     public function toArray(Request $request): array
     {
-        // Получаем корневые задачи с полной иерархией
-        $overallProgressPercent = $this->calculateOverallProgressPercent();
-        $rootTasks = $this->rootTasks ?? $this->whenLoaded('rootTasks', $this->rootTasks);
-        
-        // Если rootTasks не загружены, загружаем задачи и строим дерево
-        if (!$rootTasks) {
-            $rootTasks = $this->tasks()->whereNull('parent_task_id')->orderBy('sort_order')->get();
-        }
+        /** @var ProjectSchedule $schedule */
+        $schedule = $this->resource;
+
+        $overallProgressPercent = $schedule->calculateOverallProgressPercent();
+        $allTasks = $schedule->relationLoaded('tasks')
+            ? $schedule->tasks
+            : $schedule->tasks()->orderBy('sort_order')->get();
+        $rootTasks = $this->buildTaskTree($allTasks);
+        $hasBaseline = $allTasks->contains(
+            fn (ScheduleTask $task) => $task->baseline_start_date !== null && $task->baseline_end_date !== null
+        );
+        $displaySettings = array_merge([
+            'show_critical_path' => true,
+            'show_float' => false,
+            'show_baseline' => $hasBaseline,
+            'show_actual_progress' => true,
+        ], $schedule->display_settings ?? []);
 
         return [
-            'id' => $this->id,
-            'name' => $this->name,
-            'description' => $this->description,
-            
-            // Даты графика
-            'planned_start_date' => $this->planned_start_date?->format('Y-m-d'),
-            'planned_end_date' => $this->planned_end_date?->format('Y-m-d'),
-            'actual_start_date' => $this->actual_start_date?->format('Y-m-d'),
-            'actual_end_date' => $this->actual_end_date?->format('Y-m-d'),
-            
-            // Прогресс
+            'id' => $schedule->id,
+            'name' => $schedule->name,
+            'description' => $schedule->description,
+            'planned_start_date' => $schedule->planned_start_date?->format('Y-m-d'),
+            'planned_end_date' => $schedule->planned_end_date?->format('Y-m-d'),
+            'actual_start_date' => $schedule->actual_start_date?->format('Y-m-d'),
+            'actual_end_date' => $schedule->actual_end_date?->format('Y-m-d'),
             'overall_progress_percent' => $overallProgressPercent,
-            'status' => $this->status->value ?? $this->status,
-            'status_label' => method_exists($this->status, 'label') ? $this->status->label() : ($this->status->value ?? $this->status),
-            'critical_path_calculated' => (bool) $this->critical_path_calculated,
-            'critical_path_duration_days' => $this->critical_path_duration_days,
-            
-            // Иерархия задач для Gantt
+            'status' => $schedule->status->value ?? $schedule->status,
+            'status_label' => method_exists($schedule->status, 'label')
+                ? $schedule->status->label()
+                : ($schedule->status->value ?? $schedule->status),
+            'critical_path_calculated' => (bool) $schedule->critical_path_calculated,
+            'critical_path_duration_days' => $schedule->critical_path_duration_days,
             'tasks' => ScheduleTaskGanttResource::collection($rootTasks),
-            
-            // Все зависимости для отрисовки линий
             'dependencies' => $this->when(
-                $this->relationLoaded('dependencies'),
-                $this->dependencies->map(function ($dependency) {
+                $schedule->relationLoaded('dependencies'),
+                $schedule->dependencies->map(function (TaskDependency $dependency) use ($allTasks) {
                     return [
                         'id' => $dependency->id,
                         'predecessor_task_id' => $dependency->predecessor_task_id,
                         'successor_task_id' => $dependency->successor_task_id,
                         'type' => $dependency->dependency_type->value ?? $dependency->dependency_type,
-                        'type_label' => $dependency->dependency_type->label() ?? '',
+                        'type_label' => method_exists($dependency->dependency_type, 'label')
+                            ? $dependency->dependency_type->label()
+                            : '',
                         'lag_days' => $dependency->lag_days ?? 0,
                         'is_critical' => $dependency->is_critical ?? false,
                         'is_active' => $dependency->is_active ?? true,
-                        // Координаты для отрисовки линии
-                        'gantt_line' => $this->getDependencyLineCoordinates($dependency),
+                        'gantt_line' => $this->getDependencyLineCoordinates($allTasks, $dependency),
                     ];
                 })
             ),
-            
-            // Метаданные для UI
             'gantt_meta' => [
-                'date_range' => $this->getDateRange(),
+                'date_range' => $this->getDateRange($schedule, $allTasks),
                 'current_date' => now()->format('Y-m-d'),
-                'view_mode' => 'days', // days, weeks, months
-                'timeline' => $this->generateTimeline(),
-                'critical_path_tasks' => $this->tasks()
+                'view_mode' => 'days',
+                'timeline' => $this->generateTimeline($schedule, $allTasks),
+                'critical_path_tasks' => $allTasks
                     ->where('is_critical', true)
                     ->pluck('id')
                     ->toArray(),
             ],
-            
-            // Настройки отображения
-            'display_settings' => $this->display_settings ?? [
-                'show_critical_path' => true,
-                'show_float' => false,
-                'show_baseline' => false,
-                'show_actual_progress' => true,
-            ],
+            'display_settings' => $displaySettings,
         ];
     }
 
     /**
-     * Получить диапазон дат для временной шкалы
+     * @param Collection<int, ScheduleTask> $allTasks
+     * @return Collection<int, ScheduleTask>
      */
-    protected function getDateRange(): array
+    protected function buildTaskTree(Collection $allTasks): Collection
     {
-        $allTasks = $this->tasks;
-        
+        $tasks = $allTasks->sortBy('sort_order')->values();
+        $childrenByParent = $tasks->groupBy(
+            fn (ScheduleTask $task) => $task->parent_task_id === null ? 'root' : (string) $task->parent_task_id
+        );
+
+        $attachChildren = function (?int $parentTaskId) use (&$attachChildren, $childrenByParent): Collection {
+            /** @var Collection<int, ScheduleTask> $children */
+            $children = $childrenByParent->get($parentTaskId === null ? 'root' : (string) $parentTaskId, collect());
+
+            return $children
+                ->sortBy('sort_order')
+                ->values()
+                ->map(function (ScheduleTask $task) use (&$attachChildren) {
+                    $task->setRelation('childTasks', $attachChildren($task->id));
+
+                    return $task;
+                });
+        };
+
+        return $attachChildren(null);
+    }
+
+    /**
+     * @param Collection<int, ScheduleTask>|null $allTasks
+     * @return array{start: string, end: string}
+     */
+    protected function getDateRange(ProjectSchedule $schedule, ?Collection $allTasks = null): array
+    {
+        $allTasks ??= $schedule->relationLoaded('tasks') ? $schedule->tasks : collect();
+
         if ($allTasks->isEmpty()) {
             return [
-                'start' => $this->planned_start_date?->format('Y-m-d') ?? now()->format('Y-m-d'),
-                'end' => $this->planned_end_date?->format('Y-m-d') ?? now()->addMonths(3)->format('Y-m-d'),
+                'start' => $schedule->planned_start_date?->format('Y-m-d') ?? now()->format('Y-m-d'),
+                'end' => $schedule->planned_end_date?->format('Y-m-d') ?? now()->addMonths(3)->format('Y-m-d'),
             ];
         }
 
-        $minDate = $allTasks->min(function ($task) {
-            return $task->planned_start_date ?? $task->actual_start_date ?? $task->early_start_date;
-        });
-
-        $maxDate = $allTasks->max(function ($task) {
-            return $task->planned_end_date ?? $task->actual_end_date ?? $task->late_finish_date;
-        });
+        $minDate = $allTasks->min(
+            fn (ScheduleTask $task) => $task->planned_start_date ?? $task->actual_start_date ?? $task->early_start_date
+        );
+        $maxDate = $allTasks->max(
+            fn (ScheduleTask $task) => $task->planned_end_date ?? $task->actual_end_date ?? $task->late_finish_date
+        );
 
         return [
-            'start' => $minDate?->format('Y-m-d') ?? $this->planned_start_date?->format('Y-m-d'),
-            'end' => $maxDate?->format('Y-m-d') ?? $this->planned_end_date?->format('Y-m-d'),
+            'start' => $minDate?->format('Y-m-d') ?? $schedule->planned_start_date?->format('Y-m-d') ?? now()->format('Y-m-d'),
+            'end' => $maxDate?->format('Y-m-d') ?? $schedule->planned_end_date?->format('Y-m-d') ?? now()->addMonths(3)->format('Y-m-d'),
         ];
     }
 
     /**
-     * Генерировать массив дат для временной шкалы
+     * @param Collection<int, ScheduleTask>|null $allTasks
+     * @return array<int, array{date: string, day: int, month: int, year: int, month_name: string, is_weekend: bool, is_today: bool}>
      */
-    protected function generateTimeline(): array
+    protected function generateTimeline(ProjectSchedule $schedule, ?Collection $allTasks = null): array
     {
-        $dateRange = $this->getDateRange();
-        $start = \Carbon\Carbon::parse($dateRange['start']);
-        $end = \Carbon\Carbon::parse($dateRange['end']);
-        
+        $dateRange = $this->getDateRange($schedule, $allTasks);
+        $start = Carbon::parse($dateRange['start']);
+        $end = Carbon::parse($dateRange['end']);
         $timeline = [];
         $current = $start->copy();
-        
+
         while ($current <= $end) {
             $timeline[] = [
                 'date' => $current->format('Y-m-d'),
@@ -136,27 +165,31 @@ class ScheduleGanttResource extends JsonResource
             ];
             $current->addDay();
         }
-        
+
         return $timeline;
     }
 
     /**
-     * Получить координаты для отрисовки линии зависимости
+     * @param Collection<int, ScheduleTask> $allTasks
+     * @return array{
+     *     from: array{task_id: int, date: string},
+     *     to: array{task_id: int, date: string},
+     *     lag_days: int
+     * }|null
      */
-    protected function getDependencyLineCoordinates($dependency): ?array
+    protected function getDependencyLineCoordinates(Collection $allTasks, TaskDependency $dependency): ?array
     {
-        $predecessor = $this->tasks->firstWhere('id', $dependency->predecessor_task_id);
-        $successor = $this->tasks->firstWhere('id', $dependency->successor_task_id);
-        
-        if (!$predecessor || !$successor) {
+        $predecessor = $allTasks->firstWhere('id', $dependency->predecessor_task_id);
+        $successor = $allTasks->firstWhere('id', $dependency->successor_task_id);
+
+        if (!$predecessor instanceof ScheduleTask || !$successor instanceof ScheduleTask) {
             return null;
         }
 
-        // Используем фактическую дату окончания предшественника или плановую
         $predEnd = $predecessor->actual_end_date ?? $predecessor->planned_end_date ?? $predecessor->early_finish_date;
         $succStart = $successor->actual_start_date ?? $successor->planned_start_date ?? $successor->early_start_date;
-        
-        if (!$predEnd || !$succStart) {
+
+        if ($predEnd === null || $succStart === null) {
             return null;
         }
 
@@ -173,4 +206,3 @@ class ScheduleGanttResource extends JsonResource
         ];
     }
 }
-

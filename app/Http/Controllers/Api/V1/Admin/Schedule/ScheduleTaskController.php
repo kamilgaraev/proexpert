@@ -1,23 +1,29 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1\Admin\Schedule;
 
 use App\Http\Controllers\Controller;
-use App\Models\ScheduleTask;
-use App\Models\ProjectSchedule;
 use App\Http\Requests\Api\V1\Schedule\UpdateScheduleTaskRequest;
 use App\Http\Resources\Api\V1\Schedule\ScheduleTaskResource;
 use App\Http\Responses\AdminResponse;
+use App\Models\ProjectSchedule;
+use App\Models\ScheduleTask;
+use App\Services\Schedule\ScheduleTaskMutationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
+use function trans_message;
 
 class ScheduleTaskController extends Controller
 {
-    /**
-     * Обновить задачу графика (для Gantt: drag&drop, resize)
-     */
+    public function __construct(
+        protected ScheduleTaskMutationService $scheduleTaskMutationService,
+    ) {
+    }
+
     public function update(UpdateScheduleTaskRequest $request, int $project, int $schedule, int $task): JsonResponse
     {
         try {
@@ -26,7 +32,7 @@ class ScheduleTaskController extends Controller
                 ->first();
 
             if (!$scheduleModel) {
-                return AdminResponse::error('График не найден', Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('schedule_management.schedule_not_found'), Response::HTTP_NOT_FOUND);
             }
 
             $taskModel = ScheduleTask::where('id', $task)
@@ -34,64 +40,27 @@ class ScheduleTaskController extends Controller
                 ->first();
 
             if (!$taskModel) {
-                return AdminResponse::error('Задача не найдена', Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('schedule_management.task_not_found'), Response::HTTP_NOT_FOUND);
             }
 
-            $validatedData = $request->validated();
-
-            $autoSchedulingService = app(\App\Services\Schedule\AutoSchedulingService::class);
-            $autoSchedulingService->clearUpdatedTasks();
-
-            $taskModel->update($validatedData);
-
-            if (array_key_exists('intervals', $validatedData)) {
-                $scheduleTaskService = app(\App\Services\Schedule\ScheduleTaskService::class);
-                $scheduleTaskService->syncTaskIntervals($taskModel, $validatedData['intervals']);
-                $taskModel->refresh();
-            }
-
-            if (
-                isset($validatedData['completed_quantity']) &&
-                $taskModel->quantity > 0
-            ) {
-                $taskModel->refresh();
-                $taskModel->recalculateProgressFromQuantity();
-                $validatedData['progress_percent'] = $taskModel->fresh()->progress_percent;
-            }
-
-            if (isset($validatedData['planned_start_date']) ||
-                isset($validatedData['planned_end_date']) ||
-                isset($validatedData['progress_percent']) ||
-                isset($validatedData['completed_quantity'])) {
-                $scheduleModel->update(['critical_path_calculated' => false]);
-            }
-
-            if (isset($validatedData['progress_percent']) || isset($validatedData['completed_quantity'])) {
-                $scheduleModel->recalculateProgress();
-            }
-
-            // Получаем список всех затронутых задач (включая тех, что обновились через обсерверы)
-            $affectedTasks = $autoSchedulingService->getUpdatedTasks();
-            $affectedTasksResources = ScheduleTaskResource::collection($affectedTasks);
+            $result = $this->scheduleTaskMutationService->updateTask($scheduleModel, $taskModel, $request->validated());
 
             return AdminResponse::success([
-                'task' => new ScheduleTaskResource($taskModel->fresh(['parentTask', 'childTasks', 'assignedUser', 'workType', 'measurementUnit', 'predecessorDependencies', 'successorDependencies', 'intervals'])),
-                'affected_tasks' => $affectedTasksResources,
-            ], 'Задача успешно обновлена');
-        } catch (\Exception $e) {
+                'task' => new ScheduleTaskResource($result['task']),
+                'affected_tasks' => ScheduleTaskResource::collection($result['affected_tasks']),
+            ], trans_message('schedule_management.task_updated'));
+        } catch (\Throwable $e) {
             Log::error('schedule.task.update.error', [
                 'project_id' => $project,
                 'schedule_id' => $schedule,
                 'task_id' => $task,
                 'error' => $e->getMessage(),
             ]);
-            return AdminResponse::error('Внутренняя ошибка сервера', 500);
+
+            return AdminResponse::error(trans_message('schedule_management.task_update_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
-    /**
-     * Удалить задачу
-     */
     public function destroy(Request $request, int $project, int $schedule, int $task): JsonResponse
     {
         try {
@@ -100,7 +69,7 @@ class ScheduleTaskController extends Controller
                 ->first();
 
             if (!$scheduleModel) {
-                return AdminResponse::error('График не найден', Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('schedule_management.schedule_not_found'), Response::HTTP_NOT_FOUND);
             }
 
             $taskModel = ScheduleTask::where('id', $task)
@@ -108,11 +77,11 @@ class ScheduleTaskController extends Controller
                 ->first();
 
             if (!$taskModel) {
-                return AdminResponse::error('Задача не найдена', Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('schedule_management.task_not_found'), Response::HTTP_NOT_FOUND);
             }
 
             if (ScheduleTask::where('parent_task_id', $task)->exists()) {
-                return AdminResponse::error('Невозможно удалить задачу, у которой есть подзадачи', Response::HTTP_CONFLICT);
+                return AdminResponse::error(trans_message('schedule_management.task_delete_has_children'), Response::HTTP_CONFLICT);
             }
 
             $taskModel->delete();
@@ -120,21 +89,19 @@ class ScheduleTaskController extends Controller
             $scheduleModel->update(['critical_path_calculated' => false]);
             $scheduleModel->recalculateProgress();
 
-            return AdminResponse::success(null, 'Задача успешно удалена');
-        } catch (\Exception $e) {
+            return AdminResponse::success(null, trans_message('schedule_management.task_deleted'));
+        } catch (\Throwable $e) {
             Log::error('schedule.task.destroy.error', [
                 'project_id' => $project,
                 'schedule_id' => $schedule,
                 'task_id' => $task,
                 'error' => $e->getMessage(),
             ]);
-            return AdminResponse::error('Внутренняя ошибка сервера', 500);
+
+            return AdminResponse::error(trans_message('schedule_management.task_delete_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
-    /**
-     * Получить детальную информацию о задаче
-     */
     public function show(Request $request, int $project, int $schedule, int $task): JsonResponse
     {
         try {
@@ -143,7 +110,7 @@ class ScheduleTaskController extends Controller
                 ->first();
 
             if (!$scheduleModel) {
-                return AdminResponse::error('График не найден', Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('schedule_management.schedule_not_found'), Response::HTTP_NOT_FOUND);
             }
 
             $taskModel = ScheduleTask::where('id', $task)
@@ -155,26 +122,26 @@ class ScheduleTaskController extends Controller
                     'workType',
                     'measurementUnit',
                     'predecessorDependencies',
-                    'successorDependencies'
+                    'successorDependencies',
                 ])
                 ->withCount('completedWorks')
                 ->with('intervals')
                 ->first();
 
             if (!$taskModel) {
-                return AdminResponse::error('Задача не найдена', Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('schedule_management.task_not_found'), Response::HTTP_NOT_FOUND);
             }
 
             return AdminResponse::success(new ScheduleTaskResource($taskModel));
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('schedule.task.show.error', [
                 'project_id' => $project,
                 'schedule_id' => $schedule,
                 'task_id' => $task,
                 'error' => $e->getMessage(),
             ]);
-            return AdminResponse::error('Внутренняя ошибка сервера', 500);
+
+            return AdminResponse::error(trans_message('schedule_management.task_load_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 }
-

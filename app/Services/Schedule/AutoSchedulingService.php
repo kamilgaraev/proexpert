@@ -10,6 +10,7 @@ use App\Models\TaskDependency;
 use App\Enums\Schedule\DependencyTypeEnum;
 use App\Enums\Schedule\TaskTypeEnum;
 use Carbon\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -163,6 +164,66 @@ class AutoSchedulingService
     protected function trackUpdatedTask(ScheduleTask $task): void
     {
         $this->updatedTasks[$task->id] = $task;
+    }
+
+    public function rememberTask(ScheduleTask $task): void
+    {
+        $this->trackUpdatedTask($task);
+    }
+
+    /**
+     * @param iterable<ScheduleTask> $tasks
+     */
+    public function rememberTasks(iterable $tasks): void
+    {
+        foreach ($tasks as $task) {
+            $this->trackUpdatedTask($task);
+        }
+    }
+
+    /**
+     * @return Collection<int, ScheduleTask>
+     */
+    public function shiftDescendants(ScheduleTask $task, int $deltaDays): Collection
+    {
+        if ($deltaDays === 0) {
+            return collect();
+        }
+
+        $allTasks = ScheduleTask::query()
+            ->where('schedule_id', $task->schedule_id)
+            ->orderBy('sort_order')
+            ->get();
+
+        $childrenByParent = $allTasks->groupBy('parent_task_id');
+        $descendants = collect();
+
+        $collectDescendants = function (int $parentTaskId) use (&$collectDescendants, $childrenByParent, $descendants): void {
+            /** @var Collection<int, ScheduleTask> $children */
+            $children = $childrenByParent->get($parentTaskId, collect());
+
+            foreach ($children as $child) {
+                $descendants->push($child);
+                $collectDescendants($child->id);
+            }
+        };
+
+        $collectDescendants($task->id);
+
+        foreach ($descendants as $descendant) {
+            if (!$descendant->planned_start_date || !$descendant->planned_end_date) {
+                continue;
+            }
+
+            $descendant->update([
+                'planned_start_date' => $descendant->planned_start_date->copy()->addDays($deltaDays)->toDateString(),
+                'planned_end_date' => $descendant->planned_end_date->copy()->addDays($deltaDays)->toDateString(),
+            ]);
+
+            $this->trackUpdatedTask($descendant->fresh());
+        }
+
+        return $descendants;
     }
 
     /**

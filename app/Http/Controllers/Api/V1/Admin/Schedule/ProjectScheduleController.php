@@ -100,13 +100,13 @@ class ProjectScheduleController extends Controller
 
             if ($request->get('format') === 'gantt') {
                 $scheduleModel->load([
-                    'rootTasks' => fn ($query) => $query->orderBy('sort_order')->withCount('completedWorks'),
-                    'rootTasks.childTasks' => fn ($query) => $query->orderBy('sort_order')
-                        ->with('intervals')
-                        ->withCount('completedWorks'),
-                    'rootTasks.intervals',
-                    'rootTasks.predecessorDependencies',
                     'tasks' => fn ($query) => $query->orderBy('sort_order')
+                        ->with([
+                            'assignedUser',
+                            'workType',
+                            'measurementUnit',
+                            'predecessorDependencies',
+                        ])
                         ->with('intervals')
                         ->withCount('completedWorks'),
                     'dependencies',
