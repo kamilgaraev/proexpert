@@ -20,8 +20,8 @@ class CollectBudgetDataAction
     public function execute(int $projectId, int $organizationId): array
     {
         $project = Project::with(['contracts', 'completedWorks'])
-            ->where('id', $projectId)
-            ->where('organization_id', $organizationId)
+            ->accessibleByOrganization($organizationId)
+            ->whereKey($projectId)
             ->firstOrFail();
 
         // Базовые данные бюджета

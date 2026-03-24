@@ -255,6 +255,18 @@ class Project extends Model
         return $query->where('cost_category_id', $costCategoryId);
     }
 
+    public function scopeAccessibleByOrganization($query, int $organizationId)
+    {
+        return $query->where(function ($scope) use ($organizationId) {
+            $scope->where('organization_id', $organizationId)
+                ->orWhereHas('organizations', function ($organizationQuery) use ($organizationId) {
+                    $organizationQuery
+                        ->where('organizations.id', $organizationId)
+                        ->wherePivot('is_active', true);
+                });
+        });
+    }
+
     /**
      * Получить контракты, связанные с проектом.
      */

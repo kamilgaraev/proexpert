@@ -17,8 +17,8 @@ class CollectMaterialsDataAction
      */
     public function execute(int $projectId, int $organizationId): array
     {
-        $project = Project::where('id', $projectId)
-            ->where('organization_id', $organizationId)
+        $project = Project::accessibleByOrganization($organizationId)
+            ->whereKey($projectId)
             ->firstOrFail();
 
         // Остатки на складах

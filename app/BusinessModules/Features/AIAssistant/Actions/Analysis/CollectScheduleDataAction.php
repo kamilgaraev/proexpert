@@ -17,8 +17,8 @@ class CollectScheduleDataAction
      */
     public function execute(int $projectId, int $organizationId): array
     {
-        $project = Project::where('id', $projectId)
-            ->where('organization_id', $organizationId)
+        $project = Project::accessibleByOrganization($organizationId)
+            ->whereKey($projectId)
             ->firstOrFail();
 
         // Задачи из ProjectSchedule
@@ -34,7 +34,7 @@ class CollectScheduleDataAction
         $pendingTasks = $tasks->where('status', 'pending')->count();
         
         // Просроченные задачи
-        $overdueTasks = $tasks->filter(function ($task) use ($now) {
+        $overdueTasks = $tasks->filter(function ($task) {
             return $task->end_date && 
                    $task->end_date->isPast() && 
                    $task->status !== 'completed';

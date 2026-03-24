@@ -152,7 +152,7 @@ class SystemAnalysisService
      */
     public function analyzeOrganization(int $organizationId, User $user, array $options = []): array
     {
-        $projects = Project::where('organization_id', $organizationId)
+        $projects = Project::accessibleByOrganization($organizationId)
             ->where('is_archived', false)
             ->get();
 
