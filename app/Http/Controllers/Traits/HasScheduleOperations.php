@@ -20,6 +20,7 @@ use App\Models\TaskDependency;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 use function trans_message;
 
 trait HasScheduleOperations
@@ -182,6 +183,22 @@ trait HasScheduleOperations
         $data['schedule_id'] = $schedule->id;
         $data['organization_id'] = $organizationId;
         $data['created_by_user_id'] = $request->user()->id;
+
+        $parentTask = null;
+        if (array_key_exists('parent_task_id', $data) && $data['parent_task_id'] !== null) {
+            $parentTask = ScheduleTask::query()
+                ->where('id', $data['parent_task_id'])
+                ->where('schedule_id', $schedule->id)
+                ->first();
+
+            if (!$parentTask) {
+                throw new HttpException(422, trans_message('schedule_management.task_not_found'));
+            }
+        }
+
+        $data['level'] = $parentTask
+            ? (($parentTask->level ?? 0) + 1)
+            : 0;
 
         $insertAfterId = $data['insert_after_id'] ?? null;
         unset($data['insert_after_id']);

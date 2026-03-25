@@ -149,10 +149,6 @@ class CreateScheduleTaskRequest extends FormRequest
             $defaults['priority'] = 'normal';
         }
         
-        if (!$this->has('level')) {
-            $defaults['level'] = 0;
-        }
-        
         if (!$this->has('sort_order')) {
             $defaults['sort_order'] = 0;
         }
