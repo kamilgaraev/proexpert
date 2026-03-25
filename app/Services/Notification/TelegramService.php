@@ -64,9 +64,44 @@ class TelegramService
         if ($contactForm->company) {
             $message .= "🏢 **Компания:** {$contactForm->company}\n";
         }
+
+        if ($contactForm->company_role) {
+            $message .= "🧩 **Роль компании:** {$contactForm->company_role}\n";
+        }
+
+        if ($contactForm->company_size) {
+            $message .= "🏗 **Масштаб:** {$contactForm->company_size}\n";
+        }
         
         $message .= "📋 **Тема:** {$contactForm->subject}\n";
         $message .= "💬 **Сообщение:**\n{$contactForm->message}\n\n";
+
+        $message .= "🔐 **PD consent:** " . ($contactForm->consent_to_personal_data ? 'yes' : 'no') . "\n";
+
+        if ($contactForm->consent_version) {
+            $message .= "📝 **Consent version:** {$contactForm->consent_version}\n";
+        }
+
+        if ($contactForm->page_source) {
+            $message .= "🧭 **Page source:** {$contactForm->page_source}\n";
+        }
+
+        $utmPayload = array_filter([
+            'utm_source' => $contactForm->utm_source,
+            'utm_medium' => $contactForm->utm_medium,
+            'utm_campaign' => $contactForm->utm_campaign,
+            'utm_term' => $contactForm->utm_term,
+            'utm_content' => $contactForm->utm_content,
+        ]);
+
+        if ($utmPayload !== []) {
+            $message .= "📊 **UTM:** " . implode(', ', array_map(
+                static fn (string $key, string $value): string => "{$key}={$value}",
+                array_keys($utmPayload),
+                array_values($utmPayload)
+            )) . "\n";
+        }
+
         $message .= "🕐 **Дата:** " . $contactForm->created_at->format('d.m.Y H:i') . "\n";
         $message .= "🆔 **ID заявки:** #{$contactForm->id}";
 

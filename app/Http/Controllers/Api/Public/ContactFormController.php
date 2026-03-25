@@ -1,61 +1,50 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
-use App\Models\ContactForm;
-use App\Services\Notification\TelegramService;
 use App\Http\Requests\Api\Public\StoreContactFormRequest;
 use App\Http\Resources\Api\Public\ContactFormResource;
+use App\Http\Responses\LandingResponse;
+use App\Services\Public\ContactFormService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
 
+use function trans_message;
+
 class ContactFormController extends Controller
 {
-    protected TelegramService $telegramService;
-
-    public function __construct(TelegramService $telegramService)
-    {
-        $this->telegramService = $telegramService;
-    }
+    public function __construct(
+        protected ContactFormService $contactFormService,
+    ) {}
 
     public function store(StoreContactFormRequest $request): JsonResponse
     {
         try {
-            $contactForm = ContactForm::create($request->validated());
+            $contactForm = $this->contactFormService->submit($request->validated());
 
-            $telegramSent = false;
-            if (config('telegram.notifications.contact_forms')) {
-                $telegramSent = $this->telegramService->sendContactFormNotification($contactForm);
-            }
-
-            if ($telegramSent) {
-                $contactForm->markAsProcessed();
-            }
-
-            Log::info('Contact form submitted', [
-                'contact_form_id' => $contactForm->id,
-                'email' => $contactForm->email,
-                'telegram_sent' => $telegramSent,
+            return LandingResponse::success(
+                new ContactFormResource($contactForm),
+                trans_message('public_contact.submitted'),
+                201
+            );
+        } catch (\Throwable $exception) {
+            Log::error('Public contact form submission error', [
+                'error' => $exception->getMessage(),
+                'email' => $request->input('email'),
+                'page_source' => $request->input('page_source'),
+                'company_role' => $request->input('company_role'),
+                'company_size' => $request->input('company_size'),
+                'ip' => $request->ip(),
+                'user_agent' => $request->userAgent(),
             ]);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Ваша заявка успешно отправлена. Мы свяжемся с вами в ближайшее время.',
-                'data' => new ContactFormResource($contactForm),
-            ], 201);
-
-        } catch (\Exception $e) {
-            Log::error('Contact form submission error', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Произошла ошибка при отправке заявки. Попробуйте позже.',
-            ], 500);
+            return LandingResponse::error(
+                trans_message('public_contact.submit_error'),
+                500
+            );
         }
     }
-
 }

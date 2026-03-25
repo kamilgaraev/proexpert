@@ -19,8 +19,18 @@ class ContactForm extends Model
         'email',
         'phone',
         'company',
+        'company_role',
+        'company_size',
         'subject',
         'message',
+        'consent_to_personal_data',
+        'consent_version',
+        'page_source',
+        'utm_source',
+        'utm_medium',
+        'utm_campaign',
+        'utm_term',
+        'utm_content',
         'status',
         'telegram_data',
         'is_processed',
@@ -28,6 +38,7 @@ class ContactForm extends Model
     ];
 
     protected $casts = [
+        'consent_to_personal_data' => 'boolean',
         'telegram_data' => 'array',
         'is_processed' => 'boolean',
         'processed_at' => 'datetime',
