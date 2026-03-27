@@ -27,7 +27,7 @@ class ContactFormController extends Controller
 
             return LandingResponse::success(
                 new ContactFormResource($contactForm),
-                trans_message('public_contact.submitted'),
+                trans_message('public_contact.submitted', [], $this->fallbackLocale()),
                 201
             );
         } catch (\Throwable $exception) {
@@ -42,9 +42,16 @@ class ContactFormController extends Controller
             ]);
 
             return LandingResponse::error(
-                trans_message('public_contact.submit_error'),
+                trans_message('public_contact.submit_error', [], $this->fallbackLocale()),
                 500
             );
         }
+    }
+
+    protected function fallbackLocale(): string
+    {
+        $locale = config('app.fallback_locale', 'ru');
+
+        return is_string($locale) && $locale !== '' ? $locale : 'ru';
     }
 }
