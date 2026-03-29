@@ -10,11 +10,22 @@
     "system_admin.dashboard.view",
     "system_admin.profile.view",
     "system_admin.profile.update",
-    "system_admin.blog.posts.view",
-    "system_admin.blog.posts.create",
-    "system_admin.blog.posts.update",
-    "system_admin.blog.posts.publish",
-    "system_admin.blog.categories.manage"
+    "system_admin.blog.articles.view",
+    "system_admin.blog.articles.create",
+    "system_admin.blog.articles.update",
+    "system_admin.blog.articles.delete",
+    "system_admin.blog.articles.publish",
+    "system_admin.blog.categories.manage",
+    "system_admin.blog.tags.manage",
+    "system_admin.blog.media.view",
+    "system_admin.blog.media.upload",
+    "system_admin.blog.media.manage",
+    "system_admin.blog.media.delete",
+    "system_admin.blog.comments.moderate",
+    "system_admin.blog.seo.manage",
+    "system_admin.blog.revisions.view",
+    "system_admin.blog.revisions.restore",
+    "system_admin.blog.preview.view"
   ],
   "module_permissions": {
     "profile": [
@@ -22,11 +33,22 @@
       "system_admin.profile.update"
     ],
     "blog": [
-      "system_admin.blog.posts.view",
-      "system_admin.blog.posts.create",
-      "system_admin.blog.posts.update",
-      "system_admin.blog.posts.publish",
-      "system_admin.blog.categories.manage"
+      "system_admin.blog.articles.view",
+      "system_admin.blog.articles.create",
+      "system_admin.blog.articles.update",
+      "system_admin.blog.articles.delete",
+      "system_admin.blog.articles.publish",
+      "system_admin.blog.categories.manage",
+      "system_admin.blog.tags.manage",
+      "system_admin.blog.media.view",
+      "system_admin.blog.media.upload",
+      "system_admin.blog.media.manage",
+      "system_admin.blog.media.delete",
+      "system_admin.blog.comments.moderate",
+      "system_admin.blog.seo.manage",
+      "system_admin.blog.revisions.view",
+      "system_admin.blog.revisions.restore",
+      "system_admin.blog.preview.view"
     ]
   },
   "interface_access": [

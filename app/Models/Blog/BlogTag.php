@@ -1,7 +1,10 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models\Blog;
 
+use App\Enums\Blog\BlogContextEnum;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -12,6 +15,8 @@ class BlogTag extends Model
     use HasFactory;
 
     protected $fillable = [
+        'organization_group_id',
+        'blog_context',
         'name',
         'slug',
         'description',
@@ -21,6 +26,7 @@ class BlogTag extends Model
     ];
 
     protected $casts = [
+        'blog_context' => BlogContextEnum::class,
         'is_active' => 'boolean',
         'usage_count' => 'integer',
     ];
@@ -36,12 +42,23 @@ class BlogTag extends Model
         return $this->articles()->where('blog_articles.status', 'published');
     }
 
-    public function setNameAttribute($value): void
+    public function setNameAttribute(string $value): void
     {
         $this->attributes['name'] = $value;
+
         if (empty($this->attributes['slug'])) {
             $this->attributes['slug'] = Str::slug($value);
         }
+    }
+
+    public function scopeMarketing($query)
+    {
+        return $query->where('blog_context', BlogContextEnum::MARKETING->value);
+    }
+
+    public function scopeHolding($query)
+    {
+        return $query->where('blog_context', BlogContextEnum::HOLDING->value);
     }
 
     public function scopeActive($query)
@@ -53,14 +70,4 @@ class BlogTag extends Model
     {
         return $query->orderBy('usage_count', 'desc');
     }
-
-    public function incrementUsage(): void
-    {
-        $this->increment('usage_count');
-    }
-
-    public function decrementUsage(): void
-    {
-        $this->decrement('usage_count');
-    }
-} 
+}

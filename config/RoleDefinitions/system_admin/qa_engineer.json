@@ -15,7 +15,11 @@
     "system_admin.users.create",
     "system_admin.users.update",
     "system_admin.organizations.view",
-    "system_admin.subscription_plans.view"
+    "system_admin.subscription_plans.view",
+    "system_admin.blog.articles.view",
+    "system_admin.blog.media.view",
+    "system_admin.blog.revisions.view",
+    "system_admin.blog.preview.view"
   ],
   "module_permissions": {
     "profile": [
@@ -32,6 +36,12 @@
     ],
     "subscription_plans": [
       "system_admin.subscription_plans.view"
+    ],
+    "blog": [
+      "system_admin.blog.articles.view",
+      "system_admin.blog.media.view",
+      "system_admin.blog.revisions.view",
+      "system_admin.blog.preview.view"
     ]
   },
   "interface_access": [

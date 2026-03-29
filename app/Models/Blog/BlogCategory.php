@@ -1,13 +1,16 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models\Blog;
 
+use App\Enums\Blog\BlogContextEnum;
+use App\Models\OrganizationGroup;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
-use App\Models\OrganizationGroup;
 
 class BlogCategory extends Model
 {
@@ -15,6 +18,7 @@ class BlogCategory extends Model
 
     protected $fillable = [
         'organization_group_id',
+        'blog_context',
         'name',
         'slug',
         'description',
@@ -27,6 +31,7 @@ class BlogCategory extends Model
     ];
 
     protected $casts = [
+        'blog_context' => BlogContextEnum::class,
         'is_active' => 'boolean',
         'sort_order' => 'integer',
     ];
@@ -46,12 +51,23 @@ class BlogCategory extends Model
         return $this->articles()->where('status', 'published');
     }
 
-    public function setNameAttribute($value): void
+    public function setNameAttribute(string $value): void
     {
         $this->attributes['name'] = $value;
+
         if (empty($this->attributes['slug'])) {
             $this->attributes['slug'] = Str::slug($value);
         }
+    }
+
+    public function scopeMarketing($query)
+    {
+        return $query->where('blog_context', BlogContextEnum::MARKETING->value);
+    }
+
+    public function scopeHolding($query)
+    {
+        return $query->where('blog_context', BlogContextEnum::HOLDING->value);
     }
 
     public function scopeActive($query)
@@ -73,4 +89,4 @@ class BlogCategory extends Model
     {
         return $this->publishedArticles()->count();
     }
-} 
+}

@@ -226,11 +226,17 @@ class RouteServiceProvider extends ServiceProvider
                      require base_path('routes/api/v1/landing/billing.php');
                      require base_path('routes/api/v1/landing/landing_admin_auth.php');
                      require base_path('routes/api/v1/landing/landing_admins.php');
-                     require base_path('routes/api/v1/landing_admin_blog.php');
                      
                      // Holding API Routes (объединены: лендинг, отчеты, публичные данные)
                      require base_path('routes/api/v1/landing/holding.php');
                  });
+
+            Route::middleware('api')
+                ->prefix('api/v1/blog')
+                ->as('api.v1.blog.')
+                ->group(function() {
+                    require base_path('routes/api/v1/blog_public.php');
+                });
 
             // Admin API Routes
             Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.context'])

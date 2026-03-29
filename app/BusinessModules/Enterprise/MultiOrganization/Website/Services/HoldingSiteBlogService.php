@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Enterprise\MultiOrganization\Website\Services;
 
+use App\Enums\Blog\BlogContextEnum;
 use App\Models\Blog\BlogArticle;
 use App\Models\Blog\BlogCategory;
 use App\Models\OrganizationGroup;
@@ -16,6 +17,7 @@ class HoldingSiteBlogService
     {
         $query = BlogArticle::query()
             ->with('category:id,name,slug')
+            ->where('blog_context', BlogContextEnum::HOLDING->value)
             ->where('organization_group_id', $group->id)
             ->orderByDesc('published_at')
             ->orderByDesc('updated_at');
@@ -38,6 +40,7 @@ class HoldingSiteBlogService
 
         return BlogArticle::create([
             'organization_group_id' => $group->id,
+            'blog_context' => BlogContextEnum::HOLDING->value,
             'category_id' => $category->id,
             'author_id' => null,
             'created_by_user_id' => $user->id,
@@ -116,6 +119,7 @@ class HoldingSiteBlogService
     {
         return BlogArticle::query()
             ->with('category:id,name,slug')
+            ->where('blog_context', BlogContextEnum::HOLDING->value)
             ->where('organization_group_id', $group->id)
             ->where('slug', $slug)
             ->where('status', 'published')
@@ -163,6 +167,7 @@ class HoldingSiteBlogService
     {
         if ($categoryId) {
             $category = BlogCategory::query()
+                ->where('blog_context', BlogContextEnum::HOLDING->value)
                 ->where('organization_group_id', $group->id)
                 ->where('id', $categoryId)
                 ->first();
@@ -175,6 +180,7 @@ class HoldingSiteBlogService
         return BlogCategory::firstOrCreate(
             [
                 'organization_group_id' => $group->id,
+                'blog_context' => BlogContextEnum::HOLDING->value,
                 'slug' => 'holding-news',
             ],
             [
@@ -195,6 +201,7 @@ class HoldingSiteBlogService
 
         while (
             BlogArticle::query()
+                ->where('blog_context', BlogContextEnum::HOLDING->value)
                 ->where('slug', $slug)
                 ->when($ignoreId, fn ($query) => $query->where('id', '!=', $ignoreId))
                 ->exists()

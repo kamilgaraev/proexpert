@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api\V1\Landing;
 
 use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\HoldingSite;
 use App\BusinessModules\Enterprise\MultiOrganization\Website\Services\HoldingSiteBlogService;
+use App\Enums\Blog\BlogContextEnum;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\LandingResponse;
 use App\Models\Blog\BlogArticle;
@@ -94,6 +95,7 @@ class SiteBlogArticlesController extends Controller
             $group = $this->resolveHoldingGroup($request);
             $site = $this->resolveHoldingSite($group);
             $article = BlogArticle::query()
+                ->where('blog_context', BlogContextEnum::HOLDING->value)
                 ->where('organization_group_id', $group->id)
                 ->where('id', $articleId)
                 ->firstOrFail();
@@ -142,6 +144,7 @@ class SiteBlogArticlesController extends Controller
             $group = $this->resolveHoldingGroup($request);
             $site = $this->resolveHoldingSite($group);
             $article = BlogArticle::query()
+                ->where('blog_context', BlogContextEnum::HOLDING->value)
                 ->where('organization_group_id', $group->id)
                 ->where('id', $articleId)
                 ->firstOrFail();

@@ -1,13 +1,17 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models\Blog;
 
+use App\Enums\Blog\BlogCommentStatusEnum;
+use App\Enums\Blog\BlogContextEnum;
+use App\Models\LandingAdmin;
+use App\Models\SystemAdmin;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use App\Models\LandingAdmin;
-use App\Enums\Blog\BlogCommentStatusEnum;
 
 class BlogComment extends Model
 {
@@ -15,6 +19,7 @@ class BlogComment extends Model
 
     protected $fillable = [
         'article_id',
+        'blog_context',
         'parent_id',
         'author_name',
         'author_email',
@@ -25,10 +30,12 @@ class BlogComment extends Model
         'status',
         'approved_at',
         'approved_by',
+        'approved_by_system_admin_id',
         'likes_count',
     ];
 
     protected $casts = [
+        'blog_context' => BlogContextEnum::class,
         'status' => BlogCommentStatusEnum::class,
         'approved_at' => 'datetime',
         'likes_count' => 'integer',
@@ -54,6 +61,11 @@ class BlogComment extends Model
         return $this->belongsTo(LandingAdmin::class, 'approved_by');
     }
 
+    public function approvedBySystemAdmin(): BelongsTo
+    {
+        return $this->belongsTo(SystemAdmin::class, 'approved_by_system_admin_id');
+    }
+
     public function scopeApproved($query)
     {
         return $query->where('status', BlogCommentStatusEnum::APPROVED);
@@ -64,14 +76,14 @@ class BlogComment extends Model
         return $query->where('status', BlogCommentStatusEnum::PENDING);
     }
 
+    public function scopeMarketing($query)
+    {
+        return $query->where('blog_context', BlogContextEnum::MARKETING->value);
+    }
+
     public function scopeRootComments($query)
     {
         return $query->whereNull('parent_id');
-    }
-
-    public function scopeReplies($query)
-    {
-        return $query->whereNotNull('parent_id');
     }
 
     public function getIsApprovedAttribute(): bool
@@ -81,15 +93,15 @@ class BlogComment extends Model
 
     public function getIsRootAttribute(): bool
     {
-        return is_null($this->parent_id);
+        return $this->parent_id === null;
     }
 
-    public function approve(LandingAdmin $admin): void
+    public function approveBySystemAdmin(SystemAdmin $admin): void
     {
         $this->update([
             'status' => BlogCommentStatusEnum::APPROVED,
             'approved_at' => now(),
-            'approved_by' => $admin->id,
+            'approved_by_system_admin_id' => $admin->id,
         ]);
     }
 
@@ -106,4 +118,4 @@ class BlogComment extends Model
             'status' => BlogCommentStatusEnum::SPAM,
         ]);
     }
-} 
+}

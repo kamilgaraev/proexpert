@@ -15,7 +15,10 @@
     "system_admin.users.view",
     "system_admin.organizations.view",
     "system_admin.subscription_plans.view",
-    "system_admin.audit_logs.view"
+    "system_admin.audit_logs.view",
+    "system_admin.blog.articles.view",
+    "system_admin.blog.revisions.view",
+    "system_admin.blog.preview.view"
   ],
   "module_permissions": {
     "profile": [
@@ -36,6 +39,11 @@
     ],
     "security": [
       "system_admin.audit_logs.view"
+    ],
+    "blog": [
+      "system_admin.blog.articles.view",
+      "system_admin.blog.revisions.view",
+      "system_admin.blog.preview.view"
     ]
   },
   "interface_access": [

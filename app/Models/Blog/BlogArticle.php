@@ -1,18 +1,22 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models\Blog;
 
+use App\Enums\Blog\BlogArticleStatusEnum;
+use App\Enums\Blog\BlogContextEnum;
+use App\Models\LandingAdmin;
+use App\Models\OrganizationGroup;
+use App\Models\SystemAdmin;
+use App\Models\User;
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use App\Models\LandingAdmin;
-use App\Models\OrganizationGroup;
-use App\Models\User;
-use App\Enums\Blog\BlogArticleStatusEnum;
 use Illuminate\Support\Str;
-use Carbon\Carbon;
 
 class BlogArticle extends Model
 {
@@ -20,14 +24,19 @@ class BlogArticle extends Model
 
     protected $fillable = [
         'organization_group_id',
+        'blog_context',
         'category_id',
         'author_id',
+        'author_system_admin_id',
         'created_by_user_id',
         'updated_by_user_id',
+        'last_edited_by_system_admin_id',
         'title',
         'slug',
         'excerpt',
         'content',
+        'editor_document',
+        'editor_version',
         'featured_image',
         'gallery_images',
         'meta_title',
@@ -49,19 +58,24 @@ class BlogArticle extends Model
         'is_published_in_rss',
         'noindex',
         'sort_order',
+        'last_autosaved_at',
     ];
 
     protected $casts = [
+        'blog_context' => BlogContextEnum::class,
+        'editor_document' => 'array',
         'gallery_images' => 'array',
         'meta_keywords' => 'array',
         'structured_data' => 'array',
         'status' => BlogArticleStatusEnum::class,
         'published_at' => 'datetime',
         'scheduled_at' => 'datetime',
+        'last_autosaved_at' => 'datetime',
         'views_count' => 'integer',
         'likes_count' => 'integer',
         'comments_count' => 'integer',
         'reading_time' => 'integer',
+        'editor_version' => 'integer',
         'is_featured' => 'boolean',
         'allow_comments' => 'boolean',
         'is_published_in_rss' => 'boolean',
@@ -84,6 +98,11 @@ class BlogArticle extends Model
         return $this->belongsTo(LandingAdmin::class, 'author_id');
     }
 
+    public function systemAuthor(): BelongsTo
+    {
+        return $this->belongsTo(SystemAdmin::class, 'author_system_admin_id');
+    }
+
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by_user_id');
@@ -92,6 +111,11 @@ class BlogArticle extends Model
     public function updater(): BelongsTo
     {
         return $this->belongsTo(User::class, 'updated_by_user_id');
+    }
+
+    public function lastEditedBySystemAdmin(): BelongsTo
+    {
+        return $this->belongsTo(SystemAdmin::class, 'last_edited_by_system_admin_id');
     }
 
     public function tags(): BelongsToMany
@@ -110,18 +134,37 @@ class BlogArticle extends Model
         return $this->comments()->where('status', 'approved');
     }
 
-    public function setTitleAttribute($value): void
+    public function revisions(): HasMany
+    {
+        return $this->hasMany(BlogArticleRevision::class, 'article_id');
+    }
+
+    public function setTitleAttribute(string $value): void
     {
         $this->attributes['title'] = $value;
+
         if (empty($this->attributes['slug'])) {
             $this->attributes['slug'] = Str::slug($value);
         }
     }
 
+    public function scopeMarketing($query)
+    {
+        return $query->where('blog_context', BlogContextEnum::MARKETING->value);
+    }
+
+    public function scopeHolding($query)
+    {
+        return $query->where('blog_context', BlogContextEnum::HOLDING->value);
+    }
+
     public function scopePublished($query)
     {
         return $query->where('status', BlogArticleStatusEnum::PUBLISHED)
-            ->where('published_at', '<=', now());
+            ->where(function ($builder): void {
+                $builder->whereNull('published_at')
+                    ->orWhere('published_at', '<=', now());
+            });
     }
 
     public function scopeForOrganizationGroup($query, int $organizationGroupId)
@@ -140,36 +183,42 @@ class BlogArticle extends Model
             ->where('scheduled_at', '>', now());
     }
 
-    public function scopeByCategory($query, $categoryId)
+    public function scopeByCategory($query, int $categoryId)
     {
         return $query->where('category_id', $categoryId);
     }
 
-    public function scopeByTag($query, $tagId)
+    public function scopeByTag($query, int $tagId)
     {
-        return $query->whereHas('tags', function ($q) use ($tagId) {
-            $q->where('blog_tags.id', $tagId);
+        return $query->whereHas('tags', function ($builder) use ($tagId): void {
+            $builder->where('blog_tags.id', $tagId);
         });
     }
 
-    public function scopeSearch($query, $search)
+    public function scopeSearch($query, string $search)
     {
-        return $query->where(function ($q) use ($search) {
-            $q->where('title', 'like', "%{$search}%")
-                ->orWhere('content', 'like', "%{$search}%")
-                ->orWhere('excerpt', 'like', "%{$search}%");
+        return $query->where(function ($builder) use ($search): void {
+            $builder->where('title', 'like', '%' . $search . '%')
+                ->orWhere('content', 'like', '%' . $search . '%')
+                ->orWhere('excerpt', 'like', '%' . $search . '%')
+                ->orWhereHas('tags', function ($tagQuery) use ($search): void {
+                    $tagQuery->where('blog_tags.name', 'like', '%' . ltrim($search, '#') . '%');
+                });
         });
     }
 
     public function getIsPublishedAttribute(): bool
     {
-        return $this->status === BlogArticleStatusEnum::PUBLISHED && 
-               $this->published_at <= now();
+        if ($this->status !== BlogArticleStatusEnum::PUBLISHED) {
+            return false;
+        }
+
+        return $this->published_at === null || $this->published_at->lte(now());
     }
 
     public function getReadablePublishedAtAttribute(): string
     {
-        return $this->published_at ? $this->published_at->format('d.m.Y H:i') : '';
+        return $this->published_at?->format('d.m.Y H:i') ?? '';
     }
 
     public function getEstimatedReadingTimeAttribute(): int
@@ -177,10 +226,10 @@ class BlogArticle extends Model
         if ($this->reading_time) {
             return $this->reading_time;
         }
-        
-        $wordsPerMinute = 200;
-        $wordCount = str_word_count(strip_tags($this->content));
-        return max(1, ceil($wordCount / $wordsPerMinute));
+
+        $wordCount = str_word_count(strip_tags((string) $this->content));
+
+        return max(1, (int) ceil($wordCount / 200));
     }
 
     public function incrementViews(): void
@@ -190,16 +239,33 @@ class BlogArticle extends Model
 
     public function getUrlAttribute(): string
     {
-        return "/blog/{$this->slug}";
+        return '/blog/' . $this->slug;
     }
 
-    public function getMetaTitleAttribute($value): string
+    public function getMetaTitleAttribute(?string $value): string
     {
-        return $value ?: $this->title;
+        return $value ?: (string) $this->title;
     }
 
-    public function getMetaDescriptionAttribute($value): string
+    public function getMetaDescriptionAttribute(?string $value): string
     {
-        return $value ?: Str::limit(strip_tags($this->excerpt ?: $this->content), 160);
+        return $value ?: Str::limit(strip_tags((string) ($this->excerpt ?: $this->content)), 160);
     }
-} 
+
+    public function getAuthorLabelAttribute(): string
+    {
+        return $this->systemAuthor?->name
+            ?? $this->author?->name
+            ?? 'ProHelper Team';
+    }
+
+    public function getAuthorEmailAttribute(): ?string
+    {
+        return $this->systemAuthor?->email ?? $this->author?->email;
+    }
+
+    public function getPublishTimestamp(): ?CarbonInterface
+    {
+        return $this->published_at;
+    }
+}

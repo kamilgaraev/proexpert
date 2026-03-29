@@ -21,6 +21,13 @@ class AuthServiceProvider extends ServiceProvider
         \App\Models\ProjectSchedule::class => \App\Policies\ProjectSchedulePolicy::class,
         \App\Models\ConstructionJournal::class => \App\Policies\ConstructionJournalPolicy::class,
         \App\Models\ConstructionJournalEntry::class => \App\Policies\ConstructionJournalEntryPolicy::class,
+        \App\Models\Blog\BlogArticle::class => \App\Policies\SystemAdmin\BlogArticlePolicy::class,
+        \App\Models\Blog\BlogCategory::class => \App\Policies\SystemAdmin\BlogCategoryPolicy::class,
+        \App\Models\Blog\BlogTag::class => \App\Policies\SystemAdmin\BlogTagPolicy::class,
+        \App\Models\Blog\BlogComment::class => \App\Policies\SystemAdmin\BlogCommentPolicy::class,
+        \App\Models\Blog\BlogMediaAsset::class => \App\Policies\SystemAdmin\BlogMediaAssetPolicy::class,
+        \App\Models\Blog\BlogArticleRevision::class => \App\Policies\SystemAdmin\BlogArticleRevisionPolicy::class,
+        \App\Models\Blog\BlogSeoSettings::class => \App\Policies\SystemAdmin\BlogSeoSettingsPolicy::class,
     ];
 
     /**
