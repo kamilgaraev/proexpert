@@ -59,6 +59,7 @@ class BlogArticleResource extends Resource
                     ->schema([
                         ViewField::make('editor_workspace_overview')
                             ->view('filament.blog.article-editor.workspace-overview')
+                            ->hiddenLabel()
                             ->dehydrated(false)
                             ->columnSpanFull(),
                         Forms\Components\TextInput::make('title')
@@ -124,6 +125,7 @@ class BlogArticleResource extends Resource
                             ->label('Noindex'),
                         ViewField::make('editor_outline')
                             ->view('filament.blog.article-editor.outline')
+                            ->hiddenLabel()
                             ->dehydrated(false)
                             ->columnSpanFull(),
                     ])
