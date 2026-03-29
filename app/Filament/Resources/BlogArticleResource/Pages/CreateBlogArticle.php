@@ -17,11 +17,18 @@ class CreateBlogArticle extends CreateRecord
 {
     protected static string $resource = BlogArticleResource::class;
 
+    protected static string $layout = 'filament-panels::components.layout.simple';
+
     protected Width | string | null $maxContentWidth = Width::Screen;
 
     public static bool $formActionsAreSticky = true;
 
     protected ?string $subheading = 'Создайте базовый draft и сразу переходите в полноценный редактор.';
+
+    public function getBreadcrumbs(): array
+    {
+        return [];
+    }
 
     protected function handleRecordCreation(array $data): BlogArticle
     {

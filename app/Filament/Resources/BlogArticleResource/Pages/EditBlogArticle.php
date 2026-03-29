@@ -19,11 +19,18 @@ class EditBlogArticle extends EditRecord
 {
     protected static string $resource = BlogArticleResource::class;
 
+    protected static string $layout = 'filament-panels::components.layout.simple';
+
     protected Width | string | null $maxContentWidth = Width::Screen;
 
     public static bool $formActionsAreSticky = true;
 
     protected ?string $subheading = 'Полноэкранный редактор статьи с autosave, preview и ревизиями.';
+
+    public function getBreadcrumbs(): array
+    {
+        return [];
+    }
 
     protected function mutateFormDataBeforeFill(array $data): array
     {
