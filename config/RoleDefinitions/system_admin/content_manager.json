@@ -8,6 +8,8 @@
   "system_permissions": [
     "system_admin.access",
     "system_admin.dashboard.view",
+    "system_admin.profile.view",
+    "system_admin.profile.update",
     "system_admin.blog.posts.view",
     "system_admin.blog.posts.create",
     "system_admin.blog.posts.update",
@@ -15,6 +17,10 @@
     "system_admin.blog.categories.manage"
   ],
   "module_permissions": {
+    "profile": [
+      "system_admin.profile.view",
+      "system_admin.profile.update"
+    ],
     "blog": [
       "system_admin.blog.posts.view",
       "system_admin.blog.posts.create",

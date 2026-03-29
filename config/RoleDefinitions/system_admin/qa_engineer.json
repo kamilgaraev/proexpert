@@ -8,6 +8,8 @@
   "system_permissions": [
     "system_admin.access",
     "system_admin.dashboard.view",
+    "system_admin.profile.view",
+    "system_admin.profile.update",
     "system_admin.api_docs.view",
     "system_admin.users.view",
     "system_admin.users.create",
@@ -16,6 +18,10 @@
     "system_admin.subscription_plans.view"
   ],
   "module_permissions": {
+    "profile": [
+      "system_admin.profile.view",
+      "system_admin.profile.update"
+    ],
     "users": [
       "system_admin.users.view",
       "system_admin.users.create",

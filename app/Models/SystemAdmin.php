@@ -60,6 +60,21 @@ class SystemAdmin extends Authenticatable implements FilamentUser
         return app(SystemAdminRoleService::class)->resolveRoleSlug($this);
     }
 
+    public function getRoleDefinition(): ?array
+    {
+        return app(SystemAdminRoleService::class)->getRole($this->getRoleSlug());
+    }
+
+    public function getRoleName(): string
+    {
+        return (string) ($this->getRoleDefinition()['name'] ?? $this->getRoleSlug());
+    }
+
+    public function getPermissionLabels(): array
+    {
+        return app(SystemAdminRoleService::class)->getPermissionLabels($this);
+    }
+
     public function hasSystemRole(string $roleSlug): bool
     {
         return $this->getRoleSlug() === $roleSlug;
@@ -73,6 +88,11 @@ class SystemAdmin extends Authenticatable implements FilamentUser
     public function isSuperAdmin(): bool
     {
         return app(SystemAdminRoleService::class)->isSuperAdmin($this);
+    }
+
+    public function canManageRoleSlug(string $roleSlug): bool
+    {
+        return app(SystemAdminRoleService::class)->canManageRole($this, $roleSlug);
     }
 
     public function isActive(): bool

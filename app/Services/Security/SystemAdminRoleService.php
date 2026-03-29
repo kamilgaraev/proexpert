@@ -85,6 +85,11 @@ class SystemAdminRoleService
         return in_array('*', $canManageRoles, true) || in_array($targetRole, $canManageRoles, true);
     }
 
+    public function getPermissionLabels(SystemAdmin $systemAdmin): array
+    {
+        return $this->getPermissions($this->resolveRoleSlug($systemAdmin));
+    }
+
     public function clearCache(): void
     {
         Cache::forget(self::CACHE_KEY);
