@@ -1,0 +1,40 @@
+{
+  "name": "Аудитор безопасности",
+  "slug": "security_auditor",
+  "version": "1.0.0",
+  "context": "system_admin",
+  "interface": "admin",
+  "description": "Роль для аудита доступа и проверки системных данных без права на изменение",
+  "system_permissions": [
+    "system_admin.access",
+    "system_admin.dashboard.view",
+    "system_admin.api_docs.view",
+    "system_admin.users.view",
+    "system_admin.organizations.view",
+    "system_admin.subscription_plans.view",
+    "system_admin.audit_logs.view"
+  ],
+  "module_permissions": {
+    "users": [
+      "system_admin.users.view"
+    ],
+    "organizations": [
+      "system_admin.organizations.view"
+    ],
+    "subscription_plans": [
+      "system_admin.subscription_plans.view"
+    ],
+    "security": [
+      "system_admin.audit_logs.view"
+    ]
+  },
+  "interface_access": [
+    "admin"
+  ],
+  "hierarchy": {
+    "can_manage_roles": [],
+    "cannot_manage": [
+      "*"
+    ]
+  }
+}

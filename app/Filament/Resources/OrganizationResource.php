@@ -4,11 +4,19 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\OrganizationResource\Pages;
 use App\Models\Organization;
+use App\Models\SystemAdmin;
+use App\Policies\SystemAdmin\OrganizationResourcePolicy;
+use Filament\Actions\BulkActionGroup;
+use Filament\Actions\DeleteBulkAction;
+use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
+use Filament\Schemas\Components\Section;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Auth;
 
 class OrganizationResource extends Resource
 {
@@ -17,8 +25,6 @@ class OrganizationResource extends Resource
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-building-office-2';
 
     protected static string | \UnitEnum | null $navigationGroup = 'System';
-    
-    protected static bool $shouldSkipAuthorization = true;
 
     public static function getNavigationLabel(): string
     {
@@ -39,7 +45,7 @@ class OrganizationResource extends Resource
     {
         return $schema
             ->components([
-                Forms\Components\Section::make('Основная информация')
+                Section::make('Основная информация')
                     ->schema([
                         Forms\Components\TextInput::make('name')
                             ->label(__('widgets.organizations.name') ?? 'Название')
@@ -53,7 +59,7 @@ class OrganizationResource extends Resource
                             ->maxLength(20),
                     ])->columns(2),
 
-                Forms\Components\Section::make('Контакты')
+                Section::make('Контакты')
                     ->schema([
                         Forms\Components\TextInput::make('email')
                             ->email()
@@ -66,7 +72,7 @@ class OrganizationResource extends Resource
                             ->columnSpanFull(),
                     ])->columns(2),
 
-                Forms\Components\Section::make('Статус')
+                Section::make('Статус')
                     ->schema([
                         Forms\Components\Toggle::make('is_active')
                             ->label('Активна')
@@ -100,11 +106,11 @@ class OrganizationResource extends Resource
                 //
             ])
             ->actions([
-                Tables\Actions\EditAction::make(),
+                EditAction::make(),
             ])
             ->bulkActions([
-                Tables\Actions\BulkActionGroup::make([
-                    Tables\Actions\DeleteBulkAction::make(),
+                BulkActionGroup::make([
+                    DeleteBulkAction::make(),
                 ]),
             ]);
     }
@@ -121,5 +127,51 @@ class OrganizationResource extends Resource
             'create' => Pages\CreateOrganization::route('/create'),
             'edit' => Pages\EditOrganization::route('/{record}/edit'),
         ];
+    }
+
+    public static function canViewAny(): bool
+    {
+        $user = self::getSystemAdmin();
+
+        return $user !== null && app(OrganizationResourcePolicy::class)->viewAny($user);
+    }
+
+    public static function canCreate(): bool
+    {
+        $user = self::getSystemAdmin();
+
+        return $user !== null && app(OrganizationResourcePolicy::class)->create($user);
+    }
+
+    public static function canEdit(Model $record): bool
+    {
+        $user = self::getSystemAdmin();
+
+        return $user !== null
+            && $record instanceof Organization
+            && app(OrganizationResourcePolicy::class)->update($user, $record);
+    }
+
+    public static function canDelete(Model $record): bool
+    {
+        $user = self::getSystemAdmin();
+
+        return $user !== null
+            && $record instanceof Organization
+            && app(OrganizationResourcePolicy::class)->delete($user, $record);
+    }
+
+    public static function canDeleteAny(): bool
+    {
+        $user = self::getSystemAdmin();
+
+        return $user !== null && app(OrganizationResourcePolicy::class)->deleteAny($user);
+    }
+
+    protected static function getSystemAdmin(): ?SystemAdmin
+    {
+        $user = Auth::guard('system_admin')->user();
+
+        return $user instanceof SystemAdmin ? $user : null;
     }
 }

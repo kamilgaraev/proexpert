@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Services\Security\SystemAdminRoleService;
+use Filament\Panel;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -20,6 +22,8 @@ class SystemAdmin extends Authenticatable implements FilamentUser
         'name',
         'email',
         'password',
+        'role',
+        'is_active',
     ];
 
     /**
@@ -39,10 +43,40 @@ class SystemAdmin extends Authenticatable implements FilamentUser
      */
     protected $casts = [
         'email_verified_at' => 'datetime',
+        'password' => 'hashed',
+        'is_active' => 'boolean',
     ];
 
-    public function canAccessPanel(\Filament\Panel $panel): bool
+    public function canAccessPanel(Panel $panel): bool
     {
-        return $panel->getId() === 'admin';
+        return $panel->getId() === 'admin'
+            && $this->isActive()
+            && app(SystemAdminRoleService::class)->canAccessInterface($this, 'admin')
+            && $this->hasSystemPermission('system_admin.access');
+    }
+
+    public function getRoleSlug(): string
+    {
+        return app(SystemAdminRoleService::class)->resolveRoleSlug($this);
+    }
+
+    public function hasSystemRole(string $roleSlug): bool
+    {
+        return $this->getRoleSlug() === $roleSlug;
+    }
+
+    public function hasSystemPermission(string $permission): bool
+    {
+        return app(SystemAdminRoleService::class)->hasPermission($this, $permission);
+    }
+
+    public function isSuperAdmin(): bool
+    {
+        return app(SystemAdminRoleService::class)->isSuperAdmin($this);
+    }
+
+    public function isActive(): bool
+    {
+        return (bool) ($this->is_active ?? true);
     }
 }

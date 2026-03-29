@@ -47,6 +47,7 @@ use App\Modules\Core\ModuleScanner;
 use App\Modules\Core\ModuleRegistry;
 use App\Modules\Core\BillingEngine;
 use App\Modules\Core\AccessController;
+use App\Models\SystemAdmin;
 use Illuminate\Support\Facades\Log;
 class AppServiceProvider extends ServiceProvider
 {
@@ -151,7 +152,8 @@ class AppServiceProvider extends ServiceProvider
         }
 
         Gate::define('viewApiDocs', function ($user = null) {
-            return Auth::guard('system_admin')->check();
+            return $user instanceof SystemAdmin
+                && $user->hasSystemPermission('system_admin.api_docs.view');
         });
 
         

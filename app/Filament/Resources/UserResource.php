@@ -3,20 +3,22 @@
 namespace App\Filament\Resources;
 
 use App\Filament\Resources\UserResource\Pages;
+use App\Models\SystemAdmin;
 use App\Models\User;
+use App\Policies\SystemAdmin\UserResourcePolicy;
 use Filament\Forms;
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Auth;
 
 class UserResource extends Resource
 {
     protected static ?string $model = User::class;
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-users';
-
-    protected static bool $shouldSkipAuthorization = true;
 
     protected static string | \UnitEnum | null $navigationGroup = 'System';
 
@@ -66,5 +68,51 @@ class UserResource extends Resource
             'create' => Pages\CreateUser::route('/create'),
             'edit' => Pages\EditUser::route('/{record}/edit'),
         ];
+    }
+
+    public static function canViewAny(): bool
+    {
+        $user = self::getSystemAdmin();
+
+        return $user !== null && app(UserResourcePolicy::class)->viewAny($user);
+    }
+
+    public static function canCreate(): bool
+    {
+        $user = self::getSystemAdmin();
+
+        return $user !== null && app(UserResourcePolicy::class)->create($user);
+    }
+
+    public static function canEdit(Model $record): bool
+    {
+        $user = self::getSystemAdmin();
+
+        return $user !== null
+            && $record instanceof User
+            && app(UserResourcePolicy::class)->update($user, $record);
+    }
+
+    public static function canDelete(Model $record): bool
+    {
+        $user = self::getSystemAdmin();
+
+        return $user !== null
+            && $record instanceof User
+            && app(UserResourcePolicy::class)->delete($user, $record);
+    }
+
+    public static function canDeleteAny(): bool
+    {
+        $user = self::getSystemAdmin();
+
+        return $user !== null && app(UserResourcePolicy::class)->deleteAny($user);
+    }
+
+    protected static function getSystemAdmin(): ?SystemAdmin
+    {
+        $user = Auth::guard('system_admin')->user();
+
+        return $user instanceof SystemAdmin ? $user : null;
     }
 }

@@ -1,0 +1,35 @@
+{
+  "name": "Контент-менеджер",
+  "slug": "content_manager",
+  "version": "1.0.0",
+  "context": "system_admin",
+  "interface": "admin",
+  "description": "Роль для будущего управления блогом и контентными разделами панели",
+  "system_permissions": [
+    "system_admin.access",
+    "system_admin.dashboard.view",
+    "system_admin.blog.posts.view",
+    "system_admin.blog.posts.create",
+    "system_admin.blog.posts.update",
+    "system_admin.blog.posts.publish",
+    "system_admin.blog.categories.manage"
+  ],
+  "module_permissions": {
+    "blog": [
+      "system_admin.blog.posts.view",
+      "system_admin.blog.posts.create",
+      "system_admin.blog.posts.update",
+      "system_admin.blog.posts.publish",
+      "system_admin.blog.categories.manage"
+    ]
+  },
+  "interface_access": [
+    "admin"
+  ],
+  "hierarchy": {
+    "can_manage_roles": [],
+    "cannot_manage": [
+      "*"
+    ]
+  }
+}

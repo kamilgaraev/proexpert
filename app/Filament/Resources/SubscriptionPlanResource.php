@@ -4,11 +4,19 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\SubscriptionPlanResource\Pages;
 use App\Models\SubscriptionPlan;
+use App\Models\SystemAdmin;
+use App\Policies\SystemAdmin\SubscriptionPlanResourcePolicy;
+use Filament\Actions\BulkActionGroup;
+use Filament\Actions\DeleteBulkAction;
+use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
+use Filament\Schemas\Components\Section;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Auth;
 
 class SubscriptionPlanResource extends Resource
 {
@@ -17,8 +25,6 @@ class SubscriptionPlanResource extends Resource
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-credit-card';
 
     protected static string | \UnitEnum | null $navigationGroup = 'System';
-    
-    protected static bool $shouldSkipAuthorization = true;
 
     public static function getNavigationLabel(): string
     {
@@ -39,7 +45,7 @@ class SubscriptionPlanResource extends Resource
     {
         return $schema
             ->components([
-                Forms\Components\Section::make(__('widgets.subscription_plans.section_main'))
+                Section::make(__('widgets.subscription_plans.section_main'))
                     ->schema([
                         Forms\Components\TextInput::make('name')
                             ->label(__('widgets.subscription_plans.name'))
@@ -99,11 +105,11 @@ class SubscriptionPlanResource extends Resource
                 //
             ])
             ->actions([
-                Tables\Actions\EditAction::make(),
+                EditAction::make(),
             ])
             ->bulkActions([
-                Tables\Actions\BulkActionGroup::make([
-                    Tables\Actions\DeleteBulkAction::make(),
+                BulkActionGroup::make([
+                    DeleteBulkAction::make(),
                 ]),
             ]);
     }
@@ -115,5 +121,51 @@ class SubscriptionPlanResource extends Resource
             'create' => Pages\CreateSubscriptionPlan::route('/create'),
             'edit' => Pages\EditSubscriptionPlan::route('/{record}/edit'),
         ];
+    }
+
+    public static function canViewAny(): bool
+    {
+        $user = self::getSystemAdmin();
+
+        return $user !== null && app(SubscriptionPlanResourcePolicy::class)->viewAny($user);
+    }
+
+    public static function canCreate(): bool
+    {
+        $user = self::getSystemAdmin();
+
+        return $user !== null && app(SubscriptionPlanResourcePolicy::class)->create($user);
+    }
+
+    public static function canEdit(Model $record): bool
+    {
+        $user = self::getSystemAdmin();
+
+        return $user !== null
+            && $record instanceof SubscriptionPlan
+            && app(SubscriptionPlanResourcePolicy::class)->update($user, $record);
+    }
+
+    public static function canDelete(Model $record): bool
+    {
+        $user = self::getSystemAdmin();
+
+        return $user !== null
+            && $record instanceof SubscriptionPlan
+            && app(SubscriptionPlanResourcePolicy::class)->delete($user, $record);
+    }
+
+    public static function canDeleteAny(): bool
+    {
+        $user = self::getSystemAdmin();
+
+        return $user !== null && app(SubscriptionPlanResourcePolicy::class)->deleteAny($user);
+    }
+
+    protected static function getSystemAdmin(): ?SystemAdmin
+    {
+        $user = Auth::guard('system_admin')->user();
+
+        return $user instanceof SystemAdmin ? $user : null;
     }
 }

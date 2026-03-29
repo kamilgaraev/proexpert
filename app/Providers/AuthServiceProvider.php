@@ -5,7 +5,9 @@ namespace App\Providers;
 use Illuminate\Foundation\Support\Providers\AuthServiceProvider as ServiceProvider;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
+use App\Models\SystemAdmin;
 use App\Models\User;
+use App\Services\Security\SystemAdminRoleService;
 
 class AuthServiceProvider extends ServiceProvider
 {
@@ -37,10 +39,20 @@ class AuthServiceProvider extends ServiceProvider
         $this->registerPolicies();
 
         Gate::before(function ($user, string $ability, $arguments = null) {
-            // Если пользователь - SystemAdmin, даем ему полные права (superuser)
-            // Это решает проблему доступа к админке и предотвращает ошибки при обращении к свойствам User модели
-            if ($user instanceof \App\Models\SystemAdmin) {
-                return true;
+            if ($user instanceof SystemAdmin) {
+                if (!$user->isActive()) {
+                    return false;
+                }
+
+                if ($user->isSuperAdmin()) {
+                    return true;
+                }
+
+                if (str_starts_with($ability, 'system_admin.')) {
+                    return app(SystemAdminRoleService::class)->hasPermission($user, $ability);
+                }
+
+                return null;
             }
 
             $userAgent = request()->userAgent() ?? '';
@@ -153,9 +165,8 @@ class AuthServiceProvider extends ServiceProvider
         
         // Перехватываем результат Policy, чтобы не проверять право в системном контексте, если Policy уже вернул результат
         Gate::after(function ($user, string $ability, $result, $arguments = null) {
-            // Если SystemAdmin, то он уже обработан в Gate::before (вернул true), но на всякий случай
-            if ($user instanceof \App\Models\SystemAdmin) {
-                return $result ?? true;
+            if ($user instanceof SystemAdmin) {
+                return $result;
             }
 
             $userAgent = request()->userAgent() ?? '';

@@ -1,0 +1,25 @@
+{
+  "name": "Суперадминистратор панели",
+  "slug": "super_admin",
+  "version": "1.0.0",
+  "context": "system_admin",
+  "interface": "admin",
+  "description": "Полный доступ к суперадминке и всем внутренним разделам панели",
+  "system_permissions": [
+    "*"
+  ],
+  "module_permissions": {
+    "*": [
+      "*"
+    ]
+  },
+  "interface_access": [
+    "admin"
+  ],
+  "hierarchy": {
+    "can_manage_roles": [
+      "*"
+    ],
+    "cannot_manage": []
+  }
+}
