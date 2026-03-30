@@ -167,7 +167,7 @@ class UserPermissionsController extends Controller
     protected function getAvailableInterfaces($user, ?AuthorizationContext $context): array
     {
         $interfaces = [];
-        $allInterfaces = ['lk', 'admin', 'mobile'];
+        $allInterfaces = ['lk', 'admin', 'mobile', 'customer'];
 
         foreach ($allInterfaces as $interface) {
             if ($this->authService->canAccessInterface($user, $interface, $context)) {

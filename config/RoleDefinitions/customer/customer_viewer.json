@@ -1,0 +1,32 @@
+{
+  "name": "Customer viewer",
+  "slug": "customer_viewer",
+  "version": "1.0.0",
+  "context": "organization",
+  "interface": "customer",
+  "description": "Только просмотр данных customer-портала.",
+  "system_permissions": [
+    "customer.dashboard.view",
+    "customer.projects.view",
+    "customer.documents.view",
+    "customer.approvals.view",
+    "customer.conversations.view",
+    "customer.notifications.view",
+    "customer.profile.view"
+  ],
+  "module_permissions": {},
+  "interface_access": [
+    "customer"
+  ],
+  "hierarchy": {
+    "can_manage_roles": [],
+    "cannot_manage": [
+      "customer_owner",
+      "customer_manager",
+      "customer_approver",
+      "customer_viewer",
+      "system_admin",
+      "super_admin"
+    ]
+  }
+}

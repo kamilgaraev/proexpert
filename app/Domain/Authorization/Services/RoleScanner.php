@@ -186,7 +186,7 @@ class RoleScanner
             throw new InvalidArgumentException("Папка ролей не найдена: $basePath");
         }
 
-        $directories = ['system', 'lk', 'admin', 'mobile', 'project'];
+        $directories = ['system', 'lk', 'admin', 'mobile', 'project', 'customer'];
 
         foreach ($directories as $dir) {
             $dirPath = "$basePath/$dir";

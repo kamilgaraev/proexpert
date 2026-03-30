@@ -1,0 +1,36 @@
+{
+  "name": "Customer owner",
+  "slug": "customer_owner",
+  "version": "1.0.0",
+  "context": "organization",
+  "interface": "customer",
+  "description": "Полный доступ к customer-порталу организации.",
+  "system_permissions": [
+    "customer.dashboard.view",
+    "customer.projects.view",
+    "customer.documents.view",
+    "customer.approvals.view",
+    "customer.approvals.manage",
+    "customer.conversations.view",
+    "customer.notifications.view",
+    "customer.support.manage",
+    "customer.profile.view",
+    "customer.profile.edit"
+  ],
+  "module_permissions": {},
+  "interface_access": [
+    "customer"
+  ],
+  "hierarchy": {
+    "can_manage_roles": [
+      "customer_manager",
+      "customer_approver",
+      "customer_viewer"
+    ],
+    "cannot_manage": [
+      "customer_owner",
+      "system_admin",
+      "super_admin"
+    ]
+  }
+}

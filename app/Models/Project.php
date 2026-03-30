@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use App\Models\WorkType;
 use App\Traits\HasOnboardingDemo;
 
@@ -136,7 +137,7 @@ class Project extends Model
     /**
      * Получить структурированный адрес проекта
      */
-    public function projectAddress()
+    public function projectAddress(): HasOne
     {
         return $this->hasOne(ProjectAddress::class);
     }

@@ -1,0 +1,33 @@
+{
+  "name": "Customer manager",
+  "slug": "customer_manager",
+  "version": "1.0.0",
+  "context": "organization",
+  "interface": "customer",
+  "description": "Рабочий доступ к customer-порталу без управления ролями.",
+  "system_permissions": [
+    "customer.dashboard.view",
+    "customer.projects.view",
+    "customer.documents.view",
+    "customer.approvals.view",
+    "customer.conversations.view",
+    "customer.notifications.view",
+    "customer.support.manage",
+    "customer.profile.view"
+  ],
+  "module_permissions": {},
+  "interface_access": [
+    "customer"
+  ],
+  "hierarchy": {
+    "can_manage_roles": [],
+    "cannot_manage": [
+      "customer_owner",
+      "customer_manager",
+      "customer_approver",
+      "customer_viewer",
+      "system_admin",
+      "super_admin"
+    ]
+  }
+}

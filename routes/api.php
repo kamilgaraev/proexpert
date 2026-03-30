@@ -155,6 +155,11 @@ Route::prefix('landing')->name('landing.')->group(function () {
     });
 });
 
+// --- Customer API ---
+Route::prefix('customer')->name('customer.')->group(function () {
+    require __DIR__ . '/api/v1/customer.php';
+});
+
 // --- LK API (Personal Cabinet) ---
 Route::prefix('lk')->name('lk.')->group(function () {
     // Подключение маршрутов для проверки прав пользователя (ЛК)
