@@ -155,7 +155,10 @@ Route::prefix('landing')->name('landing.')->group(function () {
     });
 });
 
-// --- Customer API ---
+Route::prefix('v1/customer')->name('customer.v1.')->group(function () {
+    require __DIR__ . '/api/v1/customer.php';
+});
+
 Route::prefix('customer')->name('customer.')->group(function () {
     require __DIR__ . '/api/v1/customer.php';
 });
