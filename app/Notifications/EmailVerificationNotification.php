@@ -12,6 +12,11 @@ class EmailVerificationNotification extends VerifyEmail
 {
     use Queueable;
 
+    public function __construct(
+        private readonly ?string $frontendUrl = null
+    ) {
+    }
+
     public function toMail($notifiable)
     {
         $verificationUrl = $this->verificationUrl($notifiable);
@@ -26,7 +31,7 @@ class EmailVerificationNotification extends VerifyEmail
 
     protected function verificationUrl($notifiable)
     {
-        $frontendUrl = config('app.frontend_url');
+        $frontendUrl = $this->frontendUrl ?: config('app.frontend_url');
         
         $params = [
             'id' => $notifiable->getKey(),

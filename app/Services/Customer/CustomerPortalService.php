@@ -153,7 +153,7 @@ class CustomerPortalService
                 'roles' => $this->authorizationService->getUserRoleSlugs($user, [
                     'organization_id' => $organizationId,
                 ]),
-                'interfaces' => $this->resolveAvailableInterfaces($user, $authContext),
+                'interfaces' => $this->resolveCustomerInterfaces($user, $authContext),
             ],
         ];
     }
@@ -364,5 +364,16 @@ class CustomerPortalService
         }
 
         return $interfaces;
+    }
+
+    private function resolveCustomerInterfaces(User $user, AuthorizationContext $authContext): array
+    {
+        $interfaces = $this->resolveAvailableInterfaces($user, $authContext);
+
+        if (!\in_array('customer', $interfaces, true)) {
+            $interfaces[] = 'customer';
+        }
+
+        return array_values(array_unique($interfaces));
     }
 }

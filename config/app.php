@@ -238,4 +238,6 @@ return [
 
     'frontend_url' => env('FRONTEND_URL', 'https://lk.prohelper.pro'),
 
+    'customer_frontend_url' => env('CUSTOMER_FRONTEND_URL', 'https://customer.prohelper.pro'),
+
 ];
