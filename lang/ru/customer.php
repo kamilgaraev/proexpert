@@ -24,6 +24,10 @@ return [
     'support_create_error' => 'Не удалось создать запрос в поддержку.',
     'support_validation_error' => 'Проверьте корректность данных запроса в поддержку.',
     'unauthorized' => 'Требуется авторизация в customer-портале.',
+    'permissions_loaded' => 'Права доступа customer-пользователя загружены.',
+    'permissions_load_error' => 'Не удалось загрузить права доступа customer-пользователя.',
+    'support_loaded' => 'История обращений в поддержку загружена.',
+    'support_load_error' => 'Не удалось загрузить историю обращений в поддержку.',
     'auth' => [
         'login_success' => 'Вход в customer-портал выполнен успешно.',
         'login_error' => 'Не удалось выполнить вход в customer-портал.',

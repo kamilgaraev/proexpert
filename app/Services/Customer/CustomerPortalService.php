@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Customer;
 
+use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\ContactForm;
@@ -13,6 +14,7 @@ use App\Models\Project;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
 
 class CustomerPortalService
 {
@@ -21,11 +23,16 @@ class CustomerPortalService
     ) {
     }
 
-    public function getDashboard(int $organizationId): array
+    public function getDashboard(User $user, int $organizationId): array
     {
         $projects = $this->baseProjectQuery($organizationId)->get();
         $documentsCount = $this->baseDocumentQuery($organizationId)->count();
         $approvalsCount = $this->baseApprovalQuery($organizationId)->where('is_approved', false)->count();
+        $unreadNotificationsCount = Notification::query()
+            ->forUser($user)
+            ->forOrganization($organizationId)
+            ->unread()
+            ->count();
 
         return [
             'metrics' => [
@@ -46,7 +53,7 @@ class CustomerPortalService
                 ],
                 [
                     'label' => 'Непрочитанные сообщения',
-                    'value' => '0',
+                    'value' => (string) $unreadNotificationsCount,
                     'tone' => 'success',
                 ],
             ],
@@ -127,12 +134,28 @@ class CustomerPortalService
         ];
     }
 
-    public function getNotifications(int $organizationId): array
+    public function getNotifications(User $user, int $organizationId): array
     {
+        $notifications = Notification::query()
+            ->forUser($user)
+            ->forOrganization($organizationId)
+            ->latest('created_at')
+            ->limit(25)
+            ->get();
+        $unreadCount = Notification::query()
+            ->forUser($user)
+            ->forOrganization($organizationId)
+            ->unread()
+            ->count();
+
         return [
-            'items' => [],
+            'items' => $notifications->map(
+                fn (Notification $notification): array => $this->mapNotification($notification)
+            )->all(),
             'meta' => [
                 'organization_id' => $organizationId,
+                'unread_count' => $unreadCount,
+                'total' => $notifications->count(),
             ],
         ];
     }
@@ -154,6 +177,31 @@ class CustomerPortalService
                     'organization_id' => $organizationId,
                 ]),
                 'interfaces' => $this->resolveCustomerInterfaces($user, $authContext),
+            ],
+        ];
+    }
+
+    public function getPermissions(User $user, int $organizationId): array
+    {
+        $authContext = AuthorizationContext::getOrganizationContext($organizationId);
+        $roles = $this->authorizationService->getUserRoleSlugs($user, [
+            'organization_id' => $organizationId,
+        ]);
+        $permissions = $this->authorizationService->getUserPermissionsStructured($user, $authContext);
+        $permissionsFlat = $this->flattenPermissions($permissions);
+
+        return [
+            'roles' => $roles,
+            'permissions' => [
+                'system' => array_values($this->normalizePermissions($permissions['system'] ?? [])),
+                'modules' => $this->normalizeModulePermissions($permissions['modules'] ?? []),
+            ],
+            'permissions_flat' => $permissionsFlat,
+            'interfaces' => $this->resolveCustomerInterfaces($user, $authContext),
+            'meta' => [
+                'checked_at' => now()->toISOString(),
+                'total_permissions' => count($permissionsFlat),
+                'total_roles' => count($roles),
             ],
         ];
     }
@@ -181,11 +229,34 @@ class CustomerPortalService
         ]);
 
         return [
-            'request' => [
-                'id' => $contactForm->id,
-                'status' => $contactForm->status,
-                'subject' => $contactForm->subject,
-                'created_at' => $contactForm->created_at?->toISOString(),
+            'request' => $this->mapSupportRequest($contactForm),
+        ];
+    }
+
+    public function getSupportRequests(User $user, int $organizationId): array
+    {
+        $requests = ContactForm::query()
+            ->where('page_source', 'customer-portal')
+            ->where(function (Builder $builder) use ($organizationId, $user): void {
+                $builder
+                    ->whereRaw("(telegram_data->>'organization_id') = ?", [(string) $organizationId])
+                    ->orWhere(function (Builder $inner) use ($user): void {
+                        $inner
+                            ->where('email', $user->email)
+                            ->where('company_role', 'customer');
+                    });
+            })
+            ->latest('created_at')
+            ->limit(20)
+            ->get();
+
+        return [
+            'items' => $requests->map(
+                fn (ContactForm $request): array => $this->mapSupportRequest($request)
+            )->all(),
+            'meta' => [
+                'organization_id' => $organizationId,
+                'total' => $requests->count(),
             ],
         ];
     }
@@ -299,6 +370,46 @@ class CustomerPortalService
         ];
     }
 
+    private function mapNotification(Notification $notification): array
+    {
+        $data = is_array($notification->data) ? $notification->data : [];
+        $title = $this->firstNonEmptyString([
+            $data['title'] ?? null,
+            $data['subject'] ?? null,
+            $data['name'] ?? null,
+        ]) ?? Str::headline((string) ($notification->notification_type ?: $notification->type ?: 'Уведомление'));
+        $description = $this->firstNonEmptyString([
+            $data['message'] ?? null,
+            $data['description'] ?? null,
+            $data['body'] ?? null,
+            $data['text'] ?? null,
+        ]) ?? 'Откройте уведомление, чтобы посмотреть детали.';
+
+        return [
+            'id' => (string) $notification->id,
+            'title' => $title,
+            'description' => $description,
+            'createdAtLabel' => $notification->created_at?->format('d.m.Y H:i'),
+            'tone' => $this->resolveNotificationTone($notification),
+            'statusLabel' => $notification->read_at ? 'Прочитано' : 'Не прочитано',
+            'isUnread' => $notification->read_at === null,
+        ];
+    }
+
+    private function mapSupportRequest(ContactForm $contactForm): array
+    {
+        return [
+            'id' => $contactForm->id,
+            'status' => $contactForm->status,
+            'statusLabel' => $this->resolveSupportStatusLabel($contactForm->status),
+            'subject' => $contactForm->subject,
+            'message' => $contactForm->message,
+            'phone' => $contactForm->phone,
+            'createdAt' => $contactForm->created_at?->toISOString(),
+            'createdAtLabel' => $contactForm->created_at?->format('d.m.Y H:i'),
+        ];
+    }
+
     private function resolveProjectLocation(Project $project): string
     {
         return $project->projectAddress?->getFormattedAddress()
@@ -351,6 +462,90 @@ class CustomerPortalService
         }
 
         return number_format((float) $amount, 0, '.', ' ') . ' руб.';
+    }
+
+    private function resolveNotificationTone(Notification $notification): string
+    {
+        return match ($notification->priority) {
+            'critical', 'high' => 'warning',
+            'low' => $notification->read_at ? 'neutral' : 'success',
+            default => $notification->read_at ? 'neutral' : 'primary',
+        };
+    }
+
+    private function resolveSupportStatusLabel(?string $status): string
+    {
+        return match ($status) {
+            ContactForm::STATUS_PROCESSING => 'В работе',
+            ContactForm::STATUS_COMPLETED => 'Решено',
+            ContactForm::STATUS_CANCELLED => 'Закрыто',
+            default => 'Новая заявка',
+        };
+    }
+
+    private function normalizeModulePermissions(array $modules): array
+    {
+        $normalized = [];
+
+        foreach ($modules as $module => $modulePermissions) {
+            if (!is_array($modulePermissions)) {
+                continue;
+            }
+
+            $normalized[$module] = array_values($this->normalizePermissions($modulePermissions));
+        }
+
+        return $normalized;
+    }
+
+    private function flattenPermissions(array $permissions): array
+    {
+        $flat = $this->normalizePermissions($permissions['system'] ?? []);
+
+        foreach ($this->normalizeModulePermissions($permissions['modules'] ?? []) as $modulePermissions) {
+            $flat = array_merge($flat, $modulePermissions);
+        }
+
+        return array_values(array_unique($flat));
+    }
+
+    private function normalizePermissions(array $permissions): array
+    {
+        $normalized = [];
+
+        foreach ($permissions as $permission) {
+            $normalizedPermission = $this->normalizePermission($permission);
+
+            if ($normalizedPermission !== null) {
+                $normalized[] = $normalizedPermission;
+            }
+        }
+
+        return $normalized;
+    }
+
+    private function normalizePermission(mixed $permission): ?string
+    {
+        if (is_string($permission) && $permission !== '*') {
+            return $permission;
+        }
+
+        if (is_array($permission) && isset($permission['name']) && is_string($permission['name']) && $permission['name'] !== '*') {
+            return $permission['name'];
+        }
+
+        return null;
+    }
+
+    private function firstNonEmptyString(array $values): ?string
+    {
+        foreach ($values as $value) {
+            if (is_string($value) && trim($value) !== '') {
+                return trim($value);
+            }
+        }
+
+        return null;
     }
 
     private function resolveAvailableInterfaces(User $user, AuthorizationContext $authContext): array

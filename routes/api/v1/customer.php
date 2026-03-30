@@ -34,6 +34,8 @@ Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.con
         Route::get('/approvals', [PortalController::class, 'approvals'])->name('approvals');
         Route::get('/conversations', [PortalController::class, 'conversations'])->name('conversations');
         Route::get('/notifications', [PortalController::class, 'notifications'])->name('notifications');
+        Route::get('/permissions', [PortalController::class, 'permissions'])->name('permissions');
         Route::get('/profile', [PortalController::class, 'profile'])->name('profile');
+        Route::get('/support', [PortalController::class, 'supportIndex'])->name('support.index');
         Route::post('/support', [PortalController::class, 'support'])->name('support');
     });

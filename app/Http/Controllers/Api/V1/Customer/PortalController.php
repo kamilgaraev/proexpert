@@ -25,9 +25,14 @@ class PortalController extends CustomerController
     {
         try {
             $organizationId = $this->resolveOrganizationId($request);
+            $user = $request->user();
+
+            if (!$user) {
+                return CustomerResponse::error(trans_message('customer.unauthorized'), 401);
+            }
 
             return CustomerResponse::success(
-                $this->customerPortalService->getDashboard($organizationId),
+                $this->customerPortalService->getDashboard($user, $organizationId),
                 trans_message('customer.dashboard_loaded')
             );
         } catch (Throwable $exception) {
@@ -105,9 +110,14 @@ class PortalController extends CustomerController
     {
         try {
             $organizationId = $this->resolveOrganizationId($request);
+            $user = $request->user();
+
+            if (!$user) {
+                return CustomerResponse::error(trans_message('customer.unauthorized'), 401);
+            }
 
             return CustomerResponse::success(
-                $this->customerPortalService->getNotifications($organizationId),
+                $this->customerPortalService->getNotifications($user, $organizationId),
                 trans_message('customer.notifications_loaded')
             );
         } catch (Throwable $exception) {
@@ -143,6 +153,56 @@ class PortalController extends CustomerController
             ]);
 
             return CustomerResponse::error(trans_message('customer.profile_load_error'), 500);
+        }
+    }
+
+    public function permissions(Request $request): JsonResponse
+    {
+        try {
+            $organizationId = $this->resolveOrganizationId($request);
+            $user = $request->user();
+
+            if (!$user) {
+                return CustomerResponse::error(trans_message('customer.unauthorized'), 401);
+            }
+
+            return CustomerResponse::success(
+                $this->customerPortalService->getPermissions($user, $organizationId),
+                trans_message('customer.permissions_loaded')
+            );
+        } catch (Throwable $exception) {
+            Log::error('customer.permissions.failed', [
+                'user_id' => $request->user()?->id,
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'error' => $exception->getMessage(),
+            ]);
+
+            return CustomerResponse::error(trans_message('customer.permissions_load_error'), 500);
+        }
+    }
+
+    public function supportIndex(Request $request): JsonResponse
+    {
+        try {
+            $organizationId = $this->resolveOrganizationId($request);
+            $user = $request->user();
+
+            if (!$user) {
+                return CustomerResponse::error(trans_message('customer.unauthorized'), 401);
+            }
+
+            return CustomerResponse::success(
+                $this->customerPortalService->getSupportRequests($user, $organizationId),
+                trans_message('customer.support_loaded')
+            );
+        } catch (Throwable $exception) {
+            Log::error('customer.support.index.failed', [
+                'user_id' => $request->user()?->id,
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'error' => $exception->getMessage(),
+            ]);
+
+            return CustomerResponse::error(trans_message('customer.support_load_error'), 500);
         }
     }
 
