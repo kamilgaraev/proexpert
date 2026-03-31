@@ -215,6 +215,8 @@ class PermissionResolver
         if (isset($reverseMapping[$module])) {
             $modulesToCheck[] = $reverseMapping[$module];
         }
+
+        $modulesToCheck = $this->expandModuleVariants($module);
         
         $this->logging->technical('permission.module.parsed', [
             'module' => $module,
@@ -241,7 +243,7 @@ class PermissionResolver
                 continue;
             }
             
-            if ($this->checkModulePermission($modulePermissions, $moduleToCheck, $action)) {
+            if ($this->checkModulePermission($modulePermissions, $moduleToCheck, $module, $action, $permission)) {
                 return true;
             }
         }
@@ -360,7 +362,13 @@ class PermissionResolver
     /**
      * Проверить модульное право
      */
-    protected function checkModulePermission(array $modulePermissions, string $module, string $action): bool
+    protected function checkModulePermission(
+        array $modulePermissions,
+        string $module,
+        string $requestedModule,
+        string $action,
+        string $requestedPermission
+    ): bool
     {
         $this->logging->technical('permission.module.check_permissions', [
             'module' => $module,
@@ -378,6 +386,7 @@ class PermissionResolver
         }
 
         $permissions = $modulePermissions[$module];
+        $permissionVariants = $this->buildPermissionVariants($requestedModule, $module, $action);
         
         // Проверяем точное совпадение
         if (in_array($action, $permissions)) {
@@ -398,6 +407,15 @@ class PermissionResolver
         }
 
         // Проверяем wildcard с префиксом (например: create_* для create_project)
+        if (in_array($requestedPermission, $permissions, true) || count(array_intersect($permissionVariants, $permissions)) > 0) {
+            $this->logging->technical('permission.module.granted.qualified_match', [
+                'module' => $module,
+                'action' => $action,
+                'requested_permission' => $requestedPermission,
+            ]);
+            return true;
+        }
+
         foreach ($permissions as $permission) {
             if ($this->matchesWildcard($action, $permission)) {
                 $this->logging->technical('permission.module.granted.pattern_match', [
@@ -406,6 +424,18 @@ class PermissionResolver
                     'pattern' => $permission,
                 ]);
                 return true;
+            }
+
+            foreach ($permissionVariants as $permissionVariant) {
+                if ($this->matchesWildcard($permissionVariant, $permission)) {
+                    $this->logging->technical('permission.module.granted.qualified_pattern_match', [
+                        'module' => $module,
+                        'action' => $action,
+                        'pattern' => $permission,
+                        'requested_permission' => $permissionVariant,
+                    ]);
+                    return true;
+                }
             }
         }
 
@@ -507,6 +537,68 @@ class PermissionResolver
      * @param string $pattern Wildcard шаблон (например: admin.*, *.view, admin.*.edit)
      * @return bool
      */
+    protected function expandModuleVariants(string $module): array
+    {
+        $normalizedHyphen = str_replace('_', '-', $module);
+        $normalizedUnderscore = str_replace('-', '_', $module);
+
+        $moduleMapping = [
+            'schedule' => 'schedule-management',
+            'schedule_management' => 'schedule-management',
+            'construction-journal' => 'budget-estimates',
+            'construction_journal' => 'budget-estimates',
+            'estimates' => 'budget-estimates',
+            'ai_estimates' => 'ai-estimates',
+            'time_tracking' => 'time-tracking',
+            'report_templates' => 'report-templates',
+        ];
+
+        $reverseMapping = [
+            'budget-estimates' => 'estimates',
+            'schedule-management' => 'schedule',
+            'time-tracking' => 'time_tracking',
+            'report-templates' => 'report_templates',
+        ];
+
+        $variants = [
+            $module,
+            $normalizedHyphen,
+            $normalizedUnderscore,
+        ];
+
+        foreach ([$module, $normalizedHyphen, $normalizedUnderscore] as $candidate) {
+            if (isset($moduleMapping[$candidate])) {
+                $variants[] = $moduleMapping[$candidate];
+            }
+
+            if (isset($reverseMapping[$candidate])) {
+                $variants[] = $reverseMapping[$candidate];
+            }
+        }
+
+        return array_values(array_unique($variants));
+    }
+
+    protected function buildPermissionVariants(string $requestedModule, string $resolvedModule, string $action): array
+    {
+        $moduleVariants = array_unique([
+            $requestedModule,
+            $resolvedModule,
+            str_replace('_', '-', $requestedModule),
+            str_replace('-', '_', $requestedModule),
+            str_replace('_', '-', $resolvedModule),
+            str_replace('-', '_', $resolvedModule),
+        ]);
+
+        $variants = [];
+
+        foreach ($moduleVariants as $moduleVariant) {
+            $variants[] = "{$moduleVariant}.{$action}";
+        }
+
+        return array_values(array_unique($variants));
+    }
+
     protected function matchesWildcard(string $permission, string $pattern): bool
     {
         // Если нет wildcard, то точное сравнение

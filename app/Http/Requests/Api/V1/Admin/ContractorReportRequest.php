@@ -25,6 +25,7 @@ class ContractorReportRequest extends FormRequest
     {
         $rules = [
             'project_id' => ['required', 'integer', 'exists:projects,id'],
+            'contractor_id' => ['nullable', 'integer', 'exists:contractors,id'],
             'date_from' => ['nullable', 'date'],
             'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
             'contractor_ids' => ['nullable', 'array'],
@@ -99,6 +100,7 @@ class ContractorReportRequest extends FormRequest
         $dateTo = $this->input('date_to');
         
         $mergeData = [
+            'contractor_id' => $this->route('contractorId') ?? $this->input('contractor_id'),
             'date_from' => $dateFrom === '' ? null : $dateFrom,
             'date_to' => $dateTo === '' ? null : $dateTo,
             'include_completed_works' => $this->boolean('include_completed_works', true),

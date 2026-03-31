@@ -40,6 +40,7 @@ Route::prefix('reports')->name('reports.')->group(function () {
         Route::get('project-timelines', [ReportController::class, 'projectTimelinesReport'])->name('project_timelines');
         
         Route::get('contractor-summary', [ContractorReportController::class, 'contractorSummaryReport'])->name('contractor_summary');
+        Route::get('contractor-detail', [ContractorReportController::class, 'contractorDetailReport'])->name('contractor_detail_legacy');
         Route::get('contractor-detail/{contractorId}', [ContractorReportController::class, 'contractorDetailReport'])->name('contractor_detail');
 
         Route::get('foreman-activity', [ReportController::class, 'foremanActivityReport'])->name('foreman_activity');
