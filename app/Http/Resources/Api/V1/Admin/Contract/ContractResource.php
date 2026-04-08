@@ -10,6 +10,7 @@ use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceA
 use App\Http\Resources\Api\V1\Admin\Contract\Payment\ContractPaymentResource;
 use App\Http\Resources\Api\V1\Admin\Contract\Agreement\SupplementaryAgreementResource;
 use App\Http\Resources\Api\V1\Admin\Contract\Specification\SpecificationResource;
+use App\Services\Project\ProjectCustomerResolverService;
 
 class ContractResource extends JsonResource
 {
@@ -539,20 +540,7 @@ class ContractResource extends JsonResource
             
             // === АГРЕГИРОВАННЫЕ ДАННЫЕ ===
             // Заказчик (организация-владелец проекта)
-            'customer' => $this->when(
-                $this->relationLoaded('project') && $this->project?->relationLoaded('organization'),
-                function() {
-                    return [
-                        'id' => $this->project->organization->id,
-                        'name' => $this->project->organization->name,
-                        'inn' => $this->project->organization->inn,
-                        'kpp' => $this->project->organization->kpp,
-                        'legal_address' => $this->project->organization->legal_address,
-                        'contact_email' => $this->project->organization->contact_email,
-                        'contact_phone' => $this->project->organization->contact_phone,
-                    ];
-                }
-            ),
+            'customer' => $this->resolveCustomer(),
             
             // Расширенные данные подрядчика
             'contractor_details' => $this->when(
@@ -574,4 +562,24 @@ class ContractResource extends JsonResource
             ),
         ];
     }
-} 
+
+    private function resolveCustomer(): ?array
+    {
+        if (!$this->project) {
+            return null;
+        }
+
+        $resolver = app(ProjectCustomerResolverService::class);
+        $resolved = $resolver->resolve($this->project);
+
+        if ($resolved === null) {
+            return null;
+        }
+
+        return [
+            'id' => $resolved['organization']->id,
+            'name' => $resolved['organization']->name,
+            'source' => $resolved['source'],
+        ];
+    }
+}

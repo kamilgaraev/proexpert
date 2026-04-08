@@ -641,6 +641,25 @@ class JwtAuthService
             // Р¤РёРєСЃРёСЂСѓРµРј С‚СЂР°РЅР·Р°РєС†РёСЋ
             DB::commit();
 
+            if ($organization) {
+                try {
+                    $acceptedInvitations = app(\App\Services\Project\ProjectParticipantInvitationService::class)
+                        ->acceptMatchingForOrganization($user, $organization);
+
+                    Log::info('[JwtAuthService] Project participant invitations processed after registration', [
+                        'user_id' => $user->id,
+                        'organization_id' => $organization->id,
+                        'accepted_invitations' => $acceptedInvitations,
+                    ]);
+                } catch (\Exception $invitationException) {
+                    Log::warning('[JwtAuthService] Failed to process project participant invitations after registration', [
+                        'user_id' => $user->id,
+                        'organization_id' => $organization->id,
+                        'error' => $invitationException->getMessage(),
+                    ]);
+                }
+            }
+
             // РђР’РўРћРњРђРўРР§Р•РЎРљРђРЇ Р’Р•Р РР¤РРљРђР¦РРЇ Р РЎРРќРҐР РћРќРР—РђР¦РРЇ (РІРЅРµ С‚СЂР°РЅР·Р°РєС†РёРё)
             if ($organization && !empty($organization->tax_number)) {
                 try {

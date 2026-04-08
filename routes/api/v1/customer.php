@@ -2,8 +2,10 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Api\V1\Customer\ContractController;
 use App\Http\Controllers\Api\V1\Customer\Auth\AuthController as CustomerAuthController;
 use App\Http\Controllers\Api\V1\Customer\Auth\EmailVerificationController as CustomerEmailVerificationController;
+use App\Http\Controllers\Api\V1\Customer\InvitationController;
 use App\Http\Controllers\Api\V1\Customer\PortalController;
 use App\Http\Controllers\Api\V1\Customer\ProjectController;
 use Illuminate\Support\Facades\Route;
@@ -27,9 +29,13 @@ Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.con
         Route::get('/dashboard', [PortalController::class, 'dashboard'])->name('dashboard');
         Route::get('/projects', [ProjectController::class, 'index'])->name('projects.index');
         Route::get('/projects/{project}', [ProjectController::class, 'show'])->name('projects.show');
+        Route::get('/projects/{project}/contracts', [ContractController::class, 'projectContracts'])->name('projects.contracts');
         Route::get('/projects/{project}/documents', [ProjectController::class, 'documents'])->name('projects.documents');
         Route::get('/projects/{project}/approvals', [ProjectController::class, 'approvals'])->name('projects.approvals');
         Route::get('/projects/{project}/conversations', [ProjectController::class, 'conversations'])->name('projects.conversations');
+        Route::get('/contracts', [ContractController::class, 'index'])->name('contracts.index');
+        Route::get('/contracts/{contract}', [ContractController::class, 'show'])->name('contracts.show');
+        Route::post('/invitations/{token}/accept', [InvitationController::class, 'accept'])->name('invitations.accept');
         Route::get('/documents', [PortalController::class, 'documents'])->name('documents');
         Route::get('/approvals', [PortalController::class, 'approvals'])->name('approvals');
         Route::get('/conversations', [PortalController::class, 'conversations'])->name('conversations');

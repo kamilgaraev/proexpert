@@ -12,6 +12,7 @@ use App\Models\Contract;
 use App\Models\Project;
 use App\Models\Organization;
 use App\Services\Logging\LoggingService;
+use App\Services\Project\ProjectCustomerResolverService;
 use App\Services\Project\ProjectContextService;
 use App\Domain\Project\ValueObjects\ProjectContext;
 use App\BusinessModules\Core\MultiOrganization\Contracts\OrganizationScopeInterface;
@@ -30,6 +31,7 @@ class ContractService
     protected ContractPaymentRepositoryInterface $paymentRepository;
     protected LoggingService $logging;
     protected ProjectContextService $projectContextService;
+    protected ProjectCustomerResolverService $projectCustomerResolverService;
     protected OrganizationScopeInterface $orgScope;
     protected ContractorSharingInterface $contractorSharing;
     protected ?ContractStateEventService $stateEventService = null;
@@ -41,6 +43,7 @@ class ContractService
         ContractPaymentRepositoryInterface $paymentRepository,
         LoggingService $logging,
         ProjectContextService $projectContextService,
+        ProjectCustomerResolverService $projectCustomerResolverService,
         OrganizationScopeInterface $orgScope,
         ContractorSharingInterface $contractorSharing
     ) {
@@ -50,6 +53,7 @@ class ContractService
         $this->paymentRepository = $paymentRepository;
         $this->logging = $logging;
         $this->projectContextService = $projectContextService;
+        $this->projectCustomerResolverService = $projectCustomerResolverService;
         $this->orgScope = $orgScope;
         $this->contractorSharing = $contractorSharing;
     }
@@ -86,8 +90,11 @@ class ContractService
                     throw new Exception('Проект не найден');
                 }
                 
-                // Организация заказчика = владелец проекта
-                $customerOrganizationId = $project->organization_id;
+                $customerOrganizationId = $this->projectCustomerResolverService->resolveOrganizationId($project);
+
+                if ($customerOrganizationId === null) {
+                    throw new Exception('Не удалось определить заказчика проекта для создания договора');
+                }
                 
                 // Находим или создаём Contractor в базе организации ЗАКАЗЧИКА
                 // source_organization_id = организация подрядчика (текущий пользователь)
@@ -414,7 +421,18 @@ class ContractService
         
         // Проверяем доступ: либо это организация-заказчик, либо организация-подрядчик (через source_organization_id)
         // Явное приведение типов для надежности
-        $isCustomer = (int)$contract->organization_id === (int)$organizationId;
+        $resolvedCustomerOrganizationId = null;
+
+        if ($contract->project_id !== null) {
+            $contract->loadMissing('project.organizations');
+            $resolvedCustomerOrganizationId = $contract->project instanceof Project
+                ? $this->projectCustomerResolverService->resolveOrganizationId($contract->project)
+                : null;
+        }
+
+        $isCustomer = $resolvedCustomerOrganizationId !== null
+            ? (int) $resolvedCustomerOrganizationId === (int) $organizationId
+            : (int) $contract->organization_id === (int) $organizationId;
         
         // Для самоподряда доступ имеет только организация-заказчик
         $isSelfExecution = (bool)$contract->is_self_execution || ($contract->contractor && $contract->contractor->isSelfExecution());
@@ -431,6 +449,7 @@ class ContractService
             'contract_id' => $contractId,
             'organization_id' => $organizationId,
             'contract_organization_id' => $contract->organization_id,
+            'resolved_customer_organization_id' => $resolvedCustomerOrganizationId,
             'is_customer' => $isCustomer,
             'is_self_execution' => $isSelfExecution,
             'contractor_id' => $contract->contractor_id,
@@ -542,6 +561,7 @@ class ContractService
         $contract->load([
             'project', 
             'project.organization',           // Для customer (заказчик)
+            'project.organizations',
             'projects',                       // Проекты для мультипроектных контрактов
             'agreements',                     // Дополнительные соглашения
             'specifications',                 // Спецификации
@@ -838,16 +858,18 @@ class ContractService
      */
     public function getFullContractDetails(int $contractId, int $organizationId, ?int $projectId = null): array
     {
-        $contract = $this->contractRepository->find($contractId);
-        
-        if (!$contract || $contract->organization_id !== $organizationId) {
+        $contract = $this->getContractById($contractId, $organizationId, $projectId);
+
+        if (!$contract) {
             throw new Exception('Contract not found or does not belong to organization.');
         }
 
         // Загружаем все связи одним запросом
         $contract->load([
             'contractor:id,name,legal_address,inn,kpp,phone,email',
-            'project:id,name,address,description',
+            'project:id,name,address,description,organization_id',
+            'project.organization:id,name,inn,kpp,legal_address,contact_email,contact_phone',
+            'project.organizations:id,name,tax_number,email,phone',
             'parentContract:id,number,total_amount,status',
             // 'payments' - УДАЛЕНО: платежи теперь в модуле Payments (invoices)
             'completedWorks:id,contract_id,work_type_id,user_id,quantity,total_amount,status,completion_date',

@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\V1\Admin\ProjectController;
+use App\Http\Controllers\Api\V1\Admin\ProjectParticipantInvitationController;
 use App\Http\Controllers\Api\V1\Admin\ProjectOrganizationController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Admin\ProjectChildWorksController;
@@ -49,9 +50,15 @@ Route::get('/projects/{id}/materials', [ProjectController::class, 'getProjectMat
 Route::get('/projects/{id}/work-types', [ProjectController::class, 'getProjectWorkTypes'])->name('projects.workTypes');
 
 // Получить организации проекта
-Route::get('/projects/{id}/organizations', [ProjectOrganizationController::class, 'index'])->name('projects.organizations.index');
-Route::post('/projects/{projectId}/organizations/{organizationId}', [ProjectOrganizationController::class, 'attach'])->name('projects.organizations.attach');
-Route::delete('/projects/{projectId}/organizations/{organizationId}', [ProjectOrganizationController::class, 'detach'])->name('projects.organizations.detach');
+Route::get('/projects/{project}/organizations', [ProjectOrganizationController::class, 'index'])->name('projects.organizations.index');
+Route::post('/projects/{project}/organizations', [ProjectOrganizationController::class, 'store'])->name('projects.organizations.store');
+Route::get('/projects/{project}/organizations/{organization}', [ProjectOrganizationController::class, 'show'])->name('projects.organizations.show');
+Route::patch('/projects/{project}/organizations/{organization}/role', [ProjectOrganizationController::class, 'updateRole'])->name('projects.organizations.role');
+Route::delete('/projects/{project}/organizations/{organization}', [ProjectOrganizationController::class, 'destroy'])->name('projects.organizations.destroy');
+Route::post('/projects/{project}/organizations/{organization}/activate', [ProjectOrganizationController::class, 'activate'])->name('projects.organizations.activate');
+Route::post('/projects/{project}/organizations/{organization}/deactivate', [ProjectOrganizationController::class, 'deactivate'])->name('projects.organizations.deactivate');
+Route::get('/projects/{project}/participant-invitations', [ProjectParticipantInvitationController::class, 'index'])->name('projects.participant-invitations.index');
+Route::post('/projects/{project}/participant-invitations', [ProjectParticipantInvitationController::class, 'store'])->name('projects.participant-invitations.store');
 
 // Получить детализированные работы дочерних организаций
 Route::get('/projects/{id}/child-works', [ProjectChildWorksController::class, 'index'])
@@ -63,4 +70,4 @@ Route::get('/projects/{id}/child-works', [ProjectChildWorksController::class, 'i
 
 Route::get('/projects/{id}/full', [ProjectController::class, 'fullDetails'])->name('projects.full-details');
 
-Route::get('/projects/{id}/available-organizations', [ProjectOrganizationController::class, 'available'])->name('projects.organizations.available'); 
+Route::get('/projects/{project}/available-organizations', [ProjectOrganizationController::class, 'available'])->name('projects.organizations.available'); 

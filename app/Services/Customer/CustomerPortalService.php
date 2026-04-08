@@ -8,10 +8,12 @@ use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\ContactForm;
+use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use App\Models\File;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\Project\ProjectCustomerResolverService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
@@ -19,7 +21,8 @@ use Illuminate\Support\Str;
 class CustomerPortalService
 {
     public function __construct(
-        private readonly AuthorizationService $authorizationService
+        private readonly AuthorizationService $authorizationService,
+        private readonly ProjectCustomerResolverService $projectCustomerResolverService
     ) {
     }
 
@@ -67,6 +70,68 @@ class CustomerPortalService
         return [
             'projects' => $projects->map(fn (Project $project): array => $this->mapProjectPreview($project))->all(),
         ];
+    }
+
+    public function getContracts(int $organizationId, ?Project $project = null): array
+    {
+        $contracts = $this->baseCustomerContractQuery($organizationId, $project)
+            ->with([
+                'project.projectAddress',
+                'project.organization',
+                'project.organizations',
+                'projects:id,name',
+                'contractor:id,name',
+                'performanceActs:id,contract_id,amount,is_approved',
+                'payments:id,contract_id,amount',
+            ])
+            ->latest('date')
+            ->limit(50)
+            ->get()
+            ->filter(fn (Contract $contract): bool => $this->canAccessContract($organizationId, $contract))
+            ->values();
+
+        return [
+            'items' => $contracts->map(
+                fn (Contract $contract): array => $this->mapCustomerContract($contract)
+            )->all(),
+            'meta' => [
+                'organization_id' => $organizationId,
+                'project_id' => $project?->id,
+                'total' => $contracts->count(),
+            ],
+        ];
+    }
+
+    public function getContract(int $organizationId, Contract $contract): ?array
+    {
+        $contract->loadMissing([
+            'project.projectAddress',
+            'project.organization',
+            'project.organizations',
+            'projects:id,name',
+            'contractor:id,name',
+            'performanceActs:id,contract_id,amount,is_approved',
+            'payments:id,contract_id,amount',
+        ]);
+
+        if (!$this->canAccessContract($organizationId, $contract)) {
+            return null;
+        }
+
+        return [
+            'contract' => $this->mapCustomerContract($contract),
+        ];
+    }
+
+    public function canAccessContract(int $organizationId, Contract $contract): bool
+    {
+        $contract->loadMissing('project.organizations');
+
+        if ($contract->project instanceof Project) {
+            return $this->projectCustomerResolverService->isResolvedCustomer($contract->project, $organizationId);
+        }
+
+        return (int) $contract->organization_id === $organizationId;
     }
 
     public function getProject(Project $project): array
@@ -312,6 +377,40 @@ class CustomerPortalService
             );
     }
 
+    private function baseCustomerContractQuery(int $organizationId, ?Project $project = null): Builder
+    {
+        return Contract::query()
+            ->whereHas('project', function (Builder $builder) use ($organizationId): void {
+                $builder->where(function (Builder $scope) use ($organizationId): void {
+                    $scope
+                        ->where('organization_id', $organizationId)
+                        ->orWhereHas('organizations', function (Builder $organizationQuery) use ($organizationId): void {
+                            $organizationQuery
+                                ->where('organizations.id', $organizationId)
+                                ->where('project_organization.is_active', true)
+                                ->where(function (Builder $roleQuery): void {
+                                    $roleQuery
+                                        ->where('project_organization.role_new', 'customer')
+                                        ->orWhere(function (Builder $fallbackQuery): void {
+                                            $fallbackQuery
+                                                ->whereNull('project_organization.role_new')
+                                                ->where('project_organization.role', 'customer');
+                                        });
+                                });
+                        });
+                });
+            })
+            ->when($project !== null, function (Builder $builder) use ($project): void {
+                $builder->where(function (Builder $scope) use ($project): void {
+                    $scope
+                        ->where('project_id', $project->id)
+                        ->orWhereHas('projects', function (Builder $projectsQuery) use ($project): void {
+                            $projectsQuery->where('projects.id', $project->id);
+                        });
+                });
+            });
+    }
+
     private function mapProjectPreview(Project $project): array
     {
         return [
@@ -322,6 +421,59 @@ class CustomerPortalService
             'completion' => $this->resolveProjectCompletion($project),
             'budgetLabel' => $this->formatMoney($project->budget_amount),
             'leadLabel' => $this->resolveLeadLabel($project),
+        ];
+    }
+
+    private function mapCustomerContract(Contract $contract): array
+    {
+        $project = $contract->project;
+        $resolvedCustomer = $project instanceof Project
+            ? $this->projectCustomerResolverService->resolve($project)
+            : null;
+        $performedAmount = $contract->relationLoaded('performanceActs')
+            ? (float) $contract->performanceActs->where('is_approved', true)->sum('amount')
+            : 0.0;
+        $paidAmount = $contract->relationLoaded('payments')
+            ? (float) $contract->payments->sum('amount')
+            : 0.0;
+        $totalAmount = $contract->total_amount !== null ? (float) $contract->total_amount : null;
+        $remainingAmount = $totalAmount !== null ? max(0.0, $totalAmount - $performedAmount) : null;
+
+        return [
+            'id' => $contract->id,
+            'number' => $contract->number,
+            'subject' => $contract->subject,
+            'status' => $contract->status?->value ?? (string) $contract->status,
+            'status_label' => $contract->status?->name ?? (string) $contract->status,
+            'project' => $project ? [
+                'id' => $project->id,
+                'name' => $project->name,
+                'location' => $this->resolveProjectLocation($project),
+            ] : null,
+            'projects' => $contract->relationLoaded('projects')
+                ? $contract->projects->map(fn (Project $item): array => [
+                    'id' => $item->id,
+                    'name' => $item->name,
+                ])->values()->all()
+                : [],
+            'contractor' => $contract->contractor ? [
+                'id' => $contract->contractor->id,
+                'name' => $contract->contractor->name,
+            ] : null,
+            'date' => optional($contract->date)?->format('Y-m-d'),
+            'start_date' => optional($contract->start_date)?->format('Y-m-d'),
+            'end_date' => optional($contract->end_date)?->format('Y-m-d'),
+            'total_amount' => $totalAmount,
+            'performed_amount' => round($performedAmount, 2),
+            'paid_amount' => round($paidAmount, 2),
+            'remaining_amount' => $remainingAmount !== null ? round($remainingAmount, 2) : null,
+            'is_self_execution' => (bool) $contract->is_self_execution,
+            'contract_category' => $contract->contract_category,
+            'customer' => $resolvedCustomer ? [
+                'id' => $resolvedCustomer['organization']->id,
+                'name' => $resolvedCustomer['organization']->name,
+                'source' => $resolvedCustomer['source'],
+            ] : null,
         ];
     }
 
@@ -362,6 +514,7 @@ class CustomerPortalService
             'id' => $approval->id,
             'title' => 'Акт ' . ($approval->act_document_number ?: '#' . $approval->id),
             'projectName' => $project?->name,
+            'contractId' => $approval->contract_id,
             'deadlineLabel' => $approval->is_approved
                 ? 'Согласовано ' . ($approval->approval_date?->format('d.m.Y') ?? $dateLabel)
                 : 'Ожидает решения с ' . $dateLabel,

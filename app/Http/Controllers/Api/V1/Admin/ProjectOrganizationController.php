@@ -136,6 +136,7 @@ class ProjectOrganizationController extends Controller
                             'label' => $participant['role']->label(),
                         ],
                         'is_active' => $participant['is_active'],
+                        'status' => $participant['is_active'] ? 'active' : 'inactive',
                         'is_owner' => $participant['is_owner'],
                         'added_at' => $participant['added_at'] ?? null,
                         'invited_at' => $participant['invited_at'] ?? null,
@@ -198,11 +199,11 @@ class ProjectOrganizationController extends Controller
             $organizationId = $request->input('organization_id');
             $role = ProjectOrganizationRole::from($request->input('role'));
             
-            $this->projectService->addOrganizationToProject(
-                $projectId,
+            $this->projectService->attachOrganizationToProjectEntity(
+                $project,
                 $organizationId,
                 $role,
-                $request
+                $user
             );
 
             return AdminResponse::success(null, trans_message('project.participant_added'));
@@ -309,11 +310,11 @@ class ProjectOrganizationController extends Controller
             
             $role = ProjectOrganizationRole::from($request->input('role'));
             
-            $this->projectService->updateOrganizationRole(
-                $id,
+            $this->projectService->updateOrganizationRoleForProjectEntity(
+                $project,
                 $organization,
                 $role,
-                $request
+                $request->user()
             );
             
             return AdminResponse::success(null, trans_message('project.participant_role_updated'));
@@ -380,10 +381,7 @@ class ProjectOrganizationController extends Controller
                 return AdminResponse::error(trans_message('project.no_status_change_permission'), 403);
             }
             
-            $projectModel->organizations()->updateExistingPivot($organization, [
-                'is_active' => true,
-                'updated_at' => now(),
-            ]);
+            $this->projectService->setOrganizationActiveState($projectModel, $organization, true);
             
             return AdminResponse::success(null, trans_message('project.participant_activated'));
         } catch (\RuntimeException $e) {
@@ -414,10 +412,7 @@ class ProjectOrganizationController extends Controller
                 return AdminResponse::error(trans_message('project.no_status_change_permission'), 403);
             }
             
-            $projectModel->organizations()->updateExistingPivot($organization, [
-                'is_active' => false,
-                'updated_at' => now(),
-            ]);
+            $this->projectService->setOrganizationActiveState($projectModel, $organization, false);
             
             return AdminResponse::success(null, trans_message('project.participant_deactivated'));
         } catch (\RuntimeException $e) {
@@ -473,12 +468,19 @@ class ProjectOrganizationController extends Controller
                 ->whereNotIn('id', $existingOrgIds)
                 ->get()
                 ->map(function ($org) {
+                    $profile = $this->organizationProfileService->getProfile($org);
+
                     return [
                         'id' => $org->id,
                         'name' => $org->name,
                         'inn' => $org->inn,
                         'address' => $org->address,
                         'phone' => $org->phone,
+                        'capabilities' => $profile->getCapabilities(),
+                        'primary_business_type' => $profile->getPrimaryBusinessType()?->value,
+                        'interaction_modes' => $profile->getInteractionModes(),
+                        'allowed_project_roles' => $profile->getAllowedProjectRoles(),
+                        'availability_status' => 'available',
                     ];
                 });
 
