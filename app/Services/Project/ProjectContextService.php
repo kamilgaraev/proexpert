@@ -1,13 +1,16 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services\Project;
 
-use App\Models\Project;
-use App\Models\Organization;
-use App\Models\User;
-use App\Enums\ProjectOrganizationRole;
 use App\Domain\Project\ValueObjects\ProjectContext;
 use App\Domain\Project\ValueObjects\ProjectRoleConfig;
+use App\Enums\ProjectOrganizationRole;
+use App\Models\Organization;
+use App\Models\Project;
+use App\Models\ProjectOrganization;
+use App\Models\User;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
@@ -27,8 +30,8 @@ class ProjectContextService
     public function getContextForUser(Project $project, User $user): ?ProjectContext
     {
         $organization = $user->organization;
-        
-        if (!$organization) {
+
+        if (!$organization instanceof Organization) {
             return null;
         }
 
@@ -37,8 +40,7 @@ class ProjectContextService
 
     public function invalidateContext(int $projectId, int $organizationId): void
     {
-        $cacheKey = $this->getCacheKey($projectId, $organizationId);
-        Cache::forget($cacheKey);
+        Cache::forget($this->getCacheKey($projectId, $organizationId));
 
         Log::debug('Project context cache invalidated', [
             'project_id' => $projectId,
@@ -52,16 +54,18 @@ class ProjectContextService
             return ProjectOrganizationRole::OWNER;
         }
 
-        $pivot = $project->organizations()
-            ->wherePivot('organization_id', $organization->id)
-            ->wherePivot('is_active', true)
-            ->first()?->pivot;
+        $pivot = ProjectOrganization::query()
+            ->where('project_id', $project->id)
+            ->where('organization_id', $organization->id)
+            ->where('is_active', true)
+            ->first();
 
-        if (!$pivot) {
+        if (!$pivot instanceof ProjectOrganization) {
             return null;
         }
 
-        $roleValue = $pivot->role_new ?? $pivot->role;
+        $roleValue = $pivot->getRawOriginal('role_new') ?: $pivot->getRawOriginal('role');
+
         return ProjectOrganizationRole::tryFrom($roleValue);
     }
 
@@ -74,27 +78,27 @@ class ProjectContextService
                 ProjectOrganizationRole::OWNER,
                 ProjectOrganizationRole::GENERAL_CONTRACTOR,
                 ProjectOrganizationRole::CONTRACTOR,
-            ]),
+            ], true),
             canViewFinances: in_array($role, [
                 ProjectOrganizationRole::OWNER,
                 ProjectOrganizationRole::GENERAL_CONTRACTOR,
                 ProjectOrganizationRole::CUSTOMER,
-            ]),
+            ], true),
             canManageWorks: in_array($role, [
                 ProjectOrganizationRole::OWNER,
                 ProjectOrganizationRole::GENERAL_CONTRACTOR,
                 ProjectOrganizationRole::CONTRACTOR,
                 ProjectOrganizationRole::SUBCONTRACTOR,
-            ]),
+            ], true),
             canManageWarehouse: in_array($role, [
                 ProjectOrganizationRole::OWNER,
                 ProjectOrganizationRole::GENERAL_CONTRACTOR,
                 ProjectOrganizationRole::CONTRACTOR,
-            ]),
+            ], true),
             canInviteParticipants: in_array($role, [
                 ProjectOrganizationRole::OWNER,
                 ProjectOrganizationRole::GENERAL_CONTRACTOR,
-            ]),
+            ], true),
             displayLabel: $role->label()
         );
     }
@@ -103,30 +107,34 @@ class ProjectContextService
     {
         $participants = [];
 
-        // Загружаем всех участников из project_organization
-        $allParticipants = $project->organizations()
-            ->wherePivot('is_active', true)
+        $allParticipants = ProjectOrganization::query()
+            ->with('organization')
+            ->where('project_id', $project->id)
+            ->where('is_active', true)
             ->get();
 
-        foreach ($allParticipants as $org) {
-            $pivot = $org->pivot;
-            $roleValue = $pivot->role_new ?? $pivot->role;
+        foreach ($allParticipants as $participantRecord) {
+            $organization = $participantRecord->organization;
+            if (!$organization instanceof Organization) {
+                continue;
+            }
+
+            $roleValue = $participantRecord->getRawOriginal('role_new') ?: $participantRecord->getRawOriginal('role');
             $role = ProjectOrganizationRole::tryFrom($roleValue);
 
-            if ($role) {
-                // Проверяем, является ли эта организация owner'ом проекта
-                $isProjectOwner = $project->organization_id === $org->id;
-                
-                $participants[] = [
-                    'organization' => $org,
-                    'role' => $role,
-                    'is_active' => $pivot->is_active ?? true,
-                    'is_owner' => $isProjectOwner,
-                    'added_at' => $pivot->created_at,
-                    'invited_at' => $pivot->invited_at,
-                    'accepted_at' => $pivot->accepted_at,
-                ];
+            if (!$role instanceof ProjectOrganizationRole) {
+                continue;
             }
+
+            $participants[] = [
+                'organization' => $organization,
+                'role' => $role,
+                'is_active' => (bool) $participantRecord->is_active,
+                'is_owner' => $project->organization_id === $organization->id,
+                'added_at' => $participantRecord->created_at,
+                'invited_at' => $participantRecord->invited_at,
+                'accepted_at' => $participantRecord->accepted_at,
+            ];
         }
 
         return $participants;
@@ -138,48 +146,33 @@ class ProjectContextService
             return true;
         }
 
-        return $project->organizations()
-            ->wherePivot('organization_id', $organization->id)
-            ->wherePivot('is_active', true)
+        return ProjectOrganization::query()
+            ->where('project_id', $project->id)
+            ->where('organization_id', $organization->id)
+            ->where('is_active', true)
             ->exists();
     }
 
-    /**
-     * Проверить, может ли пользователь получить доступ к проекту.
-     * Учитывает как доступ через организацию, так и прямые назначения/права.
-     */
     public function canUserAccessProject(User $user, Project $project): bool
     {
-        // 1. Если пользователь — системный админ
         if ($user->isSystemAdmin()) {
             return true;
         }
 
-        // 2. Если организация пользователя имеет доступ
         if ($user->current_organization_id) {
             $organization = Organization::find($user->current_organization_id);
-            if ($organization && $this->canOrganizationAccessProject($project, $organization)) {
+            if ($organization instanceof Organization && $this->canOrganizationAccessProject($project, $organization)) {
                 return true;
             }
         }
 
-        // 3. Проверяем наличие прав в контексте этого проекта через новую систему авторизации
-        // (Особенно важно для кастомных ролей и проектных менеджеров)
         if ($user->hasPermission('projects.view', ['project_id' => $project->id])) {
             return true;
         }
 
-        // Дополнительная проверка на владение проектом через организацию
-        if ($user->isOrganizationOwner($project->organization_id)) {
-            return true;
-        }
-
-        return false;
+        return $user->isOrganizationOwner($project->organization_id);
     }
 
-    /**
-     * Проверить, может ли пользователь управлять проектом
-     */
     public function canUserManageProject(User $user, Project $project): bool
     {
         if ($user->isSystemAdmin()) {
@@ -206,18 +199,18 @@ class ProjectContextService
 
         $allProjects = $ownedProjects->merge($participantProjects)->unique('id');
 
-        return $allProjects->map(function ($project) use ($organization) {
+        return $allProjects->map(function (Project $project) use ($organization) {
             $role = $this->getOrganizationRole($project, $organization);
-            
-            // Пропускаем проекты без роли (не должно быть, но для безопасности)
-            if (!$role) {
+
+            if (!$role instanceof ProjectOrganizationRole) {
                 Log::warning('Project without role found', [
                     'project_id' => $project->id,
                     'organization_id' => $organization->id,
                 ]);
+
                 return null;
             }
-            
+
             return [
                 'project' => $project,
                 'role' => $role,
@@ -230,7 +223,7 @@ class ProjectContextService
     {
         $role = $this->getOrganizationRole($project, $organization);
 
-        if (!$role) {
+        if (!$role instanceof ProjectOrganizationRole) {
             throw new \RuntimeException('Organization does not have access to this project');
         }
 
@@ -308,6 +301,10 @@ class ProjectContextService
                 'view_project',
                 'view_basic_info',
             ],
+            ProjectOrganizationRole::PARENT_ADMINISTRATOR => [
+                'view_project',
+                'view_basic_info',
+            ],
         };
     }
 
@@ -316,4 +313,3 @@ class ProjectContextService
         return "project:{$projectId}:org:{$organizationId}:context";
     }
 }
-
