@@ -121,7 +121,7 @@ jobs:
             chmod -R ug+rwX storage bootstrap/cache
             chmod 664 storage/logs/laravel.log
 
-            docker compose up -d ${BACKEND_SERVICES}
+            docker compose up -d --force-recreate --remove-orphans ${BACKEND_SERVICES}
 
             echo "Waiting for API health endpoint..."
             for attempt in $(seq 1 12); do
@@ -150,7 +150,22 @@ jobs:
             echo "Rebuilding Laravel caches..."
             docker compose exec -T api php artisan optimize
 
-            echo "Reloading Octane workers..."
-            docker compose exec -T api php artisan octane:reload
+            echo "Restarting API container to refresh Octane state..."
+            docker compose restart api
+
+            echo "Waiting for API health endpoint after restart..."
+            for attempt in $(seq 1 12); do
+              if docker compose exec -T api curl -fsS http://localhost:8000/up >/dev/null; then
+                echo "API is healthy after restart."
+                break
+              fi
+
+              if [ "${attempt}" -eq 12 ]; then
+                echo "API did not become healthy after restart in time."
+                exit 1
+              fi
+
+              sleep 5
+            done
 
             echo "Backend deployment successful!"
