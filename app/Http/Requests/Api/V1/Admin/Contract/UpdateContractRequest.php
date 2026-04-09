@@ -52,15 +52,17 @@ class UpdateContractRequest extends FormRequest
                 return;
             }
 
-            if ($sideType === ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_SUPPLIER) {
+            if ($sideType->requiresSupplier()) {
                 if (!$supplierId) {
                     $validator->errors()->add('supplier_id', 'Для этого типа договора нужно выбрать поставщика.');
                 }
+
                 if ($contractorId) {
-                    $validator->errors()->add('contractor_id', 'Для договора с поставщиком подрядчик не заполняется.');
+                    $validator->errors()->add('contractor_id', 'Для договора поставки подрядчик не заполняется.');
                 }
+
                 if ($isSelfExecution) {
-                    $validator->errors()->add('is_self_execution', 'Для договора с поставщиком нельзя включать собственные силы.');
+                    $validator->errors()->add('is_self_execution', 'Для договора поставки нельзя включать собственные силы.');
                 }
             }
 
@@ -68,6 +70,7 @@ class UpdateContractRequest extends FormRequest
                 if (!$contractorId && !$isSelfExecution) {
                     $validator->errors()->add('contractor_id', 'Для этого типа договора нужно выбрать подрядчика или включить собственные силы.');
                 }
+
                 if ($supplierId) {
                     $validator->errors()->add('supplier_id', 'Для договора с подрядчиком поставщик не заполняется.');
                 }
@@ -77,9 +80,11 @@ class UpdateContractRequest extends FormRequest
                 if (!$contractorId) {
                     $validator->errors()->add('contractor_id', 'Для этого типа договора нужно выбрать субподрядчика.');
                 }
+
                 if ($supplierId) {
                     $validator->errors()->add('supplier_id', 'Для договора с субподрядчиком поставщик не заполняется.');
                 }
+
                 if ($isSelfExecution) {
                     $validator->errors()->add('is_self_execution', 'Для договора с субподрядчиком нельзя включать собственные силы.');
                 }
@@ -87,10 +92,11 @@ class UpdateContractRequest extends FormRequest
 
             if ($sideType === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR) {
                 if ($supplierId) {
-                    $validator->errors()->add('supplier_id', 'Для договора между заказчиком и генподрядчиком поставщик не заполняется.');
+                    $validator->errors()->add('supplier_id', 'Для договора между заказчиком и исполнителем по проекту поставщик не заполняется.');
                 }
+
                 if ($isSelfExecution) {
-                    $validator->errors()->add('is_self_execution', 'Для договора между заказчиком и генподрядчиком нельзя включать собственные силы.');
+                    $validator->errors()->add('is_self_execution', 'Для договора между заказчиком и исполнителем по проекту нельзя включать собственные силы.');
                 }
             }
         });

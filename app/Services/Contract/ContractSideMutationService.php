@@ -362,12 +362,13 @@ class ContractSideMutationService
         $contractorId = $contractDTO->contractor_id;
         $supplierId = $contractDTO->supplier_id;
 
-        if ($sideType === ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_SUPPLIER) {
+        if ($sideType->requiresSupplier()) {
             if (!$supplierId) {
                 throw new Exception('Для договора с поставщиком нужно выбрать поставщика.');
             }
 
             $contractorId = null;
+            $supplierId = (int) $supplierId;
         }
 
         if ($sideType === ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR) {
@@ -443,7 +444,7 @@ class ContractSideMutationService
             is_fixed_amount: $contractDTO->is_fixed_amount,
             is_multi_project: $contractDTO->is_multi_project,
             project_ids: $contractDTO->project_ids,
-            is_self_execution: $contractDTO->is_self_execution,
+            is_self_execution: $sideType->allowsSelfExecution() ? $contractDTO->is_self_execution : false,
             supplier_id: $supplierId,
             contract_category: $contractDTO->contract_category,
             contract_side_type: $sideType,
@@ -499,8 +500,10 @@ class ContractSideMutationService
         $allowedRoles = match ($sideType) {
             ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR => ['owner', 'customer', 'general_contractor', 'contractor'],
             ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR,
-            ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_SUPPLIER => ['owner', 'general_contractor'],
-            ContractSideTypeEnum::CONTRACTOR_TO_SUBCONTRACTOR => ['contractor', 'subcontractor'],
+            ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_SUPPLIER => ['general_contractor'],
+            ContractSideTypeEnum::CONTRACTOR_TO_SUBCONTRACTOR,
+            ContractSideTypeEnum::CONTRACTOR_TO_SUPPLIER => ['contractor'],
+            ContractSideTypeEnum::SUBCONTRACTOR_TO_SUPPLIER => ['subcontractor'],
         };
 
         if (!in_array($role, $allowedRoles, true)) {

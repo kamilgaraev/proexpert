@@ -10,6 +10,8 @@ enum ContractSideTypeEnum: string
     case GENERAL_CONTRACTOR_TO_CONTRACTOR = 'general_contractor_to_contractor';
     case GENERAL_CONTRACTOR_TO_SUPPLIER = 'general_contractor_to_supplier';
     case CONTRACTOR_TO_SUBCONTRACTOR = 'contractor_to_subcontractor';
+    case CONTRACTOR_TO_SUPPLIER = 'contractor_to_supplier';
+    case SUBCONTRACTOR_TO_SUPPLIER = 'subcontractor_to_supplier';
 
     public function label(): string
     {
@@ -18,6 +20,8 @@ enum ContractSideTypeEnum: string
             self::GENERAL_CONTRACTOR_TO_CONTRACTOR => 'Генподрядчик -> Подрядчик',
             self::GENERAL_CONTRACTOR_TO_SUPPLIER => 'Генподрядчик -> Поставщик',
             self::CONTRACTOR_TO_SUBCONTRACTOR => 'Подрядчик -> Субподрядчик',
+            self::CONTRACTOR_TO_SUPPLIER => 'Подрядчик -> Поставщик',
+            self::SUBCONTRACTOR_TO_SUPPLIER => 'Субподрядчик -> Поставщик',
         };
     }
 
@@ -28,11 +32,20 @@ enum ContractSideTypeEnum: string
 
     public function requiresContractor(): bool
     {
-        return $this !== self::GENERAL_CONTRACTOR_TO_SUPPLIER;
+        return !$this->requiresSupplier();
     }
 
     public function requiresSupplier(): bool
     {
-        return $this === self::GENERAL_CONTRACTOR_TO_SUPPLIER;
+        return in_array($this, [
+            self::GENERAL_CONTRACTOR_TO_SUPPLIER,
+            self::CONTRACTOR_TO_SUPPLIER,
+            self::SUBCONTRACTOR_TO_SUPPLIER,
+        ], true);
+    }
+
+    public function allowsSelfExecution(): bool
+    {
+        return $this === self::GENERAL_CONTRACTOR_TO_CONTRACTOR;
     }
 }
