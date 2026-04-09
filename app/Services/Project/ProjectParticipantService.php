@@ -217,6 +217,7 @@ class ProjectParticipantService
         }
 
         $stillActive = ProjectOrganization::query()
+            ->useWritePdo()
             ->where('project_id', $project->id)
             ->where('organization_id', $organizationId)
             ->where('is_active', true)
@@ -299,6 +300,7 @@ class ProjectParticipantService
         bool $preferLatest = false
     ): ?ProjectOrganization {
         $query = ProjectOrganization::query()
+            ->useWritePdo()
             ->where('project_id', $projectId)
             ->where('organization_id', $organizationId);
 
@@ -387,6 +389,7 @@ class ProjectParticipantService
     private function invalidateProjectContexts(Project $project): void
     {
         $organizationIds = ProjectOrganization::query()
+            ->useWritePdo()
             ->where('project_id', $project->id)
             ->pluck('organization_id')
             ->push($project->organization_id)

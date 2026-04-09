@@ -52,7 +52,8 @@ class ProjectRepository extends BaseRepository implements ProjectRepositoryInter
         return $this->model->where(function($q) use ($organizationId) {
             $q->where('organization_id', $organizationId)
               ->orWhereHas('organizations', function($sub) use ($organizationId) {
-                  $sub->where('organizations.id', $organizationId);
+                  $sub->where('organizations.id', $organizationId)
+                      ->where('project_organization.is_active', true);
               });
         })
         ->orderBy('is_archived')
@@ -84,7 +85,8 @@ class ProjectRepository extends BaseRepository implements ProjectRepositoryInter
                 // 3) Или организация прикреплена как collaborator
                 ->orWhereHas('organizations', function ($q) use ($organizationId) {
                     if ($organizationId) {
-                        $q->where('organizations.id', $organizationId);
+                        $q->where('organizations.id', $organizationId)
+                            ->where('project_organization.is_active', true);
                     }
                 });
         });
@@ -143,7 +145,8 @@ class ProjectRepository extends BaseRepository implements ProjectRepositoryInter
         $query = $this->model->where(function($q) use ($organizationId) {
             $q->where('organization_id', $organizationId)
               ->orWhereHas('organizations', function($sub) use ($organizationId) {
-                  $sub->where('organizations.id', $organizationId);
+                  $sub->where('organizations.id', $organizationId)
+                      ->where('project_organization.is_active', true);
               });
         });
 

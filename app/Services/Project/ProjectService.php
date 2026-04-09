@@ -82,9 +82,10 @@ class ProjectService
     private function invalidateProjectParticipantContexts(int $projectId): void
     {
         $organizationIds = DB::table('project_organization')
+            ->useWritePdo()
             ->where('project_id', $projectId)
             ->pluck('organization_id')
-            ->push(Project::query()->whereKey($projectId)->value('organization_id'))
+            ->push(Project::query()->useWritePdo()->whereKey($projectId)->value('organization_id'))
             ->filter()
             ->unique()
             ->values();
@@ -215,15 +216,21 @@ class ProjectService
     public function findProjectByIdForCurrentOrg(int $id, Request $request): ?Project
     {
         $organizationId = $this->getCurrentOrgId($request);
-        $project = $this->projectRepository->find($id);
+        $project = Project::query()
+            ->useWritePdo()
+            ->find($id);
 
         if (!$project) {
             return null;
         }
 
-        // РџСЂРёРЅР°РґР»РµР¶РёС‚ Р»Рё С‚РµРєСѓС‰РµР№ РѕСЂРіР°РЅРёР·Р°С†РёРё РЅР°РїСЂСЏРјСѓСЋ РёР»Рё С‡РµСЂРµР· pivot
-        $belongsToOrg = $project->organization_id === $organizationId ||
-            $project->organizations()->where('organizations.id', $organizationId)->exists();
+        $belongsToOrg = $project->organization_id === $organizationId
+            || ProjectOrganization::query()
+                ->useWritePdo()
+                ->where('project_id', $project->id)
+                ->where('organization_id', $organizationId)
+                ->where('is_active', true)
+                ->exists();
 
         return $belongsToOrg ? $project : null;
     }

@@ -7,6 +7,7 @@ namespace App\Services\Project;
 use App\Enums\ProjectOrganizationRole;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Models\ProjectOrganization;
 use RuntimeException;
 
 class ProjectCustomerResolverService
@@ -23,25 +24,24 @@ class ProjectCustomerResolverService
 
     public function resolve(Project $project): array
     {
-        $customerOrganization = $project->relationLoaded('organizations')
-            ? $project->organizations->first(function (Organization $organization): bool {
-                $roleValue = $organization->pivot->role_new ?? $organization->pivot->role;
-
-                return (bool) $organization->pivot->is_active
-                    && $roleValue === ProjectOrganizationRole::CUSTOMER->value;
+        $customerParticipant = ProjectOrganization::query()
+            ->useWritePdo()
+            ->with('organization')
+            ->where('project_id', $project->id)
+            ->where('is_active', true)
+            ->where(function ($query): void {
+                $query
+                    ->where('role_new', ProjectOrganizationRole::CUSTOMER->value)
+                    ->orWhere(function ($fallbackQuery): void {
+                        $fallbackQuery
+                            ->whereNull('role_new')
+                            ->where('role', ProjectOrganizationRole::CUSTOMER->value);
+                    });
             })
-            : $project->organizations()
-                ->wherePivot('is_active', true)
-                ->where(function ($query): void {
-                    $query
-                        ->where('project_organization.role_new', ProjectOrganizationRole::CUSTOMER->value)
-                        ->orWhere(function ($fallbackQuery): void {
-                            $fallbackQuery
-                                ->whereNull('project_organization.role_new')
-                                ->where('project_organization.role', ProjectOrganizationRole::CUSTOMER->value);
-                        });
-                })
-                ->first();
+            ->orderByDesc('id')
+            ->first();
+
+        $customerOrganization = $customerParticipant?->organization;
 
         if ($customerOrganization instanceof Organization) {
             return [
@@ -54,9 +54,9 @@ class ProjectCustomerResolverService
             ];
         }
 
-        $owner = $project->relationLoaded('organization')
-            ? $project->organization
-            : $project->organization()->first();
+        $owner = Organization::query()
+            ->useWritePdo()
+            ->find($project->organization_id);
 
         if (!$owner instanceof Organization) {
             throw new RuntimeException('Customer organization for project was not resolved.');

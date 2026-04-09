@@ -55,6 +55,7 @@ class ProjectContextService
         }
 
         $pivot = ProjectOrganization::query()
+            ->useWritePdo()
             ->where('project_id', $project->id)
             ->where('organization_id', $organization->id)
             ->where('is_active', true)
@@ -108,9 +109,11 @@ class ProjectContextService
         $participants = [];
 
         $allParticipants = ProjectOrganization::query()
+            ->useWritePdo()
             ->with('organization')
             ->where('project_id', $project->id)
             ->where('is_active', true)
+            ->orderBy('id')
             ->get();
 
         foreach ($allParticipants as $participantRecord) {
@@ -126,7 +129,7 @@ class ProjectContextService
                 continue;
             }
 
-            $participants[] = [
+            $participants[$organization->id] = [
                 'organization' => $organization,
                 'role' => $role,
                 'is_active' => (bool) $participantRecord->is_active,
@@ -137,7 +140,7 @@ class ProjectContextService
             ];
         }
 
-        return $participants;
+        return array_values($participants);
     }
 
     public function canOrganizationAccessProject(Project $project, Organization $organization): bool
@@ -147,6 +150,7 @@ class ProjectContextService
         }
 
         return ProjectOrganization::query()
+            ->useWritePdo()
             ->where('project_id', $project->id)
             ->where('organization_id', $organization->id)
             ->where('is_active', true)
@@ -188,16 +192,11 @@ class ProjectContextService
 
     public function getAccessibleProjects(Organization $organization): array
     {
-        $ownedProjects = Project::where('organization_id', $organization->id)
+        $allProjects = Project::query()
+            ->useWritePdo()
+            ->accessibleByOrganization($organization->id)
             ->where('is_archived', false)
             ->get();
-
-        $participantProjects = $organization->participantProjects()
-            ->wherePivot('is_active', true)
-            ->where('is_archived', false)
-            ->get();
-
-        $allProjects = $ownedProjects->merge($participantProjects)->unique('id');
 
         return $allProjects->map(function (Project $project) use ($organization) {
             $role = $this->getOrganizationRole($project, $organization);

@@ -10,6 +10,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Models\ProjectOrganization;
 use App\Services\Organization\OrganizationProfileService;
 use App\Services\Project\ProjectContextService;
 use App\Services\Project\ProjectCustomerResolverService;
@@ -288,9 +289,11 @@ class ProjectOrganizationController extends Controller
         try {
             [$project] = $this->getProjectWithAccess($request);
 
-            $existingOrgIds = $project->organizations()
-                ->wherePivot('is_active', true)
-                ->pluck('organizations.id')
+            $existingOrgIds = ProjectOrganization::query()
+                ->useWritePdo()
+                ->where('project_id', $project->id)
+                ->where('is_active', true)
+                ->pluck('organization_id')
                 ->merge([$project->organization_id])
                 ->unique()
                 ->toArray();
@@ -326,7 +329,9 @@ class ProjectOrganizationController extends Controller
             throw new \RuntimeException(trans_message('project.unauthorized'), 401);
         }
 
-        $currentOrg = Organization::find($user->current_organization_id);
+        $currentOrg = Organization::query()
+            ->useWritePdo()
+            ->find($user->current_organization_id);
         if (!$currentOrg instanceof Organization) {
             throw new \RuntimeException(trans_message('project.organization_not_found'), 404);
         }
@@ -340,26 +345,21 @@ class ProjectOrganizationController extends Controller
 
     private function getProjectModel(Request $request): Project
     {
-        $project = $request->attributes->get('project');
-        if ($project instanceof Project) {
-            return $project;
-        }
-
         $routeProject = $request->route('project');
-        if ($routeProject instanceof Project) {
-            return $routeProject;
-        }
-
         $projectId = null;
 
-        if (is_numeric($routeProject)) {
+        if ($routeProject instanceof Project) {
+            $projectId = (int) $routeProject->id;
+        } elseif (is_numeric($routeProject)) {
             $projectId = (int) $routeProject;
         } elseif ($request->route('id')) {
             $projectId = (int) $request->route('id');
         }
 
         if ($projectId !== null) {
-            return Project::findOrFail($projectId);
+            return Project::query()
+                ->useWritePdo()
+                ->findOrFail($projectId);
         }
 
         throw new \RuntimeException('Project ID not found in request');
