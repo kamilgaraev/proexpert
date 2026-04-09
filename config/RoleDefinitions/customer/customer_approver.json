@@ -12,7 +12,9 @@
     "customer.approvals.view",
     "customer.approvals.manage",
     "customer.conversations.view",
+    "customer.issues.view",
     "customer.notifications.view",
+    "customer.requests.view",
     "customer.profile.view"
   ],
   "module_permissions": {},

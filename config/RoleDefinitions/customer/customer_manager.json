@@ -11,7 +11,12 @@
     "customer.documents.view",
     "customer.approvals.view",
     "customer.conversations.view",
+    "customer.issues.view",
+    "customer.issues.manage",
     "customer.notifications.view",
+    "customer.requests.view",
+    "customer.requests.manage",
+    "customer.team.view",
     "customer.support.manage",
     "customer.profile.view"
   ],

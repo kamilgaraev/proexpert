@@ -116,6 +116,7 @@ class ContractController extends CustomerController
                 ContractStatusEnum::cases()
             ))],
             'contractor_id' => ['nullable', 'integer', 'exists:contractors,id'],
+            'contractor_search' => ['nullable', 'string', 'max:255'],
             'date_from' => ['nullable', 'date_format:Y-m-d'],
             'date_to' => ['nullable', 'date_format:Y-m-d'],
             'search' => ['nullable', 'string', 'max:255'],

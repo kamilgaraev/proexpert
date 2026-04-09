@@ -5,12 +5,28 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Customer;
 
 use App\Http\Controllers\Controller;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
 use Illuminate\Http\Request;
 use RuntimeException;
 
 abstract class CustomerController extends Controller
 {
+    protected function hasPermission(Request $request, string $permission, ?int $organizationId = null): bool
+    {
+        $user = $request->user();
+
+        if (!$user) {
+            return false;
+        }
+
+        $context = [
+            'organization_id' => $organizationId ?? $this->resolveOrganizationId($request),
+        ];
+
+        return app(AuthorizationService::class)->can($user, $permission, $context);
+    }
+
     protected function resolveOrganizationId(Request $request): int
     {
         $organizationId = $request->attributes->get('current_organization_id')

@@ -1,19 +1,19 @@
 {
-  "name": "Customer viewer",
-  "slug": "customer_viewer",
+  "name": "Customer legal",
+  "slug": "customer_legal",
   "version": "1.0.0",
   "context": "organization",
   "interface": "customer",
-  "description": "Только просмотр данных customer-портала.",
+  "description": "Юридическая роль customer-организации: договоры, замечания и запросы.",
   "system_permissions": [
     "customer.dashboard.view",
     "customer.projects.view",
     "customer.documents.view",
-    "customer.approvals.view",
-    "customer.conversations.view",
     "customer.issues.view",
-    "customer.notifications.view",
+    "customer.issues.manage",
     "customer.requests.view",
+    "customer.requests.manage",
+    "customer.notifications.view",
     "customer.profile.view"
   ],
   "module_permissions": {},
@@ -24,9 +24,6 @@
     "can_manage_roles": [],
     "cannot_manage": [
       "customer_owner",
-      "customer_manager",
-      "customer_approver",
-      "customer_viewer",
       "system_admin",
       "super_admin"
     ]
