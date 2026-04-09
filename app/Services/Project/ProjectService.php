@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 
 namespace App\Services\Project;
 
@@ -95,12 +95,12 @@ class ProjectService
     }
 
     /**
-     * Helper для получения ID организации из запроса.
+     * Helper РґР»СЏ РїРѕР»СѓС‡РµРЅРёСЏ ID РѕСЂРіР°РЅРёР·Р°С†РёРё РёР· Р·Р°РїСЂРѕСЃР°.
      */
     protected function getCurrentOrgId(Request $request): int
     {
         /** @var User|null $user */
-        $user = $request->user(); // Получаем пользователя из запроса
+        $user = $request->user(); // РџРѕР»СѓС‡Р°РµРј РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ РёР· Р·Р°РїСЂРѕСЃР°
         $organizationId = $request->attributes->get('current_organization_id');
         if (!$organizationId && $user) {
             $organizationId = $user->current_organization_id;
@@ -108,41 +108,41 @@ class ProjectService
         
         if (!$organizationId) {
             Log::error('Failed to determine organization context', ['user_id' => $user?->id, 'request_attributes' => $request->attributes->all()]);
-            throw new BusinessLogicException('Контекст организации не определен.', 500);
+            throw new BusinessLogicException('РљРѕРЅС‚РµРєСЃС‚ РѕСЂРіР°РЅРёР·Р°С†РёРё РЅРµ РѕРїСЂРµРґРµР»РµРЅ.', 500);
         }
         return (int)$organizationId;
     }
 
     /**
-     * Получить пагинированный список проектов для текущей организации.
-     * Поддерживает фильтрацию и сортировку.
+     * РџРѕР»СѓС‡РёС‚СЊ РїР°РіРёРЅРёСЂРѕРІР°РЅРЅС‹Р№ СЃРїРёСЃРѕРє РїСЂРѕРµРєС‚РѕРІ РґР»СЏ С‚РµРєСѓС‰РµР№ РѕСЂРіР°РЅРёР·Р°С†РёРё.
+     * РџРѕРґРґРµСЂР¶РёРІР°РµС‚ С„РёР»СЊС‚СЂР°С†РёСЋ Рё СЃРѕСЂС‚РёСЂРѕРІРєСѓ.
      */
     public function getProjectsForCurrentOrg(Request $request, int $perPage = 15): LengthAwarePaginator
     {
         $organizationId = $this->getCurrentOrgId($request);
         
-        // Собираем фильтры из запроса
+        // РЎРѕР±РёСЂР°РµРј С„РёР»СЊС‚СЂС‹ РёР· Р·Р°РїСЂРѕСЃР°
         $filters = [
             'name' => $request->query('name'),
             'status' => $request->query('status'),
-            'is_archived' => $request->query('is_archived'), // Принимаем 'true', 'false', '1', '0' или null
+            'is_archived' => $request->query('is_archived'), // РџСЂРёРЅРёРјР°РµРј 'true', 'false', '1', '0' РёР»Рё null
         ];
-        // Обрабатываем is_archived, чтобы можно было передавать булевы значения
+        // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј is_archived, С‡С‚РѕР±С‹ РјРѕР¶РЅРѕ Р±С‹Р»Рѕ РїРµСЂРµРґР°РІР°С‚СЊ Р±СѓР»РµРІС‹ Р·РЅР°С‡РµРЅРёСЏ
         if (isset($filters['is_archived'])) {
             $filters['is_archived'] = filter_var($filters['is_archived'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
         } else {
-             unset($filters['is_archived']); // Удаляем, если не передан
+             unset($filters['is_archived']); // РЈРґР°Р»СЏРµРј, РµСЃР»Рё РЅРµ РїРµСЂРµРґР°РЅ
         }
         $filters = array_filter($filters, fn($value) => !is_null($value) && $value !== '');
 
-        // Параметры сортировки
+        // РџР°СЂР°РјРµС‚СЂС‹ СЃРѕСЂС‚РёСЂРѕРІРєРё
         $sortBy = $request->query('sort_by', 'created_at');
         $sortDirection = $request->query('sort_direction', 'desc');
 
-        // TODO: Добавить валидацию sortBy, чтобы разрешить только определенные поля
+        // TODO: Р”РѕР±Р°РІРёС‚СЊ РІР°Р»РёРґР°С†РёСЋ sortBy, С‡С‚РѕР±С‹ СЂР°Р·СЂРµС€РёС‚СЊ С‚РѕР»СЊРєРѕ РѕРїСЂРµРґРµР»РµРЅРЅС‹Рµ РїРѕР»СЏ
         $allowedSortBy = ['name', 'status', 'start_date', 'end_date', 'created_at', 'updated_at'];
         if (!in_array(strtolower($sortBy), $allowedSortBy)) {
-            $sortBy = 'created_at'; // По умолчанию, если передано невалидное поле
+            $sortBy = 'created_at'; // РџРѕ СѓРјРѕР»С‡Р°РЅРёСЋ, РµСЃР»Рё РїРµСЂРµРґР°РЅРѕ РЅРµРІР°Р»РёРґРЅРѕРµ РїРѕР»Рµ
         }
         if (!in_array(strtolower($sortDirection), ['asc', 'desc'])) {
             $sortDirection = 'desc';
@@ -158,10 +158,10 @@ class ProjectService
     }
 
     /**
-     * Создать новый проект.
+     * РЎРѕР·РґР°С‚СЊ РЅРѕРІС‹Р№ РїСЂРѕРµРєС‚.
      *
      * @param ProjectDTO $projectDTO
-     * @param Request $request // Для получения organization_id
+     * @param Request $request // Р”Р»СЏ РїРѕР»СѓС‡РµРЅРёСЏ organization_id
      * @return Project
      * @throws BusinessLogicException
      */
@@ -170,7 +170,7 @@ class ProjectService
         $organizationId = $this->getCurrentOrgId($request);
         $user = $request->user();
         
-        // BUSINESS: Начало создания проекта - ключевая бизнес-метрика
+        // BUSINESS: РќР°С‡Р°Р»Рѕ СЃРѕР·РґР°РЅРёСЏ РїСЂРѕРµРєС‚Р° - РєР»СЋС‡РµРІР°СЏ Р±РёР·РЅРµСЃ-РјРµС‚СЂРёРєР°
         $this->logging->business('project.creation.started', [
             'project_name' => $projectDTO->name,
             'project_description' => $projectDTO->description ?? null,
@@ -188,7 +188,7 @@ class ProjectService
         
         event(new ProjectCreated($project));
         
-        // AUDIT: Создание проекта - важно для compliance и отслеживания изменений
+        // AUDIT: РЎРѕР·РґР°РЅРёРµ РїСЂРѕРµРєС‚Р° - РІР°Р¶РЅРѕ РґР»СЏ compliance Рё РѕС‚СЃР»РµР¶РёРІР°РЅРёСЏ РёР·РјРµРЅРµРЅРёР№
         $this->logging->audit('project.created', [
             'project_id' => $project->id,
             'project_name' => $project->name,
@@ -200,7 +200,7 @@ class ProjectService
             'creation_date' => $project->created_at?->toISOString()
         ]);
         
-        // BUSINESS: Успешное создание проекта - ключевая метрика роста
+        // BUSINESS: РЈСЃРїРµС€РЅРѕРµ СЃРѕР·РґР°РЅРёРµ РїСЂРѕРµРєС‚Р° - РєР»СЋС‡РµРІР°СЏ РјРµС‚СЂРёРєР° СЂРѕСЃС‚Р°
         $this->logging->business('project.created', [
             'project_id' => $project->id,
             'project_name' => $project->name,
@@ -221,7 +221,7 @@ class ProjectService
             return null;
         }
 
-        // Принадлежит ли текущей организации напрямую или через pivot
+        // РџСЂРёРЅР°РґР»РµР¶РёС‚ Р»Рё С‚РµРєСѓС‰РµР№ РѕСЂРіР°РЅРёР·Р°С†РёРё РЅР°РїСЂСЏРјСѓСЋ РёР»Рё С‡РµСЂРµР· pivot
         $belongsToOrg = $project->organization_id === $organizationId ||
             $project->organizations()->where('organizations.id', $organizationId)->exists();
 
@@ -229,11 +229,11 @@ class ProjectService
     }
 
     /**
-     * Обновить существующий проект.
+     * РћР±РЅРѕРІРёС‚СЊ СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёР№ РїСЂРѕРµРєС‚.
      *
-     * @param int $id ID проекта
+     * @param int $id ID РїСЂРѕРµРєС‚Р°
      * @param ProjectDTO $projectDTO
-     * @param Request $request // Для проверки организации
+     * @param Request $request // Р”Р»СЏ РїСЂРѕРІРµСЂРєРё РѕСЂРіР°РЅРёР·Р°С†РёРё
      * @return Project|null
      * @throws BusinessLogicException
      */
@@ -258,7 +258,7 @@ class ProjectService
         $user = $request->user();
         $organizationId = $this->getCurrentOrgId($request);
         
-        // SECURITY: Попытка удаления проекта - важное security событие
+        // SECURITY: РџРѕРїС‹С‚РєР° СѓРґР°Р»РµРЅРёСЏ РїСЂРѕРµРєС‚Р° - РІР°Р¶РЅРѕРµ security СЃРѕР±С‹С‚РёРµ
         $this->logging->security('project.deletion.attempt', [
             'project_id' => $project->id,
             'project_name' => $project->name,
@@ -267,7 +267,7 @@ class ProjectService
             'requested_by_email' => $user?->email
         ]);
         
-        // Сохраняем данные проекта для логирования до удаления
+        // РЎРѕС…СЂР°РЅСЏРµРј РґР°РЅРЅС‹Рµ РїСЂРѕРµРєС‚Р° РґР»СЏ Р»РѕРіРёСЂРѕРІР°РЅРёСЏ РґРѕ СѓРґР°Р»РµРЅРёСЏ
         $projectData = [
             'project_id' => $project->id,
             'project_name' => $project->name,
@@ -281,14 +281,14 @@ class ProjectService
         $result = $this->projectRepository->delete($id);
         
         if ($result) {
-            // AUDIT: Успешное удаление проекта - критически важно для compliance
+            // AUDIT: РЈСЃРїРµС€РЅРѕРµ СѓРґР°Р»РµРЅРёРµ РїСЂРѕРµРєС‚Р° - РєСЂРёС‚РёС‡РµСЃРєРё РІР°Р¶РЅРѕ РґР»СЏ compliance
             $this->logging->audit('project.deleted', array_merge($projectData, [
                 'deleted_by' => $user?->id,
                 'deleted_by_email' => $user?->email,
                 'deleted_at' => now()->toISOString()
             ]));
             
-            // BUSINESS: Удаление проекта - важная бизнес-метрика (может указывать на проблемы)
+            // BUSINESS: РЈРґР°Р»РµРЅРёРµ РїСЂРѕРµРєС‚Р° - РІР°Р¶РЅР°СЏ Р±РёР·РЅРµСЃ-РјРµС‚СЂРёРєР° (РјРѕР¶РµС‚ СѓРєР°Р·С‹РІР°С‚СЊ РЅР° РїСЂРѕР±Р»РµРјС‹)
             $this->logging->business('project.deleted', [
                 'project_id' => $projectData['project_id'],
                 'project_name' => $projectData['project_name'],
@@ -297,7 +297,7 @@ class ProjectService
                 'project_lifetime_days' => $project->created_at ? $project->created_at->diffInDays(now()) : null
             ]);
         } else {
-            // TECHNICAL: Неудачное удаление проекта
+            // TECHNICAL: РќРµСѓРґР°С‡РЅРѕРµ СѓРґР°Р»РµРЅРёРµ РїСЂРѕРµРєС‚Р°
             $this->logging->technical('project.deletion.failed', [
                 'project_id' => $project->id,
                 'project_name' => $project->name,
@@ -316,12 +316,12 @@ class ProjectService
         
         $project = $this->findProjectByIdForCurrentOrg($projectId, $request);
         if (!$project) {
-            throw new BusinessLogicException('Проект не найден в вашей организации.', 404);
+            throw new BusinessLogicException('РџСЂРѕРµРєС‚ РЅРµ РЅР°Р№РґРµРЅ РІ РІР°С€РµР№ РѕСЂРіР°РЅРёР·Р°С†РёРё.', 404);
         }
 
         $user = $this->userRepository->find($userId);
         
-        // Получаем ID контекста авторизации для организации
+        // РџРѕР»СѓС‡Р°РµРј ID РєРѕРЅС‚РµРєСЃС‚Р° Р°РІС‚РѕСЂРёР·Р°С†РёРё РґР»СЏ РѕСЂРіР°РЅРёР·Р°С†РёРё
         $authContext = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
         $contextId = $authContext ? $authContext->id : null;
         
@@ -330,11 +330,11 @@ class ProjectService
             || !app(\App\Domain\Authorization\Services\AuthorizationService::class)->hasRole($user, 'foreman', $contextId) 
             || !$user->organizations()->where('organization_user.organization_id', $organizationId)->exists()
            ) { 
-            throw new BusinessLogicException('Пользователь не найден, неактивен или не является прорабом в вашей организации.', 404);
+            throw new BusinessLogicException('РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РЅР°Р№РґРµРЅ, РЅРµР°РєС‚РёРІРµРЅ РёР»Рё РЅРµ СЏРІР»СЏРµС‚СЃСЏ РїСЂРѕСЂР°Р±РѕРј РІ РІР°С€РµР№ РѕСЂРіР°РЅРёР·Р°С†РёРё.', 404);
         }
 
         try {
-            // Добавляем роль foreman в pivot. Если запись уже есть — обновляем.
+            // Р”РѕР±Р°РІР»СЏРµРј СЂРѕР»СЊ foreman РІ pivot. Р•СЃР»Рё Р·Р°РїРёСЃСЊ СѓР¶Рµ РµСЃС‚СЊ вЂ” РѕР±РЅРѕРІР»СЏРµРј.
             $project->users()->syncWithoutDetaching([$userId => ['role' => 'foreman']]);
             Log::info('Foreman assigned to project', ['project_id' => $projectId, 'user_id' => $userId, 'admin_id' => $request->user()->id]);
             return true;
@@ -344,7 +344,7 @@ class ProjectService
                 return true; 
             }
             Log::error('Database error assigning foreman to project', ['project_id' => $projectId, 'user_id' => $userId, 'exception' => $e]);
-            throw new BusinessLogicException('Ошибка базы данных при назначении прораба.', 500, $e);
+            throw new BusinessLogicException('РћС€РёР±РєР° Р±Р°Р·С‹ РґР°РЅРЅС‹С… РїСЂРё РЅР°Р·РЅР°С‡РµРЅРёРё РїСЂРѕСЂР°Р±Р°.', 500, $e);
         }
     }
 
@@ -354,7 +354,7 @@ class ProjectService
         
         $project = $this->findProjectByIdForCurrentOrg($projectId, $request);
         if (!$project) {
-            throw new BusinessLogicException('Проект не найден в вашей организации.', 404);
+            throw new BusinessLogicException('РџСЂРѕРµРєС‚ РЅРµ РЅР°Р№РґРµРЅ РІ РІР°С€РµР№ РѕСЂРіР°РЅРёР·Р°С†РёРё.', 404);
         }
 
         $detachedCount = $project->users()->detach($userId);
@@ -369,22 +369,22 @@ class ProjectService
     }
 
     /**
-     * Получить все проекты для текущей организации (без пагинации).
-     * @deprecated Используйте getProjectsForCurrentOrg с пагинацией.
+     * РџРѕР»СѓС‡РёС‚СЊ РІСЃРµ РїСЂРѕРµРєС‚С‹ РґР»СЏ С‚РµРєСѓС‰РµР№ РѕСЂРіР°РЅРёР·Р°С†РёРё (Р±РµР· РїР°РіРёРЅР°С†РёРё).
+     * @deprecated РСЃРїРѕР»СЊР·СѓР№С‚Рµ getProjectsForCurrentOrg СЃ РїР°РіРёРЅР°С†РёРµР№.
      */
     public function getAllProjectsForCurrentOrg(Request $request): Collection 
     { 
         $organizationId = $this->getCurrentOrgId($request); 
-        // Метод getProjectsForOrganization должен возвращать пагинатор, 
-        // если нужна коллекция, нужен другой метод репозитория или ->get()
-        // Возвращаем пустую коллекцию или выбрасываем исключение, т.к. метод неясен
+        // РњРµС‚РѕРґ getProjectsForOrganization РґРѕР»Р¶РµРЅ РІРѕР·РІСЂР°С‰Р°С‚СЊ РїР°РіРёРЅР°С‚РѕСЂ, 
+        // РµСЃР»Рё РЅСѓР¶РЅР° РєРѕР»Р»РµРєС†РёСЏ, РЅСѓР¶РµРЅ РґСЂСѓРіРѕР№ РјРµС‚РѕРґ СЂРµРїРѕР·РёС‚РѕСЂРёСЏ РёР»Рё ->get()
+        // Р’РѕР·РІСЂР°С‰Р°РµРј РїСѓСЃС‚СѓСЋ РєРѕР»Р»РµРєС†РёСЋ РёР»Рё РІС‹Р±СЂР°СЃС‹РІР°РµРј РёСЃРєР»СЋС‡РµРЅРёРµ, С‚.Рє. РјРµС‚РѕРґ РЅРµСЏСЃРµРЅ
         Log::warning('Deprecated method getAllProjectsForCurrentOrg called.');
-        // return $this->projectRepository->getProjectsForOrganization($organizationId, -1)->items(); // Пример обхода пагинации
-        return new Collection(); // Возвращаем пустую коллекцию
+        // return $this->projectRepository->getProjectsForOrganization($organizationId, -1)->items(); // РџСЂРёРјРµСЂ РѕР±С…РѕРґР° РїР°РіРёРЅР°С†РёРё
+        return new Collection(); // Р’РѕР·РІСЂР°С‰Р°РµРј РїСѓСЃС‚СѓСЋ РєРѕР»Р»РµРєС†РёСЋ
     }
 
     /**
-     * Получить активные проекты для текущей организации.
+     * РџРѕР»СѓС‡РёС‚СЊ Р°РєС‚РёРІРЅС‹Рµ РїСЂРѕРµРєС‚С‹ РґР»СЏ С‚РµРєСѓС‰РµР№ РѕСЂРіР°РЅРёР·Р°С†РёРё.
      */
     public function getActiveProjectsForCurrentOrg(Request $request): Collection
     {
@@ -393,13 +393,13 @@ class ProjectService
     }
 
     /**
-     * Получить проекты, назначенные пользователю в текущей организации.
+     * РџРѕР»СѓС‡РёС‚СЊ РїСЂРѕРµРєС‚С‹, РЅР°Р·РЅР°С‡РµРЅРЅС‹Рµ РїРѕР»СЊР·РѕРІР°С‚РµР»СЋ РІ С‚РµРєСѓС‰РµР№ РѕСЂРіР°РЅРёР·Р°С†РёРё.
      */
     public function getProjectsForUser(Request $request): Collection
     {
         $user = $request->user();
         if (!$user) {
-             throw new BusinessLogicException('Пользователь не аутентифицирован.', 401);
+             throw new BusinessLogicException('РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ Р°СѓС‚РµРЅС‚РёС„РёС†РёСЂРѕРІР°РЅ.', 401);
         }
         $userId = $user->id;
         $organizationId = $this->getCurrentOrgId($request);
@@ -407,16 +407,16 @@ class ProjectService
     }
 
     /**
-     * Получить детали проекта по ID (с отношениями).
-     * Проверяет принадлежность проекта текущей организации.
+     * РџРѕР»СѓС‡РёС‚СЊ РґРµС‚Р°Р»Рё РїСЂРѕРµРєС‚Р° РїРѕ ID (СЃ РѕС‚РЅРѕС€РµРЅРёСЏРјРё).
+     * РџСЂРѕРІРµСЂСЏРµС‚ РїСЂРёРЅР°РґР»РµР¶РЅРѕСЃС‚СЊ РїСЂРѕРµРєС‚Р° С‚РµРєСѓС‰РµР№ РѕСЂРіР°РЅРёР·Р°С†РёРё.
      */
     public function getProjectDetails(int $id, Request $request): ?Project
     { 
-        $project = $this->findProjectByIdForCurrentOrg($id, $request); // Используем уже существующий метод
+        $project = $this->findProjectByIdForCurrentOrg($id, $request); // РСЃРїРѕР»СЊР·СѓРµРј СѓР¶Рµ СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёР№ РјРµС‚РѕРґ
         if (!$project) {
              return null;
         }
-        // Загружаем нужные связи
+        // Р—Р°РіСЂСѓР¶Р°РµРј РЅСѓР¶РЅС‹Рµ СЃРІСЏР·Рё
         return $project->load(['materials', 'workTypes', 'users']); 
     }
     
@@ -424,12 +424,12 @@ class ProjectService
     {
         $project = $this->projectRepository->find($id);
         if (!$project) {
-            throw new BusinessLogicException('Проект не найден.', 404);
+            throw new BusinessLogicException('РџСЂРѕРµРєС‚ РЅРµ РЅР°Р№РґРµРЅ.', 404);
         }
 
         try {
-            // ===== ИСТОЧНИК ИСТИНЫ: СКЛАД (warehouse_balances + warehouse_movements) =====
-            // Статистика по материалам - берем из движений склада, связанных с проектом
+            // ===== РРЎРўРћР§РќРРљ РРЎРўРРќР«: РЎРљР›РђР” (warehouse_balances + warehouse_movements) =====
+            // РЎС‚Р°С‚РёСЃС‚РёРєР° РїРѕ РјР°С‚РµСЂРёР°Р»Р°Рј - Р±РµСЂРµРј РёР· РґРІРёР¶РµРЅРёР№ СЃРєР»Р°РґР°, СЃРІСЏР·Р°РЅРЅС‹С… СЃ РїСЂРѕРµРєС‚РѕРј
             $materialStats = DB::table('warehouse_movements as wm')
                 ->join('warehouse_balances as wb', function($join) {
                     $join->on('wm.warehouse_id', '=', 'wb.warehouse_id')
@@ -446,7 +446,7 @@ class ProjectService
                 ")
                 ->first();
             
-            // Если нет движений по проекту, проверяем распределения (но без финансовых данных)
+            // Р•СЃР»Рё РЅРµС‚ РґРІРёР¶РµРЅРёР№ РїРѕ РїСЂРѕРµРєС‚Сѓ, РїСЂРѕРІРµСЂСЏРµРј СЂР°СЃРїСЂРµРґРµР»РµРЅРёСЏ (РЅРѕ Р±РµР· С„РёРЅР°РЅСЃРѕРІС‹С… РґР°РЅРЅС‹С…)
             if (!$materialStats || $materialStats->unique_materials_count == 0) {
                 $allocationStats = DB::table('warehouse_project_allocations as wpa')
                     ->join('warehouse_balances as wb', function($join) {
@@ -462,7 +462,7 @@ class ProjectService
                     ")
                     ->first();
                 
-                // Используем данные распределений, если есть
+                // РСЃРїРѕР»СЊР·СѓРµРј РґР°РЅРЅС‹Рµ СЂР°СЃРїСЂРµРґРµР»РµРЅРёР№, РµСЃР»Рё РµСЃС‚СЊ
                 if ($allocationStats && $allocationStats->unique_materials_count > 0) {
                     $materialStats = (object)[
                         'unique_materials_count' => $allocationStats->unique_materials_count,
@@ -474,13 +474,13 @@ class ProjectService
                 }
             }
 
-            // Статистика по выполненным работам
+            // РЎС‚Р°С‚РёСЃС‚РёРєР° РїРѕ РІС‹РїРѕР»РЅРµРЅРЅС‹Рј СЂР°Р±РѕС‚Р°Рј
             $workStats = DB::table('completed_works as cw')
                 ->where('cw.project_id', $id)
                 ->selectRaw("\n                    COUNT(*) as total_works_count,\n                    SUM(cw.quantity) as total_work_quantity,\n                    COUNT(DISTINCT cw.work_type_id) as unique_work_types_count,\n                    SUM(cw.total_amount) as total_work_cost\n                ")
                 ->first();
 
-            // Команда проекта
+            // РљРѕРјР°РЅРґР° РїСЂРѕРµРєС‚Р°
             $teamMembers = DB::table('project_user as pu')
                 ->join('users as u', 'u.id', '=', 'pu.user_id')
                 ->where('pu.project_id', $id)
@@ -489,8 +489,8 @@ class ProjectService
 
             $userStats = (object) ['assigned_users_count' => $teamMembers->count()];
 
-            // Акты выполненных работ по проекту
-            // Фильтруем напрямую по project_id для корректной работы с мультипроектными контрактами
+            // РђРєС‚С‹ РІС‹РїРѕР»РЅРµРЅРЅС‹С… СЂР°Р±РѕС‚ РїРѕ РїСЂРѕРµРєС‚Сѓ
+            // Р¤РёР»СЊС‚СЂСѓРµРј РЅР°РїСЂСЏРјСѓСЋ РїРѕ project_id РґР»СЏ РєРѕСЂСЂРµРєС‚РЅРѕР№ СЂР°Р±РѕС‚С‹ СЃ РјСѓР»СЊС‚РёРїСЂРѕРµРєС‚РЅС‹РјРё РєРѕРЅС‚СЂР°РєС‚Р°РјРё
             $acts = DB::table('contract_performance_acts as a')
                 ->join('contracts as c', 'c.id', '=', 'a.contract_id')
                 ->where('a.project_id', $id)
@@ -498,7 +498,7 @@ class ProjectService
                 ->orderBy('a.act_date', 'desc')
                 ->get();
 
-            // Последние операции - ИСТОЧНИК ИСТИНЫ: СКЛАД
+            // РџРѕСЃР»РµРґРЅРёРµ РѕРїРµСЂР°С†РёРё - РРЎРўРћР§РќРРљ РРЎРўРРќР«: РЎРљР›РђР”
             $lastMaterialOperation = DB::table('warehouse_movements')
                 ->where('project_id', $id)
                 ->whereIn('movement_type', ['receipt', 'write_off'])
@@ -548,7 +548,7 @@ class ProjectService
                 'project_id' => $id,
                 'error' => $e->getMessage()
             ]);
-            throw new BusinessLogicException('Ошибка при получении статистики проекта.', 500);
+            throw new BusinessLogicException('РћС€РёР±РєР° РїСЂРё РїРѕР»СѓС‡РµРЅРёРё СЃС‚Р°С‚РёСЃС‚РёРєРё РїСЂРѕРµРєС‚Р°.', 500);
         }
     }
 
@@ -556,17 +556,17 @@ class ProjectService
     {
         $project = $this->projectRepository->find($id);
         if (!$project) {
-            throw new BusinessLogicException('Проект не найден.', 404);
+            throw new BusinessLogicException('РџСЂРѕРµРєС‚ РЅРµ РЅР°Р№РґРµРЅ.', 404);
         }
 
         try {
-            // СКЛАДСКАЯ СИСТЕМА: показываем материалы, распределенные на проект + доступный остаток на складах
+            // РЎРљР›РђР”РЎРљРђРЇ РЎРРЎРўР•РњРђ: РїРѕРєР°Р·С‹РІР°РµРј РјР°С‚РµСЂРёР°Р»С‹, СЂР°СЃРїСЂРµРґРµР»РµРЅРЅС‹Рµ РЅР° РїСЂРѕРµРєС‚ + РґРѕСЃС‚СѓРїРЅС‹Р№ РѕСЃС‚Р°С‚РѕРє РЅР° СЃРєР»Р°РґР°С…
             $query = DB::table('warehouse_project_allocations as wpa')
                 ->join('materials as m', 'wpa.material_id', '=', 'm.id')
                 ->join('organization_warehouses as w', 'wpa.warehouse_id', '=', 'w.id')
                 ->leftJoin('measurement_units as mu', 'm.measurement_unit_id', '=', 'mu.id')
                 ->leftJoin('users as u', 'wpa.allocated_by_user_id', '=', 'u.id')
-                // Подтягиваем общий остаток материала на всех складах организации
+                // РџРѕРґС‚СЏРіРёРІР°РµРј РѕР±С‰РёР№ РѕСЃС‚Р°С‚РѕРє РјР°С‚РµСЂРёР°Р»Р° РЅР° РІСЃРµС… СЃРєР»Р°РґР°С… РѕСЂРіР°РЅРёР·Р°С†РёРё
                 ->leftJoin(DB::raw('(
                     SELECT 
                         wb.material_id,
@@ -624,8 +624,8 @@ class ProjectService
                     $warehouseAvailable = (float)$item->warehouse_available_total;
                     $allocated = (float)$item->allocated_quantity;
                     
-                    // КРИТИЧНО: Проверяем валидность данных
-                    // Если материал распределен, но его НЕТ на складе - это некорректные данные!
+                    // РљР РРўРР§РќРћ: РџСЂРѕРІРµСЂСЏРµРј РІР°Р»РёРґРЅРѕСЃС‚СЊ РґР°РЅРЅС‹С…
+                    // Р•СЃР»Рё РјР°С‚РµСЂРёР°Р» СЂР°СЃРїСЂРµРґРµР»РµРЅ, РЅРѕ РµРіРѕ РќР•Рў РЅР° СЃРєР»Р°РґРµ - СЌС‚Рѕ РЅРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ!
                     $isValid = $warehouseAvailable > 0;
                     $hasWarning = !$isValid && $allocated > 0;
                     
@@ -637,17 +637,17 @@ class ProjectService
                         'unit' => $item->unit,
                         'warehouse_name' => $item->warehouse_name,
                         'warehouse_id' => $item->warehouse_id,
-                        'allocated_quantity' => $allocated, // Распределено на проект
-                        'warehouse_available_total' => $warehouseAvailable, // Доступно на всех складах
+                        'allocated_quantity' => $allocated, // Р Р°СЃРїСЂРµРґРµР»РµРЅРѕ РЅР° РїСЂРѕРµРєС‚
+                        'warehouse_available_total' => $warehouseAvailable, // Р”РѕСЃС‚СѓРїРЅРѕ РЅР° РІСЃРµС… СЃРєР»Р°РґР°С…
                         'average_price' => (float)$item->average_price,
                         'allocated_value' => $allocated * (float)$item->average_price,
                         'last_operation_date' => $item->last_operation_date,
                         'allocated_by' => $item->allocated_by,
                         'notes' => $item->notes,
-                        // Флаги валидности данных
+                        // Р¤Р»Р°РіРё РІР°Р»РёРґРЅРѕСЃС‚Рё РґР°РЅРЅС‹С…
                         'is_valid' => $isValid,
                         'has_warning' => $hasWarning,
-                        'warning_message' => $hasWarning ? 'Материал распределен на проект, но отсутствует на складе. Требуется оприходование!' : null,
+                        'warning_message' => $hasWarning ? 'РњР°С‚РµСЂРёР°Р» СЂР°СЃРїСЂРµРґРµР»РµРЅ РЅР° РїСЂРѕРµРєС‚, РЅРѕ РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚ РЅР° СЃРєР»Р°РґРµ. РўСЂРµР±СѓРµС‚СЃСЏ РѕРїСЂРёС…РѕРґРѕРІР°РЅРёРµ!' : null,
                     ];
                 }),
                 'links' => [
@@ -670,7 +670,7 @@ class ProjectService
                 'project_id' => $id,
                 'error' => $e->getMessage()
             ]);
-            throw new BusinessLogicException('Ошибка при получении материалов проекта.', 500);
+            throw new BusinessLogicException('РћС€РёР±РєР° РїСЂРё РїРѕР»СѓС‡РµРЅРёРё РјР°С‚РµСЂРёР°Р»РѕРІ РїСЂРѕРµРєС‚Р°.', 500);
         }
     }
 
@@ -678,7 +678,7 @@ class ProjectService
     {
         $project = $this->projectRepository->find($id);
         if (!$project) {
-            throw new BusinessLogicException('Проект не найден.', 404);
+            throw new BusinessLogicException('РџСЂРѕРµРєС‚ РЅРµ РЅР°Р№РґРµРЅ.', 404);
         }
 
         try {
@@ -743,12 +743,12 @@ class ProjectService
                 'project_id' => $id,
                 'error' => $e->getMessage()
             ]);
-            throw new BusinessLogicException('Ошибка при получении видов работ проекта.', 500);
+            throw new BusinessLogicException('РћС€РёР±РєР° РїСЂРё РїРѕР»СѓС‡РµРЅРёРё РІРёРґРѕРІ СЂР°Р±РѕС‚ РїСЂРѕРµРєС‚Р°.', 500);
         }
     }
 
     /**
-     * Добавить дочернюю организацию к проекту.
+     * Р”РѕР±Р°РІРёС‚СЊ РґРѕС‡РµСЂРЅСЋСЋ РѕСЂРіР°РЅРёР·Р°С†РёСЋ Рє РїСЂРѕРµРєС‚Сѓ.
      */
     public function addOrganizationToProject(
         int $projectId, 
@@ -758,22 +758,22 @@ class ProjectService
     ): void {
         $project = $this->findProjectByIdForCurrentOrg($projectId, $request);
         if (!$project) {
-            throw new BusinessLogicException('Проект не найден в вашей организации.', 404);
+            throw new BusinessLogicException('РџСЂРѕРµРєС‚ РЅРµ РЅР°Р№РґРµРЅ РІ РІР°С€РµР№ РѕСЂРіР°РЅРёР·Р°С†РёРё.', 404);
         }
 
         if ($project->organizations()->where('organizations.id', $organizationId)->exists()) {
-            throw new BusinessLogicException('Организация уже добавлена к проекту.', 409);
+            throw new BusinessLogicException('РћСЂРіР°РЅРёР·Р°С†РёСЏ СѓР¶Рµ РґРѕР±Р°РІР»РµРЅР° Рє РїСЂРѕРµРєС‚Сѓ.', 409);
         }
 
         $organization = \App\Models\Organization::find($organizationId);
         if (!$organization) {
-            throw new BusinessLogicException('Организация не найдена.', 404);
+            throw new BusinessLogicException('РћСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°.', 404);
         }
 
         $validation = $this->organizationProfileService->validateCapabilitiesForRole($organization, $role);
         if (!$validation->isValid) {
             throw new BusinessLogicException(
-                'Организация не может выполнять данную роль: ' . implode(', ', $validation->errors),
+                'РћСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РјРѕР¶РµС‚ РІС‹РїРѕР»РЅСЏС‚СЊ РґР°РЅРЅСѓСЋ СЂРѕР»СЊ: ' . implode(', ', $validation->errors),
                 422
             );
         }
@@ -854,17 +854,17 @@ class ProjectService
     }
 
     /**
-     * Удалить организацию из проекта.
+     * РЈРґР°Р»РёС‚СЊ РѕСЂРіР°РЅРёР·Р°С†РёСЋ РёР· РїСЂРѕРµРєС‚Р°.
      */
     public function removeOrganizationFromProject(int $projectId, int $organizationId, Request $request): void
     {
         $project = $this->findProjectByIdForCurrentOrg($projectId, $request);
         if (!$project) {
-            throw new BusinessLogicException('Проект не найден в вашей организации.', 404);
+            throw new BusinessLogicException(trans_message('project.not_found'), 404);
         }
 
         if ($organizationId === $project->organization_id) {
-            throw new BusinessLogicException('Нельзя удалить головную организацию проекта.', 400);
+            throw new BusinessLogicException(trans_message('project.owner_remove_forbidden'), 400);
         }
         
         $participantSnapshot = DB::table('project_organization')
@@ -873,7 +873,7 @@ class ProjectService
             ->first();
 
         if (!$participantSnapshot) {
-            throw new BusinessLogicException('РћСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ СЏРІР»СЏРµС‚СЃСЏ СѓС‡Р°СЃС‚РЅРёРєРѕРј РїСЂРѕРµРєС‚Р°.', 404);
+            throw new BusinessLogicException(trans_message('project.participant_not_found'), 404);
         }
 
         $role = $this->resolveProjectRoleFromValues(
@@ -901,7 +901,7 @@ class ProjectService
                 'organization_id' => $organizationId,
             ]);
 
-            throw new BusinessLogicException('РќРµ СѓРґР°Р»РѕСЃСЊ СѓРґР°Р»РёС‚СЊ СѓС‡Р°СЃС‚РЅРёРєР° РёР· РїСЂРѕРµРєС‚Р°. РџРѕРІС‚РѕСЂРёС‚Рµ РїРѕРїС‹С‚РєСѓ.', 409);
+            throw new BusinessLogicException(trans_message('project.participant_remove_conflict'), 409);
         }
 
         $this->invalidateProjectParticipantContexts($projectId);
@@ -917,7 +917,7 @@ class ProjectService
     }
     
     /**
-     * Изменить роль организации в проекте.
+     * РР·РјРµРЅРёС‚СЊ СЂРѕР»СЊ РѕСЂРіР°РЅРёР·Р°С†РёРё РІ РїСЂРѕРµРєС‚Рµ.
      */
     public function updateOrganizationRole(
         int $projectId, 
@@ -927,11 +927,11 @@ class ProjectService
     ): void {
         $project = $this->findProjectByIdForCurrentOrg($projectId, $request);
         if (!$project) {
-            throw new BusinessLogicException('Проект не найден в вашей организации.', 404);
+            throw new BusinessLogicException(trans_message('project.not_found'), 404);
         }
 
         if ($organizationId === $project->organization_id) {
-            throw new BusinessLogicException('Нельзя изменить роль владельца проекта.', 400);
+            throw new BusinessLogicException(trans_message('project.owner_role_change_forbidden'), 400);
         }
 
         $pivot = ProjectOrganization::query()
@@ -940,10 +940,10 @@ class ProjectService
             ->first();
 
         if (!$pivot) {
-            throw new BusinessLogicException('Организация не является участником проекта.', 404);
+            throw new BusinessLogicException(trans_message('project.participant_not_found'), 404);
         }
         
-        // Получаем текущую роль
+        // РџРѕР»СѓС‡Р°РµРј С‚РµРєСѓС‰СѓСЋ СЂРѕР»СЊ
         $organization = Organization::withTrashed()->find($organizationId);
         if (!$organization instanceof Organization) {
             throw new BusinessLogicException(trans_message('project.organization_not_found'), 404);
@@ -958,7 +958,7 @@ class ProjectService
         
         if (!$validation->isValid) {
             throw new BusinessLogicException(
-                'Организация не может выполнять данную роль: ' . implode(', ', $validation->errors),
+                trans_message('project.role_capabilities_invalid', ['errors' => implode(', ', $validation->errors)]),
                 422
             );
         }
@@ -1077,16 +1077,16 @@ class ProjectService
     }
 
     /**
-     * Получить полную информацию по проекту: финансы, статистика, разбивка по организациям.
+     * РџРѕР»СѓС‡РёС‚СЊ РїРѕР»РЅСѓСЋ РёРЅС„РѕСЂРјР°С†РёСЋ РїРѕ РїСЂРѕРµРєС‚Сѓ: С„РёРЅР°РЅСЃС‹, СЃС‚Р°С‚РёСЃС‚РёРєР°, СЂР°Р·Р±РёРІРєР° РїРѕ РѕСЂРіР°РЅРёР·Р°С†РёСЏРј.
      */
     public function getFullProjectDetails(int $projectId, Request $request): array
     {
         $project = $this->findProjectByIdForCurrentOrg($projectId, $request);
         if (!$project) {
-            throw new BusinessLogicException('Проект не найден или не принадлежит вашей организации.', 404);
+            throw new BusinessLogicException('РџСЂРѕРµРєС‚ РЅРµ РЅР°Р№РґРµРЅ РёР»Рё РЅРµ РїСЂРёРЅР°РґР»РµР¶РёС‚ РІР°С€РµР№ РѕСЂРіР°РЅРёР·Р°С†РёРё.', 404);
         }
 
-        // Загружаем организации и контракты с актами/платежами
+        // Р—Р°РіСЂСѓР¶Р°РµРј РѕСЂРіР°РЅРёР·Р°С†РёРё Рё РєРѕРЅС‚СЂР°РєС‚С‹ СЃ Р°РєС‚Р°РјРё/РїР»Р°С‚РµР¶Р°РјРё
         $project->load([
             'organizations:id,name',
             'contracts:id,project_id,total_amount,status',
@@ -1094,12 +1094,12 @@ class ProjectService
             'contracts.payments:id,contract_id,amount',
         ]);
 
-        // Общие суммы
+        // РћР±С‰РёРµ СЃСѓРјРјС‹
         $totalContractsAmount = $project->contracts->sum('total_amount');
         $totalPerformanceActsAmount = $project->contracts->flatMap(fn($c) => $c->performanceActs)->where('is_approved', true)->sum('amount');
         $totalPaymentsAmount = $project->contracts->flatMap(fn($c) => $c->payments)->sum('amount');
 
-        // Сумма выполненных работ и материалов
+        // РЎСѓРјРјР° РІС‹РїРѕР»РЅРµРЅРЅС‹С… СЂР°Р±РѕС‚ Рё РјР°С‚РµСЂРёР°Р»РѕРІ
         $completedWorksQuery = DB::table('completed_works')
             ->where('project_id', $projectId)
             ->selectRaw('organization_id, COUNT(*) as works_count, SUM(total_amount) as works_amount')
@@ -1113,7 +1113,7 @@ class ProjectService
             ->groupBy('cw.organization_id')
             ->get();
 
-        // Формируем словари для быстрого доступа
+        // Р¤РѕСЂРјРёСЂСѓРµРј СЃР»РѕРІР°СЂРё РґР»СЏ Р±С‹СЃС‚СЂРѕРіРѕ РґРѕСЃС‚СѓРїР°
         $worksByOrg = $completedWorksQuery->keyBy('organization_id');
         $materialsByOrg = $materialsQuery->keyBy('organization_id');
 
@@ -1131,7 +1131,7 @@ class ProjectService
             ];
         })->toArray();
 
-        // Общая статистика по выполненным работам и материалам
+        // РћР±С‰Р°СЏ СЃС‚Р°С‚РёСЃС‚РёРєР° РїРѕ РІС‹РїРѕР»РЅРµРЅРЅС‹Рј СЂР°Р±РѕС‚Р°Рј Рё РјР°С‚РµСЂРёР°Р»Р°Рј
         $totalWorksAmount = array_sum(array_column($organizationsStats, 'works_amount'));
         $totalMaterialsAmount = array_sum(array_column($organizationsStats, 'materials_amount'));
 
