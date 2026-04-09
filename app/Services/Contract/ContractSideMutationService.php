@@ -8,8 +8,10 @@ use App\BusinessModules\Core\MultiOrganization\Contracts\ContractorSharingInterf
 use App\Domain\Project\ValueObjects\ProjectContext;
 use App\DTOs\Contract\ContractDTO;
 use App\Enums\Contract\ContractSideTypeEnum;
+use App\Enums\ProjectOrganizationRole;
 use App\Models\Contract;
 use App\Models\Contractor;
+use App\Models\Organization;
 use App\Models\Project;
 use App\Repositories\Interfaces\ContractPaymentRepositoryInterface;
 use App\Repositories\Interfaces\ContractRepositoryInterface;
@@ -416,6 +418,19 @@ class ContractSideMutationService
             }
         }
 
+        if ($contractorId !== null) {
+            $targetOrganizationId = $sideType === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
+                ? $this->resolveProjectCustomerOrganizationId($contractDTO)
+                : $organizationId;
+
+            $contractorId = $this->resolveAccessibleContractorId(
+                $contractorId,
+                $targetOrganizationId,
+                $contractDTO,
+                $sideType
+            );
+        }
+
         return new ContractDTO(
             project_id: $contractDTO->project_id,
             contractor_id: $contractorId,
@@ -518,6 +533,108 @@ class ContractSideMutationService
         }
 
         return $this->selfExecutionService->getOrCreateForOrganization($organizationId)->id;
+    }
+
+    private function resolveAccessibleContractorId(
+        int $contractorId,
+        int $targetOrganizationId,
+        ContractDTO $contractDTO,
+        ContractSideTypeEnum $sideType
+    ): int {
+        if ($this->contractorSharing->canUseContractor($contractorId, $targetOrganizationId)) {
+            return $contractorId;
+        }
+
+        $contractor = Contractor::query()
+            ->with('sourceOrganization')
+            ->find($contractorId);
+
+        if (!$contractor instanceof Contractor || !$contractor->source_organization_id) {
+            return $contractorId;
+        }
+
+        $project = $this->resolvePrimaryProject($contractDTO);
+
+        if (!$project instanceof Project) {
+            return $contractorId;
+        }
+
+        $sourceOrganizationId = (int) $contractor->source_organization_id;
+
+        if (!$this->isProjectParticipantCompatibleWithSide($project, $sourceOrganizationId, $sideType)) {
+            return $contractorId;
+        }
+
+        $sourceOrganization = $contractor->sourceOrganization instanceof Organization
+            ? $contractor->sourceOrganization
+            : Organization::find($sourceOrganizationId);
+
+        if (!$sourceOrganization instanceof Organization) {
+            return $contractorId;
+        }
+
+        return $this->getOrCreateParticipantContractor($targetOrganizationId, $sourceOrganization)->id;
+    }
+
+    private function isProjectParticipantCompatibleWithSide(
+        Project $project,
+        int $organizationId,
+        ContractSideTypeEnum $sideType
+    ): bool {
+        $participant = $project->organizations()
+            ->wherePivot('is_active', true)
+            ->where('organizations.id', $organizationId)
+            ->first();
+
+        if (!$participant instanceof Organization) {
+            return false;
+        }
+
+        $roleValue = $participant->pivot->role_new ?? $participant->pivot->role;
+        $role = ProjectOrganizationRole::tryFrom((string) $roleValue);
+
+        if (!$role instanceof ProjectOrganizationRole) {
+            return false;
+        }
+
+        $allowedRoles = match ($sideType) {
+            ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR => [
+                ProjectOrganizationRole::GENERAL_CONTRACTOR,
+                ProjectOrganizationRole::CONTRACTOR,
+            ],
+            ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR => [
+                ProjectOrganizationRole::CONTRACTOR,
+            ],
+            ContractSideTypeEnum::CONTRACTOR_TO_SUBCONTRACTOR => [
+                ProjectOrganizationRole::SUBCONTRACTOR,
+            ],
+            default => [],
+        };
+
+        return in_array($role, $allowedRoles, true);
+    }
+
+    private function getOrCreateParticipantContractor(int $targetOrganizationId, Organization $sourceOrganization): Contractor
+    {
+        return Contractor::query()->firstOrCreate(
+            [
+                'organization_id' => $targetOrganizationId,
+                'source_organization_id' => $sourceOrganization->id,
+            ],
+            [
+                'name' => $sourceOrganization->name,
+                'inn' => $sourceOrganization->tax_number,
+                'legal_address' => $sourceOrganization->address,
+                'phone' => $sourceOrganization->phone,
+                'email' => $sourceOrganization->email,
+                'contractor_type' => Contractor::TYPE_INVITED_ORGANIZATION,
+                'connected_at' => now(),
+                'sync_settings' => [
+                    'sync_fields' => ['name', 'phone', 'email', 'legal_address', 'inn'],
+                    'sync_interval_hours' => 24,
+                ],
+            ]
+        );
     }
 
     private function assertProjectsAvailableForContract(
