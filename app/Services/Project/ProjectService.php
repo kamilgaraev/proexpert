@@ -835,16 +835,22 @@ class ProjectService
             throw new BusinessLogicException('Нельзя удалить головную организацию проекта.', 400);
         }
         
-        // Получаем роль организации перед удалением
-        $role = $this->resolveOrganizationRoleForProject($project, $organizationId, true);
-        if (!$role instanceof ProjectOrganizationRole) {
-            throw new BusinessLogicException(trans_message('project.participant_not_found'), 404);
+        $participant = ProjectOrganization::query()
+            ->where('project_id', $projectId)
+            ->where('organization_id', $organizationId)
+            ->first();
+
+        if (!$participant instanceof ProjectOrganization) {
+            return;
         }
 
+        $role = $this->resolveProjectRoleFromPivot($participant);
         $organization = Organization::withTrashed()->find($organizationId);
         $user = $request->user();
-
-        $project->organizations()->detach($organizationId);
+        ProjectOrganization::query()
+            ->where('project_id', $projectId)
+            ->where('organization_id', $organizationId)
+            ->delete();
         
         $this->projectContextService->invalidateContext($projectId, $organizationId);
         
@@ -854,7 +860,7 @@ class ProjectService
         ]);
         
         // Dispatch event
-        if ($organization instanceof Organization) {
+        if ($organization instanceof Organization && $role instanceof ProjectOrganizationRole) {
             event(new ProjectOrganizationRemoved($project, $organization, $role, $user));
         }
     }
@@ -989,6 +995,22 @@ class ProjectService
             return null;
         }
 
+        $roleValue = $pivot->getRawOriginal('role_new') ?: $pivot->getRawOriginal('role');
+        if (!is_string($roleValue) || $roleValue === '') {
+            return null;
+        }
+
+        return ProjectOrganizationRole::tryFrom($roleValue) ?? match ($roleValue) {
+            'owner' => ProjectOrganizationRole::OWNER,
+            'contractor' => ProjectOrganizationRole::CONTRACTOR,
+            'child_contractor' => ProjectOrganizationRole::SUBCONTRACTOR,
+            'observer' => ProjectOrganizationRole::OBSERVER,
+            default => null,
+        };
+    }
+
+    private function resolveProjectRoleFromPivot(ProjectOrganization $pivot): ?ProjectOrganizationRole
+    {
         $roleValue = $pivot->getRawOriginal('role_new') ?: $pivot->getRawOriginal('role');
         if (!is_string($roleValue) || $roleValue === '') {
             return null;
