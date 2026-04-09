@@ -1931,10 +1931,30 @@ class CustomerPortalService
                 return round($request->created_at->diffInMinutes($lastResponseAt) / 60, 1);
             })
             ->filter();
+        $approvalCycleHours = (clone $approvalsQuery)
+            ->where(function (Builder $builder): void {
+                $builder
+                    ->whereNotNull('approval_date')
+                    ->orWhere('is_approved', true);
+            })
+            ->get()
+            ->map(function (ContractPerformanceAct $approval): ?float {
+                if (!$approval->created_at) {
+                    return null;
+                }
+
+                $completedAt = $approval->approval_date?->startOfDay() ?? ($approval->is_approved ? $approval->updated_at : null);
+                if ($completedAt === null) {
+                    return null;
+                }
+
+                return round($approval->created_at->diffInMinutes($completedAt) / 60, 1);
+            })
+            ->filter();
 
         return [
             'issue_response_hours' => $issueResponseHours->isEmpty() ? null : round($issueResponseHours->avg(), 1),
-            'approval_cycle_hours' => round($approvalsQuery->whereNotNull('approved_at')->avg(DB::raw("extract(epoch from (approved_at - created_at)) / 3600")) ?: 0, 1),
+            'approval_cycle_hours' => $approvalCycleHours->isEmpty() ? 0.0 : round($approvalCycleHours->avg(), 1),
             'rework_count' => (clone $approvalsQuery)->where('is_approved', false)->count(),
             'overdue_actions_count' => (clone $issuesQuery)->whereNotIn('status', ['resolved', 'rejected'])->whereDate('due_date', '<', now()->toDateString())->count()
                 + (clone $requestsQuery)->whereNotIn('status', ['completed', 'rejected'])->whereDate('due_date', '<', now()->toDateString())->count(),

@@ -6,7 +6,9 @@ use App\Repositories\Interfaces\ProjectRepositoryInterface;
 use App\Repositories\Interfaces\UserRepositoryInterface;
 use App\Repositories\Interfaces\MaterialRepositoryInterface;
 use App\Repositories\Interfaces\WorkTypeRepositoryInterface;
+use App\Models\Organization;
 use App\Models\Project;
+use App\Models\ProjectOrganization;
 use App\Models\User;
 use App\Models\Role;
 use App\Services\Logging\LoggingService;
@@ -834,8 +836,12 @@ class ProjectService
         }
         
         // Получаем роль организации перед удалением
-        $organization = \App\Models\Organization::find($organizationId);
-        $role = $this->projectContextService->getOrganizationRole($project, $organization);
+        $role = $this->resolveOrganizationRoleForProject($project, $organizationId);
+        if (!$role instanceof ProjectOrganizationRole) {
+            throw new BusinessLogicException('РћСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ СЏРІР»СЏРµС‚СЃСЏ СѓС‡Р°СЃС‚РЅРёРєРѕРј РїСЂРѕРµРєС‚Р°.', 404);
+        }
+
+        $organization = Organization::withTrashed()->find($organizationId);
         $user = $request->user();
 
         $project->organizations()->detach($organizationId);
@@ -848,7 +854,7 @@ class ProjectService
         ]);
         
         // Dispatch event
-        if ($role) {
+        if ($organization instanceof Organization) {
             event(new ProjectOrganizationRemoved($project, $organization, $role, $user));
         }
     }
@@ -871,8 +877,9 @@ class ProjectService
             throw new BusinessLogicException('Нельзя изменить роль владельца проекта.', 400);
         }
 
-        $pivot = $project->organizations()
-            ->wherePivot('organization_id', $organizationId)
+        $pivot = ProjectOrganization::query()
+            ->where('project_id', $projectId)
+            ->where('organization_id', $organizationId)
             ->first();
 
         if (!$pivot) {
@@ -880,8 +887,15 @@ class ProjectService
         }
         
         // Получаем текущую роль
-        $organization = \App\Models\Organization::find($organizationId);
-        $oldRole = $this->projectContextService->getOrganizationRole($project, $organization);
+        $organization = Organization::withTrashed()->find($organizationId);
+        if (!$organization instanceof Organization) {
+            throw new BusinessLogicException('РћСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°.', 404);
+        }
+
+        $oldRole = $this->resolveOrganizationRoleForProject($project, $organizationId);
+        if (!$oldRole instanceof ProjectOrganizationRole) {
+            throw new BusinessLogicException('РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ С‚РµРєСѓС‰СѓСЋ СЂРѕР»СЊ РѕСЂРіР°РЅРёР·Р°С†РёРё РІ РїСЂРѕРµРєС‚Рµ.', 422);
+        }
 
         $validation = $this->organizationProfileService->validateCapabilitiesForRole($organization, $newRole);
         
@@ -948,6 +962,36 @@ class ProjectService
             ProjectOrganizationRole::DESIGNER,
             ProjectOrganizationRole::OBSERVER,
             ProjectOrganizationRole::PARENT_ADMINISTRATOR => 'observer',
+        };
+    }
+
+    private function resolveOrganizationRoleForProject(Project $project, int $organizationId): ?ProjectOrganizationRole
+    {
+        if ($organizationId === (int) $project->organization_id) {
+            return ProjectOrganizationRole::OWNER;
+        }
+
+        $pivot = ProjectOrganization::query()
+            ->where('project_id', $project->id)
+            ->where('organization_id', $organizationId)
+            ->where('is_active', true)
+            ->first();
+
+        if (!$pivot instanceof ProjectOrganization) {
+            return null;
+        }
+
+        $roleValue = $pivot->getRawOriginal('role_new') ?: $pivot->getRawOriginal('role');
+        if (!is_string($roleValue) || $roleValue === '') {
+            return null;
+        }
+
+        return ProjectOrganizationRole::tryFrom($roleValue) ?? match ($roleValue) {
+            'owner' => ProjectOrganizationRole::OWNER,
+            'contractor' => ProjectOrganizationRole::CONTRACTOR,
+            'child_contractor' => ProjectOrganizationRole::SUBCONTRACTOR,
+            'observer' => ProjectOrganizationRole::OBSERVER,
+            default => null,
         };
     }
 
