@@ -31,44 +31,44 @@ class NormalizeAdminResponse
         $statusCode = $response->getStatusCode();
 
         if ($this->isStandardResponse($payload)) {
-            return $this->normalizeStandardPayload($payload, $statusCode);
+            return $this->withNoCacheHeaders($this->normalizeStandardPayload($payload, $statusCode));
         }
 
         if ($statusCode >= Response::HTTP_BAD_REQUEST) {
-            return AdminResponse::error(
+            return $this->withNoCacheHeaders(AdminResponse::error(
                 $this->resolveErrorMessage($payload, $statusCode),
                 $statusCode,
                 is_array($payload) ? ($payload['errors'] ?? null) : null
-            );
+            ));
         }
 
         if ($this->isLegacyPaginator($payload)) {
-            return AdminResponse::paginated(
+            return $this->withNoCacheHeaders(AdminResponse::paginated(
                 $payload['data'] ?? [],
                 $this->extractLegacyMeta($payload),
                 $this->extractOptionalMessage($payload),
                 $statusCode,
                 is_array($payload) ? ($payload['summary'] ?? null) : null,
                 $this->extractLegacyLinks($payload)
-            );
+            ));
         }
 
         if ($this->hasCollectionMeta($payload)) {
-            return AdminResponse::paginated(
+            return $this->withNoCacheHeaders(AdminResponse::paginated(
                 $payload['data'] ?? [],
                 is_array($payload['meta']) ? $payload['meta'] : [],
                 $this->extractOptionalMessage($payload),
                 $statusCode,
                 is_array($payload) ? ($payload['summary'] ?? null) : null,
                 is_array($payload['links'] ?? null) ? $payload['links'] : null
-            );
+            ));
         }
 
-        return AdminResponse::success(
+        return $this->withNoCacheHeaders(AdminResponse::success(
             $this->extractSuccessData($payload),
             $this->extractOptionalMessage($payload),
             $statusCode
-        );
+        ));
     }
 
     private function isStandardResponse(mixed $payload): bool
@@ -205,5 +205,14 @@ class NormalizeAdminResponse
             'prev' => $payload['prev_page_url'] ?? null,
             'next' => $payload['next_page_url'] ?? null,
         ];
+    }
+
+    private function withNoCacheHeaders(JsonResponse $response): JsonResponse
+    {
+        $response->headers->set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+        $response->headers->set('Pragma', 'no-cache');
+        $response->headers->set('Expires', '0');
+
+        return $response;
     }
 }
