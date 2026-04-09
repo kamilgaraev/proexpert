@@ -72,33 +72,36 @@ class CustomerPortalService
         ];
     }
 
-    public function getContracts(int $organizationId, ?Project $project = null): array
+    public function getContracts(int $organizationId, array $filters = [], ?Project $project = null): array
     {
-        $contracts = $this->baseCustomerContractQuery($organizationId, $project)
+        $page = isset($filters['page']) ? max(1, (int) $filters['page']) : 1;
+        $perPage = isset($filters['per_page']) ? min(max((int) $filters['per_page'], 1), 50) : 15;
+        $appliedFilters = $this->normalizeContractFilters($filters, $project);
+
+        $contracts = $this->baseCustomerContractQuery($organizationId, $appliedFilters, $project)
             ->with([
                 'project.projectAddress',
                 'project.organization',
                 'project.organizations',
-                'projects:id,name',
+                'projects:id,name,organization_id,address',
+                'projects.projectAddress',
+                'projects.organization',
+                'projects.organizations',
                 'contractor:id,name',
                 'performanceActs:id,contract_id,amount,is_approved',
                 'payments:id,contract_id,amount',
             ])
             ->latest('date')
-            ->limit(50)
-            ->get()
-            ->filter(fn (Contract $contract): bool => $this->canAccessContract($organizationId, $contract))
-            ->values();
+            ->paginate($perPage, ['*'], 'page', $page);
 
         return [
-            'items' => $contracts->map(
+            'items' => collect($contracts->items())
+                ->filter(fn (Contract $contract): bool => $this->canAccessContract($organizationId, $contract))
+                ->values()
+                ->map(
                 fn (Contract $contract): array => $this->mapCustomerContract($contract)
             )->all(),
-            'meta' => [
-                'organization_id' => $organizationId,
-                'project_id' => $project?->id,
-                'total' => $contracts->count(),
-            ],
+            'meta' => $this->buildContractsMeta($contracts, $appliedFilters),
         ];
     }
 
@@ -125,10 +128,23 @@ class CustomerPortalService
 
     public function canAccessContract(int $organizationId, Contract $contract): bool
     {
-        $contract->loadMissing('project.organizations');
+        $contract->loadMissing([
+            'project.organization',
+            'project.organizations',
+            'projects.organization',
+            'projects.organizations',
+        ]);
 
         if ($contract->project instanceof Project) {
-            return $this->projectCustomerResolverService->isResolvedCustomer($contract->project, $organizationId);
+            if ($this->projectCustomerResolverService->isResolvedCustomer($contract->project, $organizationId)) {
+                return true;
+            }
+        }
+
+        if ($contract->relationLoaded('projects') && $contract->projects->isNotEmpty()) {
+            return $contract->projects->contains(
+                fn (Project $project): bool => $this->projectCustomerResolverService->isResolvedCustomer($project, $organizationId)
+            );
         }
 
         return (int) $contract->organization_id === $organizationId;
@@ -136,7 +152,8 @@ class CustomerPortalService
 
     public function getProject(Project $project): array
     {
-        $project->loadMissing(['projectAddress', 'organization']);
+        $project->loadMissing(['projectAddress', 'organization', 'organizations']);
+        $resolvedCustomer = $this->projectCustomerResolverService->resolve($project);
 
         return [
             'project' => [
@@ -151,6 +168,7 @@ class CustomerPortalService
                 'description' => $project->description,
                 'startDate' => optional($project->start_date)?->format('Y-m-d'),
                 'endDate' => optional($project->end_date)?->format('Y-m-d'),
+                'resolved_customer' => $this->mapResolvedCustomer($resolvedCustomer),
             ],
         ];
     }
@@ -176,7 +194,7 @@ class CustomerPortalService
     public function getApprovals(int $organizationId, ?Project $project = null): array
     {
         $approvals = $this->baseApprovalQuery($organizationId, $project)
-            ->with(['project.projectAddress'])
+            ->with(['project.projectAddress', 'contract:id,number,subject,status'])
             ->latest('act_date')
             ->limit(20)
             ->get();
@@ -329,7 +347,7 @@ class CustomerPortalService
     private function baseProjectQuery(int $organizationId): Builder
     {
         return Project::query()
-            ->with(['projectAddress', 'organization'])
+            ->with(['projectAddress', 'organization', 'organizations'])
             ->accessibleByOrganization($organizationId)
             ->where('is_archived', false)
             ->orderByDesc('updated_at');
@@ -377,28 +395,13 @@ class CustomerPortalService
             );
     }
 
-    private function baseCustomerContractQuery(int $organizationId, ?Project $project = null): Builder
+    private function baseCustomerContractQuery(int $organizationId, array $filters = [], ?Project $project = null): Builder
     {
         return Contract::query()
-            ->whereHas('project', function (Builder $builder) use ($organizationId): void {
-                $builder->where(function (Builder $scope) use ($organizationId): void {
-                    $scope
-                        ->where('organization_id', $organizationId)
-                        ->orWhereHas('organizations', function (Builder $organizationQuery) use ($organizationId): void {
-                            $organizationQuery
-                                ->where('organizations.id', $organizationId)
-                                ->where('project_organization.is_active', true)
-                                ->where(function (Builder $roleQuery): void {
-                                    $roleQuery
-                                        ->where('project_organization.role_new', 'customer')
-                                        ->orWhere(function (Builder $fallbackQuery): void {
-                                            $fallbackQuery
-                                                ->whereNull('project_organization.role_new')
-                                                ->where('project_organization.role', 'customer');
-                                        });
-                                });
-                        });
-                });
+            ->where(function (Builder $builder) use ($organizationId): void {
+                $builder
+                    ->whereHas('project', fn (Builder $projectQuery) => $this->applyResolvedCustomerProjectAccess($projectQuery, $organizationId))
+                    ->orWhereHas('projects', fn (Builder $projectQuery) => $this->applyResolvedCustomerProjectAccess($projectQuery, $organizationId));
             })
             ->when($project !== null, function (Builder $builder) use ($project): void {
                 $builder->where(function (Builder $scope) use ($project): void {
@@ -408,11 +411,33 @@ class CustomerPortalService
                             $projectsQuery->where('projects.id', $project->id);
                         });
                 });
+            })
+            ->when(isset($filters['project_id']), function (Builder $builder) use ($filters): void {
+                $projectId = (int) $filters['project_id'];
+                $builder->where(function (Builder $scope) use ($projectId): void {
+                    $scope
+                        ->where('project_id', $projectId)
+                        ->orWhereHas('projects', fn (Builder $projectsQuery) => $projectsQuery->where('projects.id', $projectId));
+                });
+            })
+            ->when(isset($filters['status']), fn (Builder $builder) => $builder->where('status', $filters['status']))
+            ->when(isset($filters['contractor_id']), fn (Builder $builder) => $builder->where('contractor_id', (int) $filters['contractor_id']))
+            ->when(isset($filters['date_from']), fn (Builder $builder) => $builder->whereDate('date', '>=', $filters['date_from']))
+            ->when(isset($filters['date_to']), fn (Builder $builder) => $builder->whereDate('date', '<=', $filters['date_to']))
+            ->when(isset($filters['search']), function (Builder $builder) use ($filters): void {
+                $search = (string) $filters['search'];
+                $builder->where(function (Builder $scope) use ($search): void {
+                    $scope
+                        ->where('number', 'like', '%' . $search . '%')
+                        ->orWhere('subject', 'like', '%' . $search . '%');
+                });
             });
     }
 
     private function mapProjectPreview(Project $project): array
     {
+        $resolvedCustomer = $this->projectCustomerResolverService->resolve($project);
+
         return [
             'id' => $project->id,
             'name' => $project->name,
@@ -421,6 +446,7 @@ class CustomerPortalService
             'completion' => $this->resolveProjectCompletion($project),
             'budgetLabel' => $this->formatMoney($project->budget_amount),
             'leadLabel' => $this->resolveLeadLabel($project),
+            'resolved_customer' => $this->mapResolvedCustomer($resolvedCustomer),
         ];
     }
 
@@ -469,11 +495,7 @@ class CustomerPortalService
             'remaining_amount' => $remainingAmount !== null ? round($remainingAmount, 2) : null,
             'is_self_execution' => (bool) $contract->is_self_execution,
             'contract_category' => $contract->contract_category,
-            'customer' => $resolvedCustomer ? [
-                'id' => $resolvedCustomer['organization']->id,
-                'name' => $resolvedCustomer['organization']->name,
-                'source' => $resolvedCustomer['source'],
-            ] : null,
+            'customer' => $this->mapResolvedCustomer($resolvedCustomer),
         ];
     }
 
@@ -515,11 +537,92 @@ class CustomerPortalService
             'title' => 'Акт ' . ($approval->act_document_number ?: '#' . $approval->id),
             'projectName' => $project?->name,
             'contractId' => $approval->contract_id,
+            'contractNumber' => $approval->contract?->number,
+            'contractSubject' => $approval->contract?->subject,
+            'contractStatus' => $approval->contract?->status?->value ?? (string) $approval->contract?->status,
             'deadlineLabel' => $approval->is_approved
                 ? 'Согласовано ' . ($approval->approval_date?->format('d.m.Y') ?? $dateLabel)
                 : 'Ожидает решения с ' . $dateLabel,
             'status' => $approval->is_approved ? 'approved' : 'pending',
             'amount' => $this->formatMoney($approval->amount),
+        ];
+    }
+
+    private function applyResolvedCustomerProjectAccess(Builder $builder, int $organizationId): void
+    {
+        $builder->where(function (Builder $scope) use ($organizationId): void {
+            $scope
+                ->whereHas('organizations', function (Builder $organizationQuery) use ($organizationId): void {
+                    $organizationQuery
+                        ->where('organizations.id', $organizationId)
+                        ->where('project_organization.is_active', true)
+                        ->where(function (Builder $roleQuery): void {
+                            $roleQuery
+                                ->where('project_organization.role_new', 'customer')
+                                ->orWhere(function (Builder $fallbackQuery): void {
+                                    $fallbackQuery
+                                        ->whereNull('project_organization.role_new')
+                                        ->where('project_organization.role', 'customer');
+                                });
+                        });
+                })
+                ->orWhere(function (Builder $ownerScope) use ($organizationId): void {
+                    $ownerScope
+                        ->where('organization_id', $organizationId)
+                        ->whereDoesntHave('organizations', function (Builder $organizationQuery): void {
+                            $organizationQuery
+                                ->where('project_organization.is_active', true)
+                                ->where(function (Builder $roleQuery): void {
+                                    $roleQuery
+                                        ->where('project_organization.role_new', 'customer')
+                                        ->orWhere(function (Builder $fallbackQuery): void {
+                                            $fallbackQuery
+                                                ->whereNull('project_organization.role_new')
+                                                ->where('project_organization.role', 'customer');
+                                        });
+                                });
+                        });
+                });
+        });
+    }
+
+    private function normalizeContractFilters(array $filters, ?Project $project = null): array
+    {
+        $normalized = array_filter([
+            'project_id' => $project?->id ?? ($filters['project_id'] ?? null),
+            'status' => $filters['status'] ?? null,
+            'contractor_id' => isset($filters['contractor_id']) ? (int) $filters['contractor_id'] : null,
+            'date_from' => $filters['date_from'] ?? null,
+            'date_to' => $filters['date_to'] ?? null,
+            'search' => isset($filters['search']) ? trim((string) $filters['search']) : null,
+        ], static fn ($value): bool => $value !== null && $value !== '');
+
+        return $normalized;
+    }
+
+    private function buildContractsMeta($contracts, array $filters): array
+    {
+        return [
+            'current_page' => $contracts->currentPage(),
+            'per_page' => $contracts->perPage(),
+            'total' => $contracts->total(),
+            'last_page' => $contracts->lastPage(),
+            'filters' => $filters,
+        ];
+    }
+
+    private function mapResolvedCustomer(?array $resolvedCustomer): ?array
+    {
+        if ($resolvedCustomer === null) {
+            return null;
+        }
+
+        return [
+            'id' => $resolvedCustomer['id'],
+            'name' => $resolvedCustomer['name'],
+            'source' => $resolvedCustomer['source'],
+            'role' => $resolvedCustomer['role'],
+            'is_fallback_owner' => $resolvedCustomer['is_fallback_owner'],
         ];
     }
 

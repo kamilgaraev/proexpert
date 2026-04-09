@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Customer;
 
+use App\Enums\Contract\ContractStatusEnum;
 use App\Http\Responses\CustomerResponse;
 use App\Models\Contract;
 use App\Models\Project;
@@ -11,6 +12,7 @@ use App\Services\Customer\CustomerPortalService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 use Throwable;
 
 use function trans_message;
@@ -26,9 +28,14 @@ class ContractController extends CustomerController
     {
         try {
             $organizationId = $this->resolveOrganizationId($request);
+            $filters = $this->validateFilters($request);
+
+            if ($filters instanceof JsonResponse) {
+                return $filters;
+            }
 
             return CustomerResponse::success(
-                $this->customerPortalService->getContracts($organizationId),
+                $this->customerPortalService->getContracts($organizationId, $filters),
                 trans_message('customer.contracts_loaded')
             );
         } catch (Throwable $exception) {
@@ -46,13 +53,18 @@ class ContractController extends CustomerController
     {
         try {
             $organizationId = $this->resolveOrganizationId($request);
+            $filters = $this->validateFilters($request);
+
+            if ($filters instanceof JsonResponse) {
+                return $filters;
+            }
 
             if (!$this->canAccessProject($project, $organizationId)) {
                 return CustomerResponse::error(trans_message('customer.project_not_found'), 404);
             }
 
             return CustomerResponse::success(
-                $this->customerPortalService->getContracts($organizationId, $project),
+                $this->customerPortalService->getContracts($organizationId, $filters, $project),
                 trans_message('customer.contracts_loaded')
             );
         } catch (Throwable $exception) {
@@ -91,5 +103,32 @@ class ContractController extends CustomerController
 
             return CustomerResponse::error(trans_message('customer.contract_load_error'), 500);
         }
+    }
+
+    private function validateFilters(Request $request): array|JsonResponse
+    {
+        $validator = Validator::make($request->query(), [
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
+            'project_id' => ['nullable', 'integer', 'exists:projects,id'],
+            'status' => ['nullable', 'string', 'in:' . implode(',', array_map(
+                static fn (ContractStatusEnum $status): string => $status->value,
+                ContractStatusEnum::cases()
+            ))],
+            'contractor_id' => ['nullable', 'integer', 'exists:contractors,id'],
+            'date_from' => ['nullable', 'date_format:Y-m-d'],
+            'date_to' => ['nullable', 'date_format:Y-m-d'],
+            'search' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        if ($validator->fails()) {
+            return CustomerResponse::error(
+                trans_message('customer.validation_failed'),
+                422,
+                $validator->errors()
+            );
+        }
+
+        return $validator->validated();
     }
 }

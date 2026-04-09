@@ -59,6 +59,8 @@ Route::post('/projects/{project}/organizations/{organization}/activate', [Projec
 Route::post('/projects/{project}/organizations/{organization}/deactivate', [ProjectOrganizationController::class, 'deactivate'])->name('projects.organizations.deactivate');
 Route::get('/projects/{project}/participant-invitations', [ProjectParticipantInvitationController::class, 'index'])->name('projects.participant-invitations.index');
 Route::post('/projects/{project}/participant-invitations', [ProjectParticipantInvitationController::class, 'store'])->name('projects.participant-invitations.store');
+Route::post('/projects/{project}/participant-invitations/{invitation}/cancel', [ProjectParticipantInvitationController::class, 'cancel'])->name('projects.participant-invitations.cancel');
+Route::post('/projects/{project}/participant-invitations/{invitation}/resend', [ProjectParticipantInvitationController::class, 'resend'])->name('projects.participant-invitations.resend');
 
 // Получить детализированные работы дочерних организаций
 Route::get('/projects/{id}/child-works', [ProjectChildWorksController::class, 'index'])

@@ -643,13 +643,13 @@ class JwtAuthService
 
             if ($organization) {
                 try {
-                    $acceptedInvitations = app(\App\Services\Project\ProjectParticipantInvitationService::class)
+                    $processedInvitations = app(\App\Services\Project\ProjectParticipantInvitationService::class)
                         ->acceptMatchingForOrganization($user, $organization);
 
                     Log::info('[JwtAuthService] Project participant invitations processed after registration', [
                         'user_id' => $user->id,
                         'organization_id' => $organization->id,
-                        'accepted_invitations' => $acceptedInvitations,
+                        'invitation_stats' => $processedInvitations,
                     ]);
                 } catch (\Exception $invitationException) {
                     Log::warning('[JwtAuthService] Failed to process project participant invitations after registration', [

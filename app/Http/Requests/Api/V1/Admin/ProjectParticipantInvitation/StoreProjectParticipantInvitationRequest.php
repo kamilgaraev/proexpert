@@ -19,7 +19,10 @@ class StoreProjectParticipantInvitationRequest extends FormRequest
     {
         return [
             'organization_id' => ['nullable', 'integer', 'exists:organizations,id'],
-            'role' => ['required', 'string', Rule::in([ProjectOrganizationRole::CUSTOMER->value])],
+            'role' => ['required', 'string', Rule::in(array_map(
+                static fn (ProjectOrganizationRole $role): string => $role->value,
+                ProjectOrganizationRole::cases()
+            ))],
             'organization_name' => ['nullable', 'string', 'max:255', 'required_without:organization_id'],
             'inn' => ['nullable', 'string', 'max:32'],
             'email' => ['nullable', 'email', 'max:255', 'required_without:organization_id'],

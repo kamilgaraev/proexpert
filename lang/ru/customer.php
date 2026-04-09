@@ -15,6 +15,7 @@ return [
     'contract_loaded' => 'Карточка договора загружена.',
     'contract_load_error' => 'Не удалось загрузить договор.',
     'contract_not_found' => 'Договор не найден или недоступен.',
+    'validation_failed' => 'Проверьте параметры запроса.',
     'documents_loaded' => 'Список документов загружен.',
     'documents_load_error' => 'Не удалось загрузить документы.',
     'approvals_loaded' => 'Список согласований загружен.',

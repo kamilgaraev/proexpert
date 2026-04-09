@@ -16,18 +16,22 @@ class ProjectParticipantInvitation extends Model
 
     public const STATUS_PENDING = 'pending';
     public const STATUS_ACCEPTED = 'accepted';
-    public const STATUS_DECLINED = 'declined';
     public const STATUS_EXPIRED = 'expired';
+    public const STATUS_CANCELLED = 'cancelled';
+    public const STATUS_DECLINED = 'declined';
 
     protected $fillable = [
         'project_id',
         'organization_id',
         'invited_by_user_id',
         'invited_organization_id',
+        'accepted_organization_id_snapshot',
         'accepted_by_user_id',
+        'cancelled_by_user_id',
         'role',
         'token',
         'status',
+        'status_reason',
         'organization_name',
         'inn',
         'email',
@@ -37,12 +41,16 @@ class ProjectParticipantInvitation extends Model
         'metadata',
         'expires_at',
         'accepted_at',
+        'cancelled_at',
+        'resent_at',
     ];
 
     protected $casts = [
         'metadata' => 'array',
         'expires_at' => 'datetime',
         'accepted_at' => 'datetime',
+        'cancelled_at' => 'datetime',
+        'resent_at' => 'datetime',
     ];
 
     protected static function booted(): void
@@ -53,7 +61,7 @@ class ProjectParticipantInvitation extends Model
             }
 
             if ($invitation->expires_at === null) {
-                $invitation->expires_at = now()->addDays(14);
+                $invitation->expires_at = now()->addDays(7);
             }
         });
     }
@@ -83,6 +91,11 @@ class ProjectParticipantInvitation extends Model
         return $this->belongsTo(User::class, 'accepted_by_user_id');
     }
 
+    public function cancelledBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'cancelled_by_user_id');
+    }
+
     public function scopePending($query)
     {
         return $query
@@ -100,7 +113,28 @@ class ProjectParticipantInvitation extends Model
             return false;
         }
 
-        return $this->expires_at === null || $this->expires_at->isFuture();
+        return !$this->hasExpired();
+    }
+
+    public function hasExpired(): bool
+    {
+        return $this->expires_at !== null && $this->expires_at->isPast();
+    }
+
+    public function isAccepted(): bool
+    {
+        return $this->status === self::STATUS_ACCEPTED;
+    }
+
+    public function isCancelled(): bool
+    {
+        return \in_array($this->status, [self::STATUS_CANCELLED, self::STATUS_DECLINED], true);
+    }
+
+    public function isExpired(): bool
+    {
+        return $this->status === self::STATUS_EXPIRED
+            || ($this->status === self::STATUS_PENDING && $this->hasExpired());
     }
 
     public function roleEnum(): ProjectOrganizationRole

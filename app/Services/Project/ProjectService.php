@@ -36,6 +36,7 @@ class ProjectService
     protected OrganizationProfileService $organizationProfileService;
     protected ProjectContextService $projectContextService;
     protected OrganizationScopeInterface $orgScope;
+    protected ProjectParticipantService $projectParticipantService;
 
     public function __construct(
         ProjectRepositoryInterface $projectRepository,
@@ -45,7 +46,8 @@ class ProjectService
         LoggingService $logging,
         OrganizationProfileService $organizationProfileService,
         ProjectContextService $projectContextService,
-        OrganizationScopeInterface $orgScope
+        OrganizationScopeInterface $orgScope,
+        ProjectParticipantService $projectParticipantService
     ) {
         $this->projectRepository = $projectRepository;
         $this->userRepository = $userRepository;
@@ -55,6 +57,7 @@ class ProjectService
         $this->organizationProfileService = $organizationProfileService;
         $this->projectContextService = $projectContextService;
         $this->orgScope = $orgScope;
+        $this->projectParticipantService = $projectParticipantService;
     }
 
     /**
@@ -775,48 +778,7 @@ class ProjectService
         ProjectOrganizationRole $role,
         ?User $user = null
     ): void {
-        if ($project->organizations()->where('organizations.id', $organizationId)->exists()) {
-            throw new BusinessLogicException('РћСЂРіР°РЅРёР·Р°С†РёСЏ СѓР¶Рµ РґРѕР±Р°РІР»РµРЅР° Рє РїСЂРѕРµРєС‚Сѓ.', 409);
-        }
-
-        $organization = \App\Models\Organization::find($organizationId);
-        if (!$organization) {
-            throw new BusinessLogicException('РћСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°.', 404);
-        }
-
-        $this->assertCustomerRoleAvailable($project, $role, $organizationId);
-
-        $validation = $this->organizationProfileService->validateCapabilitiesForRole($organization, $role);
-        if (!$validation->isValid) {
-            throw new BusinessLogicException(
-                'РћСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РјРѕР¶РµС‚ РІС‹РїРѕР»РЅСЏС‚СЊ РґР°РЅРЅСѓСЋ СЂРѕР»СЊ: ' . implode(', ', $validation->errors),
-                422
-            );
-        }
-
-        $project->organizations()->attach($organizationId, [
-            'role' => $role->value,
-            'role_new' => $role->value,
-            'is_active' => true,
-            'added_by_user_id' => $user?->id,
-            'invited_at' => now(),
-            'accepted_at' => now(),
-        ]);
-
-        $this->projectContextService->invalidateContext($project->id, $organizationId);
-
-        $this->logging->business('Organization added to project', [
-            'project_id' => $project->id,
-            'organization_id' => $organizationId,
-            'role' => $role->value,
-            'added_by' => $user?->id,
-        ]);
-
-        if (in_array($role->value, ['contractor', 'subcontractor'], true)) {
-            $this->ensureContractorExists($project->organization_id, $organizationId);
-        }
-
-        event(new ProjectOrganizationAdded($project, $organization, $role, $user));
+        $this->projectParticipantService->attach($project, $organizationId, $role, $user);
     }
 
     private function ensureContractorExists(int $forOrgId, int $sourceOrgId): void
@@ -958,78 +920,12 @@ class ProjectService
         ProjectOrganizationRole $newRole,
         ?User $user = null
     ): void {
-        if ($organizationId === $project->organization_id) {
-            throw new BusinessLogicException('РќРµР»СЊР·СЏ РёР·РјРµРЅРёС‚СЊ СЂРѕР»СЊ РІР»Р°РґРµР»СЊС†Р° РїСЂРѕРµРєС‚Р°.', 400);
-        }
-
-        $pivot = $project->organizations()
-            ->wherePivot('organization_id', $organizationId)
-            ->first();
-
-        if (!$pivot) {
-            throw new BusinessLogicException('РћСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ СЏРІР»СЏРµС‚СЃСЏ СѓС‡Р°СЃС‚РЅРёРєРѕРј РїСЂРѕРµРєС‚Р°.', 404);
-        }
-
-        $organization = \App\Models\Organization::find($organizationId);
-        $oldRole = $this->projectContextService->getOrganizationRole($project, $organization);
-
-        $this->assertCustomerRoleAvailable($project, $newRole, $organizationId);
-
-        $validation = $this->organizationProfileService->validateCapabilitiesForRole($organization, $newRole);
-        if (!$validation->isValid) {
-            throw new BusinessLogicException(
-                'РћСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РјРѕР¶РµС‚ РІС‹РїРѕР»РЅСЏС‚СЊ РґР°РЅРЅСѓСЋ СЂРѕР»СЊ: ' . implode(', ', $validation->errors),
-                422
-            );
-        }
-
-        $project->organizations()->updateExistingPivot($organizationId, [
-            'role' => $newRole->value,
-            'role_new' => $newRole->value,
-            'updated_at' => now(),
-        ]);
-
-        $this->projectContextService->invalidateContext($project->id, $organizationId);
-
-        $this->logging->business('Organization role updated in project', [
-            'project_id' => $project->id,
-            'organization_id' => $organizationId,
-            'old_role' => $oldRole?->value,
-            'new_role' => $newRole->value,
-        ]);
-
-        if ($oldRole) {
-            event(new ProjectOrganizationRoleChanged($project, $organization, $oldRole, $newRole, $user));
-        }
+        $this->projectParticipantService->updateRole($project, $organizationId, $newRole, $user);
     }
 
     public function setOrganizationActiveState(Project $project, int $organizationId, bool $isActive): void
     {
-        if ($organizationId === $project->organization_id) {
-            throw new BusinessLogicException('Нельзя изменить активность владельца проекта.', 400);
-        }
-
-        $participant = $project->organizations()
-            ->wherePivot('organization_id', $organizationId)
-            ->first();
-
-        if (!$participant) {
-            throw new BusinessLogicException('Организация не является участником проекта.', 404);
-        }
-
-        $roleValue = $participant->pivot->role_new ?? $participant->pivot->role;
-        $role = ProjectOrganizationRole::from($roleValue);
-
-        if ($isActive) {
-            $this->assertCustomerRoleAvailable($project, $role, $organizationId);
-        }
-
-        $project->organizations()->updateExistingPivot($organizationId, [
-            'is_active' => $isActive,
-            'updated_at' => now(),
-        ]);
-
-        $this->projectContextService->invalidateContext($project->id, $organizationId);
+        $this->projectParticipantService->setActiveState($project, $organizationId, $isActive);
     }
 
     private function assertCustomerRoleAvailable(
@@ -1037,26 +933,7 @@ class ProjectService
         ProjectOrganizationRole $role,
         ?int $organizationId = null
     ): void {
-        if ($role !== ProjectOrganizationRole::CUSTOMER) {
-            return;
-        }
-
-        $existingCustomer = $project->organizations()
-            ->wherePivot('is_active', true)
-            ->where(function ($query): void {
-                $query
-                    ->where('project_organization.role_new', ProjectOrganizationRole::CUSTOMER->value)
-                    ->orWhere(function ($fallbackQuery): void {
-                        $fallbackQuery
-                            ->whereNull('project_organization.role_new')
-                            ->where('project_organization.role', ProjectOrganizationRole::CUSTOMER->value);
-                    });
-            })
-            ->first();
-
-        if ($existingCustomer && (int) $existingCustomer->id !== (int) $organizationId) {
-            throw new BusinessLogicException('В проекте уже есть активный заказчик.', 409);
-        }
+        $this->projectParticipantService->enforceUniqueCustomer($project, $role, $organizationId);
     }
 
     /**
