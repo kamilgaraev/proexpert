@@ -836,9 +836,9 @@ class ProjectService
         }
         
         // Получаем роль организации перед удалением
-        $role = $this->resolveOrganizationRoleForProject($project, $organizationId);
+        $role = $this->resolveOrganizationRoleForProject($project, $organizationId, true);
         if (!$role instanceof ProjectOrganizationRole) {
-            throw new BusinessLogicException('РћСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ СЏРІР»СЏРµС‚СЃСЏ СѓС‡Р°СЃС‚РЅРёРєРѕРј РїСЂРѕРµРєС‚Р°.', 404);
+            throw new BusinessLogicException(trans_message('project.participant_not_found'), 404);
         }
 
         $organization = Organization::withTrashed()->find($organizationId);
@@ -889,12 +889,12 @@ class ProjectService
         // Получаем текущую роль
         $organization = Organization::withTrashed()->find($organizationId);
         if (!$organization instanceof Organization) {
-            throw new BusinessLogicException('РћСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°.', 404);
+            throw new BusinessLogicException(trans_message('project.organization_not_found'), 404);
         }
 
-        $oldRole = $this->resolveOrganizationRoleForProject($project, $organizationId);
+        $oldRole = $this->resolveOrganizationRoleForProject($project, $organizationId, true);
         if (!$oldRole instanceof ProjectOrganizationRole) {
-            throw new BusinessLogicException('РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ С‚РµРєСѓС‰СѓСЋ СЂРѕР»СЊ РѕСЂРіР°РЅРёР·Р°С†РёРё РІ РїСЂРѕРµРєС‚Рµ.', 422);
+            throw new BusinessLogicException(trans_message('project.participant_role_update_error'), 422);
         }
 
         $validation = $this->organizationProfileService->validateCapabilitiesForRole($organization, $newRole);
@@ -965,17 +965,25 @@ class ProjectService
         };
     }
 
-    private function resolveOrganizationRoleForProject(Project $project, int $organizationId): ?ProjectOrganizationRole
+    private function resolveOrganizationRoleForProject(
+        Project $project,
+        int $organizationId,
+        bool $includeInactive = false
+    ): ?ProjectOrganizationRole
     {
         if ($organizationId === (int) $project->organization_id) {
             return ProjectOrganizationRole::OWNER;
         }
 
-        $pivot = ProjectOrganization::query()
+        $pivotQuery = ProjectOrganization::query()
             ->where('project_id', $project->id)
-            ->where('organization_id', $organizationId)
-            ->where('is_active', true)
-            ->first();
+            ->where('organization_id', $organizationId);
+
+        if (!$includeInactive) {
+            $pivotQuery->where('is_active', true);
+        }
+
+        $pivot = $pivotQuery->first();
 
         if (!$pivot instanceof ProjectOrganization) {
             return null;

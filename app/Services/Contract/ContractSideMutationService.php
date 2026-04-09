@@ -500,10 +500,10 @@ class ContractSideMutationService
         $allowedRoles = match ($sideType) {
             ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR => ['owner', 'customer', 'general_contractor', 'contractor'],
             ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR,
-            ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_SUPPLIER => ['general_contractor'],
+            ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_SUPPLIER => ['owner', 'general_contractor'],
             ContractSideTypeEnum::CONTRACTOR_TO_SUBCONTRACTOR,
-            ContractSideTypeEnum::CONTRACTOR_TO_SUPPLIER => ['contractor'],
-            ContractSideTypeEnum::SUBCONTRACTOR_TO_SUPPLIER => ['subcontractor'],
+            ContractSideTypeEnum::CONTRACTOR_TO_SUPPLIER => ['owner', 'contractor'],
+            ContractSideTypeEnum::SUBCONTRACTOR_TO_SUPPLIER => ['owner', 'subcontractor'],
         };
 
         if (!in_array($role, $allowedRoles, true)) {

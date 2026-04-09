@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Admin;
 
+use App\Exceptions\BusinessLogicException;
 use App\Enums\ProjectOrganizationRole;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -44,6 +45,8 @@ class ProjectOrganizationController extends Controller
                 'resolved_customer' => $this->projectCustomerResolverService->resolve($project),
                 'can_manage' => $projectContext->roleConfig->canInviteParticipants,
             ]);
+        } catch (BusinessLogicException $exception) {
+            return AdminResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 400);
         } catch (\RuntimeException $exception) {
             return AdminResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 500);
         } catch (\Throwable $exception) {
@@ -86,6 +89,8 @@ class ProjectOrganizationController extends Controller
             );
 
             return AdminResponse::success(null, trans_message('project.participant_added'));
+        } catch (BusinessLogicException $exception) {
+            return AdminResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 400);
         } catch (\RuntimeException $exception) {
             return AdminResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 500);
         } catch (\Throwable $exception) {
@@ -134,6 +139,8 @@ class ProjectOrganizationController extends Controller
                     'metadata' => $pivot->metadata,
                 ] : null,
             ]);
+        } catch (BusinessLogicException $exception) {
+            return AdminResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 400);
         } catch (\RuntimeException $exception) {
             return AdminResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 500);
         } catch (\Throwable $exception) {
@@ -176,6 +183,8 @@ class ProjectOrganizationController extends Controller
             );
 
             return AdminResponse::success(null, trans_message('project.participant_role_updated'));
+        } catch (BusinessLogicException $exception) {
+            return AdminResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 400);
         } catch (\RuntimeException $exception) {
             return AdminResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 500);
         } catch (\Throwable $exception) {
@@ -202,6 +211,8 @@ class ProjectOrganizationController extends Controller
             $this->projectService->removeOrganizationFromProject($project->id, $organization, $request);
 
             return AdminResponse::success(null, trans_message('project.participant_removed'));
+        } catch (BusinessLogicException $exception) {
+            return AdminResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 400);
         } catch (\RuntimeException $exception) {
             return AdminResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 500);
         } catch (\Throwable $exception) {
@@ -228,6 +239,8 @@ class ProjectOrganizationController extends Controller
             $this->projectParticipantService->setActiveState($project, $organization, true);
 
             return AdminResponse::success(null, trans_message('project.participant_activated'));
+        } catch (BusinessLogicException $exception) {
+            return AdminResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 400);
         } catch (\RuntimeException $exception) {
             return AdminResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 500);
         } catch (\Throwable $exception) {
@@ -254,6 +267,8 @@ class ProjectOrganizationController extends Controller
             $this->projectParticipantService->setActiveState($project, $organization, false);
 
             return AdminResponse::success(null, trans_message('project.participant_deactivated'));
+        } catch (BusinessLogicException $exception) {
+            return AdminResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 400);
         } catch (\RuntimeException $exception) {
             return AdminResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 500);
         } catch (\Throwable $exception) {
