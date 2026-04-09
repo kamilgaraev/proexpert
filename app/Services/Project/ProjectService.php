@@ -62,6 +62,38 @@ class ProjectService
         $this->projectParticipantService = $projectParticipantService;
     }
 
+    private function resolveProjectRoleFromValues(?string $roleNew, ?string $roleLegacy): ?ProjectOrganizationRole
+    {
+        $roleValue = $roleNew ?: $roleLegacy;
+
+        if (!is_string($roleValue) || $roleValue === '') {
+            return null;
+        }
+
+        return ProjectOrganizationRole::tryFrom($roleValue) ?? match ($roleValue) {
+            'owner' => ProjectOrganizationRole::OWNER,
+            'contractor' => ProjectOrganizationRole::CONTRACTOR,
+            'child_contractor' => ProjectOrganizationRole::SUBCONTRACTOR,
+            'observer' => ProjectOrganizationRole::OBSERVER,
+            default => null,
+        };
+    }
+
+    private function invalidateProjectParticipantContexts(int $projectId): void
+    {
+        $organizationIds = DB::table('project_organization')
+            ->where('project_id', $projectId)
+            ->pluck('organization_id')
+            ->push(Project::query()->whereKey($projectId)->value('organization_id'))
+            ->filter()
+            ->unique()
+            ->values();
+
+        foreach ($organizationIds as $organizationId) {
+            $this->projectContextService->invalidateContext($projectId, (int) $organizationId);
+        }
+    }
+
     /**
      * Helper для получения ID организации из запроса.
      */
@@ -835,31 +867,50 @@ class ProjectService
             throw new BusinessLogicException('Нельзя удалить головную организацию проекта.', 400);
         }
         
-        $participant = ProjectOrganization::query()
+        $participantSnapshot = DB::table('project_organization')
             ->where('project_id', $projectId)
             ->where('organization_id', $organizationId)
             ->first();
 
-        if (!$participant instanceof ProjectOrganization) {
-            return;
+        if (!$participantSnapshot) {
+            throw new BusinessLogicException('РћСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ СЏРІР»СЏРµС‚СЃСЏ СѓС‡Р°СЃС‚РЅРёРєРѕРј РїСЂРѕРµРєС‚Р°.', 404);
         }
 
-        $role = $this->resolveProjectRoleFromPivot($participant);
+        $role = $this->resolveProjectRoleFromValues(
+            $participantSnapshot->role_new ?? null,
+            $participantSnapshot->role ?? null
+        );
         $organization = Organization::withTrashed()->find($organizationId);
         $user = $request->user();
-        ProjectOrganization::query()
+
+        DB::transaction(function () use ($projectId, $organizationId): void {
+            DB::table('project_organization')
+                ->where('project_id', $projectId)
+                ->where('organization_id', $organizationId)
+                ->delete();
+        });
+
+        $stillExists = DB::table('project_organization')
             ->where('project_id', $projectId)
             ->where('organization_id', $organizationId)
-            ->delete();
-        
-        $this->projectContextService->invalidateContext($projectId, $organizationId);
-        
+            ->exists();
+
+        if ($stillExists) {
+            Log::error('Project participant deletion verification failed', [
+                'project_id' => $projectId,
+                'organization_id' => $organizationId,
+            ]);
+
+            throw new BusinessLogicException('РќРµ СѓРґР°Р»РѕСЃСЊ СѓРґР°Р»РёС‚СЊ СѓС‡Р°СЃС‚РЅРёРєР° РёР· РїСЂРѕРµРєС‚Р°. РџРѕРІС‚РѕСЂРёС‚Рµ РїРѕРїС‹С‚РєСѓ.', 409);
+        }
+
+        $this->invalidateProjectParticipantContexts($projectId);
+
         $this->logging->business('Organization removed from project', [
             'project_id' => $projectId,
             'organization_id' => $organizationId,
         ]);
-        
-        // Dispatch event
+
         if ($organization instanceof Organization && $role instanceof ProjectOrganizationRole) {
             event(new ProjectOrganizationRemoved($project, $organization, $role, $user));
         }
