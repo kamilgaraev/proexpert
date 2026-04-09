@@ -2,42 +2,32 @@
 
 namespace App\Http\Requests\Api\V1\Admin\Contract;
 
-use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Support\Facades\Auth;
+use App\DTOs\Contract\ContractDTO;
+use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Enums\Contract\GpCalculationTypeEnum;
-use App\DTOs\Contract\ContractDTO;
-use Illuminate\Validation\Rules\Enum;
 use App\Rules\ParentContractValid;
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rules\Enum;
 
 class StoreContractRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     */
     public function authorize(): bool
     {
-        // return Auth::user()->can('create', \App\Models\Contract::class);
-        return true; // Упрощенная авторизация для примера
+        return true;
     }
 
-    /**
-     * Configure the validator instance.
-     */
     public function withValidator($validator): void
     {
-        $validator->after(function ($validator) {
+        $validator->after(function ($validator): void {
+            $sideType = ContractSideTypeEnum::tryFrom((string) $this->input('contract_side_type'));
             $supplierId = $this->input('supplier_id');
             $contractorId = $this->input('contractor_id');
-            $contractCategory = $this->input('contract_category');
-            $isSelfExecution = $this->input('is_self_execution') === true 
-                || $this->input('is_self_execution') === '1' 
-                || $this->input('is_self_execution') === 1;
+            $isSelfExecution = $this->boolean('is_self_execution');
 
-            // Если указан supplier_id, проверяем активацию модулей
             if ($supplierId) {
-                $organizationId = $this->attributes->get('current_organization_id') 
+                $organizationId = $this->attributes->get('current_organization_id')
                     ?? $this->input('organization_id_for_creation');
 
                 if ($organizationId) {
@@ -59,76 +49,77 @@ class StoreContractRequest extends FormRequest
                 }
             }
 
-            // Проверка: либо contractor_id, либо supplier_id должен быть заполнен
-            // Исключение: если is_self_execution = true, contractor_id опционален (будет заполнен автоматически)
-            if (!$supplierId && !$contractorId && !$isSelfExecution) {
-                $validator->errors()->add(
-                    'contractor_id',
-                    'Необходимо указать либо подрядчика (contractor_id), либо поставщика (supplier_id), либо установить is_self_execution=true'
-                );
+            if (!$sideType) {
+                return;
             }
 
-            // Нельзя указать оба одновременно (поставщик и подрядчик)
-            if ($supplierId && $contractorId) {
-                $validator->errors()->add(
-                    'supplier_id',
-                    'Нельзя указать одновременно подрядчика и поставщика. Укажите либо contractor_id, либо supplier_id.'
-                );
+            if ($sideType === ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_SUPPLIER) {
+                if (!$supplierId) {
+                    $validator->errors()->add('supplier_id', 'Для этого типа договора нужно выбрать поставщика.');
+                }
+
+                if ($contractorId) {
+                    $validator->errors()->add('contractor_id', 'Для договора с поставщиком подрядчик не заполняется.');
+                }
+
+                if ($isSelfExecution) {
+                    $validator->errors()->add('is_self_execution', 'Для договора с поставщиком нельзя включать собственные силы.');
+                }
             }
 
-            // Нельзя указать supplier_id для самоподряда
-            if ($isSelfExecution && $supplierId) {
-                $validator->errors()->add(
-                    'is_self_execution',
-                    'Нельзя указать самоподряд (is_self_execution=true) вместе с поставщиком (supplier_id). Самоподряд применим только для работ, а не для поставок.'
-                );
+            if ($sideType === ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR) {
+                if (!$contractorId && !$isSelfExecution) {
+                    $validator->errors()->add('contractor_id', 'Для этого типа договора нужно выбрать подрядчика или включить собственные силы.');
+                }
+
+                if ($supplierId) {
+                    $validator->errors()->add('supplier_id', 'Для договора с подрядчиком поставщик не заполняется.');
+                }
+            }
+
+            if ($sideType === ContractSideTypeEnum::CONTRACTOR_TO_SUBCONTRACTOR) {
+                if (!$contractorId) {
+                    $validator->errors()->add('contractor_id', 'Для этого типа договора нужно выбрать субподрядчика.');
+                }
+
+                if ($supplierId) {
+                    $validator->errors()->add('supplier_id', 'Для договора с субподрядчиком поставщик не заполняется.');
+                }
+
+                if ($isSelfExecution) {
+                    $validator->errors()->add('is_self_execution', 'Для договора с субподрядчиком нельзя включать собственные силы.');
+                }
+            }
+
+            if ($sideType === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR) {
+                if ($supplierId) {
+                    $validator->errors()->add('supplier_id', 'Для договора между заказчиком и генподрядчиком поставщик не заполняется.');
+                }
+
+                if ($isSelfExecution) {
+                    $validator->errors()->add('is_self_execution', 'Для договора между заказчиком и генподрядчиком нельзя включать собственные силы.');
+                }
             }
         });
     }
 
-    /**
-     * Get the validation rules that apply to the request.
-     *
-     * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array|string>
-     */
     public function rules(): array
     {
-        // Определяем, является ли организация подрядчиком
-        $projectContext = \App\Http\Middleware\ProjectContextMiddleware::getProjectContext($this);
-        $isContractor = $projectContext && in_array($projectContext->role->value, ['contractor', 'subcontractor']);
-        
-        // Определяем, является ли контракт самоподрядом
-        $isSelfExecution = $this->input('is_self_execution') === true || $this->input('is_self_execution') === '1' || $this->input('is_self_execution') === 1;
-        
         return [
             'project_id' => ['nullable', 'integer', 'exists:projects,id', 'required_without:project_ids'],
-            // contractor_id обязателен для генподрядчика, опционален для подрядчика (auto-fill) и для самоподряда
-            // Для договоров поставки может быть null, если указан supplier_id
-            'contractor_id' => $isContractor || $isSelfExecution
-                ? ['nullable', 'integer', 'exists:contractors,id']
-                : ['required_without:supplier_id', 'integer', 'exists:contractors,id'],
+            'contract_side_type' => ['required', new Enum(ContractSideTypeEnum::class)],
+            'contractor_id' => ['nullable', 'integer', 'exists:contractors,id'],
+            'supplier_id' => ['nullable', 'integer', 'exists:suppliers,id'],
             'is_self_execution' => ['nullable', 'boolean'],
-            // supplier_id обязателен только если нет contractor_id И нет is_self_execution
-            'supplier_id' => $isSelfExecution
-                ? ['nullable', 'integer', 'exists:suppliers,id']
-                : ['nullable', 'required_without:contractor_id', 'integer', 'exists:suppliers,id'],
             'contract_category' => ['nullable', 'string', 'in:work,procurement,service'],
             'parent_contract_id' => ['nullable', 'integer', new ParentContractValid],
             'number' => ['required', 'string', 'max:255'],
             'date' => ['required', 'date'],
-            // поле type больше не используется
             'subject' => ['nullable', 'string'],
             'work_type_category' => ['nullable', new Enum(ContractWorkTypeCategoryEnum::class)],
             'payment_terms' => ['nullable', 'string'],
             'is_fixed_amount' => ['nullable', 'boolean'],
-            // base_amount обязателен только для контрактов с фиксированной суммой
-            'base_amount' => [
-                'required_if:is_fixed_amount,true,1',
-                'nullable',
-                'numeric',
-                'min:0',
-            ],
-            // total_amount опционален, рассчитывается автоматически для фиксированных контрактов
+            'base_amount' => ['required_if:is_fixed_amount,true,1', 'nullable', 'numeric', 'min:0'],
             'total_amount' => ['nullable', 'numeric', 'min:0'],
             'gp_percentage' => ['nullable', 'numeric', 'min:-100', 'max:100'],
             'gp_calculation_type' => ['nullable', new Enum(GpCalculationTypeEnum::class)],
@@ -147,40 +138,25 @@ class StoreContractRequest extends FormRequest
             'start_date' => ['nullable', 'date'],
             'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
             'notes' => ['nullable', 'string'],
-            // Мультипроектные контракты
             'is_multi_project' => ['nullable', 'boolean'],
             'project_ids' => ['nullable', 'required_if:is_multi_project,true,1', 'array', 'min:1'],
             'project_ids.*' => ['integer', 'exists:projects,id'],
-            // Временное поле для примера в контроллере, в реальности organization_id не должен приходить из запроса на создание
-            'organization_id_for_creation' => ['sometimes', 'integer'] 
+            'organization_id_for_creation' => ['sometimes', 'integer'],
         ];
     }
 
     public function toDto(): ContractDTO
     {
-        // Определяем, является ли контракт с фиксированной суммой
-        // По умолчанию true для обратной совместимости
         $isFixedAmount = $this->validated('is_fixed_amount') !== false;
-        
-        // base_amount обязателен только для фиксированных контрактов
-        $baseAmount = $this->validated('base_amount') !== null 
-            ? (float) $this->validated('base_amount') 
-            : null;
-        
-        // total_amount опционален, рассчитывается автоматически для фиксированных контрактов
-        $totalAmount = $this->validated('total_amount') !== null 
-            ? (float) $this->validated('total_amount') 
-            : null;
-        
-        // Для фиксированных контрактов: если total_amount не указан, используем base_amount
+        $baseAmount = $this->validated('base_amount') !== null ? (float) $this->validated('base_amount') : null;
+        $totalAmount = $this->validated('total_amount') !== null ? (float) $this->validated('total_amount') : null;
+
         if ($isFixedAmount && $totalAmount === null && $baseAmount !== null) {
             $totalAmount = $baseAmount;
         }
-        
-        // Мультипроектный контракт
+
         $isMultiProject = $this->validated('is_multi_project') === true;
-        $projectIds = $this->validated('project_ids');
-        
+
         return new ContractDTO(
             project_id: $this->validated('project_id'),
             contractor_id: $this->validated('contractor_id'),
@@ -208,10 +184,13 @@ class StoreContractRequest extends FormRequest
             advance_payments: $this->validated('advance_payments'),
             is_fixed_amount: $isFixedAmount,
             is_multi_project: $isMultiProject,
-            project_ids: $projectIds,
-            is_self_execution: $this->validated('is_self_execution') === true,
+            project_ids: $this->validated('project_ids'),
+            is_self_execution: $this->boolean('is_self_execution'),
             supplier_id: $this->validated('supplier_id'),
-            contract_category: $this->validated('contract_category')
+            contract_category: $this->validated('contract_category'),
+            contract_side_type: $this->validated('contract_side_type')
+                ? ContractSideTypeEnum::from($this->validated('contract_side_type'))
+                : null
         );
     }
-} 
+}

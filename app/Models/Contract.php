@@ -12,12 +12,18 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 
 use App\Models\Estimate;
+use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Enums\Contract\GpCalculationTypeEnum;
 use Carbon\Carbon;
 use App\Traits\HasOnboardingDemo;
 
+/**
+ * @property int|null $supplier_id
+ * @property string|null $contract_category
+ * @property \App\Enums\Contract\ContractSideTypeEnum|string|null $contract_side_type
+ */
 class Contract extends Model
 {
     use HasFactory, SoftDeletes, HasOnboardingDemo;
@@ -27,6 +33,7 @@ class Contract extends Model
         'project_id',
         'contractor_id',
         'supplier_id',
+        'contract_side_type',
         'contract_category',
         'number',
         'date',
@@ -69,6 +76,7 @@ class Contract extends Model
         'actual_advance_amount' => 'decimal:2',
         'start_date' => 'date',
         'end_date' => 'date',
+        'contract_side_type' => ContractSideTypeEnum::class,
         'status' => ContractStatusEnum::class,
         'work_type_category' => ContractWorkTypeCategoryEnum::class,
         'is_onboarding_demo' => 'boolean',

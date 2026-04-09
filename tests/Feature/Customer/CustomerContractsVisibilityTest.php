@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Customer;
 
+use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\ProjectOrganizationRole;
 use App\Models\Contract;
@@ -16,7 +17,7 @@ use Tests\TestCase;
 
 class CustomerContractsVisibilityTest extends TestCase
 {
-    public function test_customer_contracts_are_filtered_by_resolved_customer_and_return_meta_filters(): void
+    public function test_customer_contracts_are_filtered_by_contract_side_and_return_meta_filters(): void
     {
         $ownerOrganization = Organization::factory()->create();
         $customerOrganization = Organization::factory()->create();
@@ -26,6 +27,7 @@ class CustomerContractsVisibilityTest extends TestCase
         $customerPortalService = app(CustomerPortalService::class);
 
         $ownerContractor = $this->createContractor($ownerOrganization, 'Генподрядчик owner');
+        $customerExecutor = $this->createContractor($customerOrganization, 'Исполнитель customer-side');
         $unrelatedContractor = $this->createContractor($unrelatedOrganization, 'Чужой подрядчик');
 
         $fallbackProject = Project::factory()->create([
@@ -52,21 +54,32 @@ class CustomerContractsVisibilityTest extends TestCase
             $fallbackProject,
             $ownerContractor,
             'C-001',
-            ContractStatusEnum::ACTIVE
+            ContractStatusEnum::ACTIVE,
+            ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
         );
         $resolvedCustomerContract = $this->createContract(
+            $customerOrganization,
+            $projectWithCustomer,
+            $customerExecutor,
+            'C-002',
+            ContractStatusEnum::DRAFT,
+            ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
+        );
+        $internalContract = $this->createContract(
             $ownerOrganization,
             $projectWithCustomer,
             $ownerContractor,
-            'C-002',
-            ContractStatusEnum::DRAFT
+            'C-003',
+            ContractStatusEnum::ACTIVE,
+            ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR
         );
         $this->createContract(
             $unrelatedOrganization,
             $foreignProject,
             $unrelatedContractor,
-            'C-003',
-            ContractStatusEnum::ACTIVE
+            'C-004',
+            ContractStatusEnum::ACTIVE,
+            ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
         );
 
         $ownerContracts = $customerPortalService->getContracts($ownerOrganization->id, [
@@ -77,13 +90,13 @@ class CustomerContractsVisibilityTest extends TestCase
 
         $this->assertSame(1, $ownerContracts['meta']['total']);
         $this->assertSame('C-001', $ownerContracts['items'][0]['number']);
-        $this->assertSame('project_owner', $ownerContracts['items'][0]['customer']['source']);
-        $this->assertTrue($ownerContracts['items'][0]['customer']['is_fallback_owner']);
+        $this->assertSame(ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR->value, $ownerContracts['items'][0]['contract_side']['type']);
+        $this->assertSame('customer', $ownerContracts['items'][0]['current_organization_role']);
         $this->assertSame('C-00', $ownerContracts['meta']['filters']['search']);
 
         $customerContracts = $customerPortalService->getContracts($customerOrganization->id, [
             'project_id' => $projectWithCustomer->id,
-            'contractor_id' => $ownerContractor->id,
+            'contractor_id' => $customerExecutor->id,
             'status' => ContractStatusEnum::DRAFT->value,
             'search' => 'C-002',
             'per_page' => 5,
@@ -92,11 +105,11 @@ class CustomerContractsVisibilityTest extends TestCase
 
         $this->assertSame(1, $customerContracts['meta']['total']);
         $this->assertSame($projectWithCustomer->id, $customerContracts['meta']['filters']['project_id']);
-        $this->assertSame($ownerContractor->id, $customerContracts['meta']['filters']['contractor_id']);
+        $this->assertSame($customerExecutor->id, $customerContracts['meta']['filters']['contractor_id']);
         $this->assertSame(5, $customerContracts['meta']['per_page']);
         $this->assertSame($resolvedCustomerContract->id, $customerContracts['items'][0]['id']);
-        $this->assertSame('project_participant', $customerContracts['items'][0]['customer']['source']);
-        $this->assertFalse($customerContracts['items'][0]['customer']['is_fallback_owner']);
+        $this->assertSame(ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR->value, $customerContracts['items'][0]['contract_side']['type']);
+        $this->assertSame('customer', $customerContracts['items'][0]['current_organization_role']);
 
         $projectContracts = $customerPortalService->getContracts($customerOrganization->id, [
             'page' => 1,
@@ -105,6 +118,7 @@ class CustomerContractsVisibilityTest extends TestCase
 
         $this->assertSame(1, $projectContracts['meta']['total']);
         $this->assertSame($resolvedCustomerContract->id, $projectContracts['items'][0]['id']);
+        $this->assertNotSame($internalContract->id, $projectContracts['items'][0]['id']);
 
         $fallbackContract->refresh();
         $resolvedCustomerContract->refresh();
@@ -124,12 +138,14 @@ class CustomerContractsVisibilityTest extends TestCase
         Project $project,
         Contractor $contractor,
         string $number,
-        ContractStatusEnum $status
+        ContractStatusEnum $status,
+        ContractSideTypeEnum $contractSideType
     ): Contract {
         return Contract::create([
             'organization_id' => $organization->id,
             'project_id' => $project->id,
             'contractor_id' => $contractor->id,
+            'contract_side_type' => $contractSideType->value,
             'number' => $number,
             'date' => now()->toDateString(),
             'subject' => 'Тестовый договор ' . $number,

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Customer;
 
 use App\BusinessModules\Features\Notifications\Models\Notification;
+use App\Enums\Contract\ContractSideTypeEnum;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\ContactForm;
@@ -13,6 +14,7 @@ use App\Models\ContractPerformanceAct;
 use App\Models\File;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\Contract\ContractSideResolverService;
 use App\Services\Project\ProjectCustomerResolverService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -22,7 +24,8 @@ class CustomerPortalService
 {
     public function __construct(
         private readonly AuthorizationService $authorizationService,
-        private readonly ProjectCustomerResolverService $projectCustomerResolverService
+        private readonly ProjectCustomerResolverService $projectCustomerResolverService,
+        private readonly ContractSideResolverService $contractSideResolverService
     ) {
     }
 
@@ -128,26 +131,8 @@ class CustomerPortalService
 
     public function canAccessContract(int $organizationId, Contract $contract): bool
     {
-        $contract->loadMissing([
-            'project.organization',
-            'project.organizations',
-            'projects.organization',
-            'projects.organizations',
-        ]);
-
-        if ($contract->project instanceof Project) {
-            if ($this->projectCustomerResolverService->isResolvedCustomer($contract->project, $organizationId)) {
-                return true;
-            }
-        }
-
-        if ($contract->relationLoaded('projects') && $contract->projects->isNotEmpty()) {
-            return $contract->projects->contains(
-                fn (Project $project): bool => $this->projectCustomerResolverService->isResolvedCustomer($project, $organizationId)
-            );
-        }
-
-        return (int) $contract->organization_id === $organizationId;
+        return $contract->contract_side_type === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
+            && (int) $contract->organization_id === $organizationId;
     }
 
     public function getProject(Project $project): array
@@ -398,11 +383,8 @@ class CustomerPortalService
     private function baseCustomerContractQuery(int $organizationId, array $filters = [], ?Project $project = null): Builder
     {
         return Contract::query()
-            ->where(function (Builder $builder) use ($organizationId): void {
-                $builder
-                    ->whereHas('project', fn (Builder $projectQuery) => $this->applyResolvedCustomerProjectAccess($projectQuery, $organizationId))
-                    ->orWhereHas('projects', fn (Builder $projectQuery) => $this->applyResolvedCustomerProjectAccess($projectQuery, $organizationId));
-            })
+            ->where('contract_side_type', ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR->value)
+            ->where('organization_id', $organizationId)
             ->when($project !== null, function (Builder $builder) use ($project): void {
                 $builder->where(function (Builder $scope) use ($project): void {
                     $scope
@@ -453,9 +435,7 @@ class CustomerPortalService
     private function mapCustomerContract(Contract $contract): array
     {
         $project = $contract->project;
-        $resolvedCustomer = $project instanceof Project
-            ? $this->projectCustomerResolverService->resolve($project)
-            : null;
+        $contractSide = $this->contractSideResolverService->resolve($contract);
         $performedAmount = $contract->relationLoaded('performanceActs')
             ? (float) $contract->performanceActs->where('is_approved', true)->sum('amount')
             : 0.0;
@@ -495,7 +475,9 @@ class CustomerPortalService
             'remaining_amount' => $remainingAmount !== null ? round($remainingAmount, 2) : null,
             'is_self_execution' => (bool) $contract->is_self_execution,
             'contract_category' => $contract->contract_category,
-            'customer' => $this->mapResolvedCustomer($resolvedCustomer),
+            'customer' => $contractSide['customer_organization'],
+            'contract_side' => $contractSide,
+            'current_organization_role' => $this->resolveCurrentOrganizationRole($contract),
         ];
     }
 
@@ -531,12 +513,14 @@ class CustomerPortalService
     {
         $project = $approval->project;
         $dateLabel = $approval->act_date?->format('d.m.Y');
+        $hasCustomerContractAccess = $approval->contract instanceof Contract
+            && $approval->contract->contract_side_type === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR;
 
         return [
             'id' => $approval->id,
             'title' => 'Акт ' . ($approval->act_document_number ?: '#' . $approval->id),
             'projectName' => $project?->name,
-            'contractId' => $approval->contract_id,
+            'contractId' => $hasCustomerContractAccess ? $approval->contract_id : null,
             'contractNumber' => $approval->contract?->number,
             'contractSubject' => $approval->contract?->subject,
             'contractStatus' => $approval->contract?->status?->value ?? (string) $approval->contract?->status,
@@ -609,6 +593,13 @@ class CustomerPortalService
             'last_page' => $contracts->lastPage(),
             'filters' => $filters,
         ];
+    }
+
+    private function resolveCurrentOrganizationRole(Contract $contract): string
+    {
+        return $contract->contract_side_type === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
+            ? 'customer'
+            : 'initiator';
     }
 
     private function mapResolvedCustomer(?array $resolvedCustomer): ?array

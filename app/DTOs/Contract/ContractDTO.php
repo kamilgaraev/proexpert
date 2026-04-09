@@ -2,10 +2,11 @@
 
 namespace App\DTOs\Contract;
 
+use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Enums\Contract\GpCalculationTypeEnum;
-use Illuminate\Http\Request; // Для гидрации из Request, если нужно
+use Illuminate\Http\Request;
 
 class ContractDTO
 {
@@ -14,12 +15,12 @@ class ContractDTO
         public readonly ?int $contractor_id,
         public readonly ?int $parent_contract_id,
         public readonly string $number,
-        public readonly string $date, // Y-m-d format
+        public readonly string $date,
         public readonly ?string $subject,
         public readonly ?ContractWorkTypeCategoryEnum $work_type_category,
         public readonly ?string $payment_terms,
-        public readonly ?float $base_amount, // Базовая сумма ДО учета ГП (nullable для нефиксированных контрактов)
-        public readonly ?float $total_amount, // Итоговая сумма (nullable для нефиксированных контрактов)
+        public readonly ?float $base_amount,
+        public readonly ?float $total_amount,
         public readonly ?float $gp_percentage,
         public readonly ?GpCalculationTypeEnum $gp_calculation_type,
         public readonly ?float $gp_coefficient,
@@ -30,17 +31,19 @@ class ContractDTO
         public readonly ?float $planned_advance_amount,
         public readonly ?float $actual_advance_amount,
         public readonly ContractStatusEnum $status,
-        public readonly ?string $start_date, // Y-m-d format
-        public readonly ?string $end_date, // Y-m-d format
+        public readonly ?string $start_date,
+        public readonly ?string $end_date,
         public readonly ?string $notes,
         public readonly ?array $advance_payments = null,
-        public readonly bool $is_fixed_amount = true, // По умолчанию фиксированная сумма
-        public readonly bool $is_multi_project = false, // Мультипроектный контракт
-        public readonly ?array $project_ids = null, // Массив ID проектов для мультипроектных контрактов
-        public readonly bool $is_self_execution = false, // Собственные силы (хозяйственный способ)
-        public readonly ?int $supplier_id = null, // Поставщик (для договоров поставки)
-        public readonly ?string $contract_category = null // Категория контракта (work, procurement, service)
-    ) {}
+        public readonly bool $is_fixed_amount = true,
+        public readonly bool $is_multi_project = false,
+        public readonly ?array $project_ids = null,
+        public readonly bool $is_self_execution = false,
+        public readonly ?int $supplier_id = null,
+        public readonly ?string $contract_category = null,
+        public readonly ?ContractSideTypeEnum $contract_side_type = null
+    ) {
+    }
 
     public function toArray(): array
     {
@@ -74,10 +77,10 @@ class ContractDTO
             'is_self_execution' => $this->is_self_execution,
             'supplier_id' => $this->supplier_id,
             'contract_category' => $this->contract_category,
+            'contract_side_type' => $this->contract_side_type?->value,
         ];
     }
 
-    // Опционально: статический метод для создания из Request
     /*
     public static function fromRequest(Request $request): self
     {
@@ -100,4 +103,4 @@ class ContractDTO
         );
     }
     */
-} 
+}

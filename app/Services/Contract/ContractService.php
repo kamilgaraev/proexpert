@@ -7,12 +7,12 @@ use App\Repositories\Interfaces\ContractorRepositoryInterface;
 use App\Repositories\Interfaces\ContractPerformanceActRepositoryInterface;
 use App\Repositories\Interfaces\ContractPaymentRepositoryInterface;
 use App\Services\Contract\ContractStateEventService;
+use App\Enums\Contract\ContractSideTypeEnum;
 use App\DTOs\Contract\ContractDTO;
 use App\Models\Contract;
+use App\Models\Contractor;
 use App\Models\Project;
-use App\Models\Organization;
 use App\Services\Logging\LoggingService;
-use App\Services\Project\ProjectCustomerResolverService;
 use App\Services\Project\ProjectContextService;
 use App\Domain\Project\ValueObjects\ProjectContext;
 use App\BusinessModules\Core\MultiOrganization\Contracts\OrganizationScopeInterface;
@@ -31,7 +31,7 @@ class ContractService
     protected ContractPaymentRepositoryInterface $paymentRepository;
     protected LoggingService $logging;
     protected ProjectContextService $projectContextService;
-    protected ProjectCustomerResolverService $projectCustomerResolverService;
+    protected ContractSideResolverService $contractSideResolverService;
     protected OrganizationScopeInterface $orgScope;
     protected ContractorSharingInterface $contractorSharing;
     protected ?ContractStateEventService $stateEventService = null;
@@ -43,7 +43,7 @@ class ContractService
         ContractPaymentRepositoryInterface $paymentRepository,
         LoggingService $logging,
         ProjectContextService $projectContextService,
-        ProjectCustomerResolverService $projectCustomerResolverService,
+        ContractSideResolverService $contractSideResolverService,
         OrganizationScopeInterface $orgScope,
         ContractorSharingInterface $contractorSharing
     ) {
@@ -53,7 +53,7 @@ class ContractService
         $this->paymentRepository = $paymentRepository;
         $this->logging = $logging;
         $this->projectContextService = $projectContextService;
-        $this->projectCustomerResolverService = $projectCustomerResolverService;
+        $this->contractSideResolverService = $contractSideResolverService;
         $this->orgScope = $orgScope;
         $this->contractorSharing = $contractorSharing;
     }
@@ -69,6 +69,8 @@ class ContractService
         ?ProjectContext $projectContext = null
     ): Contract
     {
+        return $this->createContractWithExplicitSides($organizationId, $contractDTO, $projectContext);
+
         // Project-Based RBAC: валидация прав и auto-fill contractor_id
         if ($projectContext) {
             // Проверка: может ли роль создавать контракты
@@ -381,8 +383,416 @@ class ContractService
         return $this->stateEventService;
     }
 
+    private function createContractWithExplicitSides(
+        int $organizationId,
+        ContractDTO $contractDTO,
+        ?ProjectContext $projectContext = null
+    ): Contract {
+        if ($projectContext && !$projectContext->roleConfig->canManageContracts) {
+            throw new Exception(
+                'Ваша роль "' . $projectContext->roleConfig->displayLabel . '" не позволяет создавать договоры в этом проекте'
+            );
+        }
+
+        $contractDTO = $this->resolveContractPartiesForCreate($organizationId, $contractDTO, $projectContext);
+        $targetOrganizationId = $this->resolveOwnerOrganizationId($organizationId, $contractDTO);
+
+        if ($contractDTO->is_fixed_amount && $contractDTO->base_amount === null) {
+            throw new Exception('Для договора с фиксированной суммой необходимо указать базовую сумму.');
+        }
+
+        if ($contractDTO->contractor_id !== null && !$this->contractorSharing->canUseContractor($contractDTO->contractor_id, $targetOrganizationId)) {
+            $contractor = Contractor::find($contractDTO->contractor_id);
+            $contractorName = $contractor ? $contractor->name : "ID {$contractDTO->contractor_id}";
+
+            throw new Exception("Подрядчик \"{$contractorName}\" недоступен для организации-владельца договора.");
+        }
+
+        $this->logging->business('contract.creation.started', [
+            'organization_id' => $targetOrganizationId,
+            'contractor_id' => $contractDTO->contractor_id,
+            'supplier_id' => $contractDTO->supplier_id,
+            'contract_side_type' => $contractDTO->contract_side_type?->value,
+            'contract_number' => $contractDTO->number,
+            'project_id' => $contractDTO->project_id,
+            'user_id' => Auth::id(),
+            'has_project_context' => $projectContext !== null,
+            'is_self_execution' => $contractDTO->is_self_execution,
+        ]);
+
+        $contractData = $contractDTO->toArray();
+        $contractData['organization_id'] = $targetOrganizationId;
+
+        if (!$contractDTO->is_fixed_amount && (!isset($contractData['total_amount']) || $contractData['total_amount'] === null)) {
+            $contractData['total_amount'] = 0;
+        }
+
+        $projectIds = $contractData['project_ids'] ?? null;
+        unset($contractData['project_ids']);
+
+        try {
+            DB::beginTransaction();
+
+            $advancePayments = $contractDTO->advance_payments;
+            unset($contractData['advance_payments']);
+
+            $contract = $this->contractRepository->create($contractData);
+
+            if ($contractDTO->is_multi_project && !empty($projectIds)) {
+                $validProjects = Project::whereIn('id', $projectIds)
+                    ->where('organization_id', $targetOrganizationId)
+                    ->pluck('id')
+                    ->toArray();
+
+                if (count($validProjects) !== count($projectIds)) {
+                    throw new Exception('Некоторые проекты не найдены или не принадлежат организации-владельцу договора.');
+                }
+
+                $contract->syncProjects($projectIds);
+            } elseif (!$contractDTO->is_multi_project && $contractDTO->project_id) {
+                $contract->syncProjects([$contractDTO->project_id]);
+            }
+
+            if ($advancePayments && is_array($advancePayments)) {
+                foreach ($advancePayments as $advance) {
+                    $this->paymentRepository->create([
+                        'contract_id' => $contract->id,
+                        'amount' => $advance['amount'],
+                        'payment_date' => $advance['payment_date'] ?? null,
+                        'payment_type' => 'advance',
+                        'description' => $advance['description'] ?? null,
+                    ]);
+                }
+            }
+
+            DB::commit();
+
+            try {
+                $this->getStateEventService()->createContractCreatedEvent($contract);
+            } catch (Exception $e) {
+                Log::warning('Failed to create contract state event', [
+                    'contract_id' => $contract->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+
+            $this->logging->business('contract.created', [
+                'organization_id' => $targetOrganizationId,
+                'contract_id' => $contract->id,
+                'contract_number' => $contract->number,
+                'contractor_id' => $contract->contractor_id,
+                'supplier_id' => $contract->supplier_id,
+                'contract_side_type' => $contract->contract_side_type?->value,
+                'user_id' => Auth::id(),
+            ]);
+
+            $this->logging->audit('contract.created', [
+                'organization_id' => $targetOrganizationId,
+                'contract_id' => $contract->id,
+                'contract_number' => $contract->number,
+                'transaction_type' => 'contract_created',
+                'performed_by' => Auth::id() ?? 'system',
+                'contract_amount' => $contract->total_amount,
+            ]);
+
+            return $contract;
+        } catch (Exception $e) {
+            DB::rollBack();
+
+            $this->logging->business('contract.creation.failed', [
+                'organization_id' => $targetOrganizationId,
+                'contract_number' => $contractDTO->number ?? null,
+                'error_message' => $e->getMessage(),
+                'user_id' => Auth::id(),
+            ], 'error');
+
+            throw $e;
+        }
+    }
+
+    private function getContractByIdWithExplicitSides(int $contractId, int $organizationId, ?int $projectId = null): ?Contract
+    {
+        $contract = $this->contractRepository->find($contractId);
+
+        if (!$contract) {
+            return null;
+        }
+
+        $contract->load([
+            'organization',
+            'contractor.sourceOrganization',
+            'supplier',
+        ]);
+
+        $isOwnerOrganization = (int) $contract->organization_id === (int) $organizationId;
+        $isContractorOrganization = !$contract->is_self_execution
+            && $contract->contractor !== null
+            && (int) ($contract->contractor->source_organization_id ?? 0) === (int) $organizationId;
+
+        if (!$isOwnerOrganization && !$isContractorOrganization) {
+            return null;
+        }
+
+        if ($projectId !== null) {
+            $belongsToProject = false;
+
+            if ($contract->is_multi_project) {
+                $belongsToProject = $contract->projects()->where('projects.id', $projectId)->exists();
+            } else {
+                $belongsToProject = (int) $contract->project_id === (int) $projectId;
+            }
+
+            if (!$belongsToProject) {
+                return null;
+            }
+        }
+
+        $contract->load([
+            'project.organization',
+            'project.organizations',
+            'projects',
+            'agreements',
+            'specifications',
+            'performanceActs',
+            'performanceActs.completedWorks',
+        ]);
+
+        return $contract;
+    }
+
+    private function updateContractWithExplicitSides(int $contractId, int $organizationId, ContractDTO $contractDTO): Contract
+    {
+        $contract = $this->getContractByIdWithExplicitSides($contractId, $organizationId);
+
+        if (!$contract) {
+            throw new Exception('Contract not found.');
+        }
+
+        $sideChanged = $contractDTO->contract_side_type !== null
+            && $contract->contract_side_type !== $contractDTO->contract_side_type;
+
+        if ($sideChanged && ($contract->performanceActs()->exists() || $contract->payments()->exists())) {
+            throw new Exception('Нельзя менять стороны договора после появления актов или платежей.');
+        }
+
+        $contractDTO = $this->resolveContractPartiesForCreate($organizationId, $contractDTO, null);
+        $targetOrganizationId = $this->resolveOwnerOrganizationId($organizationId, $contractDTO);
+
+        if ($contractDTO->contractor_id !== null && !$this->contractorSharing->canUseContractor($contractDTO->contractor_id, $targetOrganizationId)) {
+            throw new Exception('Выбранный подрядчик недоступен для организации-владельца договора.');
+        }
+
+        $updateData = $contractDTO->toArray();
+        $updateData['organization_id'] = $targetOrganizationId;
+        $projectIds = $updateData['project_ids'] ?? null;
+        unset($updateData['project_ids']);
+
+        if (!$contractDTO->is_fixed_amount && (!isset($updateData['total_amount']) || $updateData['total_amount'] === null)) {
+            $updateData['total_amount'] = 0;
+        }
+
+        DB::transaction(function () use ($contract, $updateData, $contractDTO, $projectIds, $targetOrganizationId): void {
+            $contract->update($updateData);
+
+            if ($contractDTO->is_multi_project && !empty($projectIds)) {
+                $validProjects = Project::whereIn('id', $projectIds)
+                    ->where('organization_id', $targetOrganizationId)
+                    ->pluck('id')
+                    ->toArray();
+
+                if (count($validProjects) !== count($projectIds)) {
+                    throw new Exception('Некоторые проекты не найдены или не принадлежат организации-владельцу договора.');
+                }
+
+                $contract->syncProjects($projectIds);
+            } elseif (!$contractDTO->is_multi_project && $contractDTO->project_id) {
+                $contract->syncProjects([$contractDTO->project_id]);
+            }
+        });
+
+        $contract->refresh();
+
+        return $contract;
+    }
+
+    private function resolveContractPartiesForCreate(
+        int $organizationId,
+        ContractDTO $contractDTO,
+        ?ProjectContext $projectContext
+    ): ContractDTO {
+        $sideType = $contractDTO->contract_side_type;
+
+        if (!$sideType instanceof ContractSideTypeEnum) {
+            throw new Exception('Не указан тип договора.');
+        }
+
+        $this->assertSideAllowedForProjectContext($sideType, $projectContext);
+
+        $contractorId = $contractDTO->contractor_id;
+        $supplierId = $contractDTO->supplier_id;
+
+        if ($sideType === ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_SUPPLIER) {
+            if (!$supplierId) {
+                throw new Exception('Для договора с поставщиком нужно выбрать поставщика.');
+            }
+
+            $contractorId = null;
+        }
+
+        if ($sideType === ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR) {
+            $supplierId = null;
+
+            if ($contractDTO->is_self_execution) {
+                $contractorId = $this->resolveSelfExecutionContractorId($organizationId);
+            }
+
+            if (!$contractorId) {
+                throw new Exception('Для договора с подрядчиком нужно выбрать подрядчика.');
+            }
+        }
+
+        if ($sideType === ContractSideTypeEnum::CONTRACTOR_TO_SUBCONTRACTOR) {
+            $supplierId = null;
+
+            if (!$contractorId) {
+                throw new Exception('Для договора с субподрядчиком нужно выбрать субподрядчика.');
+            }
+        }
+
+        if ($sideType === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR) {
+            $supplierId = null;
+            $customerOrganizationId = $this->resolveProjectCustomerOrganizationId($contractDTO);
+
+            if ($projectContext && in_array($projectContext->roleConfig->role->value, ['general_contractor', 'contractor'], true)) {
+                $contractor = Contractor::firstOrCreate(
+                    [
+                        'organization_id' => $customerOrganizationId,
+                        'source_organization_id' => $organizationId,
+                    ],
+                    [
+                        'name' => $projectContext->organizationName ?? 'Исполнитель по договору',
+                        'contractor_type' => Contractor::TYPE_INVITED_ORGANIZATION,
+                        'connected_at' => now(),
+                    ]
+                );
+
+                $contractorId = $contractor->id;
+            }
+
+            if (!$contractorId) {
+                throw new Exception('Для договора между заказчиком и генподрядчиком нужно выбрать исполнителя.');
+            }
+        }
+
+        return new ContractDTO(
+            project_id: $contractDTO->project_id,
+            contractor_id: $contractorId,
+            parent_contract_id: $contractDTO->parent_contract_id,
+            number: $contractDTO->number,
+            date: $contractDTO->date,
+            subject: $contractDTO->subject,
+            work_type_category: $contractDTO->work_type_category,
+            payment_terms: $contractDTO->payment_terms,
+            base_amount: $contractDTO->base_amount,
+            total_amount: $contractDTO->total_amount,
+            gp_percentage: $contractDTO->gp_percentage,
+            gp_calculation_type: $contractDTO->gp_calculation_type,
+            gp_coefficient: $contractDTO->gp_coefficient,
+            warranty_retention_calculation_type: $contractDTO->warranty_retention_calculation_type,
+            warranty_retention_percentage: $contractDTO->warranty_retention_percentage,
+            warranty_retention_coefficient: $contractDTO->warranty_retention_coefficient,
+            subcontract_amount: $contractDTO->subcontract_amount,
+            planned_advance_amount: $contractDTO->planned_advance_amount,
+            actual_advance_amount: $contractDTO->actual_advance_amount,
+            status: $contractDTO->status,
+            start_date: $contractDTO->start_date,
+            end_date: $contractDTO->end_date,
+            notes: $contractDTO->notes,
+            advance_payments: $contractDTO->advance_payments,
+            is_fixed_amount: $contractDTO->is_fixed_amount,
+            is_multi_project: $contractDTO->is_multi_project,
+            project_ids: $contractDTO->project_ids,
+            is_self_execution: $contractDTO->is_self_execution,
+            supplier_id: $supplierId,
+            contract_category: $contractDTO->contract_category,
+            contract_side_type: $sideType,
+        );
+    }
+
+    private function resolveOwnerOrganizationId(int $organizationId, ContractDTO $contractDTO): int
+    {
+        return $contractDTO->contract_side_type === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
+            ? $this->resolveProjectCustomerOrganizationId($contractDTO)
+            : $organizationId;
+    }
+
+    private function resolveProjectCustomerOrganizationId(ContractDTO $contractDTO): int
+    {
+        $project = $this->resolvePrimaryProject($contractDTO);
+
+        if (!$project) {
+            throw new Exception('Для этого типа договора нужен проект с определенным заказчиком.');
+        }
+
+        $project->loadMissing('organizations');
+        $resolvedCustomerId = app(\App\Services\Project\ProjectCustomerResolverService::class)
+            ->resolveOrganizationId($project);
+
+        if ($resolvedCustomerId === null) {
+            throw new Exception('Не удалось определить заказчика проекта для выбранного типа договора.');
+        }
+
+        return (int) $resolvedCustomerId;
+    }
+
+    private function resolvePrimaryProject(ContractDTO $contractDTO): ?Project
+    {
+        $projectId = $contractDTO->project_id;
+
+        if ($projectId === null && is_array($contractDTO->project_ids) && !empty($contractDTO->project_ids)) {
+            $projectId = (int) $contractDTO->project_ids[0];
+        }
+
+        return $projectId ? Project::find($projectId) : null;
+    }
+
+    private function assertSideAllowedForProjectContext(
+        ContractSideTypeEnum $sideType,
+        ?ProjectContext $projectContext
+    ): void {
+        if ($projectContext === null) {
+            return;
+        }
+
+        $role = $projectContext->roleConfig->role->value;
+
+        $allowedRoles = match ($sideType) {
+            ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR => ['owner', 'customer', 'general_contractor', 'contractor'],
+            ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR,
+            ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_SUPPLIER => ['owner', 'general_contractor'],
+            ContractSideTypeEnum::CONTRACTOR_TO_SUBCONTRACTOR => ['contractor', 'subcontractor'],
+        };
+
+        if (!in_array($role, $allowedRoles, true)) {
+            throw new Exception('Текущая роль в проекте не позволяет создать договор с выбранными сторонами.');
+        }
+    }
+
+    private function resolveSelfExecutionContractorId(int $organizationId): int
+    {
+        $selfExecutionService = app(\App\Services\Contractor\SelfExecutionService::class);
+
+        if (!$selfExecutionService->canUseSelfExecution($organizationId)) {
+            throw new Exception('Организация не может использовать собственные силы для договора.');
+        }
+
+        return $selfExecutionService->getOrCreateForOrganization($organizationId)->id;
+    }
+
     public function getContractById(int $contractId, int $organizationId, ?int $projectId = null): ?Contract
     {
+        return $this->getContractByIdWithExplicitSides($contractId, $organizationId, $projectId);
+
         Log::info('[ContractService] getContractById START', [
             'contract_id' => $contractId,
             'organization_id' => $organizationId,
@@ -583,6 +993,8 @@ class ContractService
 
     public function updateContract(int $contractId, int $organizationId, ContractDTO $contractDTO): Contract
     {
+        return $this->updateContractWithExplicitSides($contractId, $organizationId, $contractDTO);
+
         $contract = $this->getContractById($contractId, $organizationId);
         if (!$contract) {
             throw new Exception('Contract not found.');

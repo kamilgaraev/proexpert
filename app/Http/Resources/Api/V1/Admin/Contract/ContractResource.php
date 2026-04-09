@@ -10,8 +10,11 @@ use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceA
 use App\Http\Resources\Api\V1\Admin\Contract\Payment\ContractPaymentResource;
 use App\Http\Resources\Api\V1\Admin\Contract\Agreement\SupplementaryAgreementResource;
 use App\Http\Resources\Api\V1\Admin\Contract\Specification\SpecificationResource;
-use App\Services\Project\ProjectCustomerResolverService;
+use App\Services\Contract\ContractSideResolverService;
 
+/**
+ * @mixin \App\Models\Contract
+ */
 class ContractResource extends JsonResource
 {
     /**
@@ -541,6 +544,7 @@ class ContractResource extends JsonResource
             // === АГРЕГИРОВАННЫЕ ДАННЫЕ ===
             // Заказчик (организация-владелец проекта)
             'customer' => $this->resolveCustomer(),
+            'contract_side' => $this->resolveContractSide(),
             
             // Расширенные данные подрядчика
             'contractor_details' => $this->when(
@@ -565,21 +569,11 @@ class ContractResource extends JsonResource
 
     private function resolveCustomer(): ?array
     {
-        if (!$this->project) {
-            return null;
-        }
+        return app(ContractSideResolverService::class)->resolveCustomerAlias($this->resource);
+    }
 
-        $resolver = app(ProjectCustomerResolverService::class);
-        $resolved = $resolver->resolve($this->project);
-
-        if ($resolved === null) {
-            return null;
-        }
-
-        return [
-            'id' => $resolved['organization']->id,
-            'name' => $resolved['organization']->name,
-            'source' => $resolved['source'],
-        ];
+    private function resolveContractSide(): array
+    {
+        return app(ContractSideResolverService::class)->resolve($this->resource);
     }
 }
