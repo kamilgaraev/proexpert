@@ -747,7 +747,7 @@ class ProjectService
         $user = $request->user();
         
         $project->organizations()->attach($organizationId, [
-            'role' => $role->value,
+            'role' => $this->resolveLegacyProjectRoleValue($role),
             'role_new' => $role->value,
             'is_active' => true,
             'added_by_user_id' => $user?->id,
@@ -893,7 +893,7 @@ class ProjectService
         }
 
         $project->organizations()->updateExistingPivot($organizationId, [
-            'role' => $newRole->value,
+            'role' => $this->resolveLegacyProjectRoleValue($newRole),
             'role_new' => $newRole->value,
             'updated_at' => now(),
         ]);
@@ -934,6 +934,21 @@ class ProjectService
         ?int $organizationId = null
     ): void {
         $this->projectParticipantService->enforceUniqueCustomer($project, $role, $organizationId);
+    }
+
+    private function resolveLegacyProjectRoleValue(ProjectOrganizationRole $role): string
+    {
+        return match ($role) {
+            ProjectOrganizationRole::OWNER => 'owner',
+            ProjectOrganizationRole::CONTRACTOR,
+            ProjectOrganizationRole::GENERAL_CONTRACTOR => 'contractor',
+            ProjectOrganizationRole::SUBCONTRACTOR => 'child_contractor',
+            ProjectOrganizationRole::CUSTOMER,
+            ProjectOrganizationRole::CONSTRUCTION_SUPERVISION,
+            ProjectOrganizationRole::DESIGNER,
+            ProjectOrganizationRole::OBSERVER,
+            ProjectOrganizationRole::PARENT_ADMINISTRATOR => 'observer',
+        };
     }
 
     /**

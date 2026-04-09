@@ -29,6 +29,8 @@ class AdminResponse
         array $extra = []
     ): JsonResponse
     {
+        $statusCode = self::normalizeStatusCode($code, 400);
+
         $response = [
             'success' => false,
             'message' => $message,
@@ -47,7 +49,7 @@ class AdminResponse
             $response[$key] = $value;
         }
 
-        return response()->json($response, $code);
+        return response()->json($response, $statusCode);
     }
 
     public static function paginated(
@@ -93,5 +95,10 @@ class AdminResponse
         }
 
         return $data;
+    }
+
+    protected static function normalizeStatusCode(int $code, int $fallback = 400): int
+    {
+        return ($code >= 100 && $code < 600) ? $code : $fallback;
     }
 }

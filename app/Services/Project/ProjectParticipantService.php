@@ -40,7 +40,7 @@ class ProjectParticipantService
         $this->validateRoleCapability($organization, $role);
 
         $project->organizations()->attach($organizationId, [
-            'role' => $role->value,
+            'role' => $this->resolveLegacyRoleValue($role),
             'role_new' => $role->value,
             'is_active' => true,
             'added_by_user_id' => $user?->id,
@@ -92,7 +92,7 @@ class ProjectParticipantService
         $this->validateRoleCapability($participant, $newRole);
 
         $project->organizations()->updateExistingPivot($organizationId, [
-            'role' => $newRole->value,
+            'role' => $this->resolveLegacyRoleValue($newRole),
             'role_new' => $newRole->value,
             'updated_at' => now(),
         ]);
@@ -240,5 +240,20 @@ class ProjectParticipantService
             'source_organization_id' => $sourceOrgId,
             'contractor_name' => $sourceOrg->name,
         ]);
+    }
+
+    private function resolveLegacyRoleValue(ProjectOrganizationRole $role): string
+    {
+        return match ($role) {
+            ProjectOrganizationRole::OWNER => 'owner',
+            ProjectOrganizationRole::CONTRACTOR,
+            ProjectOrganizationRole::GENERAL_CONTRACTOR => 'contractor',
+            ProjectOrganizationRole::SUBCONTRACTOR => 'child_contractor',
+            ProjectOrganizationRole::CUSTOMER,
+            ProjectOrganizationRole::CONSTRUCTION_SUPERVISION,
+            ProjectOrganizationRole::DESIGNER,
+            ProjectOrganizationRole::OBSERVER,
+            ProjectOrganizationRole::PARENT_ADMINISTRATOR => 'observer',
+        };
     }
 }
