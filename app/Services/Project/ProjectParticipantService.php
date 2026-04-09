@@ -11,6 +11,7 @@ use App\Exceptions\BusinessLogicException;
 use App\Models\Contractor;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Models\ProjectOrganization;
 use App\Models\User;
 use App\Services\Logging\LoggingService;
 use App\Services\Organization\OrganizationProfileService;
@@ -30,23 +31,34 @@ class ProjectParticipantService
         ProjectOrganizationRole $role,
         ?User $user = null
     ): void {
-        if ($project->organizations()->where('organizations.id', $organizationId)->exists()) {
-            throw new BusinessLogicException('Организация уже добавлена в проект.', 409);
-        }
-
         $organization = $this->findOrganization($organizationId);
+        $existingParticipant = ProjectOrganization::query()
+            ->where('project_id', $project->id)
+            ->where('organization_id', $organizationId)
+            ->first();
+
+        if ($existingParticipant instanceof ProjectOrganization && (bool) $existingParticipant->is_active) {
+            throw new BusinessLogicException(trans_message('project.participant_already_exists'), 409);
+        }
 
         $this->enforceUniqueCustomer($project, $role, $organizationId);
         $this->validateRoleCapability($organization, $role);
 
-        $project->organizations()->attach($organizationId, [
+        $pivotPayload = [
             'role' => $this->resolveLegacyRoleValue($role),
             'role_new' => $role->value,
             'is_active' => true,
             'added_by_user_id' => $user?->id,
             'invited_at' => now(),
             'accepted_at' => now(),
-        ]);
+            'updated_at' => now(),
+        ];
+
+        if ($existingParticipant instanceof ProjectOrganization) {
+            $project->organizations()->updateExistingPivot($organizationId, $pivotPayload);
+        } else {
+            $project->organizations()->attach($organizationId, $pivotPayload);
+        }
 
         $this->projectContextService->invalidateContext($project->id, $organizationId);
 
@@ -74,7 +86,7 @@ class ProjectParticipantService
         ?User $user = null
     ): void {
         if ($organizationId === $project->organization_id) {
-            throw new BusinessLogicException('Нельзя изменить роль владельца проекта.', 400);
+            throw new BusinessLogicException(trans_message('project.owner_role_change_forbidden'), 400);
         }
 
         $participant = $project->organizations()
@@ -82,7 +94,7 @@ class ProjectParticipantService
             ->first();
 
         if (!$participant instanceof Organization) {
-            throw new BusinessLogicException('Организация не является участником проекта.', 404);
+            throw new BusinessLogicException(trans_message('project.participant_not_found'), 404);
         }
 
         $oldRoleValue = $participant->pivot->role_new ?? $participant->pivot->role;
@@ -112,7 +124,7 @@ class ProjectParticipantService
     public function setActiveState(Project $project, int $organizationId, bool $isActive): void
     {
         if ($organizationId === $project->organization_id) {
-            throw new BusinessLogicException('Нельзя изменить активность владельца проекта.', 400);
+            throw new BusinessLogicException(trans_message('project.owner_active_state_forbidden'), 400);
         }
 
         $participant = $project->organizations()
@@ -120,7 +132,7 @@ class ProjectParticipantService
             ->first();
 
         if (!$participant instanceof Organization) {
-            throw new BusinessLogicException('Организация не является участником проекта.', 404);
+            throw new BusinessLogicException(trans_message('project.participant_not_found'), 404);
         }
 
         $roleValue = $participant->pivot->role_new ?? $participant->pivot->role;
@@ -161,7 +173,7 @@ class ProjectParticipantService
             ->first();
 
         if ($existingCustomer instanceof Organization && (int) $existingCustomer->id !== (int) $organizationId) {
-            throw new BusinessLogicException('В проекте уже есть активный заказчик.', 409);
+            throw new BusinessLogicException(trans_message('project.unique_customer_conflict'), 409);
         }
     }
 
@@ -185,7 +197,7 @@ class ProjectParticipantService
         $organization = Organization::find($organizationId);
 
         if (!$organization instanceof Organization) {
-            throw new BusinessLogicException('Организация не найдена.', 404);
+            throw new BusinessLogicException(trans_message('project.organization_not_found'), 404);
         }
 
         return $organization;
@@ -197,7 +209,9 @@ class ProjectParticipantService
 
         if (!$validation->isValid) {
             throw new BusinessLogicException(
-                'Организация не может выполнять данную роль: ' . implode(', ', $validation->errors),
+                trans_message('project.role_capabilities_invalid', [
+                    'errors' => implode(', ', $validation->errors),
+                ]),
                 422
             );
         }

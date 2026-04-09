@@ -289,6 +289,7 @@ class ProjectOrganizationController extends Controller
             [$project] = $this->getProjectWithAccess($request);
 
             $existingOrgIds = $project->organizations()
+                ->wherePivot('is_active', true)
                 ->pluck('organizations.id')
                 ->merge([$project->organization_id])
                 ->unique()

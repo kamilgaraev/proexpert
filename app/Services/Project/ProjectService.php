@@ -887,12 +887,16 @@ class ProjectService
             DB::table('project_organization')
                 ->where('project_id', $projectId)
                 ->where('organization_id', $organizationId)
-                ->delete();
+                ->update([
+                    'is_active' => false,
+                    'updated_at' => now(),
+                ]);
         });
 
         $stillExists = DB::table('project_organization')
             ->where('project_id', $projectId)
             ->where('organization_id', $organizationId)
+            ->where('is_active', true)
             ->exists();
 
         if ($stillExists) {
