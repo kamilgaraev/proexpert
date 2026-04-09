@@ -208,7 +208,7 @@ class ProjectOrganizationController extends Controller
                 return AdminResponse::error(trans_message('project.no_remove_permission'), 403);
             }
 
-            $this->projectService->removeOrganizationFromProject($project->id, $organization, $request);
+            $this->projectParticipantService->remove($project, $organization, $request->user());
 
             return AdminResponse::success(null, trans_message('project.participant_removed'));
         } catch (BusinessLogicException $exception) {

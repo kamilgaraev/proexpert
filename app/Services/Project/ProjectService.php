@@ -758,52 +758,10 @@ class ProjectService
     ): void {
         $project = $this->findProjectByIdForCurrentOrg($projectId, $request);
         if (!$project) {
-            throw new BusinessLogicException('РџСЂРѕРµРєС‚ РЅРµ РЅР°Р№РґРµРЅ РІ РІР°С€РµР№ РѕСЂРіР°РЅРёР·Р°С†РёРё.', 404);
+            throw new BusinessLogicException(trans_message('project.not_found'), 404);
         }
 
-        if ($project->organizations()->where('organizations.id', $organizationId)->exists()) {
-            throw new BusinessLogicException('РћСЂРіР°РЅРёР·Р°С†РёСЏ СѓР¶Рµ РґРѕР±Р°РІР»РµРЅР° Рє РїСЂРѕРµРєС‚Сѓ.', 409);
-        }
-
-        $organization = \App\Models\Organization::find($organizationId);
-        if (!$organization) {
-            throw new BusinessLogicException('РћСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°.', 404);
-        }
-
-        $validation = $this->organizationProfileService->validateCapabilitiesForRole($organization, $role);
-        if (!$validation->isValid) {
-            throw new BusinessLogicException(
-                'РћСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РјРѕР¶РµС‚ РІС‹РїРѕР»РЅСЏС‚СЊ РґР°РЅРЅСѓСЋ СЂРѕР»СЊ: ' . implode(', ', $validation->errors),
-                422
-            );
-        }
-
-        $user = $request->user();
-        
-        $project->organizations()->attach($organizationId, [
-            'role' => $this->resolveLegacyProjectRoleValue($role),
-            'role_new' => $role->value,
-            'is_active' => true,
-            'added_by_user_id' => $user?->id,
-            'invited_at' => now(),
-            'accepted_at' => now(),
-        ]);
-
-        $this->projectContextService->invalidateContext($projectId, $organizationId);
-
-        $this->logging->business('Organization added to project', [
-            'project_id' => $projectId,
-            'organization_id' => $organizationId,
-            'role' => $role->value,
-            'added_by' => $user?->id,
-        ]);
-        
-        if (in_array($role->value, ['contractor', 'subcontractor'])) {
-            $this->ensureContractorExists($project->organization_id, $organizationId);
-        }
-        
-        // Dispatch event
-        event(new ProjectOrganizationAdded($project, $organization, $role, $user));
+        $this->projectParticipantService->attach($project, $organizationId, $role, $request->user());
     }
 
     public function attachOrganizationToProjectEntity(
@@ -863,61 +821,7 @@ class ProjectService
             throw new BusinessLogicException(trans_message('project.not_found'), 404);
         }
 
-        if ($organizationId === $project->organization_id) {
-            throw new BusinessLogicException(trans_message('project.owner_remove_forbidden'), 400);
-        }
-        
-        $participantSnapshot = DB::table('project_organization')
-            ->where('project_id', $projectId)
-            ->where('organization_id', $organizationId)
-            ->first();
-
-        if (!$participantSnapshot) {
-            throw new BusinessLogicException(trans_message('project.participant_not_found'), 404);
-        }
-
-        $role = $this->resolveProjectRoleFromValues(
-            $participantSnapshot->role_new ?? null,
-            $participantSnapshot->role ?? null
-        );
-        $organization = Organization::withTrashed()->find($organizationId);
-        $user = $request->user();
-
-        DB::transaction(function () use ($projectId, $organizationId): void {
-            DB::table('project_organization')
-                ->where('project_id', $projectId)
-                ->where('organization_id', $organizationId)
-                ->update([
-                    'is_active' => false,
-                    'updated_at' => now(),
-                ]);
-        });
-
-        $stillExists = DB::table('project_organization')
-            ->where('project_id', $projectId)
-            ->where('organization_id', $organizationId)
-            ->where('is_active', true)
-            ->exists();
-
-        if ($stillExists) {
-            Log::error('Project participant deletion verification failed', [
-                'project_id' => $projectId,
-                'organization_id' => $organizationId,
-            ]);
-
-            throw new BusinessLogicException(trans_message('project.participant_remove_conflict'), 409);
-        }
-
-        $this->invalidateProjectParticipantContexts($projectId);
-
-        $this->logging->business('Organization removed from project', [
-            'project_id' => $projectId,
-            'organization_id' => $organizationId,
-        ]);
-
-        if ($organization instanceof Organization && $role instanceof ProjectOrganizationRole) {
-            event(new ProjectOrganizationRemoved($project, $organization, $role, $user));
-        }
+        $this->projectParticipantService->remove($project, $organizationId, $request->user());
     }
     
     /**
@@ -934,59 +838,7 @@ class ProjectService
             throw new BusinessLogicException(trans_message('project.not_found'), 404);
         }
 
-        if ($organizationId === $project->organization_id) {
-            throw new BusinessLogicException(trans_message('project.owner_role_change_forbidden'), 400);
-        }
-
-        $pivot = ProjectOrganization::query()
-            ->where('project_id', $projectId)
-            ->where('organization_id', $organizationId)
-            ->first();
-
-        if (!$pivot) {
-            throw new BusinessLogicException(trans_message('project.participant_not_found'), 404);
-        }
-        
-        // РџРѕР»СѓС‡Р°РµРј С‚РµРєСѓС‰СѓСЋ СЂРѕР»СЊ
-        $organization = Organization::withTrashed()->find($organizationId);
-        if (!$organization instanceof Organization) {
-            throw new BusinessLogicException(trans_message('project.organization_not_found'), 404);
-        }
-
-        $oldRole = $this->resolveOrganizationRoleForProject($project, $organizationId, true);
-        if (!$oldRole instanceof ProjectOrganizationRole) {
-            throw new BusinessLogicException(trans_message('project.participant_role_update_error'), 422);
-        }
-
-        $validation = $this->organizationProfileService->validateCapabilitiesForRole($organization, $newRole);
-        
-        if (!$validation->isValid) {
-            throw new BusinessLogicException(
-                trans_message('project.role_capabilities_invalid', ['errors' => implode(', ', $validation->errors)]),
-                422
-            );
-        }
-
-        $project->organizations()->updateExistingPivot($organizationId, [
-            'role' => $this->resolveLegacyProjectRoleValue($newRole),
-            'role_new' => $newRole->value,
-            'updated_at' => now(),
-        ]);
-
-        $this->projectContextService->invalidateContext($projectId, $organizationId);
-
-        $this->logging->business('Organization role updated in project', [
-            'project_id' => $projectId,
-            'organization_id' => $organizationId,
-            'old_role' => $oldRole?->value,
-            'new_role' => $newRole->value,
-        ]);
-        
-        // Dispatch event
-        if ($oldRole) {
-            $user = $request->user();
-            event(new ProjectOrganizationRoleChanged($project, $organization, $oldRole, $newRole, $user));
-        }
+        $this->projectParticipantService->updateRole($project, $organizationId, $newRole, $request->user());
     }
 
     public function updateOrganizationRoleForProjectEntity(
