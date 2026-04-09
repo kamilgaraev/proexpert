@@ -545,6 +545,8 @@ class ContractResource extends JsonResource
             // Заказчик (организация-владелец проекта)
             'customer' => $this->resolveCustomer(),
             'contract_side' => $this->resolveContractSide(),
+            'requires_contract_side_review' => (bool) $this->requires_contract_side_review,
+            'contract_side_review_reason' => $this->contract_side_review_reason,
             
             // Расширенные данные подрядчика
             'contractor_details' => $this->when(

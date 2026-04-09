@@ -14,6 +14,8 @@ Route::apiResource('contracts', ContractController::class);
 Route::group(['prefix' => 'contracts'], function () {
     Route::get('{contract}/full', [ContractController::class, 'fullDetails'])
         ->name('contracts.full-details');
+    Route::post('{contract}/resolve-side-review', [ContractController::class, 'resolveSideReview'])
+        ->name('contracts.resolve-side-review');
     Route::get('{contract}/analytics', [ContractController::class, 'analytics'])
         ->name('contracts.analytics');
     Route::get('{contract}/completed-works', [ContractController::class, 'completedWorks'])

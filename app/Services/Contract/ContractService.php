@@ -32,6 +32,8 @@ class ContractService
     protected LoggingService $logging;
     protected ProjectContextService $projectContextService;
     protected ContractSideResolverService $contractSideResolverService;
+    protected ContractAccessService $contractAccessService;
+    protected ContractSideMutationService $contractSideMutationService;
     protected OrganizationScopeInterface $orgScope;
     protected ContractorSharingInterface $contractorSharing;
     protected ?ContractStateEventService $stateEventService = null;
@@ -44,6 +46,8 @@ class ContractService
         LoggingService $logging,
         ProjectContextService $projectContextService,
         ContractSideResolverService $contractSideResolverService,
+        ContractAccessService $contractAccessService,
+        ContractSideMutationService $contractSideMutationService,
         OrganizationScopeInterface $orgScope,
         ContractorSharingInterface $contractorSharing
     ) {
@@ -54,6 +58,8 @@ class ContractService
         $this->logging = $logging;
         $this->projectContextService = $projectContextService;
         $this->contractSideResolverService = $contractSideResolverService;
+        $this->contractAccessService = $contractAccessService;
+        $this->contractSideMutationService = $contractSideMutationService;
         $this->orgScope = $orgScope;
         $this->contractorSharing = $contractorSharing;
     }
@@ -69,7 +75,7 @@ class ContractService
         ?ProjectContext $projectContext = null
     ): Contract
     {
-        return $this->createContractWithExplicitSides($organizationId, $contractDTO, $projectContext);
+        return $this->contractSideMutationService->create($organizationId, $contractDTO, $projectContext);
 
         // Project-Based RBAC: валидация прав и auto-fill contractor_id
         if ($projectContext) {
@@ -791,7 +797,7 @@ class ContractService
 
     public function getContractById(int $contractId, int $organizationId, ?int $projectId = null): ?Contract
     {
-        return $this->getContractByIdWithExplicitSides($contractId, $organizationId, $projectId);
+        return $this->contractAccessService->findAccessible($contractId, $organizationId, $projectId);
 
         Log::info('[ContractService] getContractById START', [
             'contract_id' => $contractId,
@@ -993,7 +999,7 @@ class ContractService
 
     public function updateContract(int $contractId, int $organizationId, ContractDTO $contractDTO): Contract
     {
-        return $this->updateContractWithExplicitSides($contractId, $organizationId, $contractDTO);
+        return $this->contractSideMutationService->update($contractId, $organizationId, $contractDTO);
 
         $contract = $this->getContractById($contractId, $organizationId);
         if (!$contract) {
@@ -1177,6 +1183,11 @@ class ContractService
             
             throw $e;
         }
+    }
+
+    public function resolveSideReview(int $contractId, int $organizationId, ContractSideTypeEnum $contractSideType): Contract
+    {
+        return $this->contractSideMutationService->resolveReview($contractId, $organizationId, $contractSideType);
     }
 
     public function deleteContract(int $contractId, int $organizationId): bool
@@ -1619,6 +1630,14 @@ class ContractService
             $query->where('contractor_id', $filters['contractor_id']);
         }
 
+        if (!empty($filters['contract_side_type'])) {
+            $query->where('contract_side_type', $filters['contract_side_type']);
+        }
+
+        if (array_key_exists('requires_contract_side_review', $filters) && $filters['requires_contract_side_review'] !== null) {
+            $query->where('requires_contract_side_review', (bool) $filters['requires_contract_side_review']);
+        }
+
         if (!empty($filters['status'])) {
             $query->where('status', $filters['status']);
         }
@@ -1711,6 +1730,10 @@ class ContractService
             ->mergeBindings($nearingLimitSubquery)
             ->count();
 
+        $reviewContracts = (clone $query)
+            ->where('requires_contract_side_review', true)
+            ->count();
+
         return [
             'total_contracts' => $totalContracts,
             'by_status' => [
@@ -1736,6 +1759,7 @@ class ContractService
             'alerts' => [
                 'overdue_contracts' => $overdueContracts,
                 'nearing_limit_contracts' => $nearingLimitContracts,
+                'contract_side_review_count' => $reviewContracts,
             ],
         ];
     }

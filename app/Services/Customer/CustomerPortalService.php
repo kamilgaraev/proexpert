@@ -404,6 +404,12 @@ class CustomerPortalService
             })
             ->when(isset($filters['status']), fn (Builder $builder) => $builder->where('status', $filters['status']))
             ->when(isset($filters['contractor_id']), fn (Builder $builder) => $builder->where('contractor_id', (int) $filters['contractor_id']))
+            ->when(isset($filters['contractor_search']), function (Builder $builder) use ($filters): void {
+                $search = (string) $filters['contractor_search'];
+                $builder->whereHas('contractor', function (Builder $contractorQuery) use ($search): void {
+                    $contractorQuery->where('name', 'ilike', '%' . $search . '%');
+                });
+            })
             ->when(isset($filters['date_from']), fn (Builder $builder) => $builder->whereDate('date', '>=', $filters['date_from']))
             ->when(isset($filters['date_to']), fn (Builder $builder) => $builder->whereDate('date', '<=', $filters['date_to']))
             ->when(isset($filters['search']), function (Builder $builder) use ($filters): void {
@@ -576,6 +582,7 @@ class CustomerPortalService
             'project_id' => $project?->id ?? ($filters['project_id'] ?? null),
             'status' => $filters['status'] ?? null,
             'contractor_id' => isset($filters['contractor_id']) ? (int) $filters['contractor_id'] : null,
+            'contractor_search' => isset($filters['contractor_search']) ? trim((string) $filters['contractor_search']) : null,
             'date_from' => $filters['date_from'] ?? null,
             'date_to' => $filters['date_to'] ?? null,
             'search' => isset($filters['search']) ? trim((string) $filters['search']) : null,

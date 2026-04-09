@@ -36,6 +36,14 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
         if (!empty($filters['contractor_id'])) {
             $query->where('contracts.contractor_id', $filters['contractor_id']);
         }
+
+        if (array_key_exists('requires_contract_side_review', $filters) && $filters['requires_contract_side_review'] !== null) {
+            $query->where('contracts.requires_contract_side_review', (bool) $filters['requires_contract_side_review']);
+        }
+
+        if (!empty($filters['contract_side_type'])) {
+            $query->where('contracts.contract_side_type', $filters['contract_side_type']);
+        }
         
         if (!empty($filters['project_id'])) {
             $projectId = $filters['project_id'];
@@ -170,7 +178,7 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
 
         // Фильтры по проценту выполнения (через подзапрос)
         if (!empty($filters['completion_from']) || !empty($filters['completion_to'])) {
-            $query->whereHas('completedWorks', function ($subQuery) use ($filters) {
+            $query->whereHas('completedWorks', function ($subQuery) {
                 // Подсчет процента выполнения через join с completed_works
             });
         }
@@ -264,6 +272,7 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
         // Eager load relationships
         $query->with([
             'contractor:id,name', 
+            'supplier:id,name',
             'project:id,name,organization_id',
             'project.organization:id,name',
             'project.organizations:id,name',

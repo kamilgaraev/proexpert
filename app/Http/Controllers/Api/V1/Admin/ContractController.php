@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Services\Contract\ContractService;
 use App\Http\Requests\Api\V1\Admin\Contract\StoreContractRequest;
 use App\Http\Requests\Api\V1\Admin\Contract\UpdateContractRequest;
+use App\Http\Requests\Api\V1\Admin\Contract\ResolveContractSideReviewRequest;
 use App\Http\Requests\Api\V1\Admin\Contract\AttachToParentContractRequest;
 use App\Http\Requests\Api\V1\Admin\Contract\DetachFromParentContractRequest;
 use App\Http\Resources\Api\V1\Admin\Contract\ContractResource;
@@ -101,8 +102,13 @@ class ContractController extends Controller
             'is_overdue',           // Просроченные
             'search',               // Общий поиск по номеру/проекту/подрядчику
             'contractor_search',    // Поиск по подрядчику (имя, ИНН, КПП, email, телефон)
-            'project_search'        // Поиск по проекту (название, адрес, код)
+            'project_search',       // Поиск по проекту (название, адрес, код)
+            'contract_side_type',
         ]);
+
+        if ($request->has('requires_contract_side_review')) {
+            $filters['requires_contract_side_review'] = $request->boolean('requires_contract_side_review');
+        }
         
         // ЖЕСТКО устанавливаем project_id из URL (игнорируем любые другие значения)
         if ($projectId) {
@@ -358,6 +364,41 @@ class ContractController extends Controller
                 'trace' => $e->getTraceAsString()
             ]);
             return AdminResponse::error(trans_message('contract.update_error') . ': ' . $e->getMessage(), Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    public function resolveSideReview(ResolveContractSideReviewRequest $request, int $contract): JsonResponse
+    {
+        $user = $request->user();
+        $organization = $request->attributes->get('current_organization');
+        $organizationId = $organization?->id ?? ($request->attributes->get('current_organization_id') ?? $user->current_organization_id);
+
+        if (!$organizationId) {
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), Response::HTTP_BAD_REQUEST);
+        }
+
+        try {
+            $resolvedContract = $this->contractService->resolveSideReview(
+                $contract,
+                $organizationId,
+                $request->contractSideType()
+            );
+
+            return AdminResponse::success(
+                new ContractResource($resolvedContract),
+                trans_message('contract.review_resolved')
+            );
+        } catch (Exception $exception) {
+            Log::error('Ошибка ручной проверки типа договора', [
+                'contract_id' => $contract,
+                'organization_id' => $organizationId,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return AdminResponse::error(
+                trans_message('contract.review_resolve_error') . ': ' . $exception->getMessage(),
+                Response::HTTP_BAD_REQUEST
+            );
         }
     }
 
