@@ -52,7 +52,7 @@ class PortalController extends CustomerController
             $organizationId = $this->resolveOrganizationId($request);
 
             return CustomerResponse::success(
-                $this->customerPortalService->getDocuments($organizationId),
+                $this->customerPortalService->getDocuments($organizationId, null, $request->user()),
                 trans_message('customer.documents_loaded')
             );
         } catch (Throwable $exception) {
@@ -72,7 +72,7 @@ class PortalController extends CustomerController
             $organizationId = $this->resolveOrganizationId($request);
 
             return CustomerResponse::success(
-                $this->customerPortalService->getApprovals($organizationId),
+                $this->customerPortalService->getApprovals($organizationId, null, $request->user()),
                 trans_message('customer.approvals_loaded')
             );
         } catch (Throwable $exception) {
@@ -92,7 +92,7 @@ class PortalController extends CustomerController
             $organizationId = $this->resolveOrganizationId($request);
 
             return CustomerResponse::success(
-                $this->customerPortalService->getConversations($organizationId),
+                $this->customerPortalService->getConversations($organizationId, null, $request->user()),
                 trans_message('customer.conversations_loaded')
             );
         } catch (Throwable $exception) {
@@ -117,7 +117,7 @@ class PortalController extends CustomerController
             }
 
             return CustomerResponse::success(
-                $this->customerPortalService->getNotifications($user, $organizationId),
+                $this->customerPortalService->getNotifications($user, $organizationId, $request->query()),
                 trans_message('customer.notifications_loaded')
             );
         } catch (Throwable $exception) {
@@ -244,6 +244,31 @@ class PortalController extends CustomerController
             ]);
 
             return CustomerResponse::error(trans_message('customer.support_create_error'), 500);
+        }
+    }
+
+    public function disciplineAnalytics(Request $request): JsonResponse
+    {
+        try {
+            $organizationId = $this->resolveOrganizationId($request);
+            $user = $request->user();
+
+            if (!$user) {
+                return CustomerResponse::error(trans_message('customer.unauthorized'), 401);
+            }
+
+            return CustomerResponse::success(
+                $this->customerPortalService->getDisciplineAnalytics($user, $organizationId),
+                trans_message('customer.dashboard_loaded')
+            );
+        } catch (Throwable $exception) {
+            Log::error('customer.analytics.discipline.failed', [
+                'user_id' => $request->user()?->id,
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'error' => $exception->getMessage(),
+            ]);
+
+            return CustomerResponse::error(trans_message('customer.dashboard_load_error'), 500);
         }
     }
 }

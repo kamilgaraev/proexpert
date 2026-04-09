@@ -25,13 +25,14 @@ class FinanceController extends CustomerController
     {
         try {
             $organizationId = $this->resolveOrganizationId($request);
+            $user = $request->user();
 
             if (!$this->hasPermission($request, 'customer.finance.view', $organizationId)) {
                 return CustomerResponse::error(trans_message('customer.forbidden'), 403);
             }
 
             return CustomerResponse::success(
-                $this->customerPortalService->getFinanceSummary($organizationId),
+                $this->customerPortalService->getFinanceSummary($organizationId, $user),
                 trans_message('customer.finance_loaded')
             );
         } catch (Throwable $exception) {
@@ -49,8 +50,9 @@ class FinanceController extends CustomerController
     {
         try {
             $organizationId = $this->resolveOrganizationId($request);
+            $user = $request->user();
 
-            if (!$this->canAccessProject($project, $organizationId)) {
+            if (!$this->canAccessProject($project, $organizationId, $user)) {
                 return CustomerResponse::error(trans_message('customer.project_not_found'), 404);
             }
 
@@ -59,7 +61,7 @@ class FinanceController extends CustomerController
             }
 
             return CustomerResponse::success(
-                $this->customerPortalService->getProjectFinanceSummary($organizationId, $project),
+                $this->customerPortalService->getProjectFinanceSummary($organizationId, $project, $user),
                 trans_message('customer.finance_loaded')
             );
         } catch (Throwable $exception) {

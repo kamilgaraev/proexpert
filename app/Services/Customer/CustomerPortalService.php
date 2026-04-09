@@ -23,6 +23,7 @@ use App\Services\Project\ProjectCustomerResolverService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File as FileSystem;
 
 class CustomerPortalService
@@ -36,9 +37,9 @@ class CustomerPortalService
 
     public function getDashboard(User $user, int $organizationId): array
     {
-        $projects = $this->baseProjectQuery($organizationId)->get();
-        $documentsCount = $this->baseDocumentQuery($organizationId)->count();
-        $approvalsCount = $this->baseApprovalQuery($organizationId)->where('is_approved', false)->count();
+        $projects = $this->baseProjectQuery($organizationId, $user)->get();
+        $documentsCount = $this->baseDocumentQuery($organizationId, null, $user)->count();
+        $approvalsCount = $this->baseApprovalQuery($organizationId, null, $user)->where('is_approved', false)->count();
         $unreadNotificationsCount = Notification::query()
             ->forUser($user)
             ->forOrganization($organizationId)
@@ -68,31 +69,32 @@ class CustomerPortalService
                     'tone' => 'success',
                 ],
             ],
-            'attention_feed' => $this->buildAttentionFeed($organizationId),
+            'attention_feed' => $this->buildAttentionFeed($organizationId, $user),
             'finance_summary' => $this->canViewFinance($user, $organizationId)
-                ? $this->buildFinanceSummaryPayload($organizationId)
+                ? $this->buildFinanceSummaryPayload($organizationId, $user)
                 : null,
-            'project_risks' => $this->buildProjectRisks($organizationId),
-            'recent_changes' => $this->buildRecentChanges($organizationId),
+            'project_risks' => $this->buildProjectRisks($organizationId, $user),
+            'recent_changes' => $this->buildRecentChanges($organizationId, $user),
+            'discipline_summary' => $this->buildDisciplineSummary($organizationId, $user),
         ];
     }
 
-    public function getProjects(int $organizationId): array
+    public function getProjects(int $organizationId, ?User $user = null): array
     {
-        $projects = $this->baseProjectQuery($organizationId)->get();
+        $projects = $this->baseProjectQuery($organizationId, $user)->get();
 
         return [
             'projects' => $projects->map(fn (Project $project): array => $this->mapProjectPreview($project))->all(),
         ];
     }
 
-    public function getContracts(int $organizationId, array $filters = [], ?Project $project = null): array
+    public function getContracts(int $organizationId, array $filters = [], ?Project $project = null, ?User $user = null): array
     {
         $page = isset($filters['page']) ? max(1, (int) $filters['page']) : 1;
         $perPage = isset($filters['per_page']) ? min(max((int) $filters['per_page'], 1), 50) : 15;
         $appliedFilters = $this->normalizeContractFilters($filters, $project);
 
-        $contracts = $this->baseCustomerContractQuery($organizationId, $appliedFilters, $project)
+        $contracts = $this->baseCustomerContractQuery($organizationId, $appliedFilters, $project, $user)
             ->with([
                 'project.projectAddress',
                 'project.organization',
@@ -119,7 +121,7 @@ class CustomerPortalService
         ];
     }
 
-    public function getContract(int $organizationId, Contract $contract): ?array
+    public function getContract(int $organizationId, Contract $contract, ?User $user = null): ?array
     {
         $contract->loadMissing([
             'project.projectAddress',
@@ -134,7 +136,7 @@ class CustomerPortalService
             'stateEvents:id,contract_id,event_type,event_data,created_at',
         ]);
 
-        if (!$this->canAccessContract($organizationId, $contract)) {
+        if (!$this->canAccessContract($organizationId, $contract, $user)) {
             return null;
         }
 
@@ -143,17 +145,31 @@ class CustomerPortalService
         ];
     }
 
-    public function canAccessContract(int $organizationId, Contract $contract): bool
+    public function canAccessContract(int $organizationId, Contract $contract, ?User $user = null): bool
     {
-        return $contract->contract_side_type === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
-            && (int) $contract->organization_id === $organizationId;
+        if (
+            $contract->contract_side_type !== ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
+            || (int) $contract->organization_id !== $organizationId
+        ) {
+            return false;
+        }
+
+        $scopedProjectIds = $this->resolveScopedProjectIds($organizationId, $user);
+
+        if ($scopedProjectIds === null) {
+            return true;
+        }
+
+        return $this->resolveContractProjectIds($contract)
+            ->intersect($scopedProjectIds)
+            ->isNotEmpty();
     }
 
-    public function getProject(Project $project): array
+    public function getProject(int $organizationId, Project $project, ?User $user = null): array
     {
         $project->loadMissing(['projectAddress', 'organization', 'organizations']);
         $resolvedCustomer = $this->projectCustomerResolverService->resolve($project);
-        $financeSummary = $this->buildProjectFinancePayload((int) ($resolvedCustomer['id'] ?? $project->organization_id), $project);
+        $financeSummary = $this->buildProjectFinancePayload($organizationId, $project, $user);
 
         return [
             'project' => [
@@ -170,33 +186,164 @@ class CustomerPortalService
                 'endDate' => optional($project->end_date)?->format('Y-m-d'),
                 'resolved_customer' => $this->mapResolvedCustomer($resolvedCustomer),
                 'finance_summary' => $financeSummary,
-                'key_contracts' => $this->buildProjectKeyContracts($project),
-                'problem_flags' => $this->buildSingleProjectRisk((int) ($resolvedCustomer['id'] ?? $project->organization_id), $project),
+                'key_contracts' => $this->buildProjectKeyContracts($organizationId, $project, $user),
+                'problem_flags' => $this->buildSingleProjectRisk($organizationId, $project, $user),
             ],
         ];
     }
 
-    public function getFinanceSummary(int $organizationId): array
+    public function getProjectWorkspace(int $organizationId, Project $project, ?User $user = null): array
     {
+        $projectPayload = $this->getProject($organizationId, $project, $user)['project'];
+
         return [
-            'summary' => $this->buildFinanceSummaryPayload($organizationId),
+            'workspace' => [
+                'project' => $projectPayload,
+                'documents' => $this->getDocuments($organizationId, $project, $user),
+                'approvals' => $this->getApprovals($organizationId, $project, $user),
+                'timeline' => $this->getProjectTimeline($organizationId, $project, $user)['items'],
+                'risk_center' => $this->getProjectRisks($organizationId, $project, $user)['risk'],
+                'summary' => [
+                    'documents_total' => count($this->getDocuments($organizationId, $project, $user)['items']),
+                    'approvals_total' => count($this->getApprovals($organizationId, $project, $user)['items']),
+                    'key_contracts_total' => count($projectPayload['key_contracts'] ?? []),
+                ],
+            ],
         ];
     }
 
-    public function getProjectFinanceSummary(int $organizationId, Project $project): array
+    public function getProjectTimeline(int $organizationId, Project $project, ?User $user = null): array
     {
+        $project->loadMissing(['projectAddress', 'organization']);
+
+        $contracts = $this->baseCustomerContractQuery($organizationId, ['project_id' => $project->id], $project, $user)
+            ->with(['project:id,name'])
+            ->latest('updated_at')
+            ->limit(10)
+            ->get();
+        $approvals = $this->baseApprovalQuery($organizationId, $project, $user)
+            ->latest('updated_at')
+            ->limit(10)
+            ->get();
+        $documents = $this->baseDocumentQuery($organizationId, $project, $user)
+            ->latest('updated_at')
+            ->limit(10)
+            ->get();
+        $issues = CustomerIssue::query()
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $project->id)
+            ->latest('updated_at')
+            ->limit(10)
+            ->get();
+        $requests = CustomerRequest::query()
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $project->id)
+            ->latest('updated_at')
+            ->limit(10)
+            ->get();
+
+        $items = collect()
+            ->merge($contracts->map(fn (Contract $contract): array => [
+                'id' => 'contract-' . $contract->id,
+                'type' => 'contract',
+                'title' => 'Обновлен договор ' . $contract->number,
+                'subtitle' => $contract->subject,
+                'project' => ['id' => $project->id, 'name' => $project->name],
+                'related_entity' => ['type' => 'contract', 'id' => $contract->id],
+                'created_at' => $contract->updated_at?->toISOString(),
+                'status' => $contract->status?->value ?? (string) $contract->status,
+                'priority' => 'info',
+            ]))
+            ->merge($approvals->map(fn (ContractPerformanceAct $approval): array => [
+                'id' => 'approval-' . $approval->id,
+                'type' => 'approval',
+                'title' => 'Обновлен акт ' . ($approval->act_document_number ?: '#' . $approval->id),
+                'subtitle' => $approval->is_approved ? 'Согласовано' : 'Ожидает решения',
+                'project' => ['id' => $project->id, 'name' => $project->name],
+                'related_entity' => ['type' => 'approval', 'id' => $approval->id],
+                'created_at' => $approval->updated_at?->toISOString(),
+                'status' => $approval->is_approved ? 'approved' : 'pending',
+                'priority' => $approval->is_approved ? 'info' : 'warning',
+            ]))
+            ->merge($documents->map(fn (File $document): array => [
+                'id' => 'document-' . $document->id,
+                'type' => 'document',
+                'title' => 'Добавлен документ ' . ($document->original_name ?: $document->name),
+                'subtitle' => $document->category ?: $document->type,
+                'project' => ['id' => $project->id, 'name' => $project->name],
+                'related_entity' => ['type' => 'document', 'id' => $document->id],
+                'created_at' => $document->updated_at?->toISOString(),
+                'status' => 'available',
+                'priority' => 'info',
+            ]))
+            ->merge($issues->map(fn (CustomerIssue $issue): array => [
+                'id' => 'issue-' . $issue->id,
+                'type' => 'issue',
+                'title' => 'Открыто замечание ' . $issue->title,
+                'subtitle' => $this->resolvePortalWorkflowStatusLabel($issue->status),
+                'project' => ['id' => $project->id, 'name' => $project->name],
+                'related_entity' => ['type' => 'issue', 'id' => $issue->id],
+                'created_at' => $issue->updated_at?->toISOString(),
+                'status' => $issue->status,
+                'priority' => $this->isWorkflowOverdue($issue->status, $issue->due_date) ? 'critical' : 'warning',
+            ]))
+            ->merge($requests->map(fn (CustomerRequest $request): array => [
+                'id' => 'request-' . $request->id,
+                'type' => 'request',
+                'title' => 'Обновлен запрос ' . $request->title,
+                'subtitle' => $this->resolvePortalWorkflowStatusLabel($request->status),
+                'project' => ['id' => $project->id, 'name' => $project->name],
+                'related_entity' => ['type' => 'request', 'id' => $request->id],
+                'created_at' => $request->updated_at?->toISOString(),
+                'status' => $request->status,
+                'priority' => $this->isWorkflowOverdue($request->status, $request->due_date) ? 'critical' : 'primary',
+            ]))
+            ->sortByDesc('created_at')
+            ->take(20)
+            ->values()
+            ->all();
+
         return [
-            'summary' => $this->buildProjectFinancePayload($organizationId, $project),
+            'items' => $items,
+            'meta' => [
+                'project_id' => $project->id,
+                'total' => count($items),
+            ],
         ];
     }
 
-    public function getIssues(int $organizationId, array $filters = []): array
+    public function getProjectRisks(int $organizationId, Project $project, ?User $user = null): array
     {
+        return [
+            'risk' => $this->buildSingleProjectRisk($organizationId, $project, $user),
+        ];
+    }
+
+    public function getFinanceSummary(int $organizationId, ?User $user = null): array
+    {
+        return [
+            'summary' => $this->buildFinanceSummaryPayload($organizationId, $user),
+        ];
+    }
+
+    public function getProjectFinanceSummary(int $organizationId, Project $project, ?User $user = null): array
+    {
+        return [
+            'summary' => $this->buildProjectFinancePayload($organizationId, $project, $user),
+        ];
+    }
+
+    public function getIssues(int $organizationId, array $filters = [], ?User $user = null): array
+    {
+        $scopedProjectIds = $this->resolveScopedProjectIds($organizationId, $user);
         $issues = CustomerIssue::query()
             ->with(['author:id,name', 'project:id,name', 'contract:id,number,subject', 'performanceAct:id,act_document_number,amount', 'file:id,name,original_name', 'comments.author:id,name'])
             ->where('organization_id', $organizationId)
+            ->when($scopedProjectIds !== null, fn (Builder $builder) => $builder->whereIn('project_id', $scopedProjectIds->all()))
             ->when(isset($filters['status']), fn (Builder $builder) => $builder->where('status', (string) $filters['status']))
             ->when(isset($filters['project_id']), fn (Builder $builder) => $builder->where('project_id', (int) $filters['project_id']))
+            ->when(isset($filters['issue_reason']), fn (Builder $builder) => $builder->where('issue_reason', (string) $filters['issue_reason']))
+            ->when(isset($filters['due_state']) && $filters['due_state'] === 'overdue', fn (Builder $builder) => $builder->whereNotIn('status', ['resolved', 'rejected'])->whereDate('due_date', '<', now()->toDateString()))
             ->latest('updated_at')
             ->limit(50)
             ->get();
@@ -206,9 +353,13 @@ class CustomerPortalService
         ];
     }
 
-    public function getIssue(int $organizationId, CustomerIssue $issue): ?array
+    public function getIssue(int $organizationId, CustomerIssue $issue, ?User $user = null): ?array
     {
         if ((int) $issue->organization_id !== $organizationId) {
+            return null;
+        }
+
+        if (!$this->canAccessWorkflowProject($organizationId, $issue->project_id, $user)) {
             return null;
         }
 
@@ -221,7 +372,7 @@ class CustomerPortalService
 
     public function createIssue(User $user, int $organizationId, array $payload): array
     {
-        $payload = $this->normalizeIssuePayload($organizationId, $payload);
+        $payload = $this->normalizeIssuePayload($organizationId, $payload, $user);
 
         $issue = CustomerIssue::create([
             'organization_id' => $organizationId,
@@ -236,6 +387,17 @@ class CustomerPortalService
             'attachments' => $payload['attachments'] ?? [],
             'due_date' => $payload['due_date'] ?? null,
             'status' => 'new',
+            'metadata' => [
+                'history' => [
+                    [
+                        'type' => 'created',
+                        'author_id' => $user->id,
+                        'author_name' => $user->name,
+                        'created_at' => now()->toISOString(),
+                        'body' => $payload['body'],
+                    ],
+                ],
+            ],
         ]);
 
         return [
@@ -246,6 +408,10 @@ class CustomerPortalService
     public function addIssueComment(User $user, int $organizationId, CustomerIssue $issue, array $payload): ?array
     {
         if ((int) $issue->organization_id !== $organizationId) {
+            return null;
+        }
+
+        if (!$this->canAccessWorkflowProject($organizationId, $issue->project_id, $user)) {
             return null;
         }
 
@@ -260,7 +426,24 @@ class CustomerPortalService
             $issue->update(['status' => 'in_progress']);
         }
 
-        return $this->getIssue($organizationId, $issue->fresh(['author:id,name', 'resolver:id,name', 'project:id,name', 'contract:id,number,subject', 'performanceAct:id,act_document_number,amount', 'file:id,name,original_name', 'comments.author:id,name']));
+        $metadata = $issue->metadata ?? [];
+        $history = is_array($metadata['history'] ?? null) ? $metadata['history'] : [];
+        $history[] = [
+            'type' => 'comment_added',
+            'author_id' => $user->id,
+            'author_name' => $user->name,
+            'created_at' => now()->toISOString(),
+            'body' => $payload['body'],
+        ];
+
+        $issue->update([
+            'metadata' => array_merge($metadata, [
+                'history' => $history,
+                'last_response_at' => now()->toISOString(),
+            ]),
+        ]);
+
+        return $this->getIssue($organizationId, $issue->fresh(['author:id,name', 'resolver:id,name', 'project:id,name', 'contract:id,number,subject', 'performanceAct:id,act_document_number,amount', 'file:id,name,original_name', 'comments.author:id,name']), $user);
     }
 
     public function resolveIssue(User $user, int $organizationId, CustomerIssue $issue, string $status): ?array
@@ -269,22 +452,44 @@ class CustomerPortalService
             return null;
         }
 
+        if (!$this->canAccessWorkflowProject($organizationId, $issue->project_id, $user)) {
+            return null;
+        }
+
+        $metadata = $issue->metadata ?? [];
+        $history = is_array($metadata['history'] ?? null) ? $metadata['history'] : [];
+        $history[] = [
+            'type' => 'status_changed',
+            'author_id' => $user->id,
+            'author_name' => $user->name,
+            'created_at' => now()->toISOString(),
+            'status' => $status,
+        ];
+
         $issue->update([
             'status' => $status,
             'resolved_at' => now(),
             'resolved_by_user_id' => $user->id,
+            'metadata' => array_merge($metadata, [
+                'history' => $history,
+                'last_response_at' => now()->toISOString(),
+            ]),
         ]);
 
-        return $this->getIssue($organizationId, $issue->fresh(['author:id,name', 'resolver:id,name', 'project:id,name', 'contract:id,number,subject', 'performanceAct:id,act_document_number,amount', 'file:id,name,original_name', 'comments.author:id,name']));
+        return $this->getIssue($organizationId, $issue->fresh(['author:id,name', 'resolver:id,name', 'project:id,name', 'contract:id,number,subject', 'performanceAct:id,act_document_number,amount', 'file:id,name,original_name', 'comments.author:id,name']), $user);
     }
 
-    public function getRequests(int $organizationId, array $filters = []): array
+    public function getRequests(int $organizationId, array $filters = [], ?User $user = null): array
     {
+        $scopedProjectIds = $this->resolveScopedProjectIds($organizationId, $user);
         $requests = CustomerRequest::query()
             ->with(['author:id,name', 'project:id,name', 'contract:id,number,subject', 'comments.author:id,name'])
             ->where('organization_id', $organizationId)
+            ->when($scopedProjectIds !== null, fn (Builder $builder) => $builder->whereIn('project_id', $scopedProjectIds->all()))
             ->when(isset($filters['status']), fn (Builder $builder) => $builder->where('status', (string) $filters['status']))
             ->when(isset($filters['project_id']), fn (Builder $builder) => $builder->where('project_id', (int) $filters['project_id']))
+            ->when(isset($filters['request_type']), fn (Builder $builder) => $builder->where('request_type', (string) $filters['request_type']))
+            ->when(isset($filters['due_state']) && $filters['due_state'] === 'overdue', fn (Builder $builder) => $builder->whereNotIn('status', ['completed', 'rejected'])->whereDate('due_date', '<', now()->toDateString()))
             ->latest('updated_at')
             ->limit(50)
             ->get();
@@ -294,9 +499,13 @@ class CustomerPortalService
         ];
     }
 
-    public function getRequest(int $organizationId, CustomerRequest $request): ?array
+    public function getRequest(int $organizationId, CustomerRequest $request, ?User $user = null): ?array
     {
         if ((int) $request->organization_id !== $organizationId) {
+            return null;
+        }
+
+        if (!$this->canAccessWorkflowProject($organizationId, $request->project_id, $user)) {
             return null;
         }
 
@@ -309,7 +518,7 @@ class CustomerPortalService
 
     public function createRequest(User $user, int $organizationId, array $payload): array
     {
-        $payload = $this->normalizeRequestPayload($organizationId, $payload);
+        $payload = $this->normalizeRequestPayload($organizationId, $payload, $user);
 
         $request = CustomerRequest::create([
             'organization_id' => $organizationId,
@@ -322,6 +531,17 @@ class CustomerPortalService
             'attachments' => $payload['attachments'] ?? [],
             'due_date' => $payload['due_date'] ?? null,
             'status' => 'new',
+            'metadata' => [
+                'history' => [
+                    [
+                        'type' => 'created',
+                        'author_id' => $user->id,
+                        'author_name' => $user->name,
+                        'created_at' => now()->toISOString(),
+                        'body' => $payload['body'],
+                    ],
+                ],
+            ],
         ]);
 
         return [
@@ -332,6 +552,10 @@ class CustomerPortalService
     public function addRequestComment(User $user, int $organizationId, CustomerRequest $request, array $payload): ?array
     {
         if ((int) $request->organization_id !== $organizationId) {
+            return null;
+        }
+
+        if (!$this->canAccessWorkflowProject($organizationId, $request->project_id, $user)) {
             return null;
         }
 
@@ -346,7 +570,57 @@ class CustomerPortalService
             $request->update(['status' => 'in_progress']);
         }
 
-        return $this->getRequest($organizationId, $request->fresh(['author:id,name', 'resolver:id,name', 'project:id,name', 'contract:id,number,subject', 'comments.author:id,name']));
+        $metadata = $request->metadata ?? [];
+        $history = is_array($metadata['history'] ?? null) ? $metadata['history'] : [];
+        $history[] = [
+            'type' => 'comment_added',
+            'author_id' => $user->id,
+            'author_name' => $user->name,
+            'created_at' => now()->toISOString(),
+            'body' => $payload['body'],
+        ];
+
+        $request->update([
+            'metadata' => array_merge($metadata, [
+                'history' => $history,
+                'last_response_at' => now()->toISOString(),
+            ]),
+        ]);
+
+        return $this->getRequest($organizationId, $request->fresh(['author:id,name', 'resolver:id,name', 'project:id,name', 'contract:id,number,subject', 'comments.author:id,name']), $user);
+    }
+
+    public function updateRequestStatus(User $user, int $organizationId, CustomerRequest $request, string $status): ?array
+    {
+        if ((int) $request->organization_id !== $organizationId) {
+            return null;
+        }
+
+        if (!$this->canAccessWorkflowProject($organizationId, $request->project_id, $user)) {
+            return null;
+        }
+
+        $metadata = $request->metadata ?? [];
+        $history = is_array($metadata['history'] ?? null) ? $metadata['history'] : [];
+        $history[] = [
+            'type' => 'status_changed',
+            'author_id' => $user->id,
+            'author_name' => $user->name,
+            'created_at' => now()->toISOString(),
+            'status' => $status,
+        ];
+
+        $request->update([
+            'status' => $status,
+            'resolved_at' => in_array($status, ['completed', 'rejected'], true) ? now() : null,
+            'resolved_by_user_id' => in_array($status, ['completed', 'rejected'], true) ? $user->id : null,
+            'metadata' => array_merge($metadata, [
+                'history' => $history,
+                'last_response_at' => now()->toISOString(),
+            ]),
+        ]);
+
+        return $this->getRequest($organizationId, $request->fresh(['author:id,name', 'resolver:id,name', 'project:id,name', 'contract:id,number,subject', 'comments.author:id,name']), $user);
     }
 
     public function getTeam(User $user, int $organizationId): array
@@ -361,22 +635,24 @@ class CustomerPortalService
 
         return [
             'members' => $organization->users->map(function (User $member) use ($authContext, $organization): array {
-                $roles = $this->authorizationService->getUserRoleSlugs($member, [
-                    'organization_id' => $organization->id,
-                ]);
-
-                return [
-                    'id' => $member->id,
-                    'name' => $member->name,
-                    'email' => $member->email,
-                    'phone' => $member->phone,
-                    'is_owner' => (bool) $member->pivot?->is_owner,
-                    'roles' => $roles,
-                    'interfaces' => $this->resolveCustomerInterfaces($member, $authContext),
-                ];
+                return $this->mapTeamMember($member, $organization->id, $authContext);
             })->all(),
             'available_roles' => $this->loadCustomerRoleCatalog(),
             'current_user_id' => $user->id,
+        ];
+    }
+
+    public function getTeamMember(User $viewer, int $organizationId, User $member): ?array
+    {
+        if (!$member->belongsToOrganization($organizationId)) {
+            return null;
+        }
+
+        $authContext = AuthorizationContext::getOrganizationContext($organizationId);
+
+        return [
+            'member' => $this->mapTeamMember($member->loadMissing('organizations'), $organizationId, $authContext, true),
+            'current_user_id' => $viewer->id,
         ];
     }
 
@@ -411,16 +687,16 @@ class CustomerPortalService
         ];
     }
 
-    public function getDocuments(int $organizationId, ?Project $project = null): array
+    public function getDocuments(int $organizationId, ?Project $project = null, ?User $user = null): array
     {
-        $documents = $this->baseDocumentQuery($organizationId, $project)
+        $documents = $this->baseDocumentQuery($organizationId, $project, $user)
             ->latest('updated_at')
             ->limit(50)
             ->get();
 
         $projects = $project
             ? collect([$project->id => $project->loadMissing('projectAddress')])
-            : $this->baseProjectQuery($organizationId)->get()->keyBy('id');
+            : $this->baseProjectQuery($organizationId, $user)->get()->keyBy('id');
 
         return [
             'items' => $documents->map(
@@ -429,9 +705,9 @@ class CustomerPortalService
         ];
     }
 
-    public function getApprovals(int $organizationId, ?Project $project = null): array
+    public function getApprovals(int $organizationId, ?Project $project = null, ?User $user = null): array
     {
-        $approvals = $this->baseApprovalQuery($organizationId, $project)
+        $approvals = $this->baseApprovalQuery($organizationId, $project, $user)
             ->with(['project.projectAddress', 'contract:id,number,subject,status'])
             ->latest('act_date')
             ->limit(20)
@@ -444,22 +720,25 @@ class CustomerPortalService
         ];
     }
 
-    public function getConversations(int $organizationId, ?Project $project = null): array
+    public function getConversations(int $organizationId, ?Project $project = null, ?User $user = null): array
     {
         return [
             'items' => [],
             'meta' => [
                 'organization_id' => $organizationId,
                 'project_id' => $project?->id,
+                'scoped' => $this->resolveScopedProjectIds($organizationId, $user) !== null,
             ],
         ];
     }
 
-    public function getNotifications(User $user, int $organizationId): array
+    public function getNotifications(User $user, int $organizationId, array $filters = []): array
     {
         $notifications = Notification::query()
             ->forUser($user)
             ->forOrganization($organizationId)
+            ->when(isset($filters['unread']) && filter_var($filters['unread'], FILTER_VALIDATE_BOOLEAN), fn (Builder $builder) => $builder->unread())
+            ->when(isset($filters['event_type']), fn (Builder $builder) => $builder->where('notification_type', (string) $filters['event_type']))
             ->latest('created_at')
             ->limit(25)
             ->get();
@@ -477,7 +756,15 @@ class CustomerPortalService
                 'organization_id' => $organizationId,
                 'unread_count' => $unreadCount,
                 'total' => $notifications->count(),
+                'filters' => $filters,
             ],
+        ];
+    }
+
+    public function getDisciplineAnalytics(User $user, int $organizationId): array
+    {
+        return [
+            'summary' => $this->buildDisciplineSummary($organizationId, $user),
         ];
     }
 
@@ -582,20 +869,34 @@ class CustomerPortalService
         ];
     }
 
-    private function baseProjectQuery(int $organizationId): Builder
+    private function baseProjectQuery(int $organizationId, ?User $user = null): Builder
     {
-        return Project::query()
+        $query = Project::query()
             ->with(['projectAddress', 'organization', 'organizations'])
             ->accessibleByOrganization($organizationId)
             ->where('is_archived', false)
             ->orderByDesc('updated_at');
+
+        $scopedProjectIds = $this->resolveScopedProjectIds($organizationId, $user);
+
+        if ($scopedProjectIds !== null) {
+            $query->whereKey($scopedProjectIds->all());
+        }
+
+        return $query;
     }
 
-    private function baseDocumentQuery(int $organizationId, ?Project $project = null): Builder
+    private function baseDocumentQuery(int $organizationId, ?Project $project = null, ?User $user = null): Builder
     {
         $query = File::query()->where('organization_id', $organizationId);
+        $scopedProjectIds = $this->resolveScopedProjectIds($organizationId, $user);
 
         if ($project) {
+            if ($scopedProjectIds !== null && !$scopedProjectIds->contains($project->id)) {
+                $query->whereRaw('1 = 0');
+                return $query;
+            }
+
             $approvalIds = ContractPerformanceAct::query()
                 ->where('project_id', $project->id)
                 ->pluck('id');
@@ -615,14 +916,34 @@ class CustomerPortalService
                     });
                 }
             });
+        } elseif ($scopedProjectIds !== null) {
+            $approvalIds = ContractPerformanceAct::query()
+                ->whereIn('project_id', $scopedProjectIds->all())
+                ->pluck('id');
+
+            $query->where(function (Builder $builder) use ($scopedProjectIds, $approvalIds): void {
+                $builder->where(function (Builder $inner) use ($scopedProjectIds): void {
+                    $inner
+                        ->where('fileable_type', Project::class)
+                        ->whereIn('fileable_id', $scopedProjectIds->all());
+                });
+
+                if ($approvalIds->isNotEmpty()) {
+                    $builder->orWhere(function (Builder $inner) use ($approvalIds): void {
+                        $inner
+                            ->where('fileable_type', ContractPerformanceAct::class)
+                            ->whereIn('fileable_id', $approvalIds->all());
+                    });
+                }
+            });
         }
 
         return $query;
     }
 
-    private function baseApprovalQuery(int $organizationId, ?Project $project = null): Builder
+    private function baseApprovalQuery(int $organizationId, ?Project $project = null, ?User $user = null): Builder
     {
-        return ContractPerformanceAct::query()
+        $query = ContractPerformanceAct::query()
             ->whereHas('contract', function (Builder $contractQuery) use ($organizationId): void {
                 $contractQuery
                     ->where('contract_side_type', ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR->value)
@@ -636,11 +957,19 @@ class CustomerPortalService
                     fn (Builder $projectQuery): Builder => $projectQuery->accessibleByOrganization($organizationId)
                 )
             );
+
+        $scopedProjectIds = $this->resolveScopedProjectIds($organizationId, $user);
+
+        if ($scopedProjectIds !== null) {
+            $query->whereIn('project_id', $scopedProjectIds->all());
+        }
+
+        return $query;
     }
 
-    private function baseCustomerContractQuery(int $organizationId, array $filters = [], ?Project $project = null): Builder
+    private function baseCustomerContractQuery(int $organizationId, array $filters = [], ?Project $project = null, ?User $user = null): Builder
     {
-        return Contract::query()
+        $query = Contract::query()
             ->where('contract_side_type', ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR->value)
             ->where('organization_id', $organizationId)
             ->when($project !== null, function (Builder $builder) use ($project): void {
@@ -678,6 +1007,18 @@ class CustomerPortalService
                         ->orWhere('subject', 'like', '%' . $search . '%');
                 });
             });
+
+        $scopedProjectIds = $this->resolveScopedProjectIds($organizationId, $user);
+
+        if ($scopedProjectIds !== null) {
+            $query->where(function (Builder $builder) use ($scopedProjectIds): void {
+                $builder
+                    ->whereIn('project_id', $scopedProjectIds->all())
+                    ->orWhereHas('projects', fn (Builder $projectsQuery) => $projectsQuery->whereIn('projects.id', $scopedProjectIds->all()));
+            });
+        }
+
+        return $query;
     }
 
     private function mapProjectPreview(Project $project): array
@@ -958,21 +1299,32 @@ class CustomerPortalService
             'description' => $description,
             'eventType' => $notification->notification_type ?: $notification->type,
             'createdAtLabel' => $notification->created_at?->format('d.m.Y H:i'),
+            'created_at' => $notification->created_at?->toISOString(),
             'tone' => $this->resolveNotificationTone($notification),
             'statusLabel' => $notification->read_at ? 'Прочитано' : 'Не прочитано',
             'isUnread' => $notification->read_at === null,
+            'project' => isset($data['project']) && is_array($data['project']) ? $data['project'] : null,
+            'related_entity' => isset($data['related_entity']) && is_array($data['related_entity']) ? $data['related_entity'] : null,
+            'priority' => $notification->priority ?: 'normal',
         ];
     }
 
     private function mapIssue(CustomerIssue $issue, bool $withComments = false): array
     {
+        $metadata = is_array($issue->metadata) ? $issue->metadata : [];
+        $history = is_array($metadata['history'] ?? null) ? $metadata['history'] : [];
+        $lastResponseAt = $metadata['last_response_at'] ?? $issue->comments->max('created_at');
+        $overdueSince = $issue->due_date && $issue->due_date->isPast() && !in_array($issue->status, ['resolved', 'rejected'], true)
+            ? $issue->due_date->toDateString()
+            : null;
+
         return [
             'id' => $issue->id,
             'title' => $issue->title,
             'issue_reason' => $issue->issue_reason,
             'body' => $issue->body,
             'status' => $issue->status,
-            'status_label' => $this->resolveWorkflowStatusLabel($issue->status),
+            'status_label' => $this->resolvePortalWorkflowStatusLabel($issue->status),
             'due_date' => optional($issue->due_date)?->format('Y-m-d'),
             'attachments' => $issue->attachments ?? [],
             'author' => $issue->author ? [
@@ -983,6 +1335,7 @@ class CustomerPortalService
                 'id' => $issue->resolver->id,
                 'name' => $issue->resolver->name,
             ] : null,
+            'assignee' => isset($metadata['assignee']) && is_array($metadata['assignee']) ? $metadata['assignee'] : null,
             'project' => $issue->project ? [
                 'id' => $issue->project->id,
                 'name' => $issue->project->name,
@@ -1004,6 +1357,9 @@ class CustomerPortalService
             'comments' => $withComments
                 ? $issue->comments->map(fn (CustomerPortalComment $comment): array => $this->mapComment($comment))->all()
                 : [],
+            'history' => $withComments ? array_values($history) : [],
+            'last_response_at' => $lastResponseAt instanceof \Carbon\CarbonInterface ? $lastResponseAt->toISOString() : (is_string($lastResponseAt) ? $lastResponseAt : null),
+            'overdue_since' => $overdueSince,
             'created_at' => $issue->created_at?->toISOString(),
             'updated_at' => $issue->updated_at?->toISOString(),
         ];
@@ -1011,13 +1367,20 @@ class CustomerPortalService
 
     private function mapRequest(CustomerRequest $request, bool $withComments = false): array
     {
+        $metadata = is_array($request->metadata) ? $request->metadata : [];
+        $history = is_array($metadata['history'] ?? null) ? $metadata['history'] : [];
+        $lastResponseAt = $metadata['last_response_at'] ?? $request->comments->max('created_at');
+        $overdueSince = $request->due_date && $request->due_date->isPast() && !in_array($request->status, ['completed', 'rejected'], true)
+            ? $request->due_date->toDateString()
+            : null;
+
         return [
             'id' => $request->id,
             'title' => $request->title,
             'request_type' => $request->request_type,
             'body' => $request->body,
             'status' => $request->status,
-            'status_label' => $this->resolveWorkflowStatusLabel($request->status),
+            'status_label' => $this->resolvePortalWorkflowStatusLabel($request->status),
             'due_date' => optional($request->due_date)?->format('Y-m-d'),
             'attachments' => $request->attachments ?? [],
             'author' => $request->author ? [
@@ -1028,6 +1391,7 @@ class CustomerPortalService
                 'id' => $request->resolver->id,
                 'name' => $request->resolver->name,
             ] : null,
+            'assignee' => isset($metadata['assignee']) && is_array($metadata['assignee']) ? $metadata['assignee'] : null,
             'project' => $request->project ? [
                 'id' => $request->project->id,
                 'name' => $request->project->name,
@@ -1040,6 +1404,9 @@ class CustomerPortalService
             'comments' => $withComments
                 ? $request->comments->map(fn (CustomerPortalComment $comment): array => $this->mapComment($comment))->all()
                 : [],
+            'history' => $withComments ? array_values($history) : [],
+            'last_response_at' => $lastResponseAt instanceof \Carbon\CarbonInterface ? $lastResponseAt->toISOString() : (is_string($lastResponseAt) ? $lastResponseAt : null),
+            'overdue_since' => $overdueSince,
             'created_at' => $request->created_at?->toISOString(),
             'updated_at' => $request->updated_at?->toISOString(),
         ];
@@ -1070,6 +1437,50 @@ class CustomerPortalService
             'phone' => $contactForm->phone,
             'createdAt' => $contactForm->created_at?->toISOString(),
             'createdAtLabel' => $contactForm->created_at?->format('d.m.Y H:i'),
+        ];
+    }
+
+    private function mapTeamMember(User $member, int $organizationId, AuthorizationContext $authContext, bool $withDetails = false): array
+    {
+        $roles = $this->authorizationService->getUserRoleSlugs($member, [
+            'organization_id' => $organizationId,
+        ]);
+        $accessibleProjects = Project::query()
+            ->accessibleByOrganization($organizationId)
+            ->where('is_archived', false)
+            ->get(['projects.id', 'projects.name']);
+        $assignedProjects = $member->assignedProjects()
+            ->whereIn('projects.id', $accessibleProjects->pluck('id')->all())
+            ->get(['projects.id', 'projects.name']);
+        $accessHistory = $member->roleAssignments()
+            ->where('context_id', $authContext->id)
+            ->latest('updated_at')
+            ->limit(5)
+            ->get()
+            ->map(fn ($assignment): array => [
+                'id' => $assignment->id,
+                'action' => $assignment->is_active ? 'role_assigned' : 'role_revoked',
+                'role' => $assignment->role_slug,
+                'created_at' => $assignment->updated_at?->toISOString(),
+            ])
+            ->all();
+
+        return [
+            'id' => $member->id,
+            'name' => $member->name,
+            'email' => $member->email,
+            'phone' => $member->phone,
+            'is_owner' => (bool) $member->pivot?->is_owner,
+            'status' => $member->is_active ? 'active' : 'inactive',
+            'roles' => $roles,
+            'interfaces' => $this->resolveCustomerInterfaces($member, $authContext),
+            'project_access' => $assignedProjects->map(fn (Project $project): array => [
+                'id' => $project->id,
+                'name' => $project->name,
+            ])->all(),
+            'has_full_project_access' => $assignedProjects->isEmpty(),
+            'access_history' => $withDetails ? $accessHistory : [],
+            'available_project_count' => $accessibleProjects->count(),
         ];
     }
 
@@ -1156,6 +1567,21 @@ class CustomerPortalService
         };
     }
 
+    private function resolvePortalWorkflowStatusLabel(?string $status): string
+    {
+        return match ($status) {
+            'accepted' => 'Принят',
+            'in_progress' => 'В работе',
+            'waiting_response' => 'Ждет ответа',
+            'waiting_customer' => 'Ждет решения заказчика',
+            'resolved' => 'Решено',
+            'completed' => 'Завершен',
+            'overdue' => 'Просрочен',
+            'rejected' => 'Отклонено',
+            default => 'Новое',
+        };
+    }
+
     private function canViewFinance(User $user, int $organizationId): bool
     {
         return $this->authorizationService->can($user, 'customer.finance.view', [
@@ -1163,27 +1589,32 @@ class CustomerPortalService
         ]);
     }
 
-    private function buildAttentionFeed(int $organizationId): array
+    private function buildAttentionFeed(int $organizationId, ?User $user = null): array
     {
-        $contracts = $this->baseCustomerContractQuery($organizationId)
+        $contracts = $this->baseCustomerContractQuery($organizationId, [], null, $user)
             ->with(['project:id,name'])
             ->latest('created_at')
             ->limit(4)
             ->get();
-        $approvals = $this->baseApprovalQuery($organizationId)
+        $approvals = $this->baseApprovalQuery($organizationId, null, $user)
             ->with(['project:id,name'])
             ->where('is_approved', false)
             ->latest('act_date')
             ->limit(4)
             ->get();
+        $scopedProjectIds = $this->resolveScopedProjectIds($organizationId, $user);
         $issues = CustomerIssue::query()
+            ->with(['project:id,name'])
             ->where('organization_id', $organizationId)
+            ->when($scopedProjectIds !== null, fn (Builder $builder) => $builder->whereIn('project_id', $scopedProjectIds->all()))
             ->whereIn('status', ['new', 'in_progress'])
             ->latest('updated_at')
             ->limit(4)
             ->get();
         $requests = CustomerRequest::query()
+            ->with(['project:id,name'])
             ->where('organization_id', $organizationId)
+            ->when($scopedProjectIds !== null, fn (Builder $builder) => $builder->whereIn('project_id', $scopedProjectIds->all()))
             ->whereIn('status', ['new', 'in_progress'])
             ->latest('updated_at')
             ->limit(4)
@@ -1191,50 +1622,70 @@ class CustomerPortalService
 
         return [
             'contracts' => $contracts->map(fn (Contract $contract): array => [
-                'id' => $contract->id,
+                'id' => 'contract-' . $contract->id,
+                'type' => 'contract',
                 'title' => $contract->number,
                 'subtitle' => $contract->project?->name,
                 'status' => $contract->status?->value ?? (string) $contract->status,
+                'priority' => 'info',
+                'project' => $contract->project ? ['id' => $contract->project->id, 'name' => $contract->project->name] : null,
+                'related_entity' => ['type' => 'contract', 'id' => $contract->id],
+                'created_at' => $contract->created_at?->toISOString(),
             ])->all(),
             'approvals' => $approvals->map(fn (ContractPerformanceAct $approval): array => [
-                'id' => $approval->id,
+                'id' => 'approval-' . $approval->id,
+                'type' => 'approval',
                 'title' => 'Акт ' . ($approval->act_document_number ?: '#' . $approval->id),
                 'subtitle' => $approval->project?->name,
                 'status' => $approval->is_approved ? 'approved' : 'pending',
+                'priority' => 'warning',
+                'project' => $approval->project ? ['id' => $approval->project->id, 'name' => $approval->project->name] : null,
+                'related_entity' => ['type' => 'approval', 'id' => $approval->id],
+                'created_at' => $approval->updated_at?->toISOString(),
             ])->all(),
             'issues' => $issues->map(fn (CustomerIssue $issue): array => [
-                'id' => $issue->id,
+                'id' => 'issue-' . $issue->id,
+                'type' => 'issue',
                 'title' => $issue->title,
-                'subtitle' => $this->resolveWorkflowStatusLabel($issue->status),
+                'subtitle' => $this->resolvePortalWorkflowStatusLabel($issue->status),
                 'status' => $issue->status,
+                'priority' => $this->resolveWorkflowPriority($issue->status, $issue->due_date),
+                'project' => $issue->project ? ['id' => $issue->project->id, 'name' => $issue->project->name] : null,
+                'related_entity' => ['type' => 'issue', 'id' => $issue->id],
+                'created_at' => $issue->updated_at?->toISOString(),
             ])->all(),
             'requests' => $requests->map(fn (CustomerRequest $request): array => [
-                'id' => $request->id,
+                'id' => 'request-' . $request->id,
+                'type' => 'request',
                 'title' => $request->title,
-                'subtitle' => $this->resolveWorkflowStatusLabel($request->status),
+                'subtitle' => $this->resolvePortalWorkflowStatusLabel($request->status),
                 'status' => $request->status,
+                'priority' => $this->resolveWorkflowPriority($request->status, $request->due_date),
+                'project' => $request->project ? ['id' => $request->project->id, 'name' => $request->project->name] : null,
+                'related_entity' => ['type' => 'request', 'id' => $request->id],
+                'created_at' => $request->updated_at?->toISOString(),
             ])->all(),
         ];
     }
 
-    private function buildFinanceSummaryPayload(int $organizationId): array
+    private function buildFinanceSummaryPayload(int $organizationId, ?User $user = null): array
     {
-        $contracts = $this->baseCustomerContractQuery($organizationId)
+        $contracts = $this->baseCustomerContractQuery($organizationId, [], null, $user)
             ->with(['project:id,name', 'performanceActs:id,contract_id,amount,is_approved', 'payments:id,contract_id,amount'])
             ->get();
-        $projects = $this->baseProjectQuery($organizationId)->get();
+        $projects = $this->baseProjectQuery($organizationId, $user)->get();
 
         $totals = $this->calculateContractsTotals($contracts);
 
         return [
             'totals' => $totals,
-            'projects' => $projects->map(fn (Project $project): array => $this->buildProjectFinancePayload($organizationId, $project))->all(),
+            'projects' => $projects->map(fn (Project $project): array => $this->buildProjectFinancePayload($organizationId, $project, $user))->all(),
         ];
     }
 
-    private function buildProjectFinancePayload(int $organizationId, Project $project): array
+    private function buildProjectFinancePayload(int $organizationId, Project $project, ?User $user = null): array
     {
-        $contracts = $this->baseCustomerContractQuery($organizationId, ['project_id' => $project->id], $project)
+        $contracts = $this->baseCustomerContractQuery($organizationId, ['project_id' => $project->id], $project, $user)
             ->with(['performanceActs:id,contract_id,amount,is_approved', 'payments:id,contract_id,amount'])
             ->get();
 
@@ -1252,6 +1703,9 @@ class CustomerPortalService
                 'delta' => $project->budget_amount !== null
                     ? round((float) $project->budget_amount - (float) $totals['total_amount'], 2)
                     : null,
+                'performed_vs_paid_delta' => round((float) $totals['performed_amount'] - (float) $totals['paid_amount'], 2),
+                'payment_delay_amount' => round(max(0, (float) $totals['performed_amount'] - (float) $totals['paid_amount']), 2),
+                'problem_flags' => $this->resolveFinanceDeviationFlags($project, $totals),
             ],
         ];
     }
@@ -1282,23 +1736,26 @@ class CustomerPortalService
         ];
     }
 
-    private function buildProjectRisks(int $organizationId): array
+    private function buildProjectRisks(int $organizationId, ?User $user = null): array
     {
-        return $this->baseProjectQuery($organizationId)
+        return $this->baseProjectQuery($organizationId, $user)
             ->limit(6)
             ->get()
-            ->map(fn (Project $project): array => $this->buildSingleProjectRisk($organizationId, $project))
+            ->map(fn (Project $project): array => $this->buildSingleProjectRisk($organizationId, $project, $user))
             ->filter(fn (array $risk): bool => count($risk['flags']) > 0)
             ->values()
             ->all();
     }
 
-    private function buildSingleProjectRisk(int $organizationId, Project $project): array
+    private function buildSingleProjectRisk(int $organizationId, Project $project, ?User $user = null): array
     {
-        $contracts = $this->baseCustomerContractQuery($organizationId, ['project_id' => $project->id], $project)
+        $contracts = $this->baseCustomerContractQuery($organizationId, ['project_id' => $project->id], $project, $user)
             ->with(['performanceActs:id,contract_id,amount,is_approved'])
             ->get();
-        $pendingApprovals = $this->baseApprovalQuery($organizationId, $project)->where('is_approved', false)->count();
+        $pendingApprovals = $this->baseApprovalQuery($organizationId, $project, $user)->where('is_approved', false)->count();
+        $documentsWithoutReaction = $this->baseDocumentQuery($organizationId, $project, $user)
+            ->where('updated_at', '<', now()->subDays(14))
+            ->count();
         $flags = [];
 
         if ($pendingApprovals > 0) {
@@ -1313,6 +1770,15 @@ class CustomerPortalService
             $flags[] = 'Нет договоров заказчика';
         }
 
+        if ($documentsWithoutReaction > 0) {
+            $flags[] = 'Есть документы без реакции';
+        }
+
+        $flags = array_values(array_unique(array_merge(
+            $flags,
+            $this->resolveFinanceDeviationFlags($project, $this->calculateContractsTotals($contracts))
+        )));
+
         return [
             'project' => [
                 'id' => $project->id,
@@ -1320,12 +1786,13 @@ class CustomerPortalService
             ],
             'flags' => $flags,
             'pending_approvals' => $pendingApprovals,
+            'documents_without_reaction' => $documentsWithoutReaction,
         ];
     }
 
-    private function buildRecentChanges(int $organizationId): array
+    private function buildRecentChanges(int $organizationId, ?User $user = null): array
     {
-        $contracts = $this->baseCustomerContractQuery($organizationId)
+        $contracts = $this->baseCustomerContractQuery($organizationId, [], null, $user)
             ->with(['project:id,name'])
             ->latest('updated_at')
             ->limit(5)
@@ -1337,7 +1804,7 @@ class CustomerPortalService
                 'subtitle' => $contract->project?->name,
                 'created_at' => $contract->updated_at?->toISOString(),
             ]);
-        $documents = $this->baseDocumentQuery($organizationId)
+        $documents = $this->baseDocumentQuery($organizationId, null, $user)
             ->latest('updated_at')
             ->limit(5)
             ->get()
@@ -1349,23 +1816,33 @@ class CustomerPortalService
                 'created_at' => $file->updated_at?->toISOString(),
             ]);
 
+        $scopedProjectIds = $this->resolveScopedProjectIds($organizationId, $user);
+        $issues = CustomerIssue::query()
+            ->where('organization_id', $organizationId)
+            ->when($scopedProjectIds !== null, fn (Builder $builder) => $builder->whereIn('project_id', $scopedProjectIds->all()))
+            ->latest('updated_at')
+            ->limit(5)
+            ->get()
+            ->map(fn (CustomerIssue $issue): array => [
+                'type' => 'issue',
+                'id' => $issue->id,
+                'title' => $issue->title,
+                'subtitle' => $this->resolvePortalWorkflowStatusLabel($issue->status),
+                'created_at' => $issue->updated_at?->toISOString(),
+            ]);
+
         return $contracts
             ->merge($documents)
+            ->merge($issues)
             ->sortByDesc('created_at')
             ->take(8)
             ->values()
             ->all();
     }
 
-    private function buildProjectKeyContracts(Project $project): array
+    private function buildProjectKeyContracts(int $organizationId, Project $project, ?User $user = null): array
     {
-        return Contract::query()
-            ->where('contract_side_type', ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR->value)
-            ->where(function (Builder $builder) use ($project): void {
-                $builder
-                    ->where('project_id', $project->id)
-                    ->orWhereHas('projects', fn (Builder $projectsQuery) => $projectsQuery->where('projects.id', $project->id));
-            })
+        return $this->baseCustomerContractQuery($organizationId, ['project_id' => $project->id], $project, $user)
             ->latest('date')
             ->limit(3)
             ->get(['id', 'number', 'subject', 'status', 'total_amount'])
@@ -1422,6 +1899,156 @@ class CustomerPortalService
             ->all();
     }
 
+    private function buildDisciplineSummary(int $organizationId, ?User $user = null): array
+    {
+        $scopedProjectIds = $this->resolveScopedProjectIds($organizationId, $user);
+
+        $issuesQuery = CustomerIssue::query()
+            ->where('organization_id', $organizationId)
+            ->when($scopedProjectIds !== null, fn (Builder $builder) => $builder->whereIn('project_id', $scopedProjectIds->all()));
+        $requestsQuery = CustomerRequest::query()
+            ->where('organization_id', $organizationId)
+            ->when($scopedProjectIds !== null, fn (Builder $builder) => $builder->whereIn('project_id', $scopedProjectIds->all()));
+        $approvalsQuery = $this->baseApprovalQuery($organizationId, null, $user);
+
+        $issueResponseHours = $issuesQuery->get()
+            ->map(function (CustomerIssue $issue): ?float {
+                $lastResponseAt = data_get($issue->metadata, 'last_response_at');
+                if (!$lastResponseAt || !$issue->created_at) {
+                    return null;
+                }
+
+                return round($issue->created_at->diffInMinutes($lastResponseAt) / 60, 1);
+            })
+            ->filter();
+        $requestResponseHours = $requestsQuery->get()
+            ->map(function (CustomerRequest $request): ?float {
+                $lastResponseAt = data_get($request->metadata, 'last_response_at');
+                if (!$lastResponseAt || !$request->created_at) {
+                    return null;
+                }
+
+                return round($request->created_at->diffInMinutes($lastResponseAt) / 60, 1);
+            })
+            ->filter();
+
+        return [
+            'issue_response_hours' => $issueResponseHours->isEmpty() ? null : round($issueResponseHours->avg(), 1),
+            'approval_cycle_hours' => round($approvalsQuery->whereNotNull('approved_at')->avg(DB::raw("extract(epoch from (approved_at - created_at)) / 3600")) ?: 0, 1),
+            'rework_count' => (clone $approvalsQuery)->where('is_approved', false)->count(),
+            'overdue_actions_count' => (clone $issuesQuery)->whereNotIn('status', ['resolved', 'rejected'])->whereDate('due_date', '<', now()->toDateString())->count()
+                + (clone $requestsQuery)->whereNotIn('status', ['completed', 'rejected'])->whereDate('due_date', '<', now()->toDateString())->count(),
+            'stalled_items_count' => $this->baseDocumentQuery($organizationId, null, $user)->where('updated_at', '<', now()->subDays(14))->count()
+                + (clone $approvalsQuery)->where('updated_at', '<', now()->subDays(14))->count(),
+            'request_response_hours' => $requestResponseHours->isEmpty() ? null : round($requestResponseHours->avg(), 1),
+        ];
+    }
+
+    private function resolveScopedProjectIds(int $organizationId, ?User $user = null): ?Collection
+    {
+        if ($user === null) {
+            return null;
+        }
+
+        $assignedProjectIds = $user->assignedProjects()
+            ->where(function (Builder $builder) use ($organizationId): void {
+                $builder
+                    ->where('projects.organization_id', $organizationId)
+                    ->orWhereExists(function ($subQuery) use ($organizationId): void {
+                        $subQuery
+                            ->selectRaw('1')
+                            ->from('project_organization')
+                            ->whereColumn('project_organization.project_id', 'projects.id')
+                            ->where('project_organization.organization_id', $organizationId)
+                            ->where('project_organization.is_active', true);
+                    });
+            })
+            ->pluck('projects.id');
+
+        if ($assignedProjectIds->isEmpty()) {
+            return null;
+        }
+
+        return $assignedProjectIds->map(fn ($id): int => (int) $id)->values();
+    }
+
+    private function resolveContractProjectIds(Contract $contract): Collection
+    {
+        $projectIds = collect();
+
+        if ($contract->project_id !== null) {
+            $projectIds->push((int) $contract->project_id);
+        }
+
+        $relatedProjectIds = $contract->relationLoaded('projects')
+            ? $contract->projects->pluck('id')
+            : $contract->projects()->pluck('projects.id');
+
+        return $projectIds
+            ->merge($relatedProjectIds)
+            ->map(fn ($id): int => (int) $id)
+            ->unique()
+            ->values();
+    }
+
+    private function canAccessWorkflowProject(int $organizationId, ?int $projectId, ?User $user = null): bool
+    {
+        if ($projectId === null) {
+            return true;
+        }
+
+        $scopedProjectIds = $this->resolveScopedProjectIds($organizationId, $user);
+
+        if ($scopedProjectIds === null) {
+            return true;
+        }
+
+        return $scopedProjectIds->contains((int) $projectId);
+    }
+
+    private function resolveFinanceDeviationFlags(Project $project, array $totals): array
+    {
+        $flags = [];
+
+        if ((float) $totals['performed_amount'] > (float) $totals['paid_amount']) {
+            $flags[] = 'Выполнение опережает оплату';
+        }
+
+        if ((float) $totals['paid_amount'] > (float) $totals['performed_amount']) {
+            $flags[] = 'Оплата опережает выполнение';
+        }
+
+        if ($project->end_date !== null && $project->end_date->isPast() && $project->status !== 'completed') {
+            $flags[] = 'Проектный срок под риском';
+        }
+
+        if ($project->budget_amount !== null && (float) $totals['total_amount'] > (float) $project->budget_amount) {
+            $flags[] = 'Есть риск перерасхода бюджета';
+        }
+
+        return $flags;
+    }
+
+    private function isWorkflowOverdue(?string $status, mixed $dueDate): bool
+    {
+        return $dueDate instanceof \Carbon\CarbonInterface
+            && $dueDate->isPast()
+            && !in_array($status, ['resolved', 'rejected', 'completed'], true);
+    }
+
+    private function resolveWorkflowPriority(?string $status, mixed $dueDate): string
+    {
+        if ($this->isWorkflowOverdue($status, $dueDate)) {
+            return 'warning';
+        }
+
+        return match ($status) {
+            'new', 'waiting_response', 'waiting_customer', 'overdue' => 'warning',
+            'resolved', 'completed' => 'success',
+            default => 'primary',
+        };
+    }
+
     private function defaultNotificationSettings(): array
     {
         return [
@@ -1437,6 +2064,9 @@ class CustomerPortalService
                 'contract_amount_changed' => true,
                 'new_document' => true,
                 'request_status_changed' => true,
+                'project_deadline_changed' => true,
+                'access_updated' => true,
+                'finance_risk_detected' => true,
             ],
         ];
     }
@@ -1469,9 +2099,9 @@ class CustomerPortalService
             ->all();
     }
 
-    private function normalizeIssuePayload(int $organizationId, array $payload): array
+    private function normalizeIssuePayload(int $organizationId, array $payload, ?User $user = null): array
     {
-        if (isset($payload['project_id']) && !$this->baseProjectQuery($organizationId)->whereKey((int) $payload['project_id'])->exists()) {
+        if (isset($payload['project_id']) && !$this->baseProjectQuery($organizationId, $user)->whereKey((int) $payload['project_id'])->exists()) {
             unset($payload['project_id']);
         }
 
@@ -1488,7 +2118,7 @@ class CustomerPortalService
         }
 
         if (isset($payload['performance_act_id'])) {
-            $approval = $this->baseApprovalQuery($organizationId)->whereKey((int) $payload['performance_act_id'])->first();
+            $approval = $this->baseApprovalQuery($organizationId, null, $user)->whereKey((int) $payload['performance_act_id'])->first();
 
             if ($approval === null) {
                 unset($payload['performance_act_id']);
@@ -1509,9 +2139,9 @@ class CustomerPortalService
         return $payload;
     }
 
-    private function normalizeRequestPayload(int $organizationId, array $payload): array
+    private function normalizeRequestPayload(int $organizationId, array $payload, ?User $user = null): array
     {
-        if (isset($payload['project_id']) && !$this->baseProjectQuery($organizationId)->whereKey((int) $payload['project_id'])->exists()) {
+        if (isset($payload['project_id']) && !$this->baseProjectQuery($organizationId, $user)->whereKey((int) $payload['project_id'])->exists()) {
             unset($payload['project_id']);
         }
 

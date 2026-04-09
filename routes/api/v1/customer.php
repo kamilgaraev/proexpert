@@ -33,6 +33,9 @@ Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.con
         Route::get('/dashboard', [PortalController::class, 'dashboard'])->name('dashboard');
         Route::get('/projects', [ProjectController::class, 'index'])->name('projects.index');
         Route::get('/projects/{project}', [ProjectController::class, 'show'])->name('projects.show');
+        Route::get('/projects/{project}/workspace', [ProjectController::class, 'workspace'])->name('projects.workspace');
+        Route::get('/projects/{project}/timeline', [ProjectController::class, 'timeline'])->name('projects.timeline');
+        Route::get('/projects/{project}/risks', [ProjectController::class, 'risks'])->name('projects.risks');
         Route::get('/projects/{project}/finance', [FinanceController::class, 'projectSummary'])->name('projects.finance');
         Route::get('/projects/{project}/contracts', [ContractController::class, 'projectContracts'])->name('projects.contracts');
         Route::get('/projects/{project}/documents', [ProjectController::class, 'documents'])->name('projects.documents');
@@ -50,10 +53,13 @@ Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.con
         Route::post('/requests', [CustomerRequestController::class, 'store'])->name('requests.store');
         Route::get('/requests/{requestModel}', [CustomerRequestController::class, 'show'])->name('requests.show');
         Route::post('/requests/{requestModel}/comments', [CustomerRequestController::class, 'addComment'])->name('requests.comments.store');
+        Route::post('/requests/{requestModel}/resolve', [CustomerRequestController::class, 'resolve'])->name('requests.resolve');
         Route::get('/team', [TeamController::class, 'index'])->name('team.index');
+        Route::get('/team/{member}', [TeamController::class, 'show'])->name('team.show');
         Route::get('/notification-settings', [TeamController::class, 'notificationSettings'])->name('notification-settings.show');
         Route::put('/notification-settings', [TeamController::class, 'updateNotificationSettings'])->name('notification-settings.update');
         Route::post('/invitations/{token}/accept', [InvitationController::class, 'accept'])->name('invitations.accept');
+        Route::get('/analytics/discipline', [PortalController::class, 'disciplineAnalytics'])->name('analytics.discipline');
         Route::get('/documents', [PortalController::class, 'documents'])->name('documents');
         Route::get('/approvals', [PortalController::class, 'approvals'])->name('approvals');
         Route::get('/conversations', [PortalController::class, 'conversations'])->name('conversations');

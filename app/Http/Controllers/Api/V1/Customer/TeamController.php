@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Customer;
 
 use App\Http\Responses\CustomerResponse;
+use App\Models\User;
 use App\Services\Customer\CustomerPortalService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -43,6 +44,39 @@ class TeamController extends CustomerController
             Log::error('customer.team.failed', [
                 'user_id' => $request->user()?->id,
                 'organization_id' => $request->attributes->get('current_organization_id'),
+                'error' => $exception->getMessage(),
+            ]);
+
+            return CustomerResponse::error(trans_message('customer.team_load_error'), 500);
+        }
+    }
+
+    public function show(Request $request, User $member): JsonResponse
+    {
+        try {
+            $organizationId = $this->resolveOrganizationId($request);
+            $user = $request->user();
+
+            if (!$user) {
+                return CustomerResponse::error(trans_message('customer.unauthorized'), 401);
+            }
+
+            if (!$this->hasPermission($request, 'customer.team.view', $organizationId)) {
+                return CustomerResponse::error(trans_message('customer.forbidden'), 403);
+            }
+
+            $payload = $this->customerPortalService->getTeamMember($user, $organizationId, $member);
+
+            if ($payload === null) {
+                return CustomerResponse::error(trans_message('customer.forbidden'), 404);
+            }
+
+            return CustomerResponse::success($payload, trans_message('customer.team_loaded'));
+        } catch (Throwable $exception) {
+            Log::error('customer.team.member.failed', [
+                'user_id' => $request->user()?->id,
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'member_id' => $member->id ?? null,
                 'error' => $exception->getMessage(),
             ]);
 
@@ -101,6 +135,9 @@ class TeamController extends CustomerController
                 'events.contract_amount_changed' => ['required', 'boolean'],
                 'events.new_document' => ['required', 'boolean'],
                 'events.request_status_changed' => ['required', 'boolean'],
+                'events.project_deadline_changed' => ['required', 'boolean'],
+                'events.access_updated' => ['required', 'boolean'],
+                'events.finance_risk_detected' => ['required', 'boolean'],
             ]);
 
             return CustomerResponse::success(

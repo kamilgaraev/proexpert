@@ -29,13 +29,14 @@ class ContractController extends CustomerController
         try {
             $organizationId = $this->resolveOrganizationId($request);
             $filters = $this->validateFilters($request);
+            $user = $request->user();
 
             if ($filters instanceof JsonResponse) {
                 return $filters;
             }
 
             return CustomerResponse::success(
-                $this->customerPortalService->getContracts($organizationId, $filters),
+                $this->customerPortalService->getContracts($organizationId, $filters, null, $user),
                 trans_message('customer.contracts_loaded')
             );
         } catch (Throwable $exception) {
@@ -54,17 +55,18 @@ class ContractController extends CustomerController
         try {
             $organizationId = $this->resolveOrganizationId($request);
             $filters = $this->validateFilters($request);
+            $user = $request->user();
 
             if ($filters instanceof JsonResponse) {
                 return $filters;
             }
 
-            if (!$this->canAccessProject($project, $organizationId)) {
+            if (!$this->canAccessProject($project, $organizationId, $user)) {
                 return CustomerResponse::error(trans_message('customer.project_not_found'), 404);
             }
 
             return CustomerResponse::success(
-                $this->customerPortalService->getContracts($organizationId, $filters, $project),
+                $this->customerPortalService->getContracts($organizationId, $filters, $project, $user),
                 trans_message('customer.contracts_loaded')
             );
         } catch (Throwable $exception) {
@@ -83,7 +85,7 @@ class ContractController extends CustomerController
     {
         try {
             $organizationId = $this->resolveOrganizationId($request);
-            $payload = $this->customerPortalService->getContract($organizationId, $contract);
+            $payload = $this->customerPortalService->getContract($organizationId, $contract, $request->user());
 
             if ($payload === null) {
                 return CustomerResponse::error(trans_message('customer.contract_not_found'), 404);

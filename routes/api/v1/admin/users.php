@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\V1\Admin\CustomerAccessController;
 use App\Http\Controllers\Api\V1\Admin\UserManagementController;
 
 /*
@@ -24,12 +25,18 @@ Route::post('users', [UserManagementController::class, 'store'])
 Route::get('users/{user}', [UserManagementController::class, 'show'])
     ->middleware('authorize:admin.users.view')
     ->name('users.show');
+Route::get('users/{user}/customer-access', [CustomerAccessController::class, 'show'])
+    ->middleware('authorize:admin.users.view')
+    ->name('users.customer-access.show');
 Route::put('users/{user}', [UserManagementController::class, 'update'])
     ->middleware('authorize:admin.users.edit')
     ->name('users.update');
 Route::patch('users/{user}', [UserManagementController::class, 'update'])
     ->middleware('authorize:admin.users.edit')
     ->name('users.patch');
+Route::put('users/{user}/customer-access', [CustomerAccessController::class, 'update'])
+    ->middleware('authorize:admin.users.edit')
+    ->name('users.customer-access.update');
 
 Route::post('users/{user}/block', [UserManagementController::class, 'block'])
     ->middleware('authorize:admin.users.block')

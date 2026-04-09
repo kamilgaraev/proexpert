@@ -26,13 +26,14 @@ class CustomerRequestController extends CustomerController
     {
         try {
             $organizationId = $this->resolveOrganizationId($request);
+            $user = $request->user();
 
             if (!$this->hasPermission($request, 'customer.requests.view', $organizationId)) {
                 return CustomerResponse::error(trans_message('customer.forbidden'), 403);
             }
 
             return CustomerResponse::success(
-                $this->customerPortalService->getRequests($organizationId, $request->query()),
+                $this->customerPortalService->getRequests($organizationId, $request->query(), $user),
                 trans_message('customer.requests_loaded')
             );
         } catch (Throwable $exception) {
@@ -94,12 +95,13 @@ class CustomerRequestController extends CustomerController
     {
         try {
             $organizationId = $this->resolveOrganizationId($request);
+            $user = $request->user();
 
             if (!$this->hasPermission($request, 'customer.requests.view', $organizationId)) {
                 return CustomerResponse::error(trans_message('customer.forbidden'), 403);
             }
 
-            $payload = $this->customerPortalService->getRequest($organizationId, $requestModel);
+            $payload = $this->customerPortalService->getRequest($organizationId, $requestModel, $user);
 
             if ($payload === null) {
                 return CustomerResponse::error(trans_message('customer.request_not_found'), 404);
@@ -157,6 +159,45 @@ class CustomerRequestController extends CustomerController
             ]);
 
             return CustomerResponse::error(trans_message('customer.comment_create_error'), 500);
+        }
+    }
+
+    public function resolve(Request $request, CustomerRequest $requestModel): JsonResponse
+    {
+        try {
+            $organizationId = $this->resolveOrganizationId($request);
+            $user = $request->user();
+
+            if (!$user) {
+                return CustomerResponse::error(trans_message('customer.unauthorized'), 401);
+            }
+
+            if (!$this->hasPermission($request, 'customer.requests.manage', $organizationId)) {
+                return CustomerResponse::error(trans_message('customer.forbidden'), 403);
+            }
+
+            $validated = $request->validate([
+                'status' => ['required', 'string', 'in:accepted,in_progress,waiting_customer,completed,rejected'],
+            ]);
+
+            $payload = $this->customerPortalService->updateRequestStatus($user, $organizationId, $requestModel, $validated['status']);
+
+            if ($payload === null) {
+                return CustomerResponse::error(trans_message('customer.request_not_found'), 404);
+            }
+
+            return CustomerResponse::success($payload, trans_message('customer.request_loaded'));
+        } catch (ValidationException $exception) {
+            return CustomerResponse::error(trans_message('customer.validation_failed'), 422, $exception->errors());
+        } catch (Throwable $exception) {
+            Log::error('customer.request.resolve.failed', [
+                'user_id' => $request->user()?->id,
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'request_id' => $requestModel->id ?? null,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return CustomerResponse::error(trans_message('customer.request_load_error'), 500);
         }
     }
 }

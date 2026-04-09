@@ -26,13 +26,14 @@ class IssueController extends CustomerController
     {
         try {
             $organizationId = $this->resolveOrganizationId($request);
+            $user = $request->user();
 
             if (!$this->hasPermission($request, 'customer.issues.view', $organizationId)) {
                 return CustomerResponse::error(trans_message('customer.forbidden'), 403);
             }
 
             return CustomerResponse::success(
-                $this->customerPortalService->getIssues($organizationId, $request->query()),
+                $this->customerPortalService->getIssues($organizationId, $request->query(), $user),
                 trans_message('customer.issues_loaded')
             );
         } catch (Throwable $exception) {
@@ -96,12 +97,13 @@ class IssueController extends CustomerController
     {
         try {
             $organizationId = $this->resolveOrganizationId($request);
+            $user = $request->user();
 
             if (!$this->hasPermission($request, 'customer.issues.view', $organizationId)) {
                 return CustomerResponse::error(trans_message('customer.forbidden'), 403);
             }
 
-            $payload = $this->customerPortalService->getIssue($organizationId, $issue);
+            $payload = $this->customerPortalService->getIssue($organizationId, $issue, $user);
 
             if ($payload === null) {
                 return CustomerResponse::error(trans_message('customer.issue_not_found'), 404);
