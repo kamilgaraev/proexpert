@@ -9,33 +9,54 @@ use App\Http\Controllers\Api\V1\Customer\Auth\AuthController as CustomerAuthCont
 use App\Http\Controllers\Api\V1\Customer\Auth\EmailVerificationController as CustomerEmailVerificationController;
 use App\Http\Controllers\Api\V1\Customer\InvitationController;
 use App\Http\Controllers\Api\V1\Customer\IssueController;
+use App\Http\Controllers\Api\V1\Customer\OrganizationSearchController;
 use App\Http\Controllers\Api\V1\Customer\PortalController;
 use App\Http\Controllers\Api\V1\Customer\ProjectController;
 use App\Http\Controllers\Api\V1\Customer\TeamController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('auth')->name('auth.')->group(function (): void {
-    Route::post('register', [CustomerAuthController::class, 'register'])->name('register');
-    Route::post('login', [CustomerAuthController::class, 'login'])->name('login');
+    Route::middleware('throttle:auth')->group(function (): void {
+        Route::post('register', [CustomerAuthController::class, 'register'])->name('register');
+        Route::post('login', [CustomerAuthController::class, 'login'])->name('login');
+        Route::post('forgot-password', [CustomerAuthController::class, 'forgotPassword'])->name('forgot-password');
+        Route::post('reset-password', [CustomerAuthController::class, 'resetPassword'])->name('reset-password');
+        Route::post('email/resend', [CustomerEmailVerificationController::class, 'resend'])
+            ->name('verification.resend');
+    });
     Route::get('email/verify/{id}/{hash}', [CustomerEmailVerificationController::class, 'verify'])
         ->name('verification.verify');
 
     Route::middleware(['auth:api_landing', 'auth.jwt:api_landing'])->group(function (): void {
-        Route::post('email/resend', [CustomerEmailVerificationController::class, 'resend'])
-            ->name('verification.resend');
+        Route::post('logout', [CustomerAuthController::class, 'logout'])->name('logout');
+        Route::post('refresh', [CustomerAuthController::class, 'refresh'])->name('refresh');
         Route::get('email/check', [CustomerEmailVerificationController::class, 'check'])
             ->name('verification.check');
     });
 });
 
-Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context'])
+Route::get('/invitations/{token}', [InvitationController::class, 'resolve'])->name('invitations.resolve');
+Route::middleware('throttle:auth')->group(function (): void {
+    Route::post('/invitations/{token}/login', [InvitationController::class, 'login'])->name('invitations.login');
+    Route::post('/invitations/{token}/register', [InvitationController::class, 'register'])->name('invitations.register');
+    Route::post('/invitations/{token}/decline', [InvitationController::class, 'decline'])->name('invitations.decline');
+});
+
+Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'verified', 'organization.context'])
     ->group(function (): void {
         Route::get('/dashboard', [PortalController::class, 'dashboard'])->name('dashboard');
         Route::get('/projects', [ProjectController::class, 'index'])->name('projects.index');
+        Route::get('/projects/invitations', [ProjectController::class, 'invitations'])->name('projects.invitations.index');
+        Route::post('/projects', [ProjectController::class, 'store'])->name('projects.store');
         Route::get('/projects/{project}', [ProjectController::class, 'show'])->name('projects.show');
         Route::get('/projects/{project}/workspace', [ProjectController::class, 'workspace'])->name('projects.workspace');
         Route::get('/projects/{project}/timeline', [ProjectController::class, 'timeline'])->name('projects.timeline');
         Route::get('/projects/{project}/risks', [ProjectController::class, 'risks'])->name('projects.risks');
+        Route::get('/projects/{project}/participants', [ProjectController::class, 'participants'])->name('projects.participants.index');
+        Route::post('/projects/{project}/participants/invitations', [ProjectController::class, 'inviteParticipant'])->name('projects.participants.invitations.store');
+        Route::post('/projects/{project}/participants/invitations/{invitation}/cancel', [ProjectController::class, 'cancelInvitation'])->name('projects.participants.invitations.cancel');
+        Route::post('/projects/{project}/participants/invitations/{invitation}/resend', [ProjectController::class, 'resendInvitation'])->name('projects.participants.invitations.resend');
+        Route::get('/projects/{project}/participants/search-organizations', [OrganizationSearchController::class, 'search'])->name('projects.participants.organizations.search');
         Route::get('/projects/{project}/finance', [FinanceController::class, 'projectSummary'])->name('projects.finance');
         Route::get('/projects/{project}/contracts', [ContractController::class, 'projectContracts'])->name('projects.contracts');
         Route::get('/projects/{project}/documents', [ProjectController::class, 'documents'])->name('projects.documents');

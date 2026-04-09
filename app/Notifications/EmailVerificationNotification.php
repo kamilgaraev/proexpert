@@ -1,12 +1,14 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Notifications;
 
 use Illuminate\Auth\Notifications\VerifyEmail;
 use Illuminate\Bus\Queueable;
 use Illuminate\Notifications\Messages\MailMessage;
-use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\URL;
 
 class EmailVerificationNotification extends VerifyEmail
 {
@@ -17,29 +19,33 @@ class EmailVerificationNotification extends VerifyEmail
     ) {
     }
 
-    public function toMail($notifiable)
+    public function toMail($notifiable): MailMessage
     {
         $verificationUrl = $this->verificationUrl($notifiable);
 
-        return (new MailMessage)
+        return (new MailMessage())
             ->subject('Подтверждение email в ProHelper')
             ->markdown('emails.email_verification', [
                 'user' => $notifiable,
-                'verificationUrl' => $verificationUrl
+                'verificationUrl' => $verificationUrl,
             ]);
     }
 
-    protected function verificationUrl($notifiable)
+    protected function verificationUrl($notifiable): string
     {
         $frontendUrl = $this->frontendUrl ?: config('app.frontend_url');
-        
-        $params = [
-            'id' => $notifiable->getKey(),
-            'hash' => sha1($notifiable->getEmailForVerification()),
-            'expires' => Carbon::now()->addMinutes(60)->timestamp,
-        ];
-        
-        return $frontendUrl . '/verify-email?' . http_build_query($params);
+        $routeName = rtrim((string) $frontendUrl, '/') === rtrim((string) config('app.customer_frontend_url'), '/')
+            ? 'customer.v1.auth.verification.verify'
+            : 'api.v1.landing.verification.verify';
+        $signedUrl = URL::temporarySignedRoute(
+            $routeName,
+            Carbon::now()->addMinutes(60),
+            [
+                'id' => $notifiable->getKey(),
+                'hash' => sha1($notifiable->getEmailForVerification()),
+            ]
+        );
+
+        return rtrim((string) $frontendUrl, '/') . '/verify-email?' . (string) parse_url($signedUrl, PHP_URL_QUERY);
     }
 }
-

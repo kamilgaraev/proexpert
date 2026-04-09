@@ -8,6 +8,8 @@
   "system_permissions": [
     "customer.dashboard.view",
     "customer.projects.view",
+    "customer.projects.manage",
+    "customer.projects.participants.manage",
     "customer.documents.view",
     "customer.approvals.view",
     "customer.conversations.view",

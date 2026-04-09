@@ -242,6 +242,47 @@ class ProjectParticipantInvitationService
         return $this->acceptInvitation($invitation, $organization, $user);
     }
 
+    public function declineByToken(string $token): ProjectParticipantInvitation
+    {
+        $invitation = ProjectParticipantInvitation::query()
+            ->with([
+                'invitedOrganization:id,name,tax_number,email,phone',
+                'acceptedBy:id,name',
+                'invitedBy:id,name',
+                'cancelledBy:id,name',
+            ])
+            ->where('token', $token)
+            ->first();
+
+        if (!$invitation instanceof ProjectParticipantInvitation) {
+            throw new BusinessLogicException(trans_message('customer.auth.invitation_not_found'), 404);
+        }
+
+        $this->expirePendingInvitations(invitation: $invitation);
+        $invitation->refresh();
+
+        if ($invitation->isAccepted()) {
+            throw new BusinessLogicException(trans_message('customer.auth.invitation_unavailable'), 409);
+        }
+
+        if ($invitation->isCancelled()) {
+            return $this->freshInvitation($invitation);
+        }
+
+        if ($invitation->isExpired()) {
+            throw new BusinessLogicException(trans_message('customer.auth.invitation_unavailable'), 410);
+        }
+
+        $invitation->update([
+            'status' => ProjectParticipantInvitation::STATUS_DECLINED,
+            'status_reason' => 'declined',
+            'cancelled_at' => now(),
+            'cancelled_by_user_id' => null,
+        ]);
+
+        return $this->freshInvitation($invitation);
+    }
+
     public function acceptMatchingForOrganization(User $user, Organization $organization): array
     {
         $invitations = ProjectParticipantInvitation::query()

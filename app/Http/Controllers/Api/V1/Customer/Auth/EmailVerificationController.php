@@ -7,10 +7,10 @@ namespace App\Http\Controllers\Api\V1\Customer\Auth;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\CustomerResponse;
 use App\Models\User;
-use Illuminate\Auth\Events\Verified;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Auth\Events\Verified;
 use Throwable;
 
 use function trans_message;
@@ -20,16 +20,14 @@ class EmailVerificationController extends Controller
     public function verify(Request $request, int $id, string $hash): JsonResponse
     {
         try {
+            if (!$request->hasValidSignature()) {
+                return CustomerResponse::error(trans_message('customer.auth.email_verify_invalid'), 403);
+            }
+
             $user = User::query()->findOrFail($id);
 
             if (!hash_equals($hash, sha1($user->getEmailForVerification()))) {
                 return CustomerResponse::error(trans_message('customer.auth.email_verify_invalid'), 403);
-            }
-
-            $expires = (int) $request->query('expires', 0);
-
-            if ($expires > 0 && $expires < time()) {
-                return CustomerResponse::error(trans_message('customer.auth.email_verify_expired'), 403);
             }
 
             if ($user->hasVerifiedEmail()) {
@@ -49,7 +47,7 @@ class EmailVerificationController extends Controller
             );
         } catch (Throwable $exception) {
             Log::error('customer.auth.email.verify.failed', [
-                'user_id' => $id,
+                'user_id' => $request->route('id'),
                 'ip' => $request->ip(),
                 'error' => $exception->getMessage(),
             ]);
@@ -64,7 +62,15 @@ class EmailVerificationController extends Controller
             $user = $request->user();
 
             if (!$user instanceof User) {
-                return CustomerResponse::error(trans_message('customer.unauthorized'), 401);
+                $email = (string) $request->input('email', '');
+                $user = $email !== '' ? User::query()->where('email', $email)->first() : null;
+            }
+
+            if (!$user instanceof User) {
+                return CustomerResponse::success(
+                    ['verified' => false],
+                    trans_message('customer.auth.email_resent')
+                );
             }
 
             if ($user->hasVerifiedEmail()) {
@@ -106,6 +112,7 @@ class EmailVerificationController extends Controller
                 [
                     'verified' => $user->hasVerifiedEmail(),
                     'email' => $user->email,
+                    'can_enter_portal' => $user->hasVerifiedEmail(),
                 ],
                 trans_message('customer.auth.email_status_loaded')
             );

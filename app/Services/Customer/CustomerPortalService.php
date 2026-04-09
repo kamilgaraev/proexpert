@@ -17,6 +17,7 @@ use App\Models\CustomerRequest;
 use App\Models\File;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Models\ProjectParticipantInvitation;
 use App\Models\User;
 use App\Services\Contract\ContractSideResolverService;
 use App\Services\Project\ProjectCustomerResolverService;
@@ -85,6 +86,53 @@ class CustomerPortalService
 
         return [
             'projects' => $projects->map(fn (Project $project): array => $this->mapProjectPreview($project))->all(),
+        ];
+    }
+
+    public function getProjectInvitations(int $organizationId, ?User $user = null): array
+    {
+        $projectIds = $this->baseProjectQuery($organizationId, $user)
+            ->pluck('projects.id')
+            ->map(static fn ($id): int => (int) $id)
+            ->all();
+
+        if ($projectIds === []) {
+            return ['items' => []];
+        }
+
+        $items = ProjectParticipantInvitation::query()
+            ->with(['project:id,name', 'invitedOrganization:id,name'])
+            ->whereIn('project_id', $projectIds)
+            ->latest()
+            ->limit(30)
+            ->get()
+            ->map(function (ProjectParticipantInvitation $invitation): array {
+                $status = $invitation->isCancelled()
+                    ? ProjectParticipantInvitation::STATUS_CANCELLED
+                    : ($invitation->isExpired() ? ProjectParticipantInvitation::STATUS_EXPIRED : $invitation->status);
+
+                return [
+                    'id' => $invitation->id,
+                    'project' => [
+                        'id' => $invitation->project?->id,
+                        'name' => $invitation->project?->name,
+                    ],
+                    'status' => $status,
+                    'role' => $invitation->role,
+                    'role_label' => $invitation->roleEnum()->label(),
+                    'organization_name' => $invitation->organization_name ?? $invitation->invitedOrganization?->name,
+                    'email' => $invitation->email,
+                    'expires_at' => optional($invitation->expires_at)?->toIso8601String(),
+                    'accepted_at' => optional($invitation->accepted_at)?->toIso8601String(),
+                    'cancelled_at' => optional($invitation->cancelled_at)?->toIso8601String(),
+                    'resent_at' => optional($invitation->resent_at)?->toIso8601String(),
+                ];
+            })
+            ->values()
+            ->all();
+
+        return [
+            'items' => $items,
         ];
     }
 
