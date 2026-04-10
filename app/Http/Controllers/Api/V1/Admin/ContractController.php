@@ -121,32 +121,17 @@ class ContractController extends Controller
             'filters' => $filters
         ]);
         
-        // Если пользователь - подрядчик, показываем только его контракты
+        // Для второй стороны договора показываем контракты, где текущая организация
+        // выступает исполнителем через contractor.source_organization_id.
         $projectContext = ProjectContextMiddleware::getProjectContext($request);
-        if ($projectContext && in_array($projectContext->role->value, ['contractor', 'subcontractor'])) {
-            // Находим Contractor для текущей организации через source_organization_id
-            // (организация зарегистрировалась и синхронизировалась с подрядчиком по ИНН)
-            $contractor = \App\Models\Contractor::where('source_organization_id', $organizationId)
-                ->whereHas('contracts', function($q) use ($projectId) {
-                    if ($projectId) {
-                        $q->where('project_id', $projectId);
-                    }
-                })
-                ->first();
-            
-            if ($contractor) {
-                $filters['contractor_id'] = $contractor->id;
-                // Устанавливаем флаг contractor_context чтобы репозиторий НЕ фильтровал по organization_id
-                // Контракты принадлежат заказчику (organization_id), но подрядчик должен их видеть
-                $filters['contractor_context'] = true;
-                
-                Log::info('Contractor context applied', [
-                    'organization_id' => $organizationId,
-                    'contractor_id' => $contractor->id,
-                    'contractor_name' => $contractor->name,
-                    'contractor_context_enabled' => true
-                ]);
-            }
+        if ($projectContext && in_array($projectContext->role->value, ['general_contractor', 'contractor', 'subcontractor'], true)) {
+            $filters['related_party_organization_id'] = $organizationId;
+
+            Log::info('Related party contract visibility applied', [
+                'organization_id' => $organizationId,
+                'project_role' => $projectContext->role->value,
+                'project_id' => $projectId,
+            ]);
         }
         
         $sortBy = $request->input('sort_by', 'created_at');

@@ -1619,11 +1619,48 @@ class ContractService
     public function getContractsSummary(int $organizationId, array $filters = []): array
     {
         $query = Contract::query();
-        
-        // Если указан contractor_context - не фильтруем по organization_id
-        if (empty($filters['contractor_context'])) {
-            $query->where('organization_id', $organizationId);
-        }
+        $relatedPartyOrganizationId = isset($filters['related_party_organization_id'])
+            ? (int) $filters['related_party_organization_id']
+            : null;
+
+        $applyVisibilityScope = static function ($queryBuilder) use ($organizationId, $relatedPartyOrganizationId, $filters) {
+            if ($relatedPartyOrganizationId) {
+                return $queryBuilder->where(function ($scopedQuery) use ($organizationId, $relatedPartyOrganizationId) {
+                    $scopedQuery->where('contracts.organization_id', $organizationId)
+                        ->orWhereHas('contractor', function ($contractorQuery) use ($relatedPartyOrganizationId) {
+                            $contractorQuery->where('source_organization_id', $relatedPartyOrganizationId);
+                        });
+                });
+            }
+
+            if (empty($filters['contractor_context'])) {
+                return $queryBuilder->where('contracts.organization_id', $organizationId);
+            }
+
+            return $queryBuilder;
+        };
+
+        $applyTableVisibilityScope = static function ($queryBuilder, string $contractsAlias = 'contracts') use ($organizationId, $relatedPartyOrganizationId, $filters) {
+            if ($relatedPartyOrganizationId) {
+                return $queryBuilder->where(function ($scopedQuery) use ($organizationId, $relatedPartyOrganizationId, $contractsAlias) {
+                    $scopedQuery->where($contractsAlias . '.organization_id', $organizationId)
+                        ->orWhereExists(function ($subQuery) use ($relatedPartyOrganizationId, $contractsAlias) {
+                            $subQuery->select(DB::raw(1))
+                                ->from('contractors')
+                                ->whereColumn('contractors.id', $contractsAlias . '.contractor_id')
+                                ->where('contractors.source_organization_id', $relatedPartyOrganizationId);
+                        });
+                });
+            }
+
+            if (empty($filters['contractor_context'])) {
+                return $queryBuilder->where($contractsAlias . '.organization_id', $organizationId);
+            }
+
+            return $queryBuilder;
+        };
+
+        $applyVisibilityScope($query);
 
         if (!empty($filters['project_id'])) {
             $query->where('project_id', $filters['project_id']);
@@ -1680,32 +1717,32 @@ class ContractService
         $totalPlannedAdvance = $financialData->total_planned_advance ?? 0;
         $totalActualAdvance = $financialData->total_actual_advance ?? 0;
 
-        $totalPerformedAmount = (float) DB::table('contract_performance_acts')
+        $performedAmountQuery = DB::table('contract_performance_acts')
             ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
-            ->when(empty($filters['contractor_context']), fn($q) => $q->where('contracts.organization_id', $organizationId))
             ->whereNull('contracts.deleted_at')
             ->where('contract_performance_acts.is_approved', true)
             // Фильтруем акты по project_id напрямую для корректной работы с мультипроектными контрактами
             ->when(!empty($filters['project_id']), fn($q) => $q->where('contract_performance_acts.project_id', $filters['project_id']))
             ->when(!empty($filters['contractor_id']), fn($q) => $q->where('contracts.contractor_id', $filters['contractor_id']))
             ->when(!empty($filters['status']), fn($q) => $q->where('contracts.status', $filters['status']))
-            ->when(!empty($filters['work_type_category']), fn($q) => $q->where('contracts.work_type_category', $filters['work_type_category']))
-            ->sum('contract_performance_acts.amount') ?: 0;
+            ->when(!empty($filters['work_type_category']), fn($q) => $q->where('contracts.work_type_category', $filters['work_type_category']));
+        $applyTableVisibilityScope($performedAmountQuery);
+        $totalPerformedAmount = (float) ($performedAmountQuery->sum('contract_performance_acts.amount') ?: 0);
 
         // Используем таблицу payment_documents вместо устаревшей invoices
-        $totalPaidAmount = (float) DB::table('payment_documents')
+        $paidAmountQuery = DB::table('payment_documents')
             ->join('contracts', function($join) {
                 $join->on('payment_documents.invoiceable_id', '=', 'contracts.id')
                      ->where('payment_documents.invoiceable_type', '=', 'App\\Models\\Contract');
             })
-            ->when(empty($filters['contractor_context']), fn($q) => $q->where('contracts.organization_id', $organizationId))
             ->whereNull('contracts.deleted_at')
             ->whereNull('payment_documents.deleted_at')
             ->when(!empty($filters['project_id']), fn($q) => $q->where('contracts.project_id', $filters['project_id']))
             ->when(!empty($filters['contractor_id']), fn($q) => $q->where('contracts.contractor_id', $filters['contractor_id']))
             ->when(!empty($filters['status']), fn($q) => $q->where('contracts.status', $filters['status']))
-            ->when(!empty($filters['work_type_category']), fn($q) => $q->where('contracts.work_type_category', $filters['work_type_category']))
-            ->sum('payment_documents.paid_amount') ?: 0;
+            ->when(!empty($filters['work_type_category']), fn($q) => $q->where('contracts.work_type_category', $filters['work_type_category']));
+        $applyTableVisibilityScope($paidAmountQuery);
+        $totalPaidAmount = (float) ($paidAmountQuery->sum('payment_documents.paid_amount') ?: 0);
 
         $overdueContracts = (clone $query)
             ->where('status', 'active')
@@ -1719,7 +1756,6 @@ class ContractService
                      ->where('cw.status', '=', 'confirmed');
             })
             ->select('c.id', 'c.total_amount', DB::raw('COALESCE(SUM(cw.total_amount), 0) as completed_amount'))
-            ->when(empty($filters['contractor_context']), fn($q) => $q->where('c.organization_id', $organizationId))
             ->whereNull('c.deleted_at')
             ->when(!empty($filters['project_id']), fn($q) => $q->where('c.project_id', $filters['project_id']))
             ->when(!empty($filters['contractor_id']), fn($q) => $q->where('c.contractor_id', $filters['contractor_id']))
@@ -1728,6 +1764,7 @@ class ContractService
             ->groupBy('c.id', 'c.total_amount')
             ->havingRaw('(c.total_amount - COALESCE(SUM(cw.total_amount), 0)) <= (c.total_amount * 0.1)')
             ->havingRaw('(c.total_amount - COALESCE(SUM(cw.total_amount), 0)) > 0');
+        $applyTableVisibilityScope($nearingLimitSubquery, 'c');
         
         $nearingLimitContracts = DB::table(DB::raw("({$nearingLimitSubquery->toSql()}) as subquery"))
             ->mergeBindings($nearingLimitSubquery)

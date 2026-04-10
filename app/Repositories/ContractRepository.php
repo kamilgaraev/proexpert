@@ -25,12 +25,8 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
     ): LengthAwarePaginator
     {
         $query = $this->model->query();
-        
-        // Если указан contractor_context - фильтруем только по contractor_id, без organization_id
-        // Это нужно для подрядчиков, которые зарегистрировались и видят свои контракты
-        if (empty($filters['contractor_context'])) {
-            $query->where('organization_id', $organizationId);
-        }
+
+        $this->applyVisibilityScope($query, $organizationId, $filters);
 
         // Основные фильтры
         if (!empty($filters['contractor_id'])) {
@@ -289,6 +285,28 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
         $query->orderBy('contracts.' . $sortBy, $sortDirection);
 
         return $query->paginate($perPage);
+    }
+
+    private function applyVisibilityScope(Builder $query, int $organizationId, array $filters): void
+    {
+        $relatedPartyOrganizationId = isset($filters['related_party_organization_id'])
+            ? (int) $filters['related_party_organization_id']
+            : null;
+
+        if ($relatedPartyOrganizationId) {
+            $query->where(function (Builder $scopedQuery) use ($organizationId, $relatedPartyOrganizationId) {
+                $scopedQuery->where('contracts.organization_id', $organizationId)
+                    ->orWhereHas('contractor', function (Builder $contractorQuery) use ($relatedPartyOrganizationId) {
+                        $contractorQuery->where('source_organization_id', $relatedPartyOrganizationId);
+                    });
+            });
+
+            return;
+        }
+
+        if (empty($filters['contractor_context'])) {
+            $query->where('contracts.organization_id', $organizationId);
+        }
     }
 
     public function findAccessible(int $contractId, int $organizationId): ?Contract
