@@ -3,13 +3,13 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use App\Models\ReportFile;
 use App\Models\Organization;
 use App\Services\Storage\OrgBucketService;
+use Illuminate\Database\UniqueConstraintViolationException;
 
 class SyncReportFilesCommand extends Command
 {
@@ -37,32 +37,54 @@ class SyncReportFilesCommand extends Command
 
                 foreach ($files as $path) {
                     $processed++;
-                    if (ReportFile::where('path', $path)->where('organization_id', $org->id)->exists()) {
-                        continue;
-                    }
-
                     $filename = basename($path);
                     $type = Str::before(Str::after($path, 'reports/'), '/');
                     $size = $disk->size($path) ?: 0;
 
                     if ($dryRun) {
+                        if (ReportFile::query()->where('path', $path)->exists()) {
+                            continue;
+                        }
+
                         $this->line("[DRY] {$org->id}: + {$path} ({$size} B)");
                         $created++;
                         continue;
                     }
 
-                    ReportFile::create([
-                        'organization_id' => $org->id,
-                        'path'       => $path,
-                        'type'       => $type ?: 'unknown',
-                        'filename'   => $filename,
-                        'name'       => $filename,
-                        'size'       => $size,
-                        'expires_at' => Carbon::now()->addYear(),
-                        'user_id'    => null,
-                    ]);
+                    try {
+                        $reportFile = ReportFile::query()->firstOrCreate(
+                            ['path' => $path],
+                            [
+                                'organization_id' => $org->id,
+                                'type' => $type ?: 'unknown',
+                                'filename' => $filename,
+                                'name' => $filename,
+                                'size' => $size,
+                                'expires_at' => Carbon::now()->addYear(),
+                                'user_id' => null,
+                            ]
+                        );
 
-                    $created++;
+                        if (!$reportFile->wasRecentlyCreated) {
+                            if ($reportFile->organization_id !== null && (int) $reportFile->organization_id !== (int) $org->id) {
+                                Log::warning('[reports:sync] Existing report file belongs to another organization', [
+                                    'path' => $path,
+                                    'existing_organization_id' => $reportFile->organization_id,
+                                    'scanned_organization_id' => $org->id,
+                                ]);
+                            }
+
+                            continue;
+                        }
+
+                        $created++;
+                    } catch (UniqueConstraintViolationException $e) {
+                        Log::warning('[reports:sync] Duplicate path detected during sync', [
+                            'path' => $path,
+                            'organization_id' => $org->id,
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
                 }
             }
         });
