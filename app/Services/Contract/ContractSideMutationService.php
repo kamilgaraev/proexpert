@@ -397,11 +397,14 @@ class ContractSideMutationService
             $supplierId = null;
             $customerOrganizationId = $this->resolveProjectCustomerOrganizationId($contractDTO);
 
-            if ($projectContext && in_array($projectContext->roleConfig->role->value, ['general_contractor', 'contractor'], true)) {
+            if (
+                $projectContext instanceof ProjectContext
+                && $projectContext->organizationId !== $customerOrganizationId
+            ) {
                 $contractor = Contractor::firstOrCreate(
                     [
                         'organization_id' => $customerOrganizationId,
-                        'source_organization_id' => $organizationId,
+                        'source_organization_id' => $projectContext->organizationId,
                     ],
                     [
                         'name' => $projectContext->organizationName ?? 'Исполнитель по договору',
