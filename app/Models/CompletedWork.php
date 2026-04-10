@@ -1,21 +1,37 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
+use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
+use App\Traits\HasOnboardingDemo;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use App\Traits\HasOnboardingDemo;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class CompletedWork extends Model
 {
-    use HasFactory, SoftDeletes, HasOnboardingDemo;
+    use HasFactory;
+    use SoftDeletes;
+    use HasOnboardingDemo;
+
+    public const ORIGIN_MANUAL = 'manual';
+    public const ORIGIN_SCHEDULE = 'schedule';
+    public const ORIGIN_JOURNAL = 'journal';
+
+    public const PLANNING_PLANNED = 'planned';
+    public const PLANNING_REQUIRES_SCHEDULE = 'requires_schedule';
 
     protected $fillable = [
         'organization_id',
         'project_id',
         'schedule_task_id',
+        'estimate_item_id',
+        'journal_entry_id',
+        'work_origin_type',
+        'planning_status',
         'contract_id',
         'work_type_id',
         'user_id',
@@ -32,98 +48,76 @@ class CompletedWork extends Model
     ];
 
     protected $casts = [
-        'quantity'           => 'decimal:3',
+        'quantity' => 'decimal:3',
         'completed_quantity' => 'decimal:4',
-        'price'              => 'decimal:2',
-        'total_amount'       => 'decimal:2',
-        'completion_date'    => 'date',
-        'additional_info'    => 'array',
+        'price' => 'decimal:2',
+        'total_amount' => 'decimal:2',
+        'completion_date' => 'date',
+        'additional_info' => 'array',
         'is_onboarding_demo' => 'boolean',
     ];
 
-    /**
-     * Получить организацию, которой принадлежит запись.
-     */
     public function organization(): BelongsTo
     {
         return $this->belongsTo(Organization::class);
     }
 
-    /**
-     * Получить проект, к которому относится запись.
-     */
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
     }
 
-    /**
-     * Получить вид выполненной работы.
-     */
     public function workType(): BelongsTo
     {
         return $this->belongsTo(WorkType::class);
     }
 
-    /**
-     * Получить пользователя, создавшего запись о выполненной работе.
-     */
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
     }
 
-    /**
-     * Получить подрядчика, выполнившего работу.
-     */
     public function contractor(): BelongsTo
     {
         return $this->belongsTo(Contractor::class);
     }
 
-    /**
-     * Алиас для исполнителя (пользователь-прораб).
-     * Некоторые контроллеры обращаются к relation "executor".
-     */
     public function executor(): BelongsTo
     {
-        // Используем ту же связь, что и user()
         return $this->belongsTo(User::class, 'user_id');
     }
 
-    /**
-     * Получить договор, к которому относится выполненная работа.
-     */
     public function contract(): BelongsTo
     {
         return $this->belongsTo(Contract::class);
     }
 
-    /**
-     * Получить файлы, прикрепленные к выполненной работе.
-     */
+    public function scheduleTask(): BelongsTo
+    {
+        return $this->belongsTo(ScheduleTask::class);
+    }
+
+    public function estimateItem(): BelongsTo
+    {
+        return $this->belongsTo(EstimateItem::class);
+    }
+
+    public function journalEntry(): BelongsTo
+    {
+        return $this->belongsTo(ConstructionJournalEntry::class, 'journal_entry_id');
+    }
+
     public function files()
     {
         return $this->morphMany(File::class, 'fileable');
     }
 
-    /**
-     * Получить материалы, использованные в данной выполненной работе.
-     */
     public function materials()
     {
         return $this->belongsToMany(Material::class, 'completed_work_materials')
             ->using(CompletedWorkMaterial::class)
             ->withPivot(['quantity', 'unit_price', 'total_amount', 'notes'])
             ->withTimestamps();
-    }
-
-    /**
-     * Акты выполненных работ в которые включена данная работа
-     */
-    public function scheduleTask(): BelongsTo
-    {
-        return $this->belongsTo(ScheduleTask::class);
     }
 
     public function performanceActs()
@@ -134,17 +128,43 @@ class CompletedWork extends Model
             ->withTimestamps();
     }
 
+    public function scopeRequiresSchedule($query)
+    {
+        return $query->where('planning_status', self::PLANNING_REQUIRES_SCHEDULE);
+    }
+
+    public function scopeEffectiveForSchedule($query)
+    {
+        return $query
+            ->whereNotIn('status', ['cancelled', 'rejected'])
+            ->where(function ($builder): void {
+                $builder
+                    ->where(function ($plainBuilder): void {
+                        $plainBuilder
+                            ->whereNull('journal_entry_id')
+                            ->whereIn('status', ['draft', 'pending', 'in_review', 'confirmed']);
+                    })
+                    ->orWhere(function ($journalBuilder): void {
+                        $journalBuilder
+                            ->whereNotNull('journal_entry_id')
+                            ->whereHas('journalEntry', function ($journalEntryQuery): void {
+                                $journalEntryQuery->where('status', JournalEntryStatusEnum::APPROVED);
+                            });
+                    });
+            });
+    }
+
     public function resolveRouteBinding($value, $field = null)
     {
         $completedWork = static::where($this->getRouteKeyName(), $value)->firstOrFail();
-        
+
         $user = request()->user();
         if ($user && $user->current_organization_id) {
             if ($completedWork->organization_id !== $user->current_organization_id) {
                 abort(403, 'У вас нет доступа к этой выполненной работе');
             }
         }
-        
+
         return $completedWork;
     }
 }

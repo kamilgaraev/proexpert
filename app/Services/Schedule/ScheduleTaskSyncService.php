@@ -15,7 +15,8 @@ class ScheduleTaskSyncService
 {
     public function __construct(
         private readonly ScheduleTaskCompletedWorkService $syncService
-    ) {}
+    ) {
+    }
 
     public function onTaskStatusChanged(ScheduleTask $task, string $oldStatus): void
     {
@@ -25,9 +26,9 @@ class ScheduleTaskSyncService
 
         match ($newStatus) {
             TaskStatusEnum::IN_PROGRESS => $this->autoCreateCompletedWork($task),
-            TaskStatusEnum::COMPLETED   => $this->onTaskCompleted($task),
-            TaskStatusEnum::CANCELLED   => $this->onTaskCancelled($task),
-            default                     => null,
+            TaskStatusEnum::COMPLETED => $this->onTaskCompleted($task),
+            TaskStatusEnum::CANCELLED => $this->onTaskCancelled($task),
+            default => null,
         };
     }
 
@@ -47,6 +48,7 @@ class ScheduleTaskSyncService
             Log::warning('[ScheduleTaskSyncService] Не удалось получить график для задачи', [
                 'task_id' => $task->id,
             ]);
+
             return null;
         }
 
@@ -57,23 +59,27 @@ class ScheduleTaskSyncService
                 $payload = $this->buildCompletedWorkPayload($task, $schedule->project_id, $userId);
 
                 $work = CompletedWork::create([
-                    'organization_id'    => $task->organization_id,
-                    'project_id'         => $schedule->project_id,
-                    'schedule_task_id'   => $task->id,
-                    'work_type_id'       => $payload['work_type_id'],
-                    'contract_id'        => $payload['contract_id'],
-                    'contractor_id'      => $payload['contractor_id'],
-                    'user_id'            => $userId,
-                    'quantity'           => $payload['quantity'],
+                    'organization_id' => $task->organization_id,
+                    'project_id' => $schedule->project_id,
+                    'schedule_task_id' => $task->id,
+                    'estimate_item_id' => $task->estimate_item_id,
+                    'journal_entry_id' => null,
+                    'work_origin_type' => CompletedWork::ORIGIN_SCHEDULE,
+                    'planning_status' => CompletedWork::PLANNING_PLANNED,
+                    'work_type_id' => $payload['work_type_id'],
+                    'contract_id' => $payload['contract_id'],
+                    'contractor_id' => $payload['contractor_id'],
+                    'user_id' => $userId,
+                    'quantity' => $payload['quantity'],
                     'completed_quantity' => $payload['completed_quantity'],
-                    'price'              => $payload['price'],
-                    'total_amount'       => $payload['total_amount'],
-                    'completion_date'    => now()->toDateString(),
-                    'status'             => 'draft',
+                    'price' => $payload['price'],
+                    'total_amount' => $payload['total_amount'],
+                    'completion_date' => now()->toDateString(),
+                    'status' => 'draft',
                 ]);
 
                 Log::info('[ScheduleTaskSyncService] Создана выполненная работа для задачи', [
-                    'task_id'           => $task->id,
+                    'task_id' => $task->id,
                     'completed_work_id' => $work->id,
                 ]);
 
@@ -82,8 +88,9 @@ class ScheduleTaskSyncService
         } catch (\Exception $e) {
             Log::error('[ScheduleTaskSyncService] Ошибка создания выполненной работы', [
                 'task_id' => $task->id,
-                'error'   => $e->getMessage(),
+                'error' => $e->getMessage(),
             ]);
+
             return null;
         }
     }
@@ -105,26 +112,34 @@ class ScheduleTaskSyncService
         $userId = $task->assigned_user_id ?? auth()->id();
         $payload = $this->buildCompletedWorkPayload($task, $projectId, $userId);
 
-        CompletedWork::query()
+        $activeWorks = CompletedWork::query()
             ->where('schedule_task_id', $task->id)
             ->whereIn('status', ['draft', 'pending', 'in_review'])
             ->whereNull('deleted_at')
-            ->get()
-            ->each(function (CompletedWork $work) use ($payload): void {
-                $work->fill([
-                    'work_type_id'       => $payload['work_type_id'] ?? $work->work_type_id,
-                    'contract_id'        => $payload['contract_id'] ?? $work->contract_id,
-                    'contractor_id'      => $payload['contractor_id'] ?? $work->contractor_id,
-                    'quantity'           => $payload['quantity'],
-                    'completed_quantity' => $payload['completed_quantity'],
-                    'price'              => $payload['price'],
-                    'total_amount'       => $payload['total_amount'],
-                ]);
+            ->get();
 
-                if ($work->isDirty()) {
-                    $work->saveQuietly();
-                }
-            });
+        $activeWorks->each(function (CompletedWork $work) use ($payload, $task): void {
+            $work->fill([
+                'estimate_item_id' => $task->estimate_item_id,
+                'work_origin_type' => CompletedWork::ORIGIN_SCHEDULE,
+                'planning_status' => CompletedWork::PLANNING_PLANNED,
+                'work_type_id' => $payload['work_type_id'] ?? $work->work_type_id,
+                'contract_id' => $payload['contract_id'] ?? $work->contract_id,
+                'contractor_id' => $payload['contractor_id'] ?? $work->contractor_id,
+                'quantity' => $payload['quantity'],
+                'completed_quantity' => $payload['completed_quantity'],
+                'price' => $payload['price'],
+                'total_amount' => $payload['total_amount'],
+            ]);
+
+            if ($work->isDirty()) {
+                $work->saveQuietly();
+            }
+        });
+
+        if ($activeWorks->isEmpty() && $this->shouldCreateFactFromTask($task)) {
+            $this->autoCreateCompletedWork($task);
+        }
     }
 
     public function onTaskCompleted(ScheduleTask $task): void
@@ -143,7 +158,7 @@ class ScheduleTaskSyncService
                     return;
                 }
 
-                $openWorks->each(fn(CompletedWork $w) => $w->updateQuietly(['status' => 'confirmed']));
+                $openWorks->each(fn (CompletedWork $w) => $w->updateQuietly(['status' => 'confirmed']));
 
                 $taskQuantity = (float) ($task->quantity ?? 0);
                 if ($taskQuantity <= 0) {
@@ -166,14 +181,14 @@ class ScheduleTaskSyncService
                 $this->syncService->syncCompletedQuantity($task);
 
                 Log::info('[ScheduleTaskSyncService] Выполненные работы задачи подтверждены', [
-                    'task_id'        => $task->id,
+                    'task_id' => $task->id,
                     'confirmed_count' => $openWorks->count(),
                 ]);
             });
         } catch (\Exception $e) {
             Log::error('[ScheduleTaskSyncService] Ошибка при завершении задачи', [
                 'task_id' => $task->id,
-                'error'   => $e->getMessage(),
+                'error' => $e->getMessage(),
             ]);
         }
     }
@@ -187,13 +202,13 @@ class ScheduleTaskSyncService
                 ->update(['status' => 'cancelled']);
 
             Log::info('[ScheduleTaskSyncService] Выполненные работы задачи отменены', [
-                'task_id'          => $task->id,
-                'cancelled_count'  => $count,
+                'task_id' => $task->id,
+                'cancelled_count' => $count,
             ]);
         } catch (\Exception $e) {
             Log::error('[ScheduleTaskSyncService] Ошибка при отмене задачи', [
                 'task_id' => $task->id,
-                'error'   => $e->getMessage(),
+                'error' => $e->getMessage(),
             ]);
         }
     }
@@ -213,17 +228,21 @@ class ScheduleTaskSyncService
         $price = $this->resolvePrice($task, $contractLink);
 
         return [
-            'organization_id'    => $task->organization_id,
-            'project_id'         => $projectId,
-            'schedule_task_id'   => $task->id,
-            'work_type_id'       => $task->work_type_id ?? $task->estimateItem?->work_type_id,
-            'contract_id'        => $contractLink?->contract_id,
-            'contractor_id'      => $contractLink?->contract?->contractor_id,
-            'user_id'            => $userId,
-            'quantity'           => $quantity,
+            'organization_id' => $task->organization_id,
+            'project_id' => $projectId,
+            'schedule_task_id' => $task->id,
+            'estimate_item_id' => $task->estimate_item_id,
+            'journal_entry_id' => null,
+            'work_origin_type' => CompletedWork::ORIGIN_SCHEDULE,
+            'planning_status' => CompletedWork::PLANNING_PLANNED,
+            'work_type_id' => $task->work_type_id ?? $task->estimateItem?->work_type_id,
+            'contract_id' => $contractLink?->contract_id,
+            'contractor_id' => $contractLink?->contract?->contractor_id,
+            'user_id' => $userId,
+            'quantity' => $quantity,
             'completed_quantity' => $completedQuantity,
-            'price'              => $price,
-            'total_amount'       => $price !== null ? round($price * $completedQuantity, 2) : null,
+            'price' => $price,
+            'total_amount' => $price !== null ? round($price * $completedQuantity, 2) : null,
         ];
     }
 
@@ -260,13 +279,15 @@ class ScheduleTaskSyncService
         return 0.0;
     }
 
+    private function resolveContractLink(ScheduleTask $task): ?ContractEstimateItem
+    {
+        return $task->estimateItem?->contractLinks?->sortBy('id')->first();
+    }
+
     private function resolvePrice(ScheduleTask $task, ?ContractEstimateItem $contractLink): ?float
     {
-        $linkedQuantity = (float) ($contractLink?->quantity ?? 0);
-        $linkedAmount = $contractLink?->amount !== null ? (float) $contractLink->amount : null;
-
-        if ($linkedAmount !== null && $linkedQuantity > 0) {
-            return round($linkedAmount / $linkedQuantity, 2);
+        if ($contractLink && (float) $contractLink->quantity > 0) {
+            return round((float) $contractLink->amount / (float) $contractLink->quantity, 2);
         }
 
         $estimateItem = $task->estimateItem;
@@ -280,20 +301,13 @@ class ScheduleTaskSyncService
             }
         }
 
-        $estimateQuantity = $this->resolveTaskQuantity($task);
-        foreach (['current_total_amount', 'total_amount'] as $field) {
-            if ($estimateItem->{$field} !== null && (float) $estimateItem->{$field} > 0 && $estimateQuantity > 0) {
-                return round((float) $estimateItem->{$field} / $estimateQuantity, 2);
-            }
-        }
-
         return null;
     }
 
-    private function resolveContractLink(ScheduleTask $task): ?ContractEstimateItem
+    private function shouldCreateFactFromTask(ScheduleTask $task): bool
     {
-        return $task->estimateItem?->contractLinks
-            ?->sortBy('id')
-            ->first();
+        return (float) ($task->completed_quantity ?? 0) > 0
+            || (float) ($task->progress_percent ?? 0) > 0
+            || in_array($task->status?->value ?? (string) $task->status, ['in_progress', 'completed'], true);
     }
 }

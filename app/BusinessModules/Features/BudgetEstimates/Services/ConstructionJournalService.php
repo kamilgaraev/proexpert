@@ -17,6 +17,7 @@ use App\Models\Project;
 use App\Models\ScheduleTask;
 use App\Models\User;
 use App\Models\WorkType;
+use App\Services\CompletedWork\CompletedWorkFactService;
 use Carbon\Carbon;
 use DomainException;
 use Illuminate\Database\Eloquent\Collection;
@@ -24,6 +25,11 @@ use Illuminate\Support\Facades\DB;
 
 class ConstructionJournalService
 {
+    public function __construct(
+        private readonly CompletedWorkFactService $completedWorkFactService,
+    ) {
+    }
+
     public function createJournal(Project $project, array $data, User $user): ConstructionJournal
     {
         return DB::transaction(function () use ($project, $data, $user): ConstructionJournal {
@@ -100,11 +106,19 @@ class ConstructionJournalService
                 $this->attachMaterials($entry, $data['materials']);
             }
 
+            $this->completedWorkFactService->syncFromJournalEntry($entry->load([
+                'journal',
+                'scheduleTask.estimateItem.contractLinks.contract',
+                'workVolumes.estimateItem.contractLinks.contract',
+                'workVolumes.workType',
+            ]));
+
             return $entry->load([
                 'journal',
                 'scheduleTask',
                 'estimate',
                 'createdBy',
+                'completedWorks',
                 'workVolumes.estimateItem',
                 'workVolumes.workType',
                 'workVolumes.measurementUnit',
@@ -182,12 +196,20 @@ class ConstructionJournalService
                 $this->attachMaterials($entry, $data['materials'] ?? []);
             }
 
+            $this->completedWorkFactService->syncFromJournalEntry($entry->load([
+                'journal',
+                'scheduleTask.estimateItem.contractLinks.contract',
+                'workVolumes.estimateItem.contractLinks.contract',
+                'workVolumes.workType',
+            ]));
+
             return $entry->fresh([
                 'journal',
                 'scheduleTask',
                 'estimate',
                 'createdBy',
                 'approvedBy',
+                'completedWorks',
                 'workVolumes.estimateItem',
                 'workVolumes.workType',
                 'workVolumes.measurementUnit',
@@ -200,7 +222,11 @@ class ConstructionJournalService
 
     public function deleteEntry(ConstructionJournalEntry $entry): bool
     {
-        return DB::transaction(fn (): bool => (bool) $entry->delete());
+        return DB::transaction(function () use ($entry): bool {
+            $this->completedWorkFactService->deleteJournalEntryFacts($entry);
+
+            return (bool) $entry->delete();
+        });
     }
 
     public function getDailyEntries(ConstructionJournal $journal, Carbon $date): Collection
@@ -212,6 +238,7 @@ class ConstructionJournalService
                 'estimate',
                 'createdBy',
                 'approvedBy',
+                'completedWorks',
                 'workVolumes.estimateItem',
                 'workers',
                 'equipment',
@@ -229,6 +256,7 @@ class ConstructionJournalService
                 'estimate',
                 'createdBy',
                 'approvedBy',
+                'completedWorks',
                 'workVolumes.estimateItem',
                 'workers',
                 'equipment',

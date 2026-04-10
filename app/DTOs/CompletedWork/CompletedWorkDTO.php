@@ -1,7 +1,10 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\DTOs\CompletedWork;
 
+use App\Models\CompletedWork;
 use Carbon\Carbon;
 
 class CompletedWorkDTO
@@ -11,10 +14,14 @@ class CompletedWorkDTO
         public readonly int $organization_id,
         public readonly int $project_id,
         public readonly ?int $schedule_task_id,
+        public readonly ?int $estimate_item_id,
+        public readonly ?int $journal_entry_id,
+        public readonly string $work_origin_type,
+        public readonly string $planning_status,
         public readonly ?int $contract_id,
         public readonly ?int $contractor_id,
-        public readonly int $work_type_id,
-        public readonly int $user_id,
+        public readonly ?int $work_type_id,
+        public readonly ?int $user_id,
         public readonly float $quantity,
         public readonly ?float $completed_quantity,
         public readonly ?float $price,
@@ -24,7 +31,8 @@ class CompletedWorkDTO
         public readonly string $status,
         public readonly ?array $additional_info,
         public readonly ?array $materials = null
-    ) {}
+    ) {
+    }
 
     public static function fromModel(object $model): self
     {
@@ -48,14 +56,18 @@ class CompletedWorkDTO
             organization_id: $model->organization_id,
             project_id: $model->project_id,
             schedule_task_id: $model->schedule_task_id,
+            estimate_item_id: $model->estimate_item_id,
+            journal_entry_id: $model->journal_entry_id,
+            work_origin_type: $model->work_origin_type ?? CompletedWork::ORIGIN_MANUAL,
+            planning_status: $model->planning_status ?? CompletedWork::PLANNING_PLANNED,
             contract_id: $model->contract_id,
             contractor_id: $model->contractor_id,
             work_type_id: $model->work_type_id,
             user_id: $model->user_id,
-            quantity: (float)$model->quantity,
-            completed_quantity: isset($model->completed_quantity) ? (float)$model->completed_quantity : null,
-            price: isset($model->price) ? (float)$model->price : null,
-            total_amount: isset($model->total_amount) ? (float)$model->total_amount : null,
+            quantity: (float) $model->quantity,
+            completed_quantity: isset($model->completed_quantity) ? (float) $model->completed_quantity : null,
+            price: isset($model->price) ? (float) $model->price : null,
+            total_amount: isset($model->total_amount) ? (float) $model->total_amount : null,
             completion_date: $model->completion_date instanceof Carbon ? $model->completion_date : Carbon::parse($model->completion_date),
             notes: $model->notes,
             status: $model->status,
@@ -67,30 +79,36 @@ class CompletedWorkDTO
     public function toArray(): array
     {
         $data = [
-            'organization_id'    => $this->organization_id,
-            'project_id'         => $this->project_id,
-            'schedule_task_id'   => $this->schedule_task_id,
-            'contract_id'        => $this->contract_id,
-            'contractor_id'      => $this->contractor_id,
-            'work_type_id'       => $this->work_type_id,
-            'user_id'            => $this->user_id,
-            'quantity'           => $this->quantity,
-            'completed_quantity'  => $this->completed_quantity,
-            'price'              => $this->price,
-            'total_amount'       => $this->total_amount,
-            'completion_date'    => $this->completion_date instanceof Carbon ? $this->completion_date->toDateString() : Carbon::parse($this->completion_date)->toDateString(),
-            'notes'              => $this->notes,
-            'status'             => $this->status,
-            'additional_info'    => $this->additional_info,
+            'organization_id' => $this->organization_id,
+            'project_id' => $this->project_id,
+            'schedule_task_id' => $this->schedule_task_id,
+            'estimate_item_id' => $this->estimate_item_id,
+            'journal_entry_id' => $this->journal_entry_id,
+            'work_origin_type' => $this->work_origin_type,
+            'planning_status' => $this->planning_status,
+            'contract_id' => $this->contract_id,
+            'contractor_id' => $this->contractor_id,
+            'work_type_id' => $this->work_type_id,
+            'user_id' => $this->user_id,
+            'quantity' => $this->quantity,
+            'completed_quantity' => $this->completed_quantity,
+            'price' => $this->price,
+            'total_amount' => $this->total_amount,
+            'completion_date' => $this->completion_date instanceof Carbon
+                ? $this->completion_date->toDateString()
+                : Carbon::parse($this->completion_date)->toDateString(),
+            'notes' => $this->notes,
+            'status' => $this->status,
+            'additional_info' => $this->additional_info,
         ];
 
         if ($this->materials !== null) {
             $data['materials'] = array_map(
-                fn($material) => $material instanceof CompletedWorkMaterialDTO ? $material->toArray() : $material,
+                fn ($material) => $material instanceof CompletedWorkMaterialDTO ? $material->toArray() : $material,
                 $this->materials
             );
         }
 
         return $data;
     }
-} 
+}

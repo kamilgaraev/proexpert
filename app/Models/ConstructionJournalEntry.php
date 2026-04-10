@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
@@ -83,6 +85,11 @@ class ConstructionJournalEntry extends Model
     public function materials(): HasMany
     {
         return $this->hasMany(JournalMaterial::class, 'journal_entry_id');
+    }
+
+    public function completedWorks(): HasMany
+    {
+        return $this->hasMany(CompletedWork::class, 'journal_entry_id');
     }
 
     public function scopeDraft($query)

@@ -162,6 +162,21 @@ class ConstructionJournalPayloadService
                         : null,
                 ])->values()->all()
                 : [],
+            'completed_works_count' => $entry->relationLoaded('completedWorks')
+                ? $entry->completedWorks->count()
+                : $entry->completedWorks()->count(),
+            'completed_works' => $entry->relationLoaded('completedWorks')
+                ? $entry->completedWorks->map(fn ($work): array => [
+                    'id' => $work->id,
+                    'schedule_task_id' => $work->schedule_task_id,
+                    'estimate_item_id' => $work->estimate_item_id,
+                    'planning_status' => $work->planning_status,
+                    'work_origin_type' => $work->work_origin_type,
+                    'completed_quantity' => $work->completed_quantity !== null ? (float) $work->completed_quantity : null,
+                    'status' => $work->status,
+                    'completion_date' => optional($work->completion_date)?->format('Y-m-d'),
+                ])->values()->all()
+                : [],
             'available_actions' => $this->buildEntryActions($entry, $user),
         ];
     }

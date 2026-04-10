@@ -4,20 +4,20 @@ declare(strict_types=1);
 
 namespace App\Services\Schedule;
 
+use App\Models\CompletedWork;
 use App\Models\ScheduleTask;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\DB;
 
 class ScheduleTaskCompletedWorkService
 {
     public function syncCompletedQuantity(ScheduleTask $task): void
     {
-        $total = DB::table('completed_works')
+        $total = CompletedWork::query()
             ->where('schedule_task_id', $task->id)
-            ->whereNull('deleted_at')
+            ->effectiveForSchedule()
             ->sum('completed_quantity');
 
-        $task->completed_quantity = (float)$total;
+        $task->completed_quantity = (float) $total;
         $task->saveQuietly();
 
         if ($task->quantity && $task->quantity > 0) {
@@ -29,7 +29,7 @@ class ScheduleTaskCompletedWorkService
     {
         $query = ScheduleTask::query()
             ->where('organization_id', auth()->user()?->current_organization_id)
-            ->whereHas('schedule', fn($q) => $q->where('project_id', $projectId))
+            ->whereHas('schedule', fn ($q) => $q->where('project_id', $projectId))
             ->where('task_type', '!=', 'summary')
             ->where('task_type', '!=', 'container')
             ->with(['schedule:id,name', 'measurementUnit:id,short_name'])
@@ -42,7 +42,7 @@ class ScheduleTaskCompletedWorkService
         if ($search) {
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'ilike', "%{$search}%")
-                  ->orWhere('wbs_code', 'ilike', "%{$search}%");
+                    ->orWhere('wbs_code', 'ilike', "%{$search}%");
             });
         }
 

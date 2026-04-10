@@ -105,6 +105,8 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         Route::get('/{completedWork}', [CompletedWorkController::class, 'show']);
         Route::put('/{completedWork}', [CompletedWorkController::class, 'update']);
         Route::delete('/{completedWork}', [CompletedWorkController::class, 'destroy']);
+        Route::post('/{completedWork}/attach-schedule-task', [CompletedWorkController::class, 'attachScheduleTask']);
+        Route::post('/{completedWork}/create-schedule-task', [CompletedWorkController::class, 'createScheduleTaskFromWork']);
         Route::post('/bulk', [CompletedWorkController::class, 'bulkCreate']);
         Route::get('/export/excel', [CompletedWorkController::class, 'exportExcel']);
     });

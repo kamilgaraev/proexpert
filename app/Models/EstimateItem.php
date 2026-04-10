@@ -183,6 +183,11 @@ class EstimateItem extends Model
         return $this->hasMany(JournalWorkVolume::class);
     }
 
+    public function completedWorks(): HasMany
+    {
+        return $this->hasMany(CompletedWork::class, 'estimate_item_id');
+    }
+
     public function contractLinks(): HasMany
     {
         return $this->hasMany(ContractEstimateItem::class);
@@ -200,6 +205,14 @@ class EstimateItem extends Model
      */
     public function getActualVolume(): float
     {
+        $completedWorksSum = (float) $this->completedWorks()
+            ->effectiveForSchedule()
+            ->sum('completed_quantity');
+
+        if ($completedWorksSum > 0 || $this->completedWorks()->exists()) {
+            return $completedWorksSum;
+        }
+
         return (float) $this->journalWorkVolumes()
             ->whereHas('journalEntry', function ($query) {
                 $query->where('status', \App\Enums\ConstructionJournal\JournalEntryStatusEnum::APPROVED);

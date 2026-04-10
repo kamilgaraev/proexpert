@@ -65,6 +65,14 @@ class CompletedWorkRepository extends BaseRepository implements CompletedWorkRep
                 case 'status':
                     $query->where('status', $value);
                     break;
+
+                case 'planning_status':
+                    $query->where('planning_status', $value);
+                    break;
+
+                case 'work_origin_type':
+                    $query->where('work_origin_type', $value);
+                    break;
                 
                 case 'completion_date_from':
                     $query->where('completion_date', '>=', $value);
@@ -117,7 +125,7 @@ class CompletedWorkRepository extends BaseRepository implements CompletedWorkRep
         // Валидация поля сортировки
         $allowedSortFields = [
             'id', 'completion_date', 'created_at', 'updated_at', 
-            'quantity', 'price', 'total_amount', 'status'
+            'quantity', 'price', 'total_amount', 'status', 'planning_status'
         ];
         
         if (!in_array($sortBy, $allowedSortFields)) {

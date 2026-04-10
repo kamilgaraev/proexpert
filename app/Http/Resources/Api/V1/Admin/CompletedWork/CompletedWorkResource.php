@@ -1,12 +1,15 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Resources\Api\V1\Admin\CompletedWork;
 
 use App\Http\Resources\Api\V1\Admin\Contract\ContractMiniResource;
 use App\Http\Resources\Api\V1\Admin\Contractor\ContractorMiniResource;
 use App\Http\Resources\Api\V1\Admin\Project\ProjectMiniResource;
-use App\Http\Resources\Api\V1\UserResource;
 use App\Http\Resources\Api\V1\Admin\WorkTypeResource;
+use App\Http\Resources\Api\V1\UserResource;
+use App\Models\CompletedWork;
 use App\Models\Contract;
 use App\Models\ContractEstimateItem;
 use App\Models\Contractor;
@@ -14,9 +17,10 @@ use App\Models\ScheduleTask;
 use App\Models\WorkType;
 use Illuminate\Http\Resources\Json\JsonResource;
 
+/** @mixin CompletedWork */
 class CompletedWorkResource extends JsonResource
 {
-    public function toArray($request)
+    public function toArray($request): array
     {
         $scheduleTask = $this->scheduleTask;
         $shouldSyncFromTask = $this->shouldSyncFromTask($scheduleTask);
@@ -31,42 +35,66 @@ class CompletedWorkResource extends JsonResource
         $measurementUnit = $this->resolveMeasurementUnit($scheduleTask);
 
         return [
-            'id'                 => $this->id,
-            'organization_id'    => $this->organization_id,
-            'project_id'         => $this->project_id,
-            'contract_id'        => $contract?->id ?? $this->contract_id,
-            'work_type_id'       => $workType?->id ?? $this->work_type_id,
-            'user_id'            => $this->user_id,
-            'project'            => new ProjectMiniResource($this->whenLoaded('project')),
-            'contract'           => $contract ? new ContractMiniResource($contract) : null,
-            'work_type'          => $workType ? new WorkTypeResource($workType) : null,
-            'user'               => new UserResource($this->whenLoaded('user')),
-            'contractor'         => $contractor ? new ContractorMiniResource($contractor) : null,
-            'contractor_id'      => $contractor?->id ?? $this->contractor_id,
-            'schedule_task_id'   => $this->schedule_task_id,
-            'schedule_task'      => $this->whenLoaded('scheduleTask', fn() => [
-                'id'                 => $this->scheduleTask->id,
-                'name'               => $this->scheduleTask->name,
-                'wbs_code'           => $this->scheduleTask->wbs_code,
-                'quantity'           => $taskQuantity,
+            'id' => $this->id,
+            'organization_id' => $this->organization_id,
+            'project_id' => $this->project_id,
+            'contract_id' => $contract?->id ?? $this->contract_id,
+            'work_type_id' => $workType?->id ?? $this->work_type_id,
+            'user_id' => $this->user_id,
+            'contractor_id' => $contractor?->id ?? $this->contractor_id,
+            'schedule_task_id' => $this->schedule_task_id,
+            'estimate_item_id' => $this->estimate_item_id,
+            'journal_entry_id' => $this->journal_entry_id,
+            'work_origin_type' => $this->work_origin_type ?? CompletedWork::ORIGIN_MANUAL,
+            'planning_status' => $this->planning_status ?? ($this->schedule_task_id ? CompletedWork::PLANNING_PLANNED : CompletedWork::PLANNING_REQUIRES_SCHEDULE),
+            'project' => new ProjectMiniResource($this->whenLoaded('project')),
+            'contract' => $contract ? new ContractMiniResource($contract) : null,
+            'work_type' => $workType ? new WorkTypeResource($workType) : null,
+            'user' => new UserResource($this->whenLoaded('user')),
+            'contractor' => $contractor ? new ContractorMiniResource($contractor) : null,
+            'schedule_task' => $this->whenLoaded('scheduleTask', fn () => [
+                'id' => $this->scheduleTask->id,
+                'name' => $this->scheduleTask->name,
+                'wbs_code' => $this->scheduleTask->wbs_code,
+                'quantity' => $taskQuantity,
                 'completed_quantity' => $taskCompletedQuantity,
-                'progress_percent'   => $this->scheduleTask->progress_percent ? (float)$this->scheduleTask->progress_percent : null,
+                'progress_percent' => $this->scheduleTask->progress_percent ? (float) $this->scheduleTask->progress_percent : null,
                 'planned_start_date' => $this->scheduleTask->planned_start_date?->format('Y-m-d'),
-                'planned_end_date'   => $this->scheduleTask->planned_end_date?->format('Y-m-d'),
-                'measurement_unit'   => $measurementUnit,
+                'planned_end_date' => $this->scheduleTask->planned_end_date?->format('Y-m-d'),
+                'measurement_unit' => $measurementUnit,
                 'procurement_status' => $this->scheduleTask->estimateItem?->procurement_status,
+                'schedule' => $this->scheduleTask->relationLoaded('schedule') && $this->scheduleTask->schedule ? [
+                    'id' => $this->scheduleTask->schedule->id,
+                    'name' => $this->scheduleTask->schedule->name,
+                ] : null,
             ]),
-            'quantity'           => $this->quantity !== null ? (float) $this->quantity : null,
+            'estimate_item' => $this->whenLoaded('estimateItem', fn () => [
+                'id' => $this->estimateItem?->id,
+                'name' => $this->estimateItem?->name,
+                'estimate_id' => $this->estimateItem?->estimate_id,
+                'quantity_total' => $this->estimateItem?->quantity_total !== null ? (float) $this->estimateItem->quantity_total : null,
+                'measurement_unit' => $this->estimateItem?->measurementUnit ? [
+                    'id' => $this->estimateItem->measurementUnit->id,
+                    'short_name' => $this->estimateItem->measurementUnit->short_name,
+                ] : null,
+            ]),
+            'journal_entry' => $this->whenLoaded('journalEntry', fn () => [
+                'id' => $this->journalEntry?->id,
+                'entry_number' => $this->journalEntry?->entry_number,
+                'entry_date' => $this->journalEntry?->entry_date?->format('Y-m-d'),
+                'status' => $this->journalEntry?->status?->value ?? null,
+            ]),
+            'quantity' => $this->quantity !== null ? (float) $this->quantity : null,
             'completed_quantity' => $completedQuantity,
-            'price'              => $price,
-            'total_amount'       => $totalAmount,
-            'completion_date'    => $this->completion_date->format('Y-m-d'),
-            'notes'              => $this->notes,
-            'status'             => $this->status,
-            'additional_info'    => $this->additional_info,
-            'materials'          => \App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkMaterialResource::collection($this->whenLoaded('materials')),
-            'created_at'         => $this->created_at->format('Y-m-d H:i:s'),
-            'updated_at'         => $this->updated_at->format('Y-m-d H:i:s'),
+            'price' => $price,
+            'total_amount' => $totalAmount,
+            'completion_date' => $this->completion_date->format('Y-m-d'),
+            'notes' => $this->notes,
+            'status' => $this->status,
+            'additional_info' => $this->additional_info,
+            'materials' => CompletedWorkMaterialResource::collection($this->whenLoaded('materials')),
+            'created_at' => $this->created_at->format('Y-m-d H:i:s'),
+            'updated_at' => $this->updated_at->format('Y-m-d H:i:s'),
         ];
     }
 
@@ -133,7 +161,7 @@ class CompletedWorkResource extends JsonResource
             return round($linkedAmount / $linkedQuantity, 2);
         }
 
-        $estimateItem = $scheduleTask?->estimateItem;
+        $estimateItem = $scheduleTask?->estimateItem ?? $this->estimateItem;
         if (!$estimateItem) {
             $baseQuantity = $this->resolveStoredAmountQuantity();
 
@@ -199,7 +227,7 @@ class CompletedWorkResource extends JsonResource
     private function resolveTaskQuantity(?ScheduleTask $scheduleTask): ?float
     {
         if (!$scheduleTask) {
-            return null;
+            return $this->estimateItem?->quantity_total !== null ? (float) $this->estimateItem->quantity_total : null;
         }
 
         if ($scheduleTask->quantity !== null && (float) $scheduleTask->quantity > 0) {
@@ -222,14 +250,17 @@ class CompletedWorkResource extends JsonResource
 
     private function resolveContractLink(?ScheduleTask $scheduleTask): ?ContractEstimateItem
     {
-        return $scheduleTask?->estimateItem?->contractLinks
-            ?->sortBy('id')
-            ->first();
+        return $scheduleTask?->estimateItem?->contractLinks?->sortBy('id')->first()
+            ?? $this->estimateItem?->contractLinks?->sortBy('id')->first();
     }
 
     private function shouldSyncFromTask(?ScheduleTask $scheduleTask): bool
     {
         if (!$scheduleTask || !in_array($this->status, ['draft', 'pending', 'in_review'], true)) {
+            return false;
+        }
+
+        if (($this->work_origin_type ?? null) === CompletedWork::ORIGIN_JOURNAL) {
             return false;
         }
 
@@ -252,14 +283,14 @@ class CompletedWorkResource extends JsonResource
 
     private function resolveMeasurementUnit(?ScheduleTask $scheduleTask): ?array
     {
-        $measurementUnit = $scheduleTask?->measurementUnit ?? $scheduleTask?->estimateItem?->measurementUnit;
+        $measurementUnit = $scheduleTask?->measurementUnit ?? $scheduleTask?->estimateItem?->measurementUnit ?? $this->estimateItem?->measurementUnit;
 
         if (!$measurementUnit) {
             return null;
         }
 
         return [
-            'id'         => $measurementUnit->id,
+            'id' => $measurementUnit->id,
             'short_name' => $measurementUnit->short_name,
         ];
     }

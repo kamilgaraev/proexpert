@@ -13,13 +13,15 @@ use App\Models\ConstructionJournalEntry;
 use App\Models\User;
 use App\Notifications\Journal\JournalEntryApprovedNotification;
 use App\Notifications\Journal\JournalEntryRejectedNotification;
+use App\Services\CompletedWork\CompletedWorkFactService;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 
 class JournalApprovalService
 {
     public function __construct(
-        private readonly JournalScheduleIntegrationService $journalScheduleIntegrationService
+        private readonly JournalScheduleIntegrationService $journalScheduleIntegrationService,
+        private readonly CompletedWorkFactService $completedWorkFactService
     ) {
     }
 
@@ -32,6 +34,12 @@ class JournalApprovalService
         $this->validateEntryForSubmission($entry);
 
         $entry->submit();
+        $this->completedWorkFactService->syncFromJournalEntry($entry->fresh([
+            'journal',
+            'scheduleTask.estimateItem.contractLinks.contract',
+            'workVolumes.estimateItem.contractLinks.contract',
+            'workVolumes.workType',
+        ]));
 
         event(new JournalEntrySubmitted($entry));
 
@@ -50,6 +58,12 @@ class JournalApprovalService
 
         return DB::transaction(function () use ($entry, $approver): ConstructionJournalEntry {
             $entry->approve($approver);
+            $this->completedWorkFactService->syncFromJournalEntry($entry->fresh([
+                'journal',
+                'scheduleTask.estimateItem.contractLinks.contract',
+                'workVolumes.estimateItem.contractLinks.contract',
+                'workVolumes.workType',
+            ]));
             $this->journalScheduleIntegrationService->updateTaskProgressFromEntry($entry->fresh(['scheduleTask.estimateItem', 'workVolumes']));
 
             event(new JournalEntryApproved($entry));
@@ -78,6 +92,12 @@ class JournalApprovalService
 
         return DB::transaction(function () use ($entry, $approver, $reason): ConstructionJournalEntry {
             $entry->reject($approver, $reason);
+            $this->completedWorkFactService->syncFromJournalEntry($entry->fresh([
+                'journal',
+                'scheduleTask.estimateItem.contractLinks.contract',
+                'workVolumes.estimateItem.contractLinks.contract',
+                'workVolumes.workType',
+            ]));
 
             event(new JournalEntryRejected($entry, $reason));
 
