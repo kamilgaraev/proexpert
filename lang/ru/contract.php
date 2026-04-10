@@ -23,4 +23,18 @@ return [
     'act_not_found' => 'Акт выполненных работ не найден.',
     'act_export_error' => 'Не удалось выгрузить акт выполненных работ.',
     'act_files_error' => 'Не удалось загрузить файлы акта.',
+    'work_type_category' => [
+        'smr' => 'СМР',
+        'general_construction' => 'Общестроительные работы',
+        'finishing' => 'Отделочные работы',
+        'installation' => 'Монтажные работы',
+        'design' => 'Проектирование',
+        'consultation' => 'Консультационные услуги',
+        'supply' => 'Поставка',
+        'services' => 'Услуги',
+        'equipment' => 'Техника',
+        'materials' => 'ТМЦ',
+        'rent' => 'Аренда',
+        'other' => 'Прочее',
+    ],
 ];
