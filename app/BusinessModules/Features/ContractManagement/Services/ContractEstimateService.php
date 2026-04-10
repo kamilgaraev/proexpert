@@ -92,6 +92,7 @@ class ContractEstimateService
         $query = ContractEstimateItem::with([
             'estimateItem',
             'estimateItem.section',
+            'estimateItem.section.parent',
             'estimateItem.measurementUnit',
             'estimateItem.childItems',
         ])->where('contract_id', $contract->id)

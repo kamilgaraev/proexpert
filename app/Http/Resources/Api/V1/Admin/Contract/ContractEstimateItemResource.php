@@ -11,6 +11,9 @@ class ContractEstimateItemResource extends JsonResource
     public function toArray($request): array
     {
         $item = $this->estimateItem;
+        $section = $item?->section;
+        $actualVolume = $item?->getActualVolume();
+        $completionPercentage = $item?->getCompletionPercentage();
 
         return [
             'id'                => $this->id,
@@ -32,10 +35,18 @@ class ContractEstimateItemResource extends JsonResource
                 'total_amount'    => (float) $item->total_amount,
                 'parent_work_id'  => $item->parent_work_id,
                 'section_id'      => $item->estimate_section_id,
+                'section' => $section ? [
+                    'id' => $section->id,
+                    'name' => $section->name,
+                    'section_number' => $section->full_section_number ?? $section->section_number,
+                ] : null,
                 'measurement_unit' => $item->relationLoaded('measurementUnit') && $item->measurementUnit
                     ? ['id' => $item->measurementUnit->id, 'short_name' => $item->measurementUnit->short_name]
                     : null,
+                'children_count' => $item->relationLoaded('childItems') ? $item->childItems->count() : 0,
                 'contracts_count' => $item->contractLinks()->count(),
+                'actual_volume' => (float) $actualVolume,
+                'completion_percentage' => round((float) $completionPercentage, 2),
             ] : null,
         ];
     }

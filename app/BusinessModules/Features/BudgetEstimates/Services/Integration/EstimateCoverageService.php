@@ -112,10 +112,26 @@ class EstimateCoverageService
             ->get()
             ->groupBy('estimate_id');
 
+        $contractAmount = round((float) ($contract->total_amount ?? 0), 2);
+
         $linkedEstimates = $links->map(function (Collection $group, int $estimateId) {
             $estimate = $group->first()?->estimate;
             $totalWorkItems = $estimate ? $this->getWorkItemIds($estimate)->count() : 0;
             $linkedItemsCount = $group->pluck('estimate_item_id')->unique()->count();
+            $linkedAmount = round((float) $group->sum('amount'), 2);
+            $linkedQuantities = $group->sum('quantity');
+            $averageAmount = $linkedItemsCount > 0
+                ? round($linkedAmount / $linkedItemsCount, 2)
+                : 0.0;
+            $maxAmount = round((float) $group->max('amount'), 2);
+            $linkedSectionsCount = $group
+                ->pluck('estimateItem.estimate_section_id')
+                ->filter()
+                ->unique()
+                ->count();
+            $coveragePercent = $totalWorkItems > 0
+                ? round(($linkedItemsCount / $totalWorkItems) * 100, 2)
+                : 0.0;
 
             return [
                 'estimate_id' => $estimateId,
@@ -132,19 +148,41 @@ class EstimateCoverageService
                 'coverage_status' => $this->resolveCoverageStatus($linkedItemsCount, $totalWorkItems),
                 'linked_items_count' => $linkedItemsCount,
                 'total_work_items' => $totalWorkItems,
+                'unlinked_items_count' => max(0, $totalWorkItems - $linkedItemsCount),
+                'coverage_percent' => $coveragePercent,
                 'linked_items_summary' => [
-                    'amount' => round((float) $group->sum('amount'), 2),
+                    'amount' => $linkedAmount,
+                    'average_amount' => $averageAmount,
+                    'max_amount' => $maxAmount,
+                    'total_quantity' => round((float) $linkedQuantities, 2),
+                    'sections_count' => $linkedSectionsCount,
                 ],
             ];
         })->values();
+
+        $linkedAmount = round((float) $linkedEstimates->sum('linked_items_summary.amount'), 2);
+        $linkedItemsCount = (int) $linkedEstimates->sum('linked_items_count');
+        $coveragePercent = $contractAmount > 0
+            ? round(($linkedAmount / $contractAmount) * 100, 2)
+            : 0.0;
+        $uncoveredAmount = max(0.0, round($contractAmount - $linkedAmount, 2));
+        $overcoveredAmount = max(0.0, round($linkedAmount - $contractAmount, 2));
+        $averageLinkedItemAmount = $linkedItemsCount > 0
+            ? round($linkedAmount / $linkedItemsCount, 2)
+            : 0.0;
 
         return [
             'contract_id' => $contract->id,
             'linked_estimates' => $linkedEstimates,
             'summary' => [
                 'estimates_count' => $linkedEstimates->count(),
-                'linked_items_count' => $linkedEstimates->sum('linked_items_count'),
-                'linked_amount' => round((float) $linkedEstimates->sum('linked_items_summary.amount'), 2),
+                'linked_items_count' => $linkedItemsCount,
+                'linked_amount' => $linkedAmount,
+                'contract_amount' => $contractAmount,
+                'coverage_percent' => $coveragePercent,
+                'uncovered_amount' => $uncoveredAmount,
+                'overcovered_amount' => $overcoveredAmount,
+                'average_linked_item_amount' => $averageLinkedItemAmount,
             ],
         ];
     }
