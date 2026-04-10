@@ -566,6 +566,20 @@ class ContractResource extends JsonResource
                     ];
                 }
             ),
+            'organization_details' => $this->when(
+                $this->relationLoaded('organization') && $this->organization,
+                function () {
+                    return [
+                        'id' => $this->organization->id,
+                        'name' => $this->organization->name,
+                        'inn' => $this->organization->tax_number,
+                        'kpp' => $this->organization->registration_number,
+                        'legal_address' => $this->organization->address,
+                        'email' => $this->organization->email,
+                        'phone' => $this->organization->phone,
+                    ];
+                }
+            ),
         ];
     }
 
