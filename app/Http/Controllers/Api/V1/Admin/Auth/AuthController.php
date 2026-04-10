@@ -192,7 +192,7 @@ class AuthController extends Controller
             $result = $this->authService->refresh($this->guard);
 
             if (!$result['success']) {
-                return AdminResponse::error($result['message'] ?? __('auth.token_error'), $result['status_code'] ?? Response::HTTP_UNAUTHORIZED);
+                return AdminResponse::error($result['message'] ?? trans_message('auth.token_error'), $result['status_code'] ?? Response::HTTP_UNAUTHORIZED);
             }
 
             /** @var \Tymon\JWTAuth\JWTGuard $guard */
