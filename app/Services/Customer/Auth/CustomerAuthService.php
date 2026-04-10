@@ -101,6 +101,11 @@ class CustomerAuthService
         ];
     }
 
+    public function authenticate(LoginDTO $loginDTO, string $guard): array
+    {
+        return $this->login($loginDTO, $guard);
+    }
+
     public function register(RegisterDTO $registerDTO, ?string $verificationFrontendUrl = null): array
     {
         $stats = ['accepted' => 0, 'skipped' => 0, 'conflicted' => 0];

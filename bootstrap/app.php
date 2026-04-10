@@ -10,7 +10,7 @@ use Illuminate\Http\Request;
 use App\Http\Middleware\JwtMiddleware;
 use App\Http\Middleware\SetOrganizationContext;
 
-return Application::configure(basePath: dirname(__DIR__))
+$app = Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
         web: __DIR__.'/../routes/web.php',
         api: __DIR__.'/../routes/api.php',
@@ -143,3 +143,7 @@ return Application::configure(basePath: dirname(__DIR__))
         // ============================================================
     })
     ->create();
+
+$app->useLangPath(dirname(__DIR__) . '/lang');
+
+return $app;
