@@ -121,18 +121,17 @@ class ContractController extends Controller
             'filters' => $filters
         ]);
         
-        // Для второй стороны договора показываем контракты, где текущая организация
-        // выступает исполнителем через contractor.source_organization_id.
-        $projectContext = ProjectContextMiddleware::getProjectContext($request);
-        if ($projectContext && in_array($projectContext->role->value, ['general_contractor', 'contractor', 'subcontractor'], true)) {
-            $filters['related_party_organization_id'] = $organizationId;
+        // Всегда учитываем текущую организацию как возможную вторую сторону договора.
+        // Это нужно для сценариев, когда владелец записи — заказчик, а договор должен
+        // отображаться и у второй стороны проекта.
+        $filters['related_party_organization_id'] = $organizationId;
 
-            Log::info('Related party contract visibility applied', [
-                'organization_id' => $organizationId,
-                'project_role' => $projectContext->role->value,
-                'project_id' => $projectId,
-            ]);
-        }
+        $projectContext = ProjectContextMiddleware::getProjectContext($request);
+        Log::info('Related party contract visibility applied', [
+            'organization_id' => $organizationId,
+            'project_role' => $projectContext?->role->value,
+            'project_id' => $projectId,
+        ]);
         
         $sortBy = $request->input('sort_by', 'created_at');
         $sortDirection = $request->input('sort_direction', 'desc');
