@@ -56,6 +56,11 @@ return [
             'provider' => 'users',
         ],
 
+        'api_brigade' => [
+            'driver' => 'jwt',
+            'provider' => 'users',
+        ],
+
         'api_landing_admin' => [
             'driver' => 'jwt',
             'provider' => 'landing_admins',

@@ -1,0 +1,32 @@
+{
+  "name": "Модератор каталога бригад",
+  "slug": "brigade_catalog_moderator",
+  "version": "1.0.0",
+  "context": "organization",
+  "interface": "admin",
+  "description": "Модерация карточек бригад, документов и публикации в каталоге",
+  "system_permissions": [
+    "admin.access",
+    "admin.dashboard.view",
+    "profile.view"
+  ],
+  "module_permissions": {
+    "brigades": [
+      "brigades.view",
+      "brigades.catalog.view",
+      "brigades.catalog.moderate",
+      "brigades.requests.view",
+      "brigades.invitations.view",
+      "brigades.assignments.view"
+    ]
+  },
+  "interface_access": [
+    "admin"
+  ],
+  "hierarchy": {
+    "can_manage_roles": [],
+    "cannot_manage": [
+      "*"
+    ]
+  }
+}

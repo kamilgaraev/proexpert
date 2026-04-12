@@ -129,6 +129,13 @@
       "site_requests.files.upload",
       "site_requests.templates.manage",
       "site_requests.calendar.view"
+    ],
+    "brigades": [
+      "brigades.view",
+      "brigades.catalog.view",
+      "brigades.requests.view",
+      "brigades.invitations.view",
+      "brigades.assignments.view"
     ]
   },
   "interface_access": [

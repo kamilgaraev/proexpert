@@ -57,6 +57,13 @@
       "payments.invoice.view",
       "payments.transaction.view"
     ],
+    "brigades": [
+      "brigades.view",
+      "brigades.catalog.view",
+      "brigades.requests.view",
+      "brigades.invitations.view",
+      "brigades.assignments.view"
+    ],
     "site-requests": [
       "site_requests.view"
     ]

@@ -180,6 +180,10 @@ Route::prefix('v1')->group(function () {
     require __DIR__ . '/api/v1/contractor-verification.php';
 });
 
+Route::prefix('v1/brigades')->name('brigades.')->group(function () {
+    require __DIR__ . '/api/v1/brigades.php';
+});
+
 // --- Admin Panel API ---
 Route::prefix('v1/admin')->middleware('admin.response')->name('admin.')->group(function () {
     // Публичные маршруты аутентификации админки
@@ -240,6 +244,7 @@ Route::prefix('v1/admin')->middleware('admin.response')->name('admin.')->group(f
         require __DIR__ . '/api/v1/admin/time_tracking.php';
         require __DIR__ . '/api/v1/admin/contractors.php';
         require __DIR__ . '/api/v1/admin/contractor_invitations.php';
+        require __DIR__ . '/api/v1/admin/brigades.php';
         require __DIR__ . '/api/v1/admin/custom-reports.php';
         require __DIR__ . '/api/v1/admin/estimates.php';
         require __DIR__ . '/api/v1/admin/schedules.php';

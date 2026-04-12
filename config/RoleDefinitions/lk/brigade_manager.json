@@ -1,0 +1,44 @@
+{
+  "name": "Менеджер бригады",
+  "slug": "brigade_manager",
+  "version": "1.0.0",
+  "context": "organization",
+  "interface": "lk",
+  "description": "Расширенный доступ к кабинету бригады, составу и откликам",
+  "system_permissions": [
+    "profile.view",
+    "profile.edit"
+  ],
+  "module_permissions": {
+    "brigades": [
+      "brigades.view",
+      "brigades.profile.view",
+      "brigades.profile.edit",
+      "brigades.members.view",
+      "brigades.members.edit",
+      "brigades.documents.view",
+      "brigades.documents.edit",
+      "brigades.invitations.view",
+      "brigades.invitations.respond",
+      "brigades.requests.view",
+      "brigades.responses.view",
+      "brigades.responses.create",
+      "brigades.assignments.view"
+    ]
+  },
+  "interface_access": [
+    "lk"
+  ],
+  "hierarchy": {
+    "can_manage_roles": [
+      "brigade_representative"
+    ],
+    "cannot_manage": [
+      "brigade_manager",
+      "organization_admin",
+      "organization_owner",
+      "system_admin",
+      "super_admin"
+    ]
+  }
+}

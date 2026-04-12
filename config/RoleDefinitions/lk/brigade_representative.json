@@ -1,0 +1,34 @@
+{
+  "name": "Представитель бригады",
+  "slug": "brigade_representative",
+  "version": "1.0.0",
+  "context": "organization",
+  "interface": "lk",
+  "description": "Базовый доступ к кабинету бригады и управлению профилем",
+  "system_permissions": [
+    "profile.view",
+    "profile.edit"
+  ],
+  "module_permissions": {
+    "brigades": [
+      "brigades.view",
+      "brigades.profile.view",
+      "brigades.profile.edit",
+      "brigades.members.view",
+      "brigades.documents.view",
+      "brigades.invitations.view",
+      "brigades.requests.view",
+      "brigades.responses.view",
+      "brigades.assignments.view"
+    ]
+  },
+  "interface_access": [
+    "lk"
+  ],
+  "hierarchy": {
+    "can_manage_roles": [],
+    "cannot_manage": [
+      "*"
+    ]
+  }
+}

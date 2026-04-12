@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -165,6 +166,11 @@ class User extends Authenticatable implements JWTSubject, MustVerifyEmail
         return $this->belongsToMany(Project::class, 'project_user')
             ->withPivot('role')
             ->withTimestamps();
+    }
+
+    public function brigadeProfile(): HasOne
+    {
+        return $this->hasOne(\App\BusinessModules\Contractors\Brigades\Domain\Models\BrigadeProfile::class, 'owner_user_id');
     }
 
 

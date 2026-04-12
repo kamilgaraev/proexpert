@@ -392,6 +392,16 @@
       "procurement.contracts.edit",
       "procurement.dashboard.view",
       "procurement.statistics.view"
+    ],
+    "brigades": [
+      "brigades.view",
+      "brigades.catalog.view",
+      "brigades.requests.view",
+      "brigades.requests.create",
+      "brigades.invitations.view",
+      "brigades.invitations.create",
+      "brigades.assignments.view",
+      "brigades.assignments.edit"
     ]
   },
   "interface_access": [

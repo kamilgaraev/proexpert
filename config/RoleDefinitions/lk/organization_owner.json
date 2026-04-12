@@ -117,6 +117,9 @@
     ],
     "procurement": [
       "*"
+    ],
+    "brigades": [
+      "*"
     ]
   },
   "interface_access": [
