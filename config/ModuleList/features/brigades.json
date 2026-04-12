@@ -1,0 +1,62 @@
+{
+  "name": "Бригады",
+  "slug": "brigades",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "free",
+  "category": "collaboration",
+  "description": "Контур подбора, найма и управления строительными бригадами для подрядчиков и проектов",
+  "class_name": "App\\BusinessModules\\Contractors\\Brigades\\BrigadesModule",
+  "service_provider": "App\\BusinessModules\\Contractors\\Brigades\\BrigadesServiceProvider",
+  "pricing": {
+    "base_price": 0,
+    "currency": "RUB",
+    "included_in_plans": ["start", "business", "profi", "enterprise"],
+    "duration_days": 30
+  },
+  "permissions": [
+    "brigades.view",
+    "brigades.catalog.view",
+    "brigades.catalog.moderate",
+    "brigades.documents.verify",
+    "brigades.requests.view",
+    "brigades.requests.create",
+    "brigades.requests.close",
+    "brigades.responses.view",
+    "brigades.responses.approve",
+    "brigades.invitations.view",
+    "brigades.invitations.create",
+    "brigades.invitations.cancel",
+    "brigades.assignments.view",
+    "brigades.assignments.edit"
+  ],
+  "features": [
+    "Каталог проверенных бригад для подрядчиков",
+    "Саморегистрация и кабинет бригады",
+    "Модерация профиля и документов",
+    "Запросы подрядчиков на привлечение бригад",
+    "Приглашения бригад на проекты и объекты",
+    "Отклики бригад на запросы подрядчиков",
+    "Назначение бригад на проекты",
+    "Отображение активных бригад в проектном контуре"
+  ],
+  "dependencies": [
+    "organizations",
+    "users",
+    "project-management"
+  ],
+  "conflicts": [],
+  "limits": {
+    "max_brigades_per_organization": null,
+    "max_members_per_brigade": 100,
+    "max_documents_per_brigade": 50
+  },
+  "routes": "routes/api/v1/admin/brigades.php",
+  "migrations": "database/migrations/",
+  "auto_activate": true,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "development_status": "stable",
+  "icon": "groups",
+  "display_order": 24
+}

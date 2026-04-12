@@ -15,6 +15,7 @@ final class ModuleHelper
         'workflow-management' => 'Управление процессами',
         'catalog-management' => 'Управление каталогом',
         'contractor-portal' => 'Портал контрагентов',
+        'brigades' => 'Бригады',
         'payments' => 'Финансы и платежи',
         'procurement' => 'Закупки и снабжение',
         'reports' => 'Отчеты',
