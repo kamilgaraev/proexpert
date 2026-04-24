@@ -12,6 +12,9 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context'])
         // Общедоступные методы (просмотр модулей)
         Route::get('/', [ModuleController::class, 'index'])
             ->name('index');
+
+        Route::get('/overview', [ModuleController::class, 'overview'])
+            ->name('overview');
         
         Route::get('/active', [ModuleController::class, 'active'])
             ->name('active');

@@ -12,6 +12,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (DB::getDriverName() === 'sqlite') {
+            return;
+        }
+
         // 1. В PostgreSQL нельзя менять тип колонки, если от нее зависит Materialized View.
         DB::statement('DROP MATERIALIZED VIEW IF EXISTS mv_normative_rates_usage CASCADE');
 
@@ -54,6 +58,10 @@ return new class extends Migration
      */
     public function down(): void
     {
+        if (DB::getDriverName() === 'sqlite') {
+            return;
+        }
+
         DB::statement('DROP MATERIALIZED VIEW IF EXISTS mv_normative_rates_usage CASCADE');
 
         Schema::table('estimate_items', function (Blueprint $table) {

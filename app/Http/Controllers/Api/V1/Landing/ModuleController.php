@@ -10,9 +10,11 @@ use App\Modules\Core\ModuleManager;
 use App\Modules\Services\ModuleActivationService;
 use App\Modules\Services\ModuleBillingService;
 use App\Modules\Services\ModulePermissionService;
-use Illuminate\Http\Request;
+use App\Services\Landing\ModulesOverviewService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 
 class ModuleController extends Controller
 {
@@ -25,12 +27,35 @@ class ModuleController extends Controller
         ModuleManager $moduleManager,
         ModuleActivationService $activationService,
         ModuleBillingService $billingService,
-        ModulePermissionService $permissionService
+        ModulePermissionService $permissionService,
+        private readonly ModulesOverviewService $modulesOverviewService
     ) {
         $this->moduleManager = $moduleManager;
         $this->activationService = $activationService;
         $this->billingService = $billingService;
         $this->permissionService = $permissionService;
+    }
+
+    public function overview(Request $request): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+
+            if (! $organizationId) {
+                return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+            }
+
+            return (new SuccessResponse($this->modulesOverviewService->build((int) $organizationId)))->toResponse($request);
+        } catch (\Throwable $e) {
+            Log::error('ModuleController@overview: ' . $e->getMessage(), [
+                'user_id' => Auth::id(),
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return (new ErrorResponse('Не удалось загрузить обзор модулей', 500))->toResponse($request);
+        }
     }
 
     /**
@@ -65,7 +90,7 @@ class ModuleController extends Controller
                     return $activation->module->slug;
                 });
 
-            return $allModules->map(function ($module) use ($activeModuleSlugs, $organizationId, $activations) {
+            return $allModules->map(function ($module) use ($activeModuleSlugs, $activations) {
                 // Системные модули (can_deactivate: false) всегда активны
                 $isActive = !$module->can_deactivate || in_array($module->slug, $activeModuleSlugs);
                 $activation = $isActive && isset($activations[$module->slug]) ? $activations[$module->slug] : null;

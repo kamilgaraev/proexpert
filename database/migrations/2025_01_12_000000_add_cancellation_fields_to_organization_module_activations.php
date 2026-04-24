@@ -8,6 +8,10 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (! Schema::hasTable('organization_module_activations')) {
+            return;
+        }
+
         Schema::table('organization_module_activations', function (Blueprint $table) {
             $table->timestamp('cancelled_at')->nullable()->after('expires_at');
             $table->string('cancellation_reason')->nullable()->after('cancelled_at');
@@ -18,6 +22,10 @@ return new class extends Migration
 
     public function down(): void
     {
+        if (! Schema::hasTable('organization_module_activations')) {
+            return;
+        }
+
         Schema::table('organization_module_activations', function (Blueprint $table) {
             $table->dropColumn(['cancelled_at', 'cancellation_reason', 'refund_amount', 'refund_details']);
         });

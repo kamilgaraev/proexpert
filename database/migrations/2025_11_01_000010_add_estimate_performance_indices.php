@@ -7,6 +7,10 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (DB::getDriverName() === 'sqlite') {
+            return;
+        }
+
         DB::statement('CREATE INDEX estimates_org_status_created_idx ON estimates(organization_id, status, created_at DESC)');
         
         DB::statement('CREATE INDEX estimates_project_status_idx ON estimates(project_id, status) WHERE project_id IS NOT NULL');
@@ -103,6 +107,10 @@ return new class extends Migration
 
     public function down(): void
     {
+        if (DB::getDriverName() === 'sqlite') {
+            return;
+        }
+
         DB::statement('DROP FUNCTION IF EXISTS refresh_estimate_materialized_views()');
         
         DB::statement('DROP MATERIALIZED VIEW IF EXISTS mv_estimate_library_statistics');
