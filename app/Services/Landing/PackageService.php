@@ -91,7 +91,17 @@ class PackageService
         }
 
         return DB::transaction(function () use (
-            $organizationId, $packageSlug, $tier, $durationDays, $price, $moduleSlugsList, $upgradePrice, $amountCents
+            $organizationId,
+            $packageSlug,
+            $tier,
+            $durationDays,
+            $price,
+            $moduleSlugsList,
+            $upgradePrice,
+            $amountCents,
+            $config,
+            $tierConfig,
+            $alreadyPaidSum
         ) {
             $expiresAt = $price > 0 ? now()->addDays($durationDays) : null;
 
