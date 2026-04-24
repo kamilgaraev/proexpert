@@ -6,6 +6,7 @@
   "interface": "customer",
   "description": "Юридическая роль customer-организации: договоры, замечания и запросы.",
   "system_permissions": [
+    "dashboard.view",
     "customer.dashboard.view",
     "customer.projects.view",
     "customer.documents.view",
@@ -18,7 +19,8 @@
   ],
   "module_permissions": {},
   "interface_access": [
-    "customer"
+    "customer",
+    "admin"
   ],
   "hierarchy": {
     "can_manage_roles": [],

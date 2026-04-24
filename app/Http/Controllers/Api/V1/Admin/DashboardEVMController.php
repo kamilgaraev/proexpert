@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Services\Analytics\EVMService;
+use App\Services\Admin\AdminProjectAccessService;
 use App\Models\Project;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -15,10 +16,12 @@ use Illuminate\Http\Response;
 class DashboardEVMController extends Controller
 {
     protected EVMService $evmService;
+    protected AdminProjectAccessService $projectAccessService;
 
-    public function __construct(EVMService $evmService)
+    public function __construct(EVMService $evmService, AdminProjectAccessService $projectAccessService)
     {
         $this->evmService = $evmService;
+        $this->projectAccessService = $projectAccessService;
     }
 
     /**
@@ -36,9 +39,9 @@ class DashboardEVMController extends Controller
 
             $project = Project::findOrFail($request->input('project_id'));
             
-            // Authorization check
             $user = Auth::user();
-            if ($project->organization_id !== $user->current_organization_id) {
+
+            if (!$user || !$this->projectAccessService->canViewProjectDashboard($project, $user)) {
                 return AdminResponse::error(trans_message('dashboard.access_denied'), Response::HTTP_FORBIDDEN);
             }
 
@@ -77,9 +80,9 @@ class DashboardEVMController extends Controller
 
             $project = Project::findOrFail($request->input('project_id'));
             
-            // Authorization check
             $user = Auth::user();
-            if ($project->organization_id !== $user->current_organization_id) {
+
+            if (!$user || !$this->projectAccessService->canViewProjectDashboard($project, $user)) {
                 return AdminResponse::error(trans_message('dashboard.access_denied'), Response::HTTP_FORBIDDEN);
             }
 

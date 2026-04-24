@@ -6,6 +6,7 @@
   "interface": "customer",
   "description": "Наблюдатель customer-организации: только чтение сигналов и проектных данных.",
   "system_permissions": [
+    "dashboard.view",
     "customer.dashboard.view",
     "customer.projects.view",
     "customer.documents.view",
@@ -17,7 +18,8 @@
   ],
   "module_permissions": {},
   "interface_access": [
-    "customer"
+    "customer",
+    "admin"
   ],
   "hierarchy": {
     "can_manage_roles": [],

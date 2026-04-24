@@ -6,6 +6,7 @@
   "interface": "customer",
   "description": "Куратор customer-проектов: контролирует документы, запросы и замечания.",
   "system_permissions": [
+    "dashboard.view",
     "customer.dashboard.view",
     "customer.projects.view",
     "customer.projects.manage",
@@ -22,7 +23,8 @@
   ],
   "module_permissions": {},
   "interface_access": [
-    "customer"
+    "customer",
+    "admin"
   ],
   "hierarchy": {
     "can_manage_roles": [],

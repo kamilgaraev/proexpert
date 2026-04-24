@@ -6,6 +6,7 @@
   "interface": "customer",
   "description": "Финансовая роль customer-организации: видит деньги, договоры и отклонения.",
   "system_permissions": [
+    "dashboard.view",
     "customer.dashboard.view",
     "customer.projects.view",
     "customer.finance.view",
@@ -14,7 +15,8 @@
   ],
   "module_permissions": {},
   "interface_access": [
-    "customer"
+    "customer",
+    "admin"
   ],
   "hierarchy": {
     "can_manage_roles": [],

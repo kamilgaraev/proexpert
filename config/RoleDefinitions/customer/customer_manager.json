@@ -6,6 +6,7 @@
   "interface": "customer",
   "description": "Рабочий доступ к customer-порталу без управления ролями.",
   "system_permissions": [
+    "dashboard.view",
     "customer.dashboard.view",
     "customer.projects.view",
     "customer.projects.manage",
@@ -24,7 +25,8 @@
   ],
   "module_permissions": {},
   "interface_access": [
-    "customer"
+    "customer",
+    "admin"
   ],
   "hierarchy": {
     "can_manage_roles": [],

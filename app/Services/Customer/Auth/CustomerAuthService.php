@@ -147,6 +147,9 @@ class CustomerAuthService
             ]);
         }
 
+        $profile = $this->customerPortalService->getProfile($result['user']->fresh(), $result['organization']->id);
+        $interfaces = $profile['user']['interfaces'] ?? ['customer'];
+
         $this->sendVerificationNotification($result['user'], $verificationFrontendUrl);
 
         return [
@@ -165,6 +168,7 @@ class CustomerAuthService
             ],
             'email' => $result['user']->email,
             'can_enter_portal' => false,
+            'available_interfaces' => $interfaces,
             'processed_invitations' => $stats,
         ];
     }
