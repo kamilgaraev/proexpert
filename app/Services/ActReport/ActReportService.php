@@ -7,6 +7,7 @@ namespace App\Services\ActReport;
 use App\Models\ContractPerformanceAct;
 use App\Models\Contract;
 use App\Models\CompletedWork;
+use App\Models\PerformanceActLine;
 use App\Exceptions\BusinessLogicException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -50,58 +51,7 @@ class ActReportService
      */
     public function createAct(int $organizationId, array $data): ContractPerformanceAct
     {
-        // Проверяем контракт
-        $contract = $this->validateContract($organizationId, $data['contract_id']);
-
-        DB::beginTransaction();
-        try {
-            // Создаём акт
-            $act = ContractPerformanceAct::create([
-                'contract_id' => $contract->id,
-                'project_id' => $contract->project_id,
-                'act_document_number' => $data['act_document_number'],
-                'act_date' => $data['act_date'],
-                'description' => $data['description'] ?? null,
-                'amount' => 0,
-                'is_approved' => false,
-            ]);
-
-            // Прикрепляем работы если переданы
-            if (!empty($data['work_ids'])) {
-                $this->attachWorksToAct($act, $data['work_ids']);
-            }
-
-            DB::commit();
-
-            // Загружаем связи
-            $act->load([
-                'contract.project',
-                'contract.contractor',
-                'contract.organization',
-                'completedWorks.workType',
-                'completedWorks.user',
-                'completedWorks.materials'
-            ]);
-
-            Log::info('[ActReportService] Act created', [
-                'act_id' => $act->id,
-                'contract_id' => $contract->id,
-                'organization_id' => $organizationId,
-            ]);
-
-            return $act;
-        } catch (\Exception $e) {
-            DB::rollBack();
-            Log::error('[ActReportService] Failed to create act', [
-                'error' => $e->getMessage(),
-                'organization_id' => $organizationId,
-            ]);
-            throw new BusinessLogicException(
-                trans_message('act_reports.create_failed'),
-                500,
-                $e
-            );
-        }
+        throw new BusinessLogicException(trans_message('act_reports.use_acting_wizard'), 422);
     }
 
     /**
@@ -147,16 +97,30 @@ class ActReportService
      */
     public function getAvailableWorks(ContractPerformanceAct $act): Collection
     {
-        // Получаем ID работ, которые уже в акте
         $existingWorkIds = $act->completedWorks()->pluck('completed_works.id')->toArray();
+        $actedQuantities = PerformanceActLine::query()
+            ->where('line_type', PerformanceActLine::TYPE_COMPLETED_WORK)
+            ->whereNot('performance_act_id', $act->id)
+            ->whereNotNull('completed_work_id')
+            ->selectRaw('completed_work_id, SUM(quantity) as acted_quantity')
+            ->groupBy('completed_work_id')
+            ->pluck('acted_quantity', 'completed_work_id');
 
-        // Получаем все подтверждённые работы контракта, которых нет в акте
         return CompletedWork::where('contract_id', $act->contract_id)
             ->where('status', 'confirmed')
+            ->where('work_origin_type', CompletedWork::ORIGIN_JOURNAL)
+            ->whereNotNull('journal_entry_id')
             ->whereNotIn('id', $existingWorkIds)
-            ->with(['workType', 'user', 'materials'])
-            ->orderBy('work_date', 'desc')
-            ->get();
+            ->with(['workType', 'user'])
+            ->orderBy('completion_date', 'desc')
+            ->get()
+            ->filter(function (CompletedWork $work) use ($actedQuantities): bool {
+                $effectiveQuantity = (float) ($work->completed_quantity ?? $work->quantity);
+                $actedQuantity = (float) ($actedQuantities[$work->id] ?? 0);
+
+                return $effectiveQuantity > $actedQuantity;
+            })
+            ->values();
     }
 
     /**
@@ -164,40 +128,7 @@ class ActReportService
      */
     public function attachWorksToAct(ContractPerformanceAct $act, array $workIds): void
     {
-        if ($act->is_approved) {
-            throw new BusinessLogicException(trans_message('act_reports.act_already_approved'), 400);
-        }
-
-        // Получаем валидные работы
-        $validWorks = CompletedWork::whereIn('id', $workIds)
-            ->where('contract_id', $act->contract_id)
-            ->where('status', 'confirmed')
-            ->get();
-
-        if ($validWorks->isEmpty()) {
-            throw new BusinessLogicException(trans_message('act_reports.works_not_confirmed'), 400);
-        }
-
-        $pivotData = [];
-        $totalAmount = 0;
-
-        foreach ($validWorks as $work) {
-            $pivotData[$work->id] = [
-                'included_quantity' => $work->quantity,
-                'included_amount' => $work->total_amount,
-                'notes' => null,
-            ];
-            $totalAmount += $work->total_amount;
-        }
-
-        $act->completedWorks()->attach($pivotData);
-        $act->increment('amount', $totalAmount);
-
-        Log::info('[ActReportService] Works attached to act', [
-            'act_id' => $act->id,
-            'works_count' => count($validWorks),
-            'total_amount' => $totalAmount,
-        ]);
+        throw new BusinessLogicException(trans_message('act_reports.use_acting_wizard'), 422);
     }
 
     /**
@@ -205,45 +136,7 @@ class ActReportService
      */
     public function updateWorksInAct(ContractPerformanceAct $act, array $updates): void
     {
-        if ($act->is_approved) {
-            throw new BusinessLogicException(trans_message('act_reports.act_already_approved'), 400);
-        }
-
-        DB::beginTransaction();
-        try {
-            $newTotalAmount = 0;
-
-            foreach ($updates as $update) {
-                $workId = $update['work_id'];
-                $includedQuantity = $update['included_quantity'];
-                $includedAmount = $update['included_amount'];
-                $notes = $update['notes'] ?? null;
-
-                $act->completedWorks()->updateExistingPivot($workId, [
-                    'included_quantity' => $includedQuantity,
-                    'included_amount' => $includedAmount,
-                    'notes' => $notes,
-                ]);
-
-                $newTotalAmount += $includedAmount;
-            }
-
-            $act->update(['amount' => $newTotalAmount]);
-
-            DB::commit();
-
-            Log::info('[ActReportService] Works updated in act', [
-                'act_id' => $act->id,
-                'new_total_amount' => $newTotalAmount,
-            ]);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            throw new BusinessLogicException(
-                trans_message('act_reports.update_failed'),
-                500,
-                $e
-            );
-        }
+        throw new BusinessLogicException(trans_message('act_reports.use_acting_wizard'), 422);
     }
 
     /**

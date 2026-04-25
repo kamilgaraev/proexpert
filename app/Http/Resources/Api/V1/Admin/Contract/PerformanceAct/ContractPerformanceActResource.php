@@ -2,10 +2,11 @@
 
 namespace App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct;
 
+use App\Models\ContractPerformanceAct;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
-use App\Http\Resources\Api\V1\Admin\Contract\ContractMiniResource; // Для отображения связанного контракта
 
+/** @mixin ContractPerformanceAct */
 class ContractPerformanceActResource extends JsonResource
 {
     /**
@@ -22,9 +23,8 @@ class ContractPerformanceActResource extends JsonResource
             'contract_number' => $this->whenLoaded('contract', fn() => $this->contract->number),
             'contract_date' => $this->whenLoaded('contract', fn() => $this->contract->date),
             'contract_subject' => $this->whenLoaded('contract', fn() => $this->contract->subject),
-            // 'contract' => new ContractMiniResource($this->whenLoaded('contract')), // Если нужно будет загружать детали контракта
             'act_document_number' => $this->act_document_number,
-            'act_date' => $this->act_date, // Предполагается, что в модели кастуется в Y-m-d
+            'act_date' => $this->act_date,
             'amount' => (float) ($this->amount ?? 0),
             'description' => $this->description,
             'is_approved' => (bool) $this->is_approved,
@@ -45,6 +45,25 @@ class ContractPerformanceActResource extends JsonResource
                         'included_quantity' => (float) ($work->pivot->included_quantity ?? 0),
                         'included_amount' => (float) ($work->pivot->included_amount ?? 0),
                         'notes' => $work->pivot->notes,
+                    ];
+                });
+            }, []),
+
+            'lines' => $this->whenLoaded('lines', function () {
+                return $this->lines->map(function ($line) {
+                    return [
+                        'id' => $line->id,
+                        'line_type' => $line->line_type,
+                        'completed_work_id' => $line->completed_work_id,
+                        'estimate_item_id' => $line->estimate_item_id,
+                        'title' => $line->title,
+                        'unit' => $line->unit,
+                        'quantity' => (float) $line->quantity,
+                        'unit_price' => $line->unit_price === null ? null : (float) $line->unit_price,
+                        'amount' => (float) $line->amount,
+                        'manual_reason' => $line->manual_reason,
+                        'created_by' => $line->created_by,
+                        'created_at' => $line->created_at?->toIso8601String(),
                     ];
                 });
             }, []),

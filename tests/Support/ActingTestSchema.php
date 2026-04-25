@@ -1,0 +1,240 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Support;
+
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+
+trait ActingTestSchema
+{
+    public function refreshDatabase(): void
+    {
+    }
+
+    protected function setUpActingSchema(): void
+    {
+        foreach ([
+            'performance_act_lines',
+            'acting_policies',
+            'performance_act_completed_works',
+            'contract_performance_acts',
+            'contract_state_events',
+            'completed_works',
+            'supplementary_agreements',
+            'contracts',
+            'contractors',
+            'projects',
+            'project_organization',
+            'organization_user',
+            'users',
+            'organizations',
+        ] as $table) {
+            Schema::dropIfExists($table);
+        }
+
+        Schema::create('organizations', function (Blueprint $table): void {
+            $table->id();
+            $table->string('name');
+            $table->string('legal_name')->nullable();
+            $table->string('tax_number')->nullable();
+            $table->string('registration_number')->nullable();
+            $table->string('phone')->nullable();
+            $table->string('email')->nullable();
+            $table->string('address')->nullable();
+            $table->string('city')->nullable();
+            $table->string('postal_code')->nullable();
+            $table->string('country')->nullable();
+            $table->boolean('is_active')->default(true);
+            $table->boolean('is_verified')->default(false);
+            $table->string('verification_status')->nullable();
+            $table->foreignId('parent_organization_id')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('users', function (Blueprint $table): void {
+            $table->id();
+            $table->string('name');
+            $table->string('email')->unique();
+            $table->timestamp('email_verified_at')->nullable();
+            $table->string('password');
+            $table->rememberToken();
+            $table->foreignId('current_organization_id')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('organization_user', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id');
+            $table->foreignId('user_id');
+            $table->boolean('is_owner')->default(false);
+            $table->boolean('is_active')->default(true);
+            $table->json('settings')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('projects', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id');
+            $table->string('name');
+            $table->string('status')->default('active');
+            $table->string('address')->nullable();
+            $table->decimal('latitude', 10, 7)->nullable();
+            $table->decimal('longitude', 10, 7)->nullable();
+            $table->timestamp('geocoded_at')->nullable();
+            $table->string('geocoding_status')->nullable();
+            $table->text('description')->nullable();
+            $table->decimal('budget_amount', 15, 2)->nullable();
+            $table->date('start_date')->nullable();
+            $table->date('end_date')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('contractors', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id');
+            $table->string('name');
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('project_organization', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('project_id');
+            $table->foreignId('organization_id');
+            $table->string('role')->nullable();
+            $table->string('role_new')->nullable();
+            $table->boolean('is_active')->default(true);
+            $table->timestamp('invited_at')->nullable();
+            $table->timestamp('accepted_at')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('contracts', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id');
+            $table->foreignId('project_id')->nullable();
+            $table->foreignId('contractor_id');
+            $table->string('number');
+            $table->date('date');
+            $table->text('subject')->nullable();
+            $table->decimal('total_amount', 15, 2)->nullable();
+            $table->string('status')->default('draft');
+            $table->boolean('is_multi_project')->default(false);
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('contract_state_events', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('contract_id');
+            $table->string('event_type');
+            $table->json('event_data')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('supplementary_agreements', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('contract_id');
+            $table->decimal('change_amount', 15, 2)->default(0);
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('completed_works', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id');
+            $table->foreignId('project_id');
+            $table->foreignId('contract_id')->nullable();
+            $table->foreignId('estimate_item_id')->nullable();
+            $table->foreignId('journal_entry_id')->nullable();
+            $table->string('work_origin_type', 32)->default('manual');
+            $table->string('planning_status', 32)->default('planned');
+            $table->decimal('quantity', 15, 3);
+            $table->decimal('completed_quantity', 15, 4)->nullable();
+            $table->decimal('price', 15, 2)->nullable();
+            $table->decimal('total_amount', 15, 2)->nullable();
+            $table->date('completion_date');
+            $table->text('notes')->nullable();
+            $table->string('status')->default('confirmed');
+            $table->json('additional_info')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('contract_performance_acts', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('contract_id');
+            $table->foreignId('project_id')->nullable();
+            $table->string('act_document_number')->nullable();
+            $table->date('act_date');
+            $table->decimal('amount', 15, 2)->default(0);
+            $table->text('description')->nullable();
+            $table->boolean('is_approved')->default(false);
+            $table->date('approval_date')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('performance_act_completed_works', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('performance_act_id');
+            $table->foreignId('completed_work_id');
+            $table->decimal('included_quantity', 15, 3);
+            $table->decimal('included_amount', 15, 2);
+            $table->text('notes')->nullable();
+            $table->timestamps();
+
+            $table->unique(['performance_act_id', 'completed_work_id'], 'performance_act_completed_works_unique');
+        });
+
+        Schema::create('acting_policies', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id');
+            $table->foreignId('contract_id')->nullable();
+            $table->string('mode', 32)->default('operational');
+            $table->boolean('allow_manual_lines')->default(false);
+            $table->boolean('require_manual_line_reason')->default(true);
+            $table->json('settings')->nullable();
+            $table->timestamps();
+
+            $table->unique(['organization_id', 'contract_id'], 'acting_policies_org_contract_unique');
+        });
+
+        DB::statement(
+            'CREATE UNIQUE INDEX acting_policies_org_default_unique ON acting_policies (organization_id) WHERE contract_id IS NULL'
+        );
+
+        DB::statement(
+            "CREATE TABLE performance_act_lines (
+                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                performance_act_id INTEGER NOT NULL,
+                completed_work_id INTEGER NULL,
+                estimate_item_id INTEGER NULL,
+                line_type VARCHAR(32) NOT NULL,
+                title VARCHAR(255) NOT NULL,
+                unit VARCHAR(255) NULL,
+                quantity NUMERIC NOT NULL,
+                unit_price NUMERIC NULL,
+                amount NUMERIC NOT NULL,
+                manual_reason TEXT NULL,
+                created_by INTEGER NULL,
+                created_at DATETIME NULL,
+                updated_at DATETIME NULL,
+                CONSTRAINT performance_act_lines_line_type_check CHECK (line_type IN ('completed_work', 'manual')),
+                CONSTRAINT performance_act_lines_quantity_positive_check CHECK (quantity > 0),
+                CONSTRAINT performance_act_lines_amount_non_negative_check CHECK (amount >= 0),
+                CONSTRAINT performance_act_lines_unit_price_non_negative_check CHECK (unit_price IS NULL OR unit_price >= 0)
+            )"
+        );
+
+        Schema::table('performance_act_lines', function (Blueprint $table): void {
+            $table->index(['performance_act_id', 'line_type'], 'performance_act_lines_act_type_idx');
+            $table->index('completed_work_id', 'performance_act_lines_completed_work_idx');
+        });
+    }
+}

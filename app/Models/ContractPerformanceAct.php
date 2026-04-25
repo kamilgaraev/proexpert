@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 class ContractPerformanceAct extends Model
@@ -51,14 +52,27 @@ class ContractPerformanceAct extends Model
             ->withTimestamps();
     }
 
+    public function lines(): HasMany
+    {
+        return $this->hasMany(PerformanceActLine::class, 'performance_act_id');
+    }
+
     /**
      * Автоматически пересчитать сумму акта на основе включенных работ
      */
     public function recalculateAmount(): float
     {
-        $totalAmount = $this->completedWorks()->sum('performance_act_completed_works.included_amount');
+        $totalAmount = $this->lines()->exists()
+            ? $this->lines()->sum('amount')
+            : $this->completedWorks()->sum('performance_act_completed_works.included_amount');
+
         $this->update(['amount' => $totalAmount]);
         return $totalAmount;
+    }
+
+    public function isReadyForPayment(): bool
+    {
+        return (bool) $this->is_approved && (float) $this->amount > 0;
     }
 
     public function files(): MorphMany

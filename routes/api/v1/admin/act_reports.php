@@ -3,11 +3,6 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Admin\ActReportsController;
 
-// Тестовый маршрут для отладки
-Route::get('act-reports-test', function() {
-    return response()->json(['message' => 'Test route works']);
-})->name('act-reports.test');
-
 // Маршруты для управления отчетами по актам
 Route::prefix('act-reports')->group(function () {
     // Получить все акты организации с фильтрацией
@@ -17,6 +12,12 @@ Route::prefix('act-reports')->group(function () {
     // Получить список контрактов для создания актов
     Route::get('contracts', [ActReportsController::class, 'getContracts'])
         ->name('act-reports.contracts');
+
+    Route::post('preview', [ActReportsController::class, 'preview'])
+        ->name('act-reports.preview');
+
+    Route::post('create-from-wizard', [ActReportsController::class, 'createFromWizard'])
+        ->name('act-reports.create-from-wizard');
     
     // Создать новый акт
     Route::post('/', [ActReportsController::class, 'store'])

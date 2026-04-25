@@ -10,9 +10,16 @@ use App\Models\ContractPerformanceAct;
 use App\Models\File;
 use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceActResource;
 use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceActCollection;
+use App\Http\Requests\Api\V1\Admin\ActReport\PreviewActRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\StoreActReportRequest;
+use App\Http\Requests\Api\V1\Admin\ActReport\StoreActFromWizardRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\UpdateActReportRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\UpdateActWorksRequest;
+use App\Models\Contract;
+use App\Services\Acting\ActingActWizardService;
+use App\Services\Acting\ActingAvailabilityService;
+use App\Services\Acting\ActingPolicyResolver;
+use App\Services\Acting\KS3SummaryService;
 use App\Services\ActReport\ActReportService;
 use App\Services\Export\ExcelExporterService;
 use App\Services\Storage\FileService;
@@ -21,6 +28,7 @@ use App\Exceptions\BusinessLogicException;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -34,14 +42,75 @@ use function trans_message;
  */
 class ActReportsController extends Controller
 {
+    private const PERMISSION_VIEW = 'act_reports.view';
+    private const PERMISSION_CREATE = 'act_reports.create';
+    private const PERMISSION_MANAGE_WORKS = 'act_reports.works.update';
+
     public function __construct(
         protected ActReportService $actReportService,
         protected ExcelExporterService $excelExporter,
         protected FileService $fileService,
-        protected OfficialFormsExportService $officialExportService
+        protected OfficialFormsExportService $officialExportService,
+        protected ActingPolicyResolver $actingPolicyResolver,
+        protected ActingAvailabilityService $actingAvailabilityService,
+        protected KS3SummaryService $ks3SummaryService,
+        protected ActingActWizardService $actingActWizardService
     ) {
         $this->middleware('auth:api_admin');
         $this->middleware('organization.context');
+    }
+
+    public function preview(PreviewActRequest $request): JsonResponse
+    {
+        try {
+            $organizationId = $this->getCurrentOrganizationId($request);
+            $this->authorizePermission($request, self::PERMISSION_VIEW, $organizationId);
+
+            $data = $request->validated();
+            $contract = $this->getOrganizationContractOrFail($organizationId, (int) $data['contract_id']);
+
+            return AdminResponse::success([
+                'policy' => $this->actingPolicyResolver->resolveForContract($contract),
+                'available_works' => $this->actingAvailabilityService->getAvailableWorks(
+                    $contract->id,
+                    $data['period_start'],
+                    $data['period_end']
+                ),
+                'summary' => $this->ks3SummaryService->summarize(
+                    $contract->id,
+                    $data['period_start'],
+                    $data['period_end']
+                ),
+            ]);
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode());
+        } catch (\Throwable $e) {
+            Log::error('act_reports.preview_failed', [
+                'contract_id' => $request->input('contract_id'),
+                'user_id' => $request->user()?->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('act_reports.preview_failed'), 500);
+        }
+    }
+
+    public function createFromWizard(StoreActFromWizardRequest $request): JsonResponse
+    {
+        try {
+            $organizationId = $this->getCurrentOrganizationId($request);
+            return $this->storeFromWizardPayload($request, $organizationId);
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode());
+        } catch (\Throwable $e) {
+            Log::error('act_reports.create_from_wizard_failed', [
+                'contract_id' => $request->input('contract_id'),
+                'user_id' => $request->user()?->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('act_reports.create_failed'), 500);
+        }
     }
 
     /**
@@ -93,17 +162,7 @@ class ActReportsController extends Controller
     {
         try {
             $organizationId = $this->getCurrentOrganizationId($request);
-            
-            $act = $this->actReportService->createAct(
-                $organizationId,
-                $request->validated()
-            );
-
-            return AdminResponse::success(
-                new ContractPerformanceActResource($act),
-                trans_message('act_reports.act_created'),
-                201
-            );
+            return $this->storeFromWizardPayload($request, $organizationId);
         } catch (BusinessLogicException $e) {
             return AdminResponse::error($e->getMessage(), $e->getCode());
         } catch (\Throwable $e) {
@@ -112,6 +171,29 @@ class ActReportsController extends Controller
                 500
             );
         }
+    }
+
+    private function storeFromWizardPayload(StoreActFromWizardRequest $request, int $organizationId): JsonResponse
+    {
+        $this->authorizePermission($request, self::PERMISSION_CREATE, $organizationId);
+
+        $data = $request->validated();
+        $manualLines = $data['manual_lines'] ?? [];
+        $canManageManualLines = $manualLines === []
+            || (bool) $request->user()?->can(self::PERMISSION_MANAGE_WORKS, ['organization_id' => $organizationId]);
+
+        $act = $this->actingActWizardService->createFromWizard(
+            $organizationId,
+            $data,
+            $request->user()?->id,
+            $canManageManualLines
+        );
+
+        return AdminResponse::success(
+            new ContractPerformanceActResource($act),
+            trans_message('act_reports.act_created'),
+            201
+        );
     }
 
     /**
@@ -277,6 +359,32 @@ class ActReportsController extends Controller
                 403
             );
         }
+    }
+
+    protected function authorizePermission(Request $request, string $permission, int $organizationId): void
+    {
+        $user = $request->user();
+
+        if (!$user || !$user->can($permission, ['organization_id' => $organizationId])) {
+            throw new BusinessLogicException(
+                trans_message('act_reports.access_denied'),
+                403
+            );
+        }
+    }
+
+    protected function getOrganizationContractOrFail(int $organizationId, int $contractId): Contract
+    {
+        $contract = Contract::query()
+            ->where('id', $contractId)
+            ->where('organization_id', $organizationId)
+            ->first();
+
+        if (!$contract) {
+            throw new BusinessLogicException(trans_message('act_reports.contract_not_found'), 404);
+        }
+
+        return $contract;
     }
 
     /**
