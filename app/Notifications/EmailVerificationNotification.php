@@ -46,6 +46,9 @@ class EmailVerificationNotification extends VerifyEmail
             ]
         );
 
-        return rtrim((string) $frontendUrl, '/') . '/verify-email?' . (string) parse_url($signedUrl, PHP_URL_QUERY);
+        return rtrim((string) $frontendUrl, '/') . '/verify-email?' . http_build_query([
+            'id' => $notifiable->getKey(),
+            'hash' => sha1($notifiable->getEmailForVerification()),
+        ]) . '&' . (string) parse_url($signedUrl, PHP_URL_QUERY);
     }
 }

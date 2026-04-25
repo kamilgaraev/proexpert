@@ -3,64 +3,69 @@
 namespace App\Http\Controllers\Api\V1\Landing\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Http\Responses\LandingResponse;
 use App\Models\User;
-use Illuminate\Http\Request;
-use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Auth\Events\Verified;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class EmailVerificationController extends Controller
 {
     public function verify(Request $request, $id, $hash): JsonResponse
     {
-        $user = User::findOrFail($id);
+        try {
+            $user = User::findOrFail($id);
 
-        if (!hash_equals((string) $hash, sha1($user->getEmailForVerification()))) {
-            Log::warning('Email verification failed: invalid hash', [
+            if (!$request->hasValidSignature()) {
+                Log::warning('Email verification failed: invalid signature', [
+                    'user_id' => $id,
+                    'expires' => $request->query('expires'),
+                ]);
+
+                return LandingResponse::error(
+                    'Неверная ссылка для подтверждения email',
+                    403
+                );
+            }
+
+            if (!hash_equals((string) $hash, sha1($user->getEmailForVerification()))) {
+                Log::warning('Email verification failed: invalid hash', [
+                    'user_id' => $id,
+                    'provided_hash' => $hash,
+                ]);
+
+                return LandingResponse::error(
+                    'Неверная ссылка для подтверждения email',
+                    403
+                );
+            }
+
+            if ($user->hasVerifiedEmail()) {
+                return LandingResponse::success(null, 'Email уже подтвержден');
+            }
+
+            if ($user->markEmailAsVerified()) {
+                event(new Verified($user));
+
+                Log::info('Email verified successfully', [
+                    'user_id' => $user->id,
+                    'email' => $user->email,
+                ]);
+            }
+
+            return LandingResponse::success(null, 'Email успешно подтвержден');
+        } catch (\Throwable $e) {
+            Log::error('Email verification failed', [
                 'user_id' => $id,
-                'provided_hash' => $hash
+                'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Неверная ссылка для подтверждения email'
-            ], 403);
+            return LandingResponse::error(
+                'Ошибка при подтверждении email',
+                500
+            );
         }
-
-        $expires = $request->query('expires');
-        if ($expires && $expires < time()) {
-            Log::warning('Email verification failed: link expired', [
-                'user_id' => $id,
-                'expires' => $expires,
-                'current_time' => time()
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Ссылка для подтверждения истекла. Запросите новую.'
-            ], 403);
-        }
-
-        if ($user->hasVerifiedEmail()) {
-            return response()->json([
-                'success' => true,
-                'message' => 'Email уже подтвержден'
-            ]);
-        }
-
-        if ($user->markEmailAsVerified()) {
-            event(new Verified($user));
-            
-            Log::info('Email verified successfully', [
-                'user_id' => $user->id,
-                'email' => $user->email
-            ]);
-        }
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Email успешно подтвержден'
-        ]);
     }
 
     public function resend(Request $request): JsonResponse
@@ -113,4 +118,3 @@ class EmailVerificationController extends Controller
         ]);
     }
 }
-
