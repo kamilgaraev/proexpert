@@ -33,8 +33,6 @@ use App\Repositories\Interfaces\ContractRepositoryInterface;
 use App\Repositories\ContractRepository;
 use App\Repositories\Interfaces\ContractPerformanceActRepositoryInterface;
 use App\Repositories\ContractPerformanceActRepository;
-use App\Repositories\Interfaces\ContractPaymentRepositoryInterface;
-use App\Repositories\ContractPaymentRepository;
 use App\Repositories\Interfaces\CompletedWorkRepositoryInterface;
 use App\Repositories\CompletedWork\CompletedWorkRepository;
 use App\Repositories\Interfaces\ProjectScheduleRepositoryInterface;
@@ -70,7 +68,6 @@ class RepositoryServiceProvider extends ServiceProvider
         $this->app->bind(ContractorRepositoryInterface::class, ContractorRepository::class);
         $this->app->bind(ContractRepositoryInterface::class, ContractRepository::class);
         $this->app->bind(ContractPerformanceActRepositoryInterface::class, ContractPerformanceActRepository::class);
-        $this->app->bind(ContractPaymentRepositoryInterface::class, ContractPaymentRepository::class);
         
         // Привязка для выполненных работ
         $this->app->bind(CompletedWorkRepositoryInterface::class, CompletedWorkRepository::class);

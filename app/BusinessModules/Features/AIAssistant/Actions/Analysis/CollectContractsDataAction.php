@@ -33,7 +33,7 @@ class CollectContractsDataAction
         $problemContracts = [];
 
         // Проверяем существование таблиц один раз
-        $hasPaymentsTable = $this->tableExists('contract_payments');
+        $hasPaymentsTable = $this->tableExists('payment_documents');
         $hasActsTable = $this->tableExists('contract_performance_acts');
 
         foreach ($contracts as $contract) {
@@ -42,13 +42,14 @@ class CollectContractsDataAction
             $invoiced = 0;
             if ($hasPaymentsTable) {
                 try {
-                    $paid = (float) DB::table('contract_payments')
-                        ->where('contract_id', $contract->id)
-                        ->where('status', 'paid')
-                        ->sum('amount');
+                    $paid = (float) DB::table('payment_documents')
+                        ->where('invoiceable_type', Contract::class)
+                        ->where('invoiceable_id', $contract->id)
+                        ->sum('paid_amount');
 
-                    $invoiced = (float) DB::table('contract_payments')
-                        ->where('contract_id', $contract->id)
+                    $invoiced = (float) DB::table('payment_documents')
+                        ->where('invoiceable_type', Contract::class)
+                        ->where('invoiceable_id', $contract->id)
                         ->sum('amount');
                 } catch (\Exception $e) {
                     $paid = 0;

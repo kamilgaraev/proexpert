@@ -1262,10 +1262,10 @@ class HoldingReportService
                         'payments' => $payments->map(function ($payment) {
                             return [
                                 'id' => $payment->id,
-                                'amount' => round($payment->amount, 2),
-                                'payment_date' => $payment->payment_date?->format('Y-m-d'),
-                                'payment_type' => $payment->payment_type,
-                                'notes' => $payment->notes,
+                                'amount' => round((float) $payment->paid_amount, 2),
+                                'payment_date' => $payment->document_date?->format('Y-m-d'),
+                                'payment_type' => $payment->metadata['contract_payment_type'] ?? $payment->invoice_type?->value,
+                                'notes' => $payment->description,
                             ];
                         })->toArray(),
                         
@@ -2101,4 +2101,3 @@ class HoldingReportService
         return $this->excelExporter->streamDownload($filename . '.xlsx', $headers, $rows);
     }
 }
-

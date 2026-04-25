@@ -94,13 +94,15 @@ class CollectBudgetDataAction
         // Сумма выполненных работ
         $completedWorksTotal = (float) $project->completedWorks()->sum('total_amount');
         
-        // Проверяем существование таблицы contract_payments
-        if ($this->tableExists('contract_payments')) {
+        // Проверяем существование единого платежного контура
+        if ($this->tableExists('payment_documents')) {
             try {
                 $contractsPaid = (float) $project->contracts()
-                    ->join('contract_payments', 'contracts.id', '=', 'contract_payments.contract_id')
-                    ->where('contract_payments.status', 'paid')
-                    ->sum('contract_payments.amount');
+                    ->join('payment_documents', function ($join): void {
+                        $join->on('contracts.id', '=', 'payment_documents.invoiceable_id')
+                            ->where('payment_documents.invoiceable_type', '=', Contract::class);
+                    })
+                    ->sum('payment_documents.paid_amount');
             } catch (\Exception $e) {
                 $contractsPaid = 0;
             }
@@ -131,7 +133,7 @@ class CollectBudgetDataAction
         $totalPaid = 0;
         $totalActed = 0;
 
-        $hasPaymentsTable = $this->tableExists('contract_payments');
+        $hasPaymentsTable = $this->tableExists('payment_documents');
         $hasActsTable = $this->tableExists('contract_performance_acts');
 
         foreach ($contracts as $contract) {
@@ -141,10 +143,10 @@ class CollectBudgetDataAction
             // Получаем данные по платежам только если таблица существует
             if ($hasPaymentsTable) {
                 try {
-                    $paid = DB::table('contract_payments')
-                        ->where('contract_id', $contract->id)
-                        ->where('status', 'paid')
-                        ->sum('amount');
+                    $paid = DB::table('payment_documents')
+                        ->where('invoiceable_type', Contract::class)
+                        ->where('invoiceable_id', $contract->id)
+                        ->sum('paid_amount');
                 } catch (\Exception $e) {
                     $paid = 0;
                 }

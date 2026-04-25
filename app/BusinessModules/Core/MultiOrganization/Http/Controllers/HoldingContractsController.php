@@ -111,7 +111,7 @@ class HoldingContractsController extends Controller
                 return AdminResponse::error(trans_message('holding.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
 
-            $totalPaid = $contract->payments->sum('amount');
+            $totalPaid = $contract->payments->sum('paid_amount');
             $totalActsAmount = $contract->performanceActs->where('status', 'approved')->sum('amount');
             $totalWorksAmount = $contract->completedWorks->where('status', 'approved')->sum('total_amount');
             $remainingAmount = $contract->total_amount - $totalPaid;
@@ -143,10 +143,12 @@ class HoldingContractsController extends Controller
                 }),
             ];
 
-            $paymentsByType = $contract->payments->groupBy('payment_type')->map(function ($group) {
+            $paymentsByType = $contract->payments->groupBy(function ($payment) {
+                return $payment->metadata['contract_payment_type'] ?? $payment->invoice_type?->value ?? 'other';
+            })->map(function ($group) {
                 return [
                     'count' => $group->count(),
-                    'total_amount' => (float) $group->sum('amount'),
+                    'total_amount' => (float) $group->sum('paid_amount'),
                 ];
             });
 

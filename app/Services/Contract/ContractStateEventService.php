@@ -6,7 +6,6 @@ use App\Repositories\Interfaces\ContractStateEventRepositoryInterface;
 use App\Models\Contract;
 use App\Models\ContractStateEvent;
 use App\Models\SupplementaryAgreement;
-use App\Models\ContractPayment;
 use App\Enums\Contract\ContractStateEventTypeEnum;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
@@ -317,12 +316,12 @@ class ContractStateEventService
                 'triggered_by_type' => $paymentType,
                 'triggered_by_id' => $payment->id,
                 'specification_id' => null,
-                'amount_delta' => $payment->amount ?? 0,
-                'effective_from' => $payment->payment_date ?? now(),
+                'amount_delta' => $payment->paid_amount ?? $payment->amount ?? 0,
+                'effective_from' => $payment->document_date ?? $payment->payment_date ?? now(),
                 'metadata' => [
                     'payment_id' => $payment->id,
-                    'payment_type' => $payment->payment_type ?? null,
-                    'amount' => $payment->amount,
+                    'payment_type' => $payment->metadata['contract_payment_type'] ?? $payment->payment_type ?? null,
+                    'amount' => $payment->paid_amount ?? $payment->amount,
                     'description' => $payment->description ?? null,
                 ],
                 'created_by_user_id' => Auth::id(),
@@ -484,4 +483,3 @@ class ContractStateEventService
         return $this->eventRepository->getTimeline($contract->id, $asOfDate);
     }
 }
-

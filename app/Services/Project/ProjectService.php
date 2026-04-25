@@ -964,13 +964,13 @@ class ProjectService
             'organizations:id,name',
             'contracts:id,project_id,total_amount,status',
             'contracts.performanceActs:id,contract_id,amount,is_approved',
-            'contracts.payments:id,contract_id,amount',
+            'contracts.payments:id,invoiceable_id,invoiceable_type,paid_amount',
         ]);
 
         // РћР±С‰РёРµ СЃСѓРјРјС‹
         $totalContractsAmount = $project->contracts->sum('total_amount');
         $totalPerformanceActsAmount = $project->contracts->flatMap(fn($c) => $c->performanceActs)->where('is_approved', true)->sum('amount');
-        $totalPaymentsAmount = $project->contracts->flatMap(fn($c) => $c->payments)->sum('amount');
+        $totalPaymentsAmount = $project->contracts->flatMap(fn($c) => $c->payments)->sum('paid_amount');
 
         // РЎСѓРјРјР° РІС‹РїРѕР»РЅРµРЅРЅС‹С… СЂР°Р±РѕС‚ Рё РјР°С‚РµСЂРёР°Р»РѕРІ
         $completedWorksQuery = DB::table('completed_works')

@@ -9,7 +9,6 @@ use App\Http\Requests\Api\V1\Admin\Contract\Payment\UpdateContractPaymentRequest
 use App\Http\Resources\Api\V1\Admin\Contract\Payment\ContractPaymentResource;
 use App\Http\Resources\Api\V1\Admin\Contract\Payment\ContractPaymentCollection;
 use App\Models\Contract; // Для Route Model Binding
-use App\Models\ContractPayment; // Для Route Model Binding
 use App\Http\Responses\AdminResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -113,72 +112,60 @@ class ContractPaymentController extends Controller
         }
     }
 
-    public function show(Request $request, int $project, int $contract, ContractPayment $payment)
+    public function show(Request $request, int $project, int $contract, int $payment)
     {
         $user = $request->user();
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? ($request->attributes->get('current_organization_id') ?? $user->current_organization_id);
 
         try {
-            $contractModel = $payment->contract;
-            if (!$contractModel || !$this->canAccessContract($contractModel, $organizationId)) {
+            $paymentModel = $this->paymentService->getPaymentById($payment, $contract, $organizationId);
+            if (!$paymentModel) {
                 return AdminResponse::error(trans_message('contract.payment_not_found'), Response::HTTP_NOT_FOUND);
             }
-            
-            if (!$this->validateProjectContext($request, $payment)) {
-                return AdminResponse::error(trans_message('contract.payment_not_found'), Response::HTTP_NOT_FOUND);
-            }
-            
-            return new ContractPaymentResource($payment);
+
+            return new ContractPaymentResource($paymentModel);
         } catch (Exception $e) {
             return AdminResponse::error(trans_message('contract.payment_retrieve_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
-    public function update(UpdateContractPaymentRequest $request, int $project, int $contract, ContractPayment $payment)
+    public function update(UpdateContractPaymentRequest $request, int $project, int $contract, int $payment)
     {
         $user = $request->user();
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? ($request->attributes->get('current_organization_id') ?? $user->current_organization_id);
         
         try {
-            $contractModel = $payment->contract;
-            if (!$contractModel || !$this->canAccessContract($contractModel, $organizationId)) {
-                return AdminResponse::error(trans_message('contract.payment_not_found'), Response::HTTP_NOT_FOUND);
-            }
-            
-            if (!$this->validateProjectContext($request, $payment)) {
+            $paymentModel = $this->paymentService->getPaymentById($payment, $contract, $organizationId);
+            if (!$paymentModel) {
                 return AdminResponse::error(trans_message('contract.payment_not_found'), Response::HTTP_NOT_FOUND);
             }
 
             $paymentDTO = $request->toDto();
-            $updatedPayment = $this->paymentService->updatePayment($payment->id, null, $organizationId, $paymentDTO);
+            $updatedPayment = $this->paymentService->updatePayment($paymentModel->id, $contract, $organizationId, $paymentDTO);
             return AdminResponse::success(new ContractPaymentResource($updatedPayment), trans_message('contract.payment_updated'));
         } catch (Exception $e) {
             return AdminResponse::error(trans_message('contract.payment_update_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
-    public function destroy(Request $request, int $project, int $contract, ContractPayment $payment)
+    public function destroy(Request $request, int $project, int $contract, int $payment)
     {
         $user = $request->user();
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? ($request->attributes->get('current_organization_id') ?? $user->current_organization_id);
 
         try {
-            $contractModel = $payment->contract;
-            if (!$contractModel || !$this->canAccessContract($contractModel, $organizationId)) {
-                return AdminResponse::error(trans_message('contract.payment_not_found'), Response::HTTP_NOT_FOUND);
-            }
-            
-            if (!$this->validateProjectContext($request, $payment)) {
+            $paymentModel = $this->paymentService->getPaymentById($payment, $contract, $organizationId);
+            if (!$paymentModel) {
                 return AdminResponse::error(trans_message('contract.payment_not_found'), Response::HTTP_NOT_FOUND);
             }
 
-            $this->paymentService->deletePayment($payment->id, null, $organizationId);
+            $this->paymentService->deletePayment($paymentModel->id, $contract, $organizationId);
             return AdminResponse::success(null, trans_message('contract.payment_deleted'), Response::HTTP_NO_CONTENT);
         } catch (Exception $e) {
             return AdminResponse::error(trans_message('contract.payment_delete_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
-} 
+}

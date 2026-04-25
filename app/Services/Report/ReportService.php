@@ -695,7 +695,7 @@ class ReportService
                 'contractors.name as contractor_name',
                 'projects.name as project_name',
                 // Используем новую таблицу invoices
-                DB::raw('(SELECT COALESCE(SUM(paid_amount), 0) FROM invoices WHERE invoiceable_type = \'App\\\\Models\\\\Contract\' AND invoiceable_id = contracts.id AND invoices.organization_id = ' . $organizationId . ' AND deleted_at IS NULL) as paid_amount')
+                DB::raw('(SELECT COALESCE(SUM(paid_amount), 0) FROM payment_documents WHERE invoiceable_type = \'App\\\\Models\\\\Contract\' AND invoiceable_id = contracts.id AND payment_documents.organization_id = ' . $organizationId . ' AND deleted_at IS NULL) as paid_amount')
             );
 
         // Добавляем completed_amount с учетом фильтра по проекту
@@ -849,7 +849,7 @@ class ReportService
                 DB::raw('COALESCE(SUM(contracts.total_amount), 0) as total_contract_amount'),
                 DB::raw($completedAmountSubquery),
                 // Используем новую таблицу invoices
-                DB::raw('COALESCE(SUM((SELECT SUM(paid_amount) FROM invoices WHERE invoiceable_type = \'App\\\\Models\\\\Contract\' AND invoiceable_id = contracts.id AND invoices.organization_id = ' . $organizationId . ' AND deleted_at IS NULL)), 0) as total_paid')
+                DB::raw('COALESCE(SUM((SELECT SUM(paid_amount) FROM payment_documents WHERE invoiceable_type = \'App\\\\Models\\\\Contract\' AND invoiceable_id = contracts.id AND payment_documents.organization_id = ' . $organizationId . ' AND deleted_at IS NULL)), 0) as total_paid')
             )
             ->leftJoin('contracts', 'contractors.id', '=', 'contracts.contractor_id')
             ->groupBy('contractors.id', 'contractors.name', 'contractors.inn', 'contractors.contact_person', 'contractors.phone');

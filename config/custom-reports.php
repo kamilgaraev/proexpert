@@ -54,7 +54,7 @@ return [
             'relations' => [
                 'project' => ['type' => 'belongsTo', 'target' => 'projects', 'foreign_key' => 'project_id', 'owner_key' => 'id'],
                 'contractor' => ['type' => 'belongsTo', 'target' => 'contractors', 'foreign_key' => 'contractor_id', 'owner_key' => 'id'],
-                'payments' => ['type' => 'hasMany', 'target' => 'contract_payments', 'foreign_key' => 'contract_id', 'local_key' => 'id'],
+                'payments' => ['type' => 'hasMany', 'target' => 'payment_documents', 'foreign_key' => 'invoiceable_id', 'local_key' => 'id'],
             ],
             'default_filters' => [
                 ['field' => 'organization_id', 'operator' => '=', 'value' => ':current_organization_id'],

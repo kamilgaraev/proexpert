@@ -4,8 +4,8 @@ namespace App\Console\Commands\Contracts;
 
 use App\Models\Contract;
 use App\Models\SupplementaryAgreement;
-use App\Models\ContractPayment;
 use App\Models\ContractStateEvent;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Services\Contract\ContractStateEventService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -178,14 +178,17 @@ class SyncContractHistoryEventsCommand extends Command
     protected function processPayments(Contract $contract, bool $dryRun, array &$stats): void
     {
         // Получаем все платежи контракта
-        $payments = ContractPayment::where('contract_id', $contract->id)->get();
+        $payments = PaymentDocument::query()
+            ->where('invoiceable_type', Contract::class)
+            ->where('invoiceable_id', $contract->id)
+            ->get();
 
         foreach ($payments as $payment) {
             $stats['payments_processed']++;
 
             // Проверяем, существует ли уже событие для этого платежа
             $existingEvent = ContractStateEvent::where('contract_id', $contract->id)
-                ->where('triggered_by_type', ContractPayment::class)
+                ->where('triggered_by_type', PaymentDocument::class)
                 ->where('triggered_by_id', $payment->id)
                 ->first();
 

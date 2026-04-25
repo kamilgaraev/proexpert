@@ -5,7 +5,6 @@ namespace App\Services\Contract;
 use App\Repositories\Interfaces\ContractRepositoryInterface;
 use App\Repositories\Interfaces\ContractorRepositoryInterface;
 use App\Repositories\Interfaces\ContractPerformanceActRepositoryInterface;
-use App\Repositories\Interfaces\ContractPaymentRepositoryInterface;
 use App\Services\Contract\ContractStateEventService;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\DTOs\Contract\ContractDTO;
@@ -28,7 +27,7 @@ class ContractService
     protected ContractRepositoryInterface $contractRepository;
     protected ContractorRepositoryInterface $contractorRepository; 
     protected ContractPerformanceActRepositoryInterface $actRepository;
-    protected ContractPaymentRepositoryInterface $paymentRepository;
+    protected ContractPaymentDocumentService $contractPaymentDocumentService;
     protected LoggingService $logging;
     protected ProjectContextService $projectContextService;
     protected ContractSideResolverService $contractSideResolverService;
@@ -42,7 +41,7 @@ class ContractService
         ContractRepositoryInterface $contractRepository,
         ContractorRepositoryInterface $contractorRepository,
         ContractPerformanceActRepositoryInterface $actRepository,
-        ContractPaymentRepositoryInterface $paymentRepository,
+        ContractPaymentDocumentService $contractPaymentDocumentService,
         LoggingService $logging,
         ProjectContextService $projectContextService,
         ContractSideResolverService $contractSideResolverService,
@@ -54,7 +53,7 @@ class ContractService
         $this->contractRepository = $contractRepository;
         $this->contractorRepository = $contractorRepository;
         $this->actRepository = $actRepository;
-        $this->paymentRepository = $paymentRepository;
+        $this->contractPaymentDocumentService = $contractPaymentDocumentService;
         $this->logging = $logging;
         $this->projectContextService = $projectContextService;
         $this->contractSideResolverService = $contractSideResolverService;
@@ -317,8 +316,7 @@ class ContractService
             
             if ($advancePayments && is_array($advancePayments)) {
                 foreach ($advancePayments as $advance) {
-                    $this->paymentRepository->create([
-                        'contract_id' => $contract->id,
+                    $this->contractPaymentDocumentService->createPaidContractPayment($contract, [
                         'amount' => $advance['amount'],
                         'payment_date' => $advance['payment_date'] ?? null,
                         'payment_type' => 'advance',
@@ -461,8 +459,7 @@ class ContractService
 
             if ($advancePayments && is_array($advancePayments)) {
                 foreach ($advancePayments as $advance) {
-                    $this->paymentRepository->create([
-                        'contract_id' => $contract->id,
+                    $this->contractPaymentDocumentService->createPaidContractPayment($contract, [
                         'amount' => $advance['amount'],
                         'payment_date' => $advance['payment_date'] ?? null,
                         'payment_type' => 'advance',

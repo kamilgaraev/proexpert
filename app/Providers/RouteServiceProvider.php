@@ -171,11 +171,11 @@ class RouteServiceProvider extends ServiceProvider
         });
         
         Route::bind('payment', function ($value) {
-            $payment = \App\Models\ContractPayment::findOrFail($value);
+            $payment = \App\BusinessModules\Core\Payments\Models\PaymentDocument::findOrFail($value);
             
             $user = request()->user();
             if ($user && $user->current_organization_id) {
-                $contract = $payment->contract;
+                $contract = $payment->invoiceable_type === \App\Models\Contract::class ? $payment->invoiceable : null;
                 if ($contract && $contract->organization_id !== $user->current_organization_id) {
                     abort(403, 'У вас нет доступа к этому платежу');
                 }

@@ -10,7 +10,6 @@ use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\Project;
 use App\Models\Organization;
-use App\Models\ContractPayment;
 use App\Models\ContractPerformanceAct;
 use App\Models\CompletedWork;
 use App\Models\WorkType;
@@ -19,7 +18,7 @@ use App\Models\Role;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractTypeEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
-use App\Enums\Contract\ContractPaymentTypeEnum;
+use App\Services\Contract\ContractPaymentDocumentService;
 use Carbon\Carbon;
 
 class ContractSeeder extends Seeder
@@ -329,11 +328,10 @@ class ContractSeeder extends Seeder
             // Авансовый платеж - всегда после даты договора
             $paymentDate = $faker->dateTimeBetween($contract->date, '+30 days');
 
-            ContractPayment::create([
-                'contract_id' => $contract->id,
+            app(ContractPaymentDocumentService::class)->createPaidContractPayment($contract, [
                 'payment_date' => $paymentDate,
                 'amount' => $contract->actual_advance_amount,
-                'payment_type' => ContractPaymentTypeEnum::ADVANCE,
+                'payment_type' => 'advance',
                 'reference_document_number' => 'ПП-' . $faker->numberBetween(1000, 9999),
                 'description' => 'Авансовый платеж по договору ' . $contract->number,
             ]);
@@ -353,11 +351,10 @@ class ContractSeeder extends Seeder
                 // Промежуточные платежи - от даты договора до сегодня
                 $paymentDate = $faker->dateTimeBetween($contract->date, 'now');
 
-                ContractPayment::create([
-                    'contract_id' => $contract->id,
+                app(ContractPaymentDocumentService::class)->createPaidContractPayment($contract, [
                     'payment_date' => $paymentDate,
                     'amount' => $paymentAmount,
-                    'payment_type' => ContractPaymentTypeEnum::FACT_PAYMENT,
+                    'payment_type' => 'fact_payment',
                     'reference_document_number' => 'ПП-' . $faker->numberBetween(1000, 9999),
                     'description' => 'Промежуточный платеж ' . ($i + 1) . ' по договору ' . $contract->number,
                 ]);

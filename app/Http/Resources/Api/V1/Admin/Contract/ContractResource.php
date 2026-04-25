@@ -263,7 +263,7 @@ class ContractResource extends JsonResource
                     return $totalAmount;
                 }, 0) / ((float) $totalAmountCalculated)) * 100, 2) : 0.0,
             'total_paid_amount' => (float) $this->whenLoaded('payments', function() {
-                return $this->payments->sum('amount') ?? 0;
+                return $this->payments->sum('paid_amount') ?? 0;
             }, 0),
             'is_nearing_limit' => ($this->whenLoaded('performanceActs', function() {
                 $totalAmount = 0;
@@ -318,13 +318,17 @@ class ContractResource extends JsonResource
                 'acts_pending_count' => $this->whenLoaded('performanceActs', fn() => $this->performanceActs->where('is_approved', false)->count(), 0),
                 
                 // Платежи
-                'payments_total_amount' => round((float) $this->whenLoaded('payments', fn() => $this->payments->sum('amount') ?? 0, 0), 2),
+                'payments_total_amount' => round((float) $this->whenLoaded('payments', fn() => $this->payments->sum('paid_amount') ?? 0, 0), 2),
                 'payments_count' => $this->whenLoaded('payments', fn() => $this->payments->count(), 0),
                 'advance_payments' => round((float) $this->whenLoaded('payments', function() {
-                    return $this->payments->where('payment_type', 'advance')->sum('amount') ?? 0;
+                    return $this->payments
+                        ->filter(fn ($payment) => $this->isAdvancePaymentDocument($payment))
+                        ->sum('paid_amount') ?? 0;
                 }, 0), 2),
                 'regular_payments' => round((float) $this->whenLoaded('payments', function() {
-                    return $this->payments->where('payment_type', 'regular')->sum('amount') ?? 0;
+                    return $this->payments
+                        ->reject(fn ($payment) => $this->isAdvancePaymentDocument($payment))
+                        ->sum('paid_amount') ?? 0;
                 }, 0), 2),
                 
                 // Расчетные показатели
@@ -350,7 +354,7 @@ class ContractResource extends JsonResource
                         }
                     }
                     return $totalAmount;
-                }, 0) - (float) $this->whenLoaded('payments', fn() => $this->payments->sum('amount') ?? 0, 0)), 2),
+                }, 0) - (float) $this->whenLoaded('payments', fn() => $this->payments->sum('paid_amount') ?? 0, 0)), 2),
                 
                 // Проценты выполнения
                 'performance_percentage' => ((float) $totalAmountCalculated) > 0 ? 
@@ -367,11 +371,11 @@ class ContractResource extends JsonResource
                     }, 0) / ((float) $totalAmountCalculated)) * 100, 2) : 0.0,
                     
                 'payment_percentage' => ((float) $totalAmountCalculated) > 0 ? 
-                    round(((float) $this->whenLoaded('payments', fn() => $this->payments->sum('amount') ?? 0, 0) / ((float) $totalAmountCalculated)) * 100, 2) : 0.0,
+                    round(((float) $this->whenLoaded('payments', fn() => $this->payments->sum('paid_amount') ?? 0, 0) / ((float) $totalAmountCalculated)) * 100, 2) : 0.0,
                 
                 // Дополнительные метрики
                 'payment_vs_performance_diff' => round((float) $this->whenLoaded('payments', function() {
-                    $totalPaid = $this->payments->sum('amount') ?? 0;
+                    $totalPaid = $this->payments->sum('paid_amount') ?? 0;
                     $totalPerformed = 0;
                     if ($this->relationLoaded('performanceActs')) {
                         foreach ($this->performanceActs->where('is_approved', true) as $act) {
@@ -443,7 +447,7 @@ class ContractResource extends JsonResource
                     // Средняя сумма платежа
                     'avg_payment_amount' => $this->whenLoaded('payments', function() {
                         return $this->payments->count() > 0 
-                            ? round($this->payments->avg('amount'), 2) 
+                            ? round($this->payments->avg('paid_amount'), 2)
                             : 0;
                     }, 0),
                     
@@ -466,7 +470,7 @@ class ContractResource extends JsonResource
                     // Индекс выполнения (CPI - Cost Performance Index)
                     // CPI > 1 = эффективно, CPI < 1 = перерасход
                     'cost_performance_index' => $this->whenLoaded('payments', function() {
-                        $totalPaid = $this->payments->sum('amount') ?? 0;
+                        $totalPaid = $this->payments->sum('paid_amount') ?? 0;
                         $totalPerformed = 0;
                         
                         if ($this->relationLoaded('performanceActs')) {
@@ -516,7 +520,7 @@ class ContractResource extends JsonResource
                         }
                         
                         $totalPaid = $this->relationLoaded('payments') 
-                            ? $this->payments->sum('amount') 
+                            ? $this->payments->sum('paid_amount')
                             : 0;
                         
                         return $totalPerformed > $totalPaid;
@@ -533,7 +537,7 @@ class ContractResource extends JsonResource
                         }
                         
                         $totalPaid = $this->relationLoaded('payments') 
-                            ? $this->payments->sum('amount') 
+                            ? $this->payments->sum('paid_amount')
                             : 0;
                         
                         return $totalPerformed - $totalPaid;
@@ -586,6 +590,12 @@ class ContractResource extends JsonResource
     private function resolveCustomer(): ?array
     {
         return app(ContractSideResolverService::class)->resolveCustomerAlias($this->resource);
+    }
+
+    private function isAdvancePaymentDocument($payment): bool
+    {
+        return ($payment->metadata['contract_payment_type'] ?? null) === 'advance'
+            || $payment->invoice_type?->value === 'advance';
     }
 
     private function resolveContractSide(): array

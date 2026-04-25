@@ -13,7 +13,6 @@ use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\Organization;
 use App\Models\Project;
-use App\Repositories\Interfaces\ContractPaymentRepositoryInterface;
 use App\Repositories\Interfaces\ContractRepositoryInterface;
 use App\Services\Contractor\SelfExecutionService;
 use App\Services\Logging\LoggingService;
@@ -27,7 +26,7 @@ class ContractSideMutationService
 {
     public function __construct(
         private readonly ContractRepositoryInterface $contractRepository,
-        private readonly ContractPaymentRepositoryInterface $paymentRepository,
+        private readonly ContractPaymentDocumentService $contractPaymentDocumentService,
         private readonly ContractAccessService $contractAccessService,
         private readonly LoggingService $logging,
         private readonly ContractorSharingInterface $contractorSharing,
@@ -88,8 +87,7 @@ class ContractSideMutationService
 
             if (is_array($advancePayments)) {
                 foreach ($advancePayments as $advance) {
-                    $this->paymentRepository->create([
-                        'contract_id' => $contract->id,
+                    $this->contractPaymentDocumentService->createPaidContractPayment($contract, [
                         'amount' => $advance['amount'],
                         'payment_date' => $advance['payment_date'] ?? null,
                         'payment_type' => 'advance',

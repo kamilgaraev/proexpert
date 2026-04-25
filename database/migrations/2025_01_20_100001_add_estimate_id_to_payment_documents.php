@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (!Schema::hasTable('payment_documents') || Schema::hasColumn('payment_documents', 'estimate_id')) {
+            return;
+        }
+
         Schema::table('payment_documents', function (Blueprint $table) {
             $table->foreignId('estimate_id')
                 ->nullable()
@@ -29,6 +33,10 @@ return new class extends Migration
      */
     public function down(): void
     {
+        if (!Schema::hasTable('payment_documents') || !Schema::hasColumn('payment_documents', 'estimate_id')) {
+            return;
+        }
+
         Schema::table('payment_documents', function (Blueprint $table) {
             $table->dropForeign(['estimate_id']);
             $table->dropIndex(['estimate_id']);

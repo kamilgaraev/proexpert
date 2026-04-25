@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Models\Estimate;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
@@ -153,7 +154,9 @@ class Contract extends Model
 
     public function payments(): HasMany
     {
-        return $this->hasMany(ContractPayment::class);
+        return $this->hasMany(PaymentDocument::class, 'invoiceable_id')
+            ->where('invoiceable_type', self::class)
+            ->where('status', '!=', 'cancelled');
     }
 
     /**
@@ -474,7 +477,7 @@ class Contract extends Model
     public function getTotalPaidAmountAttribute(): float
     {
         return round(
-            (float) $this->payments()->sum('amount'),
+            (float) $this->payments()->sum('paid_amount'),
             2
         );
     }

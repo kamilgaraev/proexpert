@@ -7,7 +7,7 @@ use App\Repositories\Interfaces\ContractStateEventRepositoryInterface;
 use App\DTOs\SupplementaryAgreementDTO;
 use App\Models\SupplementaryAgreement;
 use App\Models\Contract;
-use App\Models\ContractPayment;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Models\ContractStateEvent;
 use App\Enums\Contract\GpCalculationTypeEnum;
 use App\Services\Logging\LoggingService;
@@ -676,15 +676,23 @@ class SupplementaryAgreementService
                 );
             }
 
-            $payment = ContractPayment::where('id', $change['payment_id'])
-                ->where('contract_id', $contract->id)
-                ->where('payment_type', 'advance')
+            $payment = PaymentDocument::query()
+                ->whereKey($change['payment_id'])
+                ->where('invoiceable_type', Contract::class)
+                ->where('invoiceable_id', $contract->id)
+                ->where(function ($query): void {
+                    $query->where('invoice_type', 'advance')
+                        ->orWhere('metadata->contract_payment_type', 'advance');
+                })
                 ->first();
 
             if ($payment) {
-                $oldAmount = $payment->amount;
-                $payment->amount = $change['new_amount'];
-                $payment->save();
+                $oldAmount = $payment->paid_amount;
+                $payment->update([
+                    'amount' => $change['new_amount'],
+                    'paid_amount' => $change['new_amount'],
+                    'remaining_amount' => 0,
+                ]);
 
                 // TECHNICAL: Изменение суммы авансового платежа
                 $this->logging->technical('agreement.advance_payment_changed', [

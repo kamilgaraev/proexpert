@@ -1093,7 +1093,7 @@ class CustomerPortalService
             ? (float) $contract->performanceActs->where('is_approved', true)->sum('amount')
             : 0.0;
         $paidAmount = $contract->relationLoaded('payments')
-            ? (float) $contract->payments->sum('amount')
+            ? (float) $contract->payments->sum('paid_amount')
             : 0.0;
         $totalAmount = $contract->total_amount !== null ? (float) $contract->total_amount : null;
         $remainingAmount = $totalAmount !== null ? max(0.0, $totalAmount - $performedAmount) : null;
@@ -1177,10 +1177,10 @@ class CustomerPortalService
                 'count' => $payments->count(),
                 'items' => $payments->map(fn ($payment): array => [
                     'id' => $payment->id,
-                    'date' => optional($payment->payment_date)?->format('Y-m-d'),
-                    'amount' => $payment->amount !== null ? (float) $payment->amount : null,
-                    'type' => $payment->payment_type?->value ?? (string) $payment->payment_type,
-                    'reference' => $payment->reference_document_number,
+                    'date' => optional($payment->document_date)?->format('Y-m-d'),
+                    'amount' => $payment->paid_amount !== null ? (float) $payment->paid_amount : null,
+                    'type' => $payment->metadata['contract_payment_type'] ?? $payment->invoice_type?->value,
+                    'reference' => $payment->metadata['reference_document_number'] ?? $payment->document_number,
                 ])->values()->all(),
             ],
             'timeline' => $this->buildContractTimeline($contract, $agreements, $acts, $payments, $events),
@@ -1769,7 +1769,7 @@ class CustomerPortalService
         foreach ($contracts as $contract) {
             $totalAmount += (float) ($contract->total_amount ?? 0);
             $performedAmount += (float) $contract->performanceActs->where('is_approved', true)->sum('amount');
-            $paidAmount += (float) $contract->payments->sum('amount');
+            $paidAmount += (float) $contract->payments->sum('paid_amount');
             $advanceAmount += (float) ($contract->actual_advance_amount ?? 0);
             $retentionAmount += (float) $contract->warranty_retention_amount;
         }
