@@ -32,6 +32,7 @@ class EstimateService
         // Получаем настройки модуля для значений по умолчанию
         $settings = $this->module->getSettings($data['organization_id']);
         $defaults = $settings['estimate_settings'] ?? [];
+        $autoGenerateNumbers = $defaults['auto_generate_numbers'] ?? true;
 
         // Обработка overhead_rate (Накладные расходы)
         if (!array_key_exists('overhead_rate', $data) || is_null($data['overhead_rate'])) {
@@ -51,8 +52,16 @@ class EstimateService
         while ($attempt < $maxAttempts) {
             try {
                 // Generate number BEFORE main transaction to avoid race conditions
-                if (!isset($data['number'])) {
-                    $data['number'] = $this->generateNumber($data['organization_id']);
+                if ($autoGenerateNumbers && empty($data['number'])) {
+                    $data['number'] = $this->generateNumber(
+                        $data['organization_id'],
+                        $defaults['number_template'] ?? null
+                    );
+                } elseif (empty($data['number'])) {
+                    $data['number'] = $this->generateNumber(
+                        $data['organization_id'],
+                        $defaults['number_template'] ?? null
+                    );
                 }
                 
                 return DB::transaction(function () use ($data) {
@@ -268,7 +277,7 @@ class EstimateService
         return $this->repository->getByContract($contractId);
     }
 
-    protected function generateNumber(int $organizationId): string
+    protected function generateNumber(int $organizationId, ?string $template = null): string
     {
         $year = now()->year;
         $prefix = "СМ-{$year}-";
@@ -290,7 +299,12 @@ class EstimateService
             return $result->last_number;
         });
         
-        $number = $prefix . str_pad($newNumber, 4, '0', STR_PAD_LEFT);
+        $sequence = str_pad((string) $newNumber, 4, '0', STR_PAD_LEFT);
+        $number = str_replace(
+            ['{year}', '{number}'],
+            [(string) $year, $sequence],
+            $template ?: $prefix . '{number}'
+        );
         
         // Логирование для отладки
         Log::debug('estimate.number_generated', [

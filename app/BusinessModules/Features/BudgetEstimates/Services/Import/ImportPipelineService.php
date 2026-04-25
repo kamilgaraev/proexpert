@@ -49,7 +49,8 @@ class ImportPipelineService
         private SubItemGroupingService $subItemGrouper,
         private FormulaAwarenessService $formulaAwareness,
         private \App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService $calculationService,
-        private MaterialMatchingService $materialMatcher
+        private MaterialMatchingService $materialMatcher,
+        private EstimateImportFinancialSettingsResolver $financialSettingsResolver
     ) {}
 
     private function updateProgress(ImportSession $session, int $progress, string $message): void
@@ -161,7 +162,7 @@ class ImportPipelineService
                     
                     $baseForCalibration = $laborCostFromFooter > 0 ? $laborCostFromFooter : ($directCosts > 0 ? $directCosts : 0);
                     
-                    if ($baseForCalibration > 0) {
+                    if ($this->shouldPreserveImportedTotals($session) && $baseForCalibration > 0) {
                         Log::info("[ImportPipeline] Calibrating rates using footer: base={$baseForCalibration}, OH={$overheadFromFooter}, P={$profitFromFooter}");
                         if ($overheadFromFooter > 0) {
                             $estimate->overhead_rate = round(($overheadFromFooter / $baseForCalibration) * 100, 2);
@@ -189,7 +190,7 @@ class ImportPipelineService
             $footerOverhead = (float)($savedFooter['overhead_cost'] ?? 0);
             $footerProfit   = (float)($savedFooter['profit_cost'] ?? 0);
 
-            if ($footerTotal > 0 && ($footerOverhead > 0 || $footerProfit > 0)) {
+            if ($this->shouldPreserveImportedTotals($session) && $footerTotal > 0 && ($footerOverhead > 0 || $footerProfit > 0)) {
                 $footerDirect = round($footerTotal - $footerOverhead - $footerProfit, 2);
                 $estimate->update([
                     'total_amount'            => $footerTotal,
@@ -230,6 +231,7 @@ class ImportPipelineService
     private function resolveEstimate(ImportSession $session): Estimate
     {
         $settings = $session->options['estimate_settings'] ?? [];
+        $financialSettings = $this->financialSettingsResolver->resolve($settings);
         
         return $this->estimateService->create([
             'organization_id' => $session->organization_id,
@@ -238,10 +240,21 @@ class ImportPipelineService
             'type' => $settings['type'] ?? 'local',
             'estimate_date' => $settings['estimate_date'] ?? now()->format('Y-m-d'),
             'contract_id' => $settings['contract_id'] ?? null,
-            'vat_rate' => $settings['vat_rate'] ?? self::DEFAULT_VAT_RATE,
-            'overhead_rate' => 0,
-            'profit_rate' => 0,
+            'vat_rate' => $financialSettings['vat_rate'],
+            'overhead_rate' => $financialSettings['overhead_rate'],
+            'profit_rate' => $financialSettings['profit_rate'],
+            'metadata' => [
+                'import_financial_mode' => $settings['financial_mode'] ?? 'plain',
+            ],
         ]);
+    }
+
+    private function shouldPreserveImportedTotals(ImportSession $session): bool
+    {
+        $settings = $session->fresh()->options['estimate_settings'] ?? [];
+        $financialSettings = $this->financialSettingsResolver->resolve($settings);
+
+        return $financialSettings['preserve_imported_totals'];
     }
 
     private array $subItemState = [];

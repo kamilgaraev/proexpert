@@ -23,6 +23,10 @@ class ExecuteEstimateImportRequest extends FormRequest
             'estimate_settings.type' => ['required', 'string', 'in:local,object,summary,contractual'],
             'estimate_settings.project_id' => ['sometimes', 'nullable', 'integer', 'exists:projects,id'],
             'estimate_settings.contract_id' => ['sometimes', 'nullable', 'integer', 'exists:contracts,id'],
+            'estimate_settings.financial_mode' => ['sometimes', 'string', 'in:plain,organization_defaults,custom'],
+            'estimate_settings.vat_rate' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:100'],
+            'estimate_settings.overhead_rate' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:100'],
+            'estimate_settings.profit_rate' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:100'],
         ];
     }
     
