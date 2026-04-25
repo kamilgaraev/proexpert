@@ -32,7 +32,7 @@ class OrganizationSubscriptionController extends Controller
             ]);
         }
         
-        $subscription->load(['plan', 'activeBundledModules.module']);
+        $subscription->load(['plan', 'activeBundledModules.module', 'activeBundledPackages']);
         
         $plan = $subscription->plan;
         $bundledModules = $subscription->activeBundledModules->map(function ($activation) {
@@ -44,6 +44,26 @@ class OrganizationSubscriptionController extends Controller
                 'icon' => $activation->module->icon,
                 'activated_at' => $activation->activated_at?->format('Y-m-d H:i:s'),
                 'expires_at' => $activation->expires_at?->format('Y-m-d H:i:s'),
+            ];
+        });
+
+        $includedPackages = $subscription->activeBundledPackages->map(function ($packageSubscription) {
+            $configPath = config_path('Packages/'.$packageSubscription->package_slug.'.json');
+            $config = file_exists($configPath)
+                ? json_decode((string) file_get_contents($configPath), true)
+                : [];
+            $tier = $config['tiers'][$packageSubscription->tier] ?? [];
+
+            return [
+                'package_slug' => $packageSubscription->package_slug,
+                'tier' => $packageSubscription->tier,
+                'name' => $config['name'] ?? $packageSubscription->package_slug,
+                'tier_label' => $tier['label'] ?? $packageSubscription->tier,
+                'description' => $config['description'] ?? null,
+                'icon' => $config['icon'] ?? null,
+                'color' => $config['color'] ?? null,
+                'modules' => $tier['modules'] ?? [],
+                'expires_at' => $packageSubscription->expires_at?->format('Y-m-d H:i:s'),
             ];
         });
         
@@ -61,6 +81,7 @@ class OrganizationSubscriptionController extends Controller
                         'price' => $plan->price ?? 0,
                         'currency' => $plan->currency ?? 'RUB',
                         'features' => $plan->features ?? [],
+                        'included_packages' => $plan->included_packages ?? [],
                     ],
                     'is_trial' => false,
                     'trial_ends_at' => $subscription->trial_ends_at?->format('Y-m-d H:i:s'),
@@ -69,6 +90,8 @@ class OrganizationSubscriptionController extends Controller
                     'is_canceled' => $subscription->canceled_at !== null,
                     'canceled_at' => $subscription->canceled_at?->format('Y-m-d H:i:s'),
                     'is_auto_payment_enabled' => $subscription->is_auto_payment_enabled,
+                    'included_packages' => $includedPackages,
+                    'included_packages_count' => $includedPackages->count(),
                     'bundled_modules' => $bundledModules,
                     'bundled_modules_count' => $bundledModules->count(),
                 ]

@@ -22,12 +22,14 @@ class SubscriptionPlan extends Model
         'max_storage_gb',
         'max_users',
         'features',
+        'included_packages',
         'is_active',
         'display_order',
     ];
 
     protected $casts = [
         'price' => 'decimal:2',
+        'included_packages' => 'array',
         'features' => AsArrayObject::class, // Для удобной работы с JSON-полем
         'is_active' => 'boolean',
         'max_foremen' => 'integer',

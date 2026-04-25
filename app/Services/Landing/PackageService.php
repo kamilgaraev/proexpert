@@ -63,6 +63,26 @@ class PackageService
         $moduleSlugsList = $tierConfig['modules'];
         $price = (float) ($tierConfig['price'] ?? 0);
 
+        $bundledSubscription = OrganizationPackageSubscription::where('organization_id', $organizationId)
+            ->where('package_slug', $packageSlug)
+            ->where('is_bundled_with_plan', true)
+            ->active()
+            ->first();
+
+        if ($bundledSubscription) {
+            $bundledTierConfig = $config['tiers'][$bundledSubscription->tier] ?? $tierConfig;
+
+            return [
+                'package_slug' => $packageSlug,
+                'tier' => $bundledSubscription->tier,
+                'modules' => $bundledTierConfig['modules'] ?? $moduleSlugsList,
+                'price_paid' => 0,
+                'expires_at' => $bundledSubscription->expires_at,
+                'access_source' => 'subscription',
+                'is_bundled_with_plan' => true,
+            ];
+        }
+
         // Рассчитываем сумму уже оплаченных платных активных модулей
         $activeModules = OrganizationModuleActivation::where('organization_id', $organizationId)
             ->where('status', 'active')
@@ -116,10 +136,17 @@ class PackageService
 
             OrganizationPackageSubscription::updateOrCreate(
                 ['organization_id' => $organizationId, 'package_slug' => $packageSlug],
-                ['tier' => $tier, 'price_paid' => $upgradePrice, 'activated_at' => now(), 'expires_at' => $expiresAt]
+                [
+                    'subscription_id' => null,
+                    'is_bundled_with_plan' => false,
+                    'tier' => $tier,
+                    'price_paid' => $upgradePrice,
+                    'activated_at' => now(),
+                    'expires_at' => $expiresAt,
+                ]
             );
 
-            $this->activateModules($organizationId, $moduleSlugsList, $expiresAt);
+            $this->activateModules($organizationId, $moduleSlugsList, $expiresAt, false);
 
             return [
                 'package_slug' => $packageSlug,
@@ -143,6 +170,10 @@ class PackageService
             return;
         }
 
+        if ($subscription->isBundled()) {
+            return;
+        }
+
         $currentTier = $subscription->tier;
         $modulesToDeactivate = $config['tiers'][$currentTier]['modules'] ?? [];
 
@@ -150,7 +181,7 @@ class PackageService
             $modulesProtected = $this->getModulesProtectedByOtherPackages($organizationId, $packageSlug);
             $toDeactivate = array_diff($modulesToDeactivate, $modulesProtected);
 
-            $this->deactivateModules($organizationId, $toDeactivate);
+            $this->deactivateModules($organizationId, $toDeactivate, false);
 
             OrganizationPackageSubscription::where('organization_id', $organizationId)
                 ->where('package_slug', $packageSlug)
@@ -189,6 +220,8 @@ class PackageService
             'tiers' => $tiers,
             'active_tier' => $activeTier,
             'expires_at' => $subscription?->expires_at?->toISOString(),
+            'access_source' => $subscription?->is_bundled_with_plan ? 'subscription' : ($activeTier ? 'standalone' : null),
+            'is_bundled_with_plan' => (bool) ($subscription?->is_bundled_with_plan ?? false),
         ];
     }
 
@@ -236,7 +269,12 @@ class PackageService
             ->all();
     }
 
-    private function activateModules(int $organizationId, array $moduleSlugs, ?\Carbon\Carbon $expiresAt): void
+    private function activateModules(
+        int $organizationId,
+        array $moduleSlugs,
+        ?\Carbon\Carbon $expiresAt,
+        bool $isBundledWithPlan
+    ): void
     {
         $modules = Module::whereIn('slug', $moduleSlugs)->get()->keyBy('slug');
 
@@ -255,13 +293,13 @@ class PackageService
                     'status' => 'active',
                     'activated_at' => now(),
                     'expires_at' => $expiresAt,
-                    'is_bundled_with_plan' => true,
+                    'is_bundled_with_plan' => $isBundledWithPlan,
                 ]
             );
         }
     }
 
-    private function deactivateModules(int $organizationId, array $moduleSlugs): void
+    private function deactivateModules(int $organizationId, array $moduleSlugs, bool $isBundledWithPlan): void
     {
         if (empty($moduleSlugs)) {
             return;
@@ -272,8 +310,8 @@ class PackageService
         foreach ($modules as $module) {
             OrganizationModuleActivation::where('organization_id', $organizationId)
                 ->where('module_id', $module->id)
-                ->where('is_bundled_with_plan', true)
-                ->update(['status' => 'inactive', 'expires_at' => now()]);
+                ->where('is_bundled_with_plan', $isBundledWithPlan)
+                ->update(['status' => 'suspended', 'expires_at' => now()]);
         }
     }
 

@@ -14,6 +14,8 @@ class OrganizationPackageSubscription extends Model
 
     protected $fillable = [
         'organization_id',
+        'subscription_id',
+        'is_bundled_with_plan',
         'package_slug',
         'tier',
         'price_paid',
@@ -25,11 +27,17 @@ class OrganizationPackageSubscription extends Model
         'activated_at' => 'datetime',
         'expires_at' => 'datetime',
         'price_paid' => 'decimal:2',
+        'is_bundled_with_plan' => 'boolean',
     ];
 
     public function organization(): BelongsTo
     {
         return $this->belongsTo(Organization::class);
+    }
+
+    public function subscription(): BelongsTo
+    {
+        return $this->belongsTo(OrganizationSubscription::class, 'subscription_id');
     }
 
     public function isActive(): bool
@@ -48,5 +56,20 @@ class OrganizationPackageSubscription extends Model
             $q->whereNull('expires_at')
                 ->orWhere('expires_at', '>', now());
         });
+    }
+
+    public function scopeBundled($query)
+    {
+        return $query->where('is_bundled_with_plan', true);
+    }
+
+    public function scopeStandalone($query)
+    {
+        return $query->where('is_bundled_with_plan', false);
+    }
+
+    public function isBundled(): bool
+    {
+        return $this->is_bundled_with_plan === true;
     }
 }

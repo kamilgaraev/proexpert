@@ -62,6 +62,21 @@ class OrganizationSubscription extends Model
             });
     }
 
+    public function bundledPackages(): HasMany
+    {
+        return $this->hasMany(OrganizationPackageSubscription::class, 'subscription_id')
+            ->where('is_bundled_with_plan', true);
+    }
+
+    public function activeBundledPackages(): HasMany
+    {
+        return $this->bundledPackages()
+            ->where(function ($query) {
+                $query->whereNull('expires_at')
+                    ->orWhere('expires_at', '>', now());
+            });
+    }
+
     /**
      * Проверить, активна ли подписка (не истекла и не отменена)
      */
@@ -112,6 +127,13 @@ class OrganizationSubscription extends Model
         ]);
     }
 
+    public function syncPackagesExpiration(): int
+    {
+        return $this->bundledPackages()->update([
+            'expires_at' => $this->ends_at,
+        ]);
+    }
+
     public function deactivateBundledModules(string $reason = 'Подписка отменена'): int
     {
         return $this->bundledModules()
@@ -121,6 +143,13 @@ class OrganizationSubscription extends Model
                 'cancelled_at' => now(),
                 'cancellation_reason' => $reason,
             ]);
+    }
+
+    public function expireBundledPackages(): int
+    {
+        return $this->bundledPackages()->update([
+            'expires_at' => now(),
+        ]);
     }
 
     public function reactivateBundledModules(): int

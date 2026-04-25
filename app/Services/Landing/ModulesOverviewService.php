@@ -134,6 +134,8 @@ class ModulesOverviewService
                     'can_upgrade' => $this->hasHigherTier($package['tiers'], $currentTier),
                     'can_downgrade' => $this->hasLowerTier($package['tiers'], $currentTier),
                     'expires_at' => $subscription?->expires_at?->toISOString(),
+                    'access_source' => $subscription?->is_bundled_with_plan ? 'subscription' : ($currentTier ? 'standalone' : null),
+                    'is_bundled_with_plan' => (bool) ($subscription?->is_bundled_with_plan ?? false),
                     'tiers' => $tiers,
                 ];
             })

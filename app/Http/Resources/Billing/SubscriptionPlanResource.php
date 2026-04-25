@@ -6,6 +6,8 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 /**
+ * @mixin \App\Models\SubscriptionPlan
+ *
  * @OA\Schema(
  *     schema="SubscriptionPlanResource",
  *     title="Subscription Plan Resource",
@@ -45,6 +47,7 @@ class SubscriptionPlanResource extends JsonResource
             'max_projects' => $this->max_projects,
             'max_storage_gb' => $this->max_storage_gb,
             'features' => $this->features, // Already an AsArrayObject, should cast to array
+            'included_packages' => $this->included_packages ?? [],
             'display_order' => $this->display_order,
         ];
     }
