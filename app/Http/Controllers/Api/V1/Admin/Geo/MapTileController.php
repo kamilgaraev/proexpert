@@ -66,11 +66,17 @@ class MapTileController extends Controller
     public function getProjects(Request $request): JsonResponse
     {
         try {
-            $organizationId = Auth::user()->current_organization_id;
+            $user = $request->user();
+            $currentOrganizationId = (int) ($user?->current_organization_id ?? 0);
+            $requestedOrganizationId = (int) $request->input('organization_id');
+            $organizationId = $requestedOrganizationId === $currentOrganizationId
+                ? $requestedOrganizationId
+                : $currentOrganizationId;
             $filters = $request->input('filters', []);
 
             // Получаем проекты напрямую из БД без тайловой системы
-            $query = Project::where('organization_id', $organizationId)
+            $query = Project::query()
+                ->accessibleByOrganization($organizationId)
                 ->where(function ($query) {
                     $query
                         ->where(function ($query) {
@@ -81,9 +87,17 @@ class MapTileController extends Controller
                         });
                 });
 
+            if ($request->filled('project_id')) {
+                $query->whereKey((int) $request->input('project_id'));
+            }
+
             // Применяем фильтры
             if (!empty($filters['status'])) {
-                $query->where('status', $filters['status']);
+                $statuses = is_array($filters['status'])
+                    ? $filters['status']
+                    : explode(',', (string) $filters['status']);
+
+                $query->whereIn('status', array_filter($statuses));
             }
 
             if (!empty($filters['health'])) {
