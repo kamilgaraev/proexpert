@@ -107,10 +107,15 @@ class PaymentValidationService
             if (!isset($data[$field]) || empty($data[$field])) {
                 throw new \InvalidArgumentException(sprintf(
                     trans_message('payments.validation.required_field'),
-                    $field
+                    $this->fieldLabel($field)
                 ));
             }
         }
+    }
+
+    private function fieldLabel(string $field): string
+    {
+        return trans_message("payments.fields.{$field}") ?: $field;
     }
 
     /**

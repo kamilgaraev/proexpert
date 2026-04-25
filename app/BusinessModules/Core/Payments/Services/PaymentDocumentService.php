@@ -813,6 +813,7 @@ class PaymentDocumentService
             'project_id' => $contract->project_id,
             'document_type' => PaymentDocumentType::INVOICE,
             'document_date' => now(),
+            'currency' => config('payments.defaults.currency', 'RUB'),
             'direction' => InvoiceDirection::OUTGOING,
             'invoice_type' => $type,
             'invoiceable_type' => Contract::class,

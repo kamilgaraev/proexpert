@@ -4,6 +4,13 @@ declare(strict_types=1);
 
 return [
     'validation_error' => 'Переданы некорректные данные.',
+    'fields' => [
+        'organization_id' => 'организация',
+        'document_type' => 'тип документа',
+        'document_date' => 'дата документа',
+        'amount' => 'сумма',
+        'currency' => 'валюта',
+    ],
     'validation' => [
         'errors_prefix' => 'Ошибки валидации: %s',
         'required_field' => 'Поле "%s" обязательно.',

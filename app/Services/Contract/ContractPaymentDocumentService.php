@@ -32,6 +32,7 @@ class ContractPaymentDocumentService
             $this->mapContractPaymentTypeToInvoiceType($paymentType),
             [
                 'amount' => $amount,
+                'currency' => $data['currency'] ?? config('payments.defaults.currency', 'RUB'),
                 'document_date' => $paymentDate,
                 'due_date' => $paymentDate,
                 'description' => $data['description'] ?? null,
