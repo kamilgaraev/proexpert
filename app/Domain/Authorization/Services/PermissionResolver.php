@@ -198,6 +198,7 @@ class PermissionResolver
             'schedule' => 'schedule-management',
             'construction-journal' => 'budget-estimates',
             'estimates' => 'budget-estimates',
+            'act_reports' => 'act-reporting',
             'ai_estimates' => 'ai-estimates',
             'time_tracking' => 'time-tracking',
         ];
@@ -206,6 +207,7 @@ class PermissionResolver
         $reverseMapping = [
             'budget-estimates' => 'estimates',
             'schedule-management' => 'schedule',
+            'act-reporting' => 'act_reports',
         ];
         
         $modulesToCheck = [$module];
@@ -548,6 +550,8 @@ class PermissionResolver
             'construction-journal' => 'budget-estimates',
             'construction_journal' => 'budget-estimates',
             'estimates' => 'budget-estimates',
+            'act_reports' => 'act-reporting',
+            'act-reports' => 'act-reporting',
             'ai_estimates' => 'ai-estimates',
             'time_tracking' => 'time-tracking',
             'report_templates' => 'report-templates',
@@ -556,6 +560,7 @@ class PermissionResolver
         $reverseMapping = [
             'budget-estimates' => 'estimates',
             'schedule-management' => 'schedule',
+            'act-reporting' => 'act_reports',
             'time-tracking' => 'time_tracking',
             'report-templates' => 'report_templates',
         ];
