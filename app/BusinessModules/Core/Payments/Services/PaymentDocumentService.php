@@ -32,6 +32,7 @@ class PaymentDocumentService
      */
     public function create(array $data): PaymentDocument
     {
+        $data = $this->normalizeDocumentData($data);
         $attempts = 0;
         $maxAttempts = 3;
         $wasNumberProvided = isset($data['document_number']);
@@ -833,6 +834,21 @@ class PaymentDocumentService
         $this->detectAndSetRecipientOrganization($document);
         
         return $document;
+    }
+
+    private function normalizeDocumentData(array $data): array
+    {
+        foreach (['document_type', 'direction', 'invoice_type', 'status'] as $field) {
+            if (($data[$field] ?? null) instanceof \BackedEnum) {
+                $data[$field] = $data[$field]->value;
+            }
+        }
+
+        if (empty($data['currency'])) {
+            $data['currency'] = config('payments.defaults.currency', 'RUB');
+        }
+
+        return $data;
     }
 
     /**
