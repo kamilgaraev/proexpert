@@ -167,7 +167,9 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
             // Но чтобы фронт получал удобный root - завернем в один объект
             $payload = [
                 'sections' => $tree,
-                'itemsWithoutSection' => $rootItemsWithoutSection
+                'items' => $rootItemsWithoutSection,
+                'itemsWithoutSection' => $rootItemsWithoutSection,
+                'items_without_section' => $rootItemsWithoutSection,
             ];
 
             // 3. Сохранение в Storage

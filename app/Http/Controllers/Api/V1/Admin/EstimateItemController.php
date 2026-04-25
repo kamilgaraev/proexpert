@@ -3,9 +3,10 @@
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Enums\EstimatePositionItemType;
-use App\Http\Controllers\Controller;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCacheService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateItemService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateItemNumberingService;
+use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\Admin\Estimate\EstimateItemResource;
 use App\Http\Responses\AdminResponse;
 use App\Models\Estimate;
@@ -23,7 +24,8 @@ class EstimateItemController extends Controller
 {
     public function __construct(
         protected EstimateItemService $itemService,
-        protected EstimateItemNumberingService $numberingService
+        protected EstimateItemNumberingService $numberingService,
+        protected EstimateCacheService $cacheService
     ) {
         Log::info('[EstimateItemController::__construct] Контроллер создан', [
             'url' => request()->fullUrl(),
@@ -48,15 +50,15 @@ class EstimateItemController extends Controller
             ->orderBy('id', 'asc')
             ->paginate($request->input('per_page', 50));
         
-        return AdminResponse::success(
+        return AdminResponse::paginated(
             EstimateItemResource::collection($items),
-            null,
-            Response::HTTP_OK,
             [
                 'current_page' => $items->currentPage(),
                 'per_page' => $items->perPage(),
                 'total' => $items->total(),
-            ]
+            ],
+            null,
+            Response::HTTP_OK
         );
     }
 
@@ -389,6 +391,7 @@ class EstimateItemController extends Controller
 
             // Пересчитываем номера всех позиций после изменения порядка
             $this->numberingService->recalculateAllItemNumbers($estimateModel->id, $numberingMode);
+            $this->cacheService->invalidateStructure($estimateModel);
 
             // Возвращаем обновленный список позиций
             $items = EstimatePositionOrder::apply(
@@ -441,6 +444,7 @@ class EstimateItemController extends Controller
 
         try {
             $this->numberingService->recalculateAllItemNumbers($estimateModel->id, $numberingMode);
+            $this->cacheService->invalidateStructure($estimateModel);
 
             return AdminResponse::success(
                 ['numbering_mode' => $numberingMode],

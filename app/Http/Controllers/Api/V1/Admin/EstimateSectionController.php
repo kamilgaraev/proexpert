@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\BusinessModules\Features\BudgetEstimates\Http\Requests\StoreSectionRequest;
 use App\BusinessModules\Features\BudgetEstimates\Http\Requests\UpdateSectionRequest;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCacheService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateSectionNumberingService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateSectionService;
 use App\Http\Controllers\Controller;
@@ -22,7 +23,8 @@ class EstimateSectionController extends Controller
 {
     public function __construct(
         protected EstimateSectionService $sectionService,
-        protected EstimateSectionNumberingService $numberingService
+        protected EstimateSectionNumberingService $numberingService,
+        protected EstimateCacheService $cacheService
     ) {}
 
     public function index(Request $request, $project, int $estimateId): JsonResponse
@@ -181,6 +183,7 @@ class EstimateSectionController extends Controller
 
             // Пересчитываем номера
             $this->numberingService->recalculateAllSectionNumbers($estimate->id);
+            $this->cacheService->invalidateStructure($estimate);
 
             // Возвращаем обновленную иерархию
             $updatedSections = $estimate->sections()
@@ -222,6 +225,7 @@ class EstimateSectionController extends Controller
 
         try {
             $this->numberingService->recalculateAllSectionNumbers($estimate->id);
+            $this->cacheService->invalidateStructure($estimate);
 
             return AdminResponse::success(null, trans_message('estimate.section_numbering_recalculated'));
         } catch (\Exception $e) {

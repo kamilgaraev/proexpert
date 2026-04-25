@@ -326,6 +326,7 @@ class EstimateCalculationService
         
         // Инвалидировать кеш после обновления
         $this->cacheService->invalidateTotals($estimate);
+        $this->cacheService->invalidateStructure($estimate);
         
         $this->dispatchAsyncUpdates($estimate);
         
@@ -334,8 +335,8 @@ class EstimateCalculationService
 
     public function dispatchAsyncUpdates(Estimate $estimate): void
     {
-        \App\BusinessModules\Features\BudgetEstimates\Jobs\CalculateEstimateStatisticsJob::dispatch($estimate->id);
-        \App\BusinessModules\Features\BudgetEstimates\Jobs\GenerateEstimateSnapshotJob::dispatch($estimate->id);
+        \App\BusinessModules\Features\BudgetEstimates\Jobs\CalculateEstimateStatisticsJob::dispatch($estimate->id)->afterCommit();
+        \App\BusinessModules\Features\BudgetEstimates\Jobs\GenerateEstimateSnapshotJob::dispatch($estimate->id)->afterCommit();
     }
 
     public function recalculateAll(Estimate $estimate): array

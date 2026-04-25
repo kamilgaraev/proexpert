@@ -4,6 +4,7 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services;
 
 use App\Models\Estimate;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Storage;
 
 class EstimateCacheService
 {
@@ -129,6 +130,28 @@ class EstimateCacheService
     public function invalidateStructure(Estimate $estimate): void
     {
         Cache::forget("estimate_structure_{$estimate->id}");
+        $this->invalidateStructureSnapshot($estimate);
+    }
+
+    public function invalidateStructureSnapshot(Estimate $estimate): void
+    {
+        $path = $estimate->structure_cache_path;
+
+        if (!$path) {
+            return;
+        }
+
+        $estimate->structure_cache_path = null;
+
+        if ($estimate->exists) {
+            $estimate->saveQuietly();
+        }
+
+        $disk = Storage::disk('s3');
+
+        if ($disk->exists($path)) {
+            $disk->delete($path);
+        }
     }
 
     /**
@@ -200,8 +223,11 @@ class EstimateCacheService
         
         if ($driver === 'redis') {
             try {
-                $redis = Cache::getRedis();
-                $keys = $redis->keys(self::TAG_PREFIX . '*');
+                $store = Cache::store('redis')->getStore();
+                $connection = method_exists($store, 'connection') ? $store->connection() : null;
+                $keys = $connection && method_exists($connection, 'keys')
+                    ? $connection->keys(self::TAG_PREFIX . '*')
+                    : [];
                 
                 return [
                     'driver' => $driver,

@@ -13,7 +13,8 @@ class EstimateSectionService
     public function __construct(
         protected EstimateSectionRepository $repository,
         protected EstimateItemRepository $itemRepository,
-        protected EstimateCalculationService $calculationService
+        protected EstimateCalculationService $calculationService,
+        protected EstimateCacheService $cacheService
     ) {}
 
     public function createSection(array $data): EstimateSection
@@ -28,7 +29,10 @@ class EstimateSectionService
             );
         }
         
-        return $this->repository->create($data);
+        $section = $this->repository->create($data);
+        $this->invalidateEstimateStructure((int) $section->estimate_id);
+
+        return $section;
     }
     
     /**
@@ -50,6 +54,7 @@ class EstimateSectionService
     public function updateSection(EstimateSection $section, array $data): EstimateSection
     {
         $this->repository->update($section, $data);
+        $this->invalidateEstimateStructure((int) $section->estimate_id);
         
         return $section->fresh();
     }
@@ -57,6 +62,8 @@ class EstimateSectionService
     public function deleteSection(EstimateSection $section, bool $cascade = false): bool
     {
         return DB::transaction(function () use ($section, $cascade) {
+            $estimateId = (int) $section->estimate_id;
+
             if ($cascade) {
                 foreach ($section->children as $child) {
                     $this->deleteSection($child, true);
@@ -68,7 +75,10 @@ class EstimateSectionService
                 $section->items()->update(['estimate_section_id' => $section->parent_section_id]);
             }
             
-            return $this->repository->delete($section);
+            $deleted = $this->repository->delete($section);
+            $this->invalidateEstimateStructure($estimateId);
+
+            return $deleted;
         });
     }
 
@@ -79,6 +89,7 @@ class EstimateSectionService
         }
         
         $this->repository->moveSection($section, $newParentId, $newSortOrder);
+        $this->invalidateEstimateStructure((int) $section->estimate_id);
         
         return $section->fresh();
     }
@@ -86,6 +97,15 @@ class EstimateSectionService
     public function updateSortOrder(array $sectionsWithOrders): void
     {
         $this->repository->updateSortOrders($sectionsWithOrders);
+
+        $estimateId = collect($sectionsWithOrders)
+            ->pluck('estimate_id')
+            ->filter()
+            ->first();
+
+        if ($estimateId) {
+            $this->invalidateEstimateStructure((int) $estimateId);
+        }
     }
 
     public function getHierarchy(int $estimateId)
@@ -146,8 +166,19 @@ class EstimateSectionService
                 $sectionMapping[$templateSection['id']] = $section->id;
             }
         }
+
+        $this->cacheService->invalidateStructure($estimate);
         
         return $createdSections;
+    }
+
+    private function invalidateEstimateStructure(int $estimateId): void
+    {
+        $estimate = Estimate::find($estimateId);
+
+        if ($estimate) {
+            $this->cacheService->invalidateStructure($estimate);
+        }
     }
 }
 
