@@ -8,6 +8,7 @@ use App\Models\User;
 use Illuminate\Auth\Events\Verified;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 class EmailVerificationController extends Controller
@@ -48,6 +49,8 @@ class EmailVerificationController extends Controller
             if ($user->markEmailAsVerified()) {
                 event(new Verified($user));
 
+                $this->clearUserProfileCache($user);
+
                 Log::info('Email verified successfully', [
                     'user_id' => $user->id,
                     'email' => $user->email,
@@ -66,6 +69,11 @@ class EmailVerificationController extends Controller
                 500
             );
         }
+    }
+
+    private function clearUserProfileCache(User $user): void
+    {
+        Cache::forget("user_with_roles_{$user->id}_" . ($user->current_organization_id ?? 'no_org'));
     }
 
     public function resend(Request $request): JsonResponse
