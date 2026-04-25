@@ -14,6 +14,7 @@ use App\Interfaces\Billing\BalanceServiceInterface;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use Tymon\JWTAuth\Facades\JWTAuth;
 use Tymon\JWTAuth\Exceptions\JWTException;
 use Tymon\JWTAuth\Exceptions\TokenExpiredException;
@@ -492,7 +493,9 @@ class JwtAuthService
             ]);
             
             // РџСЂРѕРІРµСЂСЏРµРј, РЅРµ СЃСѓС‰РµСЃС‚РІСѓРµС‚ Р»Рё СѓР¶Рµ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ СЃ С‚Р°РєРёРј email
-            $existingUser = $this->userRepository->findByEmail($userData['email']);
+            $existingUser = User::query()
+                ->whereRaw('LOWER(email) = ?', [Str::lower((string) $userData['email'])])
+                ->first();
             if ($existingUser) {
                 Log::warning('[JwtAuthService] User already exists with this email', [
                     'email' => $userData['email'],

@@ -2,6 +2,8 @@
 
 namespace App\DTOs\Auth;
 
+use Illuminate\Support\Str;
+
 class RegisterDTO
 {
     private string $name;
@@ -40,7 +42,7 @@ class RegisterDTO
         ?string $organizationCountry
     ) {
         $this->name = $name;
-        $this->email = $email;
+        $this->email = Str::lower(trim($email));
         $this->password = $password;
         $this->phone = $phone;
         $this->position = $position;

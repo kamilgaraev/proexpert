@@ -3,6 +3,8 @@
 namespace App\Http\Requests\Api\V1\Landing\Auth;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class RegisterRequest extends FormRequest
 {
@@ -16,6 +18,15 @@ class RegisterRequest extends FormRequest
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('email')) {
+            $this->merge([
+                'email' => Str::lower(trim((string) $this->input('email'))),
+            ]);
+        }
+    }
+
     /**
      * Правила валидации для запроса.
      *
@@ -26,7 +37,19 @@ class RegisterRequest extends FormRequest
         return [
             // Данные пользователя
             'name' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:users',
+            'email' => [
+                'required',
+                'string',
+                'email',
+                'max:255',
+                function (string $attribute, mixed $value, \Closure $fail): void {
+                    $email = Str::lower(trim((string) $value));
+
+                    if (DB::table('users')->whereRaw('LOWER(email) = ?', [$email])->exists()) {
+                        $fail(trans_message('customer.auth.validation.email_taken'));
+                    }
+                },
+            ],
             'password' => [
                 'required',
                 'string',
