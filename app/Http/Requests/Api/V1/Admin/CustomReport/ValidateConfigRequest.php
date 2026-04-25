@@ -8,7 +8,7 @@ class ValidateConfigRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true; // Authorization handled by middleware: auth:api_admin, authorize:admin.access, module.access:advanced-reports
+        return true; // Authorization handled by middleware: auth:api_admin, authorize:admin.access, module.access:reports
     }
 
     public function rules(): array

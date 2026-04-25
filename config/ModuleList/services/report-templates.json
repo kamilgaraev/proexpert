@@ -43,7 +43,7 @@
   "dependencies": [
     "organizations",
     "users",
-    "basic-reports"
+    "reports"
   ],
   
   "conflicts": [],

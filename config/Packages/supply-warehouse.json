@@ -13,7 +13,10 @@
             "billing_model": "subscription",
             "duration_days": 30,
             "modules": [
+                "project-management",
+                "site-requests",
                 "catalog-management",
+                "basic-warehouse",
                 "procurement"
             ],
             "highlights": [
@@ -29,9 +32,12 @@
             "billing_model": "subscription",
             "duration_days": 30,
             "modules": [
+                "project-management",
+                "site-requests",
                 "catalog-management",
                 "basic-warehouse",
-                "procurement"
+                "procurement",
+                "material-analytics"
             ],
             "highlights": [
                 "Склад и остатки",
@@ -46,9 +52,13 @@
             "billing_model": "subscription",
             "duration_days": 30,
             "modules": [
+                "project-management",
+                "site-requests",
+                "catalog-management",
                 "basic-warehouse",
                 "procurement",
-                "material-analytics"
+                "material-analytics",
+                "data-export"
             ],
             "highlights": [
                 "Материальная аналитика",

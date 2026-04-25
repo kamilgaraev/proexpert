@@ -42,9 +42,7 @@ class SubscriptionPlanSeeder extends Seeder
                         '10 операций/мес',
                     ],
                 ],
-                'included_packages' => [
-                    ['package_slug' => 'objects-execution', 'tier' => 'base'],
-                ],
+                'included_packages' => [],
                 'is_active' => true,
                 'display_order' => 1,
             ],
@@ -76,7 +74,9 @@ class SubscriptionPlanSeeder extends Seeder
                         'Техническая поддержка',
                     ],
                 ],
-                'included_packages' => [],
+                'included_packages' => [
+                    ['package_slug' => 'objects-execution', 'tier' => 'base'],
+                ],
                 'is_active' => true,
                 'display_order' => 2,
             ],

@@ -13,8 +13,8 @@
             "billing_model": "subscription",
             "duration_days": 30,
             "modules": [
-                "advanced-reports",
-                "dashboard-widgets"
+                "dashboard-widgets",
+                "data-filters"
             ],
             "highlights": [
                 "Управленческий обзор",
@@ -29,9 +29,9 @@
             "billing_model": "subscription",
             "duration_days": 30,
             "modules": [
-                "advanced-reports",
                 "data-filters",
-                "advanced-dashboard"
+                "dashboard-widgets",
+                "data-export"
             ],
             "highlights": [
                 "Расширенные отчеты",
@@ -46,8 +46,10 @@
             "billing_model": "subscription",
             "duration_days": 30,
             "modules": [
+                "dashboard-widgets",
+                "data-filters",
+                "data-export",
                 "multi-organization",
-                "advanced-dashboard",
                 "integrations"
             ],
             "highlights": [

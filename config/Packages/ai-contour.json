@@ -13,6 +13,7 @@
             "billing_model": "subscription",
             "duration_days": 30,
             "modules": [
+                "project-management",
                 "ai-assistant"
             ],
             "highlights": [
@@ -28,6 +29,9 @@
             "billing_model": "subscription",
             "duration_days": 30,
             "modules": [
+                "project-management",
+                "contract-management",
+                "budget-estimates",
                 "ai-assistant",
                 "ai-estimates"
             ],
@@ -44,9 +48,14 @@
             "billing_model": "subscription",
             "duration_days": 30,
             "modules": [
+                "project-management",
+                "contract-management",
+                "budget-estimates",
                 "ai-assistant",
                 "ai-estimates",
-                "advanced-reports"
+                "dashboard-widgets",
+                "data-filters",
+                "data-export"
             ],
             "highlights": [
                 "AI по данным компании",

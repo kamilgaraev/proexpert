@@ -13,6 +13,10 @@
             "billing_model": "subscription",
             "duration_days": 30,
             "modules": [
+                "project-management",
+                "catalog-management",
+                "workflow-management",
+                "contract-management",
                 "payments",
                 "act-reporting"
             ],
@@ -29,6 +33,10 @@
             "billing_model": "subscription",
             "duration_days": 30,
             "modules": [
+                "project-management",
+                "catalog-management",
+                "workflow-management",
+                "contract-management",
                 "payments",
                 "act-reporting",
                 "advance-accounting"
@@ -46,8 +54,13 @@
             "billing_model": "subscription",
             "duration_days": 30,
             "modules": [
+                "project-management",
+                "catalog-management",
+                "workflow-management",
+                "contract-management",
                 "payments",
                 "act-reporting",
+                "advance-accounting",
                 "budget-estimates"
             ],
             "highlights": [

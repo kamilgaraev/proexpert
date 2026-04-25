@@ -30,6 +30,7 @@
             "duration_days": 30,
             "modules": [
                 "project-management",
+                "contract-management",
                 "schedule-management",
                 "site-requests"
             ],
@@ -47,7 +48,9 @@
             "duration_days": 30,
             "modules": [
                 "project-management",
+                "contract-management",
                 "schedule-management",
+                "site-requests",
                 "time-tracking"
             ],
             "highlights": [

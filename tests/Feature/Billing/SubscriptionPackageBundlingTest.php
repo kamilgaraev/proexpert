@@ -159,11 +159,11 @@ class SubscriptionPackageBundlingTest extends TestCase
         ]);
 
         $subscription = $this->createSubscription($plan);
-        $this->createPackageModules('objects-execution', 'pro');
+        $modules = $this->createPackageModules('objects-execution', 'pro');
 
         $result = app(SubscriptionModuleSyncService::class)->syncModulesOnSubscribe($subscription);
 
-        $this->assertSame(3, $result['activated_count']);
+        $this->assertSame(count($modules), $result['activated_count']);
         $this->assertSame(1, $result['packages_activated_count']);
 
         $this->assertDatabaseHas('organization_package_subscriptions', [
@@ -176,7 +176,7 @@ class SubscriptionPackageBundlingTest extends TestCase
         ]);
 
         $this->assertSame(
-            3,
+            count($modules),
             OrganizationModuleActivation::query()
                 ->where('organization_id', $this->organization->id)
                 ->where('subscription_id', $subscription->id)
@@ -220,7 +220,7 @@ class SubscriptionPackageBundlingTest extends TestCase
         $result = app(SubscriptionModuleSyncService::class)->syncModulesOnSubscribe($subscription);
 
         $this->assertSame(0, $result['activated_count']);
-        $this->assertSame(3, $result['converted_count']);
+        $this->assertSame(count($modules), $result['converted_count']);
         $this->assertSame(1, $result['packages_converted_count']);
 
         $this->assertDatabaseHas('organization_package_subscriptions', [
@@ -241,7 +241,7 @@ class SubscriptionPackageBundlingTest extends TestCase
         $newPlan = $this->createPlan('start', []);
 
         $subscription = $this->createSubscription($oldPlan);
-        $this->createPackageModules('objects-execution', 'pro');
+        $modules = $this->createPackageModules('objects-execution', 'pro');
         $this->createPackageModules('finance-acts', 'pro');
 
         app(SubscriptionModuleSyncService::class)->syncModulesOnSubscribe($subscription);
@@ -264,7 +264,7 @@ class SubscriptionPackageBundlingTest extends TestCase
             $newPlan
         );
 
-        $this->assertSame(3, $result['deactivated_count']);
+        $this->assertSame(count($modules), $result['deactivated_count']);
         $this->assertSame(1, $result['packages_deactivated_count']);
 
         $this->assertDatabaseHas('organization_package_subscriptions', [
@@ -322,29 +322,31 @@ class SubscriptionPackageBundlingTest extends TestCase
         $modules = [];
 
         foreach ($config['tiers'][$tier]['modules'] as $slug) {
-            $modules[] = Module::create([
-                'name' => $slug,
-                'slug' => $slug,
-                'version' => '1.0.0',
-                'type' => 'feature',
-                'billing_model' => 'subscription',
-                'category' => 'landing',
-                'description' => $slug,
-                'pricing_config' => [
-                    'base_price' => 1000,
-                    'currency' => 'RUB',
-                    'duration_days' => 30,
-                ],
-                'features' => [],
-                'permissions' => [],
-                'dependencies' => [],
-                'conflicts' => [],
-                'limits' => [],
-                'display_order' => 1,
-                'is_active' => true,
-                'is_system_module' => false,
-                'can_deactivate' => true,
-            ]);
+            $modules[] = Module::firstOrCreate(
+                ['slug' => $slug],
+                [
+                    'name' => $slug,
+                    'version' => '1.0.0',
+                    'type' => 'feature',
+                    'billing_model' => 'subscription',
+                    'category' => 'landing',
+                    'description' => $slug,
+                    'pricing_config' => [
+                        'base_price' => 1000,
+                        'currency' => 'RUB',
+                        'duration_days' => 30,
+                    ],
+                    'features' => [],
+                    'permissions' => [],
+                    'dependencies' => [],
+                    'conflicts' => [],
+                    'limits' => [],
+                    'display_order' => 1,
+                    'is_active' => true,
+                    'is_system_module' => false,
+                    'can_deactivate' => true,
+                ]
+            );
         }
 
         return $modules;

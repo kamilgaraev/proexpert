@@ -13,6 +13,8 @@
             "billing_model": "subscription",
             "duration_days": 30,
             "modules": [
+                "project-management",
+                "contract-management",
                 "budget-estimates",
                 "file-management"
             ],
@@ -29,8 +31,12 @@
             "billing_model": "subscription",
             "duration_days": 30,
             "modules": [
+                "project-management",
+                "contract-management",
+                "catalog-management",
                 "budget-estimates",
                 "rate-management",
+                "reports",
                 "report-templates"
             ],
             "highlights": [
@@ -46,9 +52,15 @@
             "billing_model": "subscription",
             "duration_days": 30,
             "modules": [
+                "project-management",
+                "contract-management",
+                "catalog-management",
                 "budget-estimates",
                 "ai-estimates",
-                "file-management"
+                "file-management",
+                "rate-management",
+                "reports",
+                "report-templates"
             ],
             "highlights": [
                 "AI-старт сметы",

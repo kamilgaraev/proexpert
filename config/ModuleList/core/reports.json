@@ -37,12 +37,9 @@
     "dependencies": [
         "organizations",
         "users",
-        "projects"
+        "project-management"
     ],
-    "conflicts": [
-        "basic-reports",
-        "advanced-reports"
-    ],
+    "conflicts": [],
     "limits": {
         "max_custom_reports": 50,
         "max_scheduled_reports": 10

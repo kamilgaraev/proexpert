@@ -69,7 +69,7 @@ class ReportsModule implements ModuleInterface, ConfigurableInterface
         return [
             'organizations',
             'users',
-            'projects',
+            'project-management',
         ];
     }
 
