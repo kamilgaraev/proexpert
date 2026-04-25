@@ -19,6 +19,7 @@ class AttachEstimateItemsRequest extends FormRequest
             'estimate_id' => 'required|integer|exists:estimates,id',
             'item_ids'    => 'required|array|min:1',
             'item_ids.*'  => 'integer|exists:estimate_items,id',
+            'include_vat' => 'sometimes|boolean',
         ];
     }
 

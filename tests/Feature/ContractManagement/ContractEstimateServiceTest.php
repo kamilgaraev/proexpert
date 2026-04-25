@@ -219,4 +219,50 @@ class ContractEstimateServiceTest extends TestCase
         $this->assertEquals(1, $coverage['primary_contract']['linked_items_count']);
         $this->assertEquals(500.0, $coverage['primary_contract']['linked_amount']);
     }
+
+    public function test_full_coverage_can_include_estimate_vat(): void
+    {
+        $this->estimate->update(['vat_rate' => 20]);
+
+        EstimateItem::factory()->create([
+            'estimate_id' => $this->estimate->id,
+            'item_type' => 'work',
+            'quantity_total' => 1,
+            'unit_price' => 1000,
+            'total_amount' => 1000,
+        ]);
+
+        EstimateItem::factory()->create([
+            'estimate_id' => $this->estimate->id,
+            'item_type' => 'material',
+            'quantity_total' => 1,
+            'unit_price' => 500,
+            'total_amount' => 500,
+        ]);
+
+        $this->coverageService->attachFullCoverage($this->contract, $this->estimate, true);
+
+        $coverage = $this->coverageService->getCoverageForEstimate($this->estimate);
+
+        $this->assertEquals(1800.0, $coverage['primary_contract']['linked_amount']);
+    }
+
+    public function test_selected_items_can_include_estimate_vat(): void
+    {
+        $this->estimate->update(['vat_rate' => 20]);
+
+        $item = EstimateItem::factory()->create([
+            'estimate_id' => $this->estimate->id,
+            'item_type' => 'work',
+            'quantity_total' => 1,
+            'unit_price' => 1000,
+            'total_amount' => 1000,
+        ]);
+
+        $this->service->attachItems($this->contract, $this->estimate, [$item->id], true);
+
+        $coverage = $this->coverageService->getCoverageForEstimate($this->estimate);
+
+        $this->assertEquals(1200.0, $coverage['primary_contract']['linked_amount']);
+    }
 }

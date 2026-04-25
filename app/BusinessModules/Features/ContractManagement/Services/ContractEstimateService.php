@@ -14,9 +14,9 @@ use Illuminate\Support\Facades\Log;
 
 class ContractEstimateService
 {
-    public function attachItems(Contract $contract, Estimate $estimate, array $itemIds): Collection
+    public function attachItems(Contract $contract, Estimate $estimate, array $itemIds, bool $includeVat = false): Collection
     {
-        return DB::transaction(function () use ($contract, $estimate, $itemIds) {
+        return DB::transaction(function () use ($contract, $estimate, $itemIds, $includeVat) {
             $allIds = $this->resolveWithChildren($estimate->id, $itemIds);
 
             $items = EstimateItem::whereIn('id', $allIds)
@@ -32,7 +32,7 @@ class ContractEstimateService
                     continue;
                 }
 
-                $link = ContractEstimateItem::firstOrCreate(
+                $link = ContractEstimateItem::updateOrCreate(
                     [
                         'contract_id'      => $contract->id,
                         'estimate_item_id' => $item->id,
@@ -40,7 +40,7 @@ class ContractEstimateService
                     [
                         'estimate_id' => $estimate->id,
                         'quantity'    => $item->quantity_total,
-                        'amount'      => $this->calculateAmount($item),
+                        'amount'      => $this->calculateAmount($item, $estimate, $includeVat),
                     ]
                 );
 
@@ -51,6 +51,7 @@ class ContractEstimateService
                 'contract_id'  => $contract->id,
                 'estimate_id'  => $estimate->id,
                 'item_ids'     => $allIds,
+                'include_vat'  => $includeVat,
                 'count'        => $attached->count(),
             ]);
 
@@ -72,9 +73,9 @@ class ContractEstimateService
         ]);
     }
 
-    public function syncItems(Contract $contract, Estimate $estimate, array $itemIds): Collection
+    public function syncItems(Contract $contract, Estimate $estimate, array $itemIds, bool $includeVat = false): Collection
     {
-        return DB::transaction(function () use ($contract, $estimate, $itemIds) {
+        return DB::transaction(function () use ($contract, $estimate, $itemIds, $includeVat) {
             ContractEstimateItem::where('contract_id', $contract->id)
                 ->where('estimate_id', $estimate->id)
                 ->delete();
@@ -83,7 +84,7 @@ class ContractEstimateService
                 return collect();
             }
 
-            return $this->attachItems($contract, $estimate, $itemIds);
+            return $this->attachItems($contract, $estimate, $itemIds, $includeVat);
         });
     }
 
@@ -175,15 +176,20 @@ class ContractEstimateService
         return array_unique(array_merge($itemIds, $childIds));
     }
 
-    private function calculateAmount(EstimateItem $item): float
+    private function calculateAmount(EstimateItem $item, Estimate $estimate, bool $includeVat): float
     {
         if ($item->total_amount !== null && (float) $item->total_amount > 0) {
-            return round((float) $item->total_amount, 2);
+            $amount = (float) $item->total_amount;
+        } else {
+            $quantity = (float) ($item->quantity_total ?? $item->quantity ?? 0);
+            $price    = (float) ($item->unit_price ?? 0);
+            $amount = $quantity * $price;
         }
 
-        $quantity = (float) ($item->quantity_total ?? $item->quantity ?? 0);
-        $price    = (float) ($item->unit_price ?? 0);
+        if ($includeVat) {
+            $amount *= 1 + ((float) ($estimate->vat_rate ?? 0) / 100);
+        }
 
-        return round($quantity * $price, 2);
+        return round($amount, 2);
     }
 }

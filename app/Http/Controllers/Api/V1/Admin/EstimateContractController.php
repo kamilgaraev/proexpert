@@ -63,10 +63,15 @@ class EstimateContractController extends Controller
 
         $validated = $request->validate([
             'contract_id' => 'required|integer|exists:contracts,id',
+            'include_vat' => 'sometimes|boolean',
         ]);
 
         try {
-            $coverage = $this->integrationService->linkToContract($estimate, (int) $validated['contract_id']);
+            $coverage = $this->integrationService->linkToContract(
+                $estimate,
+                (int) $validated['contract_id'],
+                (bool) ($validated['include_vat'] ?? false)
+            );
 
             return AdminResponse::success(
                 new EstimateCoverageResource($coverage),

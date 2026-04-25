@@ -57,7 +57,8 @@ class ContractEstimateItemController extends Controller
             $attached = $this->service->attachItems(
                 $contract,
                 $estimate,
-                $request->input('item_ids')
+                $request->input('item_ids'),
+                $request->boolean('include_vat')
             );
 
             return AdminResponse::success(

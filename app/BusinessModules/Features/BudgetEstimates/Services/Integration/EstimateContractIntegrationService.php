@@ -24,10 +24,10 @@ class EstimateContractIntegrationService
         return $this->coverageService->validateContractAmount($estimate, $contractId);
     }
 
-    public function linkToContract(Estimate $estimate, int $contractId): array
+    public function linkToContract(Estimate $estimate, int $contractId, bool $includeVat = false): array
     {
         $contract = Contract::findOrFail($contractId);
-        $this->coverageService->attachFullCoverage($contract, $estimate);
+        $this->coverageService->attachFullCoverage($contract, $estimate, $includeVat);
 
         return $this->coverageService->getCoverageForEstimate($estimate);
     }

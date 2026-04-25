@@ -44,18 +44,18 @@ class EstimateCoverageService
         });
     }
 
-    public function attachFullCoverage(Contract $contract, Estimate $estimate): Collection
+    public function attachFullCoverage(Contract $contract, Estimate $estimate, bool $includeVat = false): Collection
     {
         $itemIds = $this->getCoveredItemIds($estimate)->all();
 
-        return $this->contractEstimateService->syncItems($contract, $estimate, $itemIds);
+        return $this->contractEstimateService->syncItems($contract, $estimate, $itemIds, $includeVat);
     }
 
-    public function syncCoverageItems(Contract $contract, Estimate $estimate, array $itemIds): Collection
+    public function syncCoverageItems(Contract $contract, Estimate $estimate, array $itemIds, bool $includeVat = false): Collection
     {
         $this->assertOwnership($contract, $estimate);
 
-        return $this->contractEstimateService->syncItems($contract, $estimate, $itemIds);
+        return $this->contractEstimateService->syncItems($contract, $estimate, $itemIds, $includeVat);
     }
 
     public function detachCoverage(Contract $contract, Estimate $estimate): void
