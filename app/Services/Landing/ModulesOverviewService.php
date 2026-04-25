@@ -7,6 +7,7 @@ namespace App\Services\Landing;
 use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
 use App\Models\OrganizationPackageSubscription;
+use App\Models\OrganizationSubscription;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
 
@@ -46,7 +47,7 @@ class ModulesOverviewService
                 'active_solutions_count' => collect($solutions)->whereNotNull('current_tier')->count(),
                 'total_solutions_count' => count($solutions),
                 'active_standalone_count' => collect($standaloneModules)->where('status', 'active')->count(),
-                'monthly_total' => $this->calculateMonthlyTotal($solutions, $standaloneModules),
+                'monthly_total' => $this->calculateMonthlyTotal($organizationId, $solutions, $standaloneModules),
                 'expiring_count' => $expiringCount,
             ],
             'solutions' => $solutions,
@@ -275,14 +276,36 @@ class ModulesOverviewService
             || (($module->can_deactivate ?? true) === false && $module->billing_model === 'free');
     }
 
-    private function calculateMonthlyTotal(array $solutions, array $standaloneModules): float
+    private function calculateMonthlyTotal(int $organizationId, array $solutions, array $standaloneModules): float
     {
-        $solutionsTotal = collect($solutions)->sum('effective_monthly_price');
+        $subscriptionTotal = $this->getActiveSubscriptionMonthlyPrice($organizationId);
+        $solutionsTotal = collect($solutions)
+            ->reject(fn (array $solution): bool => (bool) ($solution['is_bundled_with_plan'] ?? false))
+            ->sum('effective_monthly_price');
         $standaloneTotal = collect($standaloneModules)
-            ->filter(fn (array $module): bool => $module['status'] === 'active' && $module['billing_model'] !== 'free')
+            ->filter(fn (array $module): bool => $module['status'] === 'active'
+                && $module['billing_model'] !== 'free'
+                && ! (bool) ($module['is_bundled_with_plan'] ?? false))
             ->sum('price');
 
-        return (float) ($solutionsTotal + $standaloneTotal);
+        return (float) ($subscriptionTotal + $solutionsTotal + $standaloneTotal);
+    }
+
+    private function getActiveSubscriptionMonthlyPrice(int $organizationId): float
+    {
+        $subscription = OrganizationSubscription::query()
+            ->where('organization_id', $organizationId)
+            ->where('status', 'active')
+            ->where(function ($query) {
+                $query->whereNull('ends_at')
+                    ->orWhere('ends_at', '>', now());
+            })
+            ->whereNull('canceled_at')
+            ->with('plan')
+            ->latest('id')
+            ->first();
+
+        return (float) ($subscription?->plan?->price ?? 0);
     }
 
     private function isExpiringSoon(?string $expiresAt): bool

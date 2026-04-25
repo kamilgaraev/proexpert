@@ -7,6 +7,9 @@ namespace Tests\Feature\Api\V1\Landing;
 use App\Models\Module;
 use App\Models\Organization;
 use App\Models\OrganizationModuleActivation;
+use App\Models\OrganizationPackageSubscription;
+use App\Models\OrganizationSubscription;
+use App\Models\SubscriptionPlan;
 use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -43,6 +46,8 @@ class ModulesOverviewControllerTest extends TestCase
     {
         Schema::dropIfExists('organization_module_activations');
         Schema::dropIfExists('organization_package_subscriptions');
+        Schema::dropIfExists('organization_subscriptions');
+        Schema::dropIfExists('subscription_plans');
         Schema::dropIfExists('modules');
         Schema::dropIfExists('organization_user');
         Schema::dropIfExists('users');
@@ -140,11 +145,49 @@ class ModulesOverviewControllerTest extends TestCase
         Schema::create('organization_package_subscriptions', function (Blueprint $table) {
             $table->id();
             $table->foreignId('organization_id');
+            $table->foreignId('subscription_id')->nullable();
+            $table->boolean('is_bundled_with_plan')->default(false);
             $table->string('package_slug');
             $table->string('tier');
             $table->decimal('price_paid', 10, 2)->default(0);
             $table->timestamp('activated_at')->nullable();
             $table->timestamp('expires_at')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('subscription_plans', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->string('slug')->unique();
+            $table->text('description')->nullable();
+            $table->decimal('price', 10, 2)->default(0);
+            $table->string('currency')->default('RUB');
+            $table->integer('duration_in_days')->default(30);
+            $table->integer('max_foremen')->nullable();
+            $table->integer('max_projects')->nullable();
+            $table->integer('max_storage_gb')->nullable();
+            $table->integer('max_users')->nullable();
+            $table->json('features')->nullable();
+            $table->json('included_packages')->nullable();
+            $table->boolean('is_active')->default(true);
+            $table->integer('display_order')->default(0);
+            $table->timestamps();
+        });
+
+        Schema::create('organization_subscriptions', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('organization_id');
+            $table->foreignId('subscription_plan_id');
+            $table->string('status')->default('active');
+            $table->timestamp('trial_ends_at')->nullable();
+            $table->timestamp('starts_at')->nullable();
+            $table->timestamp('ends_at')->nullable();
+            $table->timestamp('next_billing_at')->nullable();
+            $table->timestamp('canceled_at')->nullable();
+            $table->timestamp('payment_failure_notified_at')->nullable();
+            $table->string('payment_gateway_subscription_id')->nullable();
+            $table->string('payment_gateway_customer_id')->nullable();
+            $table->boolean('is_auto_payment_enabled')->default(false);
             $table->timestamps();
         });
     }
@@ -174,8 +217,8 @@ class ModulesOverviewControllerTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('success', true)
-            ->assertJsonPath('data.summary.total_solutions_count', 7)
-            ->assertJsonFragment(['slug' => 'projects'])
+            ->assertJsonPath('data.summary.total_solutions_count', 6)
+            ->assertJsonFragment(['slug' => 'objects-execution'])
             ->assertJsonFragment(['slug' => 'brigades'])
             ->assertJsonFragment(['slug' => 'video-monitoring'])
             ->assertJsonFragment(['slug' => 'users', 'is_system' => true])
@@ -193,6 +236,65 @@ class ModulesOverviewControllerTest extends TestCase
         $this->assertTrue($advancedModules->firstWhere('slug', 'users')['is_system']);
         $this->assertSame('packaged', $advancedModules->firstWhere('slug', 'project-management')['classification']);
         $this->assertSame('standalone', $advancedModules->firstWhere('slug', 'brigades')['classification']);
+    }
+
+    public function test_monthly_total_counts_subscription_and_excludes_bundled_package_prices(): void
+    {
+        $projectModule = $this->createModule('project-management', 'Управление проектами', 'free', true, false, 0);
+        $this->createModule('video-monitoring', 'Видеонаблюдение', 'subscription', true, false, 1900);
+
+        $plan = SubscriptionPlan::create([
+            'name' => 'Profi',
+            'slug' => 'profi',
+            'description' => 'Профессиональный тариф',
+            'price' => 19900,
+            'currency' => 'RUB',
+            'duration_in_days' => 30,
+            'included_packages' => [
+                ['package_slug' => 'objects-execution', 'tier' => 'base'],
+            ],
+            'features' => [],
+            'is_active' => true,
+            'display_order' => 1,
+        ]);
+
+        $subscription = OrganizationSubscription::create([
+            'organization_id' => $this->organization->id,
+            'subscription_plan_id' => $plan->id,
+            'status' => 'active',
+            'starts_at' => now()->subDay(),
+            'ends_at' => now()->addMonth(),
+            'next_billing_at' => now()->addMonth(),
+            'is_auto_payment_enabled' => false,
+        ]);
+
+        OrganizationPackageSubscription::create([
+            'organization_id' => $this->organization->id,
+            'subscription_id' => $subscription->id,
+            'is_bundled_with_plan' => true,
+            'package_slug' => 'objects-execution',
+            'tier' => 'base',
+            'price_paid' => 0,
+            'activated_at' => now(),
+            'expires_at' => now()->addMonth(),
+        ]);
+
+        OrganizationModuleActivation::create([
+            'organization_id' => $this->organization->id,
+            'module_id' => $projectModule->id,
+            'subscription_id' => $subscription->id,
+            'status' => 'active',
+            'activated_at' => now(),
+            'expires_at' => now()->addMonth(),
+            'is_bundled_with_plan' => true,
+            'is_auto_renew_enabled' => false,
+        ]);
+
+        $response = $this->actingAs($this->user, 'api_landing')
+            ->getJson('/api/v1/landing/modules/overview');
+
+        $response->assertOk()
+            ->assertJsonPath('data.summary.monthly_total', 19900);
     }
 
     private function createModule(
