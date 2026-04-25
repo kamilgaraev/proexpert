@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Project;
 use App\Models\User;
 use App\Models\CostCategory;
+use App\Services\DaDataService;
 use App\Services\Project\ProjectService;
 use App\Http\Requests\Api\V1\Admin\Project\StoreProjectRequest;
 use App\Http\Requests\Api\V1\Admin\Project\UpdateProjectRequest;
@@ -23,10 +24,12 @@ use Illuminate\Http\Response;
 class ProjectController extends Controller
 {
     protected ProjectService $projectService;
+    protected DaDataService $daDataService;
 
-    public function __construct(ProjectService $projectService)
+    public function __construct(ProjectService $projectService, DaDataService $daDataService)
     {
         $this->projectService = $projectService;
+        $this->daDataService = $daDataService;
         // Авторизация настроена на уровне роутов через middleware стек
         $this->middleware('subscription.limit:max_projects')->only('store');
     }
@@ -237,6 +240,52 @@ class ProjectController extends Controller
                 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
             return AdminResponse::error(trans_message('project.cost_categories_error'), 500);
+        }
+    }
+
+    public function addressSuggestions(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'query' => ['required', 'string', 'min:3', 'max:200'],
+        ]);
+
+        try {
+            $result = $this->daDataService->suggestAddress($validated['query']);
+
+            if (!$result['success']) {
+                return AdminResponse::error(trans_message('project.address_suggestions_error'), 502);
+            }
+
+            $suggestions = collect($result['data'])
+                ->map(static function (array $suggestion): array {
+                    $data = $suggestion['data'] ?? [];
+
+                    return [
+                        'value' => $suggestion['value'] ?? '',
+                        'unrestricted_value' => $suggestion['unrestricted_value'] ?? $suggestion['value'] ?? '',
+                        'postal_code' => $data['postal_code'] ?? null,
+                        'region' => $data['region_with_type'] ?? $data['region'] ?? null,
+                        'city' => $data['city_with_type'] ?? $data['settlement_with_type'] ?? null,
+                        'street' => $data['street_with_type'] ?? null,
+                        'house' => $data['house'] ?? null,
+                        'geo_lat' => $data['geo_lat'] ?? null,
+                        'geo_lon' => $data['geo_lon'] ?? null,
+                    ];
+                })
+                ->filter(static fn (array $suggestion): bool => $suggestion['value'] !== '')
+                ->values()
+                ->all();
+
+            return AdminResponse::success($suggestions, trans_message('project.address_suggestions_loaded'));
+        } catch (\Throwable $e) {
+            Log::error('Error in ProjectController@addressSuggestions', [
+                'query' => $validated['query'],
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return AdminResponse::error(trans_message('project.address_suggestions_error'), 500);
         }
     }
 

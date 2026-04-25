@@ -16,6 +16,9 @@ Route::post('projects', [ProjectController::class, 'store'])
 
 // Получить доступные категории затрат для проектов (должно быть ПЕРЕД projects/{project})
 Route::get('/projects/available-cost-categories', [ProjectController::class, 'getAvailableCostCategories'])->name('projects.cost-categories');
+Route::get('/projects/address-suggestions', [ProjectController::class, 'addressSuggestions'])
+    ->middleware(['authorize:admin.projects.edit', 'throttle:60,1'])
+    ->name('projects.address-suggestions');
 
 Route::get('projects/{project}', [ProjectController::class, 'show'])
     ->middleware('authorize:admin.projects.view')
