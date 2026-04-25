@@ -155,6 +155,13 @@ class EstimateItemController extends Controller
         );
     }
 
+    public function showForProject(Request $request, $project, int $estimateId, EstimateItem $item): JsonResponse
+    {
+        $item = $this->resolveProjectItem($item, $estimateId);
+
+        return $this->show($item);
+    }
+
     public function update(Request $request, EstimateItem $item): JsonResponse
     {
         Log::info('[EstimateItemController::update] ===== НАЧАЛО МЕТОДА =====', [
@@ -297,6 +304,13 @@ class EstimateItemController extends Controller
         );
     }
 
+    public function updateForProject(Request $request, $project, int $estimateId, EstimateItem $item): JsonResponse
+    {
+        $item = $this->resolveProjectItem($item, $estimateId);
+
+        return $this->update($request, $item);
+    }
+
     public function destroy(EstimateItem $item): JsonResponse
     {
         // Убеждаемся, что связь estimate загружена
@@ -309,6 +323,13 @@ class EstimateItemController extends Controller
         $this->itemService->deleteItem($item);
         
         return AdminResponse::success(null, trans_message('estimate.item_deleted'));
+    }
+
+    public function destroyForProject(Request $request, $project, int $estimateId, EstimateItem $item): JsonResponse
+    {
+        $item = $this->resolveProjectItem($item, $estimateId);
+
+        return $this->destroy($item);
     }
 
     public function move(Request $request, EstimateItem $item): JsonResponse
@@ -330,6 +351,13 @@ class EstimateItemController extends Controller
             new EstimateItemResource($item),
             trans_message('estimate.item_moved')
         );
+    }
+
+    public function moveForProject(Request $request, $project, int $estimateId, EstimateItem $item): JsonResponse
+    {
+        $item = $this->resolveProjectItem($item, $estimateId);
+
+        return $this->move($request, $item);
     }
 
     /**
@@ -461,5 +489,22 @@ class EstimateItemController extends Controller
                 Response::HTTP_INTERNAL_SERVER_ERROR
             );
         }
+    }
+
+    private function resolveProjectItem(EstimateItem $item, int $estimateId): EstimateItem
+    {
+        $organizationId = request()->attributes->get('current_organization_id');
+
+        if ((int) $item->estimate_id !== $estimateId) {
+            abort(Response::HTTP_NOT_FOUND);
+        }
+
+        $item->loadMissing('estimate');
+
+        if (!$item->estimate || (int) $item->estimate->organization_id !== (int) $organizationId) {
+            abort(Response::HTTP_NOT_FOUND);
+        }
+
+        return $item;
     }
 }

@@ -75,6 +75,10 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
                 
                 // Валидация нумерации
                 Route::get('/validate-numbering', [EstimateSectionController::class, 'validateNumbering'])->name('validate_numbering');
+                Route::get('/{section}', [EstimateSectionController::class, 'showForProject'])->name('show');
+                Route::put('/{section}', [EstimateSectionController::class, 'updateForProject'])->name('update');
+                Route::delete('/{section}', [EstimateSectionController::class, 'destroyForProject'])->name('destroy');
+                Route::post('/{section}/move', [EstimateSectionController::class, 'moveForProject'])->name('move');
             });
             
             // Позиции сметы
@@ -88,6 +92,10 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
                 
                 // Пересчет нумерации позиций
                 Route::post('/recalculate-numbers', [EstimateItemController::class, 'recalculateNumbers'])->name('recalculate_numbers');
+                Route::get('/{item}', [EstimateItemController::class, 'showForProject'])->name('show');
+                Route::put('/{item}', [EstimateItemController::class, 'updateForProject'])->name('update');
+                Route::delete('/{item}', [EstimateItemController::class, 'destroyForProject'])->name('destroy');
+                Route::post('/{item}/move', [EstimateItemController::class, 'moveForProject'])->name('move');
             });
             
             // Прогресс выполнения сметы

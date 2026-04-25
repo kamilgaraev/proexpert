@@ -82,6 +82,13 @@ class EstimateSectionController extends Controller
         return AdminResponse::success(new EstimateSectionResource($section));
     }
 
+    public function showForProject(Request $request, $project, int $estimateId, EstimateSection $section): JsonResponse
+    {
+        $section = $this->resolveProjectSection($section, $estimateId);
+
+        return $this->show($section);
+    }
+
     public function update(UpdateSectionRequest $request, EstimateSection $section): JsonResponse
     {
         $this->authorize('update', $section->estimate);
@@ -92,6 +99,13 @@ class EstimateSectionController extends Controller
             new EstimateSectionResource($section),
             trans_message('estimate.section_updated')
         );
+    }
+
+    public function updateForProject(UpdateSectionRequest $request, $project, int $estimateId, EstimateSection $section): JsonResponse
+    {
+        $section = $this->resolveProjectSection($section, $estimateId);
+
+        return $this->update($request, $section);
     }
 
     public function destroy(Request $request, EstimateSection $section): JsonResponse
@@ -118,6 +132,13 @@ class EstimateSectionController extends Controller
         return AdminResponse::success(null, trans_message('estimate.section_deleted'));
     }
 
+    public function destroyForProject(Request $request, $project, int $estimateId, EstimateSection $section): JsonResponse
+    {
+        $section = $this->resolveProjectSection($section, $estimateId);
+
+        return $this->destroy($request, $section);
+    }
+
     public function move(Request $request, EstimateSection $section): JsonResponse
     {
         $this->authorize('update', $section->estimate);
@@ -137,6 +158,13 @@ class EstimateSectionController extends Controller
             new EstimateSectionResource($section),
             trans_message('estimate.section_moved')
         );
+    }
+
+    public function moveForProject(Request $request, $project, int $estimateId, EstimateSection $section): JsonResponse
+    {
+        $section = $this->resolveProjectSection($section, $estimateId);
+
+        return $this->move($request, $section);
     }
 
     /**
@@ -282,6 +310,23 @@ class EstimateSectionController extends Controller
         return Estimate::where('id', $estimateId)
             ->where('organization_id', $organizationId)
             ->firstOrFail();
+    }
+
+    private function resolveProjectSection(EstimateSection $section, int $estimateId): EstimateSection
+    {
+        $organizationId = request()->attributes->get('current_organization_id');
+
+        if ((int) $section->estimate_id !== $estimateId) {
+            abort(Response::HTTP_NOT_FOUND);
+        }
+
+        $section->loadMissing('estimate');
+
+        if (!$section->estimate || (int) $section->estimate->organization_id !== (int) $organizationId) {
+            abort(Response::HTTP_NOT_FOUND);
+        }
+
+        return $section;
     }
 
     /**
