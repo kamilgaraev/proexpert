@@ -1,0 +1,60 @@
+{
+    "slug": "estimates-pto",
+    "name": "Сметы и ПТО",
+    "description": "Контур для смет, документов, шаблонов отчетов и инженерной подготовки работ.",
+    "icon": "rectangle-group",
+    "color": "#7C3AED",
+    "sort_order": 4,
+    "tiers": {
+        "base": {
+            "label": "Старт",
+            "description": "Сметный блок и файлы объекта для управляемой инженерной базы.",
+            "price": 5900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": [
+                "budget-estimates",
+                "file-management"
+            ],
+            "highlights": [
+                "Сметы по объекту",
+                "Файлы и документы",
+                "Единая инженерная база"
+            ]
+        },
+        "pro": {
+            "label": "Рост",
+            "description": "Сметы, расценки и шаблоны отчетов для регулярной работы ПТО.",
+            "price": 7900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": [
+                "budget-estimates",
+                "rate-management",
+                "report-templates"
+            ],
+            "highlights": [
+                "Расценки",
+                "Шаблоны отчетов",
+                "Стандарт ПТО"
+            ]
+        },
+        "enterprise": {
+            "label": "Корпоративный",
+            "description": "Полный инженерный контур с AI-ускорением первичной сметной работы.",
+            "price": 11900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": [
+                "budget-estimates",
+                "ai-estimates",
+                "file-management"
+            ],
+            "highlights": [
+                "AI-старт сметы",
+                "Документы объекта",
+                "Проверка объемов"
+            ]
+        }
+    }
+}

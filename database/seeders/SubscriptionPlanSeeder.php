@@ -2,9 +2,8 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Seeder;
-use Illuminate\Support\Facades\DB;
 use App\Models\SubscriptionPlan;
+use Illuminate\Database\Seeder;
 
 class SubscriptionPlanSeeder extends Seeder
 {
@@ -111,7 +110,7 @@ class SubscriptionPlanSeeder extends Seeder
                     ],
                 ],
                 'included_packages' => [
-                    ['package_slug' => 'projects', 'tier' => 'base'],
+                    ['package_slug' => 'objects-execution', 'tier' => 'base'],
                 ],
                 'is_active' => true,
                 'display_order' => 3,
@@ -148,10 +147,10 @@ class SubscriptionPlanSeeder extends Seeder
                     ],
                 ],
                 'included_packages' => [
-                    ['package_slug' => 'projects', 'tier' => 'pro'],
-                    ['package_slug' => 'finance', 'tier' => 'base'],
-                    ['package_slug' => 'supply', 'tier' => 'base'],
-                    ['package_slug' => 'analytics', 'tier' => 'base'],
+                    ['package_slug' => 'objects-execution', 'tier' => 'pro'],
+                    ['package_slug' => 'finance-acts', 'tier' => 'base'],
+                    ['package_slug' => 'supply-warehouse', 'tier' => 'base'],
+                    ['package_slug' => 'holding-analytics', 'tier' => 'base'],
                 ],
                 'is_active' => true,
                 'display_order' => 4,
@@ -190,13 +189,12 @@ class SubscriptionPlanSeeder extends Seeder
                     ],
                 ],
                 'included_packages' => [
-                    ['package_slug' => 'projects', 'tier' => 'pro'],
-                    ['package_slug' => 'finance', 'tier' => 'pro'],
-                    ['package_slug' => 'supply', 'tier' => 'pro'],
-                    ['package_slug' => 'analytics', 'tier' => 'pro'],
-                    ['package_slug' => 'integrations', 'tier' => 'pro'],
-                    ['package_slug' => 'ai', 'tier' => 'pro'],
-                    ['package_slug' => 'enterprise', 'tier' => 'enterprise'],
+                    ['package_slug' => 'objects-execution', 'tier' => 'enterprise'],
+                    ['package_slug' => 'finance-acts', 'tier' => 'enterprise'],
+                    ['package_slug' => 'supply-warehouse', 'tier' => 'enterprise'],
+                    ['package_slug' => 'holding-analytics', 'tier' => 'enterprise'],
+                    ['package_slug' => 'estimates-pto', 'tier' => 'enterprise'],
+                    ['package_slug' => 'ai-contour', 'tier' => 'enterprise'],
                 ],
                 'is_active' => true,
                 'display_order' => 5,
@@ -210,4 +208,4 @@ class SubscriptionPlanSeeder extends Seeder
             );
         }
     }
-} 
+}

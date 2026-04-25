@@ -1,0 +1,60 @@
+{
+    "slug": "objects-execution",
+    "name": "Объекты и исполнение",
+    "description": "Рабочий контур для объектов, договоров, задач, статусов и связи офиса с площадкой.",
+    "icon": "building-office",
+    "color": "#2563EB",
+    "sort_order": 1,
+    "tiers": {
+        "base": {
+            "label": "Старт",
+            "description": "Единый порядок по объектам, договорам и ответственным.",
+            "price": 4900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": [
+                "project-management",
+                "contract-management"
+            ],
+            "highlights": [
+                "Объекты и договоры",
+                "Ответственные и статусы",
+                "Базовый контроль исполнения"
+            ]
+        },
+        "pro": {
+            "label": "Рост",
+            "description": "Контроль нескольких объектов с графиком работ и заявками с площадки.",
+            "price": 7900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": [
+                "project-management",
+                "schedule-management",
+                "site-requests"
+            ],
+            "highlights": [
+                "График работ",
+                "Заявки с объекта",
+                "Связка офиса и площадки"
+            ]
+        },
+        "enterprise": {
+            "label": "Корпоративный",
+            "description": "Расширенный контур исполнения для сложной структуры ролей и нескольких направлений.",
+            "price": 11900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": [
+                "project-management",
+                "schedule-management",
+                "time-tracking"
+            ],
+            "highlights": [
+                "Несколько объектов",
+                "Учет времени",
+                "Расширенные роли"
+            ]
+        }
+    }
+}

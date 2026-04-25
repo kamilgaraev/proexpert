@@ -1,0 +1,58 @@
+{
+    "slug": "ai-contour",
+    "name": "AI-контур",
+    "description": "Пилотные AI-сценарии для вопросов по данным, анализа рисков и ускорения сметной первички.",
+    "icon": "cpu-chip",
+    "color": "#DB2777",
+    "sort_order": 6,
+    "tiers": {
+        "base": {
+            "label": "Старт",
+            "description": "AI-помощник для вопросов по проектам, деньгам и материалам.",
+            "price": 3900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": [
+                "ai-assistant"
+            ],
+            "highlights": [
+                "Вопросы по данным",
+                "Анализ рисков",
+                "Быстрые сводки"
+            ]
+        },
+        "pro": {
+            "label": "Рост",
+            "description": "AI-помощник и AI-старт смет для ПТО и руководителя проекта.",
+            "price": 6900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": [
+                "ai-assistant",
+                "ai-estimates"
+            ],
+            "highlights": [
+                "AI-помощник",
+                "AI-старт сметы",
+                "Проверка рисков"
+            ]
+        },
+        "enterprise": {
+            "label": "Корпоративный",
+            "description": "AI-пилот под данные и процессы компании с проектной настройкой.",
+            "price": 9900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": [
+                "ai-assistant",
+                "ai-estimates",
+                "advanced-reports"
+            ],
+            "highlights": [
+                "AI по данным компании",
+                "Сценарии для ПТО",
+                "Управленческие сводки"
+            ]
+        }
+    }
+}

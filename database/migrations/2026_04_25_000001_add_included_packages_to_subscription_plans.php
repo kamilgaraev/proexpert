@@ -21,22 +21,21 @@ return new class extends Migration
             'free' => [],
             'start' => [],
             'business' => [
-                ['package_slug' => 'projects', 'tier' => 'base'],
+                ['package_slug' => 'objects-execution', 'tier' => 'base'],
             ],
             'profi' => [
-                ['package_slug' => 'projects', 'tier' => 'pro'],
-                ['package_slug' => 'finance', 'tier' => 'base'],
-                ['package_slug' => 'supply', 'tier' => 'base'],
-                ['package_slug' => 'analytics', 'tier' => 'base'],
+                ['package_slug' => 'objects-execution', 'tier' => 'pro'],
+                ['package_slug' => 'finance-acts', 'tier' => 'base'],
+                ['package_slug' => 'supply-warehouse', 'tier' => 'base'],
+                ['package_slug' => 'holding-analytics', 'tier' => 'base'],
             ],
             'enterprise' => [
-                ['package_slug' => 'projects', 'tier' => 'pro'],
-                ['package_slug' => 'finance', 'tier' => 'pro'],
-                ['package_slug' => 'supply', 'tier' => 'pro'],
-                ['package_slug' => 'analytics', 'tier' => 'pro'],
-                ['package_slug' => 'integrations', 'tier' => 'pro'],
-                ['package_slug' => 'ai', 'tier' => 'pro'],
-                ['package_slug' => 'enterprise', 'tier' => 'enterprise'],
+                ['package_slug' => 'objects-execution', 'tier' => 'enterprise'],
+                ['package_slug' => 'finance-acts', 'tier' => 'enterprise'],
+                ['package_slug' => 'supply-warehouse', 'tier' => 'enterprise'],
+                ['package_slug' => 'holding-analytics', 'tier' => 'enterprise'],
+                ['package_slug' => 'estimates-pto', 'tier' => 'enterprise'],
+                ['package_slug' => 'ai-contour', 'tier' => 'enterprise'],
             ],
         ];
 

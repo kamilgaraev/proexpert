@@ -1,0 +1,60 @@
+{
+    "slug": "finance-acts",
+    "name": "Финансы и акты",
+    "description": "Контур платежей, актов, взаиморасчетов и финансовой связи с объектами и контрагентами.",
+    "icon": "banknotes",
+    "color": "#0F766E",
+    "sort_order": 3,
+    "tiers": {
+        "base": {
+            "label": "Старт",
+            "description": "Платежные документы и акты без ручной сборки финансовой картины.",
+            "price": 4900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": [
+                "payments",
+                "act-reporting"
+            ],
+            "highlights": [
+                "Платежи по объектам",
+                "Акты выполненных работ",
+                "Базовая финансовая связка"
+            ]
+        },
+        "pro": {
+            "label": "Рост",
+            "description": "Финансовый контур проекта с подотчетными средствами и связкой с исполнением.",
+            "price": 6900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": [
+                "payments",
+                "act-reporting",
+                "advance-accounting"
+            ],
+            "highlights": [
+                "Авансы и подотчет",
+                "Связка с контрагентами",
+                "Финансовый контур проекта"
+            ]
+        },
+        "enterprise": {
+            "label": "Корпоративный",
+            "description": "Документный и сметный контур для более сложных финансовых сценариев.",
+            "price": 9900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": [
+                "payments",
+                "act-reporting",
+                "budget-estimates"
+            ],
+            "highlights": [
+                "Сметный блок",
+                "Документный контур",
+                "План-факт по объекту"
+            ]
+        }
+    }
+}

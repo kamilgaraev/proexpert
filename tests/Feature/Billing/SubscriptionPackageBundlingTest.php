@@ -19,9 +19,7 @@ class SubscriptionPackageBundlingTest extends TestCase
 {
     private Organization $organization;
 
-    public function refreshDatabase(): void
-    {
-    }
+    public function refreshDatabase(): void {}
 
     protected function setUp(): void
     {
@@ -157,20 +155,20 @@ class SubscriptionPackageBundlingTest extends TestCase
     public function test_subscription_activates_included_package_modules_as_bundled(): void
     {
         $plan = $this->createPlan('profi', [
-            ['package_slug' => 'projects', 'tier' => 'pro'],
+            ['package_slug' => 'objects-execution', 'tier' => 'pro'],
         ]);
 
         $subscription = $this->createSubscription($plan);
-        $this->createPackageModules('projects', 'pro');
+        $this->createPackageModules('objects-execution', 'pro');
 
         $result = app(SubscriptionModuleSyncService::class)->syncModulesOnSubscribe($subscription);
 
-        $this->assertSame(6, $result['activated_count']);
+        $this->assertSame(3, $result['activated_count']);
         $this->assertSame(1, $result['packages_activated_count']);
 
         $this->assertDatabaseHas('organization_package_subscriptions', [
             'organization_id' => $this->organization->id,
-            'package_slug' => 'projects',
+            'package_slug' => 'objects-execution',
             'tier' => 'pro',
             'price_paid' => 0,
             'subscription_id' => $subscription->id,
@@ -178,7 +176,7 @@ class SubscriptionPackageBundlingTest extends TestCase
         ]);
 
         $this->assertSame(
-            6,
+            3,
             OrganizationModuleActivation::query()
                 ->where('organization_id', $this->organization->id)
                 ->where('subscription_id', $subscription->id)
@@ -191,17 +189,17 @@ class SubscriptionPackageBundlingTest extends TestCase
     public function test_existing_standalone_package_is_converted_without_extra_charge(): void
     {
         $plan = $this->createPlan('profi', [
-            ['package_slug' => 'finance', 'tier' => 'pro'],
+            ['package_slug' => 'finance-acts', 'tier' => 'pro'],
         ]);
 
         $subscription = $this->createSubscription($plan);
-        $modules = $this->createPackageModules('finance', 'pro');
+        $modules = $this->createPackageModules('finance-acts', 'pro');
 
         OrganizationPackageSubscription::create([
             'organization_id' => $this->organization->id,
-            'package_slug' => 'finance',
+            'package_slug' => 'finance-acts',
             'tier' => 'pro',
-            'price_paid' => 7490,
+            'price_paid' => 6900,
             'activated_at' => now()->subDay(),
             'expires_at' => now()->addDays(10),
             'is_bundled_with_plan' => false,
@@ -222,12 +220,12 @@ class SubscriptionPackageBundlingTest extends TestCase
         $result = app(SubscriptionModuleSyncService::class)->syncModulesOnSubscribe($subscription);
 
         $this->assertSame(0, $result['activated_count']);
-        $this->assertSame(4, $result['converted_count']);
+        $this->assertSame(3, $result['converted_count']);
         $this->assertSame(1, $result['packages_converted_count']);
 
         $this->assertDatabaseHas('organization_package_subscriptions', [
             'organization_id' => $this->organization->id,
-            'package_slug' => 'finance',
+            'package_slug' => 'finance-acts',
             'tier' => 'pro',
             'price_paid' => 0,
             'subscription_id' => $subscription->id,
@@ -238,21 +236,21 @@ class SubscriptionPackageBundlingTest extends TestCase
     public function test_plan_downgrade_suspends_only_bundled_packages(): void
     {
         $oldPlan = $this->createPlan('profi', [
-            ['package_slug' => 'projects', 'tier' => 'pro'],
+            ['package_slug' => 'objects-execution', 'tier' => 'pro'],
         ]);
         $newPlan = $this->createPlan('start', []);
 
         $subscription = $this->createSubscription($oldPlan);
-        $this->createPackageModules('projects', 'pro');
-        $this->createPackageModules('finance', 'pro');
+        $this->createPackageModules('objects-execution', 'pro');
+        $this->createPackageModules('finance-acts', 'pro');
 
         app(SubscriptionModuleSyncService::class)->syncModulesOnSubscribe($subscription);
 
         OrganizationPackageSubscription::create([
             'organization_id' => $this->organization->id,
-            'package_slug' => 'finance',
+            'package_slug' => 'finance-acts',
             'tier' => 'pro',
-            'price_paid' => 7490,
+            'price_paid' => 6900,
             'activated_at' => now(),
             'expires_at' => now()->addDays(30),
             'is_bundled_with_plan' => false,
@@ -266,18 +264,18 @@ class SubscriptionPackageBundlingTest extends TestCase
             $newPlan
         );
 
-        $this->assertSame(6, $result['deactivated_count']);
+        $this->assertSame(3, $result['deactivated_count']);
         $this->assertSame(1, $result['packages_deactivated_count']);
 
         $this->assertDatabaseHas('organization_package_subscriptions', [
             'organization_id' => $this->organization->id,
-            'package_slug' => 'projects',
+            'package_slug' => 'objects-execution',
             'is_bundled_with_plan' => true,
         ]);
 
         $this->assertDatabaseHas('organization_package_subscriptions', [
             'organization_id' => $this->organization->id,
-            'package_slug' => 'finance',
+            'package_slug' => 'finance-acts',
             'is_bundled_with_plan' => false,
         ]);
     }

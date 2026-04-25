@@ -1,0 +1,60 @@
+{
+    "slug": "holding-analytics",
+    "name": "Холдинг и аналитика",
+    "description": "Управленческий контур для руководителя: отчеты, дашборды, фильтры и группа компаний.",
+    "icon": "chart-bar",
+    "color": "#334155",
+    "sort_order": 5,
+    "tiers": {
+        "base": {
+            "label": "Старт",
+            "description": "Управленческий обзор по объектам и ключевым процессам.",
+            "price": 5900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": [
+                "advanced-reports",
+                "dashboard-widgets"
+            ],
+            "highlights": [
+                "Управленческий обзор",
+                "Виджеты руководителя",
+                "Базовая аналитика"
+            ]
+        },
+        "pro": {
+            "label": "Рост",
+            "description": "Отчеты, фильтры и расширенный дашборд для нескольких объектов.",
+            "price": 8900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": [
+                "advanced-reports",
+                "data-filters",
+                "advanced-dashboard"
+            ],
+            "highlights": [
+                "Расширенные отчеты",
+                "Фильтры данных",
+                "Контроль отклонений"
+            ]
+        },
+        "enterprise": {
+            "label": "Корпоративный",
+            "description": "Холдинговая структура, консолидация и интеграционный контур.",
+            "price": 14900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": [
+                "multi-organization",
+                "advanced-dashboard",
+                "integrations"
+            ],
+            "highlights": [
+                "Группа компаний",
+                "Консолидация",
+                "Интеграции"
+            ]
+        }
+    }
+}

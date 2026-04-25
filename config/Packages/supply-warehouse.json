@@ -1,0 +1,60 @@
+{
+    "slug": "supply-warehouse",
+    "name": "Снабжение и склад",
+    "description": "Контур для заявок, закупок, каталога материалов, склада и движения ТМЦ по объектам.",
+    "icon": "truck",
+    "color": "#D97706",
+    "sort_order": 2,
+    "tiers": {
+        "base": {
+            "label": "Старт",
+            "description": "Заявки и каталог материалов для первого управляемого процесса снабжения.",
+            "price": 5900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": [
+                "catalog-management",
+                "procurement"
+            ],
+            "highlights": [
+                "Каталог материалов",
+                "Заявки на снабжение",
+                "Первичный процесс закупки"
+            ]
+        },
+        "pro": {
+            "label": "Рост",
+            "description": "Снабжение, склад и движение материалов по объектам в одном процессе.",
+            "price": 7900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": [
+                "catalog-management",
+                "basic-warehouse",
+                "procurement"
+            ],
+            "highlights": [
+                "Склад и остатки",
+                "Закупки по объектам",
+                "Движение материалов"
+            ]
+        },
+        "enterprise": {
+            "label": "Корпоративный",
+            "description": "Централизованное снабжение с материальной аналитикой и контролем остатков.",
+            "price": 10900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": [
+                "basic-warehouse",
+                "procurement",
+                "material-analytics"
+            ],
+            "highlights": [
+                "Материальная аналитика",
+                "Центральный склад",
+                "Контроль отклонений"
+            ]
+        }
+    }
+}
