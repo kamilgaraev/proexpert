@@ -34,6 +34,8 @@ class UpdateProjectRequest extends FormRequest
         return [
             'name' => 'sometimes|required|string|max:255',
             'address' => 'nullable|string|max:1000',
+            'latitude' => 'nullable|numeric|between:-90,90',
+            'longitude' => 'nullable|numeric|between:-180,180',
             'description' => 'nullable|string|max:2000',
             'customer' => 'sometimes|nullable|string|max:255', // Новое правило + sometimes
             'designer' => 'sometimes|nullable|string|max:255', // Новое правило + sometimes
@@ -94,6 +96,8 @@ class UpdateProjectRequest extends FormRequest
         return new ProjectDTO(
             name: $validated['name'] ?? $currentProject->name,
             address: $validated['address'] ?? $currentProject->address,
+            latitude: array_key_exists('latitude', $validated) ? ($validated['latitude'] !== null ? (float) $validated['latitude'] : null) : $currentProject->latitude,
+            longitude: array_key_exists('longitude', $validated) ? ($validated['longitude'] !== null ? (float) $validated['longitude'] : null) : $currentProject->longitude,
             description: $validated['description'] ?? $currentProject->description,
             customer: $validated['customer'] ?? $currentProject->customer,
             designer: $validated['designer'] ?? $currentProject->designer,

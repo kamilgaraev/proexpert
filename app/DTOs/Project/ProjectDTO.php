@@ -7,6 +7,8 @@ class ProjectDTO
     public function __construct(
         public readonly string $name,
         public readonly ?string $address,
+        public readonly ?float $latitude,
+        public readonly ?float $longitude,
         public readonly ?string $description,
         public readonly ?string $customer,
         public readonly ?string $designer,
@@ -29,6 +31,8 @@ class ProjectDTO
         return [
             'name' => $this->name,
             'address' => $this->address,
+            'latitude' => $this->latitude,
+            'longitude' => $this->longitude,
             'description' => $this->description,
             'customer' => $this->customer,
             'designer' => $this->designer,

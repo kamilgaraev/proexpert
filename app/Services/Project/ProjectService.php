@@ -181,7 +181,7 @@ class ProjectService
             'project_address' => $projectDTO->address ?? null
         ]);
         
-        $dataToCreate = $projectDTO->toArray();
+        $dataToCreate = $this->withGeocodingState($projectDTO->toArray());
         $dataToCreate['organization_id'] = $organizationId;
         $dataToCreate['is_head'] = true;
         
@@ -251,8 +251,18 @@ class ProjectService
             throw new BusinessLogicException('Project not found in your organization or you do not have permission.', 404);
         }
 
-        $updated = $this->projectRepository->update($id, $projectDTO->toArray());
+        $updated = $this->projectRepository->update($id, $this->withGeocodingState($projectDTO->toArray()));
         return $updated ? $this->projectRepository->find($id) : null;
+    }
+
+    private function withGeocodingState(array $data): array
+    {
+        if (($data['latitude'] ?? null) !== null && ($data['longitude'] ?? null) !== null) {
+            $data['geocoded_at'] = now();
+            $data['geocoding_status'] = 'geocoded';
+        }
+
+        return $data;
     }
 
     public function deleteProject(int $id, Request $request): bool

@@ -23,6 +23,11 @@ class ProjectObserver
     public function updating(Project $project): void
     {
         if ($project->isDirty('address')) {
+            if ($project->isDirty('latitude') || $project->isDirty('longitude')) {
+                $project->geocoded_at = $project->latitude !== null && $project->longitude !== null ? now() : null;
+                return;
+            }
+
             $project->latitude = null;
             $project->longitude = null;
             $project->geocoded_at = null;
@@ -33,7 +38,7 @@ class ProjectObserver
 
     private function geocodeIfNeeded(Project $project): void
     {
-        if (!$project->address || ($project->latitude && $project->longitude)) {
+        if (!$project->address || ($project->latitude !== null && $project->longitude !== null)) {
             return;
         }
 

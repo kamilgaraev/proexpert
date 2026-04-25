@@ -65,6 +65,8 @@ class StoreProjectRequest extends FormRequest
         return new ProjectDTO(
             name: (string) $validated['name'],
             address: isset($validated['address']) ? (string) $validated['address'] : null,
+            latitude: null,
+            longitude: null,
             description: isset($validated['description']) ? (string) $validated['description'] : null,
             customer: isset($validated['customer']) ? (string) $validated['customer'] : null,
             designer: isset($validated['designer']) ? (string) $validated['designer'] : null,

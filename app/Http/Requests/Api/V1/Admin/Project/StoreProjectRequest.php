@@ -31,6 +31,8 @@ class StoreProjectRequest extends FormRequest
         return [
             'name' => 'required|string|max:255',
             'address' => 'nullable|string|max:1000',
+            'latitude' => 'nullable|numeric|between:-90,90',
+            'longitude' => 'nullable|numeric|between:-180,180',
             'description' => 'nullable|string|max:2000',
             'customer' => 'nullable|string|max:255',
             'designer' => 'nullable|string|max:255',
@@ -84,6 +86,8 @@ class StoreProjectRequest extends FormRequest
         return new ProjectDTO(
             name: $validated['name'],
             address: $validated['address'] ?? null,
+            latitude: isset($validated['latitude']) ? (float) $validated['latitude'] : null,
+            longitude: isset($validated['longitude']) ? (float) $validated['longitude'] : null,
             description: $validated['description'] ?? null,
             customer: $validated['customer'] ?? null,
             designer: $validated['designer'] ?? null,

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Admin\Geo;
 
 use App\Http\Controllers\Controller;
 use App\Models\Project;
+use App\Services\Geo\Geocoding\GeocodeService;
 use App\Services\Geo\TileService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -15,7 +16,8 @@ use Illuminate\Http\Response;
 class MapTileController extends Controller
 {
     public function __construct(
-        private TileService $tileService
+        private TileService $tileService,
+        private GeocodeService $geocodeService
     ) {}
 
     /**
@@ -69,8 +71,15 @@ class MapTileController extends Controller
 
             // Получаем проекты напрямую из БД без тайловой системы
             $query = Project::where('organization_id', $organizationId)
-                ->whereNotNull('latitude')
-                ->whereNotNull('longitude');
+                ->where(function ($query) {
+                    $query
+                        ->where(function ($query) {
+                            $query->whereNotNull('latitude')->whereNotNull('longitude');
+                        })
+                        ->orWhere(function ($query) {
+                            $query->whereNotNull('address')->where('address', '<>', '');
+                        });
+                });
 
             // Применяем фильтры
             if (!empty($filters['status'])) {
@@ -96,11 +105,17 @@ class MapTileController extends Controller
             // В GeoJSON формат координат: [longitude, latitude]
             $features = [];
             foreach ($projects as $project) {
+                $coordinates = $this->resolveProjectCoordinates($project);
+
+                if ($coordinates === null) {
+                    continue;
+                }
+
                 $features[] = [
                     'type' => 'Feature',
                     'geometry' => [
                         'type' => 'Point',
-                        'coordinates' => [(float) $project->longitude, (float) $project->latitude],
+                        'coordinates' => [$coordinates['longitude'], $coordinates['latitude']],
                     ],
                     'properties' => [
                         'id' => $project->id,
@@ -124,6 +139,34 @@ class MapTileController extends Controller
             ]);
             return AdminResponse::error(trans_message('dashboard.map_projects_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    private function resolveProjectCoordinates(Project $project): ?array
+    {
+        if ($project->latitude !== null && $project->longitude !== null) {
+            return [
+                'latitude' => (float) $project->latitude,
+                'longitude' => (float) $project->longitude,
+            ];
+        }
+
+        if (empty($project->address) || $project->geocoding_status === 'failed') {
+            return null;
+        }
+
+        $result = $this->geocodeService->geocodeProject($project);
+
+        if ($result === null) {
+            $this->geocodeService->markGeocodingFailed($project, 'Coordinates were not found for the project address');
+            return null;
+        }
+
+        $this->geocodeService->saveGeocodingResult($project, $result);
+
+        return [
+            'latitude' => (float) $result->latitude,
+            'longitude' => (float) $result->longitude,
+        ];
     }
 
     /**
