@@ -150,7 +150,7 @@ class MapTileController extends Controller
             ];
         }
 
-        if (empty($project->address) || $project->geocoding_status === 'failed') {
+        if (empty($project->address)) {
             return null;
         }
 
