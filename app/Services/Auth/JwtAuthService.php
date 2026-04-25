@@ -77,7 +77,7 @@ class JwtAuthService
                     if (!Auth::validate($credentials)) {
                         Log::warning('[JwtAuthService] Auth::validate FAILED.', ['email' => $credentials['email'] ?? 'N/A', 'guard' => $guard]);
                         LogService::authLog('login_failed', array_merge($logContext, ['reason' => 'credentials_invalid']));
-                        return ['success' => false, 'message' => 'РќРµРІРµСЂРЅС‹Р№ email РёР»Рё РїР°СЂРѕР»СЊ', 'status_code' => 401];
+                        return ['success' => false, 'message' => trans_message('auth.login_failed'), 'status_code' => 401];
                     }
                     Log::info('[JwtAuthService] Auth::validate passed. Before Auth::getLastAttempted.');
 
@@ -96,7 +96,7 @@ class JwtAuthService
                         ]));
                         return [
                             'success' => false, 
-                            'message' => 'РџРѕР¶Р°Р»СѓР№СЃС‚Р°, РїРѕРґС‚РІРµСЂРґРёС‚Рµ РІР°С€ email Р°РґСЂРµСЃ. РџСЂРѕРІРµСЂСЊС‚Рµ РїРѕС‡С‚Сѓ Рё РїРµСЂРµР№РґРёС‚Рµ РїРѕ СЃСЃС‹Р»РєРµ РёР· РїРёСЃСЊРјР°.', 
+                            'message' => trans_message('auth.email_verification_required'), 
                             'status_code' => 403
                         ];
                     }

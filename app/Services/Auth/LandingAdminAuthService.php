@@ -14,11 +14,14 @@ class LandingAdminAuthService
     {
         Auth::shouldUse($this->guard);
         $credentials = $loginDTO->toArray();
+
         if (!Auth::validate($credentials)) {
-            return ['success' => false, 'message' => 'Неверный email или пароль', 'status_code' => 401];
+            return ['success' => false, 'message' => trans_message('auth.login_failed'), 'status_code' => 401];
         }
+
         $admin = Auth::getLastAttempted();
         $token = JWTAuth::fromUser($admin);
+
         return ['success' => true, 'token' => $token, 'user' => $admin, 'status_code' => 200];
     }
 
@@ -26,16 +29,20 @@ class LandingAdminAuthService
     {
         Auth::shouldUse($this->guard);
         $user = Auth::user();
-        return $user ? ['success' => true, 'user' => $user] : ['success' => false, 'message' => 'Not authenticated'];
+
+        return $user
+            ? ['success' => true, 'user' => $user]
+            : ['success' => false, 'message' => trans_message('auth.unauthorized')];
     }
 
     public function refresh(): array
     {
         try {
             $token = JWTAuth::parseToken()->refresh();
+
             return ['success' => true, 'token' => $token];
         } catch (\Throwable $e) {
-            return ['success' => false, 'message' => 'Token refresh error', 'status_code' => 401];
+            return ['success' => false, 'message' => trans_message('auth.token_error'), 'status_code' => 401];
         }
     }
 
@@ -44,7 +51,6 @@ class LandingAdminAuthService
         try {
             JWTAuth::invalidate(JWTAuth::getToken());
         } catch (\Throwable $e) {
-            // ignore
         }
     }
-} 
+}
