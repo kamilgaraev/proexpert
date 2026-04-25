@@ -19,15 +19,21 @@ return new class extends Migration
 
         $includedPackagesByPlan = [
             'free' => [],
-            'start' => [],
+            'start' => [
+                ['package_slug' => 'objects-execution', 'tier' => 'base'],
+            ],
             'business' => [
                 ['package_slug' => 'objects-execution', 'tier' => 'base'],
+                ['package_slug' => 'supply-warehouse', 'tier' => 'base'],
+                ['package_slug' => 'finance-acts', 'tier' => 'base'],
             ],
             'profi' => [
                 ['package_slug' => 'objects-execution', 'tier' => 'pro'],
-                ['package_slug' => 'finance-acts', 'tier' => 'base'],
-                ['package_slug' => 'supply-warehouse', 'tier' => 'base'],
-                ['package_slug' => 'holding-analytics', 'tier' => 'base'],
+                ['package_slug' => 'supply-warehouse', 'tier' => 'pro'],
+                ['package_slug' => 'finance-acts', 'tier' => 'pro'],
+                ['package_slug' => 'estimates-pto', 'tier' => 'pro'],
+                ['package_slug' => 'holding-analytics', 'tier' => 'pro'],
+                ['package_slug' => 'ai-contour', 'tier' => 'pro'],
             ],
             'enterprise' => [
                 ['package_slug' => 'objects-execution', 'tier' => 'enterprise'],
