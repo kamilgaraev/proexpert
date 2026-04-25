@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Integration;
 
 use App\BusinessModules\Features\ContractManagement\Services\ContractEstimateService;
+use App\Enums\EstimatePositionItemType;
 use App\Models\Contract;
 use App\Models\ContractEstimateItem;
 use App\Models\Estimate;
@@ -15,6 +16,14 @@ use Illuminate\Support\Facades\DB;
 
 class EstimateCoverageService
 {
+    private const COVERED_ITEM_TYPES = [
+        EstimatePositionItemType::WORK->value,
+        EstimatePositionItemType::MATERIAL->value,
+        EstimatePositionItemType::EQUIPMENT->value,
+        EstimatePositionItemType::MACHINERY->value,
+        EstimatePositionItemType::LABOR->value,
+    ];
+
     public function __construct(
         private readonly ContractEstimateService $contractEstimateService
     ) {}
@@ -37,7 +46,7 @@ class EstimateCoverageService
 
     public function attachFullCoverage(Contract $contract, Estimate $estimate): Collection
     {
-        $itemIds = $this->getWorkItemIds($estimate)->all();
+        $itemIds = $this->getCoveredItemIds($estimate)->all();
 
         return $this->contractEstimateService->syncItems($contract, $estimate, $itemIds);
     }
@@ -59,7 +68,8 @@ class EstimateCoverageService
 
     public function getCoverageForEstimate(Estimate $estimate): array
     {
-        $totalWorkItems = $this->getWorkItemIds($estimate)->count();
+        $coveredItemIds = $this->getCoveredItemIds($estimate);
+        $totalItems = $coveredItemIds->count();
 
         $links = ContractEstimateItem::query()
             ->where('estimate_id', $estimate->id)
@@ -67,11 +77,15 @@ class EstimateCoverageService
             ->get()
             ->groupBy('contract_id');
 
-        $contracts = $links->map(function (Collection $group) use ($totalWorkItems) {
+        $contracts = $links->map(function (Collection $group) use ($coveredItemIds, $totalItems) {
             $contract = $group->first()?->contract;
-            $linkedItemIds = $group->pluck('estimate_item_id')->unique()->values();
+            $linkedItemIds = $group
+                ->pluck('estimate_item_id')
+                ->unique()
+                ->intersect($coveredItemIds)
+                ->values();
             $linkedItemsCount = $linkedItemIds->count();
-            $coverageStatus = $this->resolveCoverageStatus($linkedItemsCount, $totalWorkItems);
+            $coverageStatus = $this->resolveCoverageStatus($linkedItemsCount, $totalItems);
 
             return [
                 'contract_id' => $contract?->id,
@@ -87,7 +101,7 @@ class EstimateCoverageService
                 ] : null,
                 'coverage_status' => $coverageStatus,
                 'linked_items_count' => $linkedItemsCount,
-                'available_items_count' => max(0, $totalWorkItems - $linkedItemsCount),
+                'available_items_count' => max(0, $totalItems - $linkedItemsCount),
                 'linked_amount' => round((float) $group->sum('amount'), 2),
                 'is_full' => $coverageStatus === 'full_link',
             ];
@@ -95,7 +109,8 @@ class EstimateCoverageService
 
         return [
             'estimate_id' => $estimate->id,
-            'total_work_items' => $totalWorkItems,
+            'total_items' => $totalItems,
+            'total_work_items' => $totalItems,
             'contracts' => $contracts,
             'primary_contract' => $contracts->count() === 1 ? $contracts->first() : null,
             'coverage_status' => $this->resolveAggregateCoverageStatus($contracts),
@@ -107,7 +122,6 @@ class EstimateCoverageService
     {
         $links = ContractEstimateItem::query()
             ->where('contract_id', $contract->id)
-            ->whereHas('estimateItem', fn ($query) => $query->works())
             ->with(['estimate', 'estimateItem'])
             ->get()
             ->groupBy('estimate_id');
@@ -116,8 +130,13 @@ class EstimateCoverageService
 
         $linkedEstimates = $links->map(function (Collection $group, int $estimateId) {
             $estimate = $group->first()?->estimate;
-            $totalWorkItems = $estimate ? $this->getWorkItemIds($estimate)->count() : 0;
-            $linkedItemsCount = $group->pluck('estimate_item_id')->unique()->count();
+            $coveredItemIds = $estimate ? $this->getCoveredItemIds($estimate) : collect();
+            $totalItems = $coveredItemIds->count();
+            $linkedItemsCount = $group
+                ->pluck('estimate_item_id')
+                ->unique()
+                ->intersect($coveredItemIds)
+                ->count();
             $linkedAmount = round((float) $group->sum('amount'), 2);
             $linkedQuantities = $group->sum('quantity');
             $averageAmount = $linkedItemsCount > 0
@@ -129,8 +148,8 @@ class EstimateCoverageService
                 ->filter()
                 ->unique()
                 ->count();
-            $coveragePercent = $totalWorkItems > 0
-                ? round(($linkedItemsCount / $totalWorkItems) * 100, 2)
+            $coveragePercent = $totalItems > 0
+                ? round(($linkedItemsCount / $totalItems) * 100, 2)
                 : 0.0;
 
             return [
@@ -145,10 +164,11 @@ class EstimateCoverageService
                     'total_amount' => (float) $estimate->total_amount,
                     'total_amount_with_vat' => (float) $estimate->total_amount_with_vat,
                 ] : null,
-                'coverage_status' => $this->resolveCoverageStatus($linkedItemsCount, $totalWorkItems),
+                'coverage_status' => $this->resolveCoverageStatus($linkedItemsCount, $totalItems),
                 'linked_items_count' => $linkedItemsCount,
-                'total_work_items' => $totalWorkItems,
-                'unlinked_items_count' => max(0, $totalWorkItems - $linkedItemsCount),
+                'total_items' => $totalItems,
+                'total_work_items' => $totalItems,
+                'unlinked_items_count' => max(0, $totalItems - $linkedItemsCount),
                 'coverage_percent' => $coveragePercent,
                 'linked_items_summary' => [
                     'amount' => $linkedAmount,
@@ -274,11 +294,16 @@ class EstimateCoverageService
             });
     }
 
-    private function getWorkItemIds(Estimate $estimate): Collection
+    private function getCoveredItemIds(Estimate $estimate): Collection
     {
         return EstimateItem::query()
             ->where('estimate_id', $estimate->id)
-            ->works()
+            ->whereNull('parent_work_id')
+            ->whereIn('item_type', self::COVERED_ITEM_TYPES)
+            ->where(function ($query) {
+                $query->where('is_not_accounted', false)
+                    ->orWhereNull('is_not_accounted');
+            })
             ->pluck('id');
     }
 

@@ -95,8 +95,7 @@ class ContractEstimateService
             'estimateItem.section.parent',
             'estimateItem.measurementUnit',
             'estimateItem.childItems',
-        ])->where('contract_id', $contract->id)
-        ->whereHas('estimateItem', fn($q) => $q->works());
+        ])->where('contract_id', $contract->id);
 
         if ($estimateId !== null) {
             $query->where('estimate_id', $estimateId);
@@ -112,8 +111,7 @@ class ContractEstimateService
 
     public function calculateContractEstimateTotal(Contract $contract, ?int $estimateId = null): float
     {
-        $query = ContractEstimateItem::where('contract_id', $contract->id)
-            ->whereHas('estimateItem', fn($q) => $q->works());
+        $query = ContractEstimateItem::where('contract_id', $contract->id);
 
         if ($estimateId !== null) {
             $query->where('estimate_id', $estimateId);
@@ -125,7 +123,6 @@ class ContractEstimateService
     public function getSummary(Contract $contract): array
     {
         $links = ContractEstimateItem::where('contract_id', $contract->id)
-            ->whereHas('estimateItem', fn($q) => $q->works())
             ->with('estimateItem')
             ->get();
 
@@ -180,6 +177,10 @@ class ContractEstimateService
 
     private function calculateAmount(EstimateItem $item): float
     {
+        if ($item->total_amount !== null && (float) $item->total_amount > 0) {
+            return round((float) $item->total_amount, 2);
+        }
+
         $quantity = (float) ($item->quantity_total ?? $item->quantity ?? 0);
         $price    = (float) ($item->unit_price ?? 0);
 

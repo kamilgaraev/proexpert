@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\ContractManagement;
 
 use App\BusinessModules\Features\ContractManagement\Services\ContractEstimateService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService;
 use App\Models\Contract;
 use App\Models\ContractEstimateItem;
 use App\Models\Estimate;
@@ -21,6 +22,7 @@ class ContractEstimateServiceTest extends TestCase
     use RefreshDatabase;
 
     private ContractEstimateService $service;
+    private EstimateCoverageService $coverageService;
     private Contract $contract;
     private Estimate $estimate;
 
@@ -29,6 +31,7 @@ class ContractEstimateServiceTest extends TestCase
         parent::setUp();
 
         $this->service = app(ContractEstimateService::class);
+        $this->coverageService = app(EstimateCoverageService::class);
 
         $org = Organization::factory()->create();
         $project = Project::factory()->create(['organization_id' => $org->id]);
@@ -135,5 +138,85 @@ class ContractEstimateServiceTest extends TestCase
 
         $total = $this->service->calculateContractEstimateTotal($this->contract);
         $this->assertEquals(500, $total);
+    }
+
+    public function test_full_coverage_attaches_all_root_billable_items(): void
+    {
+        EstimateItem::factory()->create([
+            'estimate_id' => $this->estimate->id,
+            'item_type' => 'work',
+            'quantity' => 3,
+            'quantity_total' => 3,
+            'unit_price' => 100,
+            'total_amount' => 300,
+        ]);
+
+        EstimateItem::factory()->create([
+            'estimate_id' => $this->estimate->id,
+            'item_type' => 'material',
+            'quantity' => 100,
+            'quantity_total' => 100,
+            'unit_price' => 70,
+            'total_amount' => 7000,
+        ]);
+
+        EstimateItem::factory()->create([
+            'estimate_id' => $this->estimate->id,
+            'item_type' => 'material',
+            'quantity' => 7,
+            'quantity_total' => 7,
+            'unit_price' => 6000,
+            'total_amount' => 42000,
+        ]);
+
+        EstimateItem::factory()->create([
+            'estimate_id' => $this->estimate->id,
+            'item_type' => 'machinery',
+            'quantity' => 5,
+            'quantity_total' => 5,
+            'unit_price' => 10000,
+            'total_amount' => 50000,
+        ]);
+
+        $this->coverageService->attachFullCoverage($this->contract, $this->estimate);
+
+        $coverage = $this->coverageService->getCoverageForEstimate($this->estimate);
+        $summary = $this->coverageService->getContractCoverageSummary($this->contract);
+
+        $this->assertDatabaseCount('contract_estimate_items', 4);
+        $this->assertEquals(4, $coverage['total_items']);
+        $this->assertEquals('full_link', $coverage['coverage_status']);
+        $this->assertEquals(4, $coverage['primary_contract']['linked_items_count']);
+        $this->assertEquals(99300.0, $coverage['primary_contract']['linked_amount']);
+        $this->assertEquals(4, $summary['summary']['linked_items_count']);
+        $this->assertEquals(99300.0, $summary['summary']['linked_amount']);
+    }
+
+    public function test_partial_coverage_keeps_explicit_item_selection(): void
+    {
+        $item1 = EstimateItem::factory()->create([
+            'estimate_id' => $this->estimate->id,
+            'item_type' => 'work',
+            'quantity_total' => 1,
+            'unit_price' => 500,
+            'total_amount' => 500,
+        ]);
+
+        EstimateItem::factory()->create([
+            'estimate_id' => $this->estimate->id,
+            'item_type' => 'material',
+            'quantity_total' => 1,
+            'unit_price' => 700,
+            'total_amount' => 700,
+        ]);
+
+        $this->service->attachItems($this->contract, $this->estimate, [$item1->id]);
+
+        $coverage = $this->coverageService->getCoverageForEstimate($this->estimate);
+
+        $this->assertEquals(2, $coverage['total_items']);
+        $this->assertEquals('partial_link', $coverage['coverage_status']);
+        $this->assertEquals(1, $coverage['primary_contract']['linked_items_count']);
+        $this->assertEquals(500.0, $coverage['primary_contract']['linked_amount']);
     }
 }

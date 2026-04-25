@@ -104,9 +104,11 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
 
             // 2. Сборка дерева O(N) в памяти ссылками
             $itemsById = [];
+            $vatMultiplier = 1 + ((float) ($estimate->vat_rate ?? 0) / 100);
             foreach ($items as &$item) {
                 // Фронтенд ожидает parent_item_id, а в базе хранится parent_work_id. Мапим для логики и фронта
                 $item['parent_item_id'] = $item['parent_work_id'];
+                $item['total_amount_with_vat'] = round((float) ($item['total_amount'] ?? 0) * $vatMultiplier, 2);
 
                 $item['resources'] = $resourcesByItemId[$item['id']] ?? [];
                 $item['totals'] = $totalsByItemId[$item['id']] ?? [];
@@ -147,6 +149,7 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
 
             $sectionsById = [];
             foreach ($sections as &$section) {
+                $section['section_total_amount_with_vat'] = round((float) ($section['section_total_amount'] ?? 0) * $vatMultiplier, 2);
                 $section['items'] = $rootItemsWithSection[$section['id']] ?? [];
                 $section['children'] = [];
                 $sectionsById[$section['id']] =& $section;

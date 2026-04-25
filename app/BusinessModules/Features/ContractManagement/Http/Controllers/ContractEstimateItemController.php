@@ -115,7 +115,12 @@ class ContractEstimateItemController extends Controller
             $items = EstimateItem::query()
                 ->where('estimate_id', $estimate->id)
                 ->whereNotIn('id', $linkedItemIds)
-                ->works()
+                ->whereNull('parent_work_id')
+                ->whereIn('item_type', ['work', 'material', 'equipment', 'machinery', 'labor'])
+                ->where(function ($query) {
+                    $query->where('is_not_accounted', false)
+                        ->orWhereNull('is_not_accounted');
+                })
                 ->with(['measurementUnit', 'childItems'])
                 ->get();
 
@@ -173,7 +178,8 @@ class ContractEstimateItemController extends Controller
                         'number' => $estimate->number,
                         'coverage_status' => $contractCoverage['coverage_status'] ?? 'not_linked',
                         'linked_items_count' => $contractCoverage['linked_items_count'] ?? 0,
-                        'total_work_items' => $coverage['total_work_items'],
+                        'total_items' => $coverage['total_items'] ?? $coverage['total_work_items'],
+                        'total_work_items' => $coverage['total_items'] ?? $coverage['total_work_items'],
                         'is_linked' => $contractCoverage !== null,
                     ];
                 });

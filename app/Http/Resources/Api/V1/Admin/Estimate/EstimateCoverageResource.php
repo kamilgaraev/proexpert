@@ -12,6 +12,7 @@ class EstimateCoverageResource extends JsonResource
     {
         return [
             'estimate_id' => $this['estimate_id'],
+            'total_items' => $this['total_items'] ?? $this['total_work_items'],
             'total_work_items' => $this['total_work_items'],
             'coverage_status' => $this['coverage_status'],
             'legacy_contract_id' => $this['legacy_contract_id'],
