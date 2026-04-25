@@ -20,19 +20,21 @@ class EVMService
      * Calculate EVM metrics for a project with caching
      *
      * @param Project|int $project Project model or project ID
+     * @param int|null $visibleOrganizationId Organization scope for contractor-visible metrics
      * @return array
      */
-    public function calculateMetrics(Project|int $project): array
+    public function calculateMetrics(Project|int $project, ?int $visibleOrganizationId = null): array
     {
         $projectId = $project instanceof Project ? $project->id : $project;
         
-        // Try to get from cache first
         $cacheKey = self::CACHE_PREFIX . $projectId;
-        
-        $cached = Cache::get($cacheKey);
-        if ($cached !== null) {
-            Log::debug('EVM metrics cache hit', ['project_id' => $projectId]);
-            return $cached;
+
+        if ($visibleOrganizationId === null) {
+            $cached = Cache::get($cacheKey);
+            if ($cached !== null) {
+                Log::debug('EVM metrics cache hit', ['project_id' => $projectId]);
+                return $cached;
+            }
         }
 
         // Load project if ID was passed
@@ -46,10 +48,11 @@ class EVMService
         Log::debug('EVM metrics cache miss, calculating', ['project_id' => $projectId]);
 
         // Calculate metrics
-        $metrics = $this->calculateMetricsInternal($project);
+        $metrics = $this->calculateMetricsInternal($project, $visibleOrganizationId);
 
-        // Cache the result
-        Cache::put($cacheKey, $metrics, self::CACHE_TTL);
+        if ($visibleOrganizationId === null) {
+            Cache::put($cacheKey, $metrics, self::CACHE_TTL);
+        }
 
         return $metrics;
     }
@@ -57,13 +60,13 @@ class EVMService
     /**
      * Internal method to calculate metrics
      */
-    private function calculateMetricsInternal(Project $project): array
+    private function calculateMetricsInternal(Project $project, ?int $visibleOrganizationId = null): array
     {
         // 1. Basic Data Points
-        $bac = (float) $project->budget_amount;
-        $pv = $this->calculatePV($project);
-        $ev = $this->calculateEV($project);
-        $ac = $this->calculateAC($project);
+        $bac = $this->calculateBAC($project, $visibleOrganizationId);
+        $pv = $this->calculatePV($project, $bac);
+        $ev = $this->calculateEV($project, $visibleOrganizationId);
+        $ac = $this->calculateAC($project, $visibleOrganizationId);
 
         // 2. Variances
         $sv = $ev - $pv; // Schedule Variance
@@ -161,9 +164,8 @@ class EVMService
      * @param Project $project
      * @return float
      */
-    private function calculatePV(Project $project): float
+    private function calculatePV(Project $project, float $bac): float
     {
-        $bac = (float) $project->budget_amount;
         $start = $project->start_date;
         $end = $project->end_date;
         
@@ -203,20 +205,9 @@ class EVMService
      * @param Project $project
      * @return float
      */
-    private function calculateEV(Project $project): float
+    private function calculateEV(Project $project, ?int $visibleOrganizationId = null): float
     {
-        // Получаем ID всех контрактов проекта (включая мультипроектные)
-        $contractIds = Contract::where(function($q) use ($project) {
-            // Обычные контракты (project_id)
-            $q->where('project_id', $project->id)
-              // ИЛИ мультипроектные контракты (через pivot таблицу)
-              ->orWhereExists(function($sub) use ($project) {
-                  $sub->select(DB::raw(1))
-                      ->from('contract_project')
-                      ->whereColumn('contract_project.contract_id', 'contracts.id')
-                      ->where('contract_project.project_id', $project->id);
-              });
-        })->pluck('id');
+        $contractIds = $this->getProjectContractIds($project, $visibleOrganizationId);
         
         if ($contractIds->isEmpty()) {
             return 0.0;
@@ -250,23 +241,12 @@ class EVMService
      * @param Project $project
      * @return float
      */
-    private function calculateAC(Project $project): float
+    private function calculateAC(Project $project, ?int $visibleOrganizationId = null): float
     {
         // AC is tracked via payment_documents (new payment system)
         // Payment documents are linked to contracts via polymorphic relation
         
-        // Get contract IDs for this project (включая мультипроектные)
-        $contractIds = Contract::where(function($q) use ($project) {
-            // Обычные контракты (project_id)
-            $q->where('project_id', $project->id)
-              // ИЛИ мультипроектные контракты (через pivot таблицу)
-              ->orWhereExists(function($sub) use ($project) {
-                  $sub->select(DB::raw(1))
-                      ->from('contract_project')
-                      ->whereColumn('contract_project.contract_id', 'contracts.id')
-                      ->where('contract_project.project_id', $project->id);
-              });
-        })->pluck('id');
+        $contractIds = $this->getProjectContractIds($project, $visibleOrganizationId);
         
         if ($contractIds->isEmpty()) {
             return 0.0;
@@ -278,6 +258,42 @@ class EVMService
             ->whereIn('invoiceable_id', $contractIds)
             ->whereNull('deleted_at')
             ->sum('paid_amount');
+    }
+
+    private function calculateBAC(Project $project, ?int $visibleOrganizationId = null): float
+    {
+        if ($visibleOrganizationId === null) {
+            return (float) $project->budget_amount;
+        }
+
+        return (float) $this->projectContractsQuery($project, $visibleOrganizationId)
+            ->selectRaw('SUM(CASE WHEN is_fixed_amount = true THEN COALESCE(base_amount, total_amount, 0) ELSE COALESCE(total_amount, 0) END) as bac')
+            ->value('bac');
+    }
+
+    private function getProjectContractIds(Project $project, ?int $visibleOrganizationId = null): Collection
+    {
+        return $this->projectContractsQuery($project, $visibleOrganizationId)->pluck('contracts.id');
+    }
+
+    private function projectContractsQuery(Project $project, ?int $visibleOrganizationId = null)
+    {
+        return Contract::query()
+            ->whereNull('contracts.deleted_at')
+            ->where(function ($query) use ($project) {
+                $query->where('contracts.project_id', $project->id)
+                    ->orWhereExists(function ($subQuery) use ($project) {
+                        $subQuery->select(DB::raw(1))
+                            ->from('contract_project')
+                            ->whereColumn('contract_project.contract_id', 'contracts.id')
+                            ->where('contract_project.project_id', $project->id);
+                    });
+            })
+            ->when($visibleOrganizationId !== null, function ($query) use ($visibleOrganizationId) {
+                $query->whereHas('contractor', function ($contractorQuery) use ($visibleOrganizationId) {
+                    $contractorQuery->where('source_organization_id', $visibleOrganizationId);
+                });
+            });
     }
 }
 

@@ -128,6 +128,31 @@ class CustomerAdminAccessTest extends TestCase
             ->assertJsonPath('data.spi', 1.02);
     }
 
+    public function test_project_contractor_gets_scoped_admin_evm_access(): void
+    {
+        $this->withoutMiddleware();
+
+        [$project, $ownerUser] = $this->createProjectWithOwner();
+        [$contractorOrganization, $contractorUser] = $this->createOrganizationUser('contractor-evm@example.com');
+
+        app(ProjectParticipantService::class)->attach(
+            $project,
+            $contractorOrganization->id,
+            ProjectOrganizationRole::CONTRACTOR,
+            $ownerUser
+        );
+
+        $this->mockScopedEvmService($contractorOrganization->id);
+
+        $metricsResponse = $this->actingAs($contractorUser, 'api_admin')
+            ->getJson("/api/v1/admin/dashboard/evm/metrics?project_id={$project->id}");
+
+        $metricsResponse->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.spi', 1.02)
+            ->assertJsonPath('data.cpi', 0.98);
+    }
+
     public function test_user_without_project_access_gets_403_for_admin_evm(): void
     {
         $this->withoutMiddleware();
@@ -174,6 +199,7 @@ class CustomerAdminAccessTest extends TestCase
     {
         $mock = Mockery::mock(EVMService::class);
         $mock->shouldReceive('calculateMetrics')
+            ->with(Mockery::type(Project::class), null)
             ->andReturn([
                 'bac' => 1000000.0,
                 'pv' => 520000.0,
@@ -186,6 +212,29 @@ class CustomerAdminAccessTest extends TestCase
                 'eac' => 1050000.0,
                 'vac' => -50000.0,
                 'tcpi' => 1.05,
+            ]);
+
+        $this->app->instance(EVMService::class, $mock);
+    }
+
+    private function mockScopedEvmService(int $organizationId): void
+    {
+        $mock = Mockery::mock(EVMService::class);
+        $mock->shouldReceive('calculateMetrics')
+            ->once()
+            ->with(Mockery::type(Project::class), $organizationId)
+            ->andReturn([
+                'bac' => 250000.0,
+                'pv' => 125000.0,
+                'ev' => 130000.0,
+                'ac' => 128000.0,
+                'sv' => 5000.0,
+                'cv' => 2000.0,
+                'spi' => 1.02,
+                'cpi' => 0.98,
+                'eac' => 255000.0,
+                'vac' => -5000.0,
+                'tcpi' => 1.01,
             ]);
 
         $this->app->instance(EVMService::class, $mock);

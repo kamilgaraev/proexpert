@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Domain\Project\ValueObjects\ProjectContext;
+use App\Enums\ProjectOrganizationRole;
 use App\Services\Analytics\EVMService;
 use App\Services\Admin\AdminProjectAccessService;
 use App\Models\Project;
@@ -41,11 +43,13 @@ class DashboardEVMController extends Controller
             
             $user = Auth::user();
 
-            if (!$user || !$this->projectAccessService->canViewProjectDashboard($project, $user)) {
+            $projectContext = $user ? $this->projectAccessService->getProjectContext($project, $user) : null;
+
+            if (!$projectContext instanceof ProjectContext || !$this->canViewEvm($projectContext)) {
                 return AdminResponse::error(trans_message('dashboard.access_denied'), Response::HTTP_FORBIDDEN);
             }
 
-            $metrics = $this->evmService->calculateMetrics($project);
+            $metrics = $this->evmService->calculateMetrics($project, $this->resolveEvmScopeOrganizationId($projectContext));
 
             return AdminResponse::success([
                 'bac' => $metrics['bac'],
@@ -82,11 +86,13 @@ class DashboardEVMController extends Controller
             
             $user = Auth::user();
 
-            if (!$user || !$this->projectAccessService->canViewProjectDashboard($project, $user)) {
+            $projectContext = $user ? $this->projectAccessService->getProjectContext($project, $user) : null;
+
+            if (!$projectContext instanceof ProjectContext || !$this->canViewEvm($projectContext)) {
                 return AdminResponse::error(trans_message('dashboard.access_denied'), Response::HTTP_FORBIDDEN);
             }
 
-            $metrics = $this->evmService->calculateMetrics($project);
+            $metrics = $this->evmService->calculateMetrics($project, $this->resolveEvmScopeOrganizationId($projectContext));
 
             return AdminResponse::success([
                 'eac' => $metrics['eac'],
@@ -99,6 +105,20 @@ class DashboardEVMController extends Controller
             ]);
             return AdminResponse::error(trans_message('dashboard.evm_forecast_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    private function canViewEvm(ProjectContext $projectContext): bool
+    {
+        return $projectContext->roleConfig->canViewFinances
+            || $projectContext->hasPermission('view_own_finances');
+    }
+
+    private function resolveEvmScopeOrganizationId(ProjectContext $projectContext): ?int
+    {
+        return in_array($projectContext->role, [
+            ProjectOrganizationRole::CONTRACTOR,
+            ProjectOrganizationRole::SUBCONTRACTOR,
+        ], true) ? $projectContext->organizationId : null;
     }
 }
 
