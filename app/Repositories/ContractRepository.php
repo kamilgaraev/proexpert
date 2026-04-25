@@ -239,7 +239,7 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
                 $projectQuery->where(function($q) use ($search) {
                     $q->where('name', 'ilike', '%' . $search . '%')
                       ->orWhere('address', 'ilike', '%' . $search . '%')
-                      ->orWhere('code', 'ilike', '%' . $search . '%');
+                      ->orWhere('external_code', 'ilike', '%' . $search . '%');
                 });
             });
         }
@@ -253,7 +253,7 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
                   ->orWhereHas('project', function ($projectQuery) use ($search) {
                       $projectQuery->where(function($pq) use ($search) {
                           $pq->where('name', 'ilike', '%' . $search . '%')
-                             ->orWhere('code', 'ilike', '%' . $search . '%');
+                             ->orWhere('external_code', 'ilike', '%' . $search . '%');
                       });
                   })
                   ->orWhereHas('contractor', function ($contractorQuery) use ($search) {
