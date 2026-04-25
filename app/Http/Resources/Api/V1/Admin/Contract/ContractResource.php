@@ -160,16 +160,16 @@ class ContractResource extends JsonResource
         
         // Для контрактов с нефиксированной суммой: используем total_amount из БД
         // (он уже пересчитан на основе актов и ДС через Observer'ы)
-        // Для контрактов с фиксированной суммой: рассчитываем = base_amount + agreements_delta + gp_amount
+        // Для контрактов с фиксированной суммой: введенная сумма уже включает генподрядный процент
         $isFixedAmount = $this->is_fixed_amount ?? true;
         
         if (!$isFixedAmount) {
             // Для нефиксированных контрактов используем значение из БД
             $totalAmountCalculated = (float) ($this->total_amount ?? 0);
         } else {
-            // Для фиксированных контрактов рассчитываем: базовая сумма + изменения от допсоглашений + ГП
-            $totalAmountCalculated = round((float) $effectiveTotalAmount + $gpAmount, 2);
+            $totalAmountCalculated = round((float) $effectiveTotalAmount, 2);
         }
+        $amountAfterGp = round($totalAmountCalculated - $gpAmount, 2);
 
         return [
             'id' => $this->id,
@@ -185,7 +185,7 @@ class ContractResource extends JsonResource
             'work_type_category_label' => $this->work_type_category?->label(),
             'payment_terms' => $this->payment_terms,
             'base_amount' => $modelBaseAmount,
-            'total_amount' => $totalAmountCalculated, // Для фиксированных: base_amount + agreements_delta + gp_amount; для нефиксированных: из БД
+            'total_amount' => $totalAmountCalculated,
             'gp_percentage' => (float) ($this->gp_percentage ?? 0),
             'gp_amount' => (float) $gpAmount,
             'total_amount_with_gp' => $totalAmountCalculated, // То же самое, что и total_amount
@@ -405,6 +405,7 @@ class ContractResource extends JsonResource
                     'calculation_type' => $this->gp_calculation_type?->value,
                     'gp_amount' => (float) $gpAmount,
                     'total_with_gp' => $totalAmountCalculated,
+                    'amount_after_gp' => $amountAfterGp,
                 ] : null,
                 
                 // Гарантийное удержание (если применяется)

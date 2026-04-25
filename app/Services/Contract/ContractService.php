@@ -1400,7 +1400,7 @@ class ContractService
         // Расчет ГП: используем accessor модели для правильного расчета от base_amount
         $gpPercentage = (float) $contract->gp_percentage;
         $gpAmountAgg = (float) $contract->gp_amount; // Accessor рассчитывает от base_amount
-        $totalWithGpAgg = (float) $contract->total_amount_with_gp; // base_amount + gp_amount
+        $totalWithGpAgg = (float) $contract->total_amount_with_gp;
 
         // Новый расчёт суммы актов на основе включённых работ
         $totalPerformedAmount = $this->calculateActualPerformedAmount($approvedActs);
@@ -1694,10 +1694,7 @@ class ContractService
                 ELSE COALESCE(total_amount, 0)
             END) as base_sum'),
             DB::raw('SUM(CASE 
-                WHEN is_fixed_amount = true AND gp_calculation_type = \'coefficient\' 
-                    THEN COALESCE(base_amount, 0) + (COALESCE(base_amount, 0) * (COALESCE(gp_coefficient, 1) - 1))
-                WHEN is_fixed_amount = true 
-                    THEN COALESCE(base_amount, 0) + (COALESCE(base_amount, 0) * COALESCE(gp_percentage, 0) / 100)
+                WHEN is_fixed_amount = true THEN COALESCE(base_amount, 0)
                 ELSE COALESCE(total_amount, 0)
             END) as total_with_gp'),
             DB::raw('SUM(COALESCE(planned_advance_amount, 0)) as total_planned_advance'),

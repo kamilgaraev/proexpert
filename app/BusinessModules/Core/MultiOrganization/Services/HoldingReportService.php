@@ -1295,16 +1295,6 @@ class HoldingReportService
                         'acts_count' => $acts->count(),
                         'works_count' => $works->count(),
                         
-                        'agreements' => $contract->agreements->map(function ($agreement) {
-                            return [
-                                'id' => $agreement->id,
-                                'number' => $agreement->number,
-                                'date' => $agreement->date?->format('Y-m-d'),
-                                'amount_change' => round($agreement->amount_change ?? 0, 2),
-                                'description' => $agreement->description,
-                            ];
-                        })->toArray(),
-                        
                         'specifications' => $contract->specifications->map(function ($spec) {
                             return [
                                 'id' => $spec->id,
@@ -1932,15 +1922,13 @@ class HoldingReportService
             return $fullWarrantyRetention;
         }
 
-        // Используем пропорцию от base_amount + gp_amount
-        $fullTotalAmount = (float) ($contract->base_amount ?? 0) + (float) ($contract->gp_amount ?? 0);
+        $fullTotalAmount = (float) ($contract->total_amount_with_gp ?? $contract->base_amount ?? 0);
         if ($fullTotalAmount == 0) {
             return 0;
         }
 
         $allocatedBaseAmount = $this->calculateContractAmountForProject($contract, $projectId);
-        $allocatedGpAmount = $this->calculateGpAmountForProject($contract, $projectId);
-        $allocatedTotalAmount = $allocatedBaseAmount + $allocatedGpAmount;
+        $allocatedTotalAmount = $allocatedBaseAmount;
         
         $proportion = $allocatedTotalAmount / $fullTotalAmount;
 
@@ -1981,7 +1969,7 @@ class HoldingReportService
         // Если есть явная аллокация, используем её
         if ($allocation) {
             $fullTotalPaid = (float) $documents->sum('paid_amount');
-            $fullContractAmount = (float) ($contract->base_amount ?? 0) + (float) ($contract->gp_amount ?? 0);
+            $fullContractAmount = (float) ($contract->total_amount_with_gp ?? $contract->base_amount ?? 0);
             
             if ($fullContractAmount > 0) {
                 $allocatedAmount = $allocation->calculateAllocatedAmount();

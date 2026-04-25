@@ -295,7 +295,7 @@ class Contract extends Model
 
     /**
      * Получить итоговую сумму контракта с учетом генподрядного процента
-     * total_amount_with_gp = base_amount + gp_amount
+     * Генподрядный процент входит в введенную сумму договора и не увеличивает ее сверху.
      * Для контрактов с нефиксированной суммой возвращает null
      */
     public function getTotalAmountWithGpAttribute(): ?float
@@ -306,13 +306,12 @@ class Contract extends Model
         }
         
         $baseAmount = $this->base_amount ?? 0;
-        $gpAmount = $this->gp_amount ?? 0;
-        return round($baseAmount + $gpAmount, 2);
+        return round($baseAmount, 2);
     }
 
     /**
      * Рассчитать сумму гарантийного удержания от общей суммы контракта
-     * Гарантийное удержание рассчитывается от общей суммы (base_amount + gp_amount)
+     * Гарантийное удержание рассчитывается от итоговой суммы договора.
      * Если warranty_retention_calculation_type равен null — удержание не применяется
      */
     public function getWarrantyRetentionAmountAttribute(): float
@@ -322,10 +321,7 @@ class Contract extends Model
             return 0.00;
         }
 
-        // Общая сумма контракта = базовая сумма + ГП
-        $baseAmount = $this->base_amount ?? 0;
-        $gpAmount = $this->gp_amount ?? 0;
-        $totalContractAmount = $baseAmount + $gpAmount;
+        $totalContractAmount = $this->total_amount_with_gp ?? 0;
         
         if ($totalContractAmount == 0) {
             return 0.00;
