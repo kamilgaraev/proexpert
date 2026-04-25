@@ -130,7 +130,7 @@ class DaDataProvider implements GeocodeProviderInterface
         // 4 - Город
         // 5 - Координаты не определены
         
-        return match ($qcGeo) {
+        return match ((string) $qcGeo) {
             '0' => 1.0,  // Exact coordinates
             '1' => 0.9,  // Nearest house
             '2' => 0.7,  // Street level
@@ -140,4 +140,3 @@ class DaDataProvider implements GeocodeProviderInterface
         };
     }
 }
-

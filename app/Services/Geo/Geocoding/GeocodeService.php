@@ -299,15 +299,23 @@ class GeocodeService
             return;
         }
 
-        DB::table('geocoding_logs')->insert([
-            'project_id' => $projectId,
-            'provider' => $provider,
-            'request' => config('geocoding.logging.log_requests', false) ? json_encode(['project_id' => $projectId]) : null,
-            'response' => config('geocoding.logging.log_responses', false) && $result ? json_encode($result->toArray()) : null,
-            'success' => $success,
-            'error' => $error,
-            'created_at' => now(),
-        ]);
+        try {
+            DB::table('geocoding_logs')->insert([
+                'project_id' => $projectId,
+                'provider' => $provider,
+                'request' => config('geocoding.logging.log_requests', false) ? json_encode(['project_id' => $projectId]) : null,
+                'response' => config('geocoding.logging.log_responses', false) && $result ? json_encode($result->toArray()) : null,
+                'success' => $success,
+                'error' => $error,
+                'created_at' => now(),
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('Failed to write geocoding log', [
+                'project_id' => $projectId,
+                'provider' => $provider,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     /**
