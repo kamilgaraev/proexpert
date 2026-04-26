@@ -105,14 +105,7 @@
             .logo-icon {
                 width: 40px;
                 height: 40px;
-                background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
-                border-radius: 8px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                color: white;
-                font-weight: bold;
-                font-size: 1.2rem;
+                object-fit: contain;
             }
 
             .nav-links {
@@ -260,7 +253,7 @@
         <div class="container">
             <header class="header">
                 <a href="/" class="logo">
-                    <div class="logo-icon">PH</div>
+                    <img src="/logo-white.svg" alt="" class="logo-icon">
                     ProHelper
                 </a>
                 
