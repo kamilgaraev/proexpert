@@ -16,16 +16,23 @@ use Illuminate\Database\Eloquent\Collection;
 
 class ActReportService
 {
+    public function __construct(
+        private readonly ActReportWorkflowService $workflowService
+    ) {
+    }
+
     /**
      * Получить список актов с фильтрацией и пагинацией
      */
     public function getActsList(int $organizationId, array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
         $query = ContractPerformanceAct::with([
-            'contract.project',
-            'contract.contractor',
-            'completedWorks'
-        ])->whereHas('contract', function ($q) use ($organizationId) {
+                'contract.project',
+                'contract.contractor',
+                'completedWorks',
+                'lines',
+                'files',
+            ])->whereHas('contract', function ($q) use ($organizationId) {
             $q->where('organization_id', $organizationId);
         });
 
@@ -62,6 +69,8 @@ class ActReportService
         if ($act->is_approved) {
             throw new BusinessLogicException(trans_message('act_reports.act_already_approved'), 400);
         }
+
+        $this->workflowService->assertMutable($act);
 
         DB::beginTransaction();
         try {
@@ -160,6 +169,10 @@ class ActReportService
 
         if (isset($filters['is_approved'])) {
             $query->where('is_approved', (bool)$filters['is_approved']);
+        }
+
+        if (!empty($filters['status'])) {
+            $query->where('status', $filters['status']);
         }
 
         if (!empty($filters['date_from'])) {

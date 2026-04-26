@@ -54,9 +54,13 @@ class ActingActWizardService
                 'project_id' => $contract->project_id,
                 'act_document_number' => $data['act_document_number'],
                 'act_date' => $data['act_date'],
+                'period_start' => $data['period_start'],
+                'period_end' => $data['period_end'],
                 'description' => $data['description'] ?? null,
                 'amount' => 0,
+                'status' => ContractPerformanceAct::STATUS_DRAFT,
                 'is_approved' => false,
+                'created_by_user_id' => $userId,
             ]);
 
             $this->createCompletedWorkLines($act, $contract, $data);

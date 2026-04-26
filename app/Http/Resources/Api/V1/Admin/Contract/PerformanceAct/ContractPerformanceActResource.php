@@ -3,6 +3,7 @@
 namespace App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct;
 
 use App\Models\ContractPerformanceAct;
+use App\Services\ActReport\ActReportWorkflowService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -25,10 +26,27 @@ class ContractPerformanceActResource extends JsonResource
             'contract_subject' => $this->whenLoaded('contract', fn() => $this->contract->subject),
             'act_document_number' => $this->act_document_number,
             'act_date' => $this->act_date,
+            'period_start' => $this->period_start,
+            'period_end' => $this->period_end,
             'amount' => (float) ($this->amount ?? 0),
             'description' => $this->description,
+            'status' => $this->status ?? ($this->is_approved ? 'approved' : 'draft'),
             'is_approved' => (bool) $this->is_approved,
             'approval_date' => $this->approval_date,
+            'created_by_user_id' => $this->created_by_user_id,
+            'submitted_by_user_id' => $this->submitted_by_user_id,
+            'submitted_at' => $this->submitted_at?->toIso8601String(),
+            'approved_by_user_id' => $this->approved_by_user_id,
+            'rejected_by_user_id' => $this->rejected_by_user_id,
+            'rejected_at' => $this->rejected_at?->toIso8601String(),
+            'rejection_reason' => $this->rejection_reason,
+            'signed_file_id' => $this->signed_file_id,
+            'signed_by_user_id' => $this->signed_by_user_id,
+            'signed_at' => $this->signed_at?->toIso8601String(),
+            'locked_by_user_id' => $this->locked_by_user_id,
+            'locked_at' => $this->locked_at?->toIso8601String(),
+            'is_locked' => $this->isLocked(),
+            'financial_summary' => app(ActReportWorkflowService::class)->financialSummary($this->resource),
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
             

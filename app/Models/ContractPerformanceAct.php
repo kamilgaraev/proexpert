@@ -13,22 +13,49 @@ class ContractPerformanceAct extends Model
 {
     use HasFactory;
 
+    public const STATUS_DRAFT = 'draft';
+    public const STATUS_PENDING_APPROVAL = 'pending_approval';
+    public const STATUS_APPROVED = 'approved';
+    public const STATUS_REJECTED = 'rejected';
+    public const STATUS_SIGNED = 'signed';
+
     protected $fillable = [
         'contract_id',
         'project_id',
         'act_document_number',
         'act_date',
+        'period_start',
+        'period_end',
         'amount',
         'description',
+        'status',
         'is_approved',
         'approval_date',
+        'created_by_user_id',
+        'submitted_by_user_id',
+        'submitted_at',
+        'approved_by_user_id',
+        'rejected_by_user_id',
+        'rejected_at',
+        'rejection_reason',
+        'signed_file_id',
+        'signed_by_user_id',
+        'signed_at',
+        'locked_by_user_id',
+        'locked_at',
     ];
 
     protected $casts = [
         'act_date' => 'date',
+        'period_start' => 'date',
+        'period_end' => 'date',
         'amount' => 'decimal:2',
         'is_approved' => 'boolean',
         'approval_date' => 'date',
+        'submitted_at' => 'datetime',
+        'rejected_at' => 'datetime',
+        'signed_at' => 'datetime',
+        'locked_at' => 'datetime',
     ];
 
     public function contract(): BelongsTo
@@ -72,7 +99,12 @@ class ContractPerformanceAct extends Model
 
     public function isReadyForPayment(): bool
     {
-        return (bool) $this->is_approved && (float) $this->amount > 0;
+        return $this->status === self::STATUS_APPROVED && (float) $this->amount > 0;
+    }
+
+    public function isLocked(): bool
+    {
+        return $this->locked_at !== null || in_array($this->status, [self::STATUS_APPROVED, self::STATUS_SIGNED], true);
     }
 
     public function files(): MorphMany

@@ -196,14 +196,14 @@
                 <td colspan="5"></td>
             </tr>
             @php $workIndex = 2; @endphp
-            @foreach($act->completedWorks as $work)
+            @foreach($works as $work)
             @php
-                $includedAmount = $work->pivot->included_amount ?? $work->total_amount ?? 0;
+                $includedAmount = $work['amount'] ?? 0;
             @endphp
             <tr>
                 <td class="text-center">{{ $workIndex }}</td>
-                <td>{{ $work->workType->name ?? $work->description ?? '' }}</td>
-                <td class="text-center">{{ $work->workType->code ?? '' }}</td>
+                <td>{{ $work['title'] ?? '' }}</td>
+                <td class="text-center">{{ $work['code'] ?? '' }}</td>
                 <td class="text-right">{{ number_format($includedAmount, 2, ',', ' ') }}</td>
                 <td class="text-right">{{ number_format($includedAmount, 2, ',', ' ') }}</td>
                 <td class="text-right">{{ number_format($includedAmount, 2, ',', ' ') }}</td>

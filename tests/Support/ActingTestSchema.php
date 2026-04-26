@@ -173,11 +173,67 @@ trait ActingTestSchema
             $table->foreignId('project_id')->nullable();
             $table->string('act_document_number')->nullable();
             $table->date('act_date');
+            $table->date('period_start')->nullable();
+            $table->date('period_end')->nullable();
             $table->decimal('amount', 15, 2)->default(0);
             $table->text('description')->nullable();
+            $table->string('status', 32)->default('draft');
             $table->boolean('is_approved')->default(false);
             $table->date('approval_date')->nullable();
+            $table->foreignId('created_by_user_id')->nullable();
+            $table->foreignId('submitted_by_user_id')->nullable();
+            $table->timestamp('submitted_at')->nullable();
+            $table->foreignId('approved_by_user_id')->nullable();
+            $table->foreignId('rejected_by_user_id')->nullable();
+            $table->timestamp('rejected_at')->nullable();
+            $table->text('rejection_reason')->nullable();
+            $table->foreignId('signed_file_id')->nullable();
+            $table->foreignId('signed_by_user_id')->nullable();
+            $table->timestamp('signed_at')->nullable();
+            $table->foreignId('locked_by_user_id')->nullable();
+            $table->timestamp('locked_at')->nullable();
             $table->timestamps();
+        });
+
+        Schema::create('files', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id')->nullable();
+            $table->nullableMorphs('fileable');
+            $table->foreignId('user_id')->nullable();
+            $table->string('name');
+            $table->string('original_name');
+            $table->string('path');
+            $table->string('mime_type')->nullable();
+            $table->unsignedBigInteger('size')->default(0);
+            $table->string('disk')->default('s3');
+            $table->string('type')->nullable();
+            $table->string('category')->nullable();
+            $table->json('additional_info')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('payment_documents', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id');
+            $table->foreignId('project_id')->nullable();
+            $table->string('document_type')->default('invoice');
+            $table->string('document_number');
+            $table->date('document_date')->nullable();
+            $table->string('direction')->default('outgoing');
+            $table->string('invoice_type')->nullable();
+            $table->nullableMorphs('invoiceable');
+            $table->foreignId('contractor_id')->nullable();
+            $table->decimal('amount', 15, 2)->default(0);
+            $table->decimal('vat_rate', 5, 2)->default(20);
+            $table->decimal('vat_amount', 15, 2)->default(0);
+            $table->decimal('amount_without_vat', 15, 2)->default(0);
+            $table->decimal('paid_amount', 15, 2)->default(0);
+            $table->decimal('remaining_amount', 15, 2)->default(0);
+            $table->string('currency')->default('RUB');
+            $table->string('status')->default('draft');
+            $table->timestamps();
+            $table->softDeletes();
         });
 
         Schema::create('performance_act_completed_works', function (Blueprint $table): void {

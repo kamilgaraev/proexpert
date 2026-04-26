@@ -181,19 +181,19 @@
         <tbody>
             @foreach($works as $index => $work)
             @php
-                $includedQuantity = $work->pivot->included_quantity ?? $work->quantity ?? 0;
-                $includedAmount = $work->pivot->included_amount ?? $work->total_amount ?? 0;
-                $unitPrice = $includedQuantity > 0 ? ($includedAmount / $includedQuantity) : ($work->price ?? 0);
+                $includedQuantity = $work['quantity'] ?? 0;
+                $includedAmount = $work['amount'] ?? 0;
+                $unitPrice = $work['unit_price'] ?? ($includedQuantity > 0 ? ($includedAmount / $includedQuantity) : 0);
             @endphp
             <tr>
                 <td class="text-center">{{ $index + 1 }}</td>
                 <td class="text-center"></td>
-                <td>{{ $work->workType->name ?? $work->description ?? '' }}</td>
-                <td class="text-center">{{ $work->workType->measurementUnit->short_name ?? '' }}</td>
+                <td>{{ $work['title'] ?? '' }}</td>
+                <td class="text-center">{{ $work['unit'] ?? '' }}</td>
                 <td class="text-right">{{ number_format($includedQuantity, 2, ',', ' ') }}</td>
                 <td class="text-right">{{ number_format($unitPrice, 2, ',', ' ') }}</td>
                 <td class="text-right">{{ number_format($includedAmount, 2, ',', ' ') }}</td>
-                <td>{{ $work->pivot->notes ?? $work->notes ?? '' }}</td>
+                <td>{{ $work['notes'] ?? '' }}</td>
             </tr>
             @endforeach
             <tr>

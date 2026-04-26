@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Admin;
 
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Models\CompletedWork;
 use App\Models\Contract;
 use App\Models\Contractor;
@@ -302,6 +303,71 @@ class ActReportsPreviewTest extends TestCase
         ]);
     }
 
+    public function test_act_can_be_submitted_approved_locked_and_return_financial_summary(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('APPROVAL-1');
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+
+        $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'APPROVAL-ACT', 4);
+
+        PaymentDocument::create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'document_type' => 'invoice',
+            'document_number' => 'PAY-1',
+            'document_date' => '2026-04-21',
+            'direction' => 'outgoing',
+            'invoiceable_type' => Contract::class,
+            'invoiceable_id' => $contract->id,
+            'amount' => 4000,
+            'paid_amount' => 1500,
+            'remaining_amount' => 2500,
+            'status' => 'partially_paid',
+        ]);
+
+        $submit = $this->actingAs($user, 'api_admin')->postJson("/api/v1/admin/act-reports/{$act->id}/submit");
+        $submit->assertOk();
+        $submit->assertJsonPath('data.status', 'pending_approval');
+
+        $approve = $this->actingAs($user, 'api_admin')->postJson("/api/v1/admin/act-reports/{$act->id}/approve");
+        $approve->assertOk();
+        $approve->assertJsonPath('data.status', 'approved');
+        $approve->assertJsonPath('data.is_approved', true);
+        $approve->assertJsonPath('data.financial_summary.accepted_amount', 4000);
+        $approve->assertJsonPath('data.financial_summary.paid_amount', 1500);
+        $approve->assertJsonPath('data.financial_summary.debt_amount', 2500);
+
+        $this->assertDatabaseHas('contract_performance_acts', [
+            'id' => $act->id,
+            'status' => 'approved',
+            'approved_by_user_id' => $user->id,
+            'locked_by_user_id' => $user->id,
+        ]);
+    }
+
+    public function test_rejected_act_stores_reason_and_can_not_be_approved_after_signing_lock(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('REJECT-1');
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+        $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'REJECT-ACT', 1);
+
+        $reject = $this->actingAs($user, 'api_admin')->postJson("/api/v1/admin/act-reports/{$act->id}/reject", [
+            'reason' => 'Не совпадает объем',
+        ]);
+
+        $reject->assertOk();
+        $reject->assertJsonPath('data.status', 'rejected');
+        $reject->assertJsonPath('data.rejection_reason', 'Не совпадает объем');
+
+        $this->assertDatabaseHas('contract_performance_acts', [
+            'id' => $act->id,
+            'status' => 'rejected',
+            'rejected_by_user_id' => $user->id,
+        ]);
+    }
+
     private function allowPermissions(bool $allowed = true): void
     {
         $this->mock(AuthorizationService::class, function ($mock) use ($allowed): void {
@@ -354,5 +420,31 @@ class ActReportsPreviewTest extends TestCase
             'completion_date' => '2026-04-10',
             'status' => 'confirmed',
         ]);
+    }
+
+    private function createActWithWork(
+        int $organizationId,
+        User $user,
+        Contract $contract,
+        Project $project,
+        string $number,
+        float $quantity
+    ): \App\Models\ContractPerformanceAct {
+        $work = $this->createJournalWork($organizationId, $project->id, $contract->id, random_int(1000, 9999), $quantity);
+
+        $response = $this->actingAs($user, 'api_admin')->postJson('/api/v1/admin/act-reports/create-from-wizard', [
+            'contract_id' => $contract->id,
+            'act_document_number' => $number,
+            'act_date' => '2026-04-20',
+            'period_start' => '2026-04-01',
+            'period_end' => '2026-04-30',
+            'selected_works' => [
+                ['completed_work_id' => $work->id, 'quantity' => $quantity],
+            ],
+        ]);
+
+        $response->assertCreated();
+
+        return \App\Models\ContractPerformanceAct::query()->findOrFail((int) $response->json('data.id'));
     }
 }

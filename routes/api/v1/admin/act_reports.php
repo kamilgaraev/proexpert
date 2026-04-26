@@ -38,6 +38,24 @@ Route::prefix('act-reports')->group(function () {
     // Экспорт акта в PDF
     Route::get('{act}/export/pdf', [ActReportsController::class, 'exportPdf'])
         ->name('act-reports.export.pdf');
+
+    Route::post('{act}/submit', [ActReportsController::class, 'submit'])
+        ->name('act-reports.submit');
+
+    Route::post('{act}/approve', [ActReportsController::class, 'approve'])
+        ->name('act-reports.approve');
+
+    Route::post('{act}/reject', [ActReportsController::class, 'reject'])
+        ->name('act-reports.reject');
+
+    Route::get('{act}/export/ks3', [ActReportsController::class, 'exportKS3'])
+        ->name('act-reports.export.ks3');
+
+    Route::get('{act}/export/ks3/pdf', [ActReportsController::class, 'exportKS3Pdf'])
+        ->name('act-reports.export.ks3.pdf');
+
+    Route::post('{act}/signed-file', [ActReportsController::class, 'uploadSignedFile'])
+        ->name('act-reports.signed-file.upload');
     
     // Скачивание сохраненного PDF акта
     Route::get('{act}/download-pdf/{file}', [ActReportsController::class, 'downloadPdf'])

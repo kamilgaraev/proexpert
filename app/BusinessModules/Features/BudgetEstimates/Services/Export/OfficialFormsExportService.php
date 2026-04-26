@@ -6,6 +6,7 @@ use App\Models\Estimate;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use App\Helpers\NumberToWordsHelper;
+use Illuminate\Support\Collection;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
@@ -284,8 +285,8 @@ class OfficialFormsExportService
         $row += 2;
         
         // Отчетный период
-        $periodStart = $act->act_date->copy()->startOfMonth();
-        $periodEnd = $act->act_date->copy()->endOfMonth();
+        $periodStart = $act->period_start ?? $act->act_date->copy()->startOfMonth();
+        $periodEnd = $act->period_end ?? $act->act_date->copy()->endOfMonth();
         $sheet->setCellValue("A{$row}", 'Отчетный период');
         $sheet->setCellValue("B{$row}", 'с ' . $periodStart->format('d.m.Y') . ' по ' . $periodEnd->format('d.m.Y'));
         $sheet->mergeCells("B{$row}:H{$row}");
@@ -323,20 +324,23 @@ class OfficialFormsExportService
         $startRow = $sheet->getHighestRow() + 1;
         $row = $startRow;
         $totalAmount = 0;
+        $lines = $this->actLinesForExport($act);
 
-        foreach ($act->completedWorks as $index => $work) {
-            $includedQuantity = $work->pivot->included_quantity ?? $work->quantity ?? 0;
-            $includedAmount = $work->pivot->included_amount ?? $work->total_amount ?? 0;
-            $unitPrice = $includedQuantity > 0 ? ($includedAmount / $includedQuantity) : ($work->price ?? 0);
+        foreach ($lines as $index => $line) {
+            $includedQuantity = (float) ($line['quantity'] ?? 0);
+            $includedAmount = (float) ($line['amount'] ?? 0);
+            $unitPrice = $line['unit_price'] !== null
+                ? (float) $line['unit_price']
+                : ($includedQuantity > 0 ? ($includedAmount / $includedQuantity) : 0);
             
             $sheet->setCellValue("A{$row}", $index + 1);
             $sheet->setCellValue("B{$row}", ''); // по смете
-            $sheet->setCellValue("C{$row}", $work->workType?->name ?? $work->description ?? '');
-            $sheet->setCellValue("D{$row}", $work->workType?->measurementUnit?->short_name ?? '');
+            $sheet->setCellValue("C{$row}", $line['title'] ?? '');
+            $sheet->setCellValue("D{$row}", $line['unit'] ?? '');
             $sheet->setCellValue("E{$row}", $includedQuantity);
             $sheet->setCellValue("F{$row}", $unitPrice);
             $sheet->setCellValue("G{$row}", $includedAmount);
-            $sheet->setCellValue("H{$row}", $work->pivot->notes ?? $work->notes ?? '');
+            $sheet->setCellValue("H{$row}", $line['notes'] ?? '');
 
             $totalAmount += $includedAmount;
             $row++;
@@ -556,12 +560,12 @@ class OfficialFormsExportService
         
         // Детализация по работам
         $workIndex = 2;
-        foreach ($act->completedWorks as $work) {
-            $includedAmount = $work->pivot->included_amount ?? $work->total_amount ?? 0;
+        foreach ($this->actLinesForExport($act) as $line) {
+            $includedAmount = (float) ($line['amount'] ?? 0);
             
             $sheet->setCellValue("A{$row}", $workIndex);
-            $sheet->setCellValue("B{$row}", $work->workType?->name ?? $work->description ?? '');
-            $sheet->setCellValue("C{$row}", $work->workType?->code ?? '');
+            $sheet->setCellValue("B{$row}", $line['title'] ?? '');
+            $sheet->setCellValue("C{$row}", $line['code'] ?? '');
             $sheet->setCellValue("D{$row}", $totalFromStart);
             $sheet->setCellValue("E{$row}", $yearTotal);
             $sheet->setCellValue("F{$row}", $includedAmount);
@@ -748,6 +752,8 @@ class OfficialFormsExportService
     protected function prepareKS2Data(ContractPerformanceAct $act, Contract $contract): array
     {
         $act->loadMissing([
+            'lines.estimateItem',
+            'lines.completedWork.workType.measurementUnit',
             'completedWorks.workType.measurementUnit',
             'contract.contractor',
             'contract.project.organization',
@@ -755,9 +761,8 @@ class OfficialFormsExportService
             'contract.estimate'
         ]);
         
-        $totalAmount = $act->completedWorks->sum(function($work) {
-            return (float) ($work->pivot->included_amount ?? $work->total_amount ?? 0);
-        });
+        $works = $this->actLinesForExport($act);
+        $totalAmount = (float) $works->sum(fn (array $line): float => (float) ($line['amount'] ?? 0));
         
         $totalAmount = $totalAmount > 0 ? $totalAmount : (float) ($act->amount ?? 0);
         $vatAmount = round($totalAmount * 0.20, 2);
@@ -769,13 +774,13 @@ class OfficialFormsExportService
         
         // Период отчета
         $actDate = $act->act_date;
-        $periodStart = $actDate->copy()->startOfMonth();
-        $periodEnd = $actDate->copy()->endOfMonth();
+        $periodStart = $act->period_start ?? $actDate->copy()->startOfMonth();
+        $periodEnd = $act->period_end ?? $actDate->copy()->endOfMonth();
         
         return [
             'act' => $act,
             'contract' => $contract,
-            'works' => $act->completedWorks,
+            'works' => $works,
             'total_amount' => $totalAmount,
             'vat_amount' => $vatAmount,
             'contract_amount' => $contractAmount,
@@ -790,6 +795,8 @@ class OfficialFormsExportService
     protected function prepareKS3Data(ContractPerformanceAct $act, Contract $contract): array
     {
         $act->loadMissing([
+            'lines.estimateItem',
+            'lines.completedWork.workType',
             'completedWorks.workType',
             'contract.contractor',
             'contract.project.organization',
@@ -820,8 +827,8 @@ class OfficialFormsExportService
         
         // Период отчета
         $actDate = $act->act_date;
-        $periodStart = $actDate->copy()->startOfMonth();
-        $periodEnd = $actDate->copy()->endOfMonth();
+        $periodStart = $act->period_start ?? $actDate->copy()->startOfMonth();
+        $periodEnd = $act->period_end ?? $actDate->copy()->endOfMonth();
         
         $customerOrg = $contract->project?->organization ?? $contract->organization;
         $contractor = $contract->contractor;
@@ -830,7 +837,7 @@ class OfficialFormsExportService
             'act' => $act,
             'contract' => $contract,
             'estimate' => $estimate,
-            'works' => $contract->completedWorks ?? collect(),
+            'works' => $this->actLinesForExport($act),
             'total_amount' => $actAmount,
             'vat_amount' => $vatAmount,
             'year_total' => (float) $yearTotal,
@@ -842,6 +849,47 @@ class OfficialFormsExportService
             'contractor' => $contractor,
             'project' => $contract->project,
         ];
+    }
+
+    private function actLinesForExport(ContractPerformanceAct $act): Collection
+    {
+        $act->loadMissing([
+            'lines.estimateItem',
+            'lines.completedWork.workType.measurementUnit',
+            'completedWorks.workType.measurementUnit',
+        ]);
+
+        if ($act->lines->isNotEmpty()) {
+            return $act->lines->map(function ($line): array {
+                $work = $line->completedWork;
+                $workType = $work?->workType;
+
+                return [
+                    'title' => $line->title ?: ($workType?->name ?? $work?->description ?? ''),
+                    'unit' => $line->unit ?: ($workType?->measurementUnit?->short_name ?? ''),
+                    'quantity' => (float) $line->quantity,
+                    'unit_price' => $line->unit_price === null ? null : (float) $line->unit_price,
+                    'amount' => (float) $line->amount,
+                    'code' => $line->estimateItem?->code ?? $workType?->code ?? '',
+                    'notes' => $line->manual_reason,
+                ];
+            })->values();
+        }
+
+        return $act->completedWorks->map(function ($work): array {
+            $quantity = (float) ($work->pivot->included_quantity ?? $work->quantity ?? 0);
+            $amount = (float) ($work->pivot->included_amount ?? $work->total_amount ?? 0);
+
+            return [
+                'title' => $work->workType?->name ?? $work->description ?? '',
+                'unit' => $work->workType?->measurementUnit?->short_name ?? '',
+                'quantity' => $quantity,
+                'unit_price' => $quantity > 0 ? round($amount / $quantity, 2) : ($work->price ?? null),
+                'amount' => $amount,
+                'code' => $work->workType?->code ?? '',
+                'notes' => $work->pivot->notes ?? $work->notes ?? '',
+            ];
+        })->values();
     }
 
     // === EXPORT KS-6 (CONSTRUCTION JOURNAL) ===
