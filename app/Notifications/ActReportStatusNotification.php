@@ -7,6 +7,7 @@ namespace App\Notifications;
 use App\Models\ContractPerformanceAct;
 use Illuminate\Bus\Queueable;
 use Illuminate\Notifications\Notification;
+use function trans_message;
 
 class ActReportStatusNotification extends Notification
 {
@@ -39,11 +40,17 @@ class ActReportStatusNotification extends Notification
             'project_id' => $this->act->project_id,
             'project_name' => $this->act->contract?->project?->name,
             'status' => $this->act->status,
+            'status_label' => $this->statusLabel((string) $this->act->status),
             'entity' => [
                 'type' => 'act_report',
                 'id' => $this->act->id,
             ],
             'target_route' => "/reports/act-reports/{$this->act->id}",
         ];
+    }
+
+    private function statusLabel(string $status): string
+    {
+        return trans_message("act_reports.statuses.{$status}");
     }
 }
