@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Monitoring;
 
 use Illuminate\Http\Request;
+use Sentry\Severity;
 use Sentry\State\Scope;
 use Throwable;
 
@@ -25,9 +26,18 @@ class SentryScopeService
         'client_secret',
     ];
 
+    public function __construct(private ?GlitchTipReportPolicy $reportPolicy = null)
+    {
+        $this->reportPolicy ??= new GlitchTipReportPolicy();
+    }
+
     public function captureException(Throwable $exception, ?Request $request = null): void
     {
         if (!app()->bound('sentry')) {
+            return;
+        }
+
+        if (!$this->reportPolicy->shouldCapture($exception)) {
             return;
         }
 
@@ -44,6 +54,8 @@ class SentryScopeService
         $scope->setTag('app_env', (string) config('app.env'));
         $scope->setTag('app_debug', config('app.debug') ? 'true' : 'false');
         $scope->setTag('exception_class', $exception::class);
+        $scope->setTag('glitchtip_policy_level', $this->reportPolicy->levelFor($exception));
+        $scope->setLevel(new Severity($this->reportPolicy->levelFor($exception)));
 
         $release = config('sentry.release');
         if (is_string($release) && $release !== '') {

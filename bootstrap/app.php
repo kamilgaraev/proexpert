@@ -9,6 +9,8 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Http\Request;
 use App\Http\Middleware\JwtMiddleware;
 use App\Http\Middleware\SetOrganizationContext;
+use App\Services\Monitoring\GlitchTipReportPolicy;
+use App\Services\Monitoring\SentryScopeService;
 
 $app = Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -78,8 +80,6 @@ $app = Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        \Sentry\Laravel\Integration::handles($exceptions);
-
         // ============================================================
         // СТРУКТУРИРОВАННОЕ ЛОГИРОВАНИЕ ИСКЛЮЧЕНИЙ
         // Логируем разные типы ошибок в отдельные каналы для удобства анализа
@@ -130,6 +130,30 @@ $app = Application::configure(basePath: dirname(__DIR__))
         $exceptions->dontReport([
             \App\Exceptions\Billing\InsufficientBalanceException::class,
         ]);
+
+        $glitchTipPolicy = new GlitchTipReportPolicy((array) config('glitchtip.reporting', []));
+        $exceptions->stopIgnoring($glitchTipPolicy->stopIgnoringExceptions());
+
+        $exceptions->report(function (\Throwable $exception): ?bool {
+            $policy = app(GlitchTipReportPolicy::class);
+
+            if (!$policy->shouldCapture($exception)) {
+                return false;
+            }
+
+            if ($policy->shouldCaptureManually($exception)) {
+                app(SentryScopeService::class)->captureException(
+                    $exception,
+                    app()->bound('request') ? request() : null
+                );
+
+                return false;
+            }
+
+            return null;
+        });
+
+        \Sentry\Laravel\Integration::handles($exceptions);
 
         // ============================================================
         // ИНТЕГРАЦИЯ С PROMETHEUS

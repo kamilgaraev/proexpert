@@ -13,6 +13,7 @@ use Throwable;
 use Symfony\Component\Routing\Exception\RouteNotFoundException;
 use Illuminate\Support\Facades\Log;
 use App\Services\Monitoring\PrometheusService;
+use App\Services\Monitoring\GlitchTipReportPolicy;
 use App\Services\Monitoring\SentryScopeService;
 use App\Services\Logging\LoggingService;
 use App\Services\ErrorTracking\ErrorTrackingService;
@@ -299,7 +300,11 @@ class Handler extends ExceptionHandler
 
     public function report(Throwable $exception)
     {
-        if ($this->shouldReport($exception) && app()->bound(SentryScopeService::class)) {
+        $glitchTipPolicy = app()->bound(GlitchTipReportPolicy::class)
+            ? app(GlitchTipReportPolicy::class)
+            : new GlitchTipReportPolicy();
+
+        if ($glitchTipPolicy->shouldCapture($exception)) {
             app(SentryScopeService::class)->captureException($exception, app()->bound('request') ? request() : null);
         }
 
