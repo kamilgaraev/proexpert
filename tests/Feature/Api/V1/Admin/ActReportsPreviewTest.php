@@ -194,6 +194,58 @@ class ActReportsPreviewTest extends TestCase
         $response->assertJsonPath('data.lines.0.amount', 3000);
     }
 
+    public function test_create_from_wizard_applies_estimate_vat_to_completed_work_price(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('WIZARD-VAT');
+        $estimate = Estimate::create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'contract_id' => $contract->id,
+            'name' => 'Estimate',
+            'status' => 'approved',
+            'total_amount' => 6000,
+            'total_amount_with_vat' => 7200,
+            'vat_rate' => 20,
+        ]);
+        $estimateItem = EstimateItem::create([
+            'estimate_id' => $estimate->id,
+            'position_number' => '1',
+            'name' => 'Concrete',
+            'quantity' => 6,
+            'quantity_total' => 6,
+            'unit_price' => 1000,
+            'total_amount' => 6000,
+        ]);
+        $work = $this->createJournalWork($organization->id, $project->id, $contract->id, 1203, 3);
+        $work->update([
+            'estimate_item_id' => $estimateItem->id,
+            'price' => 1000,
+            'total_amount' => 3000,
+        ]);
+
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+
+        $response = $this->actingAs($user, 'api_admin')->postJson('/api/v1/admin/act-reports/create-from-wizard', [
+            'contract_id' => $contract->id,
+            'act_document_number' => 'KS-2-VAT',
+            'act_date' => '2026-04-20',
+            'period_start' => '2026-04-01',
+            'period_end' => '2026-04-30',
+            'selected_works' => [
+                [
+                    'completed_work_id' => $work->id,
+                    'quantity' => 3,
+                ],
+            ],
+        ]);
+
+        $response->assertCreated();
+        $response->assertJsonPath('data.amount', 3600);
+        $response->assertJsonPath('data.lines.0.unit_price', 1200);
+        $response->assertJsonPath('data.lines.0.amount', 3600);
+    }
+
     public function test_approve_repairs_zero_amount_act_from_estimate_contract_price(): void
     {
         [$organization, $user, $contract, $project] = $this->createContractFixture('APPROVE-PRICE');
@@ -319,6 +371,73 @@ class ActReportsPreviewTest extends TestCase
 
         $this->assertStringContainsString('<html>', $ks2);
         $this->assertStringContainsString('<html>', $ks3);
+    }
+
+    public function test_recalculate_repairs_existing_act_amount_to_include_estimate_vat(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('SHOW-VAT');
+        $estimate = Estimate::create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'contract_id' => $contract->id,
+            'name' => 'Estimate',
+            'status' => 'approved',
+            'total_amount' => 600,
+            'total_amount_with_vat' => 720,
+            'vat_rate' => 20,
+        ]);
+        $estimateItem = EstimateItem::create([
+            'estimate_id' => $estimate->id,
+            'position_number' => '1',
+            'name' => 'Concrete',
+            'quantity' => 6,
+            'quantity_total' => 6,
+            'unit_price' => 100,
+            'total_amount' => 600,
+        ]);
+        $work = $this->createJournalWork($organization->id, $project->id, $contract->id, 1204, 3);
+        $work->update([
+            'estimate_item_id' => $estimateItem->id,
+            'price' => 100,
+            'total_amount' => 300,
+        ]);
+        $act = \App\Models\ContractPerformanceAct::create([
+            'contract_id' => $contract->id,
+            'project_id' => $project->id,
+            'act_document_number' => 'KS-2-SHOW-VAT',
+            'act_date' => '2026-04-20',
+            'period_start' => '2026-04-01',
+            'period_end' => '2026-04-30',
+            'amount' => 300,
+            'status' => \App\Models\ContractPerformanceAct::STATUS_APPROVED,
+            'is_approved' => true,
+            'created_by_user_id' => $user->id,
+        ]);
+        PerformanceActLine::create([
+            'performance_act_id' => $act->id,
+            'completed_work_id' => $work->id,
+            'estimate_item_id' => $estimateItem->id,
+            'line_type' => PerformanceActLine::TYPE_COMPLETED_WORK,
+            'title' => 'Work',
+            'quantity' => 3,
+            'unit_price' => 100,
+            'amount' => 300,
+        ]);
+        $act->completedWorks()->syncWithoutDetaching([
+            $work->id => [
+                'included_quantity' => 3,
+                'included_amount' => 300,
+            ],
+        ]);
+
+        $updatedAct = app(\App\Services\ActReport\ActReportWorkflowService::class)->recalculatePricedLines($act);
+
+        $this->assertSame(360.0, (float) $updatedAct->amount);
+        $this->assertDatabaseHas('performance_act_lines', [
+            'performance_act_id' => $act->id,
+            'unit_price' => 120,
+            'amount' => 360,
+        ]);
     }
 
     public function test_create_from_wizard_requires_create_permission(): void

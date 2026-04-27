@@ -153,9 +153,12 @@ trait ActingTestSchema
             $table->id();
             $table->foreignId('organization_id');
             $table->foreignId('project_id')->nullable();
+            $table->foreignId('contract_id')->nullable();
             $table->string('name')->default('Estimate');
             $table->string('status')->default('approved');
             $table->decimal('total_amount', 15, 2)->default(0);
+            $table->decimal('total_amount_with_vat', 15, 2)->default(0);
+            $table->decimal('vat_rate', 5, 2)->default(0);
             $table->timestamps();
             $table->softDeletes();
         });

@@ -210,6 +210,7 @@ class ActReportsController extends Controller
     {
         try {
             $this->authorizeActAccess($request, $act);
+            $act = $this->workflowService->recalculatePricedLines($act);
 
             $act->load([
                 'contract.project',
@@ -217,7 +218,6 @@ class ActReportsController extends Controller
                 'contract.organization',
                 'completedWorks.workType',
                 'completedWorks.user',
-                'completedWorks.materials',
                 'lines',
                 'files',
             ]);
@@ -228,6 +228,11 @@ class ActReportsController extends Controller
         } catch (BusinessLogicException $e) {
             return AdminResponse::error($e->getMessage(), $e->getCode());
         } catch (\Throwable $e) {
+            Log::error('act_reports.show_failed', [
+                'act_id' => $act->id,
+                'error' => $e->getMessage(),
+            ]);
+
             return AdminResponse::error(
                 trans_message('act_reports.load_failed'),
                 500
@@ -493,6 +498,7 @@ class ActReportsController extends Controller
     {
         try {
             $this->authorizeActAccess($request, $act);
+            $act = $this->workflowService->recalculatePricedLines($act);
 
             $path = $this->officialExportService->exportKS2ToPdf($act, $act->contract);
             $url = $this->fileService->temporaryUrl($path, 15);
@@ -516,6 +522,7 @@ class ActReportsController extends Controller
     {
         try {
             $this->authorizeActAccess($request, $act);
+            $act = $this->workflowService->recalculatePricedLines($act);
 
             $path = $this->officialExportService->exportKS2ToExcel($act, $act->contract);
             $url = $this->fileService->temporaryUrl($path, 15);
@@ -539,6 +546,7 @@ class ActReportsController extends Controller
     {
         try {
             $this->authorizeActAccess($request, $act);
+            $act = $this->workflowService->recalculatePricedLines($act);
 
             $path = $this->officialExportService->exportKS3ToExcel($act, $act->contract);
             $url = $this->fileService->temporaryUrl($path, 15);
@@ -558,6 +566,7 @@ class ActReportsController extends Controller
         try {
             $act = $this->resolveAct($act);
             $this->authorizeActAccess($request, $act);
+            $act = $this->workflowService->recalculatePricedLines($act);
 
             $path = $this->officialExportService->exportKS3ToPdf($act, $act->contract);
             $url = $this->fileService->temporaryUrl($path, 15);
