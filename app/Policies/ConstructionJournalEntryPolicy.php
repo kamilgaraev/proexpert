@@ -124,10 +124,25 @@ class ConstructionJournalEntryPolicy
             return false;
         }
 
-        if ($entry->created_by_user_id === $user->id) {
+        $journalOrganizationId = $entry->journal?->organization_id;
+
+        if (
+            $entry->created_by_user_id === $user->id
+            && (!$journalOrganizationId || !$this->isOrganizationOwner($user, (int) $journalOrganizationId))
+        ) {
             return false;
         }
 
         return $this->hasModulePermission($user, ['approve', '*'], $project);
+    }
+
+    private function isOrganizationOwner(User $user, int $organizationId): bool
+    {
+        return $user->isOrganizationOwner($organizationId)
+            || $user->organizations()
+                ->where('organization_user.organization_id', $organizationId)
+                ->wherePivot('is_owner', true)
+                ->wherePivot('is_active', true)
+                ->exists();
     }
 }

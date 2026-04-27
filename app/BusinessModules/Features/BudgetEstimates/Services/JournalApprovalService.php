@@ -111,16 +111,26 @@ class JournalApprovalService
 
     public function canApprove(User $user, ConstructionJournalEntry $entry): bool
     {
-        if ($entry->created_by_user_id === $user->id) {
-            return false;
-        }
-
         $journal = $entry->journal;
         if (!$journal || $journal->organization_id !== $user->current_organization_id) {
             return false;
         }
 
+        if ($entry->created_by_user_id === $user->id && !$this->isOrganizationOwner($user, (int) $journal->organization_id)) {
+            return false;
+        }
+
         return $user->can('construction-journal.approve');
+    }
+
+    private function isOrganizationOwner(User $user, int $organizationId): bool
+    {
+        return $user->isOrganizationOwner($organizationId)
+            || $user->organizations()
+                ->where('organization_user.organization_id', $organizationId)
+                ->wherePivot('is_owner', true)
+                ->wherePivot('is_active', true)
+                ->exists();
     }
 
     public function getApprovalStats(User $user): array
