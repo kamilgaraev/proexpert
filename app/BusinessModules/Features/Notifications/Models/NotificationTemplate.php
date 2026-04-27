@@ -105,7 +105,7 @@ class NotificationTemplate extends Model
     public function createNewVersion(): self
     {
         $newVersion = $this->replicate();
-        $newVersion->version = $this->version + 1;
+        $newVersion->version = ((int) $this->getAttribute('version')) + 1;
         $newVersion->parent_template_id = $this->id;
         $newVersion->save();
         

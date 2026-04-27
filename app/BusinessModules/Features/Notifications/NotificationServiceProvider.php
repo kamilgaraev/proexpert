@@ -9,6 +9,8 @@ class NotificationServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        $this->mergeConfigFrom(__DIR__ . '/config/notifications.php', 'notifications');
+
         $this->app->singleton(NotificationModule::class);
         
         $this->registerServices();
@@ -43,6 +45,10 @@ class NotificationServiceProvider extends ServiceProvider
         
         $this->app->singleton(
             \App\BusinessModules\Features\Notifications\Services\AnalyticsService::class
+        );
+
+        $this->app->singleton(
+            \App\BusinessModules\Features\Notifications\Services\NotificationPayloadNormalizer::class
         );
     }
 

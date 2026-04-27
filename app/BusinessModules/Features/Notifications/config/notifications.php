@@ -22,7 +22,7 @@ return [
         ],
         'websocket' => [
             'driver' => \App\BusinessModules\Features\Notifications\Channels\WebSocketChannel::class,
-            'enabled' => env('BROADCAST_DRIVER') === 'reverb',
+            'enabled' => config('broadcasting.default') === 'reverb',
         ],
     ],
 
@@ -120,7 +120,7 @@ return [
 
     'analytics' => [
         'enabled' => true,
-        'tracking_domain' => env('APP_URL'),
+        'tracking_domain' => config('app.url'),
         'retention_days' => 90,
         'aggregate_interval' => 'daily',
     ],

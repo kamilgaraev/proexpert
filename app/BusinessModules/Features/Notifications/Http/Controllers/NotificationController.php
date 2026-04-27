@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\Notifications\Http\Controllers;
 use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -27,21 +28,37 @@ class NotificationController extends Controller
                 ->orderByDesc('created_at');
 
             if ($request->has('filter')) {
-                if ($request->filter === 'unread') {
+                if ($request->string('filter')->toString() === 'unread') {
                     $query->unread();
-                } elseif ($request->filter === 'read') {
-                    $query->whereNotNull('read_at');
+                } elseif ($request->string('filter')->toString() === 'read') {
+                    $query->read();
                 }
             } elseif ($request->has('unread')) {
                 $query->unread();
+            } elseif ($request->has('read')) {
+                $request->boolean('read') ? $query->read() : $query->unread();
             }
 
-            if ($request->has('type')) {
-                $query->byType($request->type);
+            if ($request->filled('notification_type')) {
+                $query->byType($request->string('notification_type')->toString());
+            } elseif ($request->filled('category')) {
+                $this->applyCategoryFilter($query, $request->string('category')->toString());
+            } elseif ($request->filled('type')) {
+                $this->applyNotificationTypeOrBusinessTypeFilter($query, $request->string('type')->toString());
             }
 
-            if ($request->has('priority')) {
-                $query->byPriority($request->priority);
+            if ($request->filled('business_type')) {
+                $this->applyDataValueFilter($query, 'type', $request->string('business_type')->toString());
+            } elseif ($request->filled('data_type')) {
+                $this->applyDataValueFilter($query, 'type', $request->string('data_type')->toString());
+            }
+
+            if ($request->filled('priority')) {
+                $query->byPriority($request->string('priority')->toString());
+            }
+
+            if ($request->filled('project_id')) {
+                $this->applyDataValueFilter($query, 'project_id', $request->string('project_id')->toString());
             }
 
             $notifications = $query->paginate((int) ($request->per_page ?? 20));
@@ -83,6 +100,13 @@ class NotificationController extends Controller
                 'notification_id' => $id,
             ]);
         }
+    }
+
+    public function unread(Request $request): JsonResponse
+    {
+        $request->merge(['filter' => 'unread']);
+
+        return $this->index($request);
     }
 
     public function markAsRead(Request $request, string $id): JsonResponse
@@ -161,15 +185,35 @@ class NotificationController extends Controller
             $user = $request->user();
 
             $count = Notification::forUser($user)->unread()->count();
+            $byCategoryResults = Notification::forUser($user)
+                ->unread()
+                ->selectRaw(
+                    "COALESCE(NULLIF(CAST(data AS jsonb)->>'category', ''), NULLIF(notification_type, ''), 'general') as category, COUNT(*) as count"
+                )
+                ->groupBy(DB::raw("COALESCE(NULLIF(CAST(data AS jsonb)->>'category', ''), NULLIF(notification_type, ''), 'general')"))
+                ->get();
+
             $byTypeResults = Notification::forUser($user)
                 ->unread()
-                ->selectRaw("COALESCE(CAST(data AS jsonb)->>'category', 'general') as category, COUNT(*) as count")
-                ->groupBy(DB::raw("COALESCE(CAST(data AS jsonb)->>'category', 'general')"))
+                ->selectRaw(
+                    "COALESCE(NULLIF(CAST(data AS jsonb)->>'type', ''), NULLIF(type, ''), NULLIF(notification_type, ''), 'general') as business_type, COUNT(*) as count"
+                )
+                ->groupBy(DB::raw("COALESCE(NULLIF(CAST(data AS jsonb)->>'type', ''), NULLIF(type, ''), NULLIF(notification_type, ''), 'general')"))
+                ->get();
+
+            $byNotificationTypeResults = Notification::forUser($user)
+                ->unread()
+                ->selectRaw(
+                    "COALESCE(NULLIF(notification_type, ''), NULLIF(CAST(data AS jsonb)->>'notification_type', ''), NULLIF(CAST(data AS jsonb)->>'category', ''), 'general') as notification_type, COUNT(*) as count"
+                )
+                ->groupBy(DB::raw("COALESCE(NULLIF(notification_type, ''), NULLIF(CAST(data AS jsonb)->>'notification_type', ''), NULLIF(CAST(data AS jsonb)->>'category', ''), 'general')"))
                 ->get();
 
             return AdminResponse::success([
                 'count' => $count,
-                'by_type' => $byTypeResults->pluck('count', 'category')->toArray(),
+                'by_category' => $byCategoryResults->pluck('count', 'category')->toArray(),
+                'by_notification_type' => $byNotificationTypeResults->pluck('count', 'notification_type')->toArray(),
+                'by_type' => $byTypeResults->pluck('count', 'business_type')->toArray(),
             ]);
         } catch (\Throwable $e) {
             return $this->handleUnexpectedError(
@@ -187,6 +231,28 @@ class NotificationController extends Controller
             ->where('id', $id)
             ->forUser($request->user())
             ->firstOrFail();
+    }
+
+    private function applyCategoryFilter(Builder $query, string $category): void
+    {
+        $query->where(function (Builder $nested) use ($category): void {
+            $nested->where('notification_type', $category)
+                ->orWhereRaw("CAST(data AS jsonb)->>'category' = ?", [$category])
+                ->orWhereRaw("CAST(data AS jsonb)->>'notification_type' = ?", [$category]);
+        });
+    }
+
+    private function applyNotificationTypeOrBusinessTypeFilter(Builder $query, string $type): void
+    {
+        $query->where(function (Builder $nested) use ($type): void {
+            $nested->where('notification_type', $type)
+                ->orWhereRaw("CAST(data AS jsonb)->>'type' = ?", [$type]);
+        });
+    }
+
+    private function applyDataValueFilter(Builder $query, string $key, string $value): void
+    {
+        $query->whereRaw("CAST(data AS jsonb)->>'{$key}' = ?", [$value]);
     }
 
     private function handleUnexpectedError(

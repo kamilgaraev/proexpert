@@ -62,12 +62,15 @@ class NotificationPreference extends Model
     {
         $time = $time ?? now();
         
-        if (!$this->quiet_hours_start || !$this->quiet_hours_end) {
+        $quietHoursStart = $this->getAttribute('quiet_hours_start');
+        $quietHoursEnd = $this->getAttribute('quiet_hours_end');
+
+        if (!$quietHoursStart || !$quietHoursEnd) {
             return false;
         }
 
-        $start = \Carbon\Carbon::parse($this->quiet_hours_start);
-        $end = \Carbon\Carbon::parse($this->quiet_hours_end);
+        $start = \Carbon\Carbon::parse($quietHoursStart);
+        $end = \Carbon\Carbon::parse($quietHoursEnd);
         
         return $time->between($start, $end);
     }

@@ -11,10 +11,6 @@ Route::middleware(['api', 'auth:api'])->prefix('api')->group(function () {
         Route::get('/', [NotificationController::class, 'index'])->name('notifications.index');
         Route::get('/unread-count', [NotificationController::class, 'getUnreadCount'])->name('notifications.unread-count');
         Route::post('/mark-all-read', [NotificationController::class, 'markAllAsRead'])->name('notifications.mark-all-read');
-        Route::get('/{id}', [NotificationController::class, 'show'])->name('notifications.show');
-        Route::post('/{id}/mark-read', [NotificationController::class, 'markAsRead'])->name('notifications.mark-read');
-        Route::post('/{id}/mark-unread', [NotificationController::class, 'markAsUnread'])->name('notifications.mark-unread');
-        Route::delete('/{id}', [NotificationController::class, 'destroy'])->name('notifications.destroy');
 
         Route::prefix('preferences')->group(function () {
             Route::get('/', [NotificationPreferencesController::class, 'index'])->name('notifications.preferences.index');
@@ -26,6 +22,11 @@ Route::middleware(['api', 'auth:api'])->prefix('api')->group(function () {
             Route::get('/stats', [NotificationAnalyticsController::class, 'getStats'])->name('notifications.analytics.stats');
             Route::get('/stats-by-channel', [NotificationAnalyticsController::class, 'getStatsByChannel'])->name('notifications.analytics.stats-by-channel');
         });
+
+        Route::get('/{id}', [NotificationController::class, 'show'])->name('notifications.show');
+        Route::post('/{id}/mark-read', [NotificationController::class, 'markAsRead'])->name('notifications.mark-read');
+        Route::post('/{id}/mark-unread', [NotificationController::class, 'markAsUnread'])->name('notifications.mark-unread');
+        Route::delete('/{id}', [NotificationController::class, 'destroy'])->name('notifications.destroy');
     });
 });
 

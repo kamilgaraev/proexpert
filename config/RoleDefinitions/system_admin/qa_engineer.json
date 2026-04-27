@@ -19,7 +19,10 @@
     "system_admin.blog.articles.view",
     "system_admin.blog.media.view",
     "system_admin.blog.revisions.view",
-    "system_admin.blog.preview.view"
+    "system_admin.blog.preview.view",
+    "system_admin.notifications.templates.view",
+    "system_admin.notifications.delivery_log.view",
+    "system_admin.notifications.analytics.view"
   ],
   "module_permissions": {
     "profile": [
@@ -42,6 +45,11 @@
       "system_admin.blog.media.view",
       "system_admin.blog.revisions.view",
       "system_admin.blog.preview.view"
+    ],
+    "notifications": [
+      "system_admin.notifications.templates.view",
+      "system_admin.notifications.delivery_log.view",
+      "system_admin.notifications.analytics.view"
     ]
   },
   "interface_access": [

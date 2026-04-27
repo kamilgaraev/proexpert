@@ -28,6 +28,9 @@ class AuthServiceProvider extends ServiceProvider
         \App\Models\Blog\BlogMediaAsset::class => \App\Policies\SystemAdmin\BlogMediaAssetPolicy::class,
         \App\Models\Blog\BlogArticleRevision::class => \App\Policies\SystemAdmin\BlogArticleRevisionPolicy::class,
         \App\Models\Blog\BlogSeoSettings::class => \App\Policies\SystemAdmin\BlogSeoSettingsPolicy::class,
+        \App\BusinessModules\Features\Notifications\Models\NotificationTemplate::class => \App\Policies\SystemAdmin\NotificationTemplatePolicy::class,
+        \App\BusinessModules\Features\Notifications\Models\Notification::class => \App\Policies\SystemAdmin\NotificationPolicy::class,
+        \App\BusinessModules\Features\Notifications\Models\NotificationAnalytics::class => \App\Policies\SystemAdmin\NotificationAnalyticsPolicy::class,
     ];
 
     /**

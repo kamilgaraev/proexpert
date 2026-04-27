@@ -11,13 +11,16 @@ use App\BusinessModules\Features\Notifications\Jobs\SendNotificationJob;
 use App\Models\User;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class NotificationService
 {
     protected PreferenceManager $preferenceManager;
 
-    public function __construct(PreferenceManager $preferenceManager)
-    {
+    public function __construct(
+        PreferenceManager $preferenceManager,
+        private readonly NotificationPayloadNormalizer $payloadNormalizer
+    ) {
         $this->preferenceManager = $preferenceManager;
     }
 
@@ -31,6 +34,10 @@ class NotificationService
         ?int $organizationId = null
     ): Notification {
         // 🔥 Критические уведомления с флагом force_send игнорируют настройки пользователя
+        $notificationType = $notificationType ?? 'system';
+        $priority = $priority ?? 'normal';
+        $data = $this->payloadNormalizer->normalize($type, $data, $notificationType);
+
         $forceSend = $data['force_send'] ?? false;
         
         if (!$forceSend && !$this->preferenceManager->canSend($user, $notificationType, $organizationId)) {
@@ -165,7 +172,7 @@ class NotificationService
             $notification->update(['delivery_status' => $deliveryStatus]);
 
             return $result;
-        } catch (\Exception $e) {
+        } catch (Throwable $e) {
             Log::error('Channel send failed', [
                 'notification_id' => $notification->id,
                 'channel' => $channel,

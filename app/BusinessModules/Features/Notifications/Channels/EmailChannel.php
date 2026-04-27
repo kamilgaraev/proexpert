@@ -19,6 +19,8 @@ class EmailChannel
 
     public function send($notifiable, Notification $notification): bool
     {
+        $analytics = null;
+
         try {
             $analytics = $this->createAnalytics($notification);
             
@@ -72,7 +74,7 @@ class EmailChannel
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            if (isset($analytics)) {
+            if ($analytics instanceof NotificationAnalytics) {
                 $this->markFailed($analytics, $e->getMessage());
             }
 

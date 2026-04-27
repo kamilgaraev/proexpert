@@ -53,7 +53,7 @@ class Notification extends Model
 
     public function markAsRead(): void
     {
-        if (is_null($this->read_at)) {
+        if (is_null($this->getAttribute('read_at'))) {
             $this->forceFill(['read_at' => now()])->save();
         }
     }
@@ -65,7 +65,7 @@ class Notification extends Model
 
     public function isRead(): bool
     {
-        return !is_null($this->read_at);
+        return !is_null($this->getAttribute('read_at'));
     }
 
     public function scopeUnread($query)

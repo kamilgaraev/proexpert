@@ -27,6 +27,11 @@ class ActReportStatusNotification extends Notification
     {
         return [
             'type' => 'act_report_status',
+            'title' => $this->message,
+            'message' => $this->message,
+            'category' => 'act_reports',
+            'notification_type' => 'act_reports',
+            'interface' => 'admin',
             'act_id' => $this->act->id,
             'act_number' => $this->act->act_document_number,
             'contract_id' => $this->act->contract_id,
@@ -34,7 +39,11 @@ class ActReportStatusNotification extends Notification
             'project_id' => $this->act->project_id,
             'project_name' => $this->act->contract?->project?->name,
             'status' => $this->act->status,
-            'message' => $this->message,
+            'entity' => [
+                'type' => 'act_report',
+                'id' => $this->act->id,
+            ],
+            'target_route' => "/reports/act-reports/{$this->act->id}",
         ];
     }
 }
