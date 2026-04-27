@@ -23,6 +23,9 @@ trait ActingTestSchema
             'contract_performance_acts',
             'contract_state_events',
             'completed_works',
+            'contract_estimate_items',
+            'estimate_items',
+            'estimates',
             'supplementary_agreements',
             'contracts',
             'contractors',
@@ -144,6 +147,44 @@ trait ActingTestSchema
             $table->decimal('change_amount', 15, 2)->default(0);
             $table->timestamps();
             $table->softDeletes();
+        });
+
+        Schema::create('estimates', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id');
+            $table->foreignId('project_id')->nullable();
+            $table->string('name')->default('Estimate');
+            $table->string('status')->default('approved');
+            $table->decimal('total_amount', 15, 2)->default(0);
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('estimate_items', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('estimate_id');
+            $table->string('position_number')->nullable();
+            $table->string('name');
+            $table->decimal('quantity', 15, 8)->default(0);
+            $table->decimal('quantity_total', 15, 8)->nullable();
+            $table->decimal('unit_price', 15, 4)->default(0);
+            $table->decimal('current_unit_price', 15, 4)->nullable();
+            $table->decimal('actual_unit_price', 15, 4)->nullable();
+            $table->decimal('total_amount', 15, 2)->default(0);
+            $table->decimal('current_total_amount', 15, 2)->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('contract_estimate_items', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('contract_id');
+            $table->foreignId('estimate_id');
+            $table->foreignId('estimate_item_id');
+            $table->decimal('quantity', 15, 8)->nullable();
+            $table->decimal('amount', 15, 2)->nullable();
+            $table->text('notes')->nullable();
+            $table->timestamps();
         });
 
         Schema::create('completed_works', function (Blueprint $table): void {

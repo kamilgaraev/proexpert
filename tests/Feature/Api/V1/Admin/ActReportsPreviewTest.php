@@ -8,7 +8,10 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Models\CompletedWork;
 use App\Models\Contract;
+use App\Models\ContractEstimateItem;
 use App\Models\Contractor;
+use App\Models\Estimate;
+use App\Models\EstimateItem;
 use App\Models\Organization;
 use App\Models\PerformanceActLine;
 use App\Models\Project;
@@ -132,6 +135,138 @@ class ActReportsPreviewTest extends TestCase
             'line_type' => PerformanceActLine::TYPE_COMPLETED_WORK,
             'quantity' => 2,
             'amount' => 2000,
+        ]);
+    }
+
+    public function test_create_from_wizard_uses_estimate_contract_price_when_completed_work_amount_is_empty(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('WIZARD-PRICE');
+        $estimate = Estimate::create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'name' => 'Estimate',
+            'status' => 'approved',
+            'total_amount' => 6000,
+        ]);
+        $estimateItem = EstimateItem::create([
+            'estimate_id' => $estimate->id,
+            'position_number' => '1',
+            'name' => 'Concrete',
+            'quantity' => 6,
+            'quantity_total' => 6,
+            'unit_price' => 1000,
+            'total_amount' => 6000,
+        ]);
+        ContractEstimateItem::create([
+            'contract_id' => $contract->id,
+            'estimate_id' => $estimate->id,
+            'estimate_item_id' => $estimateItem->id,
+            'quantity' => 6,
+            'amount' => 6000,
+        ]);
+        $work = $this->createJournalWork($organization->id, $project->id, $contract->id, 1201, 3);
+        $work->update([
+            'estimate_item_id' => $estimateItem->id,
+            'price' => null,
+            'total_amount' => null,
+        ]);
+
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+
+        $response = $this->actingAs($user, 'api_admin')->postJson('/api/v1/admin/act-reports/create-from-wizard', [
+            'contract_id' => $contract->id,
+            'act_document_number' => 'KS-2-PRICE',
+            'act_date' => '2026-04-20',
+            'period_start' => '2026-04-01',
+            'period_end' => '2026-04-30',
+            'selected_works' => [
+                [
+                    'completed_work_id' => $work->id,
+                    'quantity' => 3,
+                ],
+            ],
+        ]);
+
+        $response->assertCreated();
+        $response->assertJsonPath('data.amount', 3000);
+        $response->assertJsonPath('data.lines.0.unit_price', 1000);
+        $response->assertJsonPath('data.lines.0.amount', 3000);
+    }
+
+    public function test_approve_repairs_zero_amount_act_from_estimate_contract_price(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('APPROVE-PRICE');
+        $estimate = Estimate::create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'name' => 'Estimate',
+            'status' => 'approved',
+            'total_amount' => 6000,
+        ]);
+        $estimateItem = EstimateItem::create([
+            'estimate_id' => $estimate->id,
+            'position_number' => '1',
+            'name' => 'Concrete',
+            'quantity' => 6,
+            'quantity_total' => 6,
+            'unit_price' => 1000,
+            'total_amount' => 6000,
+        ]);
+        ContractEstimateItem::create([
+            'contract_id' => $contract->id,
+            'estimate_id' => $estimate->id,
+            'estimate_item_id' => $estimateItem->id,
+            'quantity' => 6,
+            'amount' => 6000,
+        ]);
+        $work = $this->createJournalWork($organization->id, $project->id, $contract->id, 1202, 3);
+        $work->update([
+            'estimate_item_id' => $estimateItem->id,
+            'price' => null,
+            'total_amount' => null,
+        ]);
+        $act = \App\Models\ContractPerformanceAct::create([
+            'contract_id' => $contract->id,
+            'project_id' => $project->id,
+            'act_document_number' => 'KS-2-REPAIR',
+            'act_date' => '2026-04-20',
+            'period_start' => '2026-04-01',
+            'period_end' => '2026-04-30',
+            'amount' => 0,
+            'status' => \App\Models\ContractPerformanceAct::STATUS_DRAFT,
+            'is_approved' => false,
+            'created_by_user_id' => $user->id,
+        ]);
+        PerformanceActLine::create([
+            'performance_act_id' => $act->id,
+            'completed_work_id' => $work->id,
+            'estimate_item_id' => $estimateItem->id,
+            'line_type' => PerformanceActLine::TYPE_COMPLETED_WORK,
+            'title' => 'Work',
+            'quantity' => 3,
+            'unit_price' => 0,
+            'amount' => 0,
+        ]);
+        $act->completedWorks()->syncWithoutDetaching([
+            $work->id => [
+                'included_quantity' => 3,
+                'included_amount' => 0,
+            ],
+        ]);
+
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+
+        $response = $this->actingAs($user, 'api_admin')->postJson("/api/v1/admin/act-reports/{$act->id}/approve");
+
+        $response->assertOk();
+        $response->assertJsonPath('data.status', \App\Models\ContractPerformanceAct::STATUS_APPROVED);
+        $response->assertJsonPath('data.amount', 3000);
+        $this->assertDatabaseHas('performance_act_lines', [
+            'id' => 1,
+            'unit_price' => 1000,
+            'amount' => 3000,
         ]);
     }
 

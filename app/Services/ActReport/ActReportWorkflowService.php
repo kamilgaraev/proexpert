@@ -7,7 +7,9 @@ namespace App\Services\ActReport;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Exceptions\BusinessLogicException;
 use App\Models\Contract;
+use App\Models\ContractEstimateItem;
 use App\Models\ContractPerformanceAct;
+use App\Models\PerformanceActLine;
 use Illuminate\Support\Facades\DB;
 
 use function trans_message;
@@ -43,6 +45,8 @@ class ActReportWorkflowService
 
     public function approve(ContractPerformanceAct $act, int $userId): ContractPerformanceAct
     {
+        $act = $this->recalculatePricedLines($act);
+
         if ($act->status === ContractPerformanceAct::STATUS_REJECTED) {
             throw new BusinessLogicException(trans_message('act_reports.act_rejected_cannot_approve'), 422);
         }
@@ -67,6 +71,82 @@ class ActReportWorkflowService
         $this->notificationService->notifyStatusChanged($updatedAct, trans_message('act_reports.act_approved'));
 
         return $updatedAct;
+    }
+
+    private function recalculatePricedLines(ContractPerformanceAct $act): ContractPerformanceAct
+    {
+        return DB::transaction(function () use ($act): ContractPerformanceAct {
+            $act->loadMissing(['lines.estimateItem.contractLinks', 'completedWorks']);
+
+            $act->lines->each(function (PerformanceActLine $line) use ($act): void {
+                if ((float) $line->amount > 0) {
+                    return;
+                }
+
+                $unitPrice = $this->resolveLineUnitPrice($act, $line);
+
+                if ($unitPrice <= 0) {
+                    return;
+                }
+
+                $quantity = (float) $line->quantity;
+                $amount = round($quantity * $unitPrice, 2);
+                $line->update([
+                    'unit_price' => $unitPrice,
+                    'amount' => $amount,
+                ]);
+
+                if ($line->completed_work_id) {
+                    $act->completedWorks()->updateExistingPivot($line->completed_work_id, [
+                        'included_amount' => $amount,
+                    ]);
+                }
+            });
+
+            $act->recalculateAmount();
+
+            return $act->fresh(['contract.project', 'contract.contractor', 'lines.estimateItem', 'files']);
+        });
+    }
+
+    private function resolveLineUnitPrice(ContractPerformanceAct $act, PerformanceActLine $line): float
+    {
+        $contractLink = $line->estimateItem?->contractLinks
+            ?->where('contract_id', $act->contract_id)
+            ->sortBy('id')
+            ->first();
+
+        if (!$contractLink && $line->estimate_item_id) {
+            $contractLink = ContractEstimateItem::query()
+                ->where('contract_id', $act->contract_id)
+                ->where('estimate_item_id', $line->estimate_item_id)
+                ->orderBy('id')
+                ->first();
+        }
+
+        if ($contractLink && (float) $contractLink->quantity > 0) {
+            return round((float) $contractLink->amount / (float) $contractLink->quantity, 2);
+        }
+
+        $estimateItem = $line->estimateItem;
+        $estimatePrice = (float) (
+            $estimateItem?->actual_unit_price
+            ?? $estimateItem?->current_unit_price
+            ?? $estimateItem?->unit_price
+            ?? 0
+        );
+
+        if ($estimatePrice > 0) {
+            return round($estimatePrice, 2);
+        }
+
+        $estimateQuantity = (float) ($estimateItem?->quantity_total ?? $estimateItem?->quantity ?? 0);
+        $estimateAmount = (float) ($estimateItem?->current_total_amount ?? $estimateItem?->total_amount ?? 0);
+        if ($estimateQuantity > 0 && $estimateAmount > 0) {
+            return round($estimateAmount / $estimateQuantity, 2);
+        }
+
+        return 0.0;
     }
 
     public function reject(ContractPerformanceAct $act, int $userId, string $reason): ContractPerformanceAct

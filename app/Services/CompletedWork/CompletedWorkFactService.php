@@ -197,6 +197,32 @@ class CompletedWorkFactService
             $totalAmount = round($price * (float) $volume->quantity, 2);
         }
 
+        $estimateItem = $volume->estimateItem ?? $task?->estimateItem;
+
+        if ($price === null && $estimateItem) {
+            $estimatePrice = (float) (
+                $estimateItem->actual_unit_price
+                ?? $estimateItem->current_unit_price
+                ?? $estimateItem->unit_price
+                ?? 0
+            );
+
+            if ($estimatePrice > 0) {
+                $price = round($estimatePrice, 2);
+                $totalAmount = round($price * (float) $volume->quantity, 2);
+            }
+        }
+
+        if ($price === null && $estimateItem) {
+            $estimateQuantity = (float) ($estimateItem->quantity_total ?? $estimateItem->quantity ?? 0);
+            $estimateAmount = (float) ($estimateItem->current_total_amount ?? $estimateItem->total_amount ?? 0);
+
+            if ($estimateQuantity > 0 && $estimateAmount > 0) {
+                $price = round($estimateAmount / $estimateQuantity, 2);
+                $totalAmount = round($price * (float) $volume->quantity, 2);
+            }
+        }
+
         return [
             'organization_id' => $entry->journal->organization_id,
             'project_id' => $entry->journal->project_id,

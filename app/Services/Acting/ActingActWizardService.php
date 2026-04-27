@@ -83,6 +83,7 @@ class ActingActWizardService
         $workIds = $selectedGroups->keys()->map(fn ($id): int => (int) $id)->values();
 
         $works = CompletedWork::query()
+            ->with('estimateItem.contractLinks')
             ->whereIn('id', $workIds)
             ->where('contract_id', $contract->id)
             ->where('status', 'confirmed')
@@ -153,6 +154,33 @@ class ActingActWizardService
     {
         if ($work->price !== null) {
             return round((float) $work->price, 2);
+        }
+
+        $contractLink = $work->estimateItem?->contractLinks
+            ?->where('contract_id', $work->contract_id)
+            ->sortBy('id')
+            ->first();
+
+        if ($contractLink && (float) $contractLink->quantity > 0) {
+            return round((float) $contractLink->amount / (float) $contractLink->quantity, 2);
+        }
+
+        $estimateItem = $work->estimateItem;
+        $estimatePrice = (float) (
+            $estimateItem?->actual_unit_price
+            ?? $estimateItem?->current_unit_price
+            ?? $estimateItem?->unit_price
+            ?? 0
+        );
+
+        if ($estimatePrice > 0) {
+            return round($estimatePrice, 2);
+        }
+
+        $estimateQuantity = (float) ($estimateItem?->quantity_total ?? $estimateItem?->quantity ?? 0);
+        $estimateAmount = (float) ($estimateItem?->current_total_amount ?? $estimateItem?->total_amount ?? 0);
+        if ($estimateQuantity > 0 && $estimateAmount > 0) {
+            return round($estimateAmount / $estimateQuantity, 2);
         }
 
         if ($effectiveQuantity <= 0) {
