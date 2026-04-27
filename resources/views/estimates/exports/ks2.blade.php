@@ -96,7 +96,7 @@
             {{ $customer_org->legal_name ?? $customer_org->name ?? '' }}
             @if($customer_org->tax_number), ИНН {{ $customer_org->tax_number }}@endif
             @if($customer_org->postal_code || $customer_org->city || $customer_org->address)
-                , {{ $customer_org->postal_code ?? '' }}@if($customer_org->city) {{ $customer_org->city }} г@endif@if($customer_org->address), {{ $customer_org->address }}@endif
+                , {{ $customer_org->postal_code ?? '' }}@if($customer_org->city) {{ $customer_org->city }} г@endif @if($customer_org->address), {{ $customer_org->address }}@endif
             @endif
         </span>
     </div>
@@ -107,7 +107,7 @@
             {{ $customer_org->legal_name ?? $customer_org->name ?? '' }}
             @if($customer_org->tax_number), ИНН {{ $customer_org->tax_number }}@endif
             @if($customer_org->postal_code || $customer_org->city || $customer_org->address)
-                , {{ $customer_org->postal_code ?? '' }}@if($customer_org->city) {{ $customer_org->city }} г@endif@if($customer_org->address), {{ $customer_org->address }}@endif
+                , {{ $customer_org->postal_code ?? '' }}@if($customer_org->city) {{ $customer_org->city }} г@endif @if($customer_org->address), {{ $customer_org->address }}@endif
             @endif
         </span>
     </div>

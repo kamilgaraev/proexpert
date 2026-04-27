@@ -270,6 +270,57 @@ class ActReportsPreviewTest extends TestCase
         ]);
     }
 
+    public function test_official_pdf_views_render_with_inline_address_fields(): void
+    {
+        $data = [
+            'act' => (object) [
+                'id' => 1,
+                'act_document_number' => '1',
+                'act_date' => now(),
+            ],
+            'contract' => (object) [
+                'number' => 'CONTRACT-1',
+                'date' => now(),
+            ],
+            'customer_org' => (object) [
+                'legal_name' => 'Customer',
+                'name' => 'Customer',
+                'tax_number' => '1650000000',
+                'postal_code' => '420000',
+                'city' => 'Kazan',
+                'address' => 'Main street',
+            ],
+            'contractor' => (object) [
+                'name' => 'Contractor',
+                'inn' => '1660000000',
+                'legal_address' => 'Contractor street',
+            ],
+            'project' => (object) [
+                'name' => 'Project',
+            ],
+            'works' => collect([
+                [
+                    'title' => 'Concrete works',
+                    'unit' => 'm3',
+                    'quantity' => 3,
+                    'unit_price' => 1000,
+                    'amount' => 3000,
+                    'notes' => null,
+                    'code' => '1',
+                ],
+            ]),
+            'total_amount' => 3000,
+            'vat_amount' => 500,
+            'contract_amount' => 100000,
+        ];
+
+        $ks2 = view('estimates.exports.ks2', $data)->render();
+        $ks3 = view('estimates.exports.ks3', $data)->render();
+
+        $this->assertStringContainsString('<html>', $ks2);
+        $this->assertStringContainsString('<html>', $ks3);
+    }
+
     public function test_create_from_wizard_requires_create_permission(): void
     {
         [$organization, $user, $contract, $project] = $this->createContractFixture('CREATE-PERM');
