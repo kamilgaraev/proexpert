@@ -11,15 +11,21 @@ use Illuminate\Support\Facades\DB;
 class GeocodeProjectsCommand extends Command
 {
     /**
+     * @var array<int, string>
+     */
+    protected $aliases = ['geocode:projects'];
+
+    /**
      * The name and signature of the console command.
      *
      * @var string
      */
-    protected $signature = 'geocode:projects
+    protected $signature = 'projects:geocode
                             {--organization= : Organization ID to geocode}
                             {--project= : Specific project ID to geocode}
                             {--status=pending : Geocoding status filter (pending, failed, all)}
                             {--limit= : Maximum number of projects to process}
+                            {--delay= : Delay in seconds between geocoding requests}
                             {--queue : Use queue for background processing}
                             {--sync : Process synchronously (not recommended for large batches)}
                             {--force : Re-geocode even if already geocoded}';
@@ -175,8 +181,11 @@ class GeocodeProjectsCommand extends Command
         $failed = 0;
         $skipped = 0;
 
+        $delayOption = $this->option('delay');
         $rateLimit = config('geocoding.batch.rate_limit', 10);
-        $delay = 1.0 / $rateLimit; // Delay between requests in seconds
+        $delay = $delayOption !== null && $delayOption !== ''
+            ? max(0.0, (float) $delayOption)
+            : 1.0 / $rateLimit;
 
         foreach ($projects as $project) {
             // Skip manual geocoded projects
