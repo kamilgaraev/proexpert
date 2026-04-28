@@ -16,6 +16,7 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 class ConstructionJournalEntryController extends Controller
 {
@@ -41,6 +42,8 @@ class ConstructionJournalEntryController extends Controller
             );
         } catch (AuthorizationException $exception) {
             return AdminResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error(trans_message('project.validation_failed'), 422, $exception->errors());
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -112,6 +115,8 @@ class ConstructionJournalEntryController extends Controller
             );
         } catch (AuthorizationException $exception) {
             return AdminResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error(trans_message('project.validation_failed'), 422, $exception->errors());
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -250,6 +255,8 @@ class ConstructionJournalEntryController extends Controller
             );
         } catch (AuthorizationException $exception) {
             return AdminResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error(trans_message('project.validation_failed'), 422, $exception->errors());
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
