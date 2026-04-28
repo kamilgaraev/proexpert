@@ -24,6 +24,8 @@ class ContractPerformanceActResource extends JsonResource
             'contract_number' => $this->whenLoaded('contract', fn() => $this->contract->number),
             'contract_date' => $this->whenLoaded('contract', fn() => $this->contract->date),
             'contract_subject' => $this->whenLoaded('contract', fn() => $this->contract->subject),
+            'project_name' => $this->resolveProjectName(),
+            'contractor_name' => $this->resolveContractorName(),
             'act_document_number' => $this->act_document_number,
             'act_date' => $this->act_date,
             'period_start' => $this->period_start,
@@ -102,5 +104,27 @@ class ContractPerformanceActResource extends JsonResource
 
             'files_count' => $this->whenCounted('files'),
         ];
+    }
+
+    private function resolveProjectName(): ?string
+    {
+        if ($this->relationLoaded('project')) {
+            return $this->project?->name;
+        }
+
+        if ($this->relationLoaded('contract') && $this->contract?->relationLoaded('project')) {
+            return $this->contract->project?->name;
+        }
+
+        return null;
+    }
+
+    private function resolveContractorName(): ?string
+    {
+        if ($this->relationLoaded('contract') && $this->contract?->relationLoaded('contractor')) {
+            return $this->contract->contractor?->name;
+        }
+
+        return null;
     }
 } 

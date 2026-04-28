@@ -128,6 +128,8 @@ class ActReportsPreviewTest extends TestCase
         $response->assertCreated();
         $response->assertJsonPath('success', true);
         $response->assertJsonPath('data.amount', 2000);
+        $response->assertJsonPath('data.project_name', $project->name);
+        $response->assertJsonPath('data.contractor_name', 'Contractor');
         $response->assertJsonCount(1, 'data.lines');
 
         $this->assertDatabaseHas('performance_act_lines', [
