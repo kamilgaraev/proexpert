@@ -86,10 +86,23 @@ class ActingActWizardService
         $works = CompletedWork::query()
             ->with('estimateItem.contractLinks', 'estimateItem.estimate')
             ->whereIn('id', $workIds)
-            ->where('contract_id', $contract->id)
+            ->where(function ($query) use ($contract): void {
+                $query
+                    ->where('contract_id', $contract->id)
+                    ->orWhere(function ($fallbackQuery) use ($contract): void {
+                        $fallbackQuery
+                            ->whereNull('contract_id')
+                            ->whereHas('estimateItem.contractLinks', function ($contractLinkQuery) use ($contract): void {
+                                $contractLinkQuery->where('contract_id', $contract->id);
+                            });
+                    });
+            })
             ->where('status', 'confirmed')
-            ->where('work_origin_type', CompletedWork::ORIGIN_JOURNAL)
-            ->whereNotNull('journal_entry_id')
+            ->where(function ($query): void {
+                $query
+                    ->where('work_origin_type', CompletedWork::ORIGIN_JOURNAL)
+                    ->orWhereNotNull('journal_entry_id');
+            })
             ->whereBetween('completion_date', [$data['period_start'], $data['period_end']])
             ->lockForUpdate()
             ->get()
@@ -109,6 +122,8 @@ class ActingActWizardService
             if (!$work) {
                 throw new BusinessLogicException(trans_message('act_reports.work_not_available_for_acting'), 422);
             }
+
+            $this->ensureCompletedWorkContract($work, $contract);
 
             $effectiveQuantity = (float) ($work->completed_quantity ?? $work->quantity);
             $availableQuantity = round(max(0, $effectiveQuantity - (float) ($actedQuantities[$workId] ?? 0)), 4);
@@ -138,6 +153,25 @@ class ActingActWizardService
                 ],
             ]);
         }
+    }
+
+    private function ensureCompletedWorkContract(CompletedWork $work, Contract $contract): void
+    {
+        if ($work->contract_id !== null) {
+            return;
+        }
+
+        $hasContractCoverage = $work->estimateItem?->contractLinks
+            ?->contains(fn ($link): bool => (int) $link->contract_id === (int) $contract->id) ?? false;
+
+        if (!$hasContractCoverage) {
+            return;
+        }
+
+        $work->forceFill([
+            'contract_id' => $contract->id,
+            'contractor_id' => $work->contractor_id ?? $contract->contractor_id,
+        ])->save();
     }
 
     private function sumRequestedQuantity(Collection $selectedWorks, float $availableQuantity): float

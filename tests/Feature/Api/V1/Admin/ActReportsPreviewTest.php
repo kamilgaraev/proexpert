@@ -50,6 +50,81 @@ class ActReportsPreviewTest extends TestCase
         $response->assertJsonPath('data.summary.current_approved_amount', 0);
     }
 
+    public function test_preview_and_wizard_accept_journal_work_resolved_by_estimate_contract_coverage(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('PREVIEW-COVERAGE');
+        $estimate = Estimate::create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'name' => 'Estimate',
+            'status' => 'approved',
+            'total_amount' => 10000,
+        ]);
+        $estimateItem = EstimateItem::create([
+            'estimate_id' => $estimate->id,
+            'position_number' => '5',
+            'item_type' => 'work',
+            'name' => 'Concrete',
+            'quantity' => 20,
+            'quantity_total' => 20,
+            'unit_price' => 1000,
+            'total_amount' => 20000,
+        ]);
+        ContractEstimateItem::create([
+            'contract_id' => $contract->id,
+            'estimate_id' => $estimate->id,
+            'estimate_item_id' => $estimateItem->id,
+            'quantity' => 20,
+            'amount' => 20000,
+        ]);
+        $work = CompletedWork::create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'contract_id' => null,
+            'estimate_item_id' => $estimateItem->id,
+            'journal_entry_id' => 102,
+            'work_origin_type' => CompletedWork::ORIGIN_JOURNAL,
+            'quantity' => 15,
+            'completed_quantity' => 15,
+            'price' => 1000,
+            'total_amount' => 15000,
+            'completion_date' => '2026-04-28',
+            'status' => 'confirmed',
+        ]);
+
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+
+        $preview = $this->actingAs($user, 'api_admin')->postJson('/api/v1/admin/act-reports/preview', [
+            'contract_id' => $contract->id,
+            'period_start' => '2026-04-01',
+            'period_end' => '2026-04-30',
+        ]);
+
+        $preview->assertOk();
+        $preview->assertJsonCount(1, 'data.available_works');
+        $preview->assertJsonPath('data.available_works.0.id', $work->id);
+
+        $create = $this->actingAs($user, 'api_admin')->postJson('/api/v1/admin/act-reports/create-from-wizard', [
+            'contract_id' => $contract->id,
+            'act_document_number' => 'KS-2-COVERAGE',
+            'act_date' => '2026-04-28',
+            'period_start' => '2026-04-01',
+            'period_end' => '2026-04-30',
+            'selected_works' => [
+                ['completed_work_id' => $work->id, 'quantity' => 15],
+            ],
+        ]);
+
+        $create->assertCreated();
+        $create->assertJsonPath('data.amount', 15000);
+        $this->assertDatabaseHas('completed_works', [
+            'id' => $work->id,
+            'contract_id' => $contract->id,
+            'contractor_id' => $contract->contractor_id,
+        ]);
+    }
+
     public function test_preview_rejects_contract_from_another_organization(): void
     {
         $organization = Organization::factory()->create();

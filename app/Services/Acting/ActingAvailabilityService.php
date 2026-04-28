@@ -24,10 +24,23 @@ class ActingAvailabilityService
 
         return CompletedWork::query()
             ->with('estimateItem.contractLinks', 'estimateItem.estimate')
-            ->where('contract_id', $contractId)
+            ->where(function ($query) use ($contractId): void {
+                $query
+                    ->where('contract_id', $contractId)
+                    ->orWhere(function ($fallbackQuery) use ($contractId): void {
+                        $fallbackQuery
+                            ->whereNull('contract_id')
+                            ->whereHas('estimateItem.contractLinks', function ($contractLinkQuery) use ($contractId): void {
+                                $contractLinkQuery->where('contract_id', $contractId);
+                            });
+                    });
+            })
             ->where('status', 'confirmed')
-            ->where('work_origin_type', CompletedWork::ORIGIN_JOURNAL)
-            ->whereNotNull('journal_entry_id')
+            ->where(function ($query): void {
+                $query
+                    ->where('work_origin_type', CompletedWork::ORIGIN_JOURNAL)
+                    ->orWhereNotNull('journal_entry_id');
+            })
             ->whereBetween('completion_date', [$periodStart, $periodEnd])
             ->orderBy('completion_date')
             ->orderBy('id')
