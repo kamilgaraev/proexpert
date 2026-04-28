@@ -27,6 +27,7 @@ class ConstructionJournalService
 {
     public function __construct(
         private readonly CompletedWorkFactService $completedWorkFactService,
+        private readonly JournalContractCoverageService $journalContractCoverageService,
     ) {
     }
 
@@ -108,8 +109,9 @@ class ConstructionJournalService
 
             $this->completedWorkFactService->syncFromJournalEntry($entry->load([
                 'journal',
-                'scheduleTask.estimateItem.contractLinks.contract',
-                'workVolumes.estimateItem.contractLinks.contract',
+                'journal.contract',
+                'scheduleTask.estimateItem.contractLinks.contract.contractor',
+                'workVolumes.estimateItem.contractLinks.contract.contractor',
                 'workVolumes.workType',
             ]));
 
@@ -119,7 +121,7 @@ class ConstructionJournalService
                 'estimate',
                 'createdBy',
                 'completedWorks',
-                'workVolumes.estimateItem',
+                'workVolumes.estimateItem.contractLinks.contract.contractor',
                 'workVolumes.workType',
                 'workVolumes.measurementUnit',
                 'workers',
@@ -198,8 +200,9 @@ class ConstructionJournalService
 
             $this->completedWorkFactService->syncFromJournalEntry($entry->load([
                 'journal',
-                'scheduleTask.estimateItem.contractLinks.contract',
-                'workVolumes.estimateItem.contractLinks.contract',
+                'journal.contract',
+                'scheduleTask.estimateItem.contractLinks.contract.contractor',
+                'workVolumes.estimateItem.contractLinks.contract.contractor',
                 'workVolumes.workType',
             ]));
 
@@ -210,7 +213,7 @@ class ConstructionJournalService
                 'createdBy',
                 'approvedBy',
                 'completedWorks',
-                'workVolumes.estimateItem',
+                'workVolumes.estimateItem.contractLinks.contract.contractor',
                 'workVolumes.workType',
                 'workVolumes.measurementUnit',
                 'workers',
@@ -267,9 +270,23 @@ class ConstructionJournalService
 
     protected function attachWorkVolumes(ConstructionJournalEntry $entry, array $volumes): void
     {
+        $entry->loadMissing('journal.contract');
+
         foreach ($volumes as $volume) {
+            $estimateItemId = $volume['estimate_item_id'] ?? null;
+
+            if (($volume['auto_attach_contract_coverage'] ?? false) && $estimateItemId) {
+                $estimateItem = EstimateItem::query()
+                    ->with(['estimate', 'contractLinks.contract.contractor'])
+                    ->find($estimateItemId);
+
+                if ($estimateItem) {
+                    $this->journalContractCoverageService->ensureCoverage($entry->journal, $estimateItem);
+                }
+            }
+
             $entry->workVolumes()->create([
-                'estimate_item_id' => $volume['estimate_item_id'] ?? null,
+                'estimate_item_id' => $estimateItemId,
                 'work_type_id' => $volume['work_type_id'] ?? null,
                 'quantity' => $volume['quantity'],
                 'measurement_unit_id' => $volume['measurement_unit_id'] ?? null,

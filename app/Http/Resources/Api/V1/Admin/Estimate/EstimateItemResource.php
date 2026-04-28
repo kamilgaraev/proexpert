@@ -2,8 +2,12 @@
 
 namespace App\Http\Resources\Api\V1\Admin\Estimate;
 
+use App\Models\EstimateItem;
 use Illuminate\Http\Resources\Json\JsonResource;
 
+/**
+ * @mixin EstimateItem
+ */
 class EstimateItemResource extends JsonResource
 {
     public function toArray($request): array
@@ -76,6 +80,11 @@ class EstimateItemResource extends JsonResource
             'procurement_status' => $this->procurement_status ?? 'pending',
             'price_deviation' => $this->getPriceDeviation(),
             'price_deviation_percent' => $this->getPriceDeviationPercent(),
+            'contract_links' => $this->whenLoaded('contractLinks', fn () => $this->contractLinks->map(fn ($link): array => [
+                'contract_id' => $link->contract_id,
+                'contract_number' => $link->contract?->number,
+                'contractor_name' => $link->contract?->contractor?->name,
+            ])->values()->all()),
 
             'created_at' => $this->created_at?->toISOString(),
             'updated_at' => $this->updated_at?->toISOString(),

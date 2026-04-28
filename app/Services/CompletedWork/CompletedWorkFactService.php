@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace App\Services\CompletedWork;
 
+use App\BusinessModules\Features\BudgetEstimates\Services\JournalContractCoverageService;
 use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
 use App\Models\CompletedWork;
 use App\Models\ConstructionJournalEntry;
+use App\Models\ContractEstimateItem;
+use App\Models\EstimateItem;
 use App\Models\JournalWorkVolume;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
@@ -19,15 +22,16 @@ class CompletedWorkFactService
     public function __construct(
         private readonly ScheduleTaskCompletedWorkService $scheduleTaskCompletedWorkService,
         private readonly ScheduleTaskService $scheduleTaskService,
+        private readonly JournalContractCoverageService $journalContractCoverageService,
     ) {
     }
 
     public function syncFromJournalEntry(ConstructionJournalEntry $entry): void
     {
         $entry->loadMissing([
-            'journal',
-            'scheduleTask.estimateItem.contractLinks.contract',
-            'workVolumes.estimateItem.contractLinks.contract',
+            'journal.contract',
+            'scheduleTask.estimateItem.contractLinks.contract.contractor',
+            'workVolumes.estimateItem.contractLinks.contract.contractor',
             'workVolumes.workType',
         ]);
 
@@ -186,8 +190,8 @@ class CompletedWorkFactService
         JournalWorkVolume $volume,
         ?ScheduleTask $task,
     ): array {
-        $contractLink = $volume->estimateItem?->contractLinks?->sortBy('id')->first()
-            ?? $task?->estimateItem?->contractLinks?->sortBy('id')->first();
+        $estimateItem = $volume->estimateItem ?? $task?->estimateItem;
+        $contractLink = $this->resolveContractLinkForEntry($entry, $estimateItem);
 
         $price = null;
         $totalAmount = null;
@@ -196,8 +200,6 @@ class CompletedWorkFactService
             $price = round((float) $contractLink->amount / (float) $contractLink->quantity, 2);
             $totalAmount = round($price * (float) $volume->quantity, 2);
         }
-
-        $estimateItem = $volume->estimateItem ?? $task?->estimateItem;
 
         if ($price === null && $estimateItem) {
             $estimatePrice = (float) (
@@ -223,6 +225,14 @@ class CompletedWorkFactService
             }
         }
 
+        $contractId = $contractLink?->contract_id;
+        $contractorId = $contractLink?->contract?->contractor_id;
+
+        if (!$estimateItem && $entry->journal->contract_id) {
+            $contractId = $entry->journal->contract_id;
+            $contractorId = $entry->journal->contract?->contractor_id;
+        }
+
         return [
             'organization_id' => $entry->journal->organization_id,
             'project_id' => $entry->journal->project_id,
@@ -231,10 +241,10 @@ class CompletedWorkFactService
             'journal_entry_id' => $entry->id,
             'work_origin_type' => CompletedWork::ORIGIN_JOURNAL,
             'planning_status' => $task ? CompletedWork::PLANNING_PLANNED : CompletedWork::PLANNING_REQUIRES_SCHEDULE,
-            'contract_id' => $entry->journal->contract_id ?? $contractLink?->contract_id,
+            'contract_id' => $contractId,
             'work_type_id' => $volume->work_type_id ?? $task?->work_type_id ?? $volume->estimateItem?->work_type_id,
             'user_id' => $entry->created_by_user_id,
-            'contractor_id' => $contractLink?->contract?->contractor_id,
+            'contractor_id' => $contractorId,
             'quantity' => (float) $volume->quantity,
             'completed_quantity' => (float) $volume->quantity,
             'price' => $price,
@@ -248,6 +258,20 @@ class CompletedWorkFactService
                 'weather_conditions' => $entry->weather_conditions,
             ], static fn ($value) => $value !== null && $value !== []),
         ];
+    }
+
+    private function resolveContractLinkForEntry(ConstructionJournalEntry $entry, ?EstimateItem $estimateItem): ?ContractEstimateItem
+    {
+        if (!$estimateItem) {
+            return null;
+        }
+
+        $estimateItem->loadMissing('contractLinks.contract.contractor');
+
+        return $this->journalContractCoverageService->resolveContractLink(
+            $entry->journal->contract_id,
+            $estimateItem->contractLinks->sortBy('id')->values(),
+        );
     }
 
     private function mapJournalStatusToCompletedWorkStatus(JournalEntryStatusEnum|string|null $status): string

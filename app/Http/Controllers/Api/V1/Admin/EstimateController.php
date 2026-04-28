@@ -145,7 +145,11 @@ class EstimateController extends Controller
 
         // Финальный фолбэк (очень редкий случай, если джоба упала). 
         // ТОЛЬКО ЗДЕСЬ мы грузим гигантское дерево в память Eloquent.
-        $estimateModel->load('sections.items.measurementUnit');
+        $estimateModel->load([
+            'sections.items.measurementUnit',
+            'sections.items.contractLinks.contract.contractor',
+            'items.contractLinks.contract.contractor',
+        ]);
         return AdminResponse::success(new EstimateResource($estimateModel));
     }
 
@@ -294,16 +298,18 @@ class EstimateController extends Controller
             ->with([
                 'items.workType',
                 'items.measurementUnit',
+                'items.contractLinks.contract.contractor',
                 'items.resources',
                 'items.works',
                 'items.totals',
                 'items.childItems' => function ($q) {
-                    $q->with(['workType', 'measurementUnit', 'resources', 'works', 'totals', 'childItems']);
+                    $q->with(['workType', 'measurementUnit', 'contractLinks.contract.contractor', 'resources', 'works', 'totals', 'childItems']);
                 },
                 'children' => function ($query) {
                     $query->with([
                         'items.workType',
                         'items.measurementUnit',
+                        'items.contractLinks.contract.contractor',
                         'items.resources',
                         'items.works',
                         'items.totals',
@@ -314,11 +320,12 @@ class EstimateController extends Controller
                             $q->with([
                                 'items.workType',
                                 'items.measurementUnit',
+                                'items.contractLinks.contract.contractor',
                                 'items.resources',
                                 'items.works',
                                 'items.totals',
                                 'items.childItems' => function ($q2) {
-                                    $q2->with(['workType', 'measurementUnit', 'resources', 'works', 'totals', 'childItems']);
+                                    $q2->with(['workType', 'measurementUnit', 'contractLinks.contract.contractor', 'resources', 'works', 'totals', 'childItems']);
                                 },
                             ])->orderBy('sort_order');
                         }

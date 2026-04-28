@@ -13,6 +13,11 @@ use Illuminate\Support\Facades\Gate;
 
 class ConstructionJournalPayloadService
 {
+    public function __construct(
+        private readonly JournalContractCoverageService $journalContractCoverageService,
+    ) {
+    }
+
     public function mapJournal(ConstructionJournal $journal, User $user, bool $includeEntries = false): array
     {
         $summary = $this->buildJournalSummary($journal);
@@ -59,6 +64,11 @@ class ConstructionJournalPayloadService
 
     public function mapEntry(ConstructionJournalEntry $entry, User $user, bool $includeJournal = true): array
     {
+        $entry->loadMissing([
+            'journal.contract.contractor',
+            'workVolumes.estimateItem.contractLinks.contract.contractor',
+        ]);
+
         return [
             'id' => $entry->id,
             'journal_id' => $entry->journal_id,
@@ -95,36 +105,41 @@ class ConstructionJournalPayloadService
                 ? $this->mapUser($entry->approvedBy)
                 : null,
             'workVolumes' => $entry->relationLoaded('workVolumes')
-                ? $entry->workVolumes->map(fn ($volume): array => [
-                    'id' => $volume->id,
-                    'journal_entry_id' => $volume->journal_entry_id,
-                    'estimate_item_id' => $volume->estimate_item_id,
-                    'work_type_id' => $volume->work_type_id,
-                    'quantity' => (float) $volume->quantity,
-                    'measurement_unit_id' => $volume->measurement_unit_id,
-                    'notes' => $volume->notes,
-                    'estimateItem' => $volume->relationLoaded('estimateItem') && $volume->estimateItem
-                        ? [
-                            'id' => $volume->estimateItem->id,
-                            'estimate_id' => $volume->estimateItem->estimate_id,
-                            'name' => $volume->estimateItem->name,
-                            'quantity_total' => (float) $volume->estimateItem->quantity_total,
-                        ]
-                        : null,
-                    'workType' => $volume->relationLoaded('workType') && $volume->workType
-                        ? [
-                            'id' => $volume->workType->id,
-                            'name' => $volume->workType->name,
-                        ]
-                        : null,
-                    'measurementUnit' => $volume->relationLoaded('measurementUnit') && $volume->measurementUnit
-                        ? [
-                            'id' => $volume->measurementUnit->id,
-                            'name' => $volume->measurementUnit->name,
-                            'short_name' => $volume->measurementUnit->short_name,
-                        ]
-                        : null,
-                ])->values()->all()
+                ? $entry->workVolumes->map(function ($volume) use ($entry): array {
+                    $coverage = $this->journalContractCoverageService->resolve($entry->journal, $volume->estimateItem);
+
+                    return [
+                        'id' => $volume->id,
+                        'journal_entry_id' => $volume->journal_entry_id,
+                        'estimate_item_id' => $volume->estimate_item_id,
+                        'work_type_id' => $volume->work_type_id,
+                        'quantity' => (float) $volume->quantity,
+                        'measurement_unit_id' => $volume->measurement_unit_id,
+                        'notes' => $volume->notes,
+                        ...$coverage,
+                        'estimateItem' => $volume->relationLoaded('estimateItem') && $volume->estimateItem
+                            ? [
+                                'id' => $volume->estimateItem->id,
+                                'estimate_id' => $volume->estimateItem->estimate_id,
+                                'name' => $volume->estimateItem->name,
+                                'quantity_total' => (float) $volume->estimateItem->quantity_total,
+                            ]
+                            : null,
+                        'workType' => $volume->relationLoaded('workType') && $volume->workType
+                            ? [
+                                'id' => $volume->workType->id,
+                                'name' => $volume->workType->name,
+                            ]
+                            : null,
+                        'measurementUnit' => $volume->relationLoaded('measurementUnit') && $volume->measurementUnit
+                            ? [
+                                'id' => $volume->measurementUnit->id,
+                                'name' => $volume->measurementUnit->name,
+                                'short_name' => $volume->measurementUnit->short_name,
+                            ]
+                            : null,
+                    ];
+                })->values()->all()
                 : [],
             'workers' => $entry->relationLoaded('workers')
                 ? $entry->workers->map(fn ($worker): array => [

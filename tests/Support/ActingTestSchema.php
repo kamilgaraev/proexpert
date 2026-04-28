@@ -23,6 +23,14 @@ trait ActingTestSchema
             'contract_performance_acts',
             'contract_state_events',
             'completed_works',
+            'journal_materials',
+            'journal_equipment',
+            'journal_workers',
+            'journal_work_volumes',
+            'construction_journal_entries',
+            'construction_journals',
+            'schedule_tasks',
+            'project_schedules',
             'contract_estimate_items',
             'estimate_items',
             'estimates',
@@ -190,13 +198,126 @@ trait ActingTestSchema
             $table->timestamps();
         });
 
+        Schema::create('construction_journals', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id');
+            $table->foreignId('project_id');
+            $table->foreignId('contract_id')->nullable();
+            $table->string('name');
+            $table->string('journal_number');
+            $table->date('start_date')->nullable();
+            $table->date('end_date')->nullable();
+            $table->string('status')->default('active');
+            $table->foreignId('created_by_user_id')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('construction_journal_entries', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('journal_id');
+            $table->foreignId('schedule_task_id')->nullable();
+            $table->foreignId('estimate_id')->nullable();
+            $table->date('entry_date');
+            $table->unsignedInteger('entry_number')->default(1);
+            $table->text('work_description');
+            $table->string('status')->default('draft');
+            $table->foreignId('created_by_user_id')->nullable();
+            $table->foreignId('approved_by_user_id')->nullable();
+            $table->timestamp('approved_at')->nullable();
+            $table->json('weather_conditions')->nullable();
+            $table->text('problems_description')->nullable();
+            $table->text('safety_notes')->nullable();
+            $table->text('visitors_notes')->nullable();
+            $table->text('quality_notes')->nullable();
+            $table->text('rejection_reason')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('journal_work_volumes', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('journal_entry_id');
+            $table->foreignId('estimate_item_id')->nullable();
+            $table->foreignId('work_type_id')->nullable();
+            $table->decimal('quantity', 15, 3)->default(0);
+            $table->foreignId('measurement_unit_id')->nullable();
+            $table->text('notes')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('journal_workers', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('journal_entry_id');
+            $table->string('specialty');
+            $table->unsignedInteger('workers_count')->default(0);
+            $table->decimal('hours_worked', 8, 2)->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('journal_equipment', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('journal_entry_id');
+            $table->string('equipment_name');
+            $table->string('equipment_type')->nullable();
+            $table->unsignedInteger('quantity')->default(1);
+            $table->decimal('hours_used', 8, 2)->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('journal_materials', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('journal_entry_id');
+            $table->foreignId('material_id')->nullable();
+            $table->string('material_name');
+            $table->decimal('quantity', 15, 3)->default(0);
+            $table->string('measurement_unit');
+            $table->text('notes')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('project_schedules', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('project_id');
+            $table->foreignId('organization_id');
+            $table->string('name')->default('Schedule');
+            $table->date('planned_start_date')->nullable();
+            $table->date('planned_end_date')->nullable();
+            $table->string('status')->default('active');
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('schedule_tasks', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('schedule_id');
+            $table->foreignId('organization_id');
+            $table->foreignId('estimate_item_id')->nullable();
+            $table->foreignId('work_type_id')->nullable();
+            $table->string('name');
+            $table->decimal('quantity', 15, 4)->nullable();
+            $table->decimal('completed_quantity', 15, 4)->nullable();
+            $table->decimal('progress_percent', 8, 2)->default(0);
+            $table->string('task_type')->default('task');
+            $table->string('status')->default('not_started');
+            $table->string('priority')->default('normal');
+            $table->unsignedInteger('level')->default(0);
+            $table->unsignedInteger('sort_order')->default(0);
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
         Schema::create('completed_works', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('organization_id');
             $table->foreignId('project_id');
             $table->foreignId('contract_id')->nullable();
             $table->foreignId('estimate_item_id')->nullable();
+            $table->foreignId('schedule_task_id')->nullable();
             $table->foreignId('journal_entry_id')->nullable();
+            $table->foreignId('work_type_id')->nullable();
+            $table->foreignId('user_id')->nullable();
+            $table->foreignId('contractor_id')->nullable();
             $table->string('work_origin_type', 32)->default('manual');
             $table->string('planning_status', 32)->default('planned');
             $table->decimal('quantity', 15, 3);

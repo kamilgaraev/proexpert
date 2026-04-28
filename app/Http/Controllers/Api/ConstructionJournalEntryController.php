@@ -289,6 +289,7 @@ class ConstructionJournalEntryController extends Controller
             'work_volumes.*.quantity' => 'required|numeric|min:0',
             'work_volumes.*.measurement_unit_id' => 'nullable|integer',
             'work_volumes.*.notes' => 'nullable|string',
+            'work_volumes.*.auto_attach_contract_coverage' => 'nullable|boolean',
             'workers' => $prefix . 'nullable|array',
             'workers.*.specialty' => 'required|string',
             'workers.*.workers_count' => 'required|integer|min:1',

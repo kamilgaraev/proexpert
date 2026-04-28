@@ -64,6 +64,7 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
                 $resourcesByItemId = [];
                 $totalsByItemId = [];
                 $worksByItemId = []; 
+                $contractLinksByItemId = [];
             } else {
                 // Извлекаем связанные данные оптом
                 $resourcesChunks = DB::table('estimate_item_resources')
@@ -96,6 +97,27 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
                 foreach ($worksChunks as $work) {
                     $worksByItemId[$work['estimate_item_id']][] = $work;
                 }
+
+                $contractLinks = DB::table('contract_estimate_items')
+                    ->leftJoin('contracts', 'contract_estimate_items.contract_id', '=', 'contracts.id')
+                    ->leftJoin('contractors', 'contracts.contractor_id', '=', 'contractors.id')
+                    ->whereIn('contract_estimate_items.estimate_item_id', $itemIds)
+                    ->get([
+                        'contract_estimate_items.estimate_item_id',
+                        'contract_estimate_items.contract_id',
+                        'contracts.number as contract_number',
+                        'contractors.name as contractor_name',
+                    ])
+                    ->map(fn($link) => (array) $link);
+
+                $contractLinksByItemId = [];
+                foreach ($contractLinks as $link) {
+                    $contractLinksByItemId[$link['estimate_item_id']][] = [
+                        'contract_id' => $link['contract_id'],
+                        'contract_number' => $link['contract_number'],
+                        'contractor_name' => $link['contractor_name'],
+                    ];
+                }
             }
 
             $workTypes = DB::table('work_types')->pluck('name', 'id')->toArray();
@@ -113,6 +135,7 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
                 $item['resources'] = $resourcesByItemId[$item['id']] ?? [];
                 $item['totals'] = $totalsByItemId[$item['id']] ?? [];
                 $item['works'] = $worksByItemId[$item['id']] ?? [];
+                $item['contract_links'] = $contractLinksByItemId[$item['id']] ?? [];
                 $item['children'] = []; // В EstimateItemResource это 'children'
                 
                 // Append simple relations
