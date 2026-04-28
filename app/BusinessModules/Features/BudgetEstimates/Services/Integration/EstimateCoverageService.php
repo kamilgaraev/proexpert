@@ -10,6 +10,7 @@ use App\Models\Contract;
 use App\Models\ContractEstimateItem;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
+use App\Services\CompletedWork\CompletedWorkFactService;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -25,7 +26,8 @@ class EstimateCoverageService
     ];
 
     public function __construct(
-        private readonly ContractEstimateService $contractEstimateService
+        private readonly ContractEstimateService $contractEstimateService,
+        private readonly CompletedWorkFactService $completedWorkFactService,
     ) {}
 
     public function createFromContract(Contract $contract, array $additionalData = []): Estimate
@@ -48,14 +50,20 @@ class EstimateCoverageService
     {
         $itemIds = $this->getCoveredItemIds($estimate)->all();
 
-        return $this->contractEstimateService->syncItems($contract, $estimate, $itemIds, $includeVat);
+        $links = $this->contractEstimateService->syncItems($contract, $estimate, $itemIds, $includeVat);
+        $this->completedWorkFactService->syncJournalEntriesForContractEstimateCoverage($contract, $estimate, $itemIds);
+
+        return $links;
     }
 
     public function syncCoverageItems(Contract $contract, Estimate $estimate, array $itemIds, bool $includeVat = false): Collection
     {
         $this->assertOwnership($contract, $estimate);
 
-        return $this->contractEstimateService->syncItems($contract, $estimate, $itemIds, $includeVat);
+        $links = $this->contractEstimateService->syncItems($contract, $estimate, $itemIds, $includeVat);
+        $this->completedWorkFactService->syncJournalEntriesForContractEstimateCoverage($contract, $estimate, $itemIds);
+
+        return $links;
     }
 
     public function detachCoverage(Contract $contract, Estimate $estimate): void
@@ -64,6 +72,8 @@ class EstimateCoverageService
             ->where('contract_id', $contract->id)
             ->where('estimate_id', $estimate->id)
             ->delete();
+
+        $this->completedWorkFactService->syncJournalEntriesForContractEstimateCoverage($contract, $estimate);
     }
 
     public function getCoverageForEstimate(Estimate $estimate): array

@@ -175,6 +175,7 @@ trait ActingTestSchema
             $table->id();
             $table->foreignId('estimate_id');
             $table->string('position_number')->nullable();
+            $table->string('item_type')->nullable();
             $table->string('name');
             $table->decimal('quantity', 15, 8)->default(0);
             $table->decimal('quantity_total', 15, 8)->nullable();

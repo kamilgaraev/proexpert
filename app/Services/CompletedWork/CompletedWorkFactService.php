@@ -8,7 +8,9 @@ use App\BusinessModules\Features\BudgetEstimates\Services\JournalContractCoverag
 use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
 use App\Models\CompletedWork;
 use App\Models\ConstructionJournalEntry;
+use App\Models\Contract;
 use App\Models\ContractEstimateItem;
+use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\JournalWorkVolume;
 use App\Models\ProjectSchedule;
@@ -86,6 +88,52 @@ class CompletedWorkFactService
 
             $taskIds->each(fn (int $taskId) => $this->syncTaskById($taskId));
         });
+    }
+
+    public function syncJournalEntriesForContractEstimateCoverage(
+        Contract $contract,
+        Estimate $estimate,
+        array $estimateItemIds = [],
+    ): int {
+        $syncedCount = 0;
+        $estimateItemIds = array_values(array_filter(array_map('intval', $estimateItemIds)));
+
+        $entryIds = JournalWorkVolume::query()
+            ->when(
+                $estimateItemIds !== [],
+                fn ($query) => $query->whereIn('estimate_item_id', $estimateItemIds),
+                fn ($query) => $query->whereHas('estimateItem', function ($estimateItemQuery) use ($estimate): void {
+                    $estimateItemQuery->where('estimate_id', $estimate->id);
+                })
+            )
+            ->pluck('journal_entry_id')
+            ->unique()
+            ->values();
+
+        if ($entryIds->isEmpty()) {
+            return 0;
+        }
+
+        ConstructionJournalEntry::query()
+            ->whereIn('id', $entryIds)
+            ->with([
+                'journal.contract',
+                'scheduleTask.estimateItem.contractLinks.contract.contractor',
+                'workVolumes.estimateItem.contractLinks.contract.contractor',
+                'workVolumes.workType',
+            ])
+            ->chunkById(100, function ($entries) use ($contract, &$syncedCount): void {
+                foreach ($entries as $entry) {
+                    if ((int) ($entry->journal?->contract_id ?? 0) !== (int) $contract->id) {
+                        continue;
+                    }
+
+                    $this->syncFromJournalEntry($entry);
+                    $syncedCount++;
+                }
+            });
+
+        return $syncedCount;
     }
 
     public function attachToTask(CompletedWork $completedWork, ScheduleTask $task): CompletedWork

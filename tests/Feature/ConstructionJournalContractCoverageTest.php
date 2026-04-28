@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Tests\Feature;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService;
+use App\Enums\EstimatePositionItemType;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\CompletedWork;
 use App\Models\ConstructionJournal;
@@ -142,6 +144,37 @@ class ConstructionJournalContractCoverageTest extends TestCase
         $this->assertNull($work->contractor_id);
     }
 
+    public function test_full_coverage_sync_updates_existing_approved_journal_work_contract(): void
+    {
+        [$organization, $user, $contract, $project, $estimate, $estimateItem] = $this->createJournalFixture();
+        $journal = $this->createJournal($organization, $project, $contract, $user);
+
+        app(ConstructionJournalService::class)->createEntry($journal, [
+            'estimate_id' => $estimate->id,
+            'entry_date' => '2026-04-28',
+            'work_description' => 'Р‘РµС‚РѕРЅРёСЂРѕРІР°РЅРёРµ',
+            'status' => 'approved',
+            'work_volumes' => [
+                [
+                    'estimate_item_id' => $estimateItem->id,
+                    'quantity' => 15,
+                ],
+            ],
+        ], $user);
+
+        $work = CompletedWork::query()->where('estimate_item_id', $estimateItem->id)->firstOrFail();
+        $this->assertNull($work->contract_id);
+
+        app(EstimateCoverageService::class)->syncCoverageItems($contract, $estimate, [$estimateItem->id]);
+
+        $this->assertDatabaseHas('completed_works', [
+            'id' => $work->id,
+            'contract_id' => $contract->id,
+            'contractor_id' => $contract->contractor_id,
+            'total_amount' => 15000,
+        ]);
+    }
+
     private function createJournalFixture(): array
     {
         $organization = Organization::factory()->create();
@@ -173,6 +206,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
         $estimateItem = EstimateItem::create([
             'estimate_id' => $estimate->id,
             'position_number' => '5',
+            'item_type' => EstimatePositionItemType::WORK->value,
             'name' => 'Бетонирование',
             'quantity' => 50,
             'quantity_total' => 50,
