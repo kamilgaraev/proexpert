@@ -102,11 +102,11 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
     Route::prefix('works')->group(function () {
         Route::get('/', [CompletedWorkController::class, 'index']);
         Route::post('/', [CompletedWorkController::class, 'store']);
-        Route::get('/{completedWork}', [CompletedWorkController::class, 'show']);
-        Route::put('/{completedWork}', [CompletedWorkController::class, 'update']);
-        Route::delete('/{completedWork}', [CompletedWorkController::class, 'destroy']);
-        Route::post('/{completedWork}/attach-schedule-task', [CompletedWorkController::class, 'attachScheduleTask']);
-        Route::post('/{completedWork}/create-schedule-task', [CompletedWorkController::class, 'createScheduleTaskFromWork']);
+        Route::get('/{completed_work}', [CompletedWorkController::class, 'show']);
+        Route::put('/{completed_work}', [CompletedWorkController::class, 'update']);
+        Route::delete('/{completed_work}', [CompletedWorkController::class, 'destroy']);
+        Route::post('/{completed_work}/attach-schedule-task', [CompletedWorkController::class, 'attachScheduleTask']);
+        Route::post('/{completed_work}/create-schedule-task', [CompletedWorkController::class, 'createScheduleTaskFromWork']);
         Route::post('/bulk', [CompletedWorkController::class, 'bulkCreate']);
         Route::get('/export/excel', [CompletedWorkController::class, 'exportExcel']);
     });
