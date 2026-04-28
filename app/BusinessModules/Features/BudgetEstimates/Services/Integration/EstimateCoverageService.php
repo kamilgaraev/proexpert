@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Integration;
 
 use App\BusinessModules\Features\ContractManagement\Services\ContractEstimateService;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCacheService;
 use App\Enums\EstimatePositionItemType;
 use App\Models\Contract;
 use App\Models\ContractEstimateItem;
@@ -28,6 +29,7 @@ class EstimateCoverageService
     public function __construct(
         private readonly ContractEstimateService $contractEstimateService,
         private readonly CompletedWorkFactService $completedWorkFactService,
+        private readonly EstimateCacheService $estimateCacheService,
     ) {}
 
     public function createFromContract(Contract $contract, array $additionalData = []): Estimate
@@ -51,6 +53,7 @@ class EstimateCoverageService
         $itemIds = $this->getCoveredItemIds($estimate)->all();
 
         $links = $this->contractEstimateService->syncItems($contract, $estimate, $itemIds, $includeVat);
+        $this->estimateCacheService->invalidateStructure($estimate);
         $this->completedWorkFactService->syncJournalEntriesForContractEstimateCoverage($contract, $estimate, $itemIds);
 
         return $links;
@@ -61,6 +64,7 @@ class EstimateCoverageService
         $this->assertOwnership($contract, $estimate);
 
         $links = $this->contractEstimateService->syncItems($contract, $estimate, $itemIds, $includeVat);
+        $this->estimateCacheService->invalidateStructure($estimate);
         $this->completedWorkFactService->syncJournalEntriesForContractEstimateCoverage($contract, $estimate, $itemIds);
 
         return $links;
@@ -73,6 +77,7 @@ class EstimateCoverageService
             ->where('estimate_id', $estimate->id)
             ->delete();
 
+        $this->estimateCacheService->invalidateStructure($estimate);
         $this->completedWorkFactService->syncJournalEntriesForContractEstimateCoverage($contract, $estimate);
     }
 

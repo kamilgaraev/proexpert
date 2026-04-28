@@ -21,6 +21,7 @@ class JournalContractCoverageService
 
     public function __construct(
         private readonly ContractEstimateService $contractEstimateService,
+        private readonly EstimateCacheService $estimateCacheService,
     ) {
     }
 
@@ -100,6 +101,7 @@ class JournalContractCoverageService
         }
 
         $attached = $this->contractEstimateService->attachItems($contract, $estimateItem->estimate, [$estimateItem->id]);
+        $this->estimateCacheService->invalidateStructure($estimateItem->estimate);
 
         return $attached
             ->firstWhere('estimate_item_id', $estimateItem->id)

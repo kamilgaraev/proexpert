@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\ContractManagement\Services;
 
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCacheService;
 use App\Models\Contract;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
@@ -14,9 +15,14 @@ use Illuminate\Support\Facades\Log;
 
 class ContractEstimateService
 {
+    public function __construct(
+        private readonly EstimateCacheService $estimateCacheService,
+    ) {
+    }
+
     public function attachItems(Contract $contract, Estimate $estimate, array $itemIds, bool $includeVat = false): Collection
     {
-        return DB::transaction(function () use ($contract, $estimate, $itemIds, $includeVat) {
+        $attached = DB::transaction(function () use ($contract, $estimate, $itemIds, $includeVat) {
             $allIds = $this->resolveWithChildren($estimate->id, $itemIds);
 
             $items = EstimateItem::whereIn('id', $allIds)
@@ -57,11 +63,20 @@ class ContractEstimateService
 
             return $attached;
         });
+
+        $this->estimateCacheService->invalidateStructure($estimate);
+
+        return $attached;
     }
 
     public function detachItems(Contract $contract, array $itemIds): void
     {
         $allIds = $this->resolveChildrenForDetach($contract->id, $itemIds);
+        $estimateIds = ContractEstimateItem::where('contract_id', $contract->id)
+            ->whereIn('estimate_item_id', $allIds)
+            ->pluck('estimate_id')
+            ->unique()
+            ->values();
 
         ContractEstimateItem::where('contract_id', $contract->id)
             ->whereIn('estimate_item_id', $allIds)
@@ -71,6 +86,11 @@ class ContractEstimateService
             'contract_id' => $contract->id,
             'item_ids'    => $allIds,
         ]);
+
+        Estimate::query()
+            ->whereIn('id', $estimateIds)
+            ->get()
+            ->each(fn (Estimate $estimate) => $this->estimateCacheService->invalidateStructure($estimate));
     }
 
     public function syncItems(Contract $contract, Estimate $estimate, array $itemIds, bool $includeVat = false): Collection
