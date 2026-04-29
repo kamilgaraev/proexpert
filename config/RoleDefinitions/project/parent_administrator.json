@@ -40,9 +40,6 @@
     "basic-warehouse": [
       "warehouse.view"
     ],
-    "advanced-warehouse": [
-      "warehouse.view"
-    ],
     "reports": [
       "reports.view",
       "reports.export"

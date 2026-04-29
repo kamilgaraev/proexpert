@@ -107,10 +107,10 @@ class SubscriptionModuleSyncService
         $organizationId = $subscription->organization_id;
 
         $oldModuleIds = $this->getModulesForPlan($oldPlan)->pluck('id');
-        $newModuleIds = $this->getModulesForPlan($newPlan)->pluck('id');
+        $newModules = $this->getModulesForPlan($newPlan);
+        $newModuleIds = $newModules->pluck('id');
 
         $modulesToRemove = $oldModuleIds->diff($newModuleIds);
-        $modulesToAdd = $newModuleIds->diff($oldModuleIds);
 
         $deactivatedCount = 0;
         $activatedCount = 0;
@@ -119,7 +119,7 @@ class SubscriptionModuleSyncService
 
         DB::transaction(function () use (
             $modulesToRemove,
-            $modulesToAdd,
+            $newModules,
             $organizationId,
             $subscription,
             $newPlan,
@@ -170,21 +170,13 @@ class SubscriptionModuleSyncService
                 );
             }
 
-            if ($modulesToAdd->isNotEmpty()) {
-                foreach ($modulesToAdd as $moduleId) {
-                    $module = Module::find($moduleId);
+            foreach ($newModules as $module) {
+                $result = $this->activateModuleForSubscription($organizationId, $module, $subscription);
 
-                    if (! $module) {
-                        continue;
-                    }
-
-                    $result = $this->activateModuleForSubscription($organizationId, $module, $subscription);
-
-                    if ($result === 'converted') {
-                        $convertedCount++;
-                    } elseif ($result === 'activated') {
-                        $activatedCount++;
-                    }
+                if ($result === 'converted') {
+                    $convertedCount++;
+                } elseif ($result === 'activated') {
+                    $activatedCount++;
                 }
             }
         });

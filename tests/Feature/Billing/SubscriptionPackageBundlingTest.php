@@ -10,6 +10,7 @@ use App\Models\OrganizationModuleActivation;
 use App\Models\OrganizationPackageSubscription;
 use App\Models\OrganizationSubscription;
 use App\Models\SubscriptionPlan;
+use App\Services\Landing\OrganizationSubscriptionService;
 use App\Services\SubscriptionModuleSyncService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -280,13 +281,43 @@ class SubscriptionPackageBundlingTest extends TestCase
         ]);
     }
 
-    private function createPlan(string $slug, array $includedPackages): SubscriptionPlan
+    public function test_update_subscription_syncs_supply_warehouse_package_modules(): void
+    {
+        $plan = $this->createPlan('profi', [
+            ['package_slug' => 'supply-warehouse', 'tier' => 'pro'],
+        ], 0);
+
+        $this->createSubscription($plan);
+        $modules = $this->createPackageModules('supply-warehouse', 'pro');
+
+        app(OrganizationSubscriptionService::class)->updateSubscription($this->organization->id, 'profi');
+
+        $basicWarehouseModule = Module::where('slug', 'basic-warehouse')->firstOrFail();
+
+        $this->assertDatabaseHas('organization_module_activations', [
+            'organization_id' => $this->organization->id,
+            'module_id' => $basicWarehouseModule->id,
+            'status' => 'active',
+            'is_bundled_with_plan' => true,
+        ]);
+
+        $this->assertSame(
+            count($modules),
+            OrganizationModuleActivation::query()
+                ->where('organization_id', $this->organization->id)
+                ->where('is_bundled_with_plan', true)
+                ->where('status', 'active')
+                ->count()
+        );
+    }
+
+    private function createPlan(string $slug, array $includedPackages, int $price = 9900): SubscriptionPlan
     {
         return SubscriptionPlan::create([
             'name' => ucfirst($slug),
             'slug' => $slug,
             'description' => $slug,
-            'price' => 9900,
+            'price' => $price,
             'currency' => 'RUB',
             'duration_in_days' => 30,
             'features' => [],

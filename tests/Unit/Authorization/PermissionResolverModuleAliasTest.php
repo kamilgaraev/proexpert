@@ -25,4 +25,21 @@ class PermissionResolverModuleAliasTest extends TestCase
         $this->assertContains('act-reporting', $resolver->variants('act_reports'));
         $this->assertContains('act_reports', $resolver->variants('act-reporting'));
     }
+
+    public function test_warehouse_permission_uses_basic_warehouse_module_alias(): void
+    {
+        $resolver = new class extends PermissionResolver {
+            public function __construct()
+            {
+            }
+
+            public function variants(string $module): array
+            {
+                return $this->expandModuleVariants($module);
+            }
+        };
+
+        $this->assertContains('basic-warehouse', $resolver->variants('warehouse'));
+        $this->assertContains('warehouse', $resolver->variants('basic-warehouse'));
+    }
 }

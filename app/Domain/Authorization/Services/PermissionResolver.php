@@ -201,6 +201,7 @@ class PermissionResolver
             'act_reports' => 'act-reporting',
             'ai_estimates' => 'ai-estimates',
             'time_tracking' => 'time-tracking',
+            'warehouse' => 'basic-warehouse',
         ];
         
         // Обратный маппинг: budget-estimates.* -> estimates.* (для обратной совместимости)
@@ -208,6 +209,7 @@ class PermissionResolver
             'budget-estimates' => 'estimates',
             'schedule-management' => 'schedule',
             'act-reporting' => 'act_reports',
+            'basic-warehouse' => 'warehouse',
         ];
         
         $modulesToCheck = [$module];
@@ -555,6 +557,7 @@ class PermissionResolver
             'ai_estimates' => 'ai-estimates',
             'time_tracking' => 'time-tracking',
             'report_templates' => 'report-templates',
+            'warehouse' => 'basic-warehouse',
         ];
 
         $reverseMapping = [
@@ -563,6 +566,7 @@ class PermissionResolver
             'act-reporting' => 'act_reports',
             'time-tracking' => 'time_tracking',
             'report-templates' => 'report_templates',
+            'basic-warehouse' => 'warehouse',
         ];
 
         $variants = [

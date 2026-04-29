@@ -166,6 +166,7 @@ class OrganizationSubscriptionService
     {
         // Получаем текущую подписку для сравнения
         $currentSubscription = $this->repo->getByOrganizationId($organizationId);
+        $oldPlan = $currentSubscription?->plan;
         
         // Апгрейд/даунгрейд: смена тарифа, перерасчёт дат
         $plan = SubscriptionPlan::where('slug', $planSlug)->where('is_active', true)->firstOrFail();
@@ -176,6 +177,7 @@ class OrganizationSubscriptionService
             'status' => 'active',
             'starts_at' => $now,
             'ends_at' => $now->copy()->addDays($plan->duration_in_days),
+            'next_billing_at' => $now->copy()->addDays($plan->duration_in_days),
             'is_auto_payment_enabled' => $isAutoPaymentEnabled,
         ];
 
@@ -225,6 +227,26 @@ class OrganizationSubscriptionService
                 'transaction_type' => 'subscription_updated',
                 'performed_by' => Auth::id() ?? 'system'
             ]);
+
+            $subscription = $subscription->fresh('plan');
+            $moduleSyncResult = $oldPlan
+                ? $this->moduleSyncService->syncModulesOnPlanChange($subscription, $oldPlan, $plan)
+                : $this->moduleSyncService->syncModulesOnSubscribe($subscription);
+
+            if (($moduleSyncResult['deactivated_count'] ?? 0) > 0 ||
+                ($moduleSyncResult['activated_count'] ?? 0) > 0 ||
+                ($moduleSyncResult['converted_count'] ?? 0) > 0 ||
+                ($moduleSyncResult['packages_activated_count'] ?? 0) > 0 ||
+                ($moduleSyncResult['packages_converted_count'] ?? 0) > 0 ||
+                ($moduleSyncResult['packages_deactivated_count'] ?? 0) > 0) {
+                $this->logging->business('subscription.update.modules_synced', [
+                    'subscription_id' => $subscription->id,
+                    'organization_id' => $organizationId,
+                    'old_plan' => $oldPlan?->slug,
+                    'new_plan' => $plan->slug,
+                    'sync_result' => $moduleSyncResult,
+                ]);
+            }
 
             $this->limitsService->clearOrganizationSubscriptionCache($organizationId);
 
@@ -766,4 +788,4 @@ class OrganizationSubscriptionService
             ];
         }
     }
-} 
+}
