@@ -137,8 +137,10 @@ class CompletedWorkController extends Controller
         }
     }
 
-    public function show(CompletedWork $completedWork): JsonResponse
+    public function show(CompletedWork $completed_work): JsonResponse
     {
+        $completedWork = $completed_work;
+
         try {
             if ($completedWork->organization_id !== Auth::user()->current_organization_id) {
                 return AdminResponse::error(trans_message('completed_work.not_found'), 404);
@@ -156,8 +158,10 @@ class CompletedWorkController extends Controller
         }
     }
 
-    public function update(UpdateCompletedWorkRequest $request, CompletedWork $completedWork): JsonResponse
+    public function update(UpdateCompletedWorkRequest $request, CompletedWork $completed_work): JsonResponse
     {
+        $completedWork = $completed_work;
+
         if ($completedWork->organization_id !== Auth::user()->current_organization_id) {
             return AdminResponse::error(trans_message('completed_work.forbidden'), 403);
         }
@@ -189,8 +193,10 @@ class CompletedWorkController extends Controller
         }
     }
 
-    public function destroy(CompletedWork $completedWork): JsonResponse
+    public function destroy(CompletedWork $completed_work): JsonResponse
     {
+        $completedWork = $completed_work;
+
         if ($completedWork->organization_id !== Auth::user()->current_organization_id) {
             return AdminResponse::error(trans_message('completed_work.forbidden'), 403);
         }
@@ -218,8 +224,10 @@ class CompletedWorkController extends Controller
         }
     }
 
-    public function syncMaterials(SyncCompletedWorkMaterialsRequest $request, CompletedWork $completedWork): JsonResponse
+    public function syncMaterials(SyncCompletedWorkMaterialsRequest $request, CompletedWork $completed_work): JsonResponse
     {
+        $completedWork = $completed_work;
+
         if ($completedWork->organization_id !== Auth::user()->current_organization_id) {
             return AdminResponse::error(trans_message('completed_work.forbidden'), 403);
         }
@@ -332,8 +340,10 @@ class CompletedWorkController extends Controller
         }
     }
 
-    public function attachScheduleTask(Request $request, int $project, CompletedWork $completedWork): JsonResponse
+    public function attachScheduleTask(Request $request, int $project, CompletedWork $completed_work): JsonResponse
     {
+        $completedWork = $completed_work;
+
         if ($completedWork->organization_id !== Auth::user()->current_organization_id || $completedWork->project_id !== $project) {
             return AdminResponse::error(trans_message('completed_work.not_found'), 404);
         }
@@ -373,8 +383,10 @@ class CompletedWorkController extends Controller
         }
     }
 
-    public function createScheduleTaskFromWork(Request $request, int $project, CompletedWork $completedWork): JsonResponse
+    public function createScheduleTaskFromWork(Request $request, int $project, CompletedWork $completed_work): JsonResponse
     {
+        $completedWork = $completed_work;
+
         if ($completedWork->organization_id !== Auth::user()->current_organization_id || $completedWork->project_id !== $project) {
             return AdminResponse::error(trans_message('completed_work.not_found'), 404);
         }
