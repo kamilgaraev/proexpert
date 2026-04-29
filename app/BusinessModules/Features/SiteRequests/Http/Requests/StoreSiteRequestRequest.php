@@ -37,6 +37,7 @@ class StoreSiteRequestRequest extends FormRequest
             'required_date' => ['nullable', 'date', 'after_or_equal:today'],
             'notes' => ['nullable', 'string'],
             'materials' => ['nullable', 'array'],
+            'estimate_item_id' => ['nullable', 'integer', 'exists:estimate_items,id'],
         ];
 
         // Правила для материалов
@@ -45,6 +46,7 @@ class StoreSiteRequestRequest extends FormRequest
             if ($this->has('materials') && is_array($this->input('materials'))) {
                 $rules = array_merge($rules, [
                     'materials.*.material_id' => ['nullable', 'integer'],
+                    'materials.*.estimate_item_id' => ['nullable', 'integer', 'exists:estimate_items,id'],
                     'materials.*.name' => ['required_without:materials.*.material_id', 'nullable', 'string', 'max:255'],
                     'materials.*.quantity' => ['required', 'numeric', 'min:0.001'],
                     'materials.*.unit' => ['required', 'string', 'max:50'],
@@ -92,6 +94,7 @@ class StoreSiteRequestRequest extends FormRequest
         if ($this->input('request_type') === SiteRequestTypeEnum::EQUIPMENT_REQUEST->value) {
             $rules = array_merge($rules, [
                 'equipment_type' => ['required', new Enum(EquipmentTypeEnum::class)],
+                'equipment_count' => ['nullable', 'integer', 'min:1', 'max:50'],
                 'equipment_specs' => ['nullable', 'string'],
                 'rental_start_date' => ['required', 'date', 'after_or_equal:today'],
                 'rental_end_date' => ['nullable', 'date', 'after_or_equal:rental_start_date'],

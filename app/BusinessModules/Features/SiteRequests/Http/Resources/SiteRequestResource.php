@@ -3,12 +3,15 @@
 namespace App\BusinessModules\Features\SiteRequests\Http\Resources;
 
 use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
+use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\Services\Storage\FileService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 /**
  * API Resource для заявки
+ *
+ * @mixin SiteRequest
  */
 class SiteRequestResource extends JsonResource
 {
@@ -40,6 +43,7 @@ class SiteRequestResource extends JsonResource
 
             // Материалы
             'material_id' => $this->material_id,
+            'estimate_item_id' => $this->estimate_item_id,
             'material_name' => $this->material_name,
             'material_quantity' => $this->material_quantity,
             'material_unit' => $this->material_unit,
@@ -69,6 +73,7 @@ class SiteRequestResource extends JsonResource
             'equipment_type_label' => $this->equipment_type instanceof EquipmentTypeEnum
                 ? $this->equipment_type->label()
                 : EquipmentTypeEnum::tryFrom((string) $this->equipment_type)?->label(),
+            'equipment_count' => $this->equipment_count,
             'equipment_specs' => $this->equipment_specs,
             'rental_start_date' => $this->rental_start_date?->format('Y-m-d'),
             'rental_end_date' => $this->rental_end_date?->format('Y-m-d'),
@@ -95,6 +100,21 @@ class SiteRequestResource extends JsonResource
                 'id' => $this->project->id,
                 'name' => $this->project->name,
             ]),
+            'estimate_item' => $this->whenLoaded('estimateItem', fn() => $this->estimateItem ? [
+                'id' => $this->estimateItem->id,
+                'estimate_id' => $this->estimateItem->estimate_id,
+                'position_number' => $this->estimateItem->position_number,
+                'name' => $this->estimateItem->name,
+                'item_type' => $this->estimateItem->item_type,
+                'quantity_total' => $this->estimateItem->quantity_total !== null
+                    ? (float) $this->estimateItem->quantity_total
+                    : null,
+                'measurement_unit' => $this->estimateItem->relationLoaded('measurementUnit') && $this->estimateItem->measurementUnit ? [
+                    'id' => $this->estimateItem->measurementUnit->id,
+                    'name' => $this->estimateItem->measurementUnit->name,
+                    'short_name' => $this->estimateItem->measurementUnit->short_name,
+                ] : null,
+            ] : null),
             'user' => $this->whenLoaded('user', fn() => [
                 'id' => $this->user->id,
                 'name' => $this->user->name,

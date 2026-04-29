@@ -289,6 +289,7 @@ class SiteRequestController extends Controller
                         'material_quantity' => $material['quantity'] ?? null,
                         'material_unit' => $material['unit'] ?? null,
                         'material_id' => $material['material_id'] ?? null,
+                        'estimate_item_id' => $material['estimate_item_id'] ?? null,
                         'note' => $material['note'] ?? null,
                     ];
                     

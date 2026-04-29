@@ -250,6 +250,7 @@ trait ActingTestSchema
         Schema::create('journal_workers', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('journal_entry_id');
+            $table->foreignId('estimate_item_id')->nullable();
             $table->string('specialty');
             $table->unsignedInteger('workers_count')->default(0);
             $table->decimal('hours_worked', 8, 2)->nullable();
@@ -259,6 +260,7 @@ trait ActingTestSchema
         Schema::create('journal_equipment', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('journal_entry_id');
+            $table->foreignId('estimate_item_id')->nullable();
             $table->string('equipment_name');
             $table->string('equipment_type')->nullable();
             $table->unsignedInteger('quantity')->default(1);
@@ -270,6 +272,7 @@ trait ActingTestSchema
             $table->id();
             $table->foreignId('journal_entry_id');
             $table->foreignId('material_id')->nullable();
+            $table->foreignId('estimate_item_id')->nullable();
             $table->string('material_name');
             $table->decimal('quantity', 15, 3)->default(0);
             $table->string('measurement_unit');
@@ -320,6 +323,9 @@ trait ActingTestSchema
             $table->foreignId('schedule_task_id')->nullable();
             $table->foreignId('journal_entry_id')->nullable();
             $table->foreignId('journal_work_volume_id')->nullable();
+            $table->foreignId('journal_material_id')->nullable();
+            $table->foreignId('journal_equipment_id')->nullable();
+            $table->foreignId('journal_worker_id')->nullable();
             $table->foreignId('work_type_id')->nullable();
             $table->foreignId('user_id')->nullable();
             $table->foreignId('contractor_id')->nullable();

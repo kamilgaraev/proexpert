@@ -31,6 +31,9 @@ class CompletedWork extends Model
         'estimate_item_id',
         'journal_entry_id',
         'journal_work_volume_id',
+        'journal_material_id',
+        'journal_equipment_id',
+        'journal_worker_id',
         'work_origin_type',
         'planning_status',
         'contract_id',
@@ -111,6 +114,21 @@ class CompletedWork extends Model
     public function journalWorkVolume(): BelongsTo
     {
         return $this->belongsTo(JournalWorkVolume::class, 'journal_work_volume_id');
+    }
+
+    public function journalMaterial(): BelongsTo
+    {
+        return $this->belongsTo(JournalMaterial::class, 'journal_material_id');
+    }
+
+    public function journalEquipment(): BelongsTo
+    {
+        return $this->belongsTo(JournalEquipment::class, 'journal_equipment_id');
+    }
+
+    public function journalWorker(): BelongsTo
+    {
+        return $this->belongsTo(JournalWorker::class, 'journal_worker_id');
     }
 
     public function files()

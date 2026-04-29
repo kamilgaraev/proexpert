@@ -14,6 +14,7 @@ class JournalEquipment extends Model
 
     protected $fillable = [
         'journal_entry_id',
+        'estimate_item_id',
         'equipment_name',
         'equipment_type',
         'quantity',
@@ -30,6 +31,11 @@ class JournalEquipment extends Model
     public function journalEntry(): BelongsTo
     {
         return $this->belongsTo(ConstructionJournalEntry::class, 'journal_entry_id');
+    }
+
+    public function estimateItem(): BelongsTo
+    {
+        return $this->belongsTo(EstimateItem::class, 'estimate_item_id');
     }
 }
 

@@ -187,6 +187,58 @@ class ConstructionJournalContractCoverageTest extends TestCase
         ]);
     }
 
+    public function test_approved_journal_material_from_estimate_updates_contract_fact(): void
+    {
+        [$organization, $user, $contract, $project, $estimate] = $this->createJournalFixture();
+        $journal = $this->createJournal($organization, $project, $contract, $user);
+        $materialItem = EstimateItem::create([
+            'estimate_id' => $estimate->id,
+            'position_number' => '2',
+            'item_type' => EstimatePositionItemType::MATERIAL->value,
+            'name' => 'Кирпич',
+            'quantity' => 100,
+            'quantity_total' => 100,
+            'unit_price' => 70,
+            'total_amount' => 7000,
+        ]);
+        $this->coverEstimateItem($contract, $estimate, $materialItem, 100, 7000);
+
+        $entry = app(ConstructionJournalService::class)->createEntry($journal, [
+            'estimate_id' => $estimate->id,
+            'entry_date' => '2026-04-29',
+            'work_description' => 'Кладка',
+            'status' => 'approved',
+            'materials' => [
+                [
+                    'estimate_item_id' => $materialItem->id,
+                    'material_name' => 'Кирпич',
+                    'quantity' => 25,
+                    'measurement_unit' => 'шт',
+                    'notes' => 'Позиция сметы: 2',
+                ],
+            ],
+        ], $user);
+        $material = $entry->materials()->firstOrFail();
+        $work = CompletedWork::query()
+            ->where('journal_material_id', $material->id)
+            ->firstOrFail();
+        $payload = (new ContractEstimateItemResource(
+            ContractEstimateItem::query()
+                ->where('contract_id', $contract->id)
+                ->where('estimate_item_id', $materialItem->id)
+                ->firstOrFail()
+                ->fresh('estimateItem')
+        ))->toArray(request());
+
+        $this->assertSame($materialItem->id, $material->estimate_item_id);
+        $this->assertSame($materialItem->id, $work->estimate_item_id);
+        $this->assertSame($contract->id, $work->contract_id);
+        $this->assertSame(25.0, (float) $work->completed_quantity);
+        $this->assertSame(25.0, $materialItem->getActualVolume($contract->id));
+        $this->assertSame(25.0, $payload['item']['actual_quantity']);
+        $this->assertSame(25.0, $payload['item']['fact_progress_percent']);
+    }
+
     public function test_completed_work_keeps_stable_journal_volume_link_when_work_volumes_are_reordered(): void
     {
         [$organization, $user, $contract, $project, $estimate, $estimateItem] = $this->createJournalFixture();
@@ -549,14 +601,20 @@ class ConstructionJournalContractCoverageTest extends TestCase
         ]);
     }
 
-    private function coverEstimateItem(Contract $contract, Estimate $estimate, EstimateItem $estimateItem): ContractEstimateItem
+    private function coverEstimateItem(
+        Contract $contract,
+        Estimate $estimate,
+        EstimateItem $estimateItem,
+        float $quantity = 50,
+        float $amount = 50000
+    ): ContractEstimateItem
     {
         return ContractEstimateItem::create([
             'contract_id' => $contract->id,
             'estimate_id' => $estimate->id,
             'estimate_item_id' => $estimateItem->id,
-            'quantity' => 50,
-            'amount' => 50000,
+            'quantity' => $quantity,
+            'amount' => $amount,
         ]);
     }
 

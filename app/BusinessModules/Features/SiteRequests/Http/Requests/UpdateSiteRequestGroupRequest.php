@@ -26,6 +26,7 @@ class UpdateSiteRequestGroupRequest extends FormRequest
             'materials' => ['sometimes', 'array'],
             'materials.*.id' => ['nullable', 'integer', 'exists:site_requests,id'],
             'materials.*.material_id' => ['nullable', 'integer'],
+            'materials.*.estimate_item_id' => ['nullable', 'integer', 'exists:estimate_items,id'],
             'materials.*.name' => ['required_without:materials.*.material_id', 'nullable', 'string', 'max:255'],
             'materials.*.quantity' => ['required', 'numeric', 'min:0.001'],
             'materials.*.unit' => ['required', 'string', 'max:50'],

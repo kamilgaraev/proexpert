@@ -5,6 +5,8 @@ namespace App\BusinessModules\Features\SiteRequests\Services;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequestGroup;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequestHistory;
+use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\PersonnelTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Events\SiteRequestCreated;
@@ -13,12 +15,16 @@ use App\BusinessModules\Features\SiteRequests\Events\SiteRequestStatusChanged;
 use App\BusinessModules\Features\SiteRequests\Events\SiteRequestApproved;
 use App\BusinessModules\Features\SiteRequests\Events\SiteRequestAssigned;
 use App\BusinessModules\Features\SiteRequests\SiteRequestsModule;
+use App\Models\EstimateItem;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
 use Carbon\Carbon;
+use DomainException;
+
+use function trans_message;
 
 /**
  * Основной сервис для работы с заявками
@@ -47,6 +53,7 @@ class SiteRequestService
                 'files',
                 'calendarEvent',
                 'group',
+                'estimateItem.measurementUnit',
                 'purchaseRequests.assignedUser',
                 'purchaseRequests.purchaseOrders.supplier',
                 'purchaseOrders.supplier',
@@ -61,7 +68,7 @@ class SiteRequestService
     {
         return SiteRequestGroup::where('id', $id)
             ->where('organization_id', $organizationId)
-            ->with(['requests.project', 'requests.user'])
+            ->with(['requests.project', 'requests.user', 'requests.estimateItem.measurementUnit'])
             ->first();
     }
 
@@ -74,7 +81,7 @@ class SiteRequestService
         array $filters = []
     ): LengthAwarePaginator {
         $query = SiteRequest::forOrganization($organizationId)
-            ->with(['project', 'user', 'assignedUser', 'group']);
+            ->with(['project', 'user', 'assignedUser', 'group', 'estimateItem.measurementUnit']);
 
         // Применяем фильтры
         $this->applyFilters($query, $filters);
@@ -94,6 +101,7 @@ class SiteRequestService
     {
         // Проверяем лимиты
         $this->checkLimits($organizationId);
+        $data = $this->prepareEstimateResourceData($organizationId, $data);
 
         $request = DB::transaction(function () use ($organizationId, $userId, $data, $groupId) {
             // Создаем заявку
@@ -130,7 +138,7 @@ class SiteRequestService
             'group_id' => $groupId,
         ]);
 
-        return $request->fresh(['project', 'user']);
+        return $request->fresh(['project', 'user', 'estimateItem.measurementUnit']);
     }
 
     /**
@@ -164,7 +172,7 @@ class SiteRequestService
                 $this->create($organizationId, $userId, $requestData, $group->id);
             }
 
-            return $group->fresh(['requests']);
+            return $group->fresh(['requests.estimateItem.measurementUnit']);
         });
     }
 
@@ -197,6 +205,7 @@ class SiteRequestService
                         
                         // Формируем данные для обновления
                         $updateData = [
+                            'estimate_item_id' => $itemData['estimate_item_id'] ?? $request->estimate_item_id,
                             'material_name' => $itemData['name'] ?? $request->material_name,
                             'material_quantity' => $itemData['quantity'] ?? $request->material_quantity,
                             'material_unit' => $itemData['unit'] ?? $request->material_unit,
@@ -230,6 +239,7 @@ class SiteRequestService
                             'material_quantity' => $itemData['quantity'] ?? null,
                             'material_unit' => $itemData['unit'] ?? null,
                             'material_id' => $itemData['material_id'] ?? null,
+                            'estimate_item_id' => $itemData['estimate_item_id'] ?? null,
                             'notes' => $itemData['note'] ?? null,
                         ];
 
@@ -254,7 +264,7 @@ class SiteRequestService
                 }
             }
 
-            return $group->fresh(['requests']);
+            return $group->fresh(['requests.estimateItem.measurementUnit']);
         });
     }
 
@@ -268,6 +278,7 @@ class SiteRequestService
             throw new \DomainException('Заявку нельзя редактировать в текущем статусе');
         }
 
+        $data = $this->prepareEstimateResourceData($request->organization_id, $data, $request);
         $oldValues = $request->only(array_keys($data));
 
         DB::transaction(function () use ($request, $userId, $data, $oldValues) {
@@ -288,7 +299,7 @@ class SiteRequestService
             'user_id' => $userId,
         ]);
 
-        return $request->fresh(['project', 'user', 'assignedUser', 'calendarEvent']);
+        return $request->fresh(['project', 'user', 'assignedUser', 'calendarEvent', 'estimateItem.measurementUnit']);
     }
 
     /**
@@ -586,6 +597,76 @@ class SiteRequestService
     /**
      * Проверить лимиты модуля
      */
+    private function prepareEstimateResourceData(
+        int $organizationId,
+        array $data,
+        ?SiteRequest $request = null
+    ): array {
+        $estimateItemId = isset($data['estimate_item_id']) ? (int) $data['estimate_item_id'] : null;
+
+        if (!$estimateItemId) {
+            return $data;
+        }
+
+        $projectId = (int) ($data['project_id'] ?? $request?->project_id ?? 0);
+        $requestType = $data['request_type'] ?? $request?->request_type;
+        $allowedTypes = $this->allowedEstimateItemTypes($requestType);
+
+        if ($projectId <= 0 || $allowedTypes === []) {
+            throw new DomainException(trans_message('construction_journal.errors.invalid_estimate_item'));
+        }
+
+        $estimateItem = EstimateItem::query()
+            ->with('measurementUnit')
+            ->where('id', $estimateItemId)
+            ->whereIn('item_type', $allowedTypes)
+            ->whereHas('estimate', function ($query) use ($organizationId, $projectId): void {
+                $query->where('organization_id', $organizationId)
+                    ->where('project_id', $projectId);
+            })
+            ->first();
+
+        if (!$estimateItem) {
+            throw new DomainException(trans_message('construction_journal.errors.invalid_estimate_item'));
+        }
+
+        $quantity = (float) ($estimateItem->quantity_total ?? $estimateItem->quantity ?? 0);
+        $unit = $estimateItem->measurementUnit?->name ?? $estimateItem->unit ?? null;
+        $requestTypeValue = $requestType instanceof SiteRequestTypeEnum ? $requestType->value : (string) $requestType;
+
+        if ($requestTypeValue === SiteRequestTypeEnum::MATERIAL_REQUEST->value) {
+            $data['material_name'] = $data['material_name'] ?? $estimateItem->name;
+            $data['material_quantity'] = $data['material_quantity'] ?? $quantity;
+            $data['material_unit'] = $data['material_unit'] ?? $unit;
+        }
+
+        if ($requestTypeValue === SiteRequestTypeEnum::PERSONNEL_REQUEST->value) {
+            $data['personnel_type'] = $data['personnel_type'] ?? PersonnelTypeEnum::OTHER->value;
+            $data['personnel_count'] = $data['personnel_count'] ?? max(1, (int) ceil($quantity));
+            $data['personnel_requirements'] = $data['personnel_requirements'] ?? $estimateItem->name;
+        }
+
+        if ($requestTypeValue === SiteRequestTypeEnum::EQUIPMENT_REQUEST->value) {
+            $data['equipment_type'] = $data['equipment_type'] ?? EquipmentTypeEnum::OTHER->value;
+            $data['equipment_count'] = $data['equipment_count'] ?? max(1, (int) ceil($quantity));
+            $data['equipment_specs'] = $data['equipment_specs'] ?? $estimateItem->name;
+        }
+
+        return $data;
+    }
+
+    private function allowedEstimateItemTypes(SiteRequestTypeEnum|string|null $requestType): array
+    {
+        $value = $requestType instanceof SiteRequestTypeEnum ? $requestType->value : (string) $requestType;
+
+        return match ($value) {
+            SiteRequestTypeEnum::MATERIAL_REQUEST->value => ['material'],
+            SiteRequestTypeEnum::EQUIPMENT_REQUEST->value => ['equipment', 'machinery'],
+            SiteRequestTypeEnum::PERSONNEL_REQUEST->value => ['labor'],
+            default => [],
+        };
+    }
+
     private function checkLimits(int $organizationId): void
     {
         $settings = $this->module->getSettings($organizationId);

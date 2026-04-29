@@ -69,6 +69,9 @@ class ConstructionJournalPayloadService
         $entry->loadMissing([
             'journal.contract.contractor',
             'workVolumes.estimateItem.contractLinks.contract.contractor',
+            'materials.estimateItem',
+            'equipment.estimateItem',
+            'workers.estimateItem',
         ]);
 
         $blockers = $this->workflowGuardService->journalEntryBlockers($entry);
@@ -149,19 +152,39 @@ class ConstructionJournalPayloadService
                 ? $entry->workers->map(fn ($worker): array => [
                     'id' => $worker->id,
                     'journal_entry_id' => $worker->journal_entry_id,
+                    'estimate_item_id' => $worker->estimate_item_id,
                     'specialty' => $worker->specialty,
                     'workers_count' => $worker->workers_count,
                     'hours_worked' => $worker->hours_worked !== null ? (float) $worker->hours_worked : null,
+                    'estimateItem' => $worker->relationLoaded('estimateItem') && $worker->estimateItem
+                        ? [
+                            'id' => $worker->estimateItem->id,
+                            'estimate_id' => $worker->estimateItem->estimate_id,
+                            'position_number' => $worker->estimateItem->position_number,
+                            'name' => $worker->estimateItem->name,
+                            'quantity_total' => (float) $worker->estimateItem->quantity_total,
+                        ]
+                        : null,
                 ])->values()->all()
                 : [],
             'equipment' => $entry->relationLoaded('equipment')
                 ? $entry->equipment->map(fn ($equipment): array => [
                     'id' => $equipment->id,
                     'journal_entry_id' => $equipment->journal_entry_id,
+                    'estimate_item_id' => $equipment->estimate_item_id,
                     'equipment_name' => $equipment->equipment_name,
                     'equipment_type' => $equipment->equipment_type,
                     'quantity' => $equipment->quantity,
                     'hours_used' => $equipment->hours_used !== null ? (float) $equipment->hours_used : null,
+                    'estimateItem' => $equipment->relationLoaded('estimateItem') && $equipment->estimateItem
+                        ? [
+                            'id' => $equipment->estimateItem->id,
+                            'estimate_id' => $equipment->estimateItem->estimate_id,
+                            'position_number' => $equipment->estimateItem->position_number,
+                            'name' => $equipment->estimateItem->name,
+                            'quantity_total' => (float) $equipment->estimateItem->quantity_total,
+                        ]
+                        : null,
                 ])->values()->all()
                 : [],
             'materials' => $entry->relationLoaded('materials')
@@ -169,6 +192,7 @@ class ConstructionJournalPayloadService
                     'id' => $material->id,
                     'journal_entry_id' => $material->journal_entry_id,
                     'material_id' => $material->material_id,
+                    'estimate_item_id' => $material->estimate_item_id,
                     'material_name' => $material->material_name,
                     'quantity' => (float) $material->quantity,
                     'measurement_unit' => $material->measurement_unit,
@@ -177,6 +201,15 @@ class ConstructionJournalPayloadService
                         ? [
                             'id' => $material->material->id,
                             'name' => $material->material->name,
+                        ]
+                        : null,
+                    'estimateItem' => $material->relationLoaded('estimateItem') && $material->estimateItem
+                        ? [
+                            'id' => $material->estimateItem->id,
+                            'estimate_id' => $material->estimateItem->estimate_id,
+                            'position_number' => $material->estimateItem->position_number,
+                            'name' => $material->estimateItem->name,
+                            'quantity_total' => (float) $material->estimateItem->quantity_total,
                         ]
                         : null,
                 ])->values()->all()

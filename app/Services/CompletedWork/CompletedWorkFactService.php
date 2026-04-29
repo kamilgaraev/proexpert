@@ -12,6 +12,9 @@ use App\Models\Contract;
 use App\Models\ContractEstimateItem;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
+use App\Models\JournalEquipment;
+use App\Models\JournalMaterial;
+use App\Models\JournalWorker;
 use App\Models\JournalWorkVolume;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
@@ -37,6 +40,10 @@ class CompletedWorkFactService
             'scheduleTask.estimateItem.contractLinks.contract.contractor',
             'workVolumes.estimateItem.contractLinks.contract.contractor',
             'workVolumes.workType',
+            'materials.estimateItem.contractLinks.contract.contractor',
+            'materials.material',
+            'equipment.estimateItem.contractLinks.contract.contractor',
+            'workers.estimateItem.contractLinks.contract.contractor',
         ]);
 
         DB::transaction(function () use ($entry): void {
@@ -44,10 +51,31 @@ class CompletedWorkFactService
             $worksByVolumeId = $existingWorks
                 ->whereNotNull('journal_work_volume_id')
                 ->keyBy('journal_work_volume_id');
+            $worksByMaterialId = $existingWorks
+                ->whereNotNull('journal_material_id')
+                ->keyBy('journal_material_id');
+            $worksByEquipmentId = $existingWorks
+                ->whereNotNull('journal_equipment_id')
+                ->keyBy('journal_equipment_id');
+            $worksByWorkerId = $existingWorks
+                ->whereNotNull('journal_worker_id')
+                ->keyBy('journal_worker_id');
             $legacyWorks = $existingWorks
                 ->whereNull('journal_work_volume_id')
+                ->whereNull('journal_material_id')
+                ->whereNull('journal_equipment_id')
+                ->whereNull('journal_worker_id')
                 ->values();
             $workVolumes = $entry->workVolumes->values();
+            $materials = $entry->materials
+                ->whereNotNull('estimate_item_id')
+                ->values();
+            $equipment = $entry->equipment
+                ->whereNotNull('estimate_item_id')
+                ->values();
+            $workers = $entry->workers
+                ->whereNotNull('estimate_item_id')
+                ->values();
             $syncedTaskIds = collect();
             $syncedWorkIds = collect();
 
@@ -66,6 +94,36 @@ class CompletedWorkFactService
                 if ($completedWork->schedule_task_id) {
                     $syncedTaskIds->push((int) $completedWork->schedule_task_id);
                 }
+            }
+
+            foreach ($materials as $material) {
+                $payload = $this->buildPayloadFromJournalMaterial($entry, $material);
+
+                /** @var CompletedWork $completedWork */
+                $completedWork = $worksByMaterialId->get($material->id) ?? new CompletedWork();
+                $completedWork->fill($payload);
+                $completedWork->save();
+                $syncedWorkIds->push((int) $completedWork->id);
+            }
+
+            foreach ($equipment as $equipmentItem) {
+                $payload = $this->buildPayloadFromJournalEquipment($entry, $equipmentItem);
+
+                /** @var CompletedWork $completedWork */
+                $completedWork = $worksByEquipmentId->get($equipmentItem->id) ?? new CompletedWork();
+                $completedWork->fill($payload);
+                $completedWork->save();
+                $syncedWorkIds->push((int) $completedWork->id);
+            }
+
+            foreach ($workers as $worker) {
+                $payload = $this->buildPayloadFromJournalWorker($entry, $worker);
+
+                /** @var CompletedWork $completedWork */
+                $completedWork = $worksByWorkerId->get($worker->id) ?? new CompletedWork();
+                $completedWork->fill($payload);
+                $completedWork->save();
+                $syncedWorkIds->push((int) $completedWork->id);
             }
 
             $this->backfillEntryScheduleTask($entry);
@@ -110,7 +168,7 @@ class CompletedWorkFactService
         $syncedCount = 0;
         $estimateItemIds = array_values(array_filter(array_map('intval', $estimateItemIds)));
 
-        $entryIds = JournalWorkVolume::query()
+        $volumeEntryIds = JournalWorkVolume::query()
             ->when(
                 $estimateItemIds !== [],
                 fn ($query) => $query->whereIn('estimate_item_id', $estimateItemIds),
@@ -119,6 +177,49 @@ class CompletedWorkFactService
                 })
             )
             ->pluck('journal_entry_id')
+            ->unique()
+            ->values();
+
+        $materialEntryIds = JournalMaterial::query()
+            ->when(
+                $estimateItemIds !== [],
+                fn ($query) => $query->whereIn('estimate_item_id', $estimateItemIds),
+                fn ($query) => $query->whereHas('estimateItem', function ($estimateItemQuery) use ($estimate): void {
+                    $estimateItemQuery->where('estimate_id', $estimate->id);
+                })
+            )
+            ->pluck('journal_entry_id')
+            ->unique()
+            ->values();
+
+        $equipmentEntryIds = JournalEquipment::query()
+            ->when(
+                $estimateItemIds !== [],
+                fn ($query) => $query->whereIn('estimate_item_id', $estimateItemIds),
+                fn ($query) => $query->whereHas('estimateItem', function ($estimateItemQuery) use ($estimate): void {
+                    $estimateItemQuery->where('estimate_id', $estimate->id);
+                })
+            )
+            ->pluck('journal_entry_id')
+            ->unique()
+            ->values();
+
+        $workerEntryIds = JournalWorker::query()
+            ->when(
+                $estimateItemIds !== [],
+                fn ($query) => $query->whereIn('estimate_item_id', $estimateItemIds),
+                fn ($query) => $query->whereHas('estimateItem', function ($estimateItemQuery) use ($estimate): void {
+                    $estimateItemQuery->where('estimate_id', $estimate->id);
+                })
+            )
+            ->pluck('journal_entry_id')
+            ->unique()
+            ->values();
+
+        $entryIds = $volumeEntryIds
+            ->merge($materialEntryIds)
+            ->merge($equipmentEntryIds)
+            ->merge($workerEntryIds)
             ->unique()
             ->values();
 
@@ -133,6 +234,10 @@ class CompletedWorkFactService
                 'scheduleTask.estimateItem.contractLinks.contract.contractor',
                 'workVolumes.estimateItem.contractLinks.contract.contractor',
                 'workVolumes.workType',
+                'materials.estimateItem.contractLinks.contract.contractor',
+                'materials.material',
+                'equipment.estimateItem.contractLinks.contract.contractor',
+                'workers.estimateItem.contractLinks.contract.contractor',
             ])
             ->chunkById(100, function ($entries) use ($contract, &$syncedCount): void {
                 foreach ($entries as $entry) {
@@ -167,6 +272,10 @@ class CompletedWorkFactService
                 'scheduleTask.estimateItem.contractLinks.contract.contractor',
                 'workVolumes.estimateItem.contractLinks.contract.contractor',
                 'workVolumes.workType',
+                'materials.estimateItem.contractLinks.contract.contractor',
+                'materials.material',
+                'equipment.estimateItem.contractLinks.contract.contractor',
+                'workers.estimateItem.contractLinks.contract.contractor',
             ]);
 
         $query->chunkById(100, function ($entries) use (&$repairedCount): void {
@@ -184,6 +293,42 @@ class CompletedWorkFactService
         });
 
         return $repairedCount;
+    }
+
+    public function repairJournalResourceFacts(?int $organizationId = null): int
+    {
+        $syncedCount = 0;
+
+        ConstructionJournalEntry::query()
+            ->where(function ($entryQuery): void {
+                $entryQuery
+                    ->whereHas('materials', fn ($query) => $query->whereNotNull('estimate_item_id'))
+                    ->orWhereHas('equipment', fn ($query) => $query->whereNotNull('estimate_item_id'))
+                    ->orWhereHas('workers', fn ($query) => $query->whereNotNull('estimate_item_id'));
+            })
+            ->when($organizationId !== null, function ($entryQuery) use ($organizationId): void {
+                $entryQuery->whereHas('journal', function ($journalQuery) use ($organizationId): void {
+                    $journalQuery->where('organization_id', $organizationId);
+                });
+            })
+            ->with([
+                'journal.contract',
+                'scheduleTask.estimateItem.contractLinks.contract.contractor',
+                'workVolumes.estimateItem.contractLinks.contract.contractor',
+                'workVolumes.workType',
+                'materials.estimateItem.contractLinks.contract.contractor',
+                'materials.material',
+                'equipment.estimateItem.contractLinks.contract.contractor',
+                'workers.estimateItem.contractLinks.contract.contractor',
+            ])
+            ->chunkById(100, function ($entries) use (&$syncedCount): void {
+                foreach ($entries as $entry) {
+                    $this->syncFromJournalEntry($entry);
+                    $syncedCount++;
+                }
+            });
+
+        return $syncedCount;
     }
 
     public function attachToTask(CompletedWork $completedWork, ScheduleTask $task): CompletedWork
@@ -331,6 +476,177 @@ class CompletedWorkFactService
                 'weather_conditions' => $entry->weather_conditions,
             ], static fn ($value) => $value !== null && $value !== []),
         ];
+    }
+
+    private function buildPayloadFromJournalMaterial(
+        ConstructionJournalEntry $entry,
+        JournalMaterial $material,
+    ): array {
+        $quantity = (float) $material->quantity;
+
+        return $this->buildPayloadFromJournalResource(
+            entry: $entry,
+            estimateItem: $material->estimateItem,
+            quantity: $quantity,
+            linkField: 'journal_material_id',
+            linkId: (int) $material->id,
+            notes: $material->notes ?: $material->material_name,
+            additionalInfo: [
+                'fact_kind' => 'material',
+                'material_id' => $material->material_id,
+                'material_name' => $material->material_name,
+                'measurement_unit' => $material->measurement_unit,
+                'journal_material_id' => $material->id,
+            ],
+        );
+    }
+
+    private function buildPayloadFromJournalEquipment(
+        ConstructionJournalEntry $entry,
+        JournalEquipment $equipment,
+    ): array {
+        $quantity = (float) ($equipment->quantity ?? 0);
+        $hoursUsed = $equipment->hours_used !== null ? (float) $equipment->hours_used : null;
+        $factQuantity = $hoursUsed !== null && $hoursUsed > 0
+            ? $quantity * $hoursUsed
+            : $quantity;
+
+        return $this->buildPayloadFromJournalResource(
+            entry: $entry,
+            estimateItem: $equipment->estimateItem,
+            quantity: $factQuantity,
+            linkField: 'journal_equipment_id',
+            linkId: (int) $equipment->id,
+            notes: $equipment->equipment_name,
+            additionalInfo: [
+                'fact_kind' => 'equipment',
+                'equipment_name' => $equipment->equipment_name,
+                'equipment_type' => $equipment->equipment_type,
+                'equipment_quantity' => $quantity,
+                'hours_used' => $hoursUsed,
+                'journal_equipment_id' => $equipment->id,
+            ],
+        );
+    }
+
+    private function buildPayloadFromJournalWorker(
+        ConstructionJournalEntry $entry,
+        JournalWorker $worker,
+    ): array {
+        $workersCount = (float) ($worker->workers_count ?? 0);
+        $hoursWorked = $worker->hours_worked !== null ? (float) $worker->hours_worked : null;
+        $factQuantity = $hoursWorked !== null && $hoursWorked > 0
+            ? $workersCount * $hoursWorked
+            : $workersCount;
+
+        return $this->buildPayloadFromJournalResource(
+            entry: $entry,
+            estimateItem: $worker->estimateItem,
+            quantity: $factQuantity,
+            linkField: 'journal_worker_id',
+            linkId: (int) $worker->id,
+            notes: $worker->specialty,
+            additionalInfo: [
+                'fact_kind' => 'labor',
+                'specialty' => $worker->specialty,
+                'workers_count' => $workersCount,
+                'hours_worked' => $hoursWorked,
+                'journal_worker_id' => $worker->id,
+            ],
+        );
+    }
+
+    private function buildPayloadFromJournalResource(
+        ConstructionJournalEntry $entry,
+        ?EstimateItem $estimateItem,
+        float $quantity,
+        string $linkField,
+        int $linkId,
+        ?string $notes,
+        array $additionalInfo,
+    ): array {
+        $contractLink = $this->resolveContractLinkForEntry($entry, $estimateItem);
+        [$price, $totalAmount] = $this->resolveFactPrice($estimateItem, $contractLink, $quantity);
+
+        $contractId = $contractLink?->contract_id;
+        $contractorId = $contractLink?->contract?->contractor_id;
+
+        if (!$estimateItem && $entry->journal->contract_id) {
+            $contractId = $entry->journal->contract_id;
+            $contractorId = $entry->journal->contract?->contractor_id;
+        }
+
+        return [
+            'organization_id' => $entry->journal->organization_id,
+            'project_id' => $entry->journal->project_id,
+            'schedule_task_id' => null,
+            'estimate_item_id' => $estimateItem?->id,
+            'journal_entry_id' => $entry->id,
+            'journal_work_volume_id' => null,
+            'journal_material_id' => null,
+            'journal_equipment_id' => null,
+            'journal_worker_id' => null,
+            $linkField => $linkId,
+            'work_origin_type' => CompletedWork::ORIGIN_JOURNAL,
+            'planning_status' => CompletedWork::PLANNING_PLANNED,
+            'contract_id' => $contractId,
+            'work_type_id' => $estimateItem?->work_type_id,
+            'user_id' => $entry->created_by_user_id,
+            'contractor_id' => $contractorId,
+            'quantity' => $quantity,
+            'completed_quantity' => $quantity,
+            'price' => $price,
+            'total_amount' => $totalAmount,
+            'completion_date' => $entry->entry_date,
+            'notes' => $notes ?: $entry->work_description,
+            'status' => $this->mapJournalStatusToCompletedWorkStatus($entry->status),
+            'additional_info' => array_filter([
+                ...$additionalInfo,
+                'journal_entry_number' => $entry->entry_number,
+                'journal_status' => $entry->status?->value,
+                'weather_conditions' => $entry->weather_conditions,
+            ], static fn ($value) => $value !== null && $value !== []),
+        ];
+    }
+
+    private function resolveFactPrice(
+        ?EstimateItem $estimateItem,
+        ?ContractEstimateItem $contractLink,
+        float $quantity,
+    ): array {
+        if ($contractLink && (float) $contractLink->quantity > 0) {
+            $price = round((float) $contractLink->amount / (float) $contractLink->quantity, 2);
+
+            return [$price, round($price * $quantity, 2)];
+        }
+
+        if ($estimateItem) {
+            $estimatePrice = (float) (
+                $estimateItem->actual_unit_price
+                ?? $estimateItem->current_unit_price
+                ?? $estimateItem->unit_price
+                ?? 0
+            );
+
+            if ($estimatePrice > 0) {
+                $price = round($estimatePrice, 2);
+
+                return [$price, round($price * $quantity, 2)];
+            }
+        }
+
+        if ($estimateItem) {
+            $estimateQuantity = (float) ($estimateItem->quantity_total ?? $estimateItem->quantity ?? 0);
+            $estimateAmount = (float) ($estimateItem->current_total_amount ?? $estimateItem->total_amount ?? 0);
+
+            if ($estimateQuantity > 0 && $estimateAmount > 0) {
+                $price = round($estimateAmount / $estimateQuantity, 2);
+
+                return [$price, round($price * $quantity, 2)];
+            }
+        }
+
+        return [null, null];
     }
 
     private function resolveContractLinkForEntry(ConstructionJournalEntry $entry, ?EstimateItem $estimateItem): ?ContractEstimateItem

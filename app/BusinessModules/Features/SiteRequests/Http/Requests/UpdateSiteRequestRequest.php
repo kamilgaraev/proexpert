@@ -33,6 +33,7 @@ class UpdateSiteRequestRequest extends FormRequest
             'priority' => ['sometimes', new Enum(SiteRequestPriorityEnum::class)],
             'required_date' => ['nullable', 'date'],
             'notes' => ['nullable', 'string'],
+            'estimate_item_id' => ['nullable', 'integer', 'exists:estimate_items,id'],
 
             // Материалы
             'material_id' => ['nullable', 'integer'],
@@ -58,6 +59,7 @@ class UpdateSiteRequestRequest extends FormRequest
 
             // Техника
             'equipment_type' => ['nullable', new Enum(EquipmentTypeEnum::class)],
+            'equipment_count' => ['nullable', 'integer', 'min:1', 'max:50'],
             'equipment_specs' => ['nullable', 'string'],
             'rental_start_date' => ['nullable', 'date'],
             'rental_end_date' => ['nullable', 'date', 'after_or_equal:rental_start_date'],

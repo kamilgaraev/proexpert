@@ -19,6 +19,7 @@ use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use App\Models\EstimateItem;
 use Carbon\Carbon;
 
 /**
@@ -44,6 +45,7 @@ class SiteRequest extends Model
         'notes',
         // Материалы
         'material_id',
+        'estimate_item_id',
         'material_name',
         'material_quantity',
         'material_unit',
@@ -64,6 +66,7 @@ class SiteRequest extends Model
         'additional_conditions',
         // Техника
         'equipment_type',
+        'equipment_count',
         'equipment_specs',
         'rental_start_date',
         'rental_end_date',
@@ -90,6 +93,7 @@ class SiteRequest extends Model
         'rental_end_date' => 'date',
         'hourly_rate' => 'decimal:2',
         'material_quantity' => 'decimal:3',
+        'equipment_count' => 'integer',
         'with_operator' => 'boolean',
         'metadata' => 'array',
     ];
@@ -117,6 +121,11 @@ class SiteRequest extends Model
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
+    }
+
+    public function estimateItem(): BelongsTo
+    {
+        return $this->belongsTo(EstimateItem::class, 'estimate_item_id');
     }
 
     /**

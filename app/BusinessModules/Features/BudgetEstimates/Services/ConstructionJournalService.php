@@ -113,6 +113,9 @@ class ConstructionJournalService
                 'scheduleTask.estimateItem.contractLinks.contract.contractor',
                 'workVolumes.estimateItem.contractLinks.contract.contractor',
                 'workVolumes.workType',
+                'materials.estimateItem.contractLinks.contract.contractor',
+                'equipment.estimateItem.contractLinks.contract.contractor',
+                'workers.estimateItem.contractLinks.contract.contractor',
             ]));
 
             return $entry->load([
@@ -124,9 +127,10 @@ class ConstructionJournalService
                 'workVolumes.estimateItem.contractLinks.contract.contractor',
                 'workVolumes.workType',
                 'workVolumes.measurementUnit',
-                'workers',
-                'equipment',
+                'workers.estimateItem',
+                'equipment.estimateItem',
                 'materials.material',
+                'materials.estimateItem',
             ]);
         });
     }
@@ -203,6 +207,9 @@ class ConstructionJournalService
                 'scheduleTask.estimateItem.contractLinks.contract.contractor',
                 'workVolumes.estimateItem.contractLinks.contract.contractor',
                 'workVolumes.workType',
+                'materials.estimateItem.contractLinks.contract.contractor',
+                'equipment.estimateItem.contractLinks.contract.contractor',
+                'workers.estimateItem.contractLinks.contract.contractor',
             ]));
 
             return $entry->fresh([
@@ -215,9 +222,10 @@ class ConstructionJournalService
                 'workVolumes.estimateItem.contractLinks.contract.contractor',
                 'workVolumes.workType',
                 'workVolumes.measurementUnit',
-                'workers',
-                'equipment',
+                'workers.estimateItem',
+                'equipment.estimateItem',
                 'materials.material',
+                'materials.estimateItem',
             ]);
         });
     }
@@ -242,9 +250,10 @@ class ConstructionJournalService
                 'approvedBy',
                 'completedWorks',
                 'workVolumes.estimateItem',
-                'workers',
-                'equipment',
+                'workers.estimateItem',
+                'equipment.estimateItem',
                 'materials.material',
+                'materials.estimateItem',
             ])
             ->get();
     }
@@ -260,9 +269,10 @@ class ConstructionJournalService
                 'approvedBy',
                 'completedWorks',
                 'workVolumes.estimateItem',
-                'workers',
-                'equipment',
+                'workers.estimateItem',
+                'equipment.estimateItem',
                 'materials.material',
+                'materials.estimateItem',
             ])
             ->get();
     }
@@ -345,6 +355,7 @@ class ConstructionJournalService
     {
         foreach ($workers as $worker) {
             $entry->workers()->create([
+                'estimate_item_id' => $worker['estimate_item_id'] ?? null,
                 'specialty' => $worker['specialty'],
                 'workers_count' => $worker['workers_count'],
                 'hours_worked' => $worker['hours_worked'] ?? null,
@@ -356,6 +367,7 @@ class ConstructionJournalService
     {
         foreach ($equipment as $item) {
             $entry->equipment()->create([
+                'estimate_item_id' => $item['estimate_item_id'] ?? null,
                 'equipment_name' => $item['equipment_name'],
                 'equipment_type' => $item['equipment_type'] ?? null,
                 'quantity' => $item['quantity'] ?? 1,
@@ -369,6 +381,7 @@ class ConstructionJournalService
         foreach ($materials as $material) {
             $entry->materials()->create([
                 'material_id' => $material['material_id'] ?? null,
+                'estimate_item_id' => $material['estimate_item_id'] ?? null,
                 'material_name' => $material['material_name'],
                 'quantity' => $material['quantity'],
                 'measurement_unit' => $material['measurement_unit'],
@@ -425,6 +438,20 @@ class ConstructionJournalService
 
         foreach (($data['materials'] ?? []) as $material) {
             $this->assertMaterialScope($journal, $material['material_id'] ?? null);
+            $this->assertEstimateResourceItemScope($journal, $material['estimate_item_id'] ?? null, $estimateId, ['material']);
+        }
+
+        foreach (($data['equipment'] ?? []) as $equipment) {
+            $this->assertEstimateResourceItemScope(
+                $journal,
+                $equipment['estimate_item_id'] ?? null,
+                $estimateId,
+                ['equipment', 'machinery'],
+            );
+        }
+
+        foreach (($data['workers'] ?? []) as $worker) {
+            $this->assertEstimateResourceItemScope($journal, $worker['estimate_item_id'] ?? null, $estimateId, ['labor']);
         }
     }
 
@@ -513,6 +540,34 @@ class ConstructionJournalService
 
         if (!$material) {
             throw new DomainException(trans_message('construction_journal.errors.invalid_material'));
+        }
+    }
+
+    protected function assertEstimateResourceItemScope(
+        ConstructionJournal $journal,
+        ?int $estimateItemId,
+        ?int $estimateId,
+        array $allowedTypes
+    ): void {
+        if (!$estimateItemId) {
+            return;
+        }
+
+        $item = EstimateItem::query()
+            ->where('id', $estimateItemId)
+            ->whereIn('item_type', $allowedTypes)
+            ->whereHas('estimate', function ($query) use ($journal, $estimateId): void {
+                $query->where('organization_id', $journal->organization_id)
+                    ->where('project_id', $journal->project_id);
+
+                if ($estimateId) {
+                    $query->where('id', $estimateId);
+                }
+            })
+            ->first();
+
+        if (!$item) {
+            throw new DomainException(trans_message('construction_journal.errors.invalid_estimate_item'));
         }
     }
 
