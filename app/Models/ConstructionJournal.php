@@ -117,9 +117,11 @@ class ConstructionJournal extends Model
 
     public function getNextEntryNumber(): int
     {
-        $lastEntry = $this->entries()->orderBy('entry_number', 'desc')->first();
+        $maxEntryNumber = $this->entries()
+            ->reorder()
+            ->max('entry_number');
 
-        return $lastEntry ? $lastEntry->entry_number + 1 : 1;
+        return $maxEntryNumber ? (int) $maxEntryNumber + 1 : 1;
     }
 
     public function resolveRouteBinding($value, $field = null)
