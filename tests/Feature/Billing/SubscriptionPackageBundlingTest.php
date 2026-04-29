@@ -10,6 +10,7 @@ use App\Models\OrganizationModuleActivation;
 use App\Models\OrganizationPackageSubscription;
 use App\Models\OrganizationSubscription;
 use App\Models\SubscriptionPlan;
+use App\Modules\Core\AccessController;
 use App\Services\Landing\OrganizationSubscriptionService;
 use App\Services\SubscriptionModuleSyncService;
 use Illuminate\Database\Schema\Blueprint;
@@ -342,6 +343,135 @@ class SubscriptionPackageBundlingTest extends TestCase
         ]);
     }
 
+    public function test_active_package_grants_effective_warehouse_module_without_activation(): void
+    {
+        $this->createPackageModules('supply-warehouse', 'pro');
+
+        OrganizationPackageSubscription::create([
+            'organization_id' => $this->organization->id,
+            'package_slug' => 'supply-warehouse',
+            'tier' => 'pro',
+            'price_paid' => 7900,
+            'activated_at' => now(),
+            'expires_at' => now()->addDays(30),
+            'is_bundled_with_plan' => false,
+        ]);
+
+        $this->assertSame(0, OrganizationModuleActivation::query()
+            ->where('organization_id', $this->organization->id)
+            ->count());
+
+        $accessController = app(AccessController::class);
+
+        $this->assertTrue($accessController->hasModuleAccess($this->organization->id, 'basic-warehouse'));
+        $this->assertTrue($accessController->hasModulePermission($this->organization->id, 'warehouse.view'));
+        $this->assertContains(
+            'basic-warehouse',
+            $accessController->getActiveModules($this->organization->id)->pluck('slug')->all()
+        );
+    }
+
+    public function test_active_plan_included_package_grants_effective_warehouse_module_without_materialized_rows(): void
+    {
+        $plan = $this->createPlan('profi', [
+            ['package_slug' => 'supply-warehouse', 'tier' => 'pro'],
+        ]);
+
+        $this->createSubscription($plan);
+        $this->createPackageModules('supply-warehouse', 'pro');
+
+        $this->assertSame(0, OrganizationPackageSubscription::query()
+            ->where('organization_id', $this->organization->id)
+            ->count());
+        $this->assertSame(0, OrganizationModuleActivation::query()
+            ->where('organization_id', $this->organization->id)
+            ->count());
+
+        $accessController = app(AccessController::class);
+
+        $this->assertTrue($accessController->hasModuleAccess($this->organization->id, 'basic-warehouse'));
+        $this->assertContains(
+            'basic-warehouse',
+            $accessController->getActiveModules($this->organization->id)->pluck('slug')->all()
+        );
+    }
+
+    public function test_expired_package_does_not_grant_effective_warehouse_module(): void
+    {
+        $this->createPackageModules('supply-warehouse', 'pro');
+
+        OrganizationPackageSubscription::create([
+            'organization_id' => $this->organization->id,
+            'package_slug' => 'supply-warehouse',
+            'tier' => 'pro',
+            'price_paid' => 7900,
+            'activated_at' => now()->subDays(40),
+            'expires_at' => now()->subDay(),
+            'is_bundled_with_plan' => false,
+        ]);
+
+        $accessController = app(AccessController::class);
+
+        $this->assertFalse($accessController->hasModuleAccess($this->organization->id, 'basic-warehouse'));
+        $this->assertNotContains(
+            'basic-warehouse',
+            $accessController->getActiveModules($this->organization->id)->pluck('slug')->all()
+        );
+    }
+
+    public function test_direct_module_activation_still_grants_effective_access_without_package(): void
+    {
+        $basicWarehouseModule = collect($this->createPackageModules('supply-warehouse', 'pro'))
+            ->firstWhere('slug', 'basic-warehouse');
+
+        $this->assertNotNull($basicWarehouseModule);
+
+        OrganizationModuleActivation::create([
+            'organization_id' => $this->organization->id,
+            'module_id' => $basicWarehouseModule->id,
+            'status' => 'active',
+            'activated_at' => now(),
+            'expires_at' => null,
+            'paid_amount' => 0,
+            'is_bundled_with_plan' => false,
+        ]);
+
+        $accessController = app(AccessController::class);
+
+        $this->assertTrue($accessController->hasModuleAccess($this->organization->id, 'basic-warehouse'));
+        $this->assertContains(
+            'basic-warehouse',
+            $accessController->getActiveModules($this->organization->id)->pluck('slug')->all()
+        );
+    }
+
+    public function test_repair_command_creates_missing_package_module_activations(): void
+    {
+        $this->createPackageModules('supply-warehouse', 'pro');
+
+        OrganizationPackageSubscription::create([
+            'organization_id' => $this->organization->id,
+            'package_slug' => 'supply-warehouse',
+            'tier' => 'pro',
+            'price_paid' => 7900,
+            'activated_at' => now(),
+            'expires_at' => now()->addDays(30),
+            'is_bundled_with_plan' => false,
+        ]);
+
+        $this->artisan('entitlements:repair-package-modules', [
+            'organizationId' => $this->organization->id,
+        ])->assertExitCode(0);
+
+        $basicWarehouseModule = Module::where('slug', 'basic-warehouse')->firstOrFail();
+
+        $this->assertDatabaseHas('organization_module_activations', [
+            'organization_id' => $this->organization->id,
+            'module_id' => $basicWarehouseModule->id,
+            'status' => 'active',
+        ]);
+    }
+
     private function createPlan(string $slug, array $includedPackages, int $price = 9900): SubscriptionPlan
     {
         return SubscriptionPlan::create([
@@ -399,7 +529,7 @@ class SubscriptionPackageBundlingTest extends TestCase
                         'duration_days' => 30,
                     ],
                     'features' => [],
-                    'permissions' => [],
+                    'permissions' => $slug === 'basic-warehouse' ? ['warehouse.view'] : [],
                     'dependencies' => [],
                     'conflicts' => [],
                     'limits' => [],
