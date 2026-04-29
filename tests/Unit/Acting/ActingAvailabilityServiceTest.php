@@ -79,6 +79,106 @@ class ActingAvailabilityServiceTest extends TestCase
         $this->assertSame(500.0, $available[0]['available_amount']);
     }
 
+    public function test_draft_act_reserves_available_quantity(): void
+    {
+        [$contract, $project, $organization] = $this->createContract();
+
+        $work = CompletedWork::create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'contract_id' => $contract->id,
+            'journal_entry_id' => 1004,
+            'work_origin_type' => CompletedWork::ORIGIN_JOURNAL,
+            'quantity' => 10,
+            'completed_quantity' => 8,
+            'price' => 100,
+            'total_amount' => 800,
+            'completion_date' => '2026-04-10',
+            'status' => 'confirmed',
+        ]);
+
+        $act = ContractPerformanceAct::create([
+            'contract_id' => $contract->id,
+            'project_id' => $project->id,
+            'act_document_number' => 'DRAFT-1',
+            'act_date' => '2026-04-15',
+            'amount' => 300,
+            'status' => ContractPerformanceAct::STATUS_DRAFT,
+            'is_approved' => false,
+        ]);
+
+        PerformanceActLine::create([
+            'performance_act_id' => $act->id,
+            'completed_work_id' => $work->id,
+            'line_type' => PerformanceActLine::TYPE_COMPLETED_WORK,
+            'title' => 'Работа из журнала',
+            'quantity' => 3,
+            'unit_price' => 100,
+            'amount' => 300,
+        ]);
+
+        $available = app(ActingAvailabilityService::class)->getAvailableWorks(
+            $contract->id,
+            '2026-04-01',
+            '2026-04-30'
+        );
+
+        $this->assertCount(1, $available);
+        $this->assertSame(3.0, $available[0]['reserved_quantity']);
+        $this->assertSame(0.0, $available[0]['approved_acted_quantity']);
+        $this->assertSame(5.0, $available[0]['available_quantity']);
+    }
+
+    public function test_rejected_act_does_not_reserve_available_quantity(): void
+    {
+        [$contract, $project, $organization] = $this->createContract();
+
+        $work = CompletedWork::create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'contract_id' => $contract->id,
+            'journal_entry_id' => 1005,
+            'work_origin_type' => CompletedWork::ORIGIN_JOURNAL,
+            'quantity' => 10,
+            'completed_quantity' => 8,
+            'price' => 100,
+            'total_amount' => 800,
+            'completion_date' => '2026-04-10',
+            'status' => 'confirmed',
+        ]);
+
+        $act = ContractPerformanceAct::create([
+            'contract_id' => $contract->id,
+            'project_id' => $project->id,
+            'act_document_number' => 'REJ-1',
+            'act_date' => '2026-04-15',
+            'amount' => 300,
+            'status' => ContractPerformanceAct::STATUS_REJECTED,
+            'is_approved' => false,
+        ]);
+
+        PerformanceActLine::create([
+            'performance_act_id' => $act->id,
+            'completed_work_id' => $work->id,
+            'line_type' => PerformanceActLine::TYPE_COMPLETED_WORK,
+            'title' => 'Работа из журнала',
+            'quantity' => 3,
+            'unit_price' => 100,
+            'amount' => 300,
+        ]);
+
+        $available = app(ActingAvailabilityService::class)->getAvailableWorks(
+            $contract->id,
+            '2026-04-01',
+            '2026-04-30'
+        );
+
+        $this->assertCount(1, $available);
+        $this->assertSame(0.0, $available[0]['reserved_quantity']);
+        $this->assertSame(0.0, $available[0]['approved_acted_quantity']);
+        $this->assertSame(8.0, $available[0]['available_quantity']);
+    }
+
     public function test_fully_acted_work_is_not_returned(): void
     {
         [$contract, $project, $organization] = $this->createContract();

@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class JournalWorkVolume extends Model
 {
@@ -43,6 +44,11 @@ class JournalWorkVolume extends Model
     public function measurementUnit(): BelongsTo
     {
         return $this->belongsTo(MeasurementUnit::class);
+    }
+
+    public function completedWork(): HasOne
+    {
+        return $this->hasOne(CompletedWork::class, 'journal_work_volume_id');
     }
 }
 

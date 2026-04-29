@@ -83,6 +83,8 @@ class ConstructionJournalEntryController extends Controller
             return AdminResponse::success($this->payloadService->mapEntry($entry, $request->user()));
         } catch (AuthorizationException $exception) {
             return AdminResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error(trans_message('project.validation_failed'), 422, $exception->errors());
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -192,7 +194,12 @@ class ConstructionJournalEntryController extends Controller
         try {
             $this->authorize('approve', $entry);
 
-            $entry = $this->approvalService->approve($entry->load(['journal', 'createdBy', 'scheduleTask', 'workVolumes']), $request->user());
+            $validated = $request->validate($this->overrideRules());
+            $entry = $this->approvalService->approve(
+                $entry->load(['journal', 'createdBy', 'scheduleTask', 'workVolumes']),
+                $request->user(),
+                $validated['override'] ?? null
+            );
 
             return AdminResponse::success(
                 $this->payloadService->mapEntry($entry->load([
@@ -291,6 +298,7 @@ class ConstructionJournalEntryController extends Controller
             'visitors_notes' => $prefix . 'nullable|string',
             'quality_notes' => $prefix . 'nullable|string',
             'work_volumes' => $prefix . 'nullable|array',
+            'work_volumes.*.id' => 'nullable|integer',
             'work_volumes.*.estimate_item_id' => 'nullable|integer',
             'work_volumes.*.work_type_id' => 'nullable|integer',
             'work_volumes.*.quantity' => 'required|numeric|min:0',
@@ -312,6 +320,16 @@ class ConstructionJournalEntryController extends Controller
             'materials.*.quantity' => 'required|numeric|min:0',
             'materials.*.measurement_unit' => 'required|string',
             'materials.*.notes' => 'nullable|string',
+        ];
+    }
+
+    private function overrideRules(): array
+    {
+        return [
+            'override' => ['nullable', 'array'],
+            'override.enabled' => ['nullable', 'boolean'],
+            'override.reason' => ['nullable', 'string', 'max:2000'],
+            'override.target' => ['nullable', 'in:schedule_missing,contract_missing,over_coverage,manual_act_line'],
         ];
     }
 }

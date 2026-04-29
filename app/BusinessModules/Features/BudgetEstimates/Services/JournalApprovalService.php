@@ -14,6 +14,7 @@ use App\Models\User;
 use App\Notifications\Journal\JournalEntryApprovedNotification;
 use App\Notifications\Journal\JournalEntryRejectedNotification;
 use App\Services\CompletedWork\CompletedWorkFactService;
+use App\Services\Workflow\WorkflowGuardService;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 
@@ -21,7 +22,8 @@ class JournalApprovalService
 {
     public function __construct(
         private readonly JournalScheduleIntegrationService $journalScheduleIntegrationService,
-        private readonly CompletedWorkFactService $completedWorkFactService
+        private readonly CompletedWorkFactService $completedWorkFactService,
+        private readonly WorkflowGuardService $workflowGuardService,
     ) {
     }
 
@@ -46,7 +48,7 @@ class JournalApprovalService
         return $entry->fresh();
     }
 
-    public function approve(ConstructionJournalEntry $entry, User $approver): ConstructionJournalEntry
+    public function approve(ConstructionJournalEntry $entry, User $approver, ?array $override = null): ConstructionJournalEntry
     {
         if (!$entry->status->canApprove()) {
             throw new DomainException(trans_message('construction_journal.errors.approve_invalid_status'));
@@ -55,6 +57,13 @@ class JournalApprovalService
         if (!$this->canApprove($approver, $entry)) {
             throw new DomainException(trans_message('construction_journal.errors.approve_forbidden'));
         }
+
+        $this->workflowGuardService->assertJournalEntryConfirmable(
+            $entry,
+            $approver,
+            $override,
+            'journal_approve',
+        );
 
         return DB::transaction(function () use ($entry, $approver): ConstructionJournalEntry {
             $entry->approve($approver);

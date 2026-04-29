@@ -25,6 +25,7 @@ use App\Services\ActReport\ActReportService;
 use App\Services\ActReport\ActReportWorkflowService;
 use App\Services\Export\ExcelExporterService;
 use App\Services\Storage\FileService;
+use App\Services\Workflow\WorkflowGuardService;
 use App\Http\Responses\AdminResponse;
 use App\Exceptions\BusinessLogicException;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -72,10 +73,20 @@ class ActReportsController extends Controller
 
             $data = $request->validated();
             $contract = $this->getOrganizationContractOrFail($organizationId, (int) $data['contract_id']);
+            $policy = $this->actingPolicyResolver->resolveForContract($contract);
+            $policy['can_override'] = (bool) $request->user()?->can(
+                WorkflowGuardService::PERMISSION_OVERRIDE,
+                ['organization_id' => $organizationId]
+            );
 
             return AdminResponse::success([
-                'policy' => $this->actingPolicyResolver->resolveForContract($contract),
+                'policy' => $policy,
                 'available_works' => $this->actingAvailabilityService->getAvailableWorks(
+                    $contract->id,
+                    $data['period_start'],
+                    $data['period_end']
+                ),
+                'blocked_works' => $this->actingAvailabilityService->getBlockedWorks(
                     $contract->id,
                     $data['period_start'],
                     $data['period_end']

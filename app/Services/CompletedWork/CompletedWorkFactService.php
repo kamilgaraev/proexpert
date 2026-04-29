@@ -30,7 +30,7 @@ class CompletedWorkFactService
 
     public function syncFromJournalEntry(ConstructionJournalEntry $entry): void
     {
-        $entry->loadMissing([
+        $entry->load([
             'journal.contract',
             'scheduleTask.estimateItem.contractLinks.contract.contractor',
             'workVolumes.estimateItem.contractLinks.contract.contractor',
@@ -38,35 +38,43 @@ class CompletedWorkFactService
         ]);
 
         DB::transaction(function () use ($entry): void {
-            $existingWorks = $entry->completedWorks()->orderBy('id')->get()->values();
+            $existingWorks = $entry->completedWorks()->orderBy('id')->get();
+            $worksByVolumeId = $existingWorks
+                ->whereNotNull('journal_work_volume_id')
+                ->keyBy('journal_work_volume_id');
+            $legacyWorks = $existingWorks
+                ->whereNull('journal_work_volume_id')
+                ->values();
             $workVolumes = $entry->workVolumes->values();
             $syncedTaskIds = collect();
+            $syncedWorkIds = collect();
 
-            foreach ($workVolumes as $index => $volume) {
+            foreach ($workVolumes as $volume) {
                 $task = $this->resolveTaskForEntry($entry, $volume);
                 $payload = $this->buildPayloadFromJournalVolume($entry, $volume, $task);
 
                 /** @var CompletedWork $completedWork */
-                $completedWork = $existingWorks->get($index) ?? new CompletedWork();
+                $completedWork = $worksByVolumeId->get($volume->id)
+                    ?? $legacyWorks->shift()
+                    ?? new CompletedWork();
                 $completedWork->fill($payload);
                 $completedWork->save();
+                $syncedWorkIds->push((int) $completedWork->id);
 
                 if ($completedWork->schedule_task_id) {
                     $syncedTaskIds->push((int) $completedWork->schedule_task_id);
                 }
             }
 
-            if ($existingWorks->count() > $workVolumes->count()) {
-                $existingWorks
-                    ->slice($workVolumes->count())
-                    ->each(function (CompletedWork $completedWork) use ($syncedTaskIds): void {
-                        if ($completedWork->schedule_task_id) {
-                            $syncedTaskIds->push((int) $completedWork->schedule_task_id);
-                        }
+            $existingWorks
+                ->reject(fn (CompletedWork $completedWork): bool => $syncedWorkIds->contains((int) $completedWork->id))
+                ->each(function (CompletedWork $completedWork) use ($syncedTaskIds): void {
+                    if ($completedWork->schedule_task_id) {
+                        $syncedTaskIds->push((int) $completedWork->schedule_task_id);
+                    }
 
-                        $completedWork->delete();
-                    });
-            }
+                    $completedWork->delete();
+                });
 
             $syncedTaskIds
                 ->filter()
@@ -287,6 +295,7 @@ class CompletedWorkFactService
             'schedule_task_id' => $task?->id,
             'estimate_item_id' => $volume->estimate_item_id ?? $task?->estimate_item_id,
             'journal_entry_id' => $entry->id,
+            'journal_work_volume_id' => $volume->id,
             'work_origin_type' => CompletedWork::ORIGIN_JOURNAL,
             'planning_status' => $task ? CompletedWork::PLANNING_PLANNED : CompletedWork::PLANNING_REQUIRES_SCHEDULE,
             'contract_id' => $contractId,

@@ -30,6 +30,7 @@ class CompletedWork extends Model
         'schedule_task_id',
         'estimate_item_id',
         'journal_entry_id',
+        'journal_work_volume_id',
         'work_origin_type',
         'planning_status',
         'contract_id',
@@ -105,6 +106,11 @@ class CompletedWork extends Model
     public function journalEntry(): BelongsTo
     {
         return $this->belongsTo(ConstructionJournalEntry::class, 'journal_entry_id');
+    }
+
+    public function journalWorkVolume(): BelongsTo
+    {
+        return $this->belongsTo(JournalWorkVolume::class, 'journal_work_volume_id');
     }
 
     public function files()

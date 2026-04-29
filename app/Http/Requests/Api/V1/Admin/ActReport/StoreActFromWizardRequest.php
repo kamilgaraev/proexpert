@@ -36,6 +36,10 @@ class StoreActFromWizardRequest extends FormRequest
             'manual_lines.*.unit_price' => ['nullable', 'numeric', 'min:0'],
             'manual_lines.*.amount' => ['nullable', 'numeric', 'min:0'],
             'manual_lines.*.manual_reason' => ['nullable', 'string', 'max:2000'],
+            'override' => ['nullable', 'array'],
+            'override.enabled' => ['nullable', 'boolean'],
+            'override.reason' => ['nullable', 'string', 'max:2000'],
+            'override.target' => ['nullable', 'in:schedule_missing,contract_missing,over_coverage,manual_act_line'],
         ];
     }
 

@@ -179,8 +179,7 @@ class ConstructionJournalService
             }
 
             if (array_key_exists('work_volumes', $data)) {
-                $entry->workVolumes()->delete();
-                $this->attachWorkVolumes($entry, $data['work_volumes'] ?? []);
+                $this->syncWorkVolumes($entry, $data['work_volumes'] ?? []);
             }
 
             if (array_key_exists('workers', $data)) {
@@ -293,6 +292,53 @@ class ConstructionJournalService
                 'notes' => $volume['notes'] ?? null,
             ]);
         }
+    }
+
+    protected function syncWorkVolumes(ConstructionJournalEntry $entry, array $volumes): void
+    {
+        $entry->loadMissing('journal.contract');
+
+        $existing = $entry->workVolumes()->get()->keyBy('id');
+        $keptIds = [];
+
+        foreach ($volumes as $volume) {
+            $estimateItemId = $volume['estimate_item_id'] ?? null;
+
+            if (($volume['auto_attach_contract_coverage'] ?? false) && $estimateItemId) {
+                $estimateItem = EstimateItem::query()
+                    ->with(['estimate', 'contractLinks.contract.contractor'])
+                    ->find($estimateItemId);
+
+                if ($estimateItem) {
+                    $this->journalContractCoverageService->ensureCoverage($entry->journal, $estimateItem);
+                }
+            }
+
+            $payload = [
+                'estimate_item_id' => $estimateItemId,
+                'work_type_id' => $volume['work_type_id'] ?? null,
+                'quantity' => $volume['quantity'],
+                'measurement_unit_id' => $volume['measurement_unit_id'] ?? null,
+                'notes' => $volume['notes'] ?? null,
+            ];
+
+            $volumeId = isset($volume['id']) ? (int) $volume['id'] : null;
+            $model = $volumeId ? $existing->get($volumeId) : null;
+
+            if ($model) {
+                $model->update($payload);
+            } else {
+                $model = $entry->workVolumes()->create($payload);
+            }
+
+            $keptIds[] = (int) $model->id;
+        }
+
+        $entry->workVolumes()
+            ->whereNotIn('id', $keptIds)
+            ->delete();
+
+        $entry->unsetRelation('workVolumes');
     }
 
     protected function attachWorkers(ConstructionJournalEntry $entry, array $workers): void

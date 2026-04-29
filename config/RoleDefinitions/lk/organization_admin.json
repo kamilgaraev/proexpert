@@ -125,7 +125,8 @@
       "completed_works.edit",
       "completed_works.delete",
       "completed_works.materials.sync",
-      "completed_works.work_type_defaults.view"
+      "completed_works.work_type_defaults.view",
+      "workflow.override"
     ],
     "advance-accounting": [
       "advance_transactions.view",

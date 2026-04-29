@@ -8,6 +8,7 @@ use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\Workflow\WorkflowGuardService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Gate;
 
@@ -15,6 +16,7 @@ class ConstructionJournalPayloadService
 {
     public function __construct(
         private readonly JournalContractCoverageService $journalContractCoverageService,
+        private readonly WorkflowGuardService $workflowGuardService,
     ) {
     }
 
@@ -68,6 +70,8 @@ class ConstructionJournalPayloadService
             'journal.contract.contractor',
             'workVolumes.estimateItem.contractLinks.contract.contractor',
         ]);
+
+        $blockers = $this->workflowGuardService->journalEntryBlockers($entry);
 
         return [
             'id' => $entry->id,
@@ -192,6 +196,8 @@ class ConstructionJournalPayloadService
                     'completion_date' => optional($work->completion_date)?->format('Y-m-d'),
                 ])->values()->all()
                 : [],
+            'workflow_state' => $blockers === [] ? 'ready' : 'blocked',
+            'blockers' => $blockers,
             'available_actions' => $this->buildEntryActions($entry, $user),
         ];
     }

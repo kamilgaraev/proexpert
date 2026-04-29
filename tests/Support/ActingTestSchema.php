@@ -316,6 +316,7 @@ trait ActingTestSchema
             $table->foreignId('estimate_item_id')->nullable();
             $table->foreignId('schedule_task_id')->nullable();
             $table->foreignId('journal_entry_id')->nullable();
+            $table->foreignId('journal_work_volume_id')->nullable();
             $table->foreignId('work_type_id')->nullable();
             $table->foreignId('user_id')->nullable();
             $table->foreignId('contractor_id')->nullable();

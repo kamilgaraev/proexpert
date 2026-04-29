@@ -72,7 +72,8 @@
       "completed_works.view",
       "completed_works.create",
       "completed_works.edit",
-      "completed_works.materials.sync"
+      "completed_works.materials.sync",
+      "workflow.override"
     ],
     "advance-accounting": [
       "advance_transactions.view",

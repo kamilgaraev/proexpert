@@ -109,11 +109,18 @@ class ActingActWizardService
             ->keyBy('id');
 
         $actedQuantities = PerformanceActLine::query()
+            ->with('performanceAct')
             ->whereIn('completed_work_id', $workIds)
             ->lockForUpdate()
             ->get()
             ->groupBy('completed_work_id')
-            ->map(fn (Collection $lines): float => (float) $lines->sum('quantity'));
+            ->map(function (Collection $lines): float {
+                return (float) $lines->sum(function (PerformanceActLine $line): float {
+                    return ActingQuantityStatus::isReleased($line->performanceAct)
+                        ? 0.0
+                        : (float) $line->quantity;
+                });
+            });
 
         foreach ($selectedGroups as $workId => $selectedWorks) {
             $workId = (int) $workId;
@@ -124,6 +131,10 @@ class ActingActWizardService
             }
 
             $this->ensureCompletedWorkContract($work, $contract);
+
+            if ($work->planning_status === CompletedWork::PLANNING_REQUIRES_SCHEDULE) {
+                throw new BusinessLogicException(trans_message('act_reports.work_not_available_for_acting'), 422);
+            }
 
             $effectiveQuantity = (float) ($work->completed_quantity ?? $work->quantity);
             $availableQuantity = round(max(0, $effectiveQuantity - (float) ($actedQuantities[$workId] ?? 0)), 4);

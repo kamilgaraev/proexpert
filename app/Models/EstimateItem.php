@@ -203,13 +203,25 @@ class EstimateItem extends Model
     /**
      * Получить сумму фактических объемов из журнала работ
      */
-    public function getActualVolume(): float
+    public function getActualVolume(?int $contractId = null): float
     {
-        $completedWorksSum = (float) $this->completedWorks()
-            ->effectiveForSchedule()
-            ->sum('completed_quantity');
+        $completedWorksQuery = $this->completedWorks()->effectiveForSchedule();
 
-        if ($completedWorksSum > 0 || $this->completedWorks()->exists()) {
+        if ($contractId !== null) {
+            $contractLinksCount = $this->contractLinks()->count();
+
+            $completedWorksQuery->where(function ($query) use ($contractId, $contractLinksCount): void {
+                $query->where('contract_id', $contractId);
+
+                if ($contractLinksCount === 1) {
+                    $query->orWhereNull('contract_id');
+                }
+            });
+        }
+
+        $completedWorksSum = (float) $completedWorksQuery->sum('completed_quantity');
+
+        if ($contractId !== null || $completedWorksSum > 0 || $this->completedWorks()->exists()) {
             return $completedWorksSum;
         }
 
@@ -225,12 +237,63 @@ class EstimateItem extends Model
      */
     public function getCompletionPercentage(): float
     {
-        if (!$this->quantity_total || $this->quantity_total == 0) {
+        $plannedQuantity = $this->resolvePlannedQuantity();
+
+        if ($plannedQuantity <= 0) {
             return 0;
         }
 
         $actualVolume = $this->getActualVolume();
-        return min(100, ($actualVolume / $this->quantity_total) * 100);
+        return min(100, ($actualVolume / $plannedQuantity) * 100);
+    }
+
+    public function resolvePlannedQuantity(?ContractEstimateItem $contractLink = null): float
+    {
+        $contractQuantity = (float) ($contractLink?->quantity ?? 0);
+
+        if ($contractQuantity > 0) {
+            return $contractQuantity;
+        }
+
+        $quantityTotal = (float) ($this->quantity_total ?? 0);
+
+        if ($quantityTotal > 0) {
+            return $quantityTotal;
+        }
+
+        $quantity = (float) ($this->quantity ?? 0);
+
+        if ($quantity > 0) {
+            return $quantity;
+        }
+
+        $unitPrice = (float) (
+            $this->actual_unit_price
+            ?? $this->current_unit_price
+            ?? $this->unit_price
+            ?? 0
+        );
+        $amount = (float) (
+            $contractLink?->amount
+            ?? $this->current_total_amount
+            ?? $this->total_amount
+            ?? 0
+        );
+
+        if ($unitPrice > 0 && $amount > 0) {
+            return round($amount / $unitPrice, 8);
+        }
+
+        return 0.0;
+    }
+
+    public function getCompletionPercentageForPlannedQuantity(float $plannedQuantity, ?int $contractId = null): float
+    {
+        if ($plannedQuantity <= 0) {
+            return 0.0;
+        }
+
+        return min(100, ($this->getActualVolume($contractId) / $plannedQuantity) * 100);
     }
 
     public function scopeByEstimate($query, int $estimateId)
