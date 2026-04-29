@@ -80,7 +80,9 @@ class OfficialFormsExportService
     public function exportKS2ToPdf(ContractPerformanceAct $act, Contract $contract): string
     {
         $data = $this->prepareKS2Data($act, $contract);
-        $pdf = Pdf::loadView('estimates.exports.ks2', $data);
+        $pdf = Pdf::loadView('estimates.exports.ks2', $data)
+            ->setPaper('a4', 'landscape')
+            ->setOption('defaultFont', 'DejaVu Serif');
         
         $actNumber = $act->act_document_number ?? $act->id;
         $filename = "KS-2_{$actNumber}_{$contract->number}.pdf";
@@ -92,7 +94,9 @@ class OfficialFormsExportService
     public function exportKS3ToPdf(ContractPerformanceAct $act, Contract $contract): string
     {
         $data = $this->prepareKS3Data($act, $contract);
-        $pdf = Pdf::loadView('estimates.exports.ks3', $data);
+        $pdf = Pdf::loadView('estimates.exports.ks3', $data)
+            ->setPaper('a4', 'landscape')
+            ->setOption('defaultFont', 'DejaVu Serif');
         
         $actNumber = $act->act_document_number ?? $act->id;
         $filename = "KS-3_{$actNumber}_{$contract->number}.pdf";

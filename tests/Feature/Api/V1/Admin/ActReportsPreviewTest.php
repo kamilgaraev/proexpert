@@ -441,13 +441,27 @@ class ActReportsPreviewTest extends TestCase
             'total_amount' => 3000,
             'vat_amount' => 500,
             'contract_amount' => 100000,
+            'period_start' => now()->startOfMonth(),
+            'period_end' => now()->endOfMonth(),
+            'total_from_start' => 9000,
+            'year_total' => 6000,
         ];
 
         $ks2 = view('estimates.exports.ks2', $data)->render();
         $ks3 = view('estimates.exports.ks3', $data)->render();
 
-        $this->assertStringContainsString('<html>', $ks2);
-        $this->assertStringContainsString('<html>', $ks3);
+        $this->assertStringContainsString('<html lang="ru">', $ks2);
+        $this->assertStringContainsString('<html lang="ru">', $ks3);
+        $this->assertStringContainsString('size: A4 landscape', $ks2);
+        $this->assertStringContainsString('size: A4 landscape', $ks3);
+        $this->assertStringContainsString('Унифицированная форма № КС-2', $ks2);
+        $this->assertStringContainsString('Унифицированная форма № КС-3', $ks3);
+        $this->assertStringContainsString('0322005', $ks2);
+        $this->assertStringContainsString('0322001', $ks3);
+        $this->assertStringContainsString('О приемке выполненных работ', $ks2);
+        $this->assertStringContainsString('О стоимости выполненных работ и затрат', $ks3);
+        $this->assertStringNotContainsString('Рљ', $ks2);
+        $this->assertStringNotContainsString('Рљ', $ks3);
     }
 
     public function test_recalculate_repairs_existing_act_amount_to_include_estimate_vat(): void
