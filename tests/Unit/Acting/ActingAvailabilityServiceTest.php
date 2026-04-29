@@ -8,9 +8,13 @@ use App\Models\CompletedWork;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use App\Models\Contractor;
+use App\Models\ConstructionJournal;
+use App\Models\ConstructionJournalEntry;
 use App\Models\Organization;
 use App\Models\PerformanceActLine;
 use App\Models\Project;
+use App\Models\Estimate;
+use App\Models\EstimateItem;
 use App\Services\Acting\ActingAvailabilityService;
 use Tests\Support\ActingTestSchema;
 use Tests\TestCase;
@@ -159,6 +163,71 @@ class ActingAvailabilityServiceTest extends TestCase
         $this->assertCount(1, $available);
         $this->assertSame(CompletedWork::ORIGIN_JOURNAL, $available[0]['work_origin_type']);
         $this->assertSame(1003, $available[0]['journal_entry_id']);
+    }
+
+    public function test_available_work_contains_user_facing_names(): void
+    {
+        [$contract, $project, $organization] = $this->createContract();
+
+        $estimate = Estimate::create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'name' => 'Основная смета',
+            'status' => 'approved',
+            'total_amount' => 50000,
+        ]);
+        $estimateItem = EstimateItem::create([
+            'estimate_id' => $estimate->id,
+            'position_number' => '5',
+            'item_type' => 'work',
+            'name' => 'Бетонирование фундамента',
+            'quantity' => 30,
+            'unit_price' => 1200,
+            'total_amount' => 36000,
+        ]);
+        $journal = ConstructionJournal::create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'contract_id' => $contract->id,
+            'name' => 'Общий журнал работ',
+            'journal_number' => '1',
+        ]);
+        $entry = ConstructionJournalEntry::create([
+            'journal_id' => $journal->id,
+            'estimate_id' => $estimate->id,
+            'entry_date' => '2026-04-29',
+            'entry_number' => 14,
+            'work_description' => 'Бетонирование',
+            'status' => 'approved',
+        ]);
+        $work = CompletedWork::create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'contract_id' => $contract->id,
+            'estimate_item_id' => $estimateItem->id,
+            'journal_entry_id' => $entry->id,
+            'work_origin_type' => CompletedWork::ORIGIN_JOURNAL,
+            'quantity' => 30,
+            'completed_quantity' => 30,
+            'price' => 1200,
+            'total_amount' => 36000,
+            'completion_date' => '2026-04-29',
+            'status' => 'confirmed',
+        ]);
+
+        $available = app(ActingAvailabilityService::class)->getAvailableWorks(
+            $contract->id,
+            '2026-04-01',
+            '2026-04-30'
+        );
+
+        $this->assertCount(1, $available);
+        $this->assertSame($work->id, $available[0]['id']);
+        $this->assertSame('Бетонирование фундамента', $available[0]['work_title']);
+        $this->assertSame('Бетонирование фундамента', $available[0]['estimate_item_name']);
+        $this->assertSame('5', $available[0]['estimate_item_position_number']);
+        $this->assertSame(14, $available[0]['journal_entry_number']);
+        $this->assertSame('1', $available[0]['journal_number']);
     }
 
     private function createContract(): array

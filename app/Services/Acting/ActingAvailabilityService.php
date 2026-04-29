@@ -23,7 +23,7 @@ class ActingAvailabilityService
             ->pluck('acted_quantity', 'completed_work_id');
 
         return CompletedWork::query()
-            ->with('estimateItem.contractLinks', 'estimateItem.estimate')
+            ->with('estimateItem.contractLinks', 'estimateItem.estimate', 'journalEntry.journal', 'workType')
             ->where(function ($query) use ($contractId): void {
                 $query
                     ->where('contract_id', $contractId)
@@ -62,9 +62,18 @@ class ActingAvailabilityService
             'contract_id' => $work->contract_id,
             'project_id' => $work->project_id,
             'estimate_item_id' => $work->estimate_item_id,
+            'estimate_item_name' => $work->estimateItem?->name,
+            'estimate_item_position_number' => $work->estimateItem?->position_number,
             'journal_entry_id' => $work->journal_entry_id,
+            'journal_entry_number' => $work->journalEntry?->entry_number,
+            'journal_number' => $work->journalEntry?->journal?->journal_number,
             'work_origin_type' => $work->work_origin_type,
             'planning_status' => $work->planning_status,
+            'work_title' => $work->workType?->name
+                ?? $work->estimateItem?->name
+                ?? $work->journalEntry?->work_description
+                ?? $work->notes,
+            'work_type_name' => $work->workType?->name,
             'quantity' => $effectiveQuantity,
             'acted_quantity' => round($actedQuantity, 4),
             'available_quantity' => $availableQuantity,
