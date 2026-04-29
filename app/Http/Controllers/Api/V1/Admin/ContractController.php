@@ -50,7 +50,14 @@ class ContractController extends Controller
         $contract = \App\Models\Contract::where('organization_id', $organizationId)->findOrFail($contract);
 
         try {
-            $path = $this->exportService->exportKS6aToExcel($contract);
+            $validated = $request->validate([
+                'format' => 'nullable|in:xlsx,pdf',
+            ]);
+
+            $format = $validated['format'] ?? 'pdf';
+            $path = $format === 'xlsx'
+                ? $this->exportService->exportKS6aToExcel($contract)
+                : $this->exportService->exportKS6aToPdf($contract);
             $url = $this->exportService->getFileService()->temporaryUrl($path, 15);
             
             return AdminResponse::success(['url' => $url], 'Файл успешно сгенерирован');

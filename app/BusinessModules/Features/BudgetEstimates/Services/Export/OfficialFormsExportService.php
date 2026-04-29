@@ -137,6 +137,19 @@ class OfficialFormsExportService
         return $this->saveSpreadsheetToS3($spreadsheet, $path, $contract->organization);
     }
 
+    public function exportKS6aToPdf(Contract $contract): string
+    {
+        $data = $this->prepareKS6aData($contract);
+        $pdf = Pdf::loadView('estimates.exports.ks6a', $data)
+            ->setPaper('a4', 'landscape')
+            ->setOption('defaultFont', 'DejaVu Serif');
+
+        $filename = "KS-6a_" . ($contract->number ?: $contract->id) . ".pdf";
+        $path = "exports/acts/ks6a/{$filename}";
+
+        return $this->savePdfToS3($pdf, $path, $contract->organization);
+    }
+
 
 
     protected function setKS6aHeader($sheet, Contract $contract): void
@@ -918,7 +931,9 @@ class OfficialFormsExportService
     public function exportKS6ToPdf(\App\Models\ConstructionJournal $journal, \Carbon\Carbon $from, \Carbon\Carbon $to): string
     {
         $data = $this->prepareKS6Data($journal, $from, $to);
-        $pdf = Pdf::loadView('estimates.exports.ks6', $data);
+        $pdf = Pdf::loadView('estimates.exports.ks6', $data)
+            ->setPaper('a4', 'landscape')
+            ->setOption('defaultFont', 'DejaVu Serif');
         
         $journalNumber = $journal->journal_number ?? $journal->id;
         $filename = "KS-6_{$journalNumber}_{$from->format('Ymd')}_{$to->format('Ymd')}.pdf";
@@ -1097,17 +1112,263 @@ class OfficialFormsExportService
     {
         $entries = $journal->entries()
             ->whereBetween('entry_date', [$from, $to])
-            ->with(['workVolumes.estimateItem', 'workers', 'equipment', 'materials', 'createdBy', 'approvedBy'])
+            ->with([
+                'workVolumes.estimateItem.measurementUnit',
+                'workVolumes.measurementUnit',
+                'workVolumes.workType.measurementUnit',
+                'workers',
+                'equipment',
+                'materials',
+                'createdBy',
+                'approvedBy',
+            ])
             ->orderBy('entry_date')
             ->orderBy('entry_number')
             ->get();
 
         return [
-            'journal' => $journal->load('project', 'contract', 'createdBy'),
+            'journal' => $journal->load('organization', 'project.organization', 'contract.contractor', 'contract.organization', 'createdBy'),
             'entries' => $entries,
             'period_from' => $from,
             'period_to' => $to,
         ];
+    }
+
+    protected function prepareKS6aData(Contract $contract): array
+    {
+        $contract->loadMissing([
+            'organization',
+            'project.organization',
+            'contractor',
+            'contractEstimateItems.estimateItem.measurementUnit',
+            'contractEstimateItems.estimateItem.workType.measurementUnit',
+        ]);
+
+        $acts = $contract->performanceActs()
+            ->where('is_approved', true)
+            ->with([
+                'lines.estimateItem.measurementUnit',
+                'lines.estimateItem.workType.measurementUnit',
+                'lines.completedWork.workType.measurementUnit',
+                'lines.completedWork.estimateItem.measurementUnit',
+                'lines.completedWork.estimateItem.workType.measurementUnit',
+                'completedWorks.workType.measurementUnit',
+                'completedWorks.estimateItem.measurementUnit',
+                'completedWorks.estimateItem.workType.measurementUnit',
+            ])
+            ->orderBy('act_date')
+            ->get();
+
+        $monthKeys = $acts
+            ->map(fn ($act): ?string => $act->act_date?->format('Y-m'))
+            ->filter()
+            ->unique()
+            ->values();
+
+        $visibleMonthKeys = $monthKeys->take(2)->values();
+        $rows = $this->buildKS6aRows($contract, $acts, $monthKeys, $visibleMonthKeys);
+        $monthGroups = $visibleMonthKeys
+            ->map(fn (string $monthKey): array => [
+                'key' => $monthKey,
+                'title' => $this->formatRussianMonth($monthKey),
+            ])
+            ->values()
+            ->all();
+
+        while (count($monthGroups) < 2) {
+            $monthGroups[] = ['key' => null, 'title' => ''];
+        }
+
+        return [
+            'contract' => $contract,
+            'project' => $contract->project,
+            'customer_org' => $contract->project?->organization ?? $contract->organization,
+            'contractor' => $contract->contractor,
+            'rows' => $rows,
+            'month_groups' => $monthGroups,
+            'remaining_label' => $this->formatRemainingMonth($visibleMonthKeys->last()),
+            'total_estimate_amount' => $rows->sum(fn (array $row): float => (float) ($row['estimate_amount'] ?? 0)),
+            'total_remaining_amount' => $rows->sum(fn (array $row): float => (float) ($row['remaining_amount'] ?? 0)),
+        ];
+    }
+
+    protected function buildKS6aRows(
+        Contract $contract,
+        Collection $acts,
+        Collection $monthKeys,
+        Collection $visibleMonthKeys
+    ): Collection {
+        $rows = collect();
+
+        foreach ($contract->contractEstimateItems as $contractItem) {
+            $estimateItem = $contractItem->estimateItem;
+            $key = $estimateItem ? "estimate:{$estimateItem->id}" : "contract-item:{$contractItem->id}";
+            $quantity = (float) ($contractItem->quantity ?? $estimateItem?->quantity_total ?? $estimateItem?->quantity ?? 0);
+            $amount = (float) ($contractItem->amount ?? $estimateItem?->total_amount ?? $estimateItem?->current_total_amount ?? 0);
+
+            $rows->put($key, [
+                'number' => $rows->count() + 1,
+                'estimate_position' => $estimateItem?->position_number ?? '',
+                'title' => $estimateItem?->name ?? (string) ($contractItem->notes ?? ''),
+                'rate_code' => $estimateItem?->normative_rate_code ?? $estimateItem?->justification ?? $estimateItem?->workType?->code ?? '',
+                'unit' => $estimateItem?->measurementUnit?->short_name ?? $estimateItem?->workType?->measurementUnit?->short_name ?? '',
+                'unit_price' => $quantity > 0 ? round($amount / $quantity, 4) : (float) ($estimateItem?->unit_price ?? 0),
+                'estimate_quantity' => $quantity,
+                'estimate_amount' => $amount,
+                'performed_quantity' => 0.0,
+                'performed_amount' => 0.0,
+                'all_months' => [],
+                'months' => [],
+            ]);
+        }
+
+        foreach ($acts as $act) {
+            $monthKey = $act->act_date?->format('Y-m');
+
+            foreach ($act->lines as $line) {
+                $estimateItem = $line->estimateItem ?? $line->completedWork?->estimateItem;
+                $workType = $line->completedWork?->workType ?? $estimateItem?->workType;
+                $key = $estimateItem ? "estimate:{$estimateItem->id}" : ($line->completed_work_id ? "work:{$line->completed_work_id}" : "line:{$line->id}");
+
+                if (!$rows->has($key)) {
+                    $quantity = (float) ($estimateItem?->quantity_total ?? $estimateItem?->quantity ?? $line->quantity ?? 0);
+                    $amount = (float) ($estimateItem?->total_amount ?? $estimateItem?->current_total_amount ?? $line->amount ?? 0);
+
+                    $rows->put($key, [
+                        'number' => $rows->count() + 1,
+                        'estimate_position' => $estimateItem?->position_number ?? '',
+                        'title' => $line->title ?? $estimateItem?->name ?? $workType?->name ?? '',
+                        'rate_code' => $estimateItem?->normative_rate_code ?? $estimateItem?->justification ?? $workType?->code ?? '',
+                        'unit' => $line->unit ?? $estimateItem?->measurementUnit?->short_name ?? $workType?->measurementUnit?->short_name ?? '',
+                        'unit_price' => (float) ($line->unit_price ?? $estimateItem?->unit_price ?? $workType?->default_price ?? 0),
+                        'estimate_quantity' => $quantity,
+                        'estimate_amount' => $amount,
+                        'performed_quantity' => 0.0,
+                        'performed_amount' => 0.0,
+                        'all_months' => [],
+                        'months' => [],
+                    ]);
+                }
+
+                $row = $rows->get($key);
+                $lineQuantity = (float) ($line->quantity ?? 0);
+                $lineAmount = (float) ($line->amount ?? 0);
+                $row['performed_quantity'] += $lineQuantity;
+                $row['performed_amount'] += $lineAmount;
+
+                if ($monthKey) {
+                    $row['all_months'][$monthKey]['quantity'] = ($row['all_months'][$monthKey]['quantity'] ?? 0) + $lineQuantity;
+                    $row['all_months'][$monthKey]['amount'] = ($row['all_months'][$monthKey]['amount'] ?? 0) + $lineAmount;
+                }
+
+                $rows->put($key, $row);
+            }
+
+            if ($act->lines->isEmpty()) {
+                foreach ($act->completedWorks as $work) {
+                    $estimateItem = $work->estimateItem;
+                    $workType = $work->workType ?? $estimateItem?->workType;
+                    $key = $estimateItem ? "estimate:{$estimateItem->id}" : "work:{$work->id}";
+
+                    if (!$rows->has($key)) {
+                        $quantity = (float) ($estimateItem?->quantity_total ?? $estimateItem?->quantity ?? $work->quantity ?? 0);
+                        $amount = (float) ($estimateItem?->total_amount ?? $estimateItem?->current_total_amount ?? $work->total_amount ?? 0);
+
+                        $rows->put($key, [
+                            'number' => $rows->count() + 1,
+                            'estimate_position' => $estimateItem?->position_number ?? '',
+                            'title' => $estimateItem?->name ?? $workType?->name ?? '',
+                            'rate_code' => $estimateItem?->normative_rate_code ?? $estimateItem?->justification ?? $workType?->code ?? '',
+                            'unit' => $estimateItem?->measurementUnit?->short_name ?? $workType?->measurementUnit?->short_name ?? '',
+                            'unit_price' => (float) ($work->price ?? $estimateItem?->unit_price ?? $workType?->default_price ?? 0),
+                            'estimate_quantity' => $quantity,
+                            'estimate_amount' => $amount,
+                            'performed_quantity' => 0.0,
+                            'performed_amount' => 0.0,
+                            'all_months' => [],
+                            'months' => [],
+                        ]);
+                    }
+
+                    $row = $rows->get($key);
+                    $quantity = (float) ($work->pivot->included_quantity ?? $work->quantity ?? 0);
+                    $amount = (float) ($work->pivot->included_amount ?? $work->total_amount ?? 0);
+                    $row['performed_quantity'] += $quantity;
+                    $row['performed_amount'] += $amount;
+
+                    if ($monthKey) {
+                        $row['all_months'][$monthKey]['quantity'] = ($row['all_months'][$monthKey]['quantity'] ?? 0) + $quantity;
+                        $row['all_months'][$monthKey]['amount'] = ($row['all_months'][$monthKey]['amount'] ?? 0) + $amount;
+                    }
+
+                    $rows->put($key, $row);
+                }
+            }
+        }
+
+        return $rows
+            ->map(function (array $row) use ($monthKeys, $visibleMonthKeys): array {
+                foreach ($visibleMonthKeys as $visibleMonthKey) {
+                    $fromStart = 0.0;
+
+                    foreach ($monthKeys as $monthKey) {
+                        $fromStart += (float) ($row['all_months'][$monthKey]['amount'] ?? 0);
+
+                        if ($monthKey === $visibleMonthKey) {
+                            break;
+                        }
+                    }
+
+                    $row['months'][$visibleMonthKey] = [
+                        'quantity' => (float) ($row['all_months'][$visibleMonthKey]['quantity'] ?? 0),
+                        'amount' => (float) ($row['all_months'][$visibleMonthKey]['amount'] ?? 0),
+                        'from_start' => $fromStart,
+                    ];
+                }
+
+                $row['remaining_quantity'] = max(0, (float) ($row['estimate_quantity'] ?? 0) - (float) ($row['performed_quantity'] ?? 0));
+                $row['remaining_amount'] = max(0, (float) ($row['estimate_amount'] ?? 0) - (float) ($row['performed_amount'] ?? 0));
+                unset($row['all_months']);
+
+                return $row;
+            })
+            ->values();
+    }
+
+    protected function formatRussianMonth(?string $monthKey): string
+    {
+        if (!$monthKey) {
+            return '';
+        }
+
+        [$year, $month] = explode('-', $monthKey);
+        $months = [
+            1 => 'январь',
+            2 => 'февраль',
+            3 => 'март',
+            4 => 'апрель',
+            5 => 'май',
+            6 => 'июнь',
+            7 => 'июль',
+            8 => 'август',
+            9 => 'сентябрь',
+            10 => 'октябрь',
+            11 => 'ноябрь',
+            12 => 'декабрь',
+        ];
+
+        return ($months[(int) $month] ?? '') . ' ' . $year . ' г.';
+    }
+
+    protected function formatRemainingMonth(?string $monthKey): string
+    {
+        if (!$monthKey) {
+            return '';
+        }
+
+        return 'на ' . $this->formatRussianMonth(
+            \Illuminate\Support\Carbon::createFromFormat('Y-m-d', "{$monthKey}-01")->addMonth()->format('Y-m')
+        );
     }
 
     protected function setExtendedReportHeader($sheet, \App\Models\ConstructionJournal $journal, \Carbon\Carbon $from, \Carbon\Carbon $to): void

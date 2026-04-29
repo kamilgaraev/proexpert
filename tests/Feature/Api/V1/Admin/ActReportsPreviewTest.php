@@ -464,6 +464,116 @@ class ActReportsPreviewTest extends TestCase
         $this->assertStringNotContainsString('Рљ', $ks3);
     }
 
+    public function test_ks6_and_ks6a_pdf_views_render_official_landscape_layout(): void
+    {
+        $organization = (object) [
+            'legal_name' => 'ООО "Городстрой"',
+            'name' => 'ООО "Городстрой"',
+            'tax_number' => '1650000000',
+            'postal_code' => '420000',
+            'city' => 'Казань',
+            'address' => 'ул. Центральная, 1',
+            'phone' => '+7 843 000-00-00',
+        ];
+        $contractor = (object) [
+            'name' => 'ООО "Быстрострой"',
+            'inn' => '1660000000',
+            'legal_address' => 'ул. Подрядная, 2',
+            'phone' => '+7 843 111-11-11',
+        ];
+        $project = (object) [
+            'name' => 'Торговый центр',
+            'address' => 'улица Весенняя, 55',
+            'organization' => $organization,
+        ];
+        $contract = (object) [
+            'id' => 1,
+            'number' => 'ДП-1',
+            'date' => now(),
+            'subject' => 'ЛСР 55-17 Устройство стен внутренних',
+            'total_amount' => 270216,
+            'contractor' => $contractor,
+            'organization' => $organization,
+        ];
+        $journal = (object) [
+            'id' => 1,
+            'journal_number' => 'Ж-1',
+            'project' => $project,
+            'organization' => $organization,
+            'contract' => $contract,
+            'createdBy' => (object) ['name' => 'Иванов И.И.'],
+        ];
+
+        $ks6 = view('estimates.exports.ks6', [
+            'journal' => $journal,
+            'entries' => collect([
+                (object) [
+                    'entry_number' => 1,
+                    'entry_date' => now(),
+                    'work_description' => 'Кладка стен из легкобетонных камней',
+                    'workVolumes' => collect([
+                        (object) [
+                            'quantity' => 6,
+                            'measurementUnit' => (object) ['short_name' => 'м2'],
+                            'workType' => (object) ['name' => 'Кладка стен'],
+                            'estimateItem' => null,
+                        ],
+                    ]),
+                    'weather_conditions' => ['temperature' => 18, 'precipitation' => 'без осадков'],
+                    'createdBy' => (object) ['name' => 'Петров П.П.'],
+                ],
+            ]),
+            'period_from' => now()->startOfMonth(),
+            'period_to' => now()->endOfMonth(),
+        ])->render();
+
+        $ks6a = view('estimates.exports.ks6a', [
+            'contract' => $contract,
+            'project' => $project,
+            'customer_org' => $organization,
+            'contractor' => $contractor,
+            'month_groups' => [
+                ['key' => '2026-03', 'title' => 'март 2026 г.'],
+                ['key' => '2026-04', 'title' => 'апрель 2026 г.'],
+            ],
+            'remaining_label' => 'на май 2026 г.',
+            'rows' => collect([
+                [
+                    'number' => 1,
+                    'estimate_position' => '1',
+                    'title' => 'Кладка стен из легкобетонных камней',
+                    'rate_code' => 'ТЕР08-03-002-01',
+                    'unit' => 'м2',
+                    'unit_price' => 898.03,
+                    'estimate_quantity' => 6,
+                    'estimate_amount' => 5388,
+                    'months' => [
+                        '2026-03' => ['quantity' => 2, 'amount' => 1796.06, 'from_start' => 1796.06],
+                        '2026-04' => ['quantity' => 2, 'amount' => 1796.06, 'from_start' => 3592.12],
+                    ],
+                    'remaining_quantity' => 2,
+                    'remaining_amount' => 1795.88,
+                ],
+            ]),
+            'total_estimate_amount' => 5388,
+            'total_remaining_amount' => 1795.88,
+        ])->render();
+
+        $this->assertStringContainsString('<html lang="ru">', $ks6);
+        $this->assertStringContainsString('<html lang="ru">', $ks6a);
+        $this->assertStringContainsString('size: A4 landscape', $ks6);
+        $this->assertStringContainsString('size: A4 landscape', $ks6a);
+        $this->assertStringContainsString('Типовая межотраслевая форма № КС-6', $ks6);
+        $this->assertStringContainsString('Унифицированная форма № КС-6а', $ks6a);
+        $this->assertStringContainsString('0322002', $ks6);
+        $this->assertStringContainsString('0322006', $ks6a);
+        $this->assertStringContainsString('ОБЩИЙ ЖУРНАЛ РАБОТ', $ks6);
+        $this->assertStringContainsString('Журнал учета выполненных работ', $ks6a);
+        $this->assertStringContainsString('Кладка стен из легкобетонных камней', $ks6a);
+        $this->assertStringNotContainsString('Рљ', $ks6);
+        $this->assertStringNotContainsString('Рљ', $ks6a);
+    }
+
     public function test_recalculate_repairs_existing_act_amount_to_include_estimate_vat(): void
     {
         [$organization, $user, $contract, $project] = $this->createContractFixture('SHOW-VAT');
