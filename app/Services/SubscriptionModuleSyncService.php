@@ -54,6 +54,7 @@ class SubscriptionModuleSyncService
                 $existingPackage = OrganizationPackageSubscription::query()
                     ->where('organization_id', $organizationId)
                     ->where('package_slug', $package['package_slug'])
+                    ->where('is_bundled_with_plan', true)
                     ->first();
 
                 if ($existingPackage?->isActive() && ! $existingPackage->isBundled()) {
@@ -66,10 +67,10 @@ class SubscriptionModuleSyncService
                     [
                         'organization_id' => $organizationId,
                         'package_slug' => $package['package_slug'],
+                        'is_bundled_with_plan' => true,
                     ],
                     [
                         'subscription_id' => $subscription->id,
-                        'is_bundled_with_plan' => true,
                         'tier' => $package['tier'],
                         'price_paid' => 0,
                         'activated_at' => now(),
@@ -166,10 +167,10 @@ class SubscriptionModuleSyncService
                     [
                         'organization_id' => $organizationId,
                         'package_slug' => $package['package_slug'],
+                        'is_bundled_with_plan' => true,
                     ],
                     [
                         'subscription_id' => $subscription->id,
-                        'is_bundled_with_plan' => true,
                         'tier' => $package['tier'],
                         'price_paid' => 0,
                         'activated_at' => now(),
@@ -522,6 +523,7 @@ class SubscriptionModuleSyncService
             $existingPackage = OrganizationPackageSubscription::query()
                 ->where('organization_id', $organizationId)
                 ->where('package_slug', $package['package_slug'])
+                ->where('is_bundled_with_plan', true)
                 ->first();
 
             if (

@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Log;
 class PackageService
 {
     private const PACKAGES_PATH = 'Packages';
+    private const TIER_ORDER = ['base', 'pro', 'enterprise'];
 
     public function __construct(
         private readonly BalanceServiceInterface $balanceService
@@ -68,36 +69,33 @@ class PackageService
             ->where('is_bundled_with_plan', true)
             ->active()
             ->first();
+        $standaloneSubscription = OrganizationPackageSubscription::where('organization_id', $organizationId)
+            ->where('package_slug', $packageSlug)
+            ->where('is_bundled_with_plan', false)
+            ->active()
+            ->first();
+        $coveredTier = $this->highestTier($bundledSubscription?->tier, $standaloneSubscription?->tier);
 
-        if ($bundledSubscription) {
-            $bundledTierConfig = $config['tiers'][$bundledSubscription->tier] ?? $tierConfig;
+        if ($coveredTier !== null && $this->tierRank($coveredTier) >= $this->tierRank($tier)) {
+            $coveredSubscription = $standaloneSubscription?->tier === $coveredTier
+                ? $standaloneSubscription
+                : $bundledSubscription;
+            $coveredTierConfig = $config['tiers'][$coveredTier] ?? $tierConfig;
 
             return [
                 'package_slug' => $packageSlug,
-                'tier' => $bundledSubscription->tier,
-                'modules' => $bundledTierConfig['modules'] ?? $moduleSlugsList,
-                'price_paid' => 0,
-                'expires_at' => $bundledSubscription->expires_at,
-                'access_source' => 'subscription',
-                'is_bundled_with_plan' => true,
+                'tier' => $coveredTier,
+                'modules' => $coveredTierConfig['modules'] ?? $moduleSlugsList,
+                'price_paid' => (float) ($coveredSubscription?->price_paid ?? 0),
+                'expires_at' => $coveredSubscription?->expires_at,
+                'access_source' => $coveredSubscription?->is_bundled_with_plan ? 'subscription' : 'standalone',
+                'is_bundled_with_plan' => (bool) ($coveredSubscription?->is_bundled_with_plan ?? false),
             ];
         }
 
-        // Рассчитываем сумму уже оплаченных платных активных модулей
-        $activeModules = OrganizationModuleActivation::where('organization_id', $organizationId)
-            ->where('status', 'active')
-            ->whereHas('module', function ($q) use ($moduleSlugsList) {
-                $q->whereIn('slug', $moduleSlugsList)->where('billing_model', '!=', 'free');
-            })
-            ->with('module')
-            ->get();
-
-        $alreadyPaidSum = 0;
-        foreach ($activeModules as $activation) {
-            $pricingConfig = $activation->module->pricing_config ?? [];
-            $alreadyPaidSum += (float) ($pricingConfig['base_price'] ?? 0);
-        }
-
+        $coveredPackagePrice = $coveredTier !== null ? (float) ($config['tiers'][$coveredTier]['price'] ?? 0) : 0;
+        $standaloneModuleCredit = $this->calculateStandaloneModuleCredit($organizationId, $moduleSlugsList);
+        $alreadyPaidSum = max($coveredPackagePrice, $standaloneModuleCredit);
         $upgradePrice = max(0, $price - $alreadyPaidSum);
         $amountCents = (int) round($upgradePrice * 100);
 
@@ -121,9 +119,14 @@ class PackageService
             $amountCents,
             $config,
             $tierConfig,
-            $alreadyPaidSum
+            $alreadyPaidSum,
+            $bundledSubscription
         ) {
             $expiresAt = $price > 0 ? now()->addDays($durationDays) : null;
+            $bundledModules = $bundledSubscription
+                ? ($config['tiers'][$bundledSubscription->tier]['modules'] ?? [])
+                : [];
+            $modulesToActivate = array_values(array_diff($moduleSlugsList, $bundledModules));
 
             if ($upgradePrice > 0) {
                 $organization = Organization::findOrFail($organizationId);
@@ -135,10 +138,13 @@ class PackageService
             }
 
             OrganizationPackageSubscription::updateOrCreate(
-                ['organization_id' => $organizationId, 'package_slug' => $packageSlug],
+                [
+                    'organization_id' => $organizationId,
+                    'package_slug' => $packageSlug,
+                    'is_bundled_with_plan' => false,
+                ],
                 [
                     'subscription_id' => null,
-                    'is_bundled_with_plan' => false,
                     'tier' => $tier,
                     'price_paid' => $upgradePrice,
                     'activated_at' => now(),
@@ -146,7 +152,7 @@ class PackageService
                 ]
             );
 
-            $this->activateModules($organizationId, $moduleSlugsList, $expiresAt, false);
+            $this->activateModules($organizationId, $modulesToActivate, $expiresAt, false);
 
             return [
                 'package_slug' => $packageSlug,
@@ -154,6 +160,8 @@ class PackageService
                 'modules' => $moduleSlugsList,
                 'price_paid' => $upgradePrice,
                 'expires_at' => $expiresAt,
+                'access_source' => 'standalone',
+                'is_bundled_with_plan' => false,
             ];
         });
     }
@@ -164,13 +172,10 @@ class PackageService
 
         $subscription = OrganizationPackageSubscription::where('organization_id', $organizationId)
             ->where('package_slug', $packageSlug)
+            ->where('is_bundled_with_plan', false)
             ->first();
 
         if (! $subscription) {
-            return;
-        }
-
-        if ($subscription->isBundled()) {
             return;
         }
 
@@ -338,8 +343,54 @@ class PackageService
         return OrganizationPackageSubscription::where('organization_id', $organizationId)
             ->active()
             ->get()
+            ->sortBy(fn (OrganizationPackageSubscription $subscription): int => $this->tierRank($subscription->tier))
             ->keyBy('package_slug')
             ->all();
+    }
+
+    private function calculateStandaloneModuleCredit(int $organizationId, array $moduleSlugsList): float
+    {
+        $activeModules = OrganizationModuleActivation::where('organization_id', $organizationId)
+            ->where('status', 'active')
+            ->where('is_bundled_with_plan', false)
+            ->whereHas('module', function ($q) use ($moduleSlugsList) {
+                $q->whereIn('slug', $moduleSlugsList)->where('billing_model', '!=', 'free');
+            })
+            ->with('module')
+            ->get();
+
+        $alreadyPaidSum = 0;
+
+        foreach ($activeModules as $activation) {
+            $pricingConfig = $activation->module->pricing_config ?? [];
+            $alreadyPaidSum += (float) ($pricingConfig['base_price'] ?? 0);
+        }
+
+        return $alreadyPaidSum;
+    }
+
+    private function highestTier(?string $firstTier, ?string $secondTier): ?string
+    {
+        if ($firstTier === null) {
+            return $secondTier;
+        }
+
+        if ($secondTier === null) {
+            return $firstTier;
+        }
+
+        return $this->tierRank($firstTier) >= $this->tierRank($secondTier) ? $firstTier : $secondTier;
+    }
+
+    private function tierRank(?string $tier): int
+    {
+        if ($tier === null) {
+            return -1;
+        }
+
+        $rank = array_search($tier, self::TIER_ORDER, true);
+
+        return $rank === false ? PHP_INT_MAX : (int) $rank;
     }
 
     private function getPackageConfig(string $packageSlug): array

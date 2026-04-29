@@ -111,11 +111,7 @@ class ModulesOverviewService
     {
         return collect($packages)
             ->map(function (array $package) use ($organizationId, $activations, $activeSlugs): array {
-                $subscription = OrganizationPackageSubscription::query()
-                    ->where('organization_id', $organizationId)
-                    ->where('package_slug', $package['slug'])
-                    ->active()
-                    ->first();
+                $subscription = $this->getEffectivePackageSubscription($organizationId, $package['slug']);
 
                 $currentTier = $subscription?->tier ?? $this->inferActiveTier($package['tiers'], $activeSlugs);
                 $tiers = $this->buildTiers($package['tiers'], $currentTier, $activations);
@@ -168,6 +164,28 @@ class ModulesOverviewService
             })
             ->values()
             ->all();
+    }
+
+    private function getEffectivePackageSubscription(int $organizationId, string $packageSlug): ?OrganizationPackageSubscription
+    {
+        return OrganizationPackageSubscription::query()
+            ->where('organization_id', $organizationId)
+            ->where('package_slug', $packageSlug)
+            ->active()
+            ->get()
+            ->sortBy(fn (OrganizationPackageSubscription $subscription): int => $this->tierRank($subscription->tier))
+            ->last();
+    }
+
+    private function tierRank(?string $tier): int
+    {
+        if ($tier === null) {
+            return -1;
+        }
+
+        $rank = array_search($tier, self::TIER_ORDER, true);
+
+        return $rank === false ? PHP_INT_MAX : (int) $rank;
     }
 
     private function buildAdvancedModule(Module $module, array $membership, Collection $activations): array

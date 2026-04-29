@@ -297,6 +297,50 @@ class ModulesOverviewControllerTest extends TestCase
             ->assertJsonPath('data.summary.monthly_total', 19900);
     }
 
+    public function test_overview_uses_standalone_package_upgrade_over_bundled_tier(): void
+    {
+        $this->createModule('project-management', 'Проекты', 'free', true, false, 0);
+        $this->createModule('site-requests', 'Заявки', 'subscription', true, false, 1000);
+        $this->createModule('catalog-management', 'Каталог', 'free', true, false, 0);
+        $this->createModule('basic-warehouse', 'Склад', 'subscription', true, false, 1000);
+        $this->createModule('procurement', 'Закупки', 'subscription', true, false, 1000);
+        $this->createModule('material-analytics', 'Аналитика', 'subscription', true, false, 1000);
+        $this->createModule('data-export', 'Экспорт', 'subscription', true, false, 1000);
+
+        OrganizationPackageSubscription::create([
+            'organization_id' => $this->organization->id,
+            'subscription_id' => 200,
+            'is_bundled_with_plan' => true,
+            'package_slug' => 'supply-warehouse',
+            'tier' => 'pro',
+            'price_paid' => 0,
+            'activated_at' => now(),
+            'expires_at' => now()->addMonth(),
+        ]);
+
+        OrganizationPackageSubscription::create([
+            'organization_id' => $this->organization->id,
+            'subscription_id' => null,
+            'is_bundled_with_plan' => false,
+            'package_slug' => 'supply-warehouse',
+            'tier' => 'enterprise',
+            'price_paid' => 3000,
+            'activated_at' => now(),
+            'expires_at' => now()->addMonth(),
+        ]);
+
+        $response = $this->actingAs($this->user, 'api_landing')
+            ->getJson('/api/v1/landing/modules/overview');
+
+        $solution = collect($response->json('data.solutions'))
+            ->firstWhere('slug', 'supply-warehouse');
+
+        $response->assertOk();
+        $this->assertSame('enterprise', $solution['current_tier'] ?? null);
+        $this->assertFalse($solution['is_bundled_with_plan'] ?? true);
+        $this->assertSame('standalone', $solution['access_source'] ?? null);
+    }
+
     private function createModule(
         string $slug,
         string $name,

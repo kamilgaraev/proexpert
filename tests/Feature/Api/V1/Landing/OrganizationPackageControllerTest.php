@@ -167,7 +167,7 @@ class OrganizationPackageControllerTest extends TestCase
             $table->timestamp('activated_at')->nullable();
             $table->timestamp('expires_at')->nullable();
             $table->timestamps();
-            $table->unique(['organization_id', 'package_slug']);
+            $table->unique(['organization_id', 'package_slug', 'is_bundled_with_plan']);
         });
     }
 
@@ -272,5 +272,141 @@ class OrganizationPackageControllerTest extends TestCase
             ->first();
 
         $this->assertNotNull($subscription?->expires_at);
+    }
+
+    public function test_subscribe_allows_standalone_upgrade_above_bundled_package_tier(): void
+    {
+        foreach ([
+            ['slug' => 'project-management', 'billing_model' => 'free', 'price' => 0],
+            ['slug' => 'site-requests', 'billing_model' => 'subscription', 'price' => 1000],
+            ['slug' => 'catalog-management', 'billing_model' => 'free', 'price' => 0],
+            ['slug' => 'basic-warehouse', 'billing_model' => 'subscription', 'price' => 1000],
+            ['slug' => 'procurement', 'billing_model' => 'subscription', 'price' => 1000],
+            ['slug' => 'material-analytics', 'billing_model' => 'subscription', 'price' => 1000],
+            ['slug' => 'data-export', 'billing_model' => 'subscription', 'price' => 1000],
+        ] as $moduleData) {
+            Module::create([
+                'name' => $moduleData['slug'],
+                'slug' => $moduleData['slug'],
+                'version' => '1.0.0',
+                'type' => 'feature',
+                'billing_model' => $moduleData['billing_model'],
+                'category' => 'landing',
+                'description' => 'Test module',
+                'pricing_config' => [
+                    'base_price' => $moduleData['price'],
+                    'currency' => 'RUB',
+                ],
+                'features' => [],
+                'permissions' => [],
+                'dependencies' => [],
+                'conflicts' => [],
+                'limits' => [],
+                'class_name' => null,
+                'config_file' => null,
+                'icon' => null,
+                'display_order' => 1,
+                'is_active' => true,
+                'is_system_module' => false,
+                'can_deactivate' => true,
+            ]);
+        }
+
+        OrganizationPackageSubscription::create([
+            'organization_id' => $this->organization->id,
+            'subscription_id' => 100,
+            'is_bundled_with_plan' => true,
+            'package_slug' => 'supply-warehouse',
+            'tier' => 'pro',
+            'price_paid' => 0,
+            'activated_at' => now(),
+            'expires_at' => now()->addMonth(),
+        ]);
+
+        foreach (['project-management', 'site-requests', 'catalog-management', 'basic-warehouse', 'procurement', 'material-analytics'] as $moduleSlug) {
+            $module = Module::where('slug', $moduleSlug)->firstOrFail();
+
+            OrganizationModuleActivation::create([
+                'organization_id' => $this->organization->id,
+                'module_id' => $module->id,
+                'subscription_id' => 100,
+                'status' => 'active',
+                'activated_at' => now(),
+                'expires_at' => now()->addMonth(),
+                'is_bundled_with_plan' => true,
+                'is_auto_renew_enabled' => false,
+            ]);
+        }
+
+        $balanceService = Mockery::mock(BalanceServiceInterface::class);
+        $balanceService
+            ->shouldReceive('getOrCreateOrganizationBalance')
+            ->once()
+            ->withArgs(fn (Organization $organization): bool => $organization->is($this->organization))
+            ->andReturn(new OrganizationBalance([
+                'organization_id' => $this->organization->id,
+                'balance' => 300000,
+                'currency' => 'RUB',
+            ]));
+
+        $balanceService
+            ->shouldReceive('debitBalance')
+            ->once()
+            ->withArgs(function (Organization $organization, int $amount, string $description): bool {
+                return $organization->is($this->organization)
+                    && $amount === 300000
+                    && $description !== '';
+            })
+            ->andReturnUsing(fn (Organization $organization) => $organization->balance()->create([
+                'balance' => 0,
+                'reserved_balance' => 0,
+                'currency' => 'RUB',
+                'is_active' => true,
+            ]));
+
+        $balanceService->shouldReceive('creditBalance')->never();
+        $balanceService->shouldReceive('hasSufficientBalance')->never();
+
+        $this->app->instance(BalanceServiceInterface::class, $balanceService);
+
+        $token = JWTAuth::fromUser($this->user);
+
+        $response = $this
+            ->withHeader('Authorization', "Bearer {$token}")
+            ->postJson('/api/v1/landing/packages/subscribe', [
+                'package_slug' => 'supply-warehouse',
+                'tier' => 'enterprise',
+                'duration_days' => 30,
+            ]);
+
+        $response->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.package_slug', 'supply-warehouse')
+            ->assertJsonPath('data.tier', 'enterprise')
+            ->assertJsonPath('data.price_paid', 3000)
+            ->assertJsonPath('data.is_bundled_with_plan', false);
+
+        $this->assertDatabaseHas('organization_package_subscriptions', [
+            'organization_id' => $this->organization->id,
+            'package_slug' => 'supply-warehouse',
+            'tier' => 'pro',
+            'is_bundled_with_plan' => true,
+        ]);
+
+        $this->assertDatabaseHas('organization_package_subscriptions', [
+            'organization_id' => $this->organization->id,
+            'package_slug' => 'supply-warehouse',
+            'tier' => 'enterprise',
+            'is_bundled_with_plan' => false,
+        ]);
+
+        $dataExport = Module::where('slug', 'data-export')->firstOrFail();
+
+        $this->assertDatabaseHas('organization_module_activations', [
+            'organization_id' => $this->organization->id,
+            'module_id' => $dataExport->id,
+            'status' => 'active',
+            'is_bundled_with_plan' => false,
+        ]);
     }
 }
