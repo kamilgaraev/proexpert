@@ -235,6 +235,41 @@ class SubscriptionModuleSyncService
         return $reactivatedCount;
     }
 
+    public function ensureBundledModulesSyncedForOrganization(int $organizationId): array
+    {
+        $subscription = OrganizationSubscription::query()
+            ->with('plan')
+            ->where('organization_id', $organizationId)
+            ->where('status', 'active')
+            ->whereNull('canceled_at')
+            ->where(function ($query) {
+                $query->whereNull('ends_at')
+                    ->orWhere('ends_at', '>', now());
+            })
+            ->latest('id')
+            ->first();
+
+        if (! $subscription || ! $subscription->plan) {
+            return $this->emptySyncResult();
+        }
+
+        $includedPackages = $this->getIncludedPackages($subscription->plan);
+        $bundledModuleSlugs = $this->getBundledModuleSlugsForPlan($subscription->plan);
+
+        if ($includedPackages === [] && $bundledModuleSlugs === []) {
+            return $this->emptySyncResult();
+        }
+
+        if (
+            ! $this->hasMissingBundledPackage($organizationId, $subscription, $includedPackages)
+            && ! $this->hasMissingBundledModule($organizationId, $bundledModuleSlugs)
+        ) {
+            return $this->emptySyncResult();
+        }
+
+        return $this->syncModulesOnSubscribe($subscription);
+    }
+
     public function getBundledModulesForPlan(string $planSlug): array
     {
         $plan = SubscriptionPlan::where('slug', $planSlug)->first();
@@ -310,6 +345,64 @@ class SubscriptionModuleSyncService
         return Module::active()
             ->whereIn('slug', $this->getBundledModuleSlugsForPlan($plan))
             ->get();
+    }
+
+    private function hasMissingBundledPackage(
+        int $organizationId,
+        OrganizationSubscription $subscription,
+        array $includedPackages
+    ): bool {
+        foreach ($includedPackages as $package) {
+            $existingPackage = OrganizationPackageSubscription::query()
+                ->where('organization_id', $organizationId)
+                ->where('package_slug', $package['package_slug'])
+                ->first();
+
+            if (
+                ! $existingPackage
+                || ! $existingPackage->isBundled()
+                || ! $existingPackage->isActive()
+                || $existingPackage->subscription_id !== $subscription->id
+                || $existingPackage->tier !== $package['tier']
+            ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function hasMissingBundledModule(int $organizationId, array $bundledModuleSlugs): bool
+    {
+        if ($bundledModuleSlugs === []) {
+            return false;
+        }
+
+        $activeModuleSlugs = OrganizationModuleActivation::query()
+            ->join('modules', 'modules.id', '=', 'organization_module_activations.module_id')
+            ->where('organization_module_activations.organization_id', $organizationId)
+            ->where('organization_module_activations.status', 'active')
+            ->where('modules.is_active', true)
+            ->where(function ($query) {
+                $query->whereNull('organization_module_activations.expires_at')
+                    ->orWhere('organization_module_activations.expires_at', '>', now());
+            })
+            ->pluck('modules.slug')
+            ->all();
+
+        return count(array_diff($bundledModuleSlugs, $activeModuleSlugs)) > 0;
+    }
+
+    private function emptySyncResult(): array
+    {
+        return [
+            'success' => true,
+            'activated_count' => 0,
+            'converted_count' => 0,
+            'packages_activated_count' => 0,
+            'packages_converted_count' => 0,
+            'modules' => [],
+        ];
     }
 
     private function getBundledModuleSlugsForPlan(SubscriptionPlan $plan): array

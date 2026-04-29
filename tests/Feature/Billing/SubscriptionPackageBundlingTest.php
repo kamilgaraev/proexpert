@@ -311,6 +311,37 @@ class SubscriptionPackageBundlingTest extends TestCase
         );
     }
 
+    public function test_existing_subscription_package_modules_are_repaired_on_permissions_check(): void
+    {
+        $plan = $this->createPlan('profi', [
+            ['package_slug' => 'supply-warehouse', 'tier' => 'pro'],
+        ], 0);
+
+        $subscription = $this->createSubscription($plan);
+        $modules = $this->createPackageModules('supply-warehouse', 'pro');
+
+        $this->assertSame(0, OrganizationModuleActivation::query()
+            ->where('organization_id', $this->organization->id)
+            ->count());
+
+        $result = app(SubscriptionModuleSyncService::class)
+            ->ensureBundledModulesSyncedForOrganization($this->organization->id);
+
+        $this->assertTrue($result['success']);
+        $this->assertSame(count($modules), $result['activated_count']);
+        $this->assertSame(1, $result['packages_activated_count']);
+
+        $basicWarehouseModule = Module::where('slug', 'basic-warehouse')->firstOrFail();
+
+        $this->assertDatabaseHas('organization_module_activations', [
+            'organization_id' => $this->organization->id,
+            'module_id' => $basicWarehouseModule->id,
+            'subscription_id' => $subscription->id,
+            'status' => 'active',
+            'is_bundled_with_plan' => true,
+        ]);
+    }
+
     private function createPlan(string $slug, array $includedPackages, int $price = 9900): SubscriptionPlan
     {
         return SubscriptionPlan::create([

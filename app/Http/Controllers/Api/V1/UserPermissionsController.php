@@ -9,6 +9,8 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Domain\Authorization\Services\RoleScanner;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use App\Modules\Core\AccessController;
+use App\Services\SubscriptionModuleSyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -39,6 +41,8 @@ class UserPermissionsController extends Controller
             if (!$user) {
                 return AdminResponse::error(trans_message('permissions.unauthorized'), 401);
             }
+
+            $this->ensureBundledModulesSynced($organizationId);
 
             $cacheKey = "user_permissions_full_{$user->id}_{$organizationId}";
             $data = Cache::remember($cacheKey, 300, function () use ($user, $organizationId) {
@@ -181,7 +185,7 @@ class UserPermissionsController extends Controller
     protected function getActiveModules(int $organizationId): array
     {
         try {
-            $accessController = app(\App\Modules\Core\AccessController::class);
+            $accessController = app(AccessController::class);
             $modules = $accessController->getActiveModules($organizationId);
 
             if ($modules instanceof \Illuminate\Support\Collection) {
@@ -196,6 +200,40 @@ class UserPermissionsController extends Controller
             ]);
 
             return [];
+        }
+    }
+
+    protected function ensureBundledModulesSynced(?int $organizationId): void
+    {
+        if (!$organizationId) {
+            return;
+        }
+
+        $cacheKey = "subscription_bundled_modules_synced_{$organizationId}";
+
+        if (Cache::has($cacheKey)) {
+            return;
+        }
+
+        try {
+            $result = app(SubscriptionModuleSyncService::class)
+                ->ensureBundledModulesSyncedForOrganization($organizationId);
+
+            Cache::put($cacheKey, true, 300);
+
+            if (
+                ($result['activated_count'] ?? 0) > 0
+                || ($result['converted_count'] ?? 0) > 0
+                || ($result['packages_activated_count'] ?? 0) > 0
+                || ($result['packages_converted_count'] ?? 0) > 0
+            ) {
+                app(AccessController::class)->clearAccessCache($organizationId);
+            }
+        } catch (Throwable $e) {
+            Log::warning('permissions.subscription_modules_sync.failed', [
+                'organization_id' => $organizationId,
+                'error' => $e->getMessage(),
+            ]);
         }
     }
 
