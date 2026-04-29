@@ -102,9 +102,9 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
     Route::prefix('works')->group(function () {
         Route::get('/', [CompletedWorkController::class, 'index']);
         Route::post('/', [CompletedWorkController::class, 'store']);
-        Route::get('/{completed_work}', [CompletedWorkController::class, 'show']);
-        Route::put('/{completed_work}', [CompletedWorkController::class, 'update']);
-        Route::delete('/{completed_work}', [CompletedWorkController::class, 'destroy']);
+        Route::get('/{completed_work}', [CompletedWorkController::class, 'showProjectWork']);
+        Route::put('/{completed_work}', [CompletedWorkController::class, 'updateProjectWork']);
+        Route::delete('/{completed_work}', [CompletedWorkController::class, 'destroyProjectWork']);
         Route::post('/{completed_work}/attach-schedule-task', [CompletedWorkController::class, 'attachScheduleTask']);
         Route::post('/{completed_work}/create-schedule-task', [CompletedWorkController::class, 'createScheduleTaskFromWork']);
         Route::post('/bulk', [CompletedWorkController::class, 'bulkCreate']);

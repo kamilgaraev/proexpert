@@ -299,6 +299,9 @@ trait ActingTestSchema
             $table->decimal('quantity', 15, 4)->nullable();
             $table->decimal('completed_quantity', 15, 4)->nullable();
             $table->decimal('progress_percent', 8, 2)->default(0);
+            $table->unsignedInteger('planned_duration_days')->nullable();
+            $table->date('actual_start_date')->nullable();
+            $table->date('actual_end_date')->nullable();
             $table->string('task_type')->default('task');
             $table->string('status')->default('not_started');
             $table->string('priority')->default('normal');

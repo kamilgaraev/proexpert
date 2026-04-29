@@ -19,6 +19,7 @@ class WorkflowGuardService
     public function __construct(
         private readonly JournalContractCoverageService $coverageService,
         private readonly LoggingService $loggingService,
+        private readonly JournalScheduleTaskResolver $scheduleTaskResolver,
     ) {
     }
 
@@ -85,7 +86,7 @@ class WorkflowGuardService
             );
         }
 
-        if (!$entry->schedule_task_id) {
+        if (!$this->scheduleTaskResolver->allVolumesHaveResolvableTask($entry)) {
             $blockers[] = $this->blocker(
                 'schedule_missing',
                 trans_message('workflow.blockers.schedule_missing'),

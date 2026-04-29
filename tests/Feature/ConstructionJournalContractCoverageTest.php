@@ -17,10 +17,15 @@ use App\Models\ContractEstimateItem;
 use App\Models\Contractor;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
+use App\Models\JournalWorkVolume;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Models\ProjectSchedule;
+use App\Models\ScheduleTask;
 use App\Models\User;
+use App\Services\CompletedWork\CompletedWorkFactService;
 use App\Services\Logging\LoggingService;
+use App\Services\Workflow\WorkflowGuardService;
 use DomainException;
 use Illuminate\Support\Facades\Notification;
 use Tests\Support\ActingTestSchema;
@@ -379,6 +384,115 @@ class ConstructionJournalContractCoverageTest extends TestCase
         $this->assertSame('approved', $approved->status->value);
     }
 
+    public function test_journal_entry_without_explicit_task_is_ready_when_estimate_item_has_single_schedule_task(): void
+    {
+        [$organization, $user, $contract, $project, $estimate, $estimateItem] = $this->createJournalFixture();
+        $journal = $this->createJournal($organization, $project, $contract, $user);
+        $this->coverEstimateItem($contract, $estimate, $estimateItem);
+        $this->createScheduleTaskForEstimateItem($organization, $project, $estimateItem, 3);
+
+        $entry = app(ConstructionJournalService::class)->createEntry($journal, [
+            'estimate_id' => $estimate->id,
+            'entry_date' => '2026-04-29',
+            'work_description' => 'РўРµСЃС‚РѕРІР°СЏ СЂР°Р±РѕС‚Р°',
+            'status' => 'submitted',
+            'work_volumes' => [
+                [
+                    'estimate_item_id' => $estimateItem->id,
+                    'quantity' => 1,
+                ],
+            ],
+        ], $user);
+
+        $blockers = app(WorkflowGuardService::class)->journalEntryBlockers($entry);
+
+        $this->assertSame([], array_column($blockers, 'code'));
+    }
+
+    public function test_approval_autolinks_unique_estimate_schedule_task_and_updates_progress(): void
+    {
+        [$organization, $user, $contract, $project, $estimate, $estimateItem] = $this->createJournalFixture();
+        $approver = User::factory()->create(['current_organization_id' => $organization->id]);
+        $journal = $this->createJournal($organization, $project, $contract, $user);
+        $this->coverEstimateItem($contract, $estimate, $estimateItem);
+        $task = $this->createScheduleTaskForEstimateItem($organization, $project, $estimateItem, 3);
+
+        $this->allowPermissions();
+        Notification::fake();
+
+        $entry = app(ConstructionJournalService::class)->createEntry($journal, [
+            'estimate_id' => $estimate->id,
+            'entry_date' => '2026-04-29',
+            'work_description' => 'РўРµСЃС‚РѕРІР°СЏ СЂР°Р±РѕС‚Р°',
+            'status' => 'submitted',
+            'work_volumes' => [
+                [
+                    'estimate_item_id' => $estimateItem->id,
+                    'quantity' => 1,
+                ],
+            ],
+        ], $user);
+
+        $approved = app(JournalApprovalService::class)->approve($entry, $approver);
+        $work = CompletedWork::query()
+            ->where('journal_entry_id', $entry->id)
+            ->where('estimate_item_id', $estimateItem->id)
+            ->firstOrFail();
+
+        $this->assertSame('approved', $approved->status->value);
+        $this->assertSame($task->id, $approved->schedule_task_id);
+        $this->assertSame($task->id, $work->schedule_task_id);
+        $this->assertSame(1.0, (float) $task->fresh()->completed_quantity);
+        $this->assertSame(33.33, (float) $task->fresh()->progress_percent);
+    }
+
+    public function test_repair_backfills_existing_journal_completed_work_schedule_links(): void
+    {
+        [$organization, $user, $contract, $project, $estimate, $estimateItem] = $this->createJournalFixture();
+        $journal = $this->createJournal($organization, $project, $contract, $user);
+        $this->coverEstimateItem($contract, $estimate, $estimateItem);
+        $task = $this->createScheduleTaskForEstimateItem($organization, $project, $estimateItem, 3);
+
+        $entry = \App\Models\ConstructionJournalEntry::create([
+            'journal_id' => $journal->id,
+            'estimate_id' => $estimate->id,
+            'entry_date' => '2026-04-29',
+            'entry_number' => 1,
+            'work_description' => 'РўРµСЃС‚РѕРІР°СЏ СЂР°Р±РѕС‚Р°',
+            'status' => 'approved',
+            'created_by_user_id' => $user->id,
+        ]);
+        $volume = JournalWorkVolume::create([
+            'journal_entry_id' => $entry->id,
+            'estimate_item_id' => $estimateItem->id,
+            'quantity' => 1,
+        ]);
+        CompletedWork::create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'contract_id' => $contract->id,
+            'estimate_item_id' => $estimateItem->id,
+            'journal_entry_id' => $entry->id,
+            'journal_work_volume_id' => $volume->id,
+            'work_origin_type' => CompletedWork::ORIGIN_JOURNAL,
+            'planning_status' => CompletedWork::PLANNING_REQUIRES_SCHEDULE,
+            'quantity' => 1,
+            'completed_quantity' => 1,
+            'completion_date' => '2026-04-29',
+            'status' => 'confirmed',
+        ]);
+
+        $repaired = app(CompletedWorkFactService::class)->repairJournalScheduleLinks($organization->id);
+        $work = CompletedWork::query()->where('journal_work_volume_id', $volume->id)->firstOrFail();
+
+        $this->assertSame(1, $repaired);
+        $this->assertSame($task->id, $entry->fresh()->schedule_task_id);
+        $this->assertSame($task->id, $work->schedule_task_id);
+        $this->assertSame(CompletedWork::PLANNING_PLANNED, $work->planning_status);
+        $this->assertSame(1.0, (float) $task->fresh()->completed_quantity);
+        $this->assertSame(33.33, (float) $task->fresh()->progress_percent);
+    }
+
     private function createJournalFixture(): array
     {
         $organization = Organization::factory()->create();
@@ -432,6 +546,46 @@ class ConstructionJournalContractCoverageTest extends TestCase
             'start_date' => '2026-04-01',
             'status' => 'active',
             'created_by_user_id' => $user->id,
+        ]);
+    }
+
+    private function coverEstimateItem(Contract $contract, Estimate $estimate, EstimateItem $estimateItem): ContractEstimateItem
+    {
+        return ContractEstimateItem::create([
+            'contract_id' => $contract->id,
+            'estimate_id' => $estimate->id,
+            'estimate_item_id' => $estimateItem->id,
+            'quantity' => 50,
+            'amount' => 50000,
+        ]);
+    }
+
+    private function createScheduleTaskForEstimateItem(
+        Organization $organization,
+        Project $project,
+        EstimateItem $estimateItem,
+        float $quantity
+    ): ScheduleTask {
+        $schedule = ProjectSchedule::create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'name' => 'Р“СЂР°С„РёРє СЂР°Р±РѕС‚',
+            'status' => 'active',
+        ]);
+
+        return ScheduleTask::create([
+            'organization_id' => $organization->id,
+            'schedule_id' => $schedule->id,
+            'estimate_item_id' => $estimateItem->id,
+            'name' => $estimateItem->name,
+            'task_type' => 'task',
+            'quantity' => $quantity,
+            'completed_quantity' => 0,
+            'progress_percent' => 0,
+            'status' => 'not_started',
+            'priority' => 'normal',
+            'level' => 0,
+            'sort_order' => 1,
         ]);
     }
 

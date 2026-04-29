@@ -17,6 +17,7 @@ use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
 use App\Services\Schedule\ScheduleTaskCompletedWorkService;
 use App\Services\Schedule\ScheduleTaskService;
+use App\Services\Workflow\JournalScheduleTaskResolver;
 use Illuminate\Support\Facades\DB;
 
 class CompletedWorkFactService
@@ -25,6 +26,7 @@ class CompletedWorkFactService
         private readonly ScheduleTaskCompletedWorkService $scheduleTaskCompletedWorkService,
         private readonly ScheduleTaskService $scheduleTaskService,
         private readonly JournalContractCoverageService $journalContractCoverageService,
+        private readonly JournalScheduleTaskResolver $scheduleTaskResolver,
     ) {
     }
 
@@ -50,7 +52,7 @@ class CompletedWorkFactService
             $syncedWorkIds = collect();
 
             foreach ($workVolumes as $volume) {
-                $task = $this->resolveTaskForEntry($entry, $volume);
+                $task = $this->scheduleTaskResolver->resolveForVolume($entry, $volume);
                 $payload = $this->buildPayloadFromJournalVolume($entry, $volume, $task);
 
                 /** @var CompletedWork $completedWork */
@@ -65,6 +67,8 @@ class CompletedWorkFactService
                     $syncedTaskIds->push((int) $completedWork->schedule_task_id);
                 }
             }
+
+            $this->backfillEntryScheduleTask($entry);
 
             $existingWorks
                 ->reject(fn (CompletedWork $completedWork): bool => $syncedWorkIds->contains((int) $completedWork->id))
@@ -144,6 +148,44 @@ class CompletedWorkFactService
         return $syncedCount;
     }
 
+    public function repairJournalScheduleLinks(?int $organizationId = null): int
+    {
+        $repairedCount = 0;
+
+        $query = ConstructionJournalEntry::query()
+            ->whereNull('schedule_task_id')
+            ->whereHas('workVolumes', function ($workVolumesQuery): void {
+                $workVolumesQuery->whereNotNull('estimate_item_id');
+            })
+            ->when($organizationId !== null, function ($entryQuery) use ($organizationId): void {
+                $entryQuery->whereHas('journal', function ($journalQuery) use ($organizationId): void {
+                    $journalQuery->where('organization_id', $organizationId);
+                });
+            })
+            ->with([
+                'journal.contract',
+                'scheduleTask.estimateItem.contractLinks.contract.contractor',
+                'workVolumes.estimateItem.contractLinks.contract.contractor',
+                'workVolumes.workType',
+            ]);
+
+        $query->chunkById(100, function ($entries) use (&$repairedCount): void {
+            foreach ($entries as $entry) {
+                if (! $this->scheduleTaskResolver->resolveUniqueTaskForEntry($entry)) {
+                    continue;
+                }
+
+                $this->syncFromJournalEntry($entry);
+
+                if ($entry->fresh()->schedule_task_id) {
+                    $repairedCount++;
+                }
+            }
+        });
+
+        return $repairedCount;
+    }
+
     public function attachToTask(CompletedWork $completedWork, ScheduleTask $task): CompletedWork
     {
         $completedWork->forceFill([
@@ -213,32 +255,6 @@ class CompletedWorkFactService
             'measurementUnit',
             'estimateItem',
         ]);
-    }
-
-    public function resolveTaskForEstimateItem(int $projectId, ?int $estimateItemId): ?ScheduleTask
-    {
-        if (!$estimateItemId) {
-            return null;
-        }
-
-        $tasks = ScheduleTask::query()
-            ->where('estimate_item_id', $estimateItemId)
-            ->whereHas('schedule', function ($query) use ($projectId): void {
-                $query->where('project_id', $projectId);
-            })
-            ->orderByDesc('updated_at')
-            ->get();
-
-        return $tasks->count() === 1 ? $tasks->first() : null;
-    }
-
-    private function resolveTaskForEntry(ConstructionJournalEntry $entry, JournalWorkVolume $volume): ?ScheduleTask
-    {
-        if ($entry->scheduleTask) {
-            return $entry->scheduleTask;
-        }
-
-        return $this->resolveTaskForEstimateItem($entry->journal->project_id, $volume->estimate_item_id);
     }
 
     private function buildPayloadFromJournalVolume(
@@ -350,6 +366,22 @@ class CompletedWorkFactService
         if ($task) {
             $this->scheduleTaskCompletedWorkService->syncCompletedQuantity($task);
         }
+    }
+
+    private function backfillEntryScheduleTask(ConstructionJournalEntry $entry): void
+    {
+        if ($entry->schedule_task_id) {
+            return;
+        }
+
+        $task = $this->scheduleTaskResolver->resolveUniqueTaskForEntry($entry);
+
+        if (! $task) {
+            return;
+        }
+
+        $entry->forceFill(['schedule_task_id' => $task->id])->save();
+        $entry->setRelation('scheduleTask', $task);
     }
 
     private function resolveTaskName(CompletedWork $completedWork): string

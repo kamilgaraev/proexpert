@@ -9,11 +9,17 @@ use App\Enums\Schedule\TaskStatusEnum;
 use App\Models\ConstructionJournalEntry;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
+use App\Services\Schedule\ScheduleTaskCompletedWorkService;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
 class JournalScheduleIntegrationService
 {
+    public function __construct(
+        private readonly ScheduleTaskCompletedWorkService $scheduleTaskCompletedWorkService,
+    ) {
+    }
+
     public function updateTaskProgressFromEntry(ConstructionJournalEntry $entry): ?ScheduleTask
     {
         if (!$entry->schedule_task_id || $entry->status !== JournalEntryStatusEnum::APPROVED) {
@@ -25,12 +31,13 @@ class JournalScheduleIntegrationService
             return null;
         }
 
-        $progress = $this->calculateTaskProgress($task);
+        if (!$task->actual_start_date) {
+            $task->update(['actual_start_date' => $entry->entry_date]);
+        }
 
-        $task->update([
-            'progress_percent' => $progress,
-            'actual_start_date' => $task->actual_start_date ?? $entry->entry_date,
-        ]);
+        $this->scheduleTaskCompletedWorkService->syncCompletedQuantity($task);
+        $task = $task->fresh();
+        $progress = (float) $task->progress_percent;
 
         if ($progress >= 100 && !$task->actual_end_date) {
             $task->update([

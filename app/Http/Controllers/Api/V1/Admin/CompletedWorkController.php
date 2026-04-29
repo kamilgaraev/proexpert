@@ -158,6 +158,15 @@ class CompletedWorkController extends Controller
         }
     }
 
+    public function showProjectWork(int $project, CompletedWork $completed_work): JsonResponse
+    {
+        if ((int) $completed_work->project_id !== $project) {
+            return AdminResponse::error(trans_message('completed_work.not_found'), 404);
+        }
+
+        return $this->show($completed_work);
+    }
+
     public function update(UpdateCompletedWorkRequest $request, CompletedWork $completed_work): JsonResponse
     {
         $completedWork = $completed_work;
@@ -193,6 +202,15 @@ class CompletedWorkController extends Controller
         }
     }
 
+    public function updateProjectWork(UpdateCompletedWorkRequest $request, int $project, CompletedWork $completed_work): JsonResponse
+    {
+        if ((int) $completed_work->project_id !== $project) {
+            return AdminResponse::error(trans_message('completed_work.not_found'), 404);
+        }
+
+        return $this->update($request, $completed_work);
+    }
+
     public function destroy(CompletedWork $completed_work): JsonResponse
     {
         $completedWork = $completed_work;
@@ -222,6 +240,15 @@ class CompletedWorkController extends Controller
 
             return AdminResponse::error(trans_message('completed_work.delete_error'), 500);
         }
+    }
+
+    public function destroyProjectWork(int $project, CompletedWork $completed_work): JsonResponse
+    {
+        if ((int) $completed_work->project_id !== $project) {
+            return AdminResponse::error(trans_message('completed_work.not_found'), 404);
+        }
+
+        return $this->destroy($completed_work);
     }
 
     public function syncMaterials(SyncCompletedWorkMaterialsRequest $request, CompletedWork $completed_work): JsonResponse
