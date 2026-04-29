@@ -44,7 +44,7 @@ class UserPermissionsController extends Controller
 
             $this->ensureBundledModulesSynced($organizationId);
 
-            $cacheKey = "user_permissions_full_{$user->id}_{$organizationId}";
+            $cacheKey = "user_permissions_full_effective_{$user->id}_{$organizationId}";
             $data = Cache::remember($cacheKey, 300, function () use ($user, $organizationId) {
                 $context = $organizationId ? ['organization_id' => $organizationId] : null;
                 $authContext = $organizationId ? AuthorizationContext::getOrganizationContext($organizationId) : null;
