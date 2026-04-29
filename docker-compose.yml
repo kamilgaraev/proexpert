@@ -1,3 +1,9 @@
+x-json-logging: &json-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   # --- BACKEND SERVICES ---
   api:
@@ -17,11 +23,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+    logging: *json-logging
 
   websockets:
     image: ghcr.io/kamilgaraev/proexpert/prohelper:${PROHELPER_IMAGE_TAG:-latest}
@@ -35,11 +37,7 @@ services:
       - ./storage/logs:/var/www/html/storage/logs
     networks:
       - prohelper-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+    logging: *json-logging
 
   horizon:
     image: ghcr.io/kamilgaraev/proexpert/prohelper:${PROHELPER_IMAGE_TAG:-latest}
@@ -56,11 +54,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+    logging: *json-logging
 
   worker-heavy:
     image: ghcr.io/kamilgaraev/proexpert/prohelper:${PROHELPER_IMAGE_TAG:-latest}
@@ -72,11 +66,7 @@ services:
       - ./storage/logs:/var/www/html/storage/logs
     networks:
       - prohelper-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+    logging: *json-logging
     deploy:
       resources:
         limits:
@@ -92,11 +82,7 @@ services:
       - ./storage/logs:/var/www/html/storage/logs
     networks:
       - prohelper-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+    logging: *json-logging
 
   # --- MONITORING SERVICES ---
   loki:
@@ -111,6 +97,7 @@ services:
     restart: unless-stopped
     networks:
       - prohelper-network
+    logging: *json-logging
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3100/ready || exit 1"]
       interval: 30s
@@ -128,6 +115,7 @@ services:
     restart: unless-stopped
     networks:
       - prohelper-network
+    logging: *json-logging
     depends_on:
       loki:
         condition: service_healthy
@@ -149,6 +137,7 @@ services:
     restart: unless-stopped
     networks:
       - prohelper-network
+    logging: *json-logging
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9090/-/healthy || exit 1"]
       interval: 30s
@@ -171,6 +160,7 @@ services:
     restart: unless-stopped
     networks:
       - prohelper-network
+    logging: *json-logging
     depends_on:
       prometheus:
         condition: service_healthy
@@ -191,6 +181,7 @@ services:
     restart: unless-stopped
     networks:
       - prohelper-network
+    logging: *json-logging
 
   # Автоматический перезапуск упавших контейнеров
   watchdog:
@@ -206,6 +197,7 @@ services:
     restart: unless-stopped
     networks:
       - prohelper-network
+    logging: *json-logging
 
   postgres-exporter:
     image: prometheuscommunity/postgres-exporter:v0.15.0
@@ -217,6 +209,31 @@ services:
     networks:
       - prohelper-network
     restart: unless-stopped
+    logging: *json-logging
+
+  docker-cleanup:
+    image: docker:27.5-cli
+    container_name: docker-cleanup
+    restart: unless-stopped
+    network_mode: none
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      DOCKER_IMAGE_PRUNE_UNTIL: 168h
+      DOCKER_BUILDER_PRUNE_UNTIL: 168h
+      DOCKER_CLEANUP_INTERVAL_SECONDS: 86400
+    command:
+      - /bin/sh
+      - -c
+      - |
+        while true; do
+          date
+          docker image prune -a -f --filter "until=$${DOCKER_IMAGE_PRUNE_UNTIL}"
+          docker builder prune -a -f --filter "until=$${DOCKER_BUILDER_PRUNE_UNTIL}"
+          docker system df
+          sleep "$${DOCKER_CLEANUP_INTERVAL_SECONDS}"
+        done
+    logging: *json-logging
 
 networks:
   prohelper-network:
