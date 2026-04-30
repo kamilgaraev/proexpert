@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Services;
 
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -14,21 +15,24 @@ use Illuminate\Support\Facades\Log;
  */
 class PurchaseRequestNumberGenerator
 {
-    private const PREFIX = 'ЗЗ';
+    private const DEFAULT_PREFIX = 'ЗЗ';
+    private const MATERIAL_PREFIX = 'ЗМ';
+    private const EQUIPMENT_PREFIX = 'ЗТ';
+    private const PERSONNEL_PREFIX = 'ЗК';
 
     /**
-     * Генерирует следующий номер заявки в формате: ЗЗ-YYYYMM-XXXX
-     * Например: ЗЗ-202602-0001
+     * Генерирует следующий номер заявки в формате: <префикс>-YYYYMM-XXXX
+     * Например: ЗМ-202604-0001
      *
      * @param int $organizationId ID организации
      * @return string Сгенерированный номер
      */
-    public function generate(int $organizationId): string
+    public function generate(int $organizationId, ?SiteRequestTypeEnum $siteRequestType = null): string
     {
         $year = (int) date('Y');
         $month = (int) date('m');
         
-        $prefix = sprintf('%s-%d%02d-', self::PREFIX, $year, $month);
+        $prefix = sprintf('%s-%d%02d-', $this->prefixForSiteRequestType($siteRequestType), $year, $month);
 
         // Используем атомарный запрос для получения следующего номера.
         // 1. Пытаемся вставить новую запись счетчика для текущего месяца.
@@ -97,5 +101,15 @@ class PurchaseRequestNumberGenerator
             ]);
             throw $e;
         }
+    }
+
+    public function prefixForSiteRequestType(?SiteRequestTypeEnum $siteRequestType): string
+    {
+        return match ($siteRequestType) {
+            SiteRequestTypeEnum::MATERIAL_REQUEST => self::MATERIAL_PREFIX,
+            SiteRequestTypeEnum::EQUIPMENT_REQUEST => self::EQUIPMENT_PREFIX,
+            SiteRequestTypeEnum::PERSONNEL_REQUEST => self::PERSONNEL_PREFIX,
+            default => self::DEFAULT_PREFIX,
+        };
     }
 }

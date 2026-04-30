@@ -73,7 +73,10 @@ class PurchaseRequestService
         DB::beginTransaction();
 
         try {
-            $requestNumber = $this->numberGenerator->generate($siteRequest->organization_id);
+            $requestNumber = $this->numberGenerator->generate(
+                $siteRequest->organization_id,
+                $siteRequest->request_type
+            );
 
             $requestTypeLabel = match ($siteRequest->request_type->value) {
                 'material_request' => 'заявки на материалы',
@@ -119,10 +122,17 @@ class PurchaseRequestService
             throw new \DomainException(trans_message('procurement.purchase_requests.duplicate_site_request'));
         }
 
+        $siteRequest = $siteRequestId
+            ? SiteRequest::query()
+                ->where('organization_id', $organizationId)
+                ->where('id', $siteRequestId)
+                ->first()
+            : null;
+
         DB::beginTransaction();
 
         try {
-            $requestNumber = $this->numberGenerator->generate($organizationId);
+            $requestNumber = $this->numberGenerator->generate($organizationId, $siteRequest?->request_type);
 
             $purchaseRequest = PurchaseRequest::create([
                 'organization_id' => $organizationId,
