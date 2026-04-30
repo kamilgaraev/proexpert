@@ -699,24 +699,62 @@ class ProjectService
         }
 
         try {
-            $query = DB::table('completed_works as cw')
-                ->join('work_types as wt', 'cw.work_type_id', '=', 'wt.id')
-                ->leftJoin('measurement_units as mu', 'wt.measurement_unit_id', '=', 'mu.id')
-                ->leftJoin('users as u', 'cw.user_id', '=', 'u.id')
+            $completedAggregates = DB::table('completed_works as cw')
                 ->where('cw.project_id', $id)
+                ->whereNull('cw.deleted_at')
+                ->select([
+                    'cw.work_type_id',
+                    DB::raw('COUNT(cw.id) as works_count'),
+                    DB::raw('SUM(COALESCE(cw.completed_quantity, cw.quantity, 0)) as completed_quantity'),
+                    DB::raw('SUM(COALESCE(cw.total_amount, 0)) as total_cost'),
+                    DB::raw('AVG(cw.price) as average_unit_price'),
+                    DB::raw('MAX(cw.completion_date) as last_completion_date'),
+                    DB::raw('COUNT(DISTINCT cw.user_id) as workers_count'),
+                ])
+                ->groupBy('cw.work_type_id');
+
+            $plannedAggregates = DB::table('schedule_tasks as st')
+                ->join('project_schedules as ps', 'st.schedule_id', '=', 'ps.id')
+                ->where('ps.project_id', $id)
+                ->whereNotNull('st.work_type_id')
+                ->whereNull('st.deleted_at')
+                ->whereNull('ps.deleted_at')
+                ->select([
+                    'st.work_type_id',
+                    DB::raw('SUM(COALESCE(st.quantity, 0)) as planned_quantity'),
+                ])
+                ->groupBy('st.work_type_id');
+
+            $query = DB::table('work_types as wt')
+                ->leftJoinSub($completedAggregates, 'cw_summary', function ($join) {
+                    $join->on('cw_summary.work_type_id', '=', 'wt.id');
+                })
+                ->leftJoinSub($plannedAggregates, 'plan_summary', function ($join) {
+                    $join->on('plan_summary.work_type_id', '=', 'wt.id');
+                })
+                ->leftJoin('measurement_units as mu', 'wt.measurement_unit_id', '=', 'mu.id')
+                ->whereNull('wt.deleted_at')
+                ->where(function ($query) {
+                    $query
+                        ->whereNotNull('cw_summary.work_type_id')
+                        ->orWhereNotNull('plan_summary.work_type_id');
+                })
                 ->select([
                     'wt.id as work_type_id',
                     'wt.name as work_type_name',
                     'wt.description as work_type_description',
                     'mu.short_name as unit',
-                    DB::raw('COUNT(cw.id) as works_count'),
-                    DB::raw('SUM(cw.quantity) as total_quantity'),
-                    DB::raw('SUM(cw.total_amount) as total_cost'),
-                    DB::raw('AVG(cw.price) as average_unit_price'),
-                    DB::raw('MAX(cw.completion_date) as last_completion_date'),
-                    DB::raw('COUNT(DISTINCT cw.user_id) as workers_count')
-                ])
-                ->groupBy(['wt.id', 'wt.name', 'wt.description', 'mu.short_name']);
+                    DB::raw('COALESCE(plan_summary.planned_quantity, 0) as planned_quantity'),
+                    DB::raw('COALESCE(cw_summary.completed_quantity, 0) as completed_quantity'),
+                    DB::raw('COALESCE(cw_summary.completed_quantity, 0) as actual_quantity'),
+                    DB::raw('COALESCE(cw_summary.completed_quantity, 0) as total_quantity'),
+                    DB::raw('CASE WHEN COALESCE(plan_summary.planned_quantity, 0) > 0 THEN ROUND((COALESCE(cw_summary.completed_quantity, 0) * 1.0 / COALESCE(plan_summary.planned_quantity, 0)) * 100, 2) ELSE 0 END as completion_percentage'),
+                    DB::raw('COALESCE(cw_summary.works_count, 0) as works_count'),
+                    DB::raw('COALESCE(cw_summary.total_cost, 0) as total_cost'),
+                    DB::raw('COALESCE(cw_summary.average_unit_price, 0) as average_unit_price'),
+                    'cw_summary.last_completion_date',
+                    DB::raw('COALESCE(cw_summary.workers_count, 0) as workers_count'),
+                ]);
 
             if ($search) {
                 $query->where(function($q) use ($search) {
@@ -725,7 +763,7 @@ class ProjectService
                 });
             }
 
-            $allowedSortBy = ['work_type_name', 'works_count', 'total_quantity', 'total_cost', 'last_completion_date'];
+            $allowedSortBy = ['work_type_name', 'works_count', 'planned_quantity', 'completed_quantity', 'total_quantity', 'total_cost', 'last_completion_date'];
             if (!in_array($sortBy, $allowedSortBy)) {
                 $sortBy = 'last_completion_date';
             }
