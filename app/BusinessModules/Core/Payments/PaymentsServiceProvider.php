@@ -21,7 +21,6 @@ use App\BusinessModules\Core\Payments\Services\OffsetService;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Observers\PaymentDocumentObserver;
 use Illuminate\Support\ServiceProvider;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Event;
 
 use App\BusinessModules\Core\Payments\Services\Export\PaymentOrderPdfService;
@@ -105,8 +104,6 @@ class PaymentsServiceProvider extends ServiceProvider
         // $schedule->job(new ProcessOverduePaymentsJob())->daily();
         // $schedule->job(new SendPaymentRemindersJob())->daily();
         // $schedule->job(new SendUpcomingPaymentNotificationsJob())->dailyAt('09:00');
-        
-        Log::info('PaymentsServiceProvider booted');
     }
     
     /**
