@@ -113,6 +113,52 @@ class ConstructionJournalContractCoverageTest extends TestCase
         $this->assertNull($work->contractor_id);
     }
 
+    public function test_journal_work_volume_inherits_work_type_from_estimate_item(): void
+    {
+        [$organization, $user, $contract, $project, $estimate, $estimateItem] = $this->createJournalFixture();
+        $journal = $this->createJournal($organization, $project, $contract, $user);
+
+        $unitId = \Illuminate\Support\Facades\DB::table('measurement_units')->insertGetId([
+            'organization_id' => $organization->id,
+            'name' => 'Cubic meter',
+            'short_name' => 'm3',
+            'type' => 'work',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $workTypeId = \Illuminate\Support\Facades\DB::table('work_types')->insertGetId([
+            'organization_id' => $organization->id,
+            'name' => 'Foundation concreting',
+            'measurement_unit_id' => $unitId,
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $estimateItem->update([
+            'work_type_id' => $workTypeId,
+            'measurement_unit_id' => $unitId,
+        ]);
+
+        $entry = app(ConstructionJournalService::class)->createEntry($journal, [
+            'estimate_id' => $estimate->id,
+            'entry_date' => '2026-04-28',
+            'work_description' => 'Foundation concreting',
+            'status' => 'approved',
+            'work_volumes' => [
+                [
+                    'estimate_item_id' => $estimateItem->id,
+                    'quantity' => 15,
+                ],
+            ],
+        ], $user);
+
+        $volume = $entry->workVolumes()->firstOrFail();
+        $work = CompletedWork::query()->where('journal_work_volume_id', $volume->id)->firstOrFail();
+
+        $this->assertSame($workTypeId, (int) $volume->work_type_id);
+        $this->assertSame($workTypeId, (int) $work->work_type_id);
+    }
+
     public function test_multiple_coverages_without_journal_contract_keep_fact_without_contract(): void
     {
         [$organization, $user, $contract, $project, $estimate, $estimateItem] = $this->createJournalFixture();

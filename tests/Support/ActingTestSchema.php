@@ -34,6 +34,8 @@ trait ActingTestSchema
             'contract_estimate_items',
             'estimate_items',
             'estimates',
+            'work_types',
+            'measurement_units',
             'supplementary_agreements',
             'contracts',
             'contractors',
@@ -157,6 +159,27 @@ trait ActingTestSchema
             $table->softDeletes();
         });
 
+        Schema::create('measurement_units', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id')->nullable();
+            $table->string('name');
+            $table->string('short_name');
+            $table->string('type')->default('work');
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('work_types', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id')->nullable();
+            $table->string('name');
+            $table->foreignId('measurement_unit_id')->nullable();
+            $table->string('category')->nullable();
+            $table->boolean('is_active')->default(true);
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
         Schema::create('estimates', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('organization_id');
@@ -177,6 +200,8 @@ trait ActingTestSchema
             $table->string('position_number')->nullable();
             $table->string('item_type')->nullable();
             $table->string('name');
+            $table->foreignId('work_type_id')->nullable();
+            $table->foreignId('measurement_unit_id')->nullable();
             $table->decimal('quantity', 15, 8)->default(0);
             $table->decimal('quantity_total', 15, 8)->nullable();
             $table->decimal('unit_price', 15, 4)->default(0);

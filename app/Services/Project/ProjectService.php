@@ -699,67 +699,153 @@ class ProjectService
         }
 
         try {
+            $completedWorkTypeId = 'COALESCE(cw.work_type_id, ei.work_type_id)';
+            $completedGroupKey = "CASE WHEN {$completedWorkTypeId} IS NOT NULL THEN 'work_type:' || CAST({$completedWorkTypeId} AS TEXT) WHEN cw.estimate_item_id IS NOT NULL THEN 'estimate_item:' || CAST(cw.estimate_item_id AS TEXT) WHEN cw.schedule_task_id IS NOT NULL THEN 'schedule_task:' || CAST(cw.schedule_task_id AS TEXT) ELSE 'untyped' END";
+            $completedDisplayId = "CASE WHEN {$completedWorkTypeId} IS NOT NULL THEN {$completedWorkTypeId} WHEN cw.estimate_item_id IS NOT NULL THEN -cw.estimate_item_id WHEN cw.schedule_task_id IS NOT NULL THEN (-1000000000 - cw.schedule_task_id) ELSE -2000000000 END";
+            $completedName = "COALESCE(cw_wt.name, ei_wt.name, ei.name, st.name, 'Без вида работ')";
+            $completedUnit = 'COALESCE(cw_mu.short_name, ei_mu.short_name, st_mu.short_name)';
+
             $completedAggregates = DB::table('completed_works as cw')
+                ->leftJoin('work_types as cw_wt', 'cw_wt.id', '=', 'cw.work_type_id')
+                ->leftJoin('measurement_units as cw_mu', 'cw_mu.id', '=', 'cw_wt.measurement_unit_id')
+                ->leftJoin('estimate_items as ei', 'ei.id', '=', 'cw.estimate_item_id')
+                ->leftJoin('work_types as ei_wt', 'ei_wt.id', '=', 'ei.work_type_id')
+                ->leftJoin('measurement_units as ei_mu', 'ei_mu.id', '=', 'ei.measurement_unit_id')
+                ->leftJoin('schedule_tasks as st', 'st.id', '=', 'cw.schedule_task_id')
+                ->leftJoin('measurement_units as st_mu', 'st_mu.id', '=', 'st.measurement_unit_id')
                 ->where('cw.project_id', $id)
                 ->whereNull('cw.deleted_at')
-                ->select([
-                    'cw.work_type_id',
-                    DB::raw('COUNT(cw.id) as works_count'),
-                    DB::raw('SUM(COALESCE(cw.completed_quantity, cw.quantity, 0)) as completed_quantity'),
-                    DB::raw('SUM(COALESCE(cw.total_amount, 0)) as total_cost'),
-                    DB::raw('AVG(cw.price) as average_unit_price'),
-                    DB::raw('MAX(cw.completion_date) as last_completion_date'),
-                    DB::raw('COUNT(DISTINCT cw.user_id) as workers_count'),
-                ])
-                ->groupBy('cw.work_type_id');
+                ->selectRaw("{$completedGroupKey} as group_key")
+                ->selectRaw("{$completedDisplayId} as work_type_id")
+                ->selectRaw("{$completedName} as work_type_name")
+                ->selectRaw("{$completedUnit} as unit")
+                ->selectRaw('0 as planned_quantity')
+                ->selectRaw('SUM(COALESCE(cw.completed_quantity, cw.quantity, 0)) as completed_quantity')
+                ->selectRaw('COUNT(cw.id) as works_count')
+                ->selectRaw('SUM(COALESCE(cw.total_amount, 0)) as total_cost')
+                ->selectRaw('SUM(COALESCE(cw.price, 0)) as price_sum')
+                ->selectRaw('COUNT(cw.price) as price_count')
+                ->selectRaw('MAX(cw.completion_date) as last_completion_date')
+                ->selectRaw('COUNT(DISTINCT cw.user_id) as workers_count')
+                ->groupByRaw("{$completedGroupKey}, {$completedDisplayId}, {$completedName}, {$completedUnit}");
+
+            $scheduleWorkTypeId = 'COALESCE(st.work_type_id, ei.work_type_id)';
+            $scheduleGroupKey = "CASE WHEN {$scheduleWorkTypeId} IS NOT NULL THEN 'work_type:' || CAST({$scheduleWorkTypeId} AS TEXT) WHEN st.estimate_item_id IS NOT NULL THEN 'estimate_item:' || CAST(st.estimate_item_id AS TEXT) ELSE 'schedule_task:' || CAST(st.id AS TEXT) END";
+            $scheduleDisplayId = "CASE WHEN {$scheduleWorkTypeId} IS NOT NULL THEN {$scheduleWorkTypeId} WHEN st.estimate_item_id IS NOT NULL THEN -st.estimate_item_id ELSE (-1000000000 - st.id) END";
+            $scheduleName = "COALESCE(st_wt.name, ei_wt.name, ei.name, st.name, 'Без вида работ')";
+            $scheduleUnit = 'COALESCE(st_mu.short_name, ei_mu.short_name)';
 
             $plannedAggregates = DB::table('schedule_tasks as st')
                 ->join('project_schedules as ps', 'st.schedule_id', '=', 'ps.id')
+                ->leftJoin('work_types as st_wt', 'st_wt.id', '=', 'st.work_type_id')
+                ->leftJoin('measurement_units as st_mu', 'st_mu.id', '=', 'st.measurement_unit_id')
+                ->leftJoin('estimate_items as ei', 'ei.id', '=', 'st.estimate_item_id')
+                ->leftJoin('work_types as ei_wt', 'ei_wt.id', '=', 'ei.work_type_id')
+                ->leftJoin('measurement_units as ei_mu', 'ei_mu.id', '=', 'ei.measurement_unit_id')
                 ->where('ps.project_id', $id)
-                ->whereNotNull('st.work_type_id')
                 ->whereNull('st.deleted_at')
                 ->whereNull('ps.deleted_at')
-                ->select([
-                    'st.work_type_id',
-                    DB::raw('SUM(COALESCE(st.quantity, 0)) as planned_quantity'),
-                ])
-                ->groupBy('st.work_type_id');
+                ->selectRaw("{$scheduleGroupKey} as group_key")
+                ->selectRaw("{$scheduleDisplayId} as work_type_id")
+                ->selectRaw("{$scheduleName} as work_type_name")
+                ->selectRaw("{$scheduleUnit} as unit")
+                ->selectRaw('SUM(COALESCE(st.quantity, ei.quantity_total, ei.quantity, 0)) as planned_quantity')
+                ->selectRaw('0 as completed_quantity')
+                ->selectRaw('0 as works_count')
+                ->selectRaw('0 as total_cost')
+                ->selectRaw('0 as price_sum')
+                ->selectRaw('0 as price_count')
+                ->selectRaw('NULL as last_completion_date')
+                ->selectRaw('0 as workers_count')
+                ->groupByRaw("{$scheduleGroupKey}, {$scheduleDisplayId}, {$scheduleName}, {$scheduleUnit}");
 
-            $query = DB::table('work_types as wt')
-                ->leftJoinSub($completedAggregates, 'cw_summary', function ($join) {
-                    $join->on('cw_summary.work_type_id', '=', 'wt.id');
-                })
-                ->leftJoinSub($plannedAggregates, 'plan_summary', function ($join) {
-                    $join->on('plan_summary.work_type_id', '=', 'wt.id');
-                })
-                ->leftJoin('measurement_units as mu', 'wt.measurement_unit_id', '=', 'mu.id')
-                ->whereNull('wt.deleted_at')
-                ->where(function ($query) {
+            $estimateWorkTypeId = 'ei.work_type_id';
+            $estimateGroupKey = "CASE WHEN {$estimateWorkTypeId} IS NOT NULL THEN 'work_type:' || CAST({$estimateWorkTypeId} AS TEXT) ELSE 'estimate_item:' || CAST(ei.id AS TEXT) END";
+            $estimateDisplayId = "CASE WHEN {$estimateWorkTypeId} IS NOT NULL THEN {$estimateWorkTypeId} ELSE -ei.id END";
+            $estimateName = "COALESCE(ei_wt.name, ei.name, 'Без вида работ')";
+            $estimateUnit = 'ei_mu.short_name';
+
+            $estimatePlanAggregates = DB::table('estimate_items as ei')
+                ->join('estimates as e', 'e.id', '=', 'ei.estimate_id')
+                ->leftJoin('work_types as ei_wt', 'ei_wt.id', '=', 'ei.work_type_id')
+                ->leftJoin('measurement_units as ei_mu', 'ei_mu.id', '=', 'ei.measurement_unit_id')
+                ->where('e.project_id', $id)
+                ->whereNull('ei.deleted_at')
+                ->whereNull('e.deleted_at')
+                ->whereExists(function ($query) use ($id): void {
                     $query
-                        ->whereNotNull('cw_summary.work_type_id')
-                        ->orWhereNotNull('plan_summary.work_type_id');
+                        ->select(DB::raw(1))
+                        ->from('completed_works as cw_plan')
+                        ->whereColumn('cw_plan.estimate_item_id', 'ei.id')
+                        ->where('cw_plan.project_id', $id)
+                        ->whereNull('cw_plan.deleted_at');
                 })
+                ->whereNotExists(function ($query) use ($id): void {
+                    $query
+                        ->select(DB::raw(1))
+                        ->from('schedule_tasks as st_plan')
+                        ->join('project_schedules as ps_plan', 'ps_plan.id', '=', 'st_plan.schedule_id')
+                        ->whereColumn('st_plan.estimate_item_id', 'ei.id')
+                        ->where('ps_plan.project_id', $id)
+                        ->whereNull('st_plan.deleted_at')
+                        ->whereNull('ps_plan.deleted_at');
+                })
+                ->selectRaw("{$estimateGroupKey} as group_key")
+                ->selectRaw("{$estimateDisplayId} as work_type_id")
+                ->selectRaw("{$estimateName} as work_type_name")
+                ->selectRaw("{$estimateUnit} as unit")
+                ->selectRaw('SUM(COALESCE(ei.quantity_total, ei.quantity, 0)) as planned_quantity')
+                ->selectRaw('0 as completed_quantity')
+                ->selectRaw('0 as works_count')
+                ->selectRaw('0 as total_cost')
+                ->selectRaw('0 as price_sum')
+                ->selectRaw('0 as price_count')
+                ->selectRaw('NULL as last_completion_date')
+                ->selectRaw('0 as workers_count')
+                ->groupByRaw("{$estimateGroupKey}, {$estimateDisplayId}, {$estimateName}, {$estimateUnit}");
+
+            $summaryRows = $completedAggregates
+                ->unionAll($plannedAggregates)
+                ->unionAll($estimatePlanAggregates);
+
+            $summaryAggregates = DB::query()
+                ->fromSub($summaryRows, 'work_summary')
+                ->selectRaw('group_key')
+                ->selectRaw('MAX(work_type_id) as work_type_id')
+                ->selectRaw('MAX(work_type_name) as work_type_name')
+                ->selectRaw('MAX(unit) as unit')
+                ->selectRaw('SUM(planned_quantity) as planned_quantity')
+                ->selectRaw('SUM(completed_quantity) as completed_quantity')
+                ->selectRaw('SUM(works_count) as works_count')
+                ->selectRaw('SUM(total_cost) as total_cost')
+                ->selectRaw('SUM(price_sum) as price_sum')
+                ->selectRaw('SUM(price_count) as price_count')
+                ->selectRaw('MAX(last_completion_date) as last_completion_date')
+                ->selectRaw('SUM(workers_count) as workers_count')
+                ->groupBy('group_key');
+
+            $query = DB::query()
+                ->fromSub($summaryAggregates, 'summary')
                 ->select([
-                    'wt.id as work_type_id',
-                    'wt.name as work_type_name',
-                    'wt.description as work_type_description',
-                    'mu.short_name as unit',
-                    DB::raw('COALESCE(plan_summary.planned_quantity, 0) as planned_quantity'),
-                    DB::raw('COALESCE(cw_summary.completed_quantity, 0) as completed_quantity'),
-                    DB::raw('COALESCE(cw_summary.completed_quantity, 0) as actual_quantity'),
-                    DB::raw('COALESCE(cw_summary.completed_quantity, 0) as total_quantity'),
-                    DB::raw('CASE WHEN COALESCE(plan_summary.planned_quantity, 0) > 0 THEN ROUND((COALESCE(cw_summary.completed_quantity, 0) * 1.0 / COALESCE(plan_summary.planned_quantity, 0)) * 100, 2) ELSE 0 END as completion_percentage'),
-                    DB::raw('COALESCE(cw_summary.works_count, 0) as works_count'),
-                    DB::raw('COALESCE(cw_summary.total_cost, 0) as total_cost'),
-                    DB::raw('COALESCE(cw_summary.average_unit_price, 0) as average_unit_price'),
-                    'cw_summary.last_completion_date',
-                    DB::raw('COALESCE(cw_summary.workers_count, 0) as workers_count'),
+                    'work_type_id',
+                    'work_type_name',
+                    DB::raw('NULL as work_type_description'),
+                    'unit',
+                    DB::raw('COALESCE(planned_quantity, 0) as planned_quantity'),
+                    DB::raw('COALESCE(completed_quantity, 0) as completed_quantity'),
+                    DB::raw('COALESCE(completed_quantity, 0) as actual_quantity'),
+                    DB::raw('COALESCE(completed_quantity, 0) as total_quantity'),
+                    DB::raw('CASE WHEN COALESCE(planned_quantity, 0) > 0 THEN ROUND((COALESCE(completed_quantity, 0) * 1.0 / COALESCE(planned_quantity, 0)) * 100, 2) ELSE 0 END as completion_percentage'),
+                    DB::raw('COALESCE(works_count, 0) as works_count'),
+                    DB::raw('COALESCE(total_cost, 0) as total_cost'),
+                    DB::raw('CASE WHEN COALESCE(price_count, 0) > 0 THEN ROUND(COALESCE(price_sum, 0) * 1.0 / price_count, 2) ELSE 0 END as average_unit_price'),
+                    'last_completion_date',
+                    DB::raw('COALESCE(workers_count, 0) as workers_count'),
                 ]);
 
             if ($search) {
                 $query->where(function($q) use ($search) {
-                    $q->where('wt.name', 'like', "%{$search}%")
-                      ->orWhere('wt.description', 'like', "%{$search}%");
+                    $q->where('work_type_name', 'like', "%{$search}%");
                 });
             }
 

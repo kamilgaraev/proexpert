@@ -283,22 +283,21 @@ class ConstructionJournalService
 
         foreach ($volumes as $volume) {
             $estimateItemId = $volume['estimate_item_id'] ?? null;
-
-            if (($volume['auto_attach_contract_coverage'] ?? false) && $estimateItemId) {
-                $estimateItem = EstimateItem::query()
+            $estimateItem = $estimateItemId
+                ? EstimateItem::query()
                     ->with(['estimate', 'contractLinks.contract.contractor'])
-                    ->find($estimateItemId);
+                    ->find($estimateItemId)
+                : null;
 
-                if ($estimateItem) {
-                    $this->journalContractCoverageService->ensureCoverage($entry->journal, $estimateItem);
-                }
+            if (($volume['auto_attach_contract_coverage'] ?? false) && $estimateItem) {
+                $this->journalContractCoverageService->ensureCoverage($entry->journal, $estimateItem);
             }
 
             $entry->workVolumes()->create([
                 'estimate_item_id' => $estimateItemId,
-                'work_type_id' => $volume['work_type_id'] ?? null,
+                'work_type_id' => $this->resolveWorkVolumeTypeId($entry, $volume, $estimateItem),
                 'quantity' => $volume['quantity'],
-                'measurement_unit_id' => $volume['measurement_unit_id'] ?? null,
+                'measurement_unit_id' => $this->resolveWorkVolumeMeasurementUnitId($entry, $volume, $estimateItem),
                 'notes' => $volume['notes'] ?? null,
             ]);
         }
@@ -313,22 +312,21 @@ class ConstructionJournalService
 
         foreach ($volumes as $volume) {
             $estimateItemId = $volume['estimate_item_id'] ?? null;
-
-            if (($volume['auto_attach_contract_coverage'] ?? false) && $estimateItemId) {
-                $estimateItem = EstimateItem::query()
+            $estimateItem = $estimateItemId
+                ? EstimateItem::query()
                     ->with(['estimate', 'contractLinks.contract.contractor'])
-                    ->find($estimateItemId);
+                    ->find($estimateItemId)
+                : null;
 
-                if ($estimateItem) {
-                    $this->journalContractCoverageService->ensureCoverage($entry->journal, $estimateItem);
-                }
+            if (($volume['auto_attach_contract_coverage'] ?? false) && $estimateItem) {
+                $this->journalContractCoverageService->ensureCoverage($entry->journal, $estimateItem);
             }
 
             $payload = [
                 'estimate_item_id' => $estimateItemId,
-                'work_type_id' => $volume['work_type_id'] ?? null,
+                'work_type_id' => $this->resolveWorkVolumeTypeId($entry, $volume, $estimateItem),
                 'quantity' => $volume['quantity'],
-                'measurement_unit_id' => $volume['measurement_unit_id'] ?? null,
+                'measurement_unit_id' => $this->resolveWorkVolumeMeasurementUnitId($entry, $volume, $estimateItem),
                 'notes' => $volume['notes'] ?? null,
             ];
 
@@ -349,6 +347,38 @@ class ConstructionJournalService
             ->delete();
 
         $entry->unsetRelation('workVolumes');
+    }
+
+    private function resolveWorkVolumeTypeId(
+        ConstructionJournalEntry $entry,
+        array $volume,
+        ?EstimateItem $estimateItem
+    ): ?int {
+        if (!empty($volume['work_type_id'])) {
+            return (int) $volume['work_type_id'];
+        }
+
+        $entry->loadMissing('scheduleTask.estimateItem');
+
+        return $estimateItem?->work_type_id
+            ?? $entry->scheduleTask?->work_type_id
+            ?? $entry->scheduleTask?->estimateItem?->work_type_id;
+    }
+
+    private function resolveWorkVolumeMeasurementUnitId(
+        ConstructionJournalEntry $entry,
+        array $volume,
+        ?EstimateItem $estimateItem
+    ): ?int {
+        if (!empty($volume['measurement_unit_id'])) {
+            return (int) $volume['measurement_unit_id'];
+        }
+
+        $entry->loadMissing('scheduleTask.estimateItem');
+
+        return $estimateItem?->measurement_unit_id
+            ?? $entry->scheduleTask?->measurement_unit_id
+            ?? $entry->scheduleTask?->estimateItem?->measurement_unit_id;
     }
 
     protected function attachWorkers(ConstructionJournalEntry $entry, array $workers): void
