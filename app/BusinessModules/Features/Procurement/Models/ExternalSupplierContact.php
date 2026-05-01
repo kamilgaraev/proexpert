@@ -8,6 +8,7 @@ use App\Models\Organization;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class ExternalSupplierContact extends Model
@@ -39,5 +40,10 @@ class ExternalSupplierContact extends Model
     public function supplierRequests(): HasMany
     {
         return $this->hasMany(SupplierRequest::class);
+    }
+
+    public function supplierParty(): HasOne
+    {
+        return $this->hasOne(SupplierParty::class);
     }
 }
