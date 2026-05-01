@@ -13,6 +13,7 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 use function trans_message;
 
@@ -134,6 +135,8 @@ class SupplierProposalController extends Controller
             );
         } catch (ModelNotFoundException) {
             return AdminResponse::error(trans_message('procurement.proposals.not_found'), 404);
+        } catch (ValidationException $e) {
+            return AdminResponse::error(trans_message('errors.validation_failed'), 422, $e->errors());
         } catch (\DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
@@ -167,7 +170,7 @@ class SupplierProposalController extends Controller
             );
         } catch (ModelNotFoundException) {
             return AdminResponse::error(trans_message('procurement.proposals.not_found'), 404);
-        } catch (\Illuminate\Validation\ValidationException $e) {
+        } catch (ValidationException $e) {
             return AdminResponse::error(trans_message('errors.validation_failed'), 422, $e->errors());
         } catch (\DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
