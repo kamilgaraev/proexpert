@@ -392,6 +392,8 @@
       "procurement.supplier_proposals.view",
       "procurement.supplier_proposals.create",
       "procurement.supplier_proposals.accept",
+      "procurement.proposal_decisions.view",
+      "procurement.proposal_decisions.select",
       "procurement.contracts.view",
       "procurement.contracts.create",
       "procurement.contracts.edit",

@@ -10,6 +10,7 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequestLine;
 use App\BusinessModules\Features\Procurement\Models\SupplierParty;
 use App\BusinessModules\Features\Procurement\Services\SupplierPartyService;
+use App\BusinessModules\Features\Procurement\Services\SupplierProposalComparisonService;
 use App\BusinessModules\Features\Procurement\Services\SupplierProposalService;
 use App\BusinessModules\Features\Procurement\Services\SupplierRequestService;
 use App\Models\Organization;
@@ -63,6 +64,8 @@ class SupplierPartyWorkflowTest extends TestCase
                 ],
             ],
         ]);
+
+        app(SupplierProposalComparisonService::class)->selectWinner($supplierRequest, $proposal->id, null, null);
 
         $acceptedProposal = app(SupplierProposalService::class)->accept($proposal);
         $purchaseOrder = $acceptedProposal->purchaseOrder;

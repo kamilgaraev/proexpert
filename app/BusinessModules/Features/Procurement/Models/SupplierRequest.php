@@ -10,6 +10,7 @@ use App\Models\Supplier;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class SupplierRequest extends Model
@@ -81,6 +82,16 @@ class SupplierRequest extends Model
     public function proposals(): HasMany
     {
         return $this->hasMany(SupplierProposal::class);
+    }
+
+    public function proposalDecision(): HasOne
+    {
+        return $this->hasOne(SupplierProposalDecision::class);
+    }
+
+    public function decision(): HasOne
+    {
+        return $this->proposalDecision();
     }
 
     public function scopeForOrganization($query, int $organizationId)

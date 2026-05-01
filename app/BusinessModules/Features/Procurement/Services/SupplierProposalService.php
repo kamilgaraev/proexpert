@@ -77,6 +77,10 @@ class SupplierProposalService
             throw new \DomainException(trans_message('procurement.proposals.accept_invalid_status'));
         }
 
+        if (!app(SupplierProposalComparisonService::class)->hasSelectedDecisionForProposal($proposal)) {
+            throw new \DomainException(trans_message('procurement.proposal_decisions.accepted_decision_required'));
+        }
+
         DB::transaction(function () use ($proposal): void {
             $proposal->loadMissing(['supplierRequest.purchaseRequest', 'lines']);
 

@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalStatusEnum;
 use App\Models\Organization;
 use App\Models\Supplier;
@@ -134,6 +135,16 @@ class SupplierProposal extends Model
     public function lines(): HasMany
     {
         return $this->hasMany(SupplierProposalLine::class);
+    }
+
+    public function decisions(): HasMany
+    {
+        return $this->hasMany(SupplierProposalDecision::class, 'winning_supplier_proposal_id');
+    }
+
+    public function winningDecision(): HasOne
+    {
+        return $this->hasOne(SupplierProposalDecision::class, 'winning_supplier_proposal_id');
     }
 
     // ============================================

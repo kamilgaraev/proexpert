@@ -43,6 +43,8 @@
       "procurement.supplier_requests.view",
       "procurement.purchase_orders.view",
       "procurement.purchase_orders.confirm",
+      "procurement.proposal_decisions.view",
+      "procurement.proposal_decisions.select",
       "procurement.contracts.view",
       "procurement.contracts.create",
       "procurement.dashboard.view",

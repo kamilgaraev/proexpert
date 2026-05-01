@@ -5,6 +5,7 @@ use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementSetting
 use App\BusinessModules\Features\Procurement\Http\Controllers\PurchaseContractController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\PurchaseOrderController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\PurchaseRequestController;
+use App\BusinessModules\Features\Procurement\Http\Controllers\SupplierProposalDecisionController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\SupplierProposalController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\SupplierRequestController;
 use App\Http\Responses\AdminResponse;
@@ -51,6 +52,12 @@ Route::prefix('api/v1/admin/procurement')
             Route::post('/{id}/cancel', [SupplierRequestController::class, 'cancel'])
                 ->middleware('authorize:procurement.supplier_requests.cancel')
                 ->name('cancel');
+            Route::get('/{supplierRequest}/proposal-comparison', [SupplierProposalDecisionController::class, 'comparison'])
+                ->middleware('authorize:procurement.proposal_decisions.view')
+                ->name('proposal_comparison');
+            Route::post('/{supplierRequest}/proposal-decision', [SupplierProposalDecisionController::class, 'select'])
+                ->middleware('authorize:procurement.proposal_decisions.select')
+                ->name('proposal_decision');
         });
 
         Route::prefix('purchase-orders')->name('purchase_orders.')->group(function () {
