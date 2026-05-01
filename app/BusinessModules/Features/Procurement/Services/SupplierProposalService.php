@@ -5,12 +5,16 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Procurement\Services;
 
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
+use App\BusinessModules\Features\Procurement\Enums\SupplierProposalDecisionEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
+use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+
 use function trans_message;
 
 class SupplierProposalService
@@ -73,45 +77,91 @@ class SupplierProposalService
 
     public function accept(SupplierProposal $proposal): SupplierProposal
     {
-        if (!$proposal->canBeAccepted()) {
-            throw new \DomainException(trans_message('procurement.proposals.accept_invalid_status'));
-        }
+        $acceptedProposal = DB::transaction(function () use ($proposal): SupplierProposal {
+            $lockedProposal = SupplierProposal::query()
+                ->whereKey($proposal->id)
+                ->lockForUpdate()
+                ->firstOrFail();
 
-        if (!app(SupplierProposalComparisonService::class)->hasSelectedDecisionForProposal($proposal)) {
-            throw new \DomainException(trans_message('procurement.proposal_decisions.accepted_decision_required'));
-        }
+            if (!$lockedProposal->canBeAccepted()) {
+                throw new \DomainException(trans_message('procurement.proposals.accept_invalid_status'));
+            }
 
-        DB::transaction(function () use ($proposal): void {
-            $proposal->loadMissing(['supplierRequest.purchaseRequest', 'lines']);
+            if ($lockedProposal->supplier_request_id === null) {
+                throw new \DomainException(trans_message('procurement.proposal_decisions.accepted_decision_required'));
+            }
 
-            $proposal->update([
+            SupplierRequest::query()
+                ->whereKey($lockedProposal->supplier_request_id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $decision = SupplierProposalDecision::query()
+                ->where('organization_id', $lockedProposal->organization_id)
+                ->where('supplier_request_id', $lockedProposal->supplier_request_id)
+                ->lockForUpdate()
+                ->first();
+
+            if (
+                $decision === null
+                || $decision->winning_supplier_proposal_id !== $lockedProposal->id
+                || !in_array($decision->status, [
+                    SupplierProposalDecisionEnum::SELECTED,
+                    SupplierProposalDecisionEnum::APPROVED,
+                ], true)
+            ) {
+                throw new \DomainException(trans_message('procurement.proposal_decisions.accepted_decision_required'));
+            }
+
+            $existingOrder = PurchaseOrder::query()
+                ->where('organization_id', $lockedProposal->organization_id)
+                ->where(function ($query) use ($lockedProposal): void {
+                    $query->where('accepted_supplier_proposal_id', $lockedProposal->id)
+                        ->orWhereHas('acceptedSupplierProposal', function ($proposalQuery) use ($lockedProposal): void {
+                            $proposalQuery
+                                ->where('organization_id', $lockedProposal->organization_id)
+                                ->where('supplier_request_id', $lockedProposal->supplier_request_id);
+                        });
+                })
+                ->lockForUpdate()
+                ->first();
+
+            if ($existingOrder !== null) {
+                throw ValidationException::withMessages([
+                    'proposal_id' => [trans_message('procurement.proposals.purchase_order_already_exists')],
+                ]);
+            }
+
+            $lockedProposal->load(['supplierRequest.purchaseRequest', 'lines']);
+
+            $lockedProposal->update([
                 'status' => SupplierProposalStatusEnum::ACCEPTED,
             ]);
 
             $order = PurchaseOrder::query()->create([
-                'organization_id' => $proposal->organization_id,
-                'purchase_request_id' => $proposal->supplierRequest?->purchase_request_id,
-                'accepted_supplier_proposal_id' => $proposal->id,
-                'supplier_id' => $proposal->supplier_id,
-                'external_supplier_contact_id' => $proposal->external_supplier_contact_id,
-                'supplier_party_id' => $proposal->supplier_party_id,
-                'supplier_snapshot' => $proposal->supplier_snapshot ?? [],
-                'order_number' => $this->generateOrderNumber($proposal->organization_id),
+                'organization_id' => $lockedProposal->organization_id,
+                'purchase_request_id' => $lockedProposal->supplierRequest?->purchase_request_id,
+                'accepted_supplier_proposal_id' => $lockedProposal->id,
+                'supplier_id' => $lockedProposal->supplier_id,
+                'external_supplier_contact_id' => $lockedProposal->external_supplier_contact_id,
+                'supplier_party_id' => $lockedProposal->supplier_party_id,
+                'supplier_snapshot' => $lockedProposal->supplier_snapshot ?? [],
+                'order_number' => $this->generateOrderNumber($lockedProposal->organization_id),
                 'order_date' => now(),
                 'status' => PurchaseOrderStatusEnum::CONFIRMED,
-                'total_amount' => $proposal->total_amount,
-                'currency' => $proposal->currency,
+                'total_amount' => $lockedProposal->total_amount,
+                'currency' => $lockedProposal->currency,
                 'pricing_source' => 'accepted_supplier_proposal',
-                'delivery_date' => $proposal->supplierRequest?->purchaseRequest?->needed_by,
+                'delivery_date' => $lockedProposal->supplierRequest?->purchaseRequest?->needed_by,
                 'confirmed_at' => now(),
-                'notes' => $proposal->notes,
+                'notes' => $lockedProposal->notes,
                 'metadata' => [
-                    'accepted_supplier_proposal_id' => $proposal->id,
-                    'supplier_request_id' => $proposal->supplier_request_id,
+                    'accepted_supplier_proposal_id' => $lockedProposal->id,
+                    'supplier_request_id' => $lockedProposal->supplier_request_id,
                 ],
             ]);
 
-            foreach ($proposal->lines as $line) {
+            foreach ($lockedProposal->lines as $line) {
                 $order->items()->create([
                     'material_id' => $line->material_id,
                     'material_name' => $line->name,
@@ -127,12 +177,14 @@ class SupplierProposalService
                 ]);
             }
 
-            $proposal->update([
+            $lockedProposal->update([
                 'purchase_order_id' => $order->id,
             ]);
+
+            return $lockedProposal;
         });
 
-        return $proposal->fresh([
+        return $acceptedProposal->fresh([
             'supplier',
             'externalSupplierContact',
             'supplierParty',

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Procurement;
 
+use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
@@ -26,6 +27,13 @@ class SupplierProposalDecisionTest extends TestCase
         $firstProposal = $this->createProposal($organization, $supplierRequest, 'KP-DEC-001', 1200);
         $secondProposal = $this->createProposal($organization, $supplierRequest, 'KP-DEC-002', 950);
         $foreignProposal = $this->createProposal($organization, $otherSupplierRequest, 'KP-DEC-003', 100);
+        $foreignOrganization = Organization::factory()->create();
+        $foreignOrganizationProposal = $this->createProposal(
+            $foreignOrganization,
+            $supplierRequest,
+            'KP-DEC-FOREIGN-ORG',
+            50
+        );
 
         $comparison = app(SupplierProposalComparisonService::class)->comparisonForRequest($supplierRequest);
 
@@ -34,6 +42,7 @@ class SupplierProposalDecisionTest extends TestCase
             array_column($comparison['rows'], 'id')
         );
         $this->assertNotContains($foreignProposal->id, array_column($comparison['rows'], 'id'));
+        $this->assertNotContains($foreignOrganizationProposal->id, array_column($comparison['rows'], 'id'));
     }
 
     public function test_cheapest_proposal_uses_components_and_falls_back_to_total_amount(): void
@@ -139,6 +148,46 @@ class SupplierProposalDecisionTest extends TestCase
 
         $this->assertSame('accepted', $accepted->status->value);
         $this->assertNotNull($accepted->purchase_order_id);
+    }
+
+    public function test_cannot_change_winner_after_selected_proposal_accepted_and_order_created(): void
+    {
+        $organization = Organization::factory()->create();
+        $supplierRequest = $this->createSupplierRequest($organization);
+        $winner = $this->createProposal($organization, $supplierRequest, 'KP-DEC-011', 100);
+        $otherProposal = $this->createProposal($organization, $supplierRequest, 'KP-DEC-012', 150);
+
+        app(SupplierProposalComparisonService::class)->selectWinner($supplierRequest, $winner->id, null, null);
+        app(SupplierProposalService::class)->accept($winner);
+
+        $this->expectException(ValidationException::class);
+
+        app(SupplierProposalComparisonService::class)->selectWinner(
+            $supplierRequest->refresh(),
+            $otherProposal->id,
+            'Selected supplier cannot deliver on time.',
+            null
+        );
+    }
+
+    public function test_second_accept_with_stale_proposal_does_not_create_duplicate_order(): void
+    {
+        $organization = Organization::factory()->create();
+        $supplierRequest = $this->createSupplierRequest($organization);
+        $winner = $this->createProposal($organization, $supplierRequest, 'KP-DEC-013', 100);
+        $staleWinner = SupplierProposal::query()->findOrFail($winner->id);
+
+        app(SupplierProposalComparisonService::class)->selectWinner($supplierRequest, $winner->id, null, null);
+        app(SupplierProposalService::class)->accept($winner);
+
+        try {
+            app(SupplierProposalService::class)->accept($staleWinner);
+            $this->fail('Stale proposal accept should not create a duplicate purchase order.');
+        } catch (DomainException|ValidationException) {
+            $this->assertSame(1, PurchaseOrder::query()
+                ->where('accepted_supplier_proposal_id', $winner->id)
+                ->count());
+        }
     }
 
     private function createSupplierRequest(
