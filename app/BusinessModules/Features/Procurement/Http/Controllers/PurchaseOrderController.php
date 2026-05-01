@@ -96,6 +96,8 @@ class PurchaseOrderController extends Controller
                     'supplierParty',
                     'purchaseRequest',
                     'contract',
+                    'proposals.supplier',
+                    'proposals.externalSupplierContact',
                     'proposals.supplierParty',
                     'items.receiptLines',
                     'receipts.lines',

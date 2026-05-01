@@ -195,7 +195,13 @@ class PurchaseRequestController extends Controller
 
             return AdminResponse::success(
                 [
-                    'purchase_request' => (new PurchaseRequestResource($purchaseRequest->fresh(['siteRequest.project', 'assignedUser', 'purchaseOrders.supplier'])))->resolve(),
+                    'purchase_request' => (new PurchaseRequestResource($purchaseRequest->fresh([
+                        'siteRequest.project',
+                        'assignedUser',
+                        'purchaseOrders.supplier',
+                        'purchaseOrders.externalSupplierContact',
+                        'purchaseOrders.supplierParty',
+                    ])))->resolve(),
                     'purchase_order' => (new PurchaseOrderResource($order))->resolve(),
                 ],
                 trans_message('procurement.purchase_requests.order_created'),

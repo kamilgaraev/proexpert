@@ -13,6 +13,31 @@ use App\Models\Supplier;
 
 /**
  * Модель коммерческого предложения от поставщика
+ *
+ * @property int $id
+ * @property int $organization_id
+ * @property int|null $purchase_order_id
+ * @property int|null $supplier_request_id
+ * @property int|null $supplier_id
+ * @property int|null $external_supplier_contact_id
+ * @property int|null $supplier_party_id
+ * @property array<string, mixed>|null $supplier_snapshot
+ * @property string $proposal_number
+ * @property \Illuminate\Support\Carbon $proposal_date
+ * @property SupplierProposalStatusEnum $status
+ * @property numeric-string|float|int $subtotal_amount
+ * @property numeric-string|float|int $delivery_amount
+ * @property numeric-string|float|int $vat_amount
+ * @property numeric-string|float|int $total_amount
+ * @property string $currency
+ * @property \Illuminate\Support\Carbon|null $valid_until
+ * @property string|null $payment_terms
+ * @property string|null $delivery_terms
+ * @property array<int, array<string, mixed>>|null $items
+ * @property string|null $notes
+ * @property array<string, mixed>|null $metadata
+ * @property \Illuminate\Support\Carbon $created_at
+ * @property \Illuminate\Support\Carbon $updated_at
  */
 class SupplierProposal extends Model
 {

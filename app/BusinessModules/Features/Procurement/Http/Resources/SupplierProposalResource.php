@@ -2,9 +2,11 @@
 
 namespace App\BusinessModules\Features\Procurement\Http\Resources;
 
+use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
+/** @mixin SupplierProposal */
 class SupplierProposalResource extends JsonResource
 {
     public function toArray(Request $request): array
@@ -72,7 +74,17 @@ class SupplierProposalResource extends JsonResource
 
     private function supplierPayload(): array
     {
-        if ($this->supplier) {
+        $snapshot = is_array($this->supplier_snapshot) ? $this->supplier_snapshot : [];
+
+        if ($snapshot !== []) {
+            return [
+                'id' => $snapshot['registered_supplier_id'] ?? $this->supplier_id,
+                'name' => $snapshot['display_name'] ?? 'Внешний поставщик',
+                'inn' => $snapshot['tax_id'] ?? null,
+            ];
+        }
+
+        if ($this->relationLoaded('supplier') && $this->supplier) {
             return [
                 'id' => $this->supplier->id,
                 'name' => $this->supplier->name,
@@ -80,10 +92,14 @@ class SupplierProposalResource extends JsonResource
             ];
         }
 
+        $externalSupplierContact = $this->relationLoaded('externalSupplierContact')
+            ? $this->externalSupplierContact
+            : null;
+
         return [
             'id' => null,
-            'name' => $this->externalSupplierContact?->name ?? 'Внешний поставщик',
-            'inn' => $this->externalSupplierContact?->tax_number,
+            'name' => $externalSupplierContact?->name ?? 'Внешний поставщик',
+            'inn' => $externalSupplierContact?->tax_number,
         ];
     }
 }

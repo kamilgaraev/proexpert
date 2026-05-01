@@ -18,6 +18,18 @@ class PurchaseRequestService
 {
     private const CACHE_TTL = 3600;
 
+    private const RESOURCE_RELATIONS = [
+        'siteRequest.project',
+        'assignedUser',
+        'lines',
+        'supplierRequests.supplier',
+        'supplierRequests.externalSupplierContact',
+        'supplierRequests.supplierParty',
+        'purchaseOrders.supplier',
+        'purchaseOrders.externalSupplierContact',
+        'purchaseOrders.supplierParty',
+    ];
+
     public function __construct(
         private readonly PurchaseRequestNumberGenerator $numberGenerator
     ) {
@@ -26,7 +38,7 @@ class PurchaseRequestService
     public function find(int $id, int $organizationId): ?PurchaseRequest
     {
         return PurchaseRequest::forOrganization($organizationId)
-            ->with(['siteRequest.project', 'assignedUser', 'lines', 'supplierRequests.supplier', 'supplierRequests.externalSupplierContact', 'purchaseOrders.supplier'])
+            ->with(self::RESOURCE_RELATIONS)
             ->find($id);
     }
 
@@ -36,7 +48,7 @@ class PurchaseRequestService
         array $filters = []
     ): LengthAwarePaginator {
         $query = PurchaseRequest::forOrganization($organizationId)
-            ->with(['siteRequest.project', 'assignedUser', 'lines', 'supplierRequests', 'purchaseOrders']);
+            ->with(self::RESOURCE_RELATIONS);
 
         if (isset($filters['status'])) {
             $query->withStatus($filters['status']);
@@ -67,7 +79,7 @@ class PurchaseRequestService
 
         $existingRequest = $this->findExistingBySiteRequest($siteRequest->organization_id, $siteRequest->id);
         if ($existingRequest) {
-            return $existingRequest->fresh(['siteRequest.project', 'assignedUser', 'purchaseOrders.supplier']);
+            return $existingRequest->fresh(self::RESOURCE_RELATIONS);
         }
 
         DB::beginTransaction();
@@ -120,7 +132,7 @@ class PurchaseRequestService
                 'organization_id' => $siteRequest->organization_id,
             ]);
 
-            return $purchaseRequest->fresh(['siteRequest.project', 'assignedUser', 'lines', 'supplierRequests', 'purchaseOrders.supplier']);
+            return $purchaseRequest->fresh(self::RESOURCE_RELATIONS);
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;
@@ -179,7 +191,7 @@ class PurchaseRequestService
 
             event(new \App\BusinessModules\Features\Procurement\Events\PurchaseRequestCreated($purchaseRequest));
 
-            return $purchaseRequest->fresh(['siteRequest.project', 'assignedUser', 'lines', 'supplierRequests', 'purchaseOrders.supplier']);
+            return $purchaseRequest->fresh(self::RESOURCE_RELATIONS);
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;
@@ -205,7 +217,7 @@ class PurchaseRequestService
 
             event(new \App\BusinessModules\Features\Procurement\Events\PurchaseRequestApproved($request, $userId));
 
-            return $request->fresh(['siteRequest.project', 'assignedUser', 'lines', 'supplierRequests', 'purchaseOrders.supplier']);
+            return $request->fresh(self::RESOURCE_RELATIONS);
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;
@@ -230,7 +242,7 @@ class PurchaseRequestService
 
             $this->invalidateCache($request->organization_id);
 
-            return $request->fresh(['siteRequest.project', 'assignedUser', 'lines', 'supplierRequests', 'purchaseOrders.supplier']);
+            return $request->fresh(self::RESOURCE_RELATIONS);
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;

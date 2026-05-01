@@ -9,6 +9,7 @@ use App\Models\Contract;
 use App\Modules\Core\AccessController;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use function trans_message;
 
 class PurchaseContractService
 {
@@ -114,19 +115,19 @@ class PurchaseContractService
 
         if (!$accessController->hasModuleAccess($organizationId, 'procurement')) {
             throw new \DomainException(
-                'Модуль "Управление закупками" не активирован. Активируйте модуль для создания договоров поставки.'
+                trans_message('procurement.contracts.procurement_module_required')
             );
         }
 
         if (!$accessController->hasModuleAccess($organizationId, 'basic-warehouse')) {
             throw new \DomainException(
-                'Модуль "Базовое управление складом" не активирован. Он необходим для работы с договорами поставки.'
+                trans_message('procurement.contracts.warehouse_module_required')
             );
         }
 
         if (empty($data['supplier_id']) && empty($data['contractor_id'])) {
             throw new \InvalidArgumentException(
-                'Необходимо указать поставщика (supplier_id) для создания договора поставки'
+                trans_message('procurement.contracts.supplier_required')
             );
         }
 
@@ -134,7 +135,7 @@ class PurchaseContractService
             $supplier = \App\Models\Supplier::find($data['supplier_id']);
 
             if (!$supplier || $supplier->organization_id !== $organizationId) {
-                throw new \InvalidArgumentException('Поставщик не найден или не принадлежит организации');
+                throw new \InvalidArgumentException(trans_message('procurement.contracts.supplier_not_found'));
             }
         }
     }
