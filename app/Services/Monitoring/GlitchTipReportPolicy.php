@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Services\Monitoring;
 
 use App\Exceptions\BusinessLogicException;
+use App\Support\LivewirePayloadExceptionClassifier;
+use Illuminate\Http\Request;
 use Sentry\Severity;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Throwable;
@@ -16,9 +18,13 @@ class GlitchTipReportPolicy
         $this->reportingConfig ??= (array) config('glitchtip.reporting', []);
     }
 
-    public function shouldCapture(Throwable $exception): bool
+    public function shouldCapture(Throwable $exception, ?Request $request = null): bool
     {
         if (!$this->enabled()) {
+            return false;
+        }
+
+        if ((new LivewirePayloadExceptionClassifier())->isMalformedClientUpdate($exception, $request)) {
             return false;
         }
 

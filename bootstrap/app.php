@@ -137,7 +137,7 @@ $app = Application::configure(basePath: dirname(__DIR__))
         $exceptions->report(function (\Throwable $exception): ?bool {
             $policy = app(GlitchTipReportPolicy::class);
 
-            if (!$policy->shouldCapture($exception)) {
+            if (!$policy->shouldCapture($exception, app()->bound('request') ? request() : null)) {
                 return false;
             }
 
