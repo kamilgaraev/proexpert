@@ -102,6 +102,8 @@ class PurchaseOrderController extends Controller
                     'items.receiptLines',
                     'receipts.lines',
                     'organization',
+                    'auditEvents.actor',
+                    'auditEvents.supplierParty',
                 ])
                 ->find($id);
 
@@ -155,7 +157,12 @@ class PurchaseOrderController extends Controller
             $purchaseRequest = PurchaseRequest::forOrganization($organizationId)
                 ->findOrFail((int) $request->input('purchase_request_id'));
 
-            $order = $this->service->create($purchaseRequest, (int) $request->input('supplier_id'), $request->validated());
+            $order = $this->service->create(
+                $purchaseRequest,
+                (int) $request->input('supplier_id'),
+                $request->validated(),
+                $request->user()?->id
+            );
 
             return AdminResponse::success(
                 new PurchaseOrderResource($order),

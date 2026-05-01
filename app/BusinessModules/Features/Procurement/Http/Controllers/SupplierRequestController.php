@@ -65,7 +65,15 @@ class SupplierRequestController extends Controller
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $supplierRequest = SupplierRequest::query()
                 ->forOrganization($organizationId)
-                ->with(['supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest', 'lines'])
+                ->with([
+                    'supplier',
+                    'externalSupplierContact',
+                    'supplierParty',
+                    'purchaseRequest',
+                    'lines',
+                    'auditEvents.actor',
+                    'auditEvents.supplierParty',
+                ])
                 ->find($id);
 
             if (!$supplierRequest) {
@@ -88,7 +96,7 @@ class SupplierRequestController extends Controller
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $supplierRequest = $this->service->create($organizationId, $request->validated());
+            $supplierRequest = $this->service->create($organizationId, $request->validated(), $request->user()?->id);
 
             return AdminResponse::success(
                 new SupplierRequestResource($supplierRequest),
@@ -117,7 +125,7 @@ class SupplierRequestController extends Controller
             }
 
             return AdminResponse::success(
-                new SupplierRequestResource($this->service->send($supplierRequest)),
+                new SupplierRequestResource($this->service->send($supplierRequest, $request->user()?->id)),
                 trans_message('procurement.supplier_requests.sent')
             );
         } catch (ValidationException $e) {
@@ -143,7 +151,7 @@ class SupplierRequestController extends Controller
             }
 
             return AdminResponse::success(
-                new SupplierRequestResource($this->service->cancel($supplierRequest)),
+                new SupplierRequestResource($this->service->cancel($supplierRequest, $request->user()?->id)),
                 trans_message('procurement.supplier_requests.cancelled')
             );
         } catch (ValidationException $e) {

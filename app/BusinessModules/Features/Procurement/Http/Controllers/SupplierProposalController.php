@@ -69,7 +69,16 @@ class SupplierProposalController extends Controller
         try {
             $organizationId = $request->attributes->get('current_organization_id');
             $proposal = SupplierProposal::forOrganization($organizationId)
-                ->with(['supplier', 'externalSupplierContact', 'supplierParty', 'supplierRequest', 'purchaseOrder', 'lines'])
+                ->with([
+                    'supplier',
+                    'externalSupplierContact',
+                    'supplierParty',
+                    'supplierRequest',
+                    'purchaseOrder',
+                    'lines',
+                    'auditEvents.actor',
+                    'auditEvents.supplierParty',
+                ])
                 ->find($id);
 
             if (!$proposal) {
@@ -98,7 +107,11 @@ class SupplierProposalController extends Controller
                 ->with(['lines'])
                 ->findOrFail($request->input('supplier_request_id'));
 
-            $proposal = $this->service->createFromSupplierRequest($supplierRequest, $request->validated());
+            $proposal = $this->service->createFromSupplierRequest(
+                $supplierRequest,
+                $request->validated(),
+                $request->user()?->id
+            );
 
             return AdminResponse::success(
                 new SupplierProposalResource($proposal),
@@ -127,7 +140,7 @@ class SupplierProposalController extends Controller
         try {
             $organizationId = $request->attributes->get('current_organization_id');
             $proposal = SupplierProposal::forOrganization($organizationId)->findOrFail($id);
-            $accepted = $this->service->accept($proposal);
+            $accepted = $this->service->accept($proposal, $request->user()?->id);
 
             return AdminResponse::success(
                 new SupplierProposalResource($accepted),

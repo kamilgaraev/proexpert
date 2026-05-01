@@ -147,6 +147,7 @@ class ProcurementModule implements ModuleInterface, BillableInterface, Configura
     {
         return [
             'procurement.view',
+            'procurement.audit.view',
             'procurement.manage',
             'procurement.purchase_requests.view',
             'procurement.purchase_requests.create',

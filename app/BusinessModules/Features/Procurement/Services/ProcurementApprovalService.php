@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Services;
 
+use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\ProcurementApprovalStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierPartyTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalDecisionEnum;
@@ -20,6 +21,10 @@ class ProcurementApprovalService
     public const REASON_NON_LOWEST_PRICE = 'non_lowest_price';
     public const REASON_EXTERNAL_SUPPLIER_MISSING_IDENTITY = 'external_supplier_missing_identity';
     public const REASON_ORDER_CHANGED_AFTER_ACCEPTANCE = 'order_changed_after_acceptance';
+
+    public function __construct(
+        private readonly ProcurementAuditService $auditService
+    ) {}
 
     public function evaluateForDecision(
         SupplierProposalDecision $decision,
@@ -106,6 +111,11 @@ class ProcurementApprovalService
             ]);
 
         $approvals = [];
+        $decision->loadMissing('winningProposal');
+        $supplierPartyId = $decision->winningProposal?->supplier_party_id;
+        $supplierSnapshot = is_array($decision->winningProposal?->supplier_snapshot)
+            ? $decision->winningProposal->supplier_snapshot
+            : [];
 
         foreach ($risks as $risk) {
             $approval = ProcurementApproval::query()
@@ -135,6 +145,23 @@ class ProcurementApprovalService
                 'context' => $risk['context'] ?? [],
             ]);
             $approval->save();
+
+            $this->auditService->record(
+                ProcurementAuditEventTypeEnum::PROCUREMENT_APPROVAL_REQUESTED->value,
+                $decision,
+                (int) $decision->organization_id,
+                $requestedBy,
+                $supplierPartyId,
+                [
+                    'approval_id' => $approval->id,
+                    'reason_code' => $approval->reason_code,
+                    'status' => $approval->status->value,
+                    'decision_id' => $decision->id,
+                    'selected_supplier_proposal_id' => $decision->winning_supplier_proposal_id,
+                    'supplier_name' => $supplierSnapshot['display_name'] ?? null,
+                    'context' => $approval->context,
+                ]
+            );
 
             $approvals[] = $approval->fresh();
         }
@@ -177,6 +204,29 @@ class ProcurementApprovalService
                 ]);
             }
 
+            $decision->loadMissing('winningProposal');
+            $snapshot = is_array($decision->winningProposal?->supplier_snapshot)
+                ? $decision->winningProposal->supplier_snapshot
+                : [];
+
+            $this->auditService->record(
+                ProcurementAuditEventTypeEnum::PROCUREMENT_APPROVAL_APPROVED->value,
+                $decision,
+                (int) $decision->organization_id,
+                $actorId,
+                $decision->winningProposal?->supplier_party_id,
+                [
+                    'approval_id' => $lockedApproval->id,
+                    'reason_code' => $lockedApproval->reason_code,
+                    'status' => ProcurementApprovalStatusEnum::APPROVED->value,
+                    'decision_id' => $decision->id,
+                    'decision_status' => $decision->status->value,
+                    'selected_supplier_proposal_id' => $decision->winning_supplier_proposal_id,
+                    'supplier_name' => $snapshot['display_name'] ?? null,
+                    'comment' => $comment,
+                ]
+            );
+
             return $lockedApproval->fresh(['requestedBy', 'approvedBy', 'rejectedBy']);
         });
     }
@@ -203,6 +253,29 @@ class ProcurementApprovalService
             $decision->update([
                 'status' => SupplierProposalDecisionEnum::REJECTED,
             ]);
+
+            $decision->loadMissing('winningProposal');
+            $snapshot = is_array($decision->winningProposal?->supplier_snapshot)
+                ? $decision->winningProposal->supplier_snapshot
+                : [];
+
+            $this->auditService->record(
+                ProcurementAuditEventTypeEnum::PROCUREMENT_APPROVAL_REJECTED->value,
+                $decision,
+                (int) $decision->organization_id,
+                $actorId,
+                $decision->winningProposal?->supplier_party_id,
+                [
+                    'approval_id' => $lockedApproval->id,
+                    'reason_code' => $lockedApproval->reason_code,
+                    'status' => ProcurementApprovalStatusEnum::REJECTED->value,
+                    'decision_id' => $decision->id,
+                    'decision_status' => SupplierProposalDecisionEnum::REJECTED->value,
+                    'selected_supplier_proposal_id' => $decision->winning_supplier_proposal_id,
+                    'supplier_name' => $snapshot['display_name'] ?? null,
+                    'comment' => $comment,
+                ]
+            );
 
             return $lockedApproval->fresh(['requestedBy', 'approvedBy', 'rejectedBy']);
         });

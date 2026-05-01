@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Procurement\Services;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
+use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
@@ -22,11 +23,12 @@ class PurchaseOrderService
 {
     public function __construct(
         private readonly PurchaseOrderPdfService $pdfService,
-        private readonly SupplierPartyService $supplierPartyService
+        private readonly SupplierPartyService $supplierPartyService,
+        private readonly ProcurementAuditService $auditService
     ) {
     }
 
-    public function create(PurchaseRequest $request, int $supplierId, array $data): PurchaseOrder
+    public function create(PurchaseRequest $request, int $supplierId, array $data, ?int $actorId = null): PurchaseOrder
     {
         if ($request->purchaseOrders()->exists()) {
             throw new \DomainException(trans_message('procurement.purchase_orders.already_exists_for_request'));
@@ -77,6 +79,24 @@ class PurchaseOrderService
                     'total_price' => 0,
                 ]);
             }
+
+            $this->auditService->record(
+                ProcurementAuditEventTypeEnum::PURCHASE_ORDER_CREATED->value,
+                $order,
+                (int) $order->organization_id,
+                $actorId,
+                $order->supplier_party_id,
+                [
+                    'order_number' => $order->order_number,
+                    'status' => $order->status->value,
+                    'purchase_request_number' => $request->request_number,
+                    'supplier_name' => $this->supplierName($supplierSnapshot),
+                    'supplier_snapshot' => $supplierSnapshot,
+                    'total_amount' => (float) $order->total_amount,
+                    'currency' => $order->currency,
+                    'pricing_source' => $order->pricing_source,
+                ]
+            );
 
             DB::commit();
 
@@ -224,6 +244,30 @@ class PurchaseOrderService
             $order->update([
                 'status' => $this->resolveDeliveryStatus($order),
             ]);
+
+            $receipt->loadMissing('lines');
+            $order->loadMissing('items');
+
+            $this->auditService->record(
+                ProcurementAuditEventTypeEnum::MATERIALS_RECEIVED->value,
+                $order,
+                (int) $order->organization_id,
+                $userId,
+                $order->supplier_party_id,
+                [
+                    'order_number' => $order->order_number,
+                    'status' => $order->status->value,
+                    'receipt_number' => $receipt->receipt_number,
+                    'receipt_date' => $receipt->receipt_date?->format('Y-m-d'),
+                    'warehouse_id' => $warehouse->id,
+                    'warehouse_name' => $warehouse->name,
+                    'supplier_name' => $this->supplierName(is_array($order->supplier_snapshot) ? $order->supplier_snapshot : []),
+                    'items_count' => count($items),
+                    'total_received_amount' => $receipt->lines->sum('total_amount'),
+                    'items' => $this->receivedItemsPayload($order, $items),
+                    'notes' => $receipt->notes,
+                ]
+            );
 
             DB::commit();
 
@@ -403,5 +447,33 @@ class PurchaseOrderService
     private function invalidateCache(int $organizationId): void
     {
         Cache::forget("procurement_purchase_orders_{$organizationId}");
+    }
+
+    private function supplierName(array $supplierSnapshot): ?string
+    {
+        $name = $supplierSnapshot['display_name'] ?? null;
+
+        return $name === null ? null : (string) $name;
+    }
+
+    private function receivedItemsPayload(PurchaseOrder $order, array $items): array
+    {
+        $itemsById = $order->items->keyBy('id');
+
+        return collect($items)
+            ->map(static function (array $item) use ($itemsById): array {
+                $orderItem = $itemsById->get((int) $item['item_id']);
+
+                return [
+                    'item_id' => (int) $item['item_id'],
+                    'material_name' => $orderItem?->material_name,
+                    'quantity_received' => (float) $item['quantity_received'],
+                    'unit' => $orderItem?->unit,
+                    'price' => (float) $item['price'],
+                    'total_amount' => round((float) $item['quantity_received'] * (float) $item['price'], 2),
+                ];
+            })
+            ->values()
+            ->all();
     }
 }

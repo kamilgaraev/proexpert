@@ -9,6 +9,7 @@ use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 class SupplierProposalDecision extends Model
@@ -69,6 +70,14 @@ class SupplierProposalDecision extends Model
     public function approvals(): MorphMany
     {
         return $this->morphMany(ProcurementApproval::class, 'approvable');
+    }
+
+    public function auditEvents(): HasMany
+    {
+        return $this->hasMany(ProcurementAuditEvent::class, 'subject_id')
+            ->where('subject_type', $this->getMorphClass())
+            ->orderBy('occurred_at')
+            ->orderBy('id');
     }
 
     public function scopeForOrganization($query, int $organizationId)

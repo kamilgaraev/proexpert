@@ -133,6 +133,14 @@ class PurchaseOrder extends Model
         return $this->hasMany(PurchaseReceipt::class);
     }
 
+    public function auditEvents(): HasMany
+    {
+        return $this->hasMany(ProcurementAuditEvent::class, 'subject_id')
+            ->where('subject_type', $this->getMorphClass())
+            ->orderBy('occurred_at')
+            ->orderBy('id');
+    }
+
     // ============================================
     // SCOPES
     // ============================================

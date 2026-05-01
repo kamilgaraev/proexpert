@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Services;
 
+use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalDecisionEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
@@ -17,7 +18,8 @@ use function trans_message;
 class SupplierProposalComparisonService
 {
     public function __construct(
-        private readonly ProcurementApprovalService $approvalService
+        private readonly ProcurementApprovalService $approvalService,
+        private readonly ProcurementAuditService $auditService
     ) {}
 
     public function comparisonForRequest(SupplierRequest $supplierRequest): array
@@ -129,9 +131,38 @@ class SupplierProposalComparisonService
                 : SupplierProposalDecisionEnum::APPROVAL_REQUIRED;
             $decision->save();
 
+            $snapshot = is_array($proposal->supplier_snapshot) ? $proposal->supplier_snapshot : [];
+
+            $this->auditService->record(
+                ProcurementAuditEventTypeEnum::SUPPLIER_PROPOSAL_SELECTED->value,
+                $decision,
+                (int) $decision->organization_id,
+                $actorId,
+                $proposal->supplier_party_id,
+                [
+                    'supplier_request_number' => $lockedSupplierRequest->request_number,
+                    'selected_supplier_proposal_number' => $proposal->proposal_number,
+                    'selected_supplier_name' => $this->supplierName($proposal, $snapshot),
+                    'selected_total' => $this->comparisonTotal($proposal),
+                    'currency' => $proposal->currency,
+                    'cheapest_supplier_proposal_id' => $cheapestProposalId,
+                    'is_lowest_price_selected' => $isLowestPriceSelected,
+                    'decision_reason' => $normalizedReason,
+                    'status' => $decision->status->value,
+                    'approval_reason_codes' => collect($risks)->pluck('reason_code')->values()->all(),
+                ]
+            );
+
             $this->approvalService->createPendingForDecision($decision, $risks, $actorId);
 
-            return $decision->fresh(['winningProposal', 'cheapestProposal', 'selectedBy', 'approvals']);
+            return $decision->fresh([
+                'winningProposal',
+                'cheapestProposal',
+                'selectedBy',
+                'approvals',
+                'auditEvents.actor',
+                'auditEvents.supplierParty',
+            ]);
         });
     }
 

@@ -56,6 +56,10 @@ class PurchaseOrderResource extends JsonResource
             'proposals' => $this->whenLoaded('proposals', fn() => SupplierProposalResource::collection($this->proposals)),
             'items' => $this->whenLoaded('items', fn() => PurchaseOrderItemResource::collection($this->items)),
             'receipts' => $this->whenLoaded('receipts', fn() => PurchaseReceiptResource::collection($this->receipts)),
+            'audit_events' => $this->whenLoaded(
+                'auditEvents',
+                fn() => ProcurementAuditEventResource::collection($this->auditEvents)
+            ),
             'created_at' => $this->created_at->toIso8601String(),
             'updated_at' => $this->updated_at->toIso8601String(),
         ];

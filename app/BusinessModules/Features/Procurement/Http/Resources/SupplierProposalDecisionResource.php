@@ -36,6 +36,10 @@ class SupplierProposalDecisionResource extends JsonResource
                 'approvals',
                 fn () => ProcurementApprovalResource::collection($this->approvals)
             ),
+            'audit_events' => $this->whenLoaded(
+                'auditEvents',
+                fn () => ProcurementAuditEventResource::collection($this->auditEvents)
+            ),
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
         ];

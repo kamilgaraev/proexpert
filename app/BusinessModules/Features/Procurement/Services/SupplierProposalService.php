@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Services;
 
+use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalDecisionEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalStatusEnum;
@@ -19,9 +20,17 @@ use function trans_message;
 
 class SupplierProposalService
 {
-    public function createFromSupplierRequest(SupplierRequest $supplierRequest, array $data): SupplierProposal
+    public function __construct(
+        private readonly ProcurementAuditService $auditService
+    ) {}
+
+    public function createFromSupplierRequest(
+        SupplierRequest $supplierRequest,
+        array $data,
+        ?int $actorId = null
+    ): SupplierProposal
     {
-        return DB::transaction(function () use ($supplierRequest, $data): SupplierProposal {
+        return DB::transaction(function () use ($supplierRequest, $data, $actorId): SupplierProposal {
             $supplierRequest->loadMissing('lines');
 
             $proposal = SupplierProposal::query()->create([
@@ -71,13 +80,34 @@ class SupplierProposalService
 
             event(new \App\BusinessModules\Features\Procurement\Events\SupplierProposalReceived($proposal));
 
+            $snapshot = is_array($proposal->supplier_snapshot) ? $proposal->supplier_snapshot : [];
+
+            $this->auditService->record(
+                ProcurementAuditEventTypeEnum::SUPPLIER_PROPOSAL_CREATED->value,
+                $proposal,
+                (int) $proposal->organization_id,
+                $actorId,
+                $proposal->supplier_party_id,
+                [
+                    'proposal_number' => $proposal->proposal_number,
+                    'status' => $proposal->status->value,
+                    'supplier_request_number' => $supplierRequest->request_number,
+                    'supplier_name' => $this->supplierName($proposal, $snapshot),
+                    'supplier_snapshot' => $snapshot,
+                    'total_amount' => (float) $proposal->total_amount,
+                    'currency' => $proposal->currency,
+                    'valid_until' => $proposal->valid_until?->format('Y-m-d'),
+                    'lines_count' => count($data['items'] ?? []),
+                ]
+            );
+
             return $proposal->fresh(['supplier', 'externalSupplierContact', 'supplierParty', 'supplierRequest', 'lines']);
         });
     }
 
-    public function accept(SupplierProposal $proposal): SupplierProposal
+    public function accept(SupplierProposal $proposal, ?int $actorId = null): SupplierProposal
     {
-        $acceptedProposal = DB::transaction(function () use ($proposal): SupplierProposal {
+        $acceptedProposal = DB::transaction(function () use ($proposal, $actorId): SupplierProposal {
             $lockedProposal = SupplierProposal::query()
                 ->whereKey($proposal->id)
                 ->lockForUpdate()
@@ -192,6 +222,28 @@ class SupplierProposalService
                 'purchase_order_id' => $order->id,
             ]);
 
+            $snapshot = is_array($lockedProposal->supplier_snapshot) ? $lockedProposal->supplier_snapshot : [];
+
+            $this->auditService->record(
+                ProcurementAuditEventTypeEnum::PURCHASE_ORDER_CREATED->value,
+                $order,
+                (int) $order->organization_id,
+                $actorId,
+                $order->supplier_party_id,
+                [
+                    'order_number' => $order->order_number,
+                    'status' => $order->status->value,
+                    'accepted_supplier_proposal_number' => $lockedProposal->proposal_number,
+                    'supplier_request_number' => $lockedProposal->supplierRequest?->request_number,
+                    'supplier_name' => $this->supplierName($lockedProposal, $snapshot),
+                    'supplier_snapshot' => $snapshot,
+                    'total_amount' => (float) $order->total_amount,
+                    'currency' => $order->currency,
+                    'items_count' => $lockedProposal->lines->count(),
+                    'pricing_source' => $order->pricing_source,
+                ]
+            );
+
             return $lockedProposal;
         });
 
@@ -250,5 +302,26 @@ class SupplierProposalService
             ->count() + 1;
 
         return sprintf('%s-%04d', $prefix, $lastNumber);
+    }
+
+    private function supplierName(SupplierProposal $proposal, array $snapshot): ?string
+    {
+        if (($snapshot['display_name'] ?? null) !== null) {
+            return (string) $snapshot['display_name'];
+        }
+
+        if ($proposal->relationLoaded('supplier') && $proposal->supplier !== null) {
+            return $proposal->supplier->name;
+        }
+
+        if ($proposal->relationLoaded('externalSupplierContact') && $proposal->externalSupplierContact !== null) {
+            return $proposal->externalSupplierContact->name;
+        }
+
+        if ($proposal->relationLoaded('supplierParty') && $proposal->supplierParty !== null) {
+            return $proposal->supplierParty->display_name;
+        }
+
+        return null;
     }
 }

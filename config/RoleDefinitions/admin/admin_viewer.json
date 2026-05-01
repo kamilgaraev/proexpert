@@ -28,6 +28,7 @@
     "site-requests": ["site-requests.view"],
     "procurement": [
       "procurement.view",
+      "procurement.audit.view",
       "procurement.purchase_requests.view",
       "procurement.supplier_requests.view",
       "procurement.purchase_orders.view",

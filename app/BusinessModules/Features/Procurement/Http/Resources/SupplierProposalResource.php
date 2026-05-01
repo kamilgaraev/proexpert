@@ -67,6 +67,10 @@ class SupplierProposalResource extends JsonResource
                 'total_amount' => (float) $line->total_amount,
                 'comment' => $line->comment,
             ])),
+            'audit_events' => $this->whenLoaded(
+                'auditEvents',
+                fn() => ProcurementAuditEventResource::collection($this->auditEvents)
+            ),
             'created_at' => $this->created_at->toIso8601String(),
             'updated_at' => $this->updated_at->toIso8601String(),
         ];

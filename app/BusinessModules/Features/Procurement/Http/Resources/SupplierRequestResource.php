@@ -54,6 +54,10 @@ class SupplierRequestResource extends JsonResource
                 'status_label' => $this->purchaseRequest->status->label(),
             ]),
             'lines' => $this->whenLoaded('lines', fn () => SupplierRequestLineResource::collection($this->lines)),
+            'audit_events' => $this->whenLoaded(
+                'auditEvents',
+                fn () => ProcurementAuditEventResource::collection($this->auditEvents)
+            ),
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
         ];

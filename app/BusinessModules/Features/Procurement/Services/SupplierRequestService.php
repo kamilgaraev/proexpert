@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Services;
 
+use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\ExternalSupplierContact;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
@@ -15,13 +16,14 @@ use Illuminate\Validation\ValidationException;
 class SupplierRequestService
 {
     public function __construct(
-        private readonly SupplierPartyService $supplierPartyService
+        private readonly SupplierPartyService $supplierPartyService,
+        private readonly ProcurementAuditService $auditService
     ) {
     }
 
-    public function create(int $organizationId, array $data): SupplierRequest
+    public function create(int $organizationId, array $data, ?int $actorId = null): SupplierRequest
     {
-        return DB::transaction(function () use ($organizationId, $data): SupplierRequest {
+        return DB::transaction(function () use ($organizationId, $data, $actorId): SupplierRequest {
             $purchaseRequest = PurchaseRequest::query()
                 ->forOrganization($organizationId)
                 ->with('lines')
@@ -85,11 +87,28 @@ class SupplierRequestService
                 ]);
             }
 
+            $this->auditService->record(
+                ProcurementAuditEventTypeEnum::SUPPLIER_REQUEST_CREATED->value,
+                $supplierRequest,
+                $organizationId,
+                $actorId,
+                $supplierParty->id,
+                [
+                    'request_number' => $supplierRequest->request_number,
+                    'status' => $supplierRequest->status->value,
+                    'purchase_request_number' => $purchaseRequest->request_number,
+                    'supplier_name' => $this->supplierName($supplierSnapshot),
+                    'supplier_snapshot' => $supplierSnapshot,
+                    'lines_count' => $purchaseRequest->lines->count(),
+                    'comment' => $supplierRequest->comment,
+                ]
+            );
+
             return $supplierRequest->load(['lines', 'supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest']);
         });
     }
 
-    public function send(SupplierRequest $supplierRequest): SupplierRequest
+    public function send(SupplierRequest $supplierRequest, ?int $actorId = null): SupplierRequest
     {
         if (!$supplierRequest->canBeSent()) {
             throw ValidationException::withMessages([
@@ -97,15 +116,38 @@ class SupplierRequestService
             ]);
         }
 
-        $supplierRequest->update([
-            'status' => SupplierRequestStatusEnum::SENT,
-            'sent_at' => now(),
-        ]);
+        return DB::transaction(function () use ($supplierRequest, $actorId): SupplierRequest {
+            $previousStatus = $supplierRequest->status->value;
 
-        return $supplierRequest->refresh()->load(['lines', 'supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest']);
+            $supplierRequest->update([
+                'status' => SupplierRequestStatusEnum::SENT,
+                'sent_at' => now(),
+            ]);
+
+            $supplierRequest->loadMissing('purchaseRequest');
+            $snapshot = is_array($supplierRequest->supplier_snapshot) ? $supplierRequest->supplier_snapshot : [];
+
+            $this->auditService->record(
+                ProcurementAuditEventTypeEnum::SUPPLIER_REQUEST_SENT->value,
+                $supplierRequest,
+                (int) $supplierRequest->organization_id,
+                $actorId,
+                $supplierRequest->supplier_party_id,
+                [
+                    'request_number' => $supplierRequest->request_number,
+                    'previous_status' => $previousStatus,
+                    'status' => SupplierRequestStatusEnum::SENT->value,
+                    'sent_at' => $supplierRequest->sent_at?->toIso8601String(),
+                    'purchase_request_number' => $supplierRequest->purchaseRequest?->request_number,
+                    'supplier_name' => $this->supplierName($snapshot),
+                ]
+            );
+
+            return $supplierRequest->refresh()->load(['lines', 'supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest']);
+        });
     }
 
-    public function cancel(SupplierRequest $supplierRequest): SupplierRequest
+    public function cancel(SupplierRequest $supplierRequest, ?int $actorId = null): SupplierRequest
     {
         if (!$supplierRequest->canBeCancelled()) {
             throw ValidationException::withMessages([
@@ -113,12 +155,35 @@ class SupplierRequestService
             ]);
         }
 
-        $supplierRequest->update([
-            'status' => SupplierRequestStatusEnum::CANCELLED,
-            'cancelled_at' => now(),
-        ]);
+        return DB::transaction(function () use ($supplierRequest, $actorId): SupplierRequest {
+            $previousStatus = $supplierRequest->status->value;
 
-        return $supplierRequest->refresh()->load(['lines', 'supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest']);
+            $supplierRequest->update([
+                'status' => SupplierRequestStatusEnum::CANCELLED,
+                'cancelled_at' => now(),
+            ]);
+
+            $supplierRequest->loadMissing('purchaseRequest');
+            $snapshot = is_array($supplierRequest->supplier_snapshot) ? $supplierRequest->supplier_snapshot : [];
+
+            $this->auditService->record(
+                ProcurementAuditEventTypeEnum::SUPPLIER_REQUEST_CANCELLED->value,
+                $supplierRequest,
+                (int) $supplierRequest->organization_id,
+                $actorId,
+                $supplierRequest->supplier_party_id,
+                [
+                    'request_number' => $supplierRequest->request_number,
+                    'previous_status' => $previousStatus,
+                    'status' => SupplierRequestStatusEnum::CANCELLED->value,
+                    'cancelled_at' => $supplierRequest->cancelled_at?->toIso8601String(),
+                    'purchase_request_number' => $supplierRequest->purchaseRequest?->request_number,
+                    'supplier_name' => $this->supplierName($snapshot),
+                ]
+            );
+
+            return $supplierRequest->refresh()->load(['lines', 'supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest']);
+        });
     }
 
     public function queryForOrganization(int $organizationId): Builder
@@ -158,5 +223,12 @@ class SupplierRequestService
             ->count() + 1;
 
         return sprintf('%s-%04d', $prefix, $lastNumber);
+    }
+
+    private function supplierName(array $supplierSnapshot): ?string
+    {
+        $name = $supplierSnapshot['display_name'] ?? null;
+
+        return $name === null ? null : (string) $name;
     }
 }

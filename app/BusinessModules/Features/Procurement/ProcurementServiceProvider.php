@@ -66,6 +66,10 @@ class ProcurementServiceProvider extends ServiceProvider
         );
 
         $this->app->singleton(
+            Services\ProcurementAuditService::class
+        );
+
+        $this->app->singleton(
             Services\SupplierProposalComparisonService::class
         );
 

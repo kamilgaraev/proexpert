@@ -131,7 +131,7 @@ Route::prefix('api/v1/admin/procurement')
         });
 
         Route::get('/audit-logs', [PurchaseOrderController::class, 'auditLogs'])
-            ->middleware('authorize:procurement.view')
+            ->middleware('authorize:procurement.audit.view')
             ->name('audit_logs.index');
 
         Route::prefix('approvals')->name('approvals.')->group(function () {

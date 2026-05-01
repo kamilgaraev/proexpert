@@ -147,6 +147,14 @@ class SupplierProposal extends Model
         return $this->hasOne(SupplierProposalDecision::class, 'winning_supplier_proposal_id');
     }
 
+    public function auditEvents(): HasMany
+    {
+        return $this->hasMany(ProcurementAuditEvent::class, 'subject_id')
+            ->where('subject_type', $this->getMorphClass())
+            ->orderBy('occurred_at')
+            ->orderBy('id');
+    }
+
     // ============================================
     // SCOPES
     // ============================================
