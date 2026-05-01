@@ -12,6 +12,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (DB::getDriverName() !== 'pgsql') {
+            return;
+        }
+
         // Получаем имя внешнего ключа из базы данных
         $foreignKey = DB::selectOne("
             SELECT constraint_name 
@@ -148,6 +152,10 @@ return new class extends Migration
      */
     public function down(): void
     {
+        if (DB::getDriverName() !== 'pgsql') {
+            return;
+        }
+
         Schema::table('payment_transactions', function (Blueprint $table) {
             // Восстанавливаем invoice_id
             $table->foreignId('invoice_id')

@@ -40,6 +40,7 @@
     "procurement": [
       "procurement.view",
       "procurement.purchase_requests.view",
+      "procurement.supplier_requests.view",
       "procurement.purchase_orders.view",
       "procurement.purchase_orders.confirm",
       "procurement.contracts.view",

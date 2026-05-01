@@ -85,38 +85,40 @@ return new class extends Migration
             $table->index('section_id');
         });
 
-        DB::statement('ALTER TABLE normative_rates ADD COLUMN search_vector tsvector');
-        
-        DB::statement("
-            CREATE INDEX normative_rates_search_idx ON normative_rates USING GIN(search_vector)
-        ");
-        
-        DB::statement("
-            CREATE INDEX normative_rates_name_trgm_idx ON normative_rates USING GIN(name gin_trgm_ops)
-        ");
-        
-        DB::statement("
-            CREATE INDEX normative_rates_code_trgm_idx ON normative_rates USING GIN(code gin_trgm_ops)
-        ");
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement('ALTER TABLE normative_rates ADD COLUMN search_vector tsvector');
 
-        DB::statement("
-            CREATE OR REPLACE FUNCTION normative_rates_search_trigger() RETURNS trigger AS $$
-            BEGIN
-                NEW.search_vector :=
-                    setweight(to_tsvector('russian', coalesce(NEW.code, '')), 'A') ||
-                    setweight(to_tsvector('russian', coalesce(NEW.name, '')), 'B') ||
-                    setweight(to_tsvector('russian', coalesce(NEW.description, '')), 'C');
-                RETURN NEW;
-            END
-            $$ LANGUAGE plpgsql;
-        ");
+            DB::statement("
+                CREATE INDEX normative_rates_search_idx ON normative_rates USING GIN(search_vector)
+            ");
 
-        DB::statement("
-            CREATE TRIGGER normative_rates_search_update
-            BEFORE INSERT OR UPDATE ON normative_rates
-            FOR EACH ROW
-            EXECUTE FUNCTION normative_rates_search_trigger();
-        ");
+            DB::statement("
+                CREATE INDEX normative_rates_name_trgm_idx ON normative_rates USING GIN(name gin_trgm_ops)
+            ");
+
+            DB::statement("
+                CREATE INDEX normative_rates_code_trgm_idx ON normative_rates USING GIN(code gin_trgm_ops)
+            ");
+
+            DB::statement("
+                CREATE OR REPLACE FUNCTION normative_rates_search_trigger() RETURNS trigger AS $$
+                BEGIN
+                    NEW.search_vector :=
+                        setweight(to_tsvector('russian', coalesce(NEW.code, '')), 'A') ||
+                        setweight(to_tsvector('russian', coalesce(NEW.name, '')), 'B') ||
+                        setweight(to_tsvector('russian', coalesce(NEW.description, '')), 'C');
+                    RETURN NEW;
+                END
+                $$ LANGUAGE plpgsql;
+            ");
+
+            DB::statement("
+                CREATE TRIGGER normative_rates_search_update
+                BEFORE INSERT OR UPDATE ON normative_rates
+                FOR EACH ROW
+                EXECUTE FUNCTION normative_rates_search_trigger();
+            ");
+        }
 
         Schema::create('normative_rate_resources', function (Blueprint $table) {
             $table->id();
@@ -138,8 +140,10 @@ return new class extends Migration
 
     public function down(): void
     {
-        DB::statement('DROP TRIGGER IF EXISTS normative_rates_search_update ON normative_rates');
-        DB::statement('DROP FUNCTION IF EXISTS normative_rates_search_trigger()');
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement('DROP TRIGGER IF EXISTS normative_rates_search_update ON normative_rates');
+            DB::statement('DROP FUNCTION IF EXISTS normative_rates_search_trigger()');
+        }
         
         Schema::dropIfExists('normative_rate_resources');
         Schema::dropIfExists('normative_rates');

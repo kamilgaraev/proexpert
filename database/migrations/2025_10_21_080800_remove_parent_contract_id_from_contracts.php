@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (\DB::getDriverName() === 'sqlite') {
+            return;
+        }
+
         Schema::table('contracts', function (Blueprint $table) {
             // Проверяем, есть ли записи с parent_contract_id перед удалением
             $hasParentContracts = \DB::table('contracts')
@@ -27,13 +31,15 @@ return new class extends Migration
 
             // Удаляем foreign key, если он существует
             // Имя constraint может отличаться, проверяем все возможные варианты
-            $foreignKeys = \DB::select(
-                "SELECT constraint_name 
-                FROM information_schema.table_constraints 
-                WHERE table_name = 'contracts' 
-                AND constraint_type = 'FOREIGN KEY' 
-                AND constraint_name LIKE '%parent_contract%'"
-            );
+            $foreignKeys = \DB::getDriverName() === 'pgsql'
+                ? \DB::select(
+                    "SELECT constraint_name 
+                    FROM information_schema.table_constraints 
+                    WHERE table_name = 'contracts' 
+                    AND constraint_type = 'FOREIGN KEY' 
+                    AND constraint_name LIKE '%parent_contract%'"
+                )
+                : [];
 
             foreach ($foreignKeys as $fk) {
                 \DB::statement("ALTER TABLE contracts DROP CONSTRAINT {$fk->constraint_name}");

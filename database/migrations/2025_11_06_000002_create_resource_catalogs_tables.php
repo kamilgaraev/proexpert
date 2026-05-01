@@ -65,9 +65,10 @@ return new class extends Migration
             $table->unique(['organization_id', 'code']);
         });
         
-        // GIN индекс для полнотекстового поиска по механизмам
-        DB::statement('CREATE INDEX machinery_name_gin_idx ON machinery USING GIN(name gin_trgm_ops)');
-        DB::statement('CREATE INDEX machinery_code_gin_idx ON machinery USING GIN(code gin_trgm_ops)');
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement('CREATE INDEX machinery_name_gin_idx ON machinery USING GIN(name gin_trgm_ops)');
+            DB::statement('CREATE INDEX machinery_code_gin_idx ON machinery USING GIN(code gin_trgm_ops)');
+        }
 
         // ============================================
         // СПРАВОЧНИК ТРУДОВЫХ РЕСУРСОВ
@@ -119,10 +120,11 @@ return new class extends Migration
             $table->unique(['organization_id', 'code']);
         });
         
-        // GIN индекс для полнотекстового поиска по трудовым ресурсам
-        DB::statement('CREATE INDEX labor_resources_name_gin_idx ON labor_resources USING GIN(name gin_trgm_ops)');
-        DB::statement('CREATE INDEX labor_resources_code_gin_idx ON labor_resources USING GIN(code gin_trgm_ops)');
-        DB::statement('CREATE INDEX labor_resources_profession_gin_idx ON labor_resources USING GIN(profession gin_trgm_ops)');
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement('CREATE INDEX labor_resources_name_gin_idx ON labor_resources USING GIN(name gin_trgm_ops)');
+            DB::statement('CREATE INDEX labor_resources_code_gin_idx ON labor_resources USING GIN(code gin_trgm_ops)');
+            DB::statement('CREATE INDEX labor_resources_profession_gin_idx ON labor_resources USING GIN(profession gin_trgm_ops)');
+        }
 
         // ============================================
         // РАСШИРЕНИЕ ТАБЛИЦЫ ESTIMATE_ITEMS

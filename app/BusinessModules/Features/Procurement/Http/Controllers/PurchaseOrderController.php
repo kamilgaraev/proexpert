@@ -38,7 +38,7 @@ class PurchaseOrderController extends Controller
             $perPage = min((int) $request->input('per_page', 15), 100);
 
             $query = PurchaseOrder::forOrganization($organizationId)
-                ->with(['supplier', 'purchaseRequest', 'contract', 'items', 'organization']);
+                ->with(['supplier', 'externalSupplierContact', 'purchaseRequest', 'contract', 'items', 'receipts.lines', 'organization']);
 
             if ($request->filled('status')) {
                 $query->withStatus((string) $request->input('status'));
@@ -81,7 +81,7 @@ class PurchaseOrderController extends Controller
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $order = PurchaseOrder::forOrganization($organizationId)
-                ->with(['supplier', 'purchaseRequest', 'contract', 'proposals', 'items', 'organization'])
+                ->with(['supplier', 'externalSupplierContact', 'purchaseRequest', 'contract', 'proposals', 'items.receiptLines', 'receipts.lines', 'organization'])
                 ->find($id);
 
             if (!$order) {
@@ -161,7 +161,7 @@ class PurchaseOrderController extends Controller
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $order = PurchaseOrder::forOrganization($organizationId)
-                ->with(['items', 'supplier', 'purchaseRequest', 'organization'])
+                ->with(['items', 'supplier', 'externalSupplierContact', 'purchaseRequest', 'organization'])
                 ->find($id);
 
             if (!$order) {
@@ -263,7 +263,7 @@ class PurchaseOrderController extends Controller
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $order = PurchaseOrder::forOrganization($organizationId)
-                ->with(['items', 'supplier', 'purchaseRequest'])
+                ->with(['items.receiptLines', 'supplier', 'externalSupplierContact', 'purchaseRequest', 'receipts.lines'])
                 ->find($id);
 
             if (!$order) {
@@ -290,13 +290,22 @@ class PurchaseOrderController extends Controller
                 ],
                 'items.*.quantity_received' => ['required', 'numeric', 'min:0.001'],
                 'items.*.price' => ['required', 'numeric', 'min:0'],
+                'items.*.metadata' => ['sometimes', 'array'],
+                'receipt_date' => ['sometimes', 'date'],
+                'notes' => ['sometimes', 'nullable', 'string', 'max:2000'],
+                'metadata' => ['sometimes', 'array'],
             ]);
 
             $received = $this->service->receiveMaterials(
                 $order,
                 (int) $validated['warehouse_id'],
                 $validated['items'],
-                (int) auth()->id()
+                (int) auth()->id(),
+                [
+                    'receipt_date' => $validated['receipt_date'] ?? null,
+                    'notes' => $validated['notes'] ?? null,
+                    'metadata' => $validated['metadata'] ?? null,
+                ]
             );
 
             return AdminResponse::success(

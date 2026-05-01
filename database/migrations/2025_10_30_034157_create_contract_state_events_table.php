@@ -34,8 +34,9 @@ return new class extends Migration
             $table->index('effective_from');
         });
 
-        // GIN индекс для JSONB поля metadata в PostgreSQL
-        DB::statement('CREATE INDEX contract_state_events_metadata_gin_idx ON contract_state_events USING GIN(metadata)');
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement('CREATE INDEX contract_state_events_metadata_gin_idx ON contract_state_events USING GIN(metadata)');
+        }
     }
 
     /**

@@ -29,29 +29,31 @@ return new class extends Migration
             $table->index('category');
         });
 
-        DB::statement('CREATE INDEX estimate_libraries_tags_gin_idx ON estimate_libraries USING GIN(tags)');
-        
-        DB::statement('ALTER TABLE estimate_libraries ADD COLUMN search_vector tsvector');
-        DB::statement('CREATE INDEX estimate_libraries_search_idx ON estimate_libraries USING GIN(search_vector)');
-        
-        DB::statement("
-            CREATE OR REPLACE FUNCTION estimate_libraries_search_trigger() RETURNS trigger AS $$
-            BEGIN
-                NEW.search_vector :=
-                    setweight(to_tsvector('russian', coalesce(NEW.name, '')), 'A') ||
-                    setweight(to_tsvector('russian', coalesce(NEW.description, '')), 'B') ||
-                    setweight(to_tsvector('russian', coalesce(NEW.category, '')), 'C');
-                RETURN NEW;
-            END
-            $$ LANGUAGE plpgsql;
-        ");
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement('CREATE INDEX estimate_libraries_tags_gin_idx ON estimate_libraries USING GIN(tags)');
 
-        DB::statement("
-            CREATE TRIGGER estimate_libraries_search_update
-            BEFORE INSERT OR UPDATE ON estimate_libraries
-            FOR EACH ROW
-            EXECUTE FUNCTION estimate_libraries_search_trigger();
-        ");
+            DB::statement('ALTER TABLE estimate_libraries ADD COLUMN search_vector tsvector');
+            DB::statement('CREATE INDEX estimate_libraries_search_idx ON estimate_libraries USING GIN(search_vector)');
+
+            DB::statement("
+                CREATE OR REPLACE FUNCTION estimate_libraries_search_trigger() RETURNS trigger AS $$
+                BEGIN
+                    NEW.search_vector :=
+                        setweight(to_tsvector('russian', coalesce(NEW.name, '')), 'A') ||
+                        setweight(to_tsvector('russian', coalesce(NEW.description, '')), 'B') ||
+                        setweight(to_tsvector('russian', coalesce(NEW.category, '')), 'C');
+                    RETURN NEW;
+                END
+                $$ LANGUAGE plpgsql;
+            ");
+
+            DB::statement("
+                CREATE TRIGGER estimate_libraries_search_update
+                BEFORE INSERT OR UPDATE ON estimate_libraries
+                FOR EACH ROW
+                EXECUTE FUNCTION estimate_libraries_search_trigger();
+            ");
+        }
 
         Schema::create('estimate_library_items', function (Blueprint $table) {
             $table->id();
@@ -69,7 +71,9 @@ return new class extends Migration
             $table->index('library_id');
         });
 
-        DB::statement('CREATE INDEX estimate_library_items_parameters_gin_idx ON estimate_library_items USING GIN(parameters)');
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement('CREATE INDEX estimate_library_items_parameters_gin_idx ON estimate_library_items USING GIN(parameters)');
+        }
 
         Schema::create('estimate_library_item_positions', function (Blueprint $table) {
             $table->id();
@@ -106,13 +110,17 @@ return new class extends Migration
             $table->index(['user_id', 'used_at']);
         });
 
-        DB::statement('CREATE INDEX estimate_library_usage_applied_parameters_gin_idx ON estimate_library_usage USING GIN(applied_parameters)');
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement('CREATE INDEX estimate_library_usage_applied_parameters_gin_idx ON estimate_library_usage USING GIN(applied_parameters)');
+        }
     }
 
     public function down(): void
     {
-        DB::statement('DROP TRIGGER IF EXISTS estimate_libraries_search_update ON estimate_libraries');
-        DB::statement('DROP FUNCTION IF EXISTS estimate_libraries_search_trigger()');
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement('DROP TRIGGER IF EXISTS estimate_libraries_search_update ON estimate_libraries');
+            DB::statement('DROP FUNCTION IF EXISTS estimate_libraries_search_trigger()');
+        }
         
         Schema::dropIfExists('estimate_library_usage');
         Schema::dropIfExists('estimate_library_item_positions');

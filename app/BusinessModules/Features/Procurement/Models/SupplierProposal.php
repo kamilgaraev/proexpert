@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalStatusEnum;
 use App\Models\Organization;
 use App\Models\Supplier;
@@ -22,13 +23,20 @@ class SupplierProposal extends Model
     protected $fillable = [
         'organization_id',
         'purchase_order_id',
+        'supplier_request_id',
         'supplier_id',
+        'external_supplier_contact_id',
         'proposal_number',
         'proposal_date',
         'status',
+        'subtotal_amount',
+        'delivery_amount',
+        'vat_amount',
         'total_amount',
         'currency',
         'valid_until',
+        'payment_terms',
+        'delivery_terms',
         'items',
         'notes',
         'metadata',
@@ -38,6 +46,9 @@ class SupplierProposal extends Model
         'status' => SupplierProposalStatusEnum::class,
         'proposal_date' => 'date',
         'valid_until' => 'date',
+        'subtotal_amount' => 'decimal:2',
+        'delivery_amount' => 'decimal:2',
+        'vat_amount' => 'decimal:2',
         'total_amount' => 'decimal:2',
         'items' => 'array',
         'metadata' => 'array',
@@ -74,6 +85,21 @@ class SupplierProposal extends Model
     public function supplier(): BelongsTo
     {
         return $this->belongsTo(Supplier::class);
+    }
+
+    public function supplierRequest(): BelongsTo
+    {
+        return $this->belongsTo(SupplierRequest::class);
+    }
+
+    public function externalSupplierContact(): BelongsTo
+    {
+        return $this->belongsTo(ExternalSupplierContact::class);
+    }
+
+    public function lines(): HasMany
+    {
+        return $this->hasMany(SupplierProposalLine::class);
     }
 
     // ============================================

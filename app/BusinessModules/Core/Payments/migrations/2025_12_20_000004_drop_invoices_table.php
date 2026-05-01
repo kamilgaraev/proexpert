@@ -15,6 +15,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (DB::getDriverName() !== 'pgsql') {
+            return;
+        }
+
         // Проверяем, существует ли таблица invoices
         if (!Schema::hasTable('invoices')) {
             return; // Таблица уже удалена
@@ -87,6 +91,10 @@ return new class extends Migration
      */
     public function down(): void
     {
+        if (DB::getDriverName() !== 'pgsql') {
+            return;
+        }
+
         // Восстановление таблицы invoices (для rollback)
         Schema::create('invoices', function (Blueprint $table) {
             $table->id();

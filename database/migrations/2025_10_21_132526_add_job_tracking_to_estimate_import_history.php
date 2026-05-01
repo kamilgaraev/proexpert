@@ -14,8 +14,10 @@ return new class extends Migration
             $table->integer('progress')->default(0)->after('status');
         });
         
-        DB::statement("ALTER TABLE estimate_import_history DROP CONSTRAINT IF EXISTS estimate_import_history_status_check");
-        DB::statement("ALTER TABLE estimate_import_history ADD CONSTRAINT estimate_import_history_status_check CHECK (status IN ('queued', 'processing', 'completed', 'failed', 'partial'))");
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement("ALTER TABLE estimate_import_history DROP CONSTRAINT IF EXISTS estimate_import_history_status_check");
+            DB::statement("ALTER TABLE estimate_import_history ADD CONSTRAINT estimate_import_history_status_check CHECK (status IN ('queued', 'processing', 'completed', 'failed', 'partial'))");
+        }
     }
 
     public function down(): void
@@ -24,7 +26,9 @@ return new class extends Migration
             $table->dropColumn(['job_id', 'progress']);
         });
         
-        DB::statement("ALTER TABLE estimate_import_history DROP CONSTRAINT IF EXISTS estimate_import_history_status_check");
-        DB::statement("ALTER TABLE estimate_import_history ADD CONSTRAINT estimate_import_history_status_check CHECK (status IN ('processing', 'completed', 'failed', 'partial'))");
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement("ALTER TABLE estimate_import_history DROP CONSTRAINT IF EXISTS estimate_import_history_status_check");
+            DB::statement("ALTER TABLE estimate_import_history ADD CONSTRAINT estimate_import_history_status_check CHECK (status IN ('processing', 'completed', 'failed', 'partial'))");
+        }
     }
 };

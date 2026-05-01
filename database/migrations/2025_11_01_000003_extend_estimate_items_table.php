@@ -9,6 +9,10 @@ return new class extends Migration
 {
     private function indexExists(string $table, string $index): bool
     {
+        if (DB::getDriverName() !== 'pgsql') {
+            return false;
+        }
+
         $result = DB::selectOne(
             "SELECT EXISTS (
                 SELECT 1 
@@ -67,9 +71,11 @@ return new class extends Migration
             });
         }
 
-        DB::statement('CREATE INDEX IF NOT EXISTS estimate_items_applied_coefficients_gin_idx ON estimate_items USING GIN(applied_coefficients)');
-        DB::statement('CREATE INDEX IF NOT EXISTS estimate_items_resource_calculation_gin_idx ON estimate_items USING GIN(resource_calculation)');
-        DB::statement('CREATE INDEX IF NOT EXISTS estimate_items_custom_resources_gin_idx ON estimate_items USING GIN(custom_resources)');
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement('CREATE INDEX IF NOT EXISTS estimate_items_applied_coefficients_gin_idx ON estimate_items USING GIN(applied_coefficients)');
+            DB::statement('CREATE INDEX IF NOT EXISTS estimate_items_resource_calculation_gin_idx ON estimate_items USING GIN(resource_calculation)');
+            DB::statement('CREATE INDEX IF NOT EXISTS estimate_items_custom_resources_gin_idx ON estimate_items USING GIN(custom_resources)');
+        }
     }
 
     public function down(): void
@@ -106,4 +112,3 @@ return new class extends Migration
         }
     }
 };
-

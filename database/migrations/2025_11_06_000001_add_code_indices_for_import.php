@@ -28,7 +28,7 @@ return new class extends Migration
 
         // Добавить GIN индекс для нормализованных кодов (без префиксов) в PostgreSQL
         // Это позволит быстро искать коды вариативно (с префиксами и без)
-        if (config('database.default') === 'pgsql') {
+        if (DB::getDriverName() === 'pgsql') {
             // Добавляем функцию для нормализации кодов
             DB::statement("
                 CREATE OR REPLACE FUNCTION normalize_code(code_text TEXT) 
@@ -87,7 +87,7 @@ return new class extends Migration
         });
 
         // Удаляем PostgreSQL специфичные объекты
-        if (config('database.default') === 'pgsql') {
+        if (DB::getDriverName() === 'pgsql') {
             DB::statement("DROP INDEX IF EXISTS normative_rates_normalized_code_idx");
             DB::statement("DROP FUNCTION IF EXISTS normalize_code(TEXT)");
         }
@@ -98,7 +98,7 @@ return new class extends Migration
      */
     private function indexExists(string $table, string $index): bool
     {
-        if (config('database.default') === 'pgsql') {
+        if (DB::getDriverName() === 'pgsql') {
             $result = DB::selectOne(
                 "SELECT EXISTS (
                     SELECT 1 
@@ -112,6 +112,14 @@ return new class extends Migration
             return $result->exists ?? false;
         }
         
+        if (DB::getDriverName() === 'sqlite') {
+            $result = DB::select("PRAGMA index_list('{$table}')");
+
+            return collect($result)->contains(
+                static fn ($row): bool => isset($row->name) && $row->name === $index
+            );
+        }
+
         // Для MySQL
         $result = DB::select(
             "SHOW INDEX FROM {$table} WHERE Key_name = ?",

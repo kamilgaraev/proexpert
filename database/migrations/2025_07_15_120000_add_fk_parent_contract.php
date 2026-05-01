@@ -9,10 +9,11 @@ return new class extends Migration
 {
     public function up(): void
     {
-        // Проверяем по имени констрейнта, есть ли уже FK
-        $constraintExists = DB::table('pg_constraint')
-            ->where('conname', 'contracts_parent_contract_id_foreign')
-            ->exists();
+        $constraintExists = DB::getDriverName() === 'pgsql'
+            ? DB::table('pg_constraint')
+                ->where('conname', 'contracts_parent_contract_id_foreign')
+                ->exists()
+            : false;
 
         if (!$constraintExists) {
             Schema::table('contracts', function (Blueprint $table) {

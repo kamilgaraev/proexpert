@@ -8,6 +8,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
+use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\Models\Contract;
 use App\Models\Supplier;
@@ -160,12 +161,10 @@ class PurchaseOrderService
         PurchaseOrder $order,
         int $warehouseId,
         array $items,
-        int $userId
+        int $userId,
+        array $receiptData = []
     ): PurchaseOrder {
-        if (!in_array($order->status, [
-            PurchaseOrderStatusEnum::CONFIRMED,
-            PurchaseOrderStatusEnum::IN_DELIVERY,
-        ], true)) {
+        if (!$order->status->canReceiveMaterials()) {
             throw new \DomainException(trans_message('procurement.purchase_orders.invalid_status_for_receive'));
         }
 
@@ -180,10 +179,34 @@ class PurchaseOrderService
         }
 
         $orderItems = $this->resolveOrderItems($order, $items);
+        $this->assertReceivableQuantities($order, $orderItems, $items);
 
         DB::beginTransaction();
 
         try {
+            $receipt = $order->receipts()->create([
+                'organization_id' => $order->organization_id,
+                'warehouse_id' => $warehouse->id,
+                'received_by_user_id' => $userId,
+                'receipt_number' => $this->generateReceiptNumber($order->organization_id),
+                'receipt_date' => $receiptData['receipt_date'] ?? now()->toDateString(),
+                'notes' => $receiptData['notes'] ?? null,
+                'metadata' => $receiptData['metadata'] ?? null,
+            ]);
+
+            foreach ($items as $item) {
+                $quantity = (float) $item['quantity_received'];
+                $price = (float) $item['price'];
+
+                $receipt->lines()->create([
+                    'purchase_order_item_id' => (int) $item['item_id'],
+                    'quantity_received' => $quantity,
+                    'price' => $price,
+                    'total_amount' => round($quantity * $price, 2),
+                    'metadata' => $item['metadata'] ?? null,
+                ]);
+            }
+
             event(new \App\BusinessModules\Features\Procurement\Events\MaterialReceivedFromSupplier(
                 $order,
                 $warehouse->id,
@@ -192,7 +215,7 @@ class PurchaseOrderService
             ));
 
             $order->update([
-                'status' => PurchaseOrderStatusEnum::DELIVERED,
+                'status' => $this->resolveDeliveryStatus($order),
             ]);
 
             DB::commit();
@@ -206,7 +229,7 @@ class PurchaseOrderService
                 'user_id' => $userId,
             ]);
 
-            return $order->fresh(['items', 'supplier', 'purchaseRequest']);
+            return $order->fresh(['items.receiptLines', 'supplier', 'externalSupplierContact', 'purchaseRequest', 'receipts.lines']);
         } catch (\Exception $e) {
             DB::rollBack();
 
@@ -275,6 +298,73 @@ class PurchaseOrderService
         }
 
         return $orderItems->values();
+    }
+
+    private function assertReceivableQuantities(PurchaseOrder $order, Collection $orderItems, array $items): void
+    {
+        $requestedByItemId = collect($items)
+            ->groupBy(static fn (array $item): int => (int) $item['item_id'])
+            ->map(static fn (Collection $rows): float => (float) $rows->sum('quantity_received'));
+
+        $receivedByItemId = $this->receivedQuantitiesByItemId($order);
+
+        foreach ($orderItems as $orderItem) {
+            $orderedQuantity = (float) $orderItem->quantity;
+            $alreadyReceived = (float) ($receivedByItemId[$orderItem->id] ?? 0);
+            $requestedQuantity = (float) ($requestedByItemId[$orderItem->id] ?? 0);
+
+            if ($alreadyReceived + $requestedQuantity > $orderedQuantity + 0.0001) {
+                throw new \DomainException(trans_message('procurement.purchase_orders.quantity_exceeds_order'));
+            }
+        }
+    }
+
+    private function resolveDeliveryStatus(PurchaseOrder $order): PurchaseOrderStatusEnum
+    {
+        $order->loadMissing('items');
+        $receivedByItemId = $this->receivedQuantitiesByItemId($order);
+
+        foreach ($order->items as $item) {
+            if ((float) ($receivedByItemId[$item->id] ?? 0) + 0.0001 < (float) $item->quantity) {
+                return PurchaseOrderStatusEnum::PARTIALLY_DELIVERED;
+            }
+        }
+
+        return PurchaseOrderStatusEnum::DELIVERED;
+    }
+
+    private function receivedQuantitiesByItemId(PurchaseOrder $order): array
+    {
+        return DB::table('purchase_receipt_lines')
+            ->join('purchase_receipts', 'purchase_receipts.id', '=', 'purchase_receipt_lines.purchase_receipt_id')
+            ->where('purchase_receipts.purchase_order_id', $order->id)
+            ->where('purchase_receipts.status', 'posted')
+            ->whereNull('purchase_receipts.deleted_at')
+            ->groupBy('purchase_receipt_lines.purchase_order_item_id')
+            ->selectRaw('purchase_receipt_lines.purchase_order_item_id, SUM(purchase_receipt_lines.quantity_received) as received_quantity')
+            ->pluck('received_quantity', 'purchase_receipt_lines.purchase_order_item_id')
+            ->map(static fn ($value): float => (float) $value)
+            ->all();
+    }
+
+    private function generateReceiptNumber(int $organizationId): string
+    {
+        $year = date('Y');
+        $month = date('m');
+
+        $lastReceipt = PurchaseReceipt::query()
+            ->where('organization_id', $organizationId)
+            ->whereYear('created_at', $year)
+            ->whereMonth('created_at', $month)
+            ->orderByDesc('id')
+            ->first();
+
+        $nextNumber = 1;
+        if ($lastReceipt && preg_match('/(\d+)$/', $lastReceipt->receipt_number, $matches)) {
+            $nextNumber = ((int) $matches[1]) + 1;
+        }
+
+        return sprintf('PR-%s%s-%04d', $year, $month, $nextNumber);
     }
 
     private function generateOrderNumber(int $organizationId): string

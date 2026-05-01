@@ -47,6 +47,25 @@ class StorePurchaseRequestRequest extends FormRequest
                         ->where('is_active', true);
                 }),
             ],
+            'needed_by' => ['sometimes', 'nullable', 'date'],
+            'budget_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'budget_currency' => ['sometimes', 'string', 'size:3'],
+            'lines' => ['sometimes', 'array', 'min:1'],
+            'lines.*.material_id' => [
+                'sometimes',
+                'nullable',
+                'integer',
+                Rule::exists('materials', 'id')->where(static function ($query) use ($organizationId) {
+                    $query->where('organization_id', $organizationId)
+                        ->whereNull('deleted_at');
+                }),
+            ],
+            'lines.*.name' => ['required_with:lines', 'string', 'max:1000'],
+            'lines.*.quantity' => ['required_with:lines', 'numeric', 'min:0.001'],
+            'lines.*.unit' => ['required_with:lines', 'string', 'max:32'],
+            'lines.*.specification' => ['sometimes', 'nullable', 'string', 'max:5000'],
+            'lines.*.needed_by' => ['sometimes', 'nullable', 'date'],
+            'lines.*.metadata' => ['sometimes', 'array'],
             'notes' => ['sometimes', 'string', 'max:5000'],
             'metadata' => ['sometimes', 'array'],
         ];

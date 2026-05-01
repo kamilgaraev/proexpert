@@ -5,6 +5,7 @@ namespace App\BusinessModules\Features\Procurement\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use App\Models\Material;
 
 /**
@@ -56,6 +57,11 @@ class PurchaseOrderItem extends Model
     public function material(): BelongsTo
     {
         return $this->belongsTo(Material::class);
+    }
+
+    public function receiptLines(): HasMany
+    {
+        return $this->hasMany(PurchaseReceiptLine::class);
     }
 
     // ============================================

@@ -10,6 +10,12 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (DB::getDriverName() === 'sqlite') {
+            Schema::table('holding_sites', function (Blueprint $table) {
+                $table->dropIndex('holding_sites_status_is_active_index');
+            });
+        }
+
         Schema::table('holding_sites', function (Blueprint $table) {
             // Убираем template_id - упрощаем, каждый лендинг уникален
             $table->dropColumn('template_id');
@@ -26,10 +32,11 @@ return new class extends Migration
             $table->unique(['organization_group_id'], 'one_landing_per_holding');
         });
         
-        // Обновляем комментарии для ясности
-        DB::statement("COMMENT ON TABLE holding_sites IS 'Лендинги холдингов - один лендинг на холдинг (упрощенная Тильда)'");
-        DB::statement("COMMENT ON COLUMN holding_sites.title IS 'Заголовок лендинга'");
-        DB::statement("COMMENT ON COLUMN holding_sites.theme_config IS 'Настройки темы (цвета, шрифты) как в Тильде'");
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement("COMMENT ON TABLE holding_sites IS 'Лендинги холдингов - один лендинг на холдинг (упрощенная Тильда)'");
+            DB::statement("COMMENT ON COLUMN holding_sites.title IS 'Заголовок лендинга'");
+            DB::statement("COMMENT ON COLUMN holding_sites.theme_config IS 'Настройки темы (цвета, шрифты) как в Тильде'");
+        }
     }
 
     public function down(): void

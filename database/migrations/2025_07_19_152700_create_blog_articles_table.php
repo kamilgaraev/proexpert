@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -50,7 +51,9 @@ return new class extends Migration
             $table->index(['is_featured', 'published_at']);
             $table->index('slug');
             $table->index('author_id');
-            $table->fullText(['title', 'content', 'excerpt']);
+            if (DB::getDriverName() !== 'sqlite') {
+                $table->fullText(['title', 'content', 'excerpt']);
+            }
         });
     }
 

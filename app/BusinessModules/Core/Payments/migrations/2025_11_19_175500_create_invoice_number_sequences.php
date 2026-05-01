@@ -10,6 +10,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (DB::getDriverName() !== 'pgsql') {
+            return;
+        }
+
         // Создаем функцию для генерации следующего номера счета
         DB::statement("
             CREATE OR REPLACE FUNCTION get_next_invoice_number(org_id INTEGER, year_val INTEGER)
@@ -60,6 +64,10 @@ return new class extends Migration
      */
     public function down(): void
     {
+        if (DB::getDriverName() !== 'pgsql') {
+            return;
+        }
+
         // Удаляем функцию
         DB::statement("DROP FUNCTION IF EXISTS get_next_invoice_number(INTEGER, INTEGER)");
         

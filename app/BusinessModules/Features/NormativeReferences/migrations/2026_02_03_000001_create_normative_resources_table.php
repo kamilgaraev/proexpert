@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -24,7 +25,9 @@ return new class extends Migration
 
             // Индексы для быстрого поиска
             $table->index(['code', 'source']);
-            $table->fullText('name'); // Для поиска по названию (если поддерживается БД)
+            if (DB::getDriverName() !== 'sqlite') {
+                $table->fullText('name');
+            }
         });
     }
 

@@ -14,6 +14,10 @@ class PurchaseOrderItemResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $receivedQuantity = $this->relationLoaded('receiptLines')
+            ? (float) $this->receiptLines->sum('quantity_received')
+            : null;
+
         return [
             'id' => $this->id,
             'purchase_order_id' => $this->purchase_order_id,
@@ -23,6 +27,8 @@ class PurchaseOrderItemResource extends JsonResource
             'unit' => $this->unit,
             'unit_price' => (float) $this->unit_price,
             'total_price' => (float) $this->total_price,
+            'received_quantity' => $receivedQuantity,
+            'remaining_quantity' => $receivedQuantity === null ? null : max((float) $this->quantity - $receivedQuantity, 0),
             'notes' => $this->notes,
             'metadata' => $this->metadata,
             'created_at' => $this->created_at?->toDateTimeString(),

@@ -1,129 +1,176 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\Procurement\Services;
 
+use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
+use App\BusinessModules\Features\Procurement\Enums\SupplierProposalStatusEnum;
+use App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
-use App\BusinessModules\Features\Procurement\Enums\SupplierProposalStatusEnum;
+use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use Illuminate\Support\Facades\DB;
+use function trans_message;
 
-/**
- * Сервис для работы с коммерческими предложениями
- */
 class SupplierProposalService
 {
-    /**
-     * Создать КП из заказа
-     */
-    public function createFromOrder(PurchaseOrder $order, array $data): SupplierProposal
+    public function createFromSupplierRequest(SupplierRequest $supplierRequest, array $data): SupplierProposal
     {
-        DB::beginTransaction();
-        try {
-            $proposalNumber = $this->generateProposalNumber($order->organization_id);
+        return DB::transaction(function () use ($supplierRequest, $data): SupplierProposal {
+            $supplierRequest->loadMissing('lines');
 
-            $proposal = SupplierProposal::create([
-                'organization_id' => $order->organization_id,
-                'purchase_order_id' => $order->id,
-                'supplier_id' => $order->supplier_id,
-                'proposal_number' => $proposalNumber,
+            $proposal = SupplierProposal::query()->create([
+                'organization_id' => $supplierRequest->organization_id,
+                'supplier_request_id' => $supplierRequest->id,
+                'supplier_id' => $supplierRequest->supplier_id,
+                'external_supplier_contact_id' => $supplierRequest->external_supplier_contact_id,
+                'proposal_number' => $this->generateProposalNumber($supplierRequest->organization_id),
                 'proposal_date' => $data['proposal_date'] ?? now(),
                 'status' => SupplierProposalStatusEnum::SUBMITTED,
-                'total_amount' => $data['total_amount'] ?? $order->total_amount,
-                'currency' => $data['currency'] ?? $order->currency,
+                'subtotal_amount' => $data['subtotal_amount'] ?? $data['total_amount'],
+                'delivery_amount' => $data['delivery_amount'] ?? 0,
+                'vat_amount' => $data['vat_amount'] ?? 0,
+                'total_amount' => $data['total_amount'],
+                'currency' => $data['currency'] ?? 'RUB',
                 'valid_until' => $data['valid_until'] ?? null,
+                'payment_terms' => $data['payment_terms'] ?? null,
+                'delivery_terms' => $data['delivery_terms'] ?? null,
                 'items' => $data['items'] ?? null,
                 'notes' => $data['notes'] ?? null,
                 'metadata' => $data['metadata'] ?? null,
             ]);
 
-            DB::commit();
+            foreach ($data['items'] ?? [] as $item) {
+                $quantity = (float) $item['quantity'];
+                $unitPrice = (float) $item['unit_price'];
+
+                $proposal->lines()->create([
+                    'supplier_request_line_id' => $item['supplier_request_line_id'] ?? null,
+                    'material_id' => $this->resolveLineMaterialId($supplierRequest, $item['supplier_request_line_id'] ?? null),
+                    'name' => $item['name'],
+                    'quantity' => $quantity,
+                    'unit' => $item['unit'],
+                    'unit_price' => $unitPrice,
+                    'total_amount' => $item['total_amount'] ?? round($quantity * $unitPrice, 2),
+                    'comment' => $item['comment'] ?? null,
+                    'metadata' => $item['metadata'] ?? null,
+                ]);
+            }
+
+            $supplierRequest->update([
+                'status' => SupplierRequestStatusEnum::RESPONDED,
+                'responded_at' => now(),
+            ]);
 
             event(new \App\BusinessModules\Features\Procurement\Events\SupplierProposalReceived($proposal));
 
-            return $proposal->fresh(['supplier', 'purchaseOrder']);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            throw $e;
-        }
+            return $proposal->fresh(['supplier', 'externalSupplierContact', 'supplierRequest', 'lines']);
+        });
     }
 
-    /**
-     * Принять КП
-     */
     public function accept(SupplierProposal $proposal): SupplierProposal
     {
         if (!$proposal->canBeAccepted()) {
-            throw new \DomainException('КП не может быть принято в текущем статусе');
+            throw new \DomainException(trans_message('procurement.proposals.accept_invalid_status'));
         }
 
-        DB::beginTransaction();
-        try {
+        DB::transaction(function () use ($proposal): void {
+            $proposal->loadMissing(['supplierRequest.purchaseRequest', 'lines']);
+
             $proposal->update([
                 'status' => SupplierProposalStatusEnum::ACCEPTED,
             ]);
 
-            // Обновляем заказ
-            if ($proposal->purchaseOrder) {
-                $orderService = app(PurchaseOrderService::class);
-                $orderService->confirm($proposal->purchaseOrder, [
-                    'total_amount' => $proposal->total_amount,
+            $order = PurchaseOrder::query()->create([
+                'organization_id' => $proposal->organization_id,
+                'purchase_request_id' => $proposal->supplierRequest?->purchase_request_id,
+                'accepted_supplier_proposal_id' => $proposal->id,
+                'supplier_id' => $proposal->supplier_id,
+                'external_supplier_contact_id' => $proposal->external_supplier_contact_id,
+                'order_number' => $this->generateOrderNumber($proposal->organization_id),
+                'order_date' => now(),
+                'status' => PurchaseOrderStatusEnum::CONFIRMED,
+                'total_amount' => $proposal->total_amount,
+                'currency' => $proposal->currency,
+                'pricing_source' => 'accepted_supplier_proposal',
+                'delivery_date' => $proposal->supplierRequest?->purchaseRequest?->needed_by,
+                'confirmed_at' => now(),
+                'notes' => $proposal->notes,
+                'metadata' => [
+                    'accepted_supplier_proposal_id' => $proposal->id,
+                    'supplier_request_id' => $proposal->supplier_request_id,
+                ],
+            ]);
+
+            foreach ($proposal->lines as $line) {
+                $order->items()->create([
+                    'material_id' => $line->material_id,
+                    'material_name' => $line->name,
+                    'quantity' => $line->quantity,
+                    'unit' => $line->unit,
+                    'unit_price' => $line->unit_price,
+                    'total_price' => $line->total_amount,
+                    'notes' => $line->comment,
+                    'metadata' => [
+                        'supplier_proposal_line_id' => $line->id,
+                        'supplier_request_line_id' => $line->supplier_request_line_id,
+                    ],
                 ]);
             }
 
-            DB::commit();
+            $proposal->update([
+                'purchase_order_id' => $order->id,
+            ]);
+        });
 
-            return $proposal->fresh();
-        } catch (\Exception $e) {
-            DB::rollBack();
-            throw $e;
-        }
+        return $proposal->fresh(['supplier', 'externalSupplierContact', 'supplierRequest', 'purchaseOrder', 'lines']);
     }
 
-    /**
-     * Отклонить КП
-     */
     public function reject(SupplierProposal $proposal, string $reason): SupplierProposal
     {
         if ($proposal->status->isFinal()) {
-            throw new \DomainException('КП уже в финальном статусе');
+            throw new \DomainException(trans_message('procurement.proposals.reject_invalid_status'));
         }
 
-        DB::beginTransaction();
-        try {
-            $proposal->update([
-                'status' => SupplierProposalStatusEnum::REJECTED,
-                'notes' => ($proposal->notes ? $proposal->notes . "\n\n" : '') . "Отклонено: {$reason}",
-            ]);
+        $proposal->update([
+            'status' => SupplierProposalStatusEnum::REJECTED,
+            'notes' => ($proposal->notes ? $proposal->notes . "\n\n" : '') . "Отклонено: {$reason}",
+        ]);
 
-            DB::commit();
-
-            return $proposal->fresh();
-        } catch (\Exception $e) {
-            DB::rollBack();
-            throw $e;
-        }
+        return $proposal->fresh(['supplier', 'externalSupplierContact', 'supplierRequest', 'lines']);
     }
 
-    /**
-     * Генерировать номер КП
-     */
+    private function resolveLineMaterialId(SupplierRequest $supplierRequest, ?int $supplierRequestLineId): ?int
+    {
+        if ($supplierRequestLineId === null) {
+            return null;
+        }
+
+        return $supplierRequest->lines
+            ->firstWhere('id', $supplierRequestLineId)
+            ?->material_id;
+    }
+
     private function generateProposalNumber(int $organizationId): string
     {
-        $year = date('Y');
-        $month = date('m');
+        $prefix = 'КП-' . now()->format('Ym');
+        $lastNumber = SupplierProposal::query()
+            ->where('organization_id', $organizationId)
+            ->where('proposal_number', 'like', $prefix . '-%')
+            ->count() + 1;
 
-        $lastProposal = SupplierProposal::where('organization_id', $organizationId)
-            ->whereYear('created_at', $year)
-            ->whereMonth('created_at', $month)
-            ->orderBy('id', 'desc')
-            ->first();
+        return sprintf('%s-%04d', $prefix, $lastNumber);
+    }
 
-        $nextNumber = 1;
-        if ($lastProposal && preg_match('/(\d+)$/', $lastProposal->proposal_number, $matches)) {
-            $nextNumber = intval($matches[1]) + 1;
-        }
+    private function generateOrderNumber(int $organizationId): string
+    {
+        $prefix = 'ЗП-' . now()->format('Ym');
+        $lastNumber = PurchaseOrder::query()
+            ->where('organization_id', $organizationId)
+            ->where('order_number', 'like', $prefix . '-%')
+            ->count() + 1;
 
-        return sprintf('КП-%s%s-%04d', $year, $month, $nextNumber);
+        return sprintf('%s-%04d', $prefix, $lastNumber);
     }
 }
-

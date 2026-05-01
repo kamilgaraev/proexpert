@@ -24,13 +24,16 @@ class PurchaseOrder extends Model
     protected $fillable = [
         'organization_id',
         'purchase_request_id',
+        'accepted_supplier_proposal_id',
         'supplier_id',
+        'external_supplier_contact_id',
         'contract_id',
         'order_number',
         'order_date',
         'status',
         'total_amount',
         'currency',
+        'pricing_source',
         'delivery_date',
         'sent_at',
         'confirmed_at',
@@ -51,6 +54,7 @@ class PurchaseOrder extends Model
     protected $attributes = [
         'status' => 'draft',
         'currency' => 'RUB',
+        'pricing_source' => 'accepted_supplier_proposal',
     ];
 
     // ============================================
@@ -81,6 +85,16 @@ class PurchaseOrder extends Model
         return $this->belongsTo(Supplier::class);
     }
 
+    public function externalSupplierContact(): BelongsTo
+    {
+        return $this->belongsTo(ExternalSupplierContact::class);
+    }
+
+    public function acceptedSupplierProposal(): BelongsTo
+    {
+        return $this->belongsTo(SupplierProposal::class, 'accepted_supplier_proposal_id');
+    }
+
     /**
      * Договор поставки
      */
@@ -103,6 +117,11 @@ class PurchaseOrder extends Model
     public function items(): HasMany
     {
         return $this->hasMany(PurchaseOrderItem::class);
+    }
+
+    public function receipts(): HasMany
+    {
+        return $this->hasMany(PurchaseReceipt::class);
     }
 
     // ============================================

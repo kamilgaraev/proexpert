@@ -46,8 +46,9 @@ return new class extends Migration
             }
         });
 
-        $indexes = DB::select("SELECT indexname FROM pg_indexes WHERE tablename = 'notifications'");
-        $existingIndexes = array_column($indexes, 'indexname');
+        $existingIndexes = DB::getDriverName() === 'pgsql'
+            ? array_column(DB::select("SELECT indexname FROM pg_indexes WHERE tablename = 'notifications'"), 'indexname')
+            : [];
 
         if (!in_array('notifications_organization_id_index', $existingIndexes)) {
             Schema::table('notifications', function (Blueprint $table) {
@@ -79,7 +80,7 @@ return new class extends Migration
             });
         }
 
-        if (Schema::hasColumn('notifications', 'organization_id')) {
+        if (Schema::hasColumn('notifications', 'organization_id') && DB::getDriverName() === 'pgsql') {
             $foreignKeys = DB::select("
                 SELECT constraint_name 
                 FROM information_schema.table_constraints 

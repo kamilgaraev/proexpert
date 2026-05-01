@@ -28,17 +28,23 @@ class PurchaseRequest extends Model
         'assigned_to',
         'request_number',
         'status',
+        'needed_by',
+        'budget_amount',
+        'budget_currency',
         'notes',
         'metadata',
     ];
 
     protected $casts = [
         'status' => PurchaseRequestStatusEnum::class,
+        'needed_by' => 'date',
+        'budget_amount' => 'decimal:2',
         'metadata' => 'array',
     ];
 
     protected $attributes = [
         'status' => 'draft',
+        'budget_currency' => 'RUB',
     ];
 
     // ============================================
@@ -75,6 +81,16 @@ class PurchaseRequest extends Model
     public function purchaseOrders(): HasMany
     {
         return $this->hasMany(PurchaseOrder::class);
+    }
+
+    public function lines(): HasMany
+    {
+        return $this->hasMany(PurchaseRequestLine::class);
+    }
+
+    public function supplierRequests(): HasMany
+    {
+        return $this->hasMany(SupplierRequest::class);
     }
 
     // ============================================

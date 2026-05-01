@@ -6,6 +6,8 @@ use App\BusinessModules\Features\Procurement\Http\Controllers\PurchaseContractCo
 use App\BusinessModules\Features\Procurement\Http\Controllers\PurchaseOrderController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\PurchaseRequestController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\SupplierProposalController;
+use App\BusinessModules\Features\Procurement\Http\Controllers\SupplierRequestController;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('api/v1/admin/procurement')
@@ -28,16 +30,34 @@ Route::prefix('api/v1/admin/procurement')
             Route::post('/{id}/reject', [PurchaseRequestController::class, 'reject'])
                 ->middleware('authorize:procurement.purchase_requests.reject')
                 ->name('reject');
-            Route::post('/{id}/create-order', [PurchaseRequestController::class, 'createOrder'])
+            Route::post('/{id}/create-order', fn () => AdminResponse::error(trans_message('procurement.purchase_orders.create_from_proposal_required'), 410))
                 ->middleware('authorize:procurement.purchase_orders.create')
                 ->name('create_order');
+        });
+
+        Route::prefix('supplier-requests')->name('supplier_requests.')->group(function () {
+            Route::get('/', [SupplierRequestController::class, 'index'])
+                ->middleware('authorize:procurement.supplier_requests.view')
+                ->name('index');
+            Route::post('/', [SupplierRequestController::class, 'store'])
+                ->middleware('authorize:procurement.supplier_requests.create')
+                ->name('store');
+            Route::get('/{id}', [SupplierRequestController::class, 'show'])
+                ->middleware('authorize:procurement.supplier_requests.view')
+                ->name('show');
+            Route::post('/{id}/send', [SupplierRequestController::class, 'send'])
+                ->middleware('authorize:procurement.supplier_requests.send')
+                ->name('send');
+            Route::post('/{id}/cancel', [SupplierRequestController::class, 'cancel'])
+                ->middleware('authorize:procurement.supplier_requests.cancel')
+                ->name('cancel');
         });
 
         Route::prefix('purchase-orders')->name('purchase_orders.')->group(function () {
             Route::get('/', [PurchaseOrderController::class, 'index'])
                 ->middleware('authorize:procurement.purchase_orders.view')
                 ->name('index');
-            Route::post('/', [PurchaseOrderController::class, 'store'])
+            Route::post('/', fn () => AdminResponse::error(trans_message('procurement.purchase_orders.create_from_proposal_required'), 410))
                 ->middleware('authorize:procurement.purchase_orders.create')
                 ->name('store');
             Route::get('/{id}', [PurchaseOrderController::class, 'show'])

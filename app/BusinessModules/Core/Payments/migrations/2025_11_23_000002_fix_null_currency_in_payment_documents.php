@@ -21,10 +21,12 @@ return new class extends Migration
             ->update(['currency' => 'RUB']);
             
         // Убедиться, что колонка currency имеет NOT NULL constraint
-        DB::statement('ALTER TABLE payment_documents ALTER COLUMN currency SET NOT NULL');
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement('ALTER TABLE payment_documents ALTER COLUMN currency SET NOT NULL');
         
         // Убедиться, что дефолт установлен на уровне БД
-        DB::statement("ALTER TABLE payment_documents ALTER COLUMN currency SET DEFAULT 'RUB'");
+            DB::statement("ALTER TABLE payment_documents ALTER COLUMN currency SET DEFAULT 'RUB'");
+        }
     }
 
     /**
@@ -37,7 +39,9 @@ return new class extends Migration
         }
         
         // Откатить NOT NULL constraint
-        DB::statement('ALTER TABLE payment_documents ALTER COLUMN currency DROP NOT NULL');
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement('ALTER TABLE payment_documents ALTER COLUMN currency DROP NOT NULL');
+        }
     }
 };
 

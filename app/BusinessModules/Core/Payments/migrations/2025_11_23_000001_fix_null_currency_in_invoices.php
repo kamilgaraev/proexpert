@@ -15,11 +15,10 @@ return new class extends Migration
             ->whereNull('currency')
             ->update(['currency' => 'RUB']);
             
-        // Убедиться, что колонка currency имеет NOT NULL constraint
-        DB::statement('ALTER TABLE invoices ALTER COLUMN currency SET NOT NULL');
-        
-        // Убедиться, что дефолт установлен на уровне БД
-        DB::statement("ALTER TABLE invoices ALTER COLUMN currency SET DEFAULT 'RUB'");
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement('ALTER TABLE invoices ALTER COLUMN currency SET NOT NULL');
+            DB::statement("ALTER TABLE invoices ALTER COLUMN currency SET DEFAULT 'RUB'");
+        }
     }
 
     /**
@@ -27,8 +26,9 @@ return new class extends Migration
      */
     public function down(): void
     {
-        // Откатить NOT NULL constraint
-        DB::statement('ALTER TABLE invoices ALTER COLUMN currency DROP NOT NULL');
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement('ALTER TABLE invoices ALTER COLUMN currency DROP NOT NULL');
+        }
     }
 };
 

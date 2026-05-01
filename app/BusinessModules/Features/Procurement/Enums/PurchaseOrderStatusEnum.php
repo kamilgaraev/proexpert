@@ -8,6 +8,7 @@ enum PurchaseOrderStatusEnum: string
     case SENT = 'sent';
     case CONFIRMED = 'confirmed';
     case IN_DELIVERY = 'in_delivery';
+    case PARTIALLY_DELIVERED = 'partially_delivered';
     case DELIVERED = 'delivered';
     case CANCELLED = 'cancelled';
 
@@ -18,6 +19,7 @@ enum PurchaseOrderStatusEnum: string
             self::SENT => 'Отправлен поставщику',
             self::CONFIRMED => 'Подтвержден поставщиком',
             self::IN_DELIVERY => 'В доставке',
+            self::PARTIALLY_DELIVERED => 'Частично доставлен',
             self::DELIVERED => 'Доставлен',
             self::CANCELLED => 'Отменен',
         };
@@ -30,6 +32,7 @@ enum PurchaseOrderStatusEnum: string
             self::SENT => 'blue',
             self::CONFIRMED => 'green',
             self::IN_DELIVERY => 'yellow',
+            self::PARTIALLY_DELIVERED => 'yellow',
             self::DELIVERED => 'green',
             self::CANCELLED => 'red',
         };
@@ -48,6 +51,11 @@ enum PurchaseOrderStatusEnum: string
     public function canBeConfirmed(): bool
     {
         return $this === self::SENT;
+    }
+
+    public function canReceiveMaterials(): bool
+    {
+        return in_array($this, [self::CONFIRMED, self::IN_DELIVERY, self::PARTIALLY_DELIVERED], true);
     }
 }
 

@@ -9,6 +9,10 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (DB::getDriverName() !== 'pgsql') {
+            return;
+        }
+
         DB::statement('DELETE FROM estimates WHERE project_id IS NULL');
         
         Schema::table('estimates', function (Blueprint $table) {
@@ -24,6 +28,10 @@ return new class extends Migration
 
     public function down(): void
     {
+        if (DB::getDriverName() !== 'pgsql') {
+            return;
+        }
+
         Schema::table('estimates', function (Blueprint $table) {
             $table->dropForeign(['project_id']);
         });

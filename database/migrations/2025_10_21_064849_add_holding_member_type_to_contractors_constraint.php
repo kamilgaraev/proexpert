@@ -12,10 +12,12 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // Удаляем старый constraint
+        if (DB::getDriverName() !== 'pgsql') {
+            return;
+        }
+
         DB::statement('ALTER TABLE contractors DROP CONSTRAINT IF EXISTS contractors_contractor_type_check');
         
-        // Добавляем новый constraint с holding_member
         DB::statement("
             ALTER TABLE contractors 
             ADD CONSTRAINT contractors_contractor_type_check 
@@ -28,10 +30,12 @@ return new class extends Migration
      */
     public function down(): void
     {
-        // Удаляем constraint с holding_member
+        if (DB::getDriverName() !== 'pgsql') {
+            return;
+        }
+
         DB::statement('ALTER TABLE contractors DROP CONSTRAINT IF EXISTS contractors_contractor_type_check');
         
-        // Возвращаем старый constraint без holding_member
         DB::statement("
             ALTER TABLE contractors 
             ADD CONSTRAINT contractors_contractor_type_check 

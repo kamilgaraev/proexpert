@@ -9,6 +9,10 @@ return new class extends Migration
     {
         DB::statement('DROP VIEW IF EXISTS cross_org_completed_works');
 
+        if (DB::getDriverName() === 'sqlite') {
+            return;
+        }
+
         DB::statement(<<<SQL
 CREATE VIEW cross_org_completed_works AS
 SELECT

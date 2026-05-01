@@ -10,6 +10,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (DB::getDriverName() !== 'pgsql') {
+            return;
+        }
+
         // Создаем функцию для генерации следующего номера документа с учетом организации, типа и периода
         DB::statement("
             CREATE OR REPLACE FUNCTION get_next_payment_document_number(
@@ -78,6 +82,10 @@ return new class extends Migration
      */
     public function down(): void
     {
+        if (DB::getDriverName() !== 'pgsql') {
+            return;
+        }
+
         // Удаляем функцию
         DB::statement("DROP FUNCTION IF EXISTS get_next_payment_document_number(INTEGER, TEXT, INTEGER, INTEGER)");
         

@@ -23,8 +23,9 @@ return new class extends Migration
             $table->index('active_specification_id');
         });
 
-        // GIN индекс для JSONB поля active_events в PostgreSQL
-        DB::statement('CREATE INDEX contract_current_state_active_events_gin_idx ON contract_current_state USING GIN(active_events)');
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement('CREATE INDEX contract_current_state_active_events_gin_idx ON contract_current_state USING GIN(active_events)');
+        }
     }
 
     /**

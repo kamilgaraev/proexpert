@@ -4,8 +4,8 @@ namespace App\BusinessModules\Features\Procurement\Http\Controllers;
 
 use App\BusinessModules\Features\Procurement\Http\Requests\StoreSupplierProposalRequest;
 use App\BusinessModules\Features\Procurement\Http\Resources\SupplierProposalResource;
-use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
+use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Services\SupplierProposalService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -29,10 +29,10 @@ class SupplierProposalController extends Controller
             $perPage = min((int) $request->input('per_page', 15), 100);
 
             $query = SupplierProposal::forOrganization($organizationId)
-                ->with(['supplier', 'purchaseOrder']);
+                ->with(['supplier', 'externalSupplierContact', 'supplierRequest', 'purchaseOrder', 'lines']);
 
-            if ($request->has('purchase_order_id')) {
-                $query->forOrder($request->input('purchase_order_id'));
+            if ($request->has('supplier_request_id')) {
+                $query->where('supplier_request_id', $request->input('supplier_request_id'));
             }
 
             if ($request->has('status')) {
@@ -68,7 +68,7 @@ class SupplierProposalController extends Controller
         try {
             $organizationId = $request->attributes->get('current_organization_id');
             $proposal = SupplierProposal::forOrganization($organizationId)
-                ->with(['supplier', 'purchaseOrder'])
+                ->with(['supplier', 'externalSupplierContact', 'supplierRequest', 'purchaseOrder', 'lines'])
                 ->find($id);
 
             if (!$proposal) {
@@ -93,10 +93,11 @@ class SupplierProposalController extends Controller
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
-            $order = PurchaseOrder::forOrganization($organizationId)
-                ->findOrFail($request->input('purchase_order_id'));
+            $supplierRequest = SupplierRequest::forOrganization($organizationId)
+                ->with(['lines'])
+                ->findOrFail($request->input('supplier_request_id'));
 
-            $proposal = $this->service->createFromOrder($order, $request->validated());
+            $proposal = $this->service->createFromSupplierRequest($supplierRequest, $request->validated());
 
             return AdminResponse::success(
                 new SupplierProposalResource($proposal),
@@ -104,7 +105,7 @@ class SupplierProposalController extends Controller
                 201
             );
         } catch (ModelNotFoundException) {
-            return AdminResponse::error(trans_message('procurement.purchase_orders.not_found'), 404);
+            return AdminResponse::error(trans_message('procurement.supplier_requests.not_found'), 404);
         } catch (\DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
