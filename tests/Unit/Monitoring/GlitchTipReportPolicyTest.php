@@ -15,6 +15,7 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\QueryException;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Http\Exceptions\PostTooLargeException;
+use Illuminate\Http\Request;
 use Illuminate\Support\MessageBag;
 use Illuminate\Validation\ValidationException;
 use PDOException;
@@ -55,6 +56,28 @@ class GlitchTipReportPolicyTest extends TestCase
 
         self::assertTrue($policy->shouldCapture(new BusinessLogicException('workflow mismatch', 409)));
         self::assertSame('warning', $policy->levelFor(new BusinessLogicException('workflow mismatch', 409)));
+    }
+
+    public function test_skips_malformed_livewire_locked_property_updates(): void
+    {
+        $policy = new GlitchTipReportPolicy($this->config());
+        $request = Request::create('/livewire-6949a084/update', 'POST');
+        $exception = new \RuntimeException('Cannot update locked property: [userUndertakingMultiFactorAuthentication]');
+
+        self::assertFalse($policy->shouldCapture($exception, $request));
+        self::assertTrue($policy->shouldCapture($exception));
+    }
+
+    public function test_skips_malformed_filament_notification_livewire_updates(): void
+    {
+        $policy = new GlitchTipReportPolicy($this->config());
+        $request = Request::create('/livewire-6949a084/update', 'POST');
+        $exception = new \TypeError(
+            'Cannot assign array to property Filament\\Notifications\\Livewire\\Notifications::$isFilamentNotificationsComponent of type bool'
+        );
+
+        self::assertFalse($policy->shouldCapture($exception, $request));
+        self::assertTrue($policy->shouldCapture($exception));
     }
 
     public static function reportableExceptions(): array

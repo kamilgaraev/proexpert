@@ -17,6 +17,7 @@ use App\Services\Monitoring\GlitchTipReportPolicy;
 use App\Services\Monitoring\SentryScopeService;
 use App\Services\Logging\LoggingService;
 use App\Services\ErrorTracking\ErrorTrackingService;
+use App\Support\LivewirePayloadExceptionClassifier;
 use App\Exceptions\Billing\InsufficientBalanceException;
 use App\Exceptions\BusinessLogicException;
 use App\Exceptions\AI\AIServiceException;
@@ -304,7 +305,7 @@ class Handler extends ExceptionHandler
             ? app(GlitchTipReportPolicy::class)
             : new GlitchTipReportPolicy();
 
-        if ($glitchTipPolicy->shouldCapture($exception)) {
+        if ($glitchTipPolicy->shouldCapture($exception, app()->bound('request') ? request() : null)) {
             app(SentryScopeService::class)->captureException($exception, app()->bound('request') ? request() : null);
         }
 
@@ -627,6 +628,10 @@ class Handler extends ExceptionHandler
 
     public function render($request, Throwable $e)
     {
+        if ((new LivewirePayloadExceptionClassifier())->isMalformedClientUpdate($e, $request)) {
+            return response('', 400);
+        }
+
         // Для JSON/API отвечает register()->renderable выше
         $response = parent::render($request, $e);
 
