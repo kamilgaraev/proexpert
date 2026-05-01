@@ -21,7 +21,8 @@ use function trans_message;
 class PurchaseOrderService
 {
     public function __construct(
-        private readonly PurchaseOrderPdfService $pdfService
+        private readonly PurchaseOrderPdfService $pdfService,
+        private readonly SupplierPartyService $supplierPartyService
     ) {
     }
 
@@ -34,11 +35,15 @@ class PurchaseOrderService
         $supplier = Supplier::query()
             ->where('organization_id', $request->organization_id)
             ->where('id', $supplierId)
+            ->where('is_active', true)
             ->first();
 
         if (!$supplier) {
             throw new \DomainException(trans_message('procurement.purchase_orders.supplier_not_found'));
         }
+
+        $supplierParty = $this->supplierPartyService->resolveRegisteredParty($request->organization_id, $supplierId);
+        $supplierSnapshot = $this->supplierPartyService->snapshotForDocument($supplierParty);
 
         DB::beginTransaction();
 
@@ -49,6 +54,8 @@ class PurchaseOrderService
                 'organization_id' => $request->organization_id,
                 'purchase_request_id' => $request->id,
                 'supplier_id' => $supplierId,
+                'supplier_party_id' => $supplierParty->id,
+                'supplier_snapshot' => $supplierSnapshot,
                 'order_number' => $orderNumber,
                 'order_date' => $data['order_date'] ?? now(),
                 'status' => PurchaseOrderStatusEnum::DRAFT,
@@ -77,7 +84,7 @@ class PurchaseOrderService
 
             event(new \App\BusinessModules\Features\Procurement\Events\PurchaseOrderCreated($order));
 
-            return $order->fresh(['supplier', 'purchaseRequest', 'items']);
+            return $order->fresh(['supplier', 'supplierParty', 'purchaseRequest', 'items']);
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;
@@ -120,7 +127,7 @@ class PurchaseOrderService
 
             event(new \App\BusinessModules\Features\Procurement\Events\PurchaseOrderSent($order));
 
-            return $order->fresh(['items', 'supplier', 'purchaseRequest', 'contract']);
+            return $order->fresh(['items', 'supplier', 'supplierParty', 'purchaseRequest', 'contract']);
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;
@@ -150,7 +157,7 @@ class PurchaseOrderService
 
             $this->invalidateCache($order->organization_id);
 
-            return $order->fresh(['supplier', 'proposals', 'items', 'purchaseRequest']);
+            return $order->fresh(['supplier', 'supplierParty', 'proposals', 'items', 'purchaseRequest']);
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;
@@ -229,7 +236,14 @@ class PurchaseOrderService
                 'user_id' => $userId,
             ]);
 
-            return $order->fresh(['items.receiptLines', 'supplier', 'externalSupplierContact', 'purchaseRequest', 'receipts.lines']);
+            return $order->fresh([
+                'items.receiptLines',
+                'supplier',
+                'externalSupplierContact',
+                'supplierParty',
+                'purchaseRequest',
+                'receipts.lines',
+            ]);
         } catch (\Exception $e) {
             DB::rollBack();
 
@@ -264,7 +278,7 @@ class PurchaseOrderService
                 'purchase_order_id' => $order->id,
             ]);
 
-            return $order->fresh(['items', 'supplier', 'purchaseRequest']);
+            return $order->fresh(['items', 'supplier', 'supplierParty', 'purchaseRequest']);
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;

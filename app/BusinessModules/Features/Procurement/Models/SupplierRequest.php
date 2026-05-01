@@ -23,6 +23,8 @@ class SupplierRequest extends Model
         'purchase_request_id',
         'supplier_id',
         'external_supplier_contact_id',
+        'supplier_party_id',
+        'supplier_snapshot',
         'request_number',
         'status',
         'sent_at',
@@ -37,11 +39,13 @@ class SupplierRequest extends Model
         'sent_at' => 'datetime',
         'responded_at' => 'datetime',
         'cancelled_at' => 'datetime',
+        'supplier_snapshot' => 'array',
         'metadata' => 'array',
     ];
 
     protected $attributes = [
         'status' => 'draft',
+        'supplier_snapshot' => '{}',
     ];
 
     public function organization(): BelongsTo
@@ -62,6 +66,11 @@ class SupplierRequest extends Model
     public function externalSupplierContact(): BelongsTo
     {
         return $this->belongsTo(ExternalSupplierContact::class);
+    }
+
+    public function supplierParty(): BelongsTo
+    {
+        return $this->belongsTo(SupplierParty::class);
     }
 
     public function lines(): HasMany
@@ -88,11 +97,15 @@ class SupplierRequest extends Model
 
     public function canBeSent(): bool
     {
-        return $this->status->canBeSent();
+        $status = $this->getAttribute('status');
+
+        return $status instanceof SupplierRequestStatusEnum && $status->canBeSent();
     }
 
     public function canBeCancelled(): bool
     {
-        return $this->status->canBeCancelled();
+        $status = $this->getAttribute('status');
+
+        return $status instanceof SupplierRequestStatusEnum && $status->canBeCancelled();
     }
 }

@@ -26,6 +26,8 @@ class SupplierProposal extends Model
         'supplier_request_id',
         'supplier_id',
         'external_supplier_contact_id',
+        'supplier_party_id',
+        'supplier_snapshot',
         'proposal_number',
         'proposal_date',
         'status',
@@ -51,12 +53,14 @@ class SupplierProposal extends Model
         'vat_amount' => 'decimal:2',
         'total_amount' => 'decimal:2',
         'items' => 'array',
+        'supplier_snapshot' => 'array',
         'metadata' => 'array',
     ];
 
     protected $attributes = [
         'status' => 'draft',
         'currency' => 'RUB',
+        'supplier_snapshot' => '{}',
     ];
 
     // ============================================
@@ -95,6 +99,11 @@ class SupplierProposal extends Model
     public function externalSupplierContact(): BelongsTo
     {
         return $this->belongsTo(ExternalSupplierContact::class);
+    }
+
+    public function supplierParty(): BelongsTo
+    {
+        return $this->belongsTo(SupplierParty::class);
     }
 
     public function lines(): HasMany
@@ -151,7 +160,9 @@ class SupplierProposal extends Model
      */
     public function canBeAccepted(): bool
     {
-        return $this->status->canBeAccepted();
+        $status = $this->getAttribute('status');
+
+        return $status instanceof SupplierProposalStatusEnum && $status->canBeAccepted();
     }
 
     /**
@@ -159,11 +170,12 @@ class SupplierProposal extends Model
      */
     public function isExpired(): bool
     {
-        if (!$this->valid_until) {
+        $validUntil = $this->getAttribute('valid_until');
+
+        if (!$validUntil instanceof \Illuminate\Support\Carbon) {
             return false;
         }
 
-        return $this->valid_until->isPast();
+        return $validUntil->isPast();
     }
 }
-

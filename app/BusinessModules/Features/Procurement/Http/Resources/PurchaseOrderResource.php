@@ -16,6 +16,8 @@ class PurchaseOrderResource extends JsonResource
             'accepted_supplier_proposal_id' => $this->accepted_supplier_proposal_id,
             'supplier_id' => $this->supplier_id,
             'external_supplier_contact_id' => $this->external_supplier_contact_id,
+            'supplier_party_id' => $this->supplier_party_id,
+            'supplier_snapshot' => $this->supplier_snapshot,
             'contract_id' => $this->contract_id,
             'order_number' => $this->order_number,
             'order_date' => $this->order_date->format('Y-m-d'),
@@ -38,6 +40,10 @@ class PurchaseOrderResource extends JsonResource
             'external_supplier_contact' => $this->whenLoaded(
                 'externalSupplierContact',
                 fn() => $this->externalSupplierContact ? new ExternalSupplierContactResource($this->externalSupplierContact) : null
+            ),
+            'supplier_party' => $this->whenLoaded(
+                'supplierParty',
+                fn() => $this->supplierParty ? new SupplierPartyResource($this->supplierParty) : null
             ),
             'purchase_request' => $this->whenLoaded('purchaseRequest', fn() => [
                 'id' => $this->purchaseRequest->id,
@@ -72,4 +78,3 @@ class PurchaseOrderResource extends JsonResource
         ];
     }
 }
-

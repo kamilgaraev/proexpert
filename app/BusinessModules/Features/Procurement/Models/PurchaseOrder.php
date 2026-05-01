@@ -27,6 +27,8 @@ class PurchaseOrder extends Model
         'accepted_supplier_proposal_id',
         'supplier_id',
         'external_supplier_contact_id',
+        'supplier_party_id',
+        'supplier_snapshot',
         'contract_id',
         'order_number',
         'order_date',
@@ -48,6 +50,7 @@ class PurchaseOrder extends Model
         'sent_at' => 'date',
         'confirmed_at' => 'date',
         'total_amount' => 'decimal:2',
+        'supplier_snapshot' => 'array',
         'metadata' => 'array',
     ];
 
@@ -55,6 +58,7 @@ class PurchaseOrder extends Model
         'status' => 'draft',
         'currency' => 'RUB',
         'pricing_source' => 'accepted_supplier_proposal',
+        'supplier_snapshot' => '{}',
     ];
 
     // ============================================
@@ -88,6 +92,11 @@ class PurchaseOrder extends Model
     public function externalSupplierContact(): BelongsTo
     {
         return $this->belongsTo(ExternalSupplierContact::class);
+    }
+
+    public function supplierParty(): BelongsTo
+    {
+        return $this->belongsTo(SupplierParty::class);
     }
 
     public function acceptedSupplierProposal(): BelongsTo
@@ -162,7 +171,9 @@ class PurchaseOrder extends Model
      */
     public function canBeSent(): bool
     {
-        return $this->status->canBeSent();
+        $status = $this->getAttribute('status');
+
+        return $status instanceof PurchaseOrderStatusEnum && $status->canBeSent();
     }
 
     /**
@@ -170,7 +181,9 @@ class PurchaseOrder extends Model
      */
     public function canBeConfirmed(): bool
     {
-        return $this->status->canBeConfirmed();
+        $status = $this->getAttribute('status');
+
+        return $status instanceof PurchaseOrderStatusEnum && $status->canBeConfirmed();
     }
 
     /**
@@ -178,7 +191,6 @@ class PurchaseOrder extends Model
      */
     public function hasContract(): bool
     {
-        return $this->contract_id !== null;
+        return $this->getAttribute('contract_id') !== null;
     }
 }
-

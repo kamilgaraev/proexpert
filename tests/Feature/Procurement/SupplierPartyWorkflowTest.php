@@ -6,8 +6,12 @@ namespace Tests\Feature\Procurement;
 
 use App\BusinessModules\Features\Procurement\Enums\SupplierPartyStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\ExternalSupplierContact;
+use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
+use App\BusinessModules\Features\Procurement\Models\PurchaseRequestLine;
 use App\BusinessModules\Features\Procurement\Models\SupplierParty;
 use App\BusinessModules\Features\Procurement\Services\SupplierPartyService;
+use App\BusinessModules\Features\Procurement\Services\SupplierProposalService;
+use App\BusinessModules\Features\Procurement\Services\SupplierRequestService;
 use App\Models\Organization;
 use App\Models\Supplier;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -16,6 +20,70 @@ use Tests\TestCase;
 
 class SupplierPartyWorkflowTest extends TestCase
 {
+    public function test_unregistered_supplier_flow_attaches_same_party_to_procurement_documents(): void
+    {
+        $organization = Organization::factory()->create();
+        $purchaseRequest = PurchaseRequest::query()->create([
+            'organization_id' => $organization->id,
+            'request_number' => 'PR-202605-9001',
+            'status' => 'approved',
+        ]);
+
+        $purchaseRequestLine = PurchaseRequestLine::query()->create([
+            'purchase_request_id' => $purchaseRequest->id,
+            'name' => 'Steel pipe 40 mm',
+            'quantity' => 12,
+            'unit' => 'pcs',
+        ]);
+
+        $supplierRequest = app(SupplierRequestService::class)->create($organization->id, [
+            'purchase_request_id' => $purchaseRequest->id,
+            'external_supplier' => [
+                'name' => 'External Flow Supplier',
+                'contact_person' => 'Flow Contact',
+                'email' => 'flow-supplier@example.test',
+                'phone' => '+7 900 111-22-33',
+                'tax_number' => '7711223344',
+            ],
+        ]);
+
+        $proposal = app(SupplierProposalService::class)->createFromSupplierRequest($supplierRequest, [
+            'proposal_date' => now()->toDateString(),
+            'subtotal_amount' => 12000,
+            'total_amount' => 12000,
+            'currency' => 'RUB',
+            'items' => [
+                [
+                    'supplier_request_line_id' => $purchaseRequestLine->id,
+                    'name' => 'Steel pipe 40 mm',
+                    'quantity' => 12,
+                    'unit' => 'pcs',
+                    'unit_price' => 1000,
+                    'total_amount' => 12000,
+                ],
+            ],
+        ]);
+
+        $acceptedProposal = app(SupplierProposalService::class)->accept($proposal);
+        $purchaseOrder = $acceptedProposal->purchaseOrder;
+
+        $supplierRequest->refresh();
+        $proposal->refresh();
+        $purchaseOrder->refresh();
+
+        $this->assertNotNull($supplierRequest->supplier_party_id);
+        $this->assertSame($supplierRequest->supplier_party_id, $proposal->supplier_party_id);
+        $this->assertSame($supplierRequest->supplier_party_id, $purchaseOrder->supplier_party_id);
+        $this->assertNull($purchaseOrder->supplier_id);
+
+        foreach ([$supplierRequest, $proposal, $purchaseOrder] as $document) {
+            $this->assertSame('External Flow Supplier', $document->supplier_snapshot['display_name'] ?? null);
+            $this->assertSame('flow-supplier@example.test', $document->supplier_snapshot['email'] ?? null);
+            $this->assertSame('7711223344', $document->supplier_snapshot['tax_id'] ?? null);
+            $this->assertSame('external', $document->supplier_snapshot['type'] ?? null);
+        }
+    }
+
     public function test_external_supplier_contact_creates_party_with_document_snapshot(): void
     {
         $organization = Organization::factory()->create();

@@ -29,7 +29,7 @@ class SupplierProposalController extends Controller
             $perPage = min((int) $request->input('per_page', 15), 100);
 
             $query = SupplierProposal::forOrganization($organizationId)
-                ->with(['supplier', 'externalSupplierContact', 'supplierRequest', 'purchaseOrder', 'lines']);
+                ->with(['supplier', 'externalSupplierContact', 'supplierParty', 'supplierRequest', 'purchaseOrder', 'lines']);
 
             if ($request->has('supplier_request_id')) {
                 $query->where('supplier_request_id', $request->input('supplier_request_id'));
@@ -68,7 +68,7 @@ class SupplierProposalController extends Controller
         try {
             $organizationId = $request->attributes->get('current_organization_id');
             $proposal = SupplierProposal::forOrganization($organizationId)
-                ->with(['supplier', 'externalSupplierContact', 'supplierRequest', 'purchaseOrder', 'lines'])
+                ->with(['supplier', 'externalSupplierContact', 'supplierParty', 'supplierRequest', 'purchaseOrder', 'lines'])
                 ->find($id);
 
             if (!$proposal) {

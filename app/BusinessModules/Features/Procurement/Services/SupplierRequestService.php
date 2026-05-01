@@ -8,13 +8,17 @@ use App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\ExternalSupplierContact;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
-use App\Models\Supplier;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class SupplierRequestService
 {
+    public function __construct(
+        private readonly SupplierPartyService $supplierPartyService
+    ) {
+    }
+
     public function create(int $organizationId, array $data): SupplierRequest
     {
         return DB::transaction(function () use ($organizationId, $data): SupplierRequest {
@@ -30,7 +34,8 @@ class SupplierRequestService
             }
 
             $supplierId = $data['supplier_id'] ?? null;
-            $externalSupplierContactId = $this->resolveExternalSupplierContactId($organizationId, $data);
+            $externalSupplierContact = $this->resolveExternalSupplierContact($organizationId, $data);
+            $externalSupplierContactId = $externalSupplierContact?->id;
 
             if (($supplierId === null) === ($externalSupplierContactId === null)) {
                 throw ValidationException::withMessages([
@@ -39,17 +44,29 @@ class SupplierRequestService
             }
 
             if ($supplierId !== null) {
-                Supplier::query()
-                    ->where('organization_id', $organizationId)
-                    ->where('is_active', true)
-                    ->findOrFail($supplierId);
+                $supplierParty = $this->supplierPartyService->resolveRegisteredParty($organizationId, (int) $supplierId);
+            } else {
+                if (!$externalSupplierContact instanceof ExternalSupplierContact) {
+                    throw ValidationException::withMessages([
+                        'supplier' => trans_message('procurement.supplier_requests.single_supplier_source_required'),
+                    ]);
+                }
+
+                $supplierParty = $this->supplierPartyService->resolveExternalParty(
+                    $organizationId,
+                    $externalSupplierContact
+                );
             }
+
+            $supplierSnapshot = $this->supplierPartyService->snapshotForDocument($supplierParty);
 
             $supplierRequest = SupplierRequest::query()->create([
                 'organization_id' => $organizationId,
                 'purchase_request_id' => $purchaseRequest->id,
                 'supplier_id' => $supplierId,
                 'external_supplier_contact_id' => $externalSupplierContactId,
+                'supplier_party_id' => $supplierParty->id,
+                'supplier_snapshot' => $supplierSnapshot,
                 'request_number' => $this->generateRequestNumber(),
                 'status' => SupplierRequestStatusEnum::DRAFT,
                 'comment' => $data['comment'] ?? null,
@@ -68,7 +85,7 @@ class SupplierRequestService
                 ]);
             }
 
-            return $supplierRequest->load(['lines', 'supplier', 'externalSupplierContact', 'purchaseRequest']);
+            return $supplierRequest->load(['lines', 'supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest']);
         });
     }
 
@@ -85,7 +102,7 @@ class SupplierRequestService
             'sent_at' => now(),
         ]);
 
-        return $supplierRequest->refresh()->load(['lines', 'supplier', 'externalSupplierContact', 'purchaseRequest']);
+        return $supplierRequest->refresh()->load(['lines', 'supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest']);
     }
 
     public function cancel(SupplierRequest $supplierRequest): SupplierRequest
@@ -101,18 +118,18 @@ class SupplierRequestService
             'cancelled_at' => now(),
         ]);
 
-        return $supplierRequest->refresh()->load(['lines', 'supplier', 'externalSupplierContact', 'purchaseRequest']);
+        return $supplierRequest->refresh()->load(['lines', 'supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest']);
     }
 
     public function queryForOrganization(int $organizationId): Builder
     {
         return SupplierRequest::query()
             ->forOrganization($organizationId)
-            ->with(['supplier', 'externalSupplierContact', 'purchaseRequest'])
+            ->with(['supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest'])
             ->latest('id');
     }
 
-    private function resolveExternalSupplierContactId(int $organizationId, array $data): ?int
+    private function resolveExternalSupplierContact(int $organizationId, array $data): ?ExternalSupplierContact
     {
         if (!isset($data['external_supplier'])) {
             return null;
@@ -130,7 +147,7 @@ class SupplierRequestService
             'metadata' => $externalSupplier['metadata'] ?? null,
         ]);
 
-        return $contact->id;
+        return $contact;
     }
 
     private function generateRequestNumber(): string

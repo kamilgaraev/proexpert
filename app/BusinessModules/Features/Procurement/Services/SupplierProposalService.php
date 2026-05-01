@@ -25,6 +25,8 @@ class SupplierProposalService
                 'supplier_request_id' => $supplierRequest->id,
                 'supplier_id' => $supplierRequest->supplier_id,
                 'external_supplier_contact_id' => $supplierRequest->external_supplier_contact_id,
+                'supplier_party_id' => $supplierRequest->supplier_party_id,
+                'supplier_snapshot' => $supplierRequest->supplier_snapshot ?? [],
                 'proposal_number' => $this->generateProposalNumber($supplierRequest->organization_id),
                 'proposal_date' => $data['proposal_date'] ?? now(),
                 'status' => SupplierProposalStatusEnum::SUBMITTED,
@@ -65,7 +67,7 @@ class SupplierProposalService
 
             event(new \App\BusinessModules\Features\Procurement\Events\SupplierProposalReceived($proposal));
 
-            return $proposal->fresh(['supplier', 'externalSupplierContact', 'supplierRequest', 'lines']);
+            return $proposal->fresh(['supplier', 'externalSupplierContact', 'supplierParty', 'supplierRequest', 'lines']);
         });
     }
 
@@ -88,6 +90,8 @@ class SupplierProposalService
                 'accepted_supplier_proposal_id' => $proposal->id,
                 'supplier_id' => $proposal->supplier_id,
                 'external_supplier_contact_id' => $proposal->external_supplier_contact_id,
+                'supplier_party_id' => $proposal->supplier_party_id,
+                'supplier_snapshot' => $proposal->supplier_snapshot ?? [],
                 'order_number' => $this->generateOrderNumber($proposal->organization_id),
                 'order_date' => now(),
                 'status' => PurchaseOrderStatusEnum::CONFIRMED,
@@ -124,7 +128,14 @@ class SupplierProposalService
             ]);
         });
 
-        return $proposal->fresh(['supplier', 'externalSupplierContact', 'supplierRequest', 'purchaseOrder', 'lines']);
+        return $proposal->fresh([
+            'supplier',
+            'externalSupplierContact',
+            'supplierParty',
+            'supplierRequest',
+            'purchaseOrder.supplierParty',
+            'lines',
+        ]);
     }
 
     public function reject(SupplierProposal $proposal, string $reason): SupplierProposal
@@ -138,7 +149,7 @@ class SupplierProposalService
             'notes' => ($proposal->notes ? $proposal->notes . "\n\n" : '') . "Отклонено: {$reason}",
         ]);
 
-        return $proposal->fresh(['supplier', 'externalSupplierContact', 'supplierRequest', 'lines']);
+        return $proposal->fresh(['supplier', 'externalSupplierContact', 'supplierParty', 'supplierRequest', 'lines']);
     }
 
     private function resolveLineMaterialId(SupplierRequest $supplierRequest, ?int $supplierRequestLineId): ?int

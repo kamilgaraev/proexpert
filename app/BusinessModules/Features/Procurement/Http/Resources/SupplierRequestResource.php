@@ -17,6 +17,8 @@ class SupplierRequestResource extends JsonResource
             'purchase_request_id' => $this->purchase_request_id,
             'supplier_id' => $this->supplier_id,
             'external_supplier_contact_id' => $this->external_supplier_contact_id,
+            'supplier_party_id' => $this->supplier_party_id,
+            'supplier_snapshot' => $this->supplier_snapshot,
             'request_number' => $this->request_number,
             'status' => $this->status->value,
             'status_label' => $this->status->label(),
@@ -40,6 +42,10 @@ class SupplierRequestResource extends JsonResource
                 fn () => $this->externalSupplierContact
                     ? new ExternalSupplierContactResource($this->externalSupplierContact)
                     : null
+            ),
+            'supplier_party' => $this->whenLoaded(
+                'supplierParty',
+                fn () => $this->supplierParty ? new SupplierPartyResource($this->supplierParty) : null
             ),
             'purchase_request' => $this->whenLoaded('purchaseRequest', fn () => [
                 'id' => $this->purchaseRequest->id,

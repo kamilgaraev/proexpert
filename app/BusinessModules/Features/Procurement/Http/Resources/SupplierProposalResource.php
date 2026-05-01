@@ -16,6 +16,8 @@ class SupplierProposalResource extends JsonResource
             'supplier_request_id' => $this->supplier_request_id,
             'supplier_id' => $this->supplier_id,
             'external_supplier_contact_id' => $this->external_supplier_contact_id,
+            'supplier_party_id' => $this->supplier_party_id,
+            'supplier_snapshot' => $this->supplier_snapshot,
             'proposal_number' => $this->proposal_number,
             'proposal_date' => $this->proposal_date->format('Y-m-d'),
             'status' => $this->status->value,
@@ -38,6 +40,10 @@ class SupplierProposalResource extends JsonResource
             'external_supplier_contact' => $this->whenLoaded(
                 'externalSupplierContact',
                 fn() => $this->externalSupplierContact ? new ExternalSupplierContactResource($this->externalSupplierContact) : null
+            ),
+            'supplier_party' => $this->whenLoaded(
+                'supplierParty',
+                fn() => $this->supplierParty ? new SupplierPartyResource($this->supplierParty) : null
             ),
             'supplier_request' => $this->whenLoaded('supplierRequest', fn() => $this->supplierRequest ? [
                 'id' => $this->supplierRequest->id,
@@ -81,4 +87,3 @@ class SupplierProposalResource extends JsonResource
         ];
     }
 }
-

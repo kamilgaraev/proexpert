@@ -38,7 +38,16 @@ class PurchaseOrderController extends Controller
             $perPage = min((int) $request->input('per_page', 15), 100);
 
             $query = PurchaseOrder::forOrganization($organizationId)
-                ->with(['supplier', 'externalSupplierContact', 'purchaseRequest', 'contract', 'items', 'receipts.lines', 'organization']);
+                ->with([
+                    'supplier',
+                    'externalSupplierContact',
+                    'supplierParty',
+                    'purchaseRequest',
+                    'contract',
+                    'items',
+                    'receipts.lines',
+                    'organization',
+                ]);
 
             if ($request->filled('status')) {
                 $query->withStatus((string) $request->input('status'));
@@ -81,7 +90,17 @@ class PurchaseOrderController extends Controller
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $order = PurchaseOrder::forOrganization($organizationId)
-                ->with(['supplier', 'externalSupplierContact', 'purchaseRequest', 'contract', 'proposals', 'items.receiptLines', 'receipts.lines', 'organization'])
+                ->with([
+                    'supplier',
+                    'externalSupplierContact',
+                    'supplierParty',
+                    'purchaseRequest',
+                    'contract',
+                    'proposals.supplierParty',
+                    'items.receiptLines',
+                    'receipts.lines',
+                    'organization',
+                ])
                 ->find($id);
 
             if (!$order) {
@@ -161,7 +180,7 @@ class PurchaseOrderController extends Controller
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $order = PurchaseOrder::forOrganization($organizationId)
-                ->with(['items', 'supplier', 'externalSupplierContact', 'purchaseRequest', 'organization'])
+                ->with(['items', 'supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest', 'organization'])
                 ->find($id);
 
             if (!$order) {
@@ -192,7 +211,7 @@ class PurchaseOrderController extends Controller
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $order = PurchaseOrder::forOrganization($organizationId)
-                ->with(['items', 'supplier', 'organization'])
+                ->with(['items', 'supplier', 'supplierParty', 'organization'])
                 ->find($id);
 
             if (!$order) {
@@ -239,7 +258,7 @@ class PurchaseOrderController extends Controller
 
             return AdminResponse::success(
                 [
-                    'purchase_order' => (new PurchaseOrderResource($order->fresh(['supplier', 'purchaseRequest', 'contract', 'items'])))->resolve(),
+                    'purchase_order' => (new PurchaseOrderResource($order->fresh(['supplier', 'supplierParty', 'purchaseRequest', 'contract', 'items'])))->resolve(),
                     'contract' => (new PurchaseContractResource($contract))->resolve(),
                 ],
                 trans_message('procurement.purchase_orders.contract_created'),
@@ -263,7 +282,14 @@ class PurchaseOrderController extends Controller
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $order = PurchaseOrder::forOrganization($organizationId)
-                ->with(['items.receiptLines', 'supplier', 'externalSupplierContact', 'purchaseRequest', 'receipts.lines'])
+                ->with([
+                    'items.receiptLines',
+                    'supplier',
+                    'externalSupplierContact',
+                    'supplierParty',
+                    'purchaseRequest',
+                    'receipts.lines',
+                ])
                 ->find($id);
 
             if (!$order) {
@@ -332,7 +358,7 @@ class PurchaseOrderController extends Controller
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $order = PurchaseOrder::forOrganization($organizationId)
-                ->with(['items', 'supplier', 'organization'])
+                ->with(['items', 'supplier', 'supplierParty', 'organization'])
                 ->find($id);
 
             if (!$order) {

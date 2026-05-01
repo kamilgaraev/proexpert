@@ -65,7 +65,7 @@ class SupplierRequestController extends Controller
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $supplierRequest = SupplierRequest::query()
                 ->forOrganization($organizationId)
-                ->with(['supplier', 'externalSupplierContact', 'purchaseRequest', 'lines'])
+                ->with(['supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest', 'lines'])
                 ->find($id);
 
             if (!$supplierRequest) {
@@ -165,7 +165,7 @@ class SupplierRequestController extends Controller
 
         return SupplierRequest::query()
             ->forOrganization($organizationId)
-            ->with(['supplier', 'externalSupplierContact', 'purchaseRequest', 'lines'])
+            ->with(['supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest', 'lines'])
             ->find($id);
     }
 }
