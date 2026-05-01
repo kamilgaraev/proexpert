@@ -33,6 +33,7 @@
       "procurement.purchase_orders.view",
       "procurement.supplier_proposals.view",
       "procurement.proposal_decisions.view",
+      "procurement.approvals.view",
       "procurement.contracts.view",
       "procurement.dashboard.view",
       "procurement.statistics.view",

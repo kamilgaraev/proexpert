@@ -172,6 +172,8 @@ class ProcurementModule implements ModuleInterface, BillableInterface, Configura
             'procurement.supplier_proposals.reject',
             'procurement.proposal_decisions.view',
             'procurement.proposal_decisions.select',
+            'procurement.approvals.view',
+            'procurement.approvals.resolve',
             'procurement.contracts.view',
             'procurement.contracts.create',
             'procurement.contracts.edit',

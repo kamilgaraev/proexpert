@@ -32,6 +32,10 @@ class SupplierProposalDecisionResource extends JsonResource
                 'cheapestProposal',
                 fn () => $this->cheapestProposal ? new SupplierProposalResource($this->cheapestProposal) : null
             ),
+            'approvals' => $this->whenLoaded(
+                'approvals',
+                fn () => ProcurementApprovalResource::collection($this->approvals)
+            ),
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
         ];

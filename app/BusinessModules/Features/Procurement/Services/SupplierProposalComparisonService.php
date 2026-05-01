@@ -16,6 +16,10 @@ use function trans_message;
 
 class SupplierProposalComparisonService
 {
+    public function __construct(
+        private readonly ProcurementApprovalService $approvalService
+    ) {}
+
     public function comparisonForRequest(SupplierRequest $supplierRequest): array
     {
         $proposals = $supplierRequest->proposals()
@@ -118,9 +122,16 @@ class SupplierProposalComparisonService
                 'selected_by' => $actorId,
                 'selected_at' => now(),
             ]);
+
+            $risks = $this->approvalService->evaluateForDecision($decision, $proposal, $comparison);
+            $decision->status = $risks === []
+                ? SupplierProposalDecisionEnum::SELECTED
+                : SupplierProposalDecisionEnum::APPROVAL_REQUIRED;
             $decision->save();
 
-            return $decision->fresh(['winningProposal', 'cheapestProposal', 'selectedBy']);
+            $this->approvalService->createPendingForDecision($decision, $risks, $actorId);
+
+            return $decision->fresh(['winningProposal', 'cheapestProposal', 'selectedBy', 'approvals']);
         });
     }
 

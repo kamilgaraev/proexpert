@@ -1,6 +1,7 @@
 <?php
 
 use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementDashboardController;
+use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementApprovalController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementSettingsController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\PurchaseContractController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\PurchaseOrderController;
@@ -132,6 +133,18 @@ Route::prefix('api/v1/admin/procurement')
         Route::get('/audit-logs', [PurchaseOrderController::class, 'auditLogs'])
             ->middleware('authorize:procurement.view')
             ->name('audit_logs.index');
+
+        Route::prefix('approvals')->name('approvals.')->group(function () {
+            Route::get('/', [ProcurementApprovalController::class, 'index'])
+                ->middleware('authorize:procurement.approvals.view')
+                ->name('index');
+            Route::post('/{approval}/approve', [ProcurementApprovalController::class, 'approve'])
+                ->middleware('authorize:procurement.approvals.resolve')
+                ->name('approve');
+            Route::post('/{approval}/reject', [ProcurementApprovalController::class, 'reject'])
+                ->middleware('authorize:procurement.approvals.resolve')
+                ->name('reject');
+        });
 
         Route::prefix('settings')->name('settings.')->group(function () {
             Route::get('/', [ProcurementSettingsController::class, 'show'])

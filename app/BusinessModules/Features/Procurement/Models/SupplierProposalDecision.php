@@ -9,6 +9,7 @@ use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 class SupplierProposalDecision extends Model
 {
@@ -63,6 +64,11 @@ class SupplierProposalDecision extends Model
     public function selectedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'selected_by');
+    }
+
+    public function approvals(): MorphMany
+    {
+        return $this->morphMany(ProcurementApproval::class, 'approvable');
     }
 
     public function scopeForOrganization($query, int $organizationId)

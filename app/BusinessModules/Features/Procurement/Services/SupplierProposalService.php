@@ -105,11 +105,22 @@ class SupplierProposalService
             if (
                 $decision === null
                 || $decision->winning_supplier_proposal_id !== $lockedProposal->id
-                || !in_array($decision->status, [
-                    SupplierProposalDecisionEnum::SELECTED,
-                    SupplierProposalDecisionEnum::APPROVED,
-                ], true)
             ) {
+                throw new \DomainException(trans_message('procurement.proposal_decisions.accepted_decision_required'));
+            }
+
+            if ($decision->status === SupplierProposalDecisionEnum::APPROVAL_REQUIRED) {
+                throw new \DomainException(trans_message('procurement.proposal_decisions.approval_required'));
+            }
+
+            if ($decision->status === SupplierProposalDecisionEnum::REJECTED) {
+                throw new \DomainException(trans_message('procurement.proposal_decisions.rejected_decision_cannot_be_accepted'));
+            }
+
+            if (!in_array($decision->status, [
+                SupplierProposalDecisionEnum::SELECTED,
+                SupplierProposalDecisionEnum::APPROVED,
+            ], true)) {
                 throw new \DomainException(trans_message('procurement.proposal_decisions.accepted_decision_required'));
             }
 
