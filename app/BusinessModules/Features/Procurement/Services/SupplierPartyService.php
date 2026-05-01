@@ -11,6 +11,7 @@ use App\BusinessModules\Features\Procurement\Models\SupplierParty;
 use App\Models\Supplier;
 use DateTimeInterface;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class SupplierPartyService
 {
@@ -107,6 +108,18 @@ class SupplierPartyService
                 ->forOrganization((int) $party->organization_id)
                 ->external()
                 ->findOrFail($party->id);
+
+            if ($party->status === SupplierPartyStatusEnum::LINKED) {
+                throw ValidationException::withMessages([
+                    'supplier_party' => trans_message('procurement.supplier_parties.already_linked'),
+                ]);
+            }
+
+            if ($party->status === SupplierPartyStatusEnum::REJECTED) {
+                throw ValidationException::withMessages([
+                    'supplier_party' => trans_message('procurement.supplier_parties.rejected_cannot_be_linked'),
+                ]);
+            }
 
             $supplier = $this->findActiveSupplier((int) $party->organization_id, $supplierId);
 

@@ -28,8 +28,14 @@ return new class extends Migration
             $table->timestamps();
 
             $table->index(['organization_id', 'type', 'status']);
-            $table->index(['organization_id', 'registered_supplier_id']);
-            $table->index(['organization_id', 'external_supplier_contact_id']);
+            $table->unique(
+                ['organization_id', 'type', 'registered_supplier_id'],
+                'supplier_parties_org_type_registered_unique'
+            );
+            $table->unique(
+                ['organization_id', 'type', 'external_supplier_contact_id'],
+                'supplier_parties_org_type_external_unique'
+            );
             $table->index(['organization_id', 'normalized_email']);
         });
     }

@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Procurement;
 
+use App\BusinessModules\Features\Procurement\Enums\SupplierPartyStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\ExternalSupplierContact;
+use App\BusinessModules\Features\Procurement\Models\SupplierParty;
 use App\BusinessModules\Features\Procurement\Services\SupplierPartyService;
 use App\Models\Organization;
 use App\Models\Supplier;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
 class SupplierPartyWorkflowTest extends TestCase
@@ -85,6 +88,7 @@ class SupplierPartyWorkflowTest extends TestCase
         $this->assertSame($firstParty->id, $sameContactParty->id);
         $this->assertSame($firstParty->id, $sameEmailParty->id);
         $this->assertNotSame($firstParty->id, $otherOrganizationParty->id);
+        $this->assertSame(2, SupplierParty::query()->count());
     }
 
     public function test_registered_supplier_creates_and_reuses_registered_party(): void
@@ -112,6 +116,7 @@ class SupplierPartyWorkflowTest extends TestCase
         $this->assertNull($party->external_supplier_contact_id);
         $this->assertSame('Registered Steel LLC', $party->display_name);
         $this->assertSame('registered@example.test', $party->normalized_email);
+        $this->assertSame(1, SupplierParty::query()->count());
     }
 
     public function test_registered_supplier_must_belong_to_organization_and_be_active(): void
@@ -198,5 +203,59 @@ class SupplierPartyWorkflowTest extends TestCase
         $this->assertSame('7703999999', $snapshot['tax_id']);
         $this->assertSame($supplier->id, $snapshot['registered_supplier_id']);
         $this->assertSame($contact->id, $snapshot['external_supplier_contact_id']);
+    }
+
+    public function test_already_linked_external_party_cannot_be_linked_again(): void
+    {
+        $organization = Organization::factory()->create();
+        $contact = ExternalSupplierContact::query()->create([
+            'organization_id' => $organization->id,
+            'name' => 'Already Linked External',
+        ]);
+
+        $firstSupplier = Supplier::query()->create([
+            'organization_id' => $organization->id,
+            'name' => 'First Registered Target',
+            'is_active' => true,
+        ]);
+
+        $secondSupplier = Supplier::query()->create([
+            'organization_id' => $organization->id,
+            'name' => 'Second Registered Target',
+            'is_active' => true,
+        ]);
+
+        $service = app(SupplierPartyService::class);
+        $party = $service->resolveExternalParty($organization->id, $contact);
+        $linkedParty = $service->linkExternalToRegistered($party, $firstSupplier->id);
+
+        $this->expectException(ValidationException::class);
+
+        $service->linkExternalToRegistered($linkedParty, $secondSupplier->id);
+    }
+
+    public function test_rejected_external_party_cannot_be_linked_to_registered_supplier(): void
+    {
+        $organization = Organization::factory()->create();
+        $contact = ExternalSupplierContact::query()->create([
+            'organization_id' => $organization->id,
+            'name' => 'Rejected External',
+        ]);
+
+        $supplier = Supplier::query()->create([
+            'organization_id' => $organization->id,
+            'name' => 'Registered Target',
+            'is_active' => true,
+        ]);
+
+        $service = app(SupplierPartyService::class);
+        $party = $service->resolveExternalParty($organization->id, $contact);
+        $party->update([
+            'status' => SupplierPartyStatusEnum::REJECTED,
+        ]);
+
+        $this->expectException(ValidationException::class);
+
+        $service->linkExternalToRegistered($party->refresh(), $supplier->id);
     }
 }
