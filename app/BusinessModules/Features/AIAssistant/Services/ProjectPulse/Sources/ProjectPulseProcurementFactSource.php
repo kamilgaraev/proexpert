@@ -29,6 +29,7 @@ class ProjectPulseProcurementFactSource implements ProjectPulseFactSourceInterfa
 
         return collect()
             ->merge($this->approvedRequestsWithoutOrders($context))
+            ->merge($this->approvedSiteRequestsWithoutPurchaseOrders($context))
             ->merge($this->supplierRequestsWithoutResponse($context))
             ->merge($this->purchaseOrdersWithDeliveryRisks($context))
             ->take((int) config('ai-assistant.project_pulse.limits.facts_total', 250))
@@ -99,6 +100,74 @@ class ProjectPulseProcurementFactSource implements ProjectPulseFactSourceInterfa
             ],
             ageDays: $this->ageDays($context, $row->created_at),
         ))->values();
+    }
+
+    private function approvedSiteRequestsWithoutPurchaseOrders(ProjectPulseContext $context): Collection
+    {
+        if (!$this->hasTable('site_requests') || !$this->hasColumn('purchase_requests', 'site_request_id')) {
+            return $this->empty();
+        }
+
+        $query = $this->table($context, 'site_requests')
+            ->leftJoin('projects', 'projects.id', '=', 'site_requests.project_id')
+            ->leftJoin('purchase_requests', 'purchase_requests.site_request_id', '=', 'site_requests.id')
+            ->whereIn('site_requests.status', ['approved', 'agreed', 'confirmed'])
+            ->limit($this->limit());
+
+        if ($this->hasTable('purchase_orders') && $this->hasColumn('purchase_orders', 'purchase_request_id')) {
+            $query->whereNotExists(function (Builder $query): void {
+                $query->select(DB::raw(1))
+                    ->from('purchase_orders')
+                    ->whereColumn('purchase_orders.purchase_request_id', 'purchase_requests.id')
+                    ->when($this->hasColumn('purchase_orders', 'deleted_at'), fn (Builder $query) => $query->whereNull('purchase_orders.deleted_at'));
+            });
+        }
+
+        return $query->get([
+            'site_requests.id as site_request_id',
+            'site_requests.project_id',
+            'site_requests.title',
+            'site_requests.status as site_request_status',
+            'site_requests.created_at',
+            'projects.name as project_name',
+            'purchase_requests.id as purchase_request_id',
+            'purchase_requests.request_number',
+            'purchase_requests.status as purchase_request_status',
+        ])->map(function ($row) use ($context): ProjectPulseFact {
+            $purchaseRequestId = $row->purchase_request_id !== null ? (int) $row->purchase_request_id : null;
+            $entityId = $purchaseRequestId ?? (int) $row->site_request_id;
+            $route = $purchaseRequestId !== null
+                ? '/procurement/purchase-requests/' . $purchaseRequestId
+                : '/site-requests/' . $row->site_request_id;
+            $number = $row->request_number ?: ('заявке "' . ($row->title ?? ('#' . $row->site_request_id)) . '"');
+
+            return new ProjectPulseFact(
+                id: ($purchaseRequestId !== null ? 'purchase_request:' . $purchaseRequestId : 'site_request:' . $row->site_request_id) . ':no_order',
+                type: $purchaseRequestId !== null ? 'purchase_request' : 'site_request',
+                priority: 'warning',
+                title: 'Согласована, но заказ поставщику не создан',
+                text: 'По согласованной закупочной заявке ' . $number . ' еще не оформлен заказ поставщику.',
+                projectId: $row->project_id !== null ? (int) $row->project_id : null,
+                projectName: $row->project_name,
+                relatedEntity: [
+                    'type' => $purchaseRequestId !== null ? 'purchase_request' : 'site_request',
+                    'id' => $entityId,
+                    'label' => $purchaseRequestId !== null ? 'Заявка на закупку ' . $number : 'Заявка с объекта #' . $row->site_request_id,
+                    'route' => $route,
+                ],
+                occurredAt: $this->dateString($row->created_at),
+                source: $this->key(),
+                category: 'procurement',
+                status: $row->purchase_request_status ?? $row->site_request_status,
+                nextAction: 'Создать заказ поставщику и зафиксировать поставщика, сроки и сумму.',
+                primaryAction: [
+                    'label' => $purchaseRequestId !== null ? 'Открыть заявку' : 'Открыть заявку с объекта',
+                    'route' => $route,
+                    'permission' => $purchaseRequestId !== null ? 'procurement.purchase_requests.view' : 'site_requests.view',
+                ],
+                ageDays: $this->ageDays($context, $row->created_at),
+            );
+        })->values();
     }
 
     private function supplierRequestsWithoutResponse(ProjectPulseContext $context): Collection

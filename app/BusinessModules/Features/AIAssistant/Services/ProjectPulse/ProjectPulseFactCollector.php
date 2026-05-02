@@ -23,6 +23,7 @@ class ProjectPulseFactCollector
         return $this->sourceRegistry
             ->all()
             ->flatMap(fn (ProjectPulseFactSourceInterface $source) => $source->collect($context))
+            ->unique('id')
             ->take((int) config('ai-assistant.project_pulse.limits.facts_total', 250))
             ->values();
     }
