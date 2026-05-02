@@ -79,7 +79,9 @@ trait BuildsProjectPulseFacts
             return null;
         }
 
-        return DB::table('projects')->whereKey($projectId)->value('name');
+        return DB::table('projects')
+            ->where('projects.id', $projectId)
+            ->value('name');
     }
 
     private function projectRoute(?int $projectId): ?array
