@@ -59,6 +59,9 @@ class ProjectPulseAiSynthesizer
             ], ['temperature' => 0.2]);
 
             $decoded = $this->decodeJson((string) ($response['content'] ?? ''));
+            $recommendations = is_array($decoded['recommendations'] ?? null)
+                ? $this->normalizeAiRecommendations($decoded['recommendations'])
+                : [];
 
             return [
                 'ai_mode' => [
@@ -70,8 +73,8 @@ class ProjectPulseAiSynthesizer
                     'title' => (string) data_get($decoded, 'summary.title', $this->ruleEngine->summary($facts)['title']),
                     'text' => (string) data_get($decoded, 'summary.text', $this->ruleEngine->summary($facts)['text']),
                 ],
-                'recommendations' => is_array($decoded['recommendations'] ?? null)
-                    ? $this->normalizeAiRecommendations($decoded['recommendations'])
+                'recommendations' => $recommendations !== []
+                    ? $recommendations
                     : $ruleRecommendations->map->toArray()->values()->all(),
             ];
         } catch (Throwable) {
