@@ -26,6 +26,17 @@ use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateWareh
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateTimeTrackingReportTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateContractPaymentsReportTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateProjectTimelinesReportTool;
+use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\ProjectPulseFactSourceRegistry;
+use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseContractFactSource;
+use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseFinanceFactSource;
+use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulsePeopleFactSource;
+use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseProcurementFactSource;
+use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseProjectFactSource;
+use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseReportFactSource;
+use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseScheduleFactSource;
+use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseSiteRequestFactSource;
+use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseWarehouseFactSource;
+use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseWorkFactSource;
 
 class AIAssistantServiceProvider extends ServiceProvider
 {
@@ -74,6 +85,21 @@ class AIAssistantServiceProvider extends ServiceProvider
             
             return $registry;
         });
+
+        $this->app->singleton(ProjectPulseFactSourceRegistry::class, function ($app): ProjectPulseFactSourceRegistry {
+            return new ProjectPulseFactSourceRegistry([
+                $app->make(ProjectPulseProjectFactSource::class),
+                $app->make(ProjectPulseSiteRequestFactSource::class),
+                $app->make(ProjectPulseProcurementFactSource::class),
+                $app->make(ProjectPulseWarehouseFactSource::class),
+                $app->make(ProjectPulseFinanceFactSource::class),
+                $app->make(ProjectPulseContractFactSource::class),
+                $app->make(ProjectPulseScheduleFactSource::class),
+                $app->make(ProjectPulseReportFactSource::class),
+                $app->make(ProjectPulseWorkFactSource::class),
+                $app->make(ProjectPulsePeopleFactSource::class),
+            ]);
+        });
     }
 
     public function boot(): void
@@ -89,4 +115,3 @@ class AIAssistantServiceProvider extends ServiceProvider
         }
     }
 }
-

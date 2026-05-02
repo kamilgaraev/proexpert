@@ -8,6 +8,7 @@ use App\BusinessModules\Features\AIAssistant\Models\ProjectPulseReport;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class ProjectPulseReportTest extends TestCase
@@ -172,5 +173,66 @@ class ProjectPulseReportTest extends TestCase
             'organization_id' => $organization->id,
             'scope_type' => 'organization',
         ]);
+    }
+
+    public function test_project_pulse_contains_approved_purchase_request_without_order(): void
+    {
+        $this->withoutMiddleware();
+
+        $organization = Organization::factory()->create();
+        $user = User::factory()->create([
+            'current_organization_id' => $organization->id,
+        ]);
+        $organization->users()->attach($user->id, [
+            'is_owner' => true,
+            'is_active' => true,
+        ]);
+        $project = Project::factory()->create([
+            'organization_id' => $organization->id,
+            'name' => 'Строительство склада Литер А',
+            'status' => 'active',
+        ]);
+
+        $siteRequestId = DB::table('site_requests')->insertGetId([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'user_id' => $user->id,
+            'title' => 'Материалы для склада',
+            'status' => 'submitted',
+            'priority' => 'high',
+            'request_type' => 'material',
+            'created_at' => now()->subDays(2),
+            'updated_at' => now()->subDays(2),
+        ]);
+
+        $purchaseRequestId = DB::table('purchase_requests')->insertGetId([
+            'organization_id' => $organization->id,
+            'site_request_id' => $siteRequestId,
+            'request_number' => '33-202604-0001',
+            'status' => 'approved',
+            'budget_amount' => 35000,
+            'created_at' => now()->subDays(2),
+            'updated_at' => now()->subDays(2),
+        ]);
+
+        $response = $this->actingAs($user, 'api_admin')
+            ->withHeaders([
+                'X-Organization-Id' => (string) $organization->id,
+            ])
+            ->postJson('/api/v1/admin/ai-assistant/project-pulse/generate', [
+                'project_id' => $project->id,
+                'period' => 'today',
+                'use_ai' => false,
+        ]);
+
+        $response->assertOk();
+        $fact = collect($response->json('data.facts'))
+            ->firstWhere('id', 'purchase_request:' . $purchaseRequestId . ':no_order');
+
+        self::assertNotNull($fact);
+        self::assertSame('procurement', $fact['category']);
+        self::assertSame('/procurement/purchase-requests/' . $purchaseRequestId, $fact['related_entity']['route']);
+        self::assertSame('/procurement/purchase-requests/' . $purchaseRequestId, $fact['primary_action']['route']);
+        self::assertStringContainsString('33-202604-0001', $fact['text']);
     }
 }

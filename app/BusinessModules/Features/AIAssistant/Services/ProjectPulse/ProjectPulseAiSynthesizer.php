@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\ProjectPulse;
 
+use App\BusinessModules\Features\AIAssistant\DTOs\ProjectPulse\ProjectPulseContext;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use Illuminate\Support\Collection;
 use Throwable;
@@ -16,12 +17,18 @@ class ProjectPulseAiSynthesizer
     ) {
     }
 
-    public function synthesize(Collection $facts, Collection $ruleRecommendations, bool $useAi): array
-    {
+    public function synthesize(
+        Collection $facts,
+        Collection $ruleRecommendations,
+        bool $useAi,
+        array $categories = [],
+        array $nextActions = [],
+        ?ProjectPulseContext $context = null,
+    ): array {
         $provider = config('ai-assistant.llm.provider', 'yandex');
 
         if (!$useAi || !config('ai-assistant.project_pulse.ai_enabled', true)) {
-            return $this->rulesOnly($facts, $ruleRecommendations, 'ИИ-обобщение отключено в настройках или запросе.');
+            return $this->rulesOnly($facts, $ruleRecommendations);
         }
 
         if (!$this->llmProvider->isAvailable()) {
@@ -32,12 +39,20 @@ class ProjectPulseAiSynthesizer
             $response = $this->llmProvider->chat([
                 [
                     'role' => 'system',
-                    'content' => 'Сформируй краткий управленческий отчет по строительным проектам. Верни только JSON с ключами summary.title, summary.text, recommendations.',
+                    'content' => 'Сформируй краткий управленческий отчет по строительным проектам. Используй только факты из payload. Не добавляй событий, сумм, сроков, статусов и участников, которых нет в фактах. Если данных недостаточно, напиши, что в системе нет подтвержденных данных для такого вывода. Верни только JSON с ключами summary.title, summary.text, recommendations.',
                 ],
                 [
                     'role' => 'user',
                     'content' => json_encode([
+                        'scope' => [
+                            'organization_id' => $context?->organizationId,
+                            'project_id' => $context?->projectId,
+                            'period' => $context?->period,
+                            'date' => $context?->date->toDateString(),
+                        ],
                         'facts' => $facts->map->toArray()->values()->all(),
+                        'categories' => $categories,
+                        'next_actions' => $nextActions,
                         'recommendations' => $ruleRecommendations->map->toArray()->values()->all(),
                     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                 ],
@@ -64,13 +79,13 @@ class ProjectPulseAiSynthesizer
         }
     }
 
-    private function rulesOnly(Collection $facts, Collection $ruleRecommendations, string $message): array
+    private function rulesOnly(Collection $facts, Collection $ruleRecommendations): array
     {
         return [
             'ai_mode' => [
                 'status' => 'rules_only',
                 'provider' => null,
-                'message' => $message,
+                'message' => 'Рекомендации подготовлены по правилам на основе данных системы.',
             ],
             'summary' => $this->ruleEngine->summary($facts),
             'recommendations' => $ruleRecommendations->map->toArray()->values()->all(),

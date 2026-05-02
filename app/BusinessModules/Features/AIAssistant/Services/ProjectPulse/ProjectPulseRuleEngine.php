@@ -38,7 +38,7 @@ class ProjectPulseRuleEngine
         if ($warning > 0) {
             return [
                 'title' => 'Есть вопросы для контроля',
-                'text' => 'Система нашла события, которые стоит проверить в рабочем порядке.',
+                'text' => 'По проектному контуру есть события, которые стоит проверить в рабочем порядке.',
             ];
         }
 
@@ -48,20 +48,97 @@ class ProjectPulseRuleEngine
         ];
     }
 
+    public function categories(Collection $facts): array
+    {
+        $labels = $this->configArray('ai-assistant.project_pulse.categories');
+
+        return $facts
+            ->groupBy(fn (ProjectPulseFact $fact) => $fact->category)
+            ->map(fn (Collection $categoryFacts, string $category) => [
+                'key' => $category,
+                'label' => (string) ($labels[$category] ?? $category),
+                'status' => $this->status($categoryFacts),
+                'critical_count' => $categoryFacts->where('priority', 'critical')->count(),
+                'warning_count' => $categoryFacts->where('priority', 'warning')->count(),
+                'info_count' => $categoryFacts->where('priority', 'info')->count(),
+                'amount' => $categoryFacts->sum(fn (ProjectPulseFact $fact) => (float) ($fact->amount ?? 0)),
+            ])
+            ->sortBy(function (array $category) use ($labels): int {
+                $position = array_search($category['key'], array_keys($labels), true);
+
+                return $position === false ? 999 : (int) $position;
+            })
+            ->values()
+            ->all();
+    }
+
+    public function groups(Collection $facts): array
+    {
+        $definitions = [
+            'requires_action' => ['label' => 'Требует реакции', 'filter' => fn (ProjectPulseFact $fact) => $fact->nextAction !== null || $fact->primaryAction !== null],
+            'critical' => ['label' => 'Критичные события', 'filter' => fn (ProjectPulseFact $fact) => $fact->priority === 'critical'],
+            'today' => ['label' => 'События за период', 'filter' => fn (ProjectPulseFact $fact) => $fact->occurredAt !== null],
+            'procurement' => ['label' => 'Закупки', 'filter' => fn (ProjectPulseFact $fact) => $fact->category === 'procurement'],
+            'warehouse' => ['label' => 'Склад', 'filter' => fn (ProjectPulseFact $fact) => $fact->category === 'warehouse'],
+            'finance' => ['label' => 'Финансы', 'filter' => fn (ProjectPulseFact $fact) => $fact->category === 'finance'],
+            'schedule' => ['label' => 'График', 'filter' => fn (ProjectPulseFact $fact) => $fact->category === 'schedule'],
+            'contracts' => ['label' => 'Договоры', 'filter' => fn (ProjectPulseFact $fact) => $fact->category === 'contract'],
+            'reports' => ['label' => 'Отчеты', 'filter' => fn (ProjectPulseFact $fact) => $fact->category === 'report'],
+        ];
+
+        return collect($definitions)
+            ->map(function (array $definition, string $key) use ($facts): array {
+                $items = $facts->filter($definition['filter'])->values();
+
+                return [
+                    'key' => $key,
+                    'label' => $definition['label'],
+                    'status' => $this->status($items),
+                    'facts' => $items->map->toArray()->all(),
+                ];
+            })
+            ->filter(fn (array $group) => count($group['facts']) > 0)
+            ->values()
+            ->all();
+    }
+
+    public function nextActions(Collection $facts): array
+    {
+        return $facts
+            ->filter(fn (ProjectPulseFact $fact) => $fact->nextAction !== null || $fact->primaryAction !== null)
+            ->sortBy(fn (ProjectPulseFact $fact) => ($this->priorityRank($fact->priority) * 100000) - (int) ($fact->ageDays ?? 0))
+            ->take((int) $this->configValue('ai-assistant.project_pulse.limits.next_actions', 10))
+            ->map(fn (ProjectPulseFact $fact) => [
+                'id' => $fact->id,
+                'priority' => $fact->priority,
+                'category' => $fact->category,
+                'title' => $fact->title,
+                'text' => $fact->nextAction ?? $fact->text,
+                'project_id' => $fact->projectId,
+                'project_name' => $fact->projectName,
+                'related_entity' => $fact->relatedEntity,
+                'primary_action' => $fact->primaryAction,
+                'deadline' => $fact->deadline,
+                'age_days' => $fact->ageDays,
+            ])
+            ->values()
+            ->all();
+    }
+
     public function recommendations(Collection $facts): Collection
     {
         return $facts
             ->filter(fn (ProjectPulseFact $fact) => in_array($fact->priority, ['critical', 'warning'], true))
-            ->take(10)
+            ->take((int) $this->configValue('ai-assistant.project_pulse.limits.recommendations', 12))
             ->map(fn (ProjectPulseFact $fact) => new ProjectPulseRecommendation(
                 id: 'rules:' . $fact->id,
                 priority: $fact->priority === 'critical' ? 'high' : 'medium',
                 title: $this->recommendationTitle($fact),
-                action: $this->recommendationAction($fact),
+                action: $fact->nextAction ?? $this->recommendationAction($fact),
                 reason: $fact->text,
                 expectedEffect: 'Снижение риска срыва сроков, простоя или финансового отклонения.',
                 projectId: $fact->projectId,
-                route: $fact->relatedEntity['route'] ?? ($fact->projectId ? '/projects/' . $fact->projectId : null),
+                route: $fact->primaryAction['route'] ?? $fact->relatedEntity['route'] ?? ($fact->projectId ? '/projects/' . $fact->projectId : null),
                 source: 'rules',
             ))
             ->values();
@@ -69,43 +146,12 @@ class ProjectPulseRuleEngine
 
     public function riskGroups(Collection $facts): array
     {
-        return collect([
-            'schedule' => 'Сроки',
-            'site_request' => 'Заявки',
-            'finance' => 'Финансы',
-        ])->map(fn (string $title, string $key) => [
-            'key' => $key,
-            'title' => $title,
-            'status' => $this->status($facts->filter(fn (ProjectPulseFact $fact) => $fact->type === $key || $fact->type === 'completed_work' && $key === 'finance')),
-            'items' => $facts
-                ->filter(fn (ProjectPulseFact $fact) => $fact->type === $key || $fact->type === 'completed_work' && $key === 'finance')
-                ->whereIn('priority', ['critical', 'warning'])
-                ->map(fn (ProjectPulseFact $fact) => $fact->toArray())
-                ->values()
-                ->all(),
-        ])->values()->all();
+        return $this->groups($facts);
     }
 
     public function urgentActions(Collection $facts): array
     {
-        return $facts
-            ->filter(fn (ProjectPulseFact $fact) => in_array($fact->priority, ['critical', 'warning'], true))
-            ->take(10)
-            ->map(fn (ProjectPulseFact $fact) => [
-                'id' => $fact->id,
-                'priority' => $fact->priority,
-                'title' => $fact->title,
-                'reason' => $fact->text,
-                'expected_effect' => 'Снижение риска срыва работ и повторных согласований.',
-                'project' => $fact->projectId ? [
-                    'id' => $fact->projectId,
-                    'name' => $fact->projectName,
-                ] : null,
-                'related_entity' => $fact->relatedEntity,
-                'source' => 'rules',
-            ])
-            ->values()
-            ->all();
+        return $this->nextActions($facts);
     }
 
     public function activity(Collection $facts): array
@@ -117,6 +163,7 @@ class ProjectPulseRuleEngine
             ->map(fn (ProjectPulseFact $fact) => [
                 'id' => $fact->id,
                 'type' => $fact->type,
+                'category' => $fact->category,
                 'title' => $fact->title,
                 'subtitle' => $fact->projectName,
                 'occurred_at' => $fact->occurredAt,
@@ -126,21 +173,46 @@ class ProjectPulseRuleEngine
             ->all();
     }
 
+    private function priorityRank(string $priority): int
+    {
+        return match ($priority) {
+            'critical' => 0,
+            'warning' => 1,
+            default => 2,
+        };
+    }
+
     private function recommendationTitle(ProjectPulseFact $fact): string
     {
-        return match ($fact->type) {
-            'schedule' => 'Проверить план завершения проекта',
-            'site_request' => 'Назначить ответственного по заявке',
-            default => 'Проверить отклонение по проекту',
+        return match ($fact->category) {
+            'procurement' => 'Закрыть закупочный следующий шаг',
+            'warehouse' => 'Проверить складское обеспечение',
+            'finance' => 'Проверить финансовое действие',
+            'contract' => 'Проверить договорной контур',
+            'schedule' => 'Актуализировать график',
+            'people' => 'Назначить ответственного',
+            default => 'Проверить событие по проекту',
         };
     }
 
     private function recommendationAction(ProjectPulseFact $fact): string
     {
-        return match ($fact->type) {
-            'schedule' => 'Обновить план работ, ответственных и дату следующего контрольного шага.',
-            'site_request' => 'Назначить исполнителя и зафиксировать срок реакции по заявке.',
-            default => 'Сверить факт, ответственного и следующий шаг по связанному объекту.',
-        };
+        return $fact->nextAction ?? 'Сверить факт, ответственного и следующий шаг по связанному объекту.';
+    }
+
+    private function configArray(string $key): array
+    {
+        $value = $this->configValue($key, []);
+
+        return is_array($value) ? $value : [];
+    }
+
+    private function configValue(string $key, mixed $default): mixed
+    {
+        try {
+            return config($key, $default);
+        } catch (\Throwable) {
+            return $default;
+        }
     }
 }

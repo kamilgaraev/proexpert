@@ -35,8 +35,18 @@ class ProjectPulseService
     public function generate(ProjectPulseContext $context): array
     {
         $facts = $this->factCollector->collect($context);
+        $categories = $this->ruleEngine->categories($facts);
+        $groups = $this->ruleEngine->groups($facts);
+        $nextActions = $this->ruleEngine->nextActions($facts);
         $ruleRecommendations = $this->ruleEngine->recommendations($facts);
-        $synthesis = $this->aiSynthesizer->synthesize($facts, $ruleRecommendations, $context->useAi);
+        $synthesis = $this->aiSynthesizer->synthesize(
+            $facts,
+            $ruleRecommendations,
+            $context->useAi,
+            $categories,
+            $nextActions,
+            $context,
+        );
         $status = $this->ruleEngine->status($facts);
 
         $report = ProjectPulseReport::create([
@@ -51,9 +61,9 @@ class ProjectPulseService
             'ai_status' => $synthesis['ai_mode']['status'],
             'ai_provider' => $synthesis['ai_mode']['provider'],
             'summary' => $synthesis['summary'],
-            'metrics' => $this->factCollector->metrics($context, $facts),
-            'urgent_actions' => $this->ruleEngine->urgentActions($facts),
-            'risk_groups' => $this->ruleEngine->riskGroups($facts),
+            'metrics' => $categories,
+            'urgent_actions' => $nextActions,
+            'risk_groups' => $groups,
             'finance' => $this->factCollector->finance($context),
             'activity' => $this->ruleEngine->activity($facts),
             'recommendations' => $synthesis['recommendations'],
@@ -72,6 +82,18 @@ class ProjectPulseService
             ->with('project')
             ->when(isset($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
             ->when(isset($filters['status']), fn ($query) => $query->where('status', $filters['status']))
+            ->when(isset($filters['ai_status']), fn ($query) => $query->where('ai_status', $filters['ai_status']))
+            ->when(isset($filters['period']), fn ($query) => $query->where('period_preset', $filters['period']))
+            ->when(isset($filters['date']), fn ($query) => $query->whereDate('report_date', $filters['date']))
+            ->when(isset($filters['category']), function ($query) use ($filters): void {
+                $category = (string) $filters['category'];
+
+                $query->where(function ($query) use ($category): void {
+                    $query
+                        ->whereJsonContains('metrics', [['key' => $category]])
+                        ->orWhereJsonContains('raw_facts', [['category' => $category]]);
+                });
+            })
             ->latest()
             ->paginate((int) ($filters['per_page'] ?? 15));
 

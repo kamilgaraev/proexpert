@@ -10,6 +10,12 @@ class ProjectPulseFormatter
 {
     public function format(ProjectPulseReport $report): array
     {
+        $report->loadMissing('project');
+
+        $categories = $report->metrics ?? [];
+        $groups = $report->risk_groups ?? [];
+        $nextActions = $report->urgent_actions ?? [];
+
         return [
             'id' => $report->id,
             'report_date' => $report->report_date?->toDateString(),
@@ -23,6 +29,11 @@ class ProjectPulseFormatter
                 'organization_id' => $report->organization_id,
                 'project_id' => $report->project_id,
             ],
+            'project_id' => $report->project_id,
+            'project' => $report->project ? [
+                'id' => $report->project->id,
+                'name' => $report->project->name,
+            ] : null,
             'status' => $report->status,
             'ai_mode' => [
                 'status' => $report->ai_status,
@@ -30,9 +41,13 @@ class ProjectPulseFormatter
                 'message' => $this->aiMessage($report),
             ],
             'summary' => $report->summary ?? [],
-            'metrics' => $report->metrics ?? [],
-            'urgent_actions' => $report->urgent_actions ?? [],
-            'risk_groups' => $report->risk_groups ?? [],
+            'categories' => $categories,
+            'groups' => $groups,
+            'facts' => $report->raw_facts ?? [],
+            'next_actions' => $nextActions,
+            'metrics' => $categories,
+            'urgent_actions' => $nextActions,
+            'risk_groups' => $groups,
             'finance' => $report->finance ?? [
                 'performed_amount' => 0,
                 'paid_amount' => 0,
@@ -47,6 +62,8 @@ class ProjectPulseFormatter
 
     public function listItem(ProjectPulseReport $report): array
     {
+        $nextActions = $report->urgent_actions ?? [];
+
         return [
             'id' => $report->id,
             'report_date' => $report->report_date?->toDateString(),
@@ -73,6 +90,9 @@ class ProjectPulseFormatter
                 'message' => $this->aiMessage($report),
             ],
             'summary' => $report->summary,
+            'categories' => $report->metrics ?? [],
+            'category_summary' => $report->metrics ?? [],
+            'next_action_count' => count($nextActions),
             'generated_at' => $report->generated_at?->toIso8601String(),
             'created_at' => $report->created_at?->toIso8601String(),
         ];
@@ -83,7 +103,7 @@ class ProjectPulseFormatter
         return match ($report->ai_status) {
             'active' => 'Рекомендации усилены ИИ на основе фактов из системы.',
             'unavailable' => 'ИИ сейчас недоступен. Показаны системные факты и базовые рекомендации.',
-            default => 'ИИ-обобщение отключено в настройках или запросе.',
+            default => 'Рекомендации подготовлены по правилам на основе данных системы.',
         };
     }
 }

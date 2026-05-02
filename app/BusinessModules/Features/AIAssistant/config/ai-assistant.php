@@ -46,5 +46,28 @@ return [
         'cache_ttl' => env('PROJECT_PULSE_CACHE_TTL', 3600),
         'auto_cleanup_days' => 90,
         'periods' => ['today', 'yesterday', 'week'],
+        'categories' => [
+            'project' => 'Проекты',
+            'request' => 'Заявки',
+            'procurement' => 'Закупки',
+            'warehouse' => 'Склад',
+            'finance' => 'Финансы',
+            'contract' => 'Договоры',
+            'schedule' => 'График',
+            'report' => 'Отчеты',
+            'work' => 'Работы',
+            'people' => 'Исполнители',
+            'system' => 'Система',
+        ],
+        'limits' => [
+            'facts_per_source' => 30,
+            'facts_total' => 250,
+            'recommendations' => 12,
+            'next_actions' => 10,
+        ],
+        'thresholds' => [
+            'high_daily_expense' => 100000,
+            'overload_warning_facts' => 8,
+        ],
     ],
 ];

@@ -27,6 +27,9 @@ class ProjectPulseReportRequest extends FormRequest
             'period' => ['nullable', 'string', Rule::in(config('ai-assistant.project_pulse.periods', ['today', 'yesterday', 'week']))],
             'date' => ['nullable', 'date_format:Y-m-d'],
             'status' => ['nullable', 'string', Rule::in(['good', 'warning', 'critical'])],
+            'ai_status' => ['nullable', 'string', Rule::in(['active', 'unavailable', 'rules_only'])],
+            'category' => ['nullable', 'string', Rule::in(array_keys(config('ai-assistant.project_pulse.categories', [])))],
+            'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ];
     }
