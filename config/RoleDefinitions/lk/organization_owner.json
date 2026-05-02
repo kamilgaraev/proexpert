@@ -95,7 +95,11 @@
       "*"
     ],
     "ai-assistant": [
-      "*"
+      "*",
+      "admin.ai_assistant.project_pulse.view",
+      "admin.ai_assistant.project_pulse.generate",
+      "admin.ai_assistant.project_pulse.export",
+      "admin.ai_assistant.project_pulse.delete"
     ],
     "basic-warehouse": [
       "*"

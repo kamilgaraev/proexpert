@@ -1329,7 +1329,7 @@ class ContractService
                    ->get()
         );
 
-        // TECHNICAL: Диагностика дочерних контрактов для системного анализа
+        // TECHNICAL: Диагностика дочерних контрактов для управленческих отчетов
         $dbChildren = \App\Models\Contract::where('parent_contract_id', $contract->id)->get();
         $this->logging->technical('contract.child_contracts.diagnostic', [
             'contract_id' => $contract->id,

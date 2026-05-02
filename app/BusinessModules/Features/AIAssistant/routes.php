@@ -3,7 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AIAssistantController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AiReportsDownloadController;
-use App\BusinessModules\Features\AIAssistant\Http\Controllers\SystemAnalysisController;
+use App\BusinessModules\Features\AIAssistant\Http\Controllers\ProjectPulseController;
 
 // ==========================================
 // Роуты для Личного кабинета (ЛК)
@@ -64,19 +64,25 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
     });
 
 // ==========================================
-// Роуты для системного анализа проектов
+// Роуты для пульса проектов
 // ==========================================
-Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'authorize:admin.access'])
-    ->prefix('api/v1/admin/ai-assistant/system-analysis')
-    ->name('admin.system-analysis.')
+Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'authorize:admin.access', 'interface:admin'])
+    ->prefix('api/v1/admin/ai-assistant/project-pulse')
+    ->name('admin.project-pulse.')
     ->group(function () {
-        Route::post('projects/{project}/analyze', [SystemAnalysisController::class, 'analyzeProject'])->name('analyze-project');
-        Route::post('organization/analyze', [SystemAnalysisController::class, 'analyzeOrganization'])->name('analyze-organization');
-        Route::get('reports', [SystemAnalysisController::class, 'listReports'])->name('reports.list');
-        Route::get('reports/{report}', [SystemAnalysisController::class, 'getReport'])->name('reports.get');
-        Route::post('reports/{report}/recalculate', [SystemAnalysisController::class, 'recalculate'])->name('reports.recalculate');
-        Route::get('reports/{report}/export/pdf', [SystemAnalysisController::class, 'exportPDF'])->name('reports.export-pdf');
-        Route::get('reports/{report}/compare/{previous}', [SystemAnalysisController::class, 'compare'])->name('reports.compare');
-        Route::delete('reports/{report}', [SystemAnalysisController::class, 'deleteReport'])->name('reports.delete');
+        Route::get('current', [ProjectPulseController::class, 'current'])
+            ->middleware('authorize:admin.ai_assistant.project_pulse.view')
+            ->name('current');
+        Route::post('generate', [ProjectPulseController::class, 'generate'])
+            ->middleware('authorize:admin.ai_assistant.project_pulse.generate')
+            ->name('generate');
+        Route::get('reports', [ProjectPulseController::class, 'reports'])
+            ->middleware('authorize:admin.ai_assistant.project_pulse.view')
+            ->name('reports.index');
+        Route::get('reports/{report}', [ProjectPulseController::class, 'show'])
+            ->middleware('authorize:admin.ai_assistant.project_pulse.view')
+            ->name('reports.show');
+        Route::delete('reports/{report}', [ProjectPulseController::class, 'destroy'])
+            ->middleware('authorize:admin.ai_assistant.project_pulse.delete')
+            ->name('reports.destroy');
     });
-

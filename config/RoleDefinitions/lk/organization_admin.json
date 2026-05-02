@@ -358,10 +358,10 @@
       "ai_assistant.reports.generate",
       "ai_assistant.analytics.view",
       "ai_assistant.usage.view",
-      "admin.ai_assistant.system_analysis.view",
-      "admin.ai_assistant.system_analysis.analyze",
-      "admin.ai_assistant.system_analysis.export",
-      "admin.ai_assistant.system_analysis.delete"
+      "admin.ai_assistant.project_pulse.view",
+      "admin.ai_assistant.project_pulse.generate",
+      "admin.ai_assistant.project_pulse.export",
+      "admin.ai_assistant.project_pulse.delete"
     ],
     "ai-estimates": [
       "ai_estimates.generate",
