@@ -10,6 +10,7 @@ use App\Models\ReportFile;
 use App\Models\Organization;
 use App\Services\Storage\OrgBucketService;
 use Illuminate\Database\UniqueConstraintViolationException;
+use League\Flysystem\UnableToRetrieveMetadata;
 
 class SyncReportFilesCommand extends Command
 {
@@ -39,7 +40,18 @@ class SyncReportFilesCommand extends Command
                     $processed++;
                     $filename = basename($path);
                     $type = Str::before(Str::after($path, 'reports/'), '/');
-                    $size = $disk->size($path) ?: 0;
+
+                    try {
+                        $size = $disk->size($path) ?: 0;
+                    } catch (UnableToRetrieveMetadata $e) {
+                        Log::warning('[reports:sync] Skipped report file with unavailable metadata', [
+                            'path' => $path,
+                            'organization_id' => $org->id,
+                            'error' => $e->getMessage(),
+                        ]);
+
+                        continue;
+                    }
 
                     if ($dryRun) {
                         if (ReportFile::query()->where('path', $path)->exists()) {

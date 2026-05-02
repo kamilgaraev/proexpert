@@ -9,6 +9,7 @@ use Illuminate\Support\Carbon;
 use App\Models\ReportFile;
 use App\Models\Organization;
 use App\Services\Storage\OrgBucketService;
+use League\Flysystem\UnableToRetrieveMetadata;
 
 class CleanupReportFilesCommand extends Command
 {
@@ -36,7 +37,18 @@ class CleanupReportFilesCommand extends Command
 
                 $toDelete = [];
                 foreach ($files as $path) {
-                    $lastModified = Carbon::createFromTimestamp($disk->lastModified($path));
+                    try {
+                        $lastModified = Carbon::createFromTimestamp($disk->lastModified($path));
+                    } catch (UnableToRetrieveMetadata $e) {
+                        Log::warning('[reports:cleanup] Skipped report file with unavailable metadata', [
+                            'path' => $path,
+                            'organization_id' => $org->id,
+                            'error' => $e->getMessage(),
+                        ]);
+
+                        continue;
+                    }
+
                     if ($lastModified->lessThan($cutoff)) {
                         $toDelete[] = $path;
                     }
@@ -65,4 +77,4 @@ class CleanupReportFilesCommand extends Command
         $this->info("Удалено {$totalDeleted} файлов.");
         return Command::SUCCESS;
     }
-} 
+}

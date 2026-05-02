@@ -6,6 +6,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Storage;
 use App\Models\User;
 use Illuminate\Support\Facades\Log;
+use League\Flysystem\UnableToCheckFileExistence;
 
 class CleanupBrokenAvatarsCommand extends Command
 {
@@ -41,7 +42,20 @@ class CleanupBrokenAvatarsCommand extends Command
         User::whereNotNull('avatar_path')->chunkById($chunk, function ($users) use (&$processed, &$cleared, $storage, $dryRun) {
             foreach ($users as $user) {
                 $processed++;
-                if (!$storage->exists($user->avatar_path)) {
+
+                try {
+                    $exists = $storage->exists($user->avatar_path);
+                } catch (UnableToCheckFileExistence $e) {
+                    Log::warning('[AvatarCleanup] Skipped avatar with unavailable existence check', [
+                        'user_id' => $user->id,
+                        'path' => $user->avatar_path,
+                        'error' => $e->getMessage(),
+                    ]);
+
+                    continue;
+                }
+
+                if (!$exists) {
                     $cleared++;
                     $this->line("[MISSING] id={$user->id} path={$user->avatar_path}");
 
@@ -58,4 +72,4 @@ class CleanupBrokenAvatarsCommand extends Command
 
         return self::SUCCESS;
     }
-} 
+}

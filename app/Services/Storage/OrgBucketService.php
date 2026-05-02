@@ -124,7 +124,11 @@ class OrgBucketService
             'region' => $region ?: ($config['region'] ?? 'ru-central1'),
         ]);
         Log::debug('[OrgBucketService] Building disk', [
-            'config' => $diskConfig,
+            'bucket' => $diskConfig['bucket'] ?? null,
+            'driver' => $diskConfig['driver'] ?? null,
+            'endpoint' => $diskConfig['endpoint'] ?? null,
+            'region' => $diskConfig['region'] ?? null,
+            'use_path_style_endpoint' => $diskConfig['use_path_style_endpoint'] ?? null,
         ]);
         return Storage::build($diskConfig);
     }
@@ -166,4 +170,4 @@ class OrgBucketService
         return round($bytes / 1_048_576, 2); // в МБ
     }
 
-} 
+}
