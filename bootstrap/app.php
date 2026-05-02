@@ -73,6 +73,7 @@ $app = Application::configure(basePath: dirname(__DIR__))
         // ГРУППА MIDDLEWARE ДЛЯ API
         // ============================================================
         $middleware->api([
+            \App\Http\Middleware\UseJwtCookieForAuthorization::class,
             'throttle:api', // Rate limiting
             \Illuminate\Routing\Middleware\SubstituteBindings::class, // Route model binding
             \App\Http\Middleware\RequestLoggingMiddleware::class, // Структурированное логирование

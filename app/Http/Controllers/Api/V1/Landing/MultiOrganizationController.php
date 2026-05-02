@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Landing;
 
 use App\Http\Controllers\Controller;
+use App\Http\Responses\LandingResponse;
 use App\Services\Landing\MultiOrganizationService;
 use App\Services\Landing\OrganizationModuleService;
 use App\Services\Landing\ChildOrganizationUserService;
@@ -11,7 +12,6 @@ use App\Models\OrganizationGroup;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
-use App\Http\Responses\Api\V1\ErrorResponse;
 
 class MultiOrganizationController extends Controller
 {
@@ -40,7 +40,7 @@ class MultiOrganizationController extends Controller
         $hasModule = $this->moduleService->hasModuleAccess($organizationId, 'multi-organization');
         
         if (!$hasModule) {
-            return response()->json([
+            return $this->landingResponse([
                 'success' => false,
                 'available' => false,
                 'message' => 'Модуль "Мультиорганизация" не активирован',
@@ -50,7 +50,7 @@ class MultiOrganizationController extends Controller
 
         $organization = $user->currentOrganization;
         
-        return response()->json([
+        return $this->landingResponse([
             'success' => true,
             'available' => true,
             'can_create_holding' => !($organization->is_holding ?? false),
@@ -74,13 +74,13 @@ class MultiOrganizationController extends Controller
         try {
             $group = $this->multiOrgService->createOrganizationGroup($user, $request->all());
             
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'message' => 'Холдинг успешно создан',
                 'data' => $group,
             ]);
         } catch (\Exception $e) {
-            return (new ErrorResponse($e->getMessage(), 400))->toResponse($request);
+            return LandingResponse::error($e->getMessage(), 400);
         }
     }
 
@@ -104,19 +104,19 @@ class MultiOrganizationController extends Controller
         $group = OrganizationGroup::findOrFail($request->input('group_id'));
         
         if ($group->parent_organization_id !== $user->current_organization_id) {
-            return (new ErrorResponse('Нет прав для добавления дочерней организации', 403))->toResponse($request);
+            return LandingResponse::error('Нет прав для добавления дочерней организации', 403);
         }
 
         try {
             $childData = $this->multiOrgService->addChildOrganization($group, $request->all(), $user);
             
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'message' => 'Дочерняя организация успешно добавлена',
                 'data' => $childData,
             ]);
         } catch (\Exception $e) {
-            return (new ErrorResponse($e->getMessage(), 400))->toResponse($request);
+            return LandingResponse::error($e->getMessage(), 400);
         }
     }
 
@@ -128,12 +128,12 @@ class MultiOrganizationController extends Controller
         try {
             $hierarchy = $this->multiOrgService->getOrganizationHierarchy($organizationId);
             
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'data' => $hierarchy,
             ]);
         } catch (\Exception $e) {
-            return (new ErrorResponse($e->getMessage(), 400))->toResponse($request);
+            return LandingResponse::error($e->getMessage(), 400);
         }
     }
 
@@ -142,7 +142,7 @@ class MultiOrganizationController extends Controller
         $user = Auth::user();
         $organizations = $this->multiOrgService->getAccessibleOrganizations($user);
         
-        return response()->json([
+        return $this->landingResponse([
             'success' => true,
             'data' => $organizations->map(function ($org) {
                 return [
@@ -163,12 +163,12 @@ class MultiOrganizationController extends Controller
         try {
             $data = $this->multiOrgService->getOrganizationData($organizationId, $user);
             
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'data' => $data,
             ]);
         } catch (\Exception $e) {
-            return (new ErrorResponse($e->getMessage(), 403))->toResponse($request);
+            return LandingResponse::error($e->getMessage(), 403);
         }
     }
 
@@ -182,14 +182,14 @@ class MultiOrganizationController extends Controller
         $targetOrgId = $request->input('organization_id');
         
         if (!$this->multiOrgService->hasAccessToOrganization($authUser, $targetOrgId)) {
-            return (new ErrorResponse('Нет доступа к выбранной организации', 403))->toResponse($request);
+            return LandingResponse::error('Нет доступа к выбранной организации', 403);
         }
 
         $user = \App\Models\User::findOrFail($authUser->id);
         $user->current_organization_id = $targetOrgId;
         $user->save();
         
-        return response()->json([
+        return $this->landingResponse([
             'success' => true,
             'message' => 'Контекст организации изменен',
             'current_organization_id' => $targetOrgId,
@@ -218,12 +218,12 @@ class MultiOrganizationController extends Controller
                 'per_page' => $request->input('per_page', 15),
             ]);
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'data' => $result,
             ]);
         } catch (\Exception $e) {
-            return (new ErrorResponse($e->getMessage(), 400))->toResponse($request);
+            return LandingResponse::error($e->getMessage(), 400);
         }
     }
 
@@ -247,13 +247,13 @@ class MultiOrganizationController extends Controller
         try {
             $updatedOrg = $this->multiOrgService->updateChildOrganization($parentOrgId, $childOrgId, $request->all(), $user);
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'message' => 'Дочерняя организация обновлена',
                 'data' => $updatedOrg,
             ]);
         } catch (\Exception $e) {
-            return (new ErrorResponse($e->getMessage(), 400))->toResponse($request);
+            return LandingResponse::error($e->getMessage(), 400);
         }
     }
 
@@ -275,12 +275,12 @@ class MultiOrganizationController extends Controller
                 $request->input('transfer_data_to')
             );
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'message' => 'Дочерняя организация удалена',
             ]);
         } catch (\Exception $e) {
-            return (new ErrorResponse($e->getMessage(), 400))->toResponse($request);
+            return LandingResponse::error($e->getMessage(), 400);
         }
     }
 
@@ -304,12 +304,12 @@ class MultiOrganizationController extends Controller
                 'per_page' => $request->input('per_page', 15),
             ]);
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'data' => $result,
             ]);
         } catch (\Exception $e) {
-            return (new ErrorResponse($e->getMessage(), 400))->toResponse($request);
+            return LandingResponse::error($e->getMessage(), 400);
         }
     }
 
@@ -345,13 +345,13 @@ class MultiOrganizationController extends Controller
 
             $result = $this->childUserService->createUserWithRole($childOrgId, $request->all(), $user);
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'message' => 'Пользователь добавлен в дочернюю организацию с персональной ролью',
                 'data' => $result,
             ]);
         } catch (\Exception $e) {
-            return (new ErrorResponse($e->getMessage(), 400))->toResponse($request);
+            return LandingResponse::error($e->getMessage(), 400);
         }
     }
 
@@ -375,13 +375,13 @@ class MultiOrganizationController extends Controller
                 $user
             );
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'message' => 'Данные пользователя обновлены',
                 'data' => $result,
             ]);
         } catch (\Exception $e) {
-            return (new ErrorResponse($e->getMessage(), 400))->toResponse($request);
+            return LandingResponse::error($e->getMessage(), 400);
         }
     }
 
@@ -393,12 +393,12 @@ class MultiOrganizationController extends Controller
         try {
             $this->multiOrgService->removeUserFromChildOrganization($parentOrgId, $childOrgId, $userId, $user);
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'message' => 'Пользователь исключен из дочерней организации',
             ]);
         } catch (\Exception $e) {
-            return (new ErrorResponse($e->getMessage(), 400))->toResponse($request);
+            return LandingResponse::error($e->getMessage(), 400);
         }
     }
 
@@ -410,12 +410,12 @@ class MultiOrganizationController extends Controller
         try {
             $stats = $this->multiOrgService->getChildOrganizationStats($parentOrgId, $childOrgId);
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'data' => $stats,
             ]);
         } catch (\Exception $e) {
-            return (new ErrorResponse($e->getMessage(), 400))->toResponse($request);
+            return LandingResponse::error($e->getMessage(), 400);
         }
     }
 
@@ -435,13 +435,13 @@ class MultiOrganizationController extends Controller
         try {
             $group = $this->multiOrgService->updateHoldingSettings($request->input('group_id'), $request->all(), $user);
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'message' => 'Настройки холдинга обновлены',
                 'data' => $group,
             ]);
         } catch (\Exception $e) {
-            return (new ErrorResponse($e->getMessage(), 400))->toResponse($request);
+            return LandingResponse::error($e->getMessage(), 400);
         }
     }
 
@@ -453,12 +453,12 @@ class MultiOrganizationController extends Controller
         try {
             $dashboard = $this->multiOrgService->getHoldingDashboard($organizationId);
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'data' => $dashboard,
             ]);
         } catch (\Exception $e) {
-            return (new ErrorResponse($e->getMessage(), 400))->toResponse($request);
+            return LandingResponse::error($e->getMessage(), 400);
         }
     }
 
@@ -467,7 +467,7 @@ class MultiOrganizationController extends Controller
         try {
             $templates = $this->childUserService->getAvailableRoleTemplates();
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'data' => [
                     'templates' => $templates,
@@ -475,7 +475,7 @@ class MultiOrganizationController extends Controller
                 ],
             ]);
         } catch (\Exception $e) {
-            return (new ErrorResponse($e->getMessage(), 400))->toResponse($request);
+            return LandingResponse::error($e->getMessage(), 400);
         }
     }
 
@@ -540,7 +540,7 @@ class MultiOrganizationController extends Controller
             
             $roles = $allRoles;
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'data' => $roles->map(function ($role) {
                     return [
@@ -559,7 +559,7 @@ class MultiOrganizationController extends Controller
                 }),
             ]);
         } catch (\Exception $e) {
-            return (new ErrorResponse($e->getMessage(), 400))->toResponse($request);
+            return LandingResponse::error($e->getMessage(), 400);
         }
     }
 
@@ -589,13 +589,13 @@ class MultiOrganizationController extends Controller
 
             $results = $this->childUserService->createBulkUsers($childOrgId, $request->input('users'), $user);
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'message' => "Обработано пользователей: {$results['total']}, успешно: {$results['successful']}, ошибок: {$results['failed']}",
                 'data' => $results,
             ]);
         } catch (\Exception $e) {
-            return (new ErrorResponse($e->getMessage(), 400))->toResponse($request);
+            return LandingResponse::error($e->getMessage(), 400);
         }
     }
 
@@ -610,7 +610,7 @@ class MultiOrganizationController extends Controller
             'status' => $request->input('status'),
         ]);
 
-        return response()->json([
+        return $this->landingResponse([
             'success' => true,
             'data' => \App\Http\Resources\Api\V1\Landing\Report\ConsolidatedContractResource::collection($contracts),
         ]);
@@ -627,7 +627,7 @@ class MultiOrganizationController extends Controller
             'status' => $request->input('status'),
         ]);
 
-        return response()->json([
+        return $this->landingResponse([
             'success' => true,
             'data' => $summary,
         ]);
@@ -644,7 +644,7 @@ class MultiOrganizationController extends Controller
             'is_approved' => $request->input('is_approved'),
         ]);
 
-        return response()->json([
+        return $this->landingResponse([
             'success' => true,
             'data' => \App\Http\Resources\Api\V1\Landing\Report\ConsolidatedActResource::collection($acts),
         ]);
@@ -661,7 +661,7 @@ class MultiOrganizationController extends Controller
             'type' => $request->input('type'),
         ]);
 
-        return response()->json([
+        return $this->landingResponse([
             'success' => true,
             'data' => \App\Http\Resources\Billing\BalanceTransactionResource::collection($movements),
         ]);
@@ -728,4 +728,25 @@ class MultiOrganizationController extends Controller
             ],
         ];
     }
+    private function landingResponse(array $payload, int $status = 200): JsonResponse
+    {
+        $success = (bool) ($payload['success'] ?? true);
+        $message = $payload['message'] ?? null;
+
+        unset($payload['success'], $payload['message']);
+
+        if ($success) {
+            $data = array_key_exists('data', $payload) && count($payload) === 1
+                ? $payload['data']
+                : $payload;
+
+            return LandingResponse::success($data, $message, $status);
+        }
+
+        $errors = $payload['errors'] ?? null;
+        unset($payload['errors']);
+
+        return LandingResponse::error((string) $message, $status, $errors, $payload);
+    }
+
 } 

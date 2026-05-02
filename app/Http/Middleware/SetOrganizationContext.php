@@ -32,6 +32,16 @@ class SetOrganizationContext
     public function handle(Request $request, Closure $next): Response
     {
         $startTime = microtime(true);
+
+        if ($request->is('*/auth/refresh')) {
+            $this->logging->technical('organization.context.skipped', [
+                'reason' => 'token_refresh',
+                'uri' => $request->getRequestUri()
+            ]);
+
+            return $next($request);
+        }
+
         $user = Auth::user();
 
         if (!$user) {
@@ -231,4 +241,4 @@ class SetOrganizationContext
     {
         // Пока ничего не делаем здесь
     }
-} 
+}

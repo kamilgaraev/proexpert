@@ -26,10 +26,12 @@ Route::prefix('auth')->name('auth.')->group(function (): void {
     });
     Route::get('email/verify/{id}/{hash}', [CustomerEmailVerificationController::class, 'verify'])
         ->name('verification.verify');
+    Route::middleware(['auth.jwt:api_landing', 'throttle:dashboard'])
+        ->post('refresh', [CustomerAuthController::class, 'refresh'])
+        ->name('refresh');
 
     Route::middleware(['auth:api_landing', 'auth.jwt:api_landing'])->group(function (): void {
         Route::post('logout', [CustomerAuthController::class, 'logout'])->name('logout');
-        Route::post('refresh', [CustomerAuthController::class, 'refresh'])->name('refresh');
         Route::get('email/check', [CustomerEmailVerificationController::class, 'check'])
             ->name('verification.check');
     });

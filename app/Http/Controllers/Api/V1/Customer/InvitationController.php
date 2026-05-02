@@ -10,6 +10,7 @@ use App\Http\Requests\Api\V1\Customer\Auth\LoginRequest;
 use App\Http\Requests\Api\V1\Customer\Auth\RegisterRequest;
 use App\Http\Responses\CustomerResponse;
 use App\Models\Organization;
+use App\Services\Auth\JwtCookieService;
 use App\Services\Customer\Auth\CustomerAuthService;
 use App\Services\Project\ProjectParticipantInvitationService;
 use Illuminate\Http\JsonResponse;
@@ -26,6 +27,7 @@ class InvitationController extends CustomerController
     public function __construct(
         private readonly ProjectParticipantInvitationService $invitationService,
         private readonly CustomerAuthService $customerAuthService,
+        private readonly JwtCookieService $jwtCookieService,
     ) {
     }
 
@@ -83,7 +85,7 @@ class InvitationController extends CustomerController
                     'invitation' => $result['invitation'] ?? null,
                 ],
                 trans_message('customer.auth.invitation_login_success')
-            );
+            )->withCookie($this->jwtCookieService->makeTokenCookie($result['token']));
         } catch (Throwable $exception) {
             Log::error('customer.invitation.login.failed', [
                 'email' => $request->input('email'),

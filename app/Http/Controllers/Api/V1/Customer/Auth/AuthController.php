@@ -12,6 +12,7 @@ use App\Http\Requests\Api\V1\Customer\Auth\LoginRequest;
 use App\Http\Requests\Api\V1\Customer\Auth\RegisterRequest;
 use App\Http\Requests\Api\V1\Customer\Auth\ResetPasswordRequest;
 use App\Http\Responses\CustomerResponse;
+use App\Services\Auth\JwtCookieService;
 use App\Services\Customer\Auth\CustomerAuthService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -25,7 +26,8 @@ class AuthController extends Controller
     private const GUARD = 'api_landing';
 
     public function __construct(
-        private readonly CustomerAuthService $authService
+        private readonly CustomerAuthService $authService,
+        private readonly JwtCookieService $jwtCookieService
     ) {
     }
 
@@ -53,7 +55,7 @@ class AuthController extends Controller
                     'available_interfaces' => $result['available_interfaces'],
                 ],
                 trans_message('customer.auth.login_success')
-            );
+            )->withCookie($this->jwtCookieService->makeTokenCookie($result['token']));
         } catch (Throwable $exception) {
             Log::error('customer.auth.login.failed', [
                 'email' => $request->input('email'),
@@ -113,7 +115,7 @@ class AuthController extends Controller
             return CustomerResponse::success(
                 ['token' => $result['token']],
                 trans_message('customer.auth.refresh_success')
-            );
+            )->withCookie($this->jwtCookieService->makeTokenCookie($result['token']));
         } catch (Throwable $exception) {
             Log::error('customer.auth.refresh.failed', [
                 'user_id' => $request->user()?->id,
@@ -140,7 +142,7 @@ class AuthController extends Controller
             return CustomerResponse::success(
                 null,
                 trans_message('customer.auth.logout_success')
-            );
+            )->withCookie($this->jwtCookieService->makeClearCookie());
         } catch (Throwable $exception) {
             Log::error('customer.auth.logout.failed', [
                 'user_id' => $request->user()?->id,

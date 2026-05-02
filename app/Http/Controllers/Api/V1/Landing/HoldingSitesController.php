@@ -45,7 +45,7 @@ class HoldingSitesController extends Controller
             // Проверяем права доступа
             $user = Auth::user();
             if (!$this->canUserManageHoldingSites($user, $organizationGroup)) {
-                return response()->json([
+                return $this->landingResponse([
                     'success' => false,
                     'message' => 'Недостаточно прав для управления сайтами холдинга'
                 ], 403);
@@ -53,7 +53,7 @@ class HoldingSitesController extends Controller
 
             $sites = $this->siteService->getHoldingSites($organizationGroup);
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'data' => $sites
             ]);
@@ -65,7 +65,7 @@ class HoldingSitesController extends Controller
                 'user_id' => Auth::id()
             ]);
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => false,
                 'message' => 'Ошибка получения списка сайтов'
             ], 500);
@@ -82,7 +82,7 @@ class HoldingSitesController extends Controller
             $user = Auth::user();
 
             if (!$this->canUserManageHoldingSites($user, $organizationGroup)) {
-                return response()->json([
+                return $this->landingResponse([
                     'success' => false,
                     'message' => 'Недостаточно прав для создания сайта'
                 ], 403);
@@ -99,7 +99,7 @@ class HoldingSitesController extends Controller
             ]);
 
             if ($validator->fails()) {
-                return response()->json([
+                return $this->landingResponse([
                     'success' => false,
                     'message' => 'Ошибки валидации',
                     'errors' => $validator->errors()
@@ -108,7 +108,7 @@ class HoldingSitesController extends Controller
 
             $site = $this->siteService->createSite($organizationGroup, $request->all(), $user);
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'data' => [
                     'id' => $site->id,
@@ -130,7 +130,7 @@ class HoldingSitesController extends Controller
                 'user_id' => Auth::id()
             ]);
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => false,
                 'message' => 'Ошибка создания сайта'
             ], 500);
@@ -149,7 +149,7 @@ class HoldingSitesController extends Controller
 
             $user = Auth::user();
             if (!$site->canUserEdit($user)) {
-                return response()->json([
+                return $this->landingResponse([
                     'success' => false,
                     'message' => 'Недостаточно прав для просмотра сайта'
                 ], 403);
@@ -177,7 +177,7 @@ class HoldingSitesController extends Controller
                 'updated_at' => $site->updated_at
             ];
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'data' => $siteData
             ]);
@@ -190,7 +190,7 @@ class HoldingSitesController extends Controller
                 'user_id' => Auth::id()
             ]);
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => false,
                 'message' => 'Ошибка получения данных сайта'
             ], 500);
@@ -209,7 +209,7 @@ class HoldingSitesController extends Controller
 
             $user = Auth::user();
             if (!$site->canUserEdit($user)) {
-                return response()->json([
+                return $this->landingResponse([
                     'success' => false,
                     'message' => 'Недостаточно прав для редактирования сайта'
                 ], 403);
@@ -225,7 +225,7 @@ class HoldingSitesController extends Controller
             ]);
 
             if ($validator->fails()) {
-                return response()->json([
+                return $this->landingResponse([
                     'success' => false,
                     'message' => 'Ошибки валидации',
                     'errors' => $validator->errors()
@@ -235,12 +235,12 @@ class HoldingSitesController extends Controller
             $updated = $this->siteService->updateSiteSettings($site, $request->all(), $user);
 
             if ($updated) {
-                return response()->json([
+                return $this->landingResponse([
                     'success' => true,
                     'message' => 'Настройки сайта обновлены'
                 ]);
             } else {
-                return response()->json([
+                return $this->landingResponse([
                     'success' => false,
                     'message' => 'Не удалось обновить настройки'
                 ], 500);
@@ -254,7 +254,7 @@ class HoldingSitesController extends Controller
                 'user_id' => Auth::id()
             ]);
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => false,
                 'message' => 'Ошибка обновления сайта'
             ], 500);
@@ -320,12 +320,12 @@ class HoldingSitesController extends Controller
             $deleted = $this->siteService->deleteSite($site, $user);
 
             if ($deleted) {
-                return response()->json([
+                return $this->landingResponse([
                     'success' => true,
                     'message' => 'Сайт успешно удален'
                 ]);
             } else {
-                return response()->json([
+                return $this->landingResponse([
                     'success' => false,
                     'message' => 'Не удалось удалить сайт'
                 ], 500);
@@ -339,7 +339,7 @@ class HoldingSitesController extends Controller
                 'user_id' => Auth::id()
             ]);
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => false,
                 'message' => 'Ошибка удаления сайта'
             ], 500);
@@ -358,4 +358,25 @@ class HoldingSitesController extends Controller
             ->wherePivot('is_owner', true)
             ->exists();
     }
+    private function landingResponse(array $payload, int $status = 200): JsonResponse
+    {
+        $success = (bool) ($payload['success'] ?? true);
+        $message = $payload['message'] ?? null;
+
+        unset($payload['success'], $payload['message']);
+
+        if ($success) {
+            $data = array_key_exists('data', $payload) && count($payload) === 1
+                ? $payload['data']
+                : $payload;
+
+            return LandingResponse::success($data, $message, $status);
+        }
+
+        $errors = $payload['errors'] ?? null;
+        unset($payload['errors']);
+
+        return LandingResponse::error((string) $message, $status, $errors, $payload);
+    }
+
 }

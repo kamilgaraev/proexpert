@@ -11,8 +11,12 @@ use App\Http\Responses\Auth\LoginResponse;
 use App\Http\Responses\Auth\ProfileResponse;
 use App\Http\Responses\Auth\RegisterResponse;
 use App\Http\Responses\Auth\TokenResponse;
+use App\Http\Responses\LandingResponse;
+use App\Services\Auth\JwtCookieService;
 use App\Services\Auth\JwtAuthService;
 use App\Services\PerformanceMonitor;
+use Illuminate\Contracts\Support\Responsable;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
@@ -29,8 +33,10 @@ class AuthController extends Controller
      *
      * @param JwtAuthService $authService
      */
-    public function __construct(JwtAuthService $authService)
-    {
+    public function __construct(
+        JwtAuthService $authService,
+        private readonly JwtCookieService $jwtCookieService
+    ) {
         $this->authService = $authService;
     }
 
@@ -85,7 +91,11 @@ class AuthController extends Controller
             }
 
             // Возвращаем успешный ответ
-            return RegisterResponse::registerSuccess($user, $organization, $token);
+            return $this->withTokenCookie(
+                RegisterResponse::registerSuccess($user, $organization, $token),
+                $token,
+                $request
+            );
         });
     }
 
@@ -135,7 +145,11 @@ class AuthController extends Controller
                     'email' => $user->email,
                     'organization_id' => $organizationId
                 ]);
-                return LoginResponse::loginSuccess($result['user'], $result['token']);
+                return $this->withTokenCookie(
+                    LoginResponse::loginSuccess($result['user'], $result['token']),
+                    $result['token'],
+                    $request
+                );
             } else {
                 Log::warning('[LandingAuthController] Authentication failed.');
                 LogService::authLog('landing_login_failed', [
@@ -149,10 +163,7 @@ class AuthController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при входе в систему.'
-            ], 500);
+            return LandingResponse::error(trans_message('auth.login_error'), 500);
         }
     }
 
@@ -188,7 +199,11 @@ class AuthController extends Controller
                 return TokenResponse::tokenError($result['message'], $result['status_code']);
             }
 
-            return TokenResponse::refreshed($result['token']);
+            return $this->withTokenCookie(
+                TokenResponse::refreshed($result['token']),
+                $result['token'],
+                request()
+            );
         });
     }
 
@@ -206,7 +221,18 @@ class AuthController extends Controller
                 return TokenResponse::tokenError($result['message'], $result['status_code']);
             }
 
-            return TokenResponse::invalidated();
+            return TokenResponse::invalidated()
+                ->toResponse(request())
+                ->withCookie($this->jwtCookieService->makeClearCookie());
         });
+    }
+
+    private function withTokenCookie(Responsable|JsonResponse $response, string $token, Request $request): JsonResponse
+    {
+        $jsonResponse = $response instanceof Responsable
+            ? $response->toResponse($request)
+            : $response;
+
+        return $jsonResponse->withCookie($this->jwtCookieService->makeTokenCookie($token));
     }
 }

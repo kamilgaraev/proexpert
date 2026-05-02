@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Landing;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Landing\Organization\UpdateOrganizationRequest;
+use App\Http\Responses\LandingResponse;
 use App\Http\Resources\Api\V1\Landing\Organization\OrganizationResource;
 use App\Models\Organization;
 use App\Services\DaDataService;
@@ -32,19 +33,13 @@ class OrganizationVerificationController extends Controller
             $organizationId = $request->attributes->get('current_organization_id');
             
             if (!$organizationId) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Организация не найдена',
-                ], 404);
+                return LandingResponse::error(trans_message('organization.verification.organization_not_found'), 404);
             }
             
             $organization = Organization::find($organizationId);
 
             if (!$organization) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Организация не найдена',
-                ], 404);
+                return LandingResponse::error(trans_message('organization.verification.organization_not_found'), 404);
             }
 
             // Автоматическая верификация, если все данные заполнены и верификация не проводилась
@@ -67,15 +62,14 @@ class OrganizationVerificationController extends Controller
             $recommendations = $this->verificationService->getVerificationRecommendations($organization);
             $userMessage = $this->verificationService->getUserFriendlyMessage($organization);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Данные организации получены',
-                'data' => [
+            return LandingResponse::success(
+                [
                     'organization' => new OrganizationResource($organization),
                     'recommendations' => $recommendations,
                     'user_message' => $userMessage
-                ]
-            ]);
+                ],
+                trans_message('organization.verification.loaded')
+            );
 
         } catch (\Exception $e) {
             Log::error('Error fetching organization data', [
@@ -84,10 +78,7 @@ class OrganizationVerificationController extends Controller
                 'trace' => $e->getTraceAsString()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при получении данных организации',
-            ], 500);
+            return LandingResponse::error(trans_message('organization.verification.load_error'), 500);
         }
     }
 
@@ -97,19 +88,13 @@ class OrganizationVerificationController extends Controller
             $organizationId = $request->attributes->get('current_organization_id');
             
             if (!$organizationId) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Организация не найдена',
-                ], 404);
+                return LandingResponse::error(trans_message('organization.verification.organization_not_found'), 404);
             }
             
             $organization = Organization::find($organizationId);
 
             if (!$organization) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Организация не найдена',
-                ], 404);
+                return LandingResponse::error(trans_message('organization.verification.organization_not_found'), 404);
             }
 
             $organization->update($request->validated());
@@ -123,13 +108,12 @@ class OrganizationVerificationController extends Controller
                 ]);
             }
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Данные организации обновлены',
-                'data' => [
+            return LandingResponse::success(
+                [
                     'organization' => new OrganizationResource($organization->fresh())
-                ]
-            ]);
+                ],
+                trans_message('organization.verification.updated')
+            );
 
         } catch (\Exception $e) {
             Log::error('Error updating organization data', [
@@ -138,10 +122,7 @@ class OrganizationVerificationController extends Controller
                 'trace' => $e->getTraceAsString()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при обновлении данных организации',
-            ], 500);
+            return LandingResponse::error(trans_message('organization.verification.update_error'), 500);
         }
     }
 
@@ -151,37 +132,27 @@ class OrganizationVerificationController extends Controller
             $organizationId = $request->attributes->get('current_organization_id');
             
             if (!$organizationId) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Организация не найдена',
-                ], 404);
+                return LandingResponse::error(trans_message('organization.verification.organization_not_found'), 404);
             }
             
             $organization = Organization::find($organizationId);
 
             if (!$organization) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Организация не найдена',
-                ], 404);
+                return LandingResponse::error(trans_message('organization.verification.organization_not_found'), 404);
             }
 
             $result = $this->verificationService->requestVerification($organization);
 
             if ($result['success']) {
-                return response()->json([
-                    'success' => true,
-                    'message' => $result['message'],
-                    'data' => [
+                return LandingResponse::success(
+                    [
                         'verification_result' => $result['data'],
                         'organization' => new OrganizationResource($organization->fresh())
-                    ]
-                ]);
+                    ],
+                    $result['message']
+                );
             } else {
-                return response()->json([
-                    'success' => false,
-                    'message' => $result['message'],
-                ], 400);
+                return LandingResponse::error($result['message'], 400);
             }
 
         } catch (\Exception $e) {
@@ -191,10 +162,7 @@ class OrganizationVerificationController extends Controller
                 'trace' => $e->getTraceAsString()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при запросе верификации',
-            ], 500);
+            return LandingResponse::error(trans_message('organization.verification.request_error'), 500);
         }
     }
 
@@ -204,19 +172,13 @@ class OrganizationVerificationController extends Controller
             $organizationId = $request->attributes->get('current_organization_id');
             
             if (!$organizationId) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Организация не найдена',
-                ], 404);
+                return LandingResponse::error(trans_message('organization.verification.organization_not_found'), 404);
             }
             
             $organization = Organization::find($organizationId);
 
             if (!$organization) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Организация не найдена',
-                ], 404);
+                return LandingResponse::error(trans_message('organization.verification.organization_not_found'), 404);
             }
 
             // Автоматическая верификация, если все данные заполнены и верификация не проводилась
@@ -238,14 +200,13 @@ class OrganizationVerificationController extends Controller
             $recommendations = $this->verificationService->getVerificationRecommendations($organization);
             $userMessage = $this->verificationService->getUserFriendlyMessage($organization);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Рекомендации по верификации получены',
-                'data' => [
+            return LandingResponse::success(
+                [
                     'recommendations' => $recommendations,
                     'user_message' => $userMessage
-                ]
-            ]);
+                ],
+                trans_message('organization.verification.recommendations_loaded')
+            );
 
         } catch (\Exception $e) {
             Log::error('Error getting verification recommendations', [
@@ -254,10 +215,7 @@ class OrganizationVerificationController extends Controller
                 'trace' => $e->getTraceAsString()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при получении рекомендаций',
-            ], 500);
+            return LandingResponse::error(trans_message('organization.verification.recommendations_error'), 500);
         }
     }
 
@@ -270,11 +228,11 @@ class OrganizationVerificationController extends Controller
         try {
             $result = $this->daDataService->suggestOrganization($request->input('query'));
 
-            return response()->json([
-                'success' => $result['success'],
-                'message' => $result['message'],
-                'data' => $result['data']
-            ]);
+            if ($result['success']) {
+                return LandingResponse::success($result['data'], $result['message']);
+            }
+
+            return LandingResponse::error($result['message'], 400, null, ['data' => $result['data']]);
 
         } catch (\Exception $e) {
             Log::error('Error suggesting organizations', [
@@ -282,11 +240,12 @@ class OrganizationVerificationController extends Controller
                 'error' => $e->getMessage()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при поиске организаций',
-                'data' => []
-            ], 500);
+            return LandingResponse::error(
+                trans_message('organization.verification.suggest_organizations_error'),
+                500,
+                null,
+                ['data' => []]
+            );
         }
     }
 
@@ -299,11 +258,11 @@ class OrganizationVerificationController extends Controller
         try {
             $result = $this->daDataService->suggestAddress($request->input('query'));
 
-            return response()->json([
-                'success' => $result['success'],
-                'message' => $result['message'],
-                'data' => $result['data']
-            ]);
+            if ($result['success']) {
+                return LandingResponse::success($result['data'], $result['message']);
+            }
+
+            return LandingResponse::error($result['message'], 400, null, ['data' => $result['data']]);
 
         } catch (\Exception $e) {
             Log::error('Error suggesting addresses', [
@@ -311,11 +270,12 @@ class OrganizationVerificationController extends Controller
                 'error' => $e->getMessage()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при поиске адресов',
-                'data' => []
-            ], 500);
+            return LandingResponse::error(
+                trans_message('organization.verification.suggest_addresses_error'),
+                500,
+                null,
+                ['data' => []]
+            );
         }
     }
 
@@ -328,11 +288,11 @@ class OrganizationVerificationController extends Controller
         try {
             $result = $this->daDataService->cleanAddress($request->input('address'));
 
-            return response()->json([
-                'success' => $result['success'],
-                'message' => $result['message'],
-                'data' => $result['data']
-            ]);
+            if ($result['success']) {
+                return LandingResponse::success($result['data'], $result['message']);
+            }
+
+            return LandingResponse::error($result['message'], 400, null, ['data' => $result['data']]);
 
         } catch (\Exception $e) {
             Log::error('Error cleaning address', [
@@ -340,11 +300,12 @@ class OrganizationVerificationController extends Controller
                 'error' => $e->getMessage()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при обработке адреса',
-                'data' => null
-            ], 500);
+            return LandingResponse::error(
+                trans_message('organization.verification.clean_address_error'),
+                500,
+                null,
+                ['data' => null]
+            );
         }
     }
 }

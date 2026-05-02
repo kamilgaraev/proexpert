@@ -6,6 +6,7 @@ use App\BusinessModules\Enterprise\MultiOrganization\Reporting\Domain\ReportEngi
 use App\BusinessModules\Enterprise\MultiOrganization\Reporting\Domain\DataAggregator;
 use App\BusinessModules\Enterprise\MultiOrganization\Reporting\Domain\KPICalculator;
 use App\Http\Controllers\Controller;
+use App\Http\Responses\LandingResponse;
 use App\Models\OrganizationGroup;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -43,7 +44,7 @@ class HoldingReportsController extends Controller
 
             $dashboard = $this->reportEngine->generateHoldingDashboard($holdingId, $period);
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'data' => $dashboard
             ]);
@@ -57,7 +58,7 @@ class HoldingReportsController extends Controller
                 'line' => $e->getLine()
             ]);
             
-            return response()->json([
+            return $this->landingResponse([
                 'success' => false,
                 'message' => 'Ошибка получения данных дашборда'
             ], 500);
@@ -78,7 +79,7 @@ class HoldingReportsController extends Controller
 
             $comparison = $this->reportEngine->generateOrganizationComparison($holdingId, $period);
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'data' => $comparison
             ]);
@@ -90,7 +91,7 @@ class HoldingReportsController extends Controller
                 'db_code' => $e->getCode()
             ]);
             
-            return response()->json([
+            return $this->landingResponse([
                 'success' => false,
                 'message' => 'Ошибка получения сравнения организаций'
             ], 500);
@@ -115,7 +116,7 @@ class HoldingReportsController extends Controller
 
             // Ограничиваем период максимум 1 годом для производительности
             if ($startDate->diffInDays($endDate) > 365) {
-                return response()->json([
+                return $this->landingResponse([
                     'success' => false,
                     'message' => 'Максимальный период отчета - 1 год'
                 ], 422);
@@ -123,13 +124,13 @@ class HoldingReportsController extends Controller
 
             $report = $this->reportEngine->generateFinancialReport($holdingId, $startDate, $endDate);
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'data' => $report
             ]);
 
         } catch (ValidationException $e) {
-            return response()->json([
+            return $this->landingResponse([
                 'success' => false,
                 'message' => 'Ошибка валидации',
                 'errors' => $e->errors()
@@ -141,7 +142,7 @@ class HoldingReportsController extends Controller
                 'db_code' => $e->getCode()
             ]);
             
-            return response()->json([
+            return $this->landingResponse([
                 'success' => false,
                 'message' => 'Ошибка получения финансового отчета'
             ], 500);
@@ -165,7 +166,7 @@ class HoldingReportsController extends Controller
 
             $kpis = $this->kpiCalculator->calculateHoldingKPIs($holding, $period);
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'data' => [
                     'holding_id' => $holdingId,
@@ -184,7 +185,7 @@ class HoldingReportsController extends Controller
                 'db_code' => $e->getCode()
             ]);
             
-            return response()->json([
+            return $this->landingResponse([
                 'success' => false,
                 'message' => 'Ошибка получения KPI метрик'
             ], 500);
@@ -215,7 +216,7 @@ class HoldingReportsController extends Controller
                 ? round((($currentRevenue - $previousRevenue) / $previousRevenue) * 100, 2)
                 : ($currentRevenue > 0 ? 100 : 0);
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'data' => [
                     'organizations_count' => $metrics['organizations_count'],
@@ -237,7 +238,7 @@ class HoldingReportsController extends Controller
                 'db_code' => $e->getCode()
             ]);
             
-            return response()->json([
+            return $this->landingResponse([
                 'success' => false,
                 'message' => 'Ошибка получения быстрых метрик'
             ], 500);
@@ -263,7 +264,7 @@ class HoldingReportsController extends Controller
                 ->exists();
                 
             if (!$isOwner) {
-                return response()->json([
+                return $this->landingResponse([
                     'success' => false,
                     'message' => 'Только владельцы могут очищать кэш'
                 ], 403);
@@ -278,7 +279,7 @@ class HoldingReportsController extends Controller
                 $this->dataAggregator->clearOrganizationCache($organization->id);
             }
 
-            return response()->json([
+            return $this->landingResponse([
                 'success' => true,
                 'message' => 'Кэш отчетов успешно очищен'
             ]);
@@ -290,7 +291,7 @@ class HoldingReportsController extends Controller
                 'db_code' => $e->getCode()
             ]);
             
-            return response()->json([
+            return $this->landingResponse([
                 'success' => false,
                 'message' => 'Ошибка очистки кэша'
             ], 500);
@@ -320,4 +321,25 @@ class HoldingReportsController extends Controller
             throw new \Exception('Нет доступа к данному холдингу');
         }
     }
+    private function landingResponse(array $payload, int $status = 200): JsonResponse
+    {
+        $success = (bool) ($payload['success'] ?? true);
+        $message = $payload['message'] ?? null;
+
+        unset($payload['success'], $payload['message']);
+
+        if ($success) {
+            $data = array_key_exists('data', $payload) && count($payload) === 1
+                ? $payload['data']
+                : $payload;
+
+            return LandingResponse::success($data, $message, $status);
+        }
+
+        $errors = $payload['errors'] ?? null;
+        unset($payload['errors']);
+
+        return LandingResponse::error((string) $message, $status, $errors, $payload);
+    }
+
 }
