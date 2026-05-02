@@ -9,6 +9,7 @@ use Illuminate\Support\Str;
 use App\Models\ReportFile;
 use App\Models\Organization;
 use App\Services\Storage\OrgBucketService;
+use App\Services\Storage\OrganizationStoragePath;
 use Illuminate\Database\UniqueConstraintViolationException;
 use League\Flysystem\UnableToRetrieveMetadata;
 
@@ -34,12 +35,15 @@ class SyncReportFilesCommand extends Command
         Organization::query()->whereNotNull('s3_bucket')->chunkById(50, function ($orgs) use (&$processed, &$created, $bucketService, $dryRun) {
             foreach ($orgs as $org) {
                 $disk = $bucketService->getDisk($org);
-                $files = $disk->allFiles('reports');
+                $files = array_values(array_unique(array_merge(
+                    $disk->allFiles(OrganizationStoragePath::reportsDirectory($org->id)),
+                    $disk->allFiles(OrganizationStoragePath::legacyReportsDirectory($org->id))
+                )));
 
                 foreach ($files as $path) {
                     $processed++;
                     $filename = basename($path);
-                    $type = Str::before(Str::after($path, 'reports/'), '/');
+                    $type = $this->detectReportType((int) $org->id, $path);
 
                     try {
                         $size = $disk->size($path) ?: 0;
@@ -84,6 +88,8 @@ class SyncReportFilesCommand extends Command
                                     'existing_organization_id' => $reportFile->organization_id,
                                     'scanned_organization_id' => $org->id,
                                 ]);
+
+                                $reportFile->forceFill(['organization_id' => $org->id])->save();
                             }
 
                             continue;
@@ -108,5 +114,24 @@ class SyncReportFilesCommand extends Command
         }
 
         return Command::SUCCESS;
+    }
+
+    private function detectReportType(int $organizationId, string $path): string
+    {
+        $normalPrefix = OrganizationStoragePath::reportsDirectory($organizationId) . '/';
+        $legacyPrefix = OrganizationStoragePath::legacyReportsDirectory($organizationId) . '/';
+        $relativePath = $path;
+
+        if (str_starts_with($path, $normalPrefix)) {
+            $relativePath = Str::after($path, $normalPrefix);
+        } elseif (str_starts_with($path, $legacyPrefix)) {
+            $relativePath = Str::after($path, $legacyPrefix);
+        }
+
+        if (!Str::contains($relativePath, '/')) {
+            return 'reports';
+        }
+
+        return Str::before($relativePath, '/') ?: 'reports';
     }
 } 

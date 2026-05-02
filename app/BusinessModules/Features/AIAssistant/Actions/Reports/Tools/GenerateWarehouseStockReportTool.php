@@ -9,6 +9,7 @@ use App\Models\Organization;
 use App\Models\User;
 use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
 use App\Services\Report\ReportService;
+use App\Services\Storage\OrganizationStoragePath;
 
 class GenerateWarehouseStockReportTool implements AIToolInterface
 {
@@ -66,7 +67,7 @@ class GenerateWarehouseStockReportTool implements AIToolInterface
             $content = ob_get_clean();
             
             $filename = 'warehouse_stock_report_' . time() . '.pdf';
-            $path = "reports/{$organization->id}/{$filename}";
+            $path = OrganizationStoragePath::forOrganization($organization->id, "reports/{$filename}");
             
             Storage::disk('s3')->put($path, $content);
             $url = Storage::disk('s3')->temporaryUrl($path, now()->addHours(24));

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Import;
 
 use App\Models\ImportSession;
+use App\Services\Storage\OrganizationStoragePath;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -22,7 +23,7 @@ class FileStorageService
         $extension = $file->getClientOriginalExtension();
 
         $storedName   = Str::uuid()->toString() . '.' . $extension;
-        $relativePath = self::BASE_DIR . "/org-{$organizationId}/" . $storedName;
+        $relativePath = OrganizationStoragePath::forOrganization($organizationId, self::BASE_DIR . "/{$storedName}");
 
         Storage::disk(self::DISK)->put($relativePath, file_get_contents($file->getRealPath()), 'private');
 

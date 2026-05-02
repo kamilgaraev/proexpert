@@ -6,6 +6,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use App\Services\Logging\LoggingService;
+use App\Services\Storage\OrganizationStoragePath;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Arr;
@@ -16,7 +17,6 @@ use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Color;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
-use Illuminate\Support\Str;
 
 class ExcelExporterService
 {
@@ -319,7 +319,7 @@ class ExcelExporterService
         ]);
 
         try {
-            $response = new StreamedResponse(function () use ($foremanData, $materialLogs, $completedWorks, $filename) {
+            $response = new StreamedResponse(function () use ($foremanData, $materialLogs, $completedWorks) {
                 try {
                     $spreadsheet = new Spreadsheet();
                     
@@ -502,7 +502,7 @@ class ExcelExporterService
         ]);
 
         try {
-            $response = new StreamedResponse(function () use ($reportData, $filename) {
+            $response = new StreamedResponse(function () use ($reportData) {
                 try {
                     $spreadsheet = new Spreadsheet();
                     $sheet = $spreadsheet->getActiveSheet();
@@ -783,23 +783,26 @@ class ExcelExporterService
             $binaryContent = ob_get_clean();
 
             // Путь теперь включает день для лучшей организаци ̃ии: YYYY/m/d/filename
-            $path = 'reports/official-material-usage/' . date('Y/m/d/') . $filename;
-
             /** @var \App\Services\Storage\FileService $fs */
             $fs = app(\App\Services\Storage\FileService::class);
             $org = \App\Services\Organization\OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
+            $relativePath = 'reports/official-material-usage/' . date('Y/m/d/') . $filename;
+            $path = $org
+                ? OrganizationStoragePath::forOrganization($org->id, $relativePath)
+                : 'shared/' . $relativePath;
             $storage = $fs->disk($org);
             $storage->put($path, $binaryContent);
 
             // Сохраняем запись в БД
             $reportFile = \App\Models\ReportFile::create([
                 'path'       => $path,
-                'type'       => Str::before($path, '/'),
+                'type'       => 'official-material-usage',
                 'filename'   => $filename,
                 'name'       => $filename, // по умолчанию
                 'size'       => strlen($binaryContent),
                 'expires_at' => now()->addYear(),
                 'user_id'    => Auth::id(),
+                'organization_id' => $org?->id,
             ]);
 
             return $storage->temporaryUrl($path, now()->addHours($expiresHours));

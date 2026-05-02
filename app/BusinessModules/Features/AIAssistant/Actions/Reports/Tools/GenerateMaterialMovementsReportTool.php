@@ -9,6 +9,7 @@ use App\Models\Organization;
 use App\Models\User;
 use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
 use App\Services\Report\ReportService;
+use App\Services\Storage\OrganizationStoragePath;
 
 class GenerateMaterialMovementsReportTool implements AIToolInterface
 {
@@ -76,7 +77,7 @@ class GenerateMaterialMovementsReportTool implements AIToolInterface
             $content = ob_get_clean();
             
             $filename = 'material_movements_report_' . time() . '.xlsx';
-            $path = "reports/{$organization->id}/{$filename}";
+            $path = OrganizationStoragePath::forOrganization($organization->id, "reports/{$filename}");
             
             Storage::disk('s3')->put($path, $content);
             $url = Storage::disk('s3')->temporaryUrl($path, now()->addHours(24));

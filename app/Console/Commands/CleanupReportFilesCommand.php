@@ -9,6 +9,7 @@ use Illuminate\Support\Carbon;
 use App\Models\ReportFile;
 use App\Models\Organization;
 use App\Services\Storage\OrgBucketService;
+use App\Services\Storage\OrganizationStoragePath;
 use League\Flysystem\UnableToRetrieveMetadata;
 
 class CleanupReportFilesCommand extends Command
@@ -28,7 +29,10 @@ class CleanupReportFilesCommand extends Command
         Organization::query()->whereNotNull('s3_bucket')->chunkById(50, function ($orgs) use ($bucketService, $cutoff, $dryRun, &$totalDeleted) {
             foreach ($orgs as $org) {
                 $disk = $bucketService->getDisk($org);
-                $files = $disk->allFiles('reports');
+                $files = array_values(array_unique(array_merge(
+                    $disk->allFiles(OrganizationStoragePath::reportsDirectory($org->id)),
+                    $disk->allFiles(OrganizationStoragePath::legacyReportsDirectory($org->id))
+                )));
 
                 // 1) удаляем записи БД, если файла нет или просрочен expires_at
                 ReportFile::where('organization_id', $org->id)

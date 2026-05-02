@@ -112,6 +112,99 @@ class StorageCleanupCommandsTest extends TestCase
         ]);
     }
 
+    public function testReportsSyncScansOrganizationReportDirectory(): void
+    {
+        Organization::factory()->create([
+            'id' => 39,
+            's3_bucket' => 'prohelper-storage',
+            'bucket_region' => 'ru-central1',
+        ]);
+
+        $this->app->instance(OrgBucketService::class, new class () extends OrgBucketService {
+            public function __construct()
+            {
+            }
+
+            public function getDisk(Organization $organization): object
+            {
+                return new class () {
+                    public function allFiles(string $directory): array
+                    {
+                        return $directory === 'org-39/reports'
+                            ? ['org-39/reports/project_profitability_report.pdf']
+                            : [];
+                    }
+
+                    public function size(string $path): int
+                    {
+                        return 1024;
+                    }
+                };
+            }
+        });
+
+        $this->artisan('reports:sync')
+            ->assertExitCode(0);
+
+        $this->assertDatabaseHas('report_files', [
+            'organization_id' => 39,
+            'path' => 'org-39/reports/project_profitability_report.pdf',
+            'type' => 'reports',
+            'size' => 1024,
+        ]);
+    }
+
+    public function testReportsSyncFixesLegacyReportOrganizationOwner(): void
+    {
+        Organization::factory()->create([
+            'id' => 39,
+            's3_bucket' => 'prohelper-storage',
+            'bucket_region' => 'ru-central1',
+        ]);
+
+        ReportFile::query()->create([
+            'organization_id' => 1,
+            'path' => 'reports/39/project_profitability_report.pdf',
+            'type' => 'reports',
+            'filename' => 'project_profitability_report.pdf',
+            'name' => 'project_profitability_report.pdf',
+            'size' => 1024,
+            'expires_at' => now()->addYear(),
+            'user_id' => null,
+        ]);
+
+        $this->app->instance(OrgBucketService::class, new class () extends OrgBucketService {
+            public function __construct()
+            {
+            }
+
+            public function getDisk(Organization $organization): object
+            {
+                return new class () {
+                    public function allFiles(string $directory): array
+                    {
+                        return $directory === 'reports/39'
+                            ? ['reports/39/project_profitability_report.pdf']
+                            : [];
+                    }
+
+                    public function size(string $path): int
+                    {
+                        return 1024;
+                    }
+                };
+            }
+        });
+
+        $this->artisan('reports:sync')
+            ->assertExitCode(0);
+
+        $this->assertDatabaseHas('report_files', [
+            'organization_id' => 39,
+            'path' => 'reports/39/project_profitability_report.pdf',
+        ]);
+    }
+
     public function testReportsCleanupSkipsFilesWhenLastModifiedMetadataIsUnavailable(): void
     {
         $organization = Organization::factory()->create([
