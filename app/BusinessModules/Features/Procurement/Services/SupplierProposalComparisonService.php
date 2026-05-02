@@ -25,7 +25,7 @@ class SupplierProposalComparisonService
     public function comparisonForRequest(SupplierRequest $supplierRequest): array
     {
         $proposals = $supplierRequest->proposals()
-            ->with(['lines', 'supplier', 'externalSupplierContact', 'supplierParty', 'currentVersion'])
+            ->with(['lines', 'supplier', 'externalSupplierContact', 'supplierParty', 'currentVersion', 'supplierRequestVersion'])
             ->where('organization_id', $supplierRequest->organization_id)
             ->whereIn('status', [
                 SupplierProposalStatusEnum::SUBMITTED->value,
@@ -44,13 +44,21 @@ class SupplierProposalComparisonService
             ->all();
 
         $baseCurrency = $rows[0]['currency'] ?? null;
+        $baseRequestVersionId = $rows[0]['supplier_request_version_id'] ?? null;
 
         $rows = collect($rows)
-            ->map(function (array $row) use ($baseCurrency): array {
+            ->map(function (array $row) use ($baseCurrency, $baseRequestVersionId): array {
                 $row['is_directly_comparable'] = $baseCurrency === null || $row['currency'] === $baseCurrency;
-                $row['comparison_warnings'] = $row['is_directly_comparable']
-                    ? []
-                    : [trans_message('procurement_enterprise.proposal_decisions.currency_not_comparable')];
+                $row['comparison_warnings'] = [];
+
+                if (!$row['is_directly_comparable']) {
+                    $row['comparison_warnings'][] = trans_message('procurement_enterprise.proposal_decisions.currency_not_comparable');
+                }
+
+                if ($baseRequestVersionId !== null && $row['supplier_request_version_id'] !== $baseRequestVersionId) {
+                    $row['is_directly_comparable'] = false;
+                    $row['comparison_warnings'][] = trans_message('procurement_enterprise.proposal_decisions.request_version_not_comparable');
+                }
 
                 return $row;
             })
@@ -78,6 +86,12 @@ class SupplierProposalComparisonService
 
         return [
             'supplier_request_id' => $supplierRequest->id,
+            'supplier_request_version_ids' => collect($rows)
+                ->pluck('supplier_request_version_id')
+                ->filter()
+                ->unique()
+                ->values()
+                ->all(),
             'cheapest_supplier_proposal_id' => $cheapestProposalId,
             'rows' => $rows,
         ];
@@ -106,8 +120,15 @@ class SupplierProposalComparisonService
             $proposal = $this->findComparableProposal($lockedSupplierRequest, $proposalId);
             $comparison = $this->comparisonForRequest($lockedSupplierRequest);
             $cheapestProposalId = $comparison['cheapest_supplier_proposal_id'];
+            $selectedRow = collect($comparison['rows'])->firstWhere('id', $proposal->id);
 
             if ($cheapestProposalId === null) {
+                throw ValidationException::withMessages([
+                    'proposal_id' => [trans_message('procurement.proposal_decisions.proposal_not_comparable')],
+                ]);
+            }
+
+            if (!is_array($selectedRow) || !($selectedRow['is_directly_comparable'] ?? true)) {
                 throw ValidationException::withMessages([
                     'proposal_id' => [trans_message('procurement.proposal_decisions.proposal_not_comparable')],
                 ]);
@@ -265,6 +286,8 @@ class SupplierProposalComparisonService
             'current_version_id' => $proposal->currentVersion?->id,
             'current_version_number' => $proposal->currentVersion?->version_number,
             'supplier_request_id' => $proposal->supplier_request_id,
+            'supplier_request_version_id' => $proposal->supplier_request_version_id,
+            'supplier_request_version_number' => $proposal->supplierRequestVersion?->version_number,
             'supplier_id' => $proposal->supplier_id,
             'external_supplier_contact_id' => $proposal->external_supplier_contact_id,
             'supplier_party_id' => $proposal->supplier_party_id,

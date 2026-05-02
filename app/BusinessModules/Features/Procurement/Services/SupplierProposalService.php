@@ -24,7 +24,8 @@ class SupplierProposalService
     public function __construct(
         private readonly ProcurementAuditService $auditService,
         private readonly SupplierProposalIntakeService $intakeService,
-        private readonly SupplierProposalVersionService $versionService
+        private readonly SupplierProposalVersionService $versionService,
+        private readonly SupplierRequestVersionService $requestVersionService
     ) {}
 
     public function createFromSupplierRequest(
@@ -35,11 +36,13 @@ class SupplierProposalService
     {
         return DB::transaction(function () use ($supplierRequest, $data, $actorId): SupplierProposal {
             $supplierRequest->loadMissing(['lines', 'supplierParty']);
+            $supplierRequestVersion = $this->requestVersionService->resolveForProposal($supplierRequest, $actorId);
             $amounts = $this->commercialAmounts($data);
 
             $proposal = SupplierProposal::query()->create([
                 'organization_id' => $supplierRequest->organization_id,
                 'supplier_request_id' => $supplierRequest->id,
+                'supplier_request_version_id' => $supplierRequestVersion->id,
                 'supplier_id' => $supplierRequest->supplier_id,
                 'external_supplier_contact_id' => $supplierRequest->external_supplier_contact_id,
                 'supplier_party_id' => $supplierRequest->supplier_party_id,
@@ -106,6 +109,8 @@ class SupplierProposalService
                     'proposal_number' => $proposal->proposal_number,
                     'status' => $proposal->status->value,
                     'supplier_request_number' => $supplierRequest->request_number,
+                    'supplier_request_version_id' => $supplierRequestVersion->id,
+                    'supplier_request_version_number' => $supplierRequestVersion->version_number,
                     'supplier_name' => $this->supplierName($proposal, $snapshot),
                     'supplier_snapshot' => $snapshot,
                     'total_amount' => (float) $proposal->total_amount,
@@ -120,6 +125,7 @@ class SupplierProposalService
                 'externalSupplierContact',
                 'supplierParty',
                 'supplierRequest',
+                'supplierRequestVersion',
                 'lines',
                 'intake',
                 'currentVersion',
@@ -290,6 +296,7 @@ class SupplierProposalService
             'externalSupplierContact',
             'supplierParty',
             'supplierRequest',
+            'supplierRequestVersion',
             'purchaseOrder.supplierParty',
             'purchaseOrder.acceptedSupplierProposalVersion',
             'lines',
@@ -309,7 +316,7 @@ class SupplierProposalService
             'notes' => ($proposal->notes ? $proposal->notes . "\n\n" : '') . "Отклонено: {$reason}",
         ]);
 
-        return $proposal->fresh(['supplier', 'externalSupplierContact', 'supplierParty', 'supplierRequest', 'lines']);
+        return $proposal->fresh(['supplier', 'externalSupplierContact', 'supplierParty', 'supplierRequest', 'supplierRequestVersion', 'lines']);
     }
 
     private function resolveLineMaterialId(SupplierRequest $supplierRequest, ?int $supplierRequestLineId): ?int

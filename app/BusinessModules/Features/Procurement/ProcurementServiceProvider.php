@@ -66,6 +66,14 @@ class ProcurementServiceProvider extends ServiceProvider
         );
 
         $this->app->singleton(
+            Services\ProcurementApprovalPolicyService::class
+        );
+
+        $this->app->singleton(
+            Services\ProcurementDutySeparationService::class
+        );
+
+        $this->app->singleton(
             Services\ProcurementAuditService::class
         );
 
@@ -75,6 +83,10 @@ class ProcurementServiceProvider extends ServiceProvider
 
         $this->app->singleton(
             Services\SupplierSelectionService::class
+        );
+
+        $this->app->singleton(
+            Services\SupplierRequestVersionService::class
         );
 
         $this->app->singleton(

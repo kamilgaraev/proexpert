@@ -57,6 +57,22 @@ class ProcurementApprovalController extends Controller
                 ->orderByRaw("CASE WHEN status = 'pending' THEN 0 ELSE 1 END")
                 ->orderByDesc('requested_at')
                 ->paginate($perPage);
+            $actorId = $this->actorId($request);
+
+            $approvals->getCollection()->transform(function (ProcurementApproval $approval) use ($actorId): ProcurementApproval {
+                $blockers = $this->service->resolutionBlockers($approval, $actorId);
+                $policyAllowed = $this->service->canResolveByPolicy($approval, $actorId);
+                $approval->setAttribute('resolution_blockers', $policyAllowed ? $blockers : [
+                    [
+                        'code' => 'permission',
+                        'message' => trans_message('procurement.access_denied'),
+                    ],
+                    ...$blockers,
+                ]);
+                $approval->setAttribute('can_resolve', $policyAllowed && $blockers === []);
+
+                return $approval;
+            });
 
             return AdminResponse::paginated(
                 ProcurementApprovalResource::collection($approvals->items()),

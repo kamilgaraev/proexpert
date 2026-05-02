@@ -44,6 +44,17 @@ class UpdateProcurementSettingsRequest extends FormRequest
 
             // Кеширование
             'cache_ttl' => ['sometimes', 'integer', 'min:60'],
+
+            'approval_policy' => ['sometimes', 'array'],
+            'approval_policy.non_lowest_delta_amount' => ['sometimes', 'numeric', 'min:0'],
+            'approval_policy.non_lowest_delta_percent' => ['sometimes', 'numeric', 'min:0', 'max:100'],
+            'approval_policy.budget_exceed_amount' => ['sometimes', 'numeric', 'min:0'],
+            'approval_policy.external_supplier_requires_identity' => ['sometimes', 'boolean'],
+            'approval_policy.prevent_requester_approval' => ['sometimes', 'boolean'],
+            'approval_policy.prevent_selector_approval' => ['sometimes', 'boolean'],
+            'approval_policy.prevent_intake_author_approval' => ['sometimes', 'boolean'],
+            'approval_policy.required_approval_permission' => ['sometimes', 'string', 'max:150'],
+            'approval_policy.is_active' => ['sometimes', 'boolean'],
         ];
     }
 

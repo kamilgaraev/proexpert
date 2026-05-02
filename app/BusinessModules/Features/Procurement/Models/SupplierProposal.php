@@ -20,6 +20,7 @@ use App\Models\Supplier;
  * @property int $organization_id
  * @property int|null $purchase_order_id
  * @property int|null $supplier_request_id
+ * @property int|null $supplier_request_version_id
  * @property int|null $supplier_id
  * @property int|null $external_supplier_contact_id
  * @property int|null $supplier_party_id
@@ -56,6 +57,7 @@ class SupplierProposal extends Model
         'organization_id',
         'purchase_order_id',
         'supplier_request_id',
+        'supplier_request_version_id',
         'supplier_id',
         'external_supplier_contact_id',
         'supplier_party_id',
@@ -134,6 +136,11 @@ class SupplierProposal extends Model
     public function supplierRequest(): BelongsTo
     {
         return $this->belongsTo(SupplierRequest::class);
+    }
+
+    public function supplierRequestVersion(): BelongsTo
+    {
+        return $this->belongsTo(SupplierRequestVersion::class, 'supplier_request_version_id');
     }
 
     public function externalSupplierContact(): BelongsTo

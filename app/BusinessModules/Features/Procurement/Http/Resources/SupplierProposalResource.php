@@ -16,6 +16,7 @@ class SupplierProposalResource extends JsonResource
             'organization_id' => $this->organization_id,
             'purchase_order_id' => $this->purchase_order_id,
             'supplier_request_id' => $this->supplier_request_id,
+            'supplier_request_version_id' => $this->supplier_request_version_id,
             'supplier_id' => $this->supplier_id,
             'external_supplier_contact_id' => $this->external_supplier_contact_id,
             'supplier_party_id' => $this->supplier_party_id,
@@ -73,6 +74,11 @@ class SupplierProposalResource extends JsonResource
                 'id' => $this->supplierRequest->id,
                 'request_number' => $this->supplierRequest->request_number,
                 'status' => $this->supplierRequest->status->value,
+            ] : null),
+            'supplier_request_version' => $this->whenLoaded('supplierRequestVersion', fn() => $this->supplierRequestVersion ? [
+                'id' => $this->supplierRequestVersion->id,
+                'version_number' => $this->supplierRequestVersion->version_number,
+                'sent_at' => $this->supplierRequestVersion->sent_at?->toIso8601String(),
             ] : null),
             'purchase_order' => $this->whenLoaded('purchaseOrder', fn() => $this->purchaseOrder ? [
                 'id' => $this->purchaseOrder->id,

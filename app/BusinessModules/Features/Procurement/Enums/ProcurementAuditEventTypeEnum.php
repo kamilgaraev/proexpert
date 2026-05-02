@@ -8,6 +8,7 @@ enum ProcurementAuditEventTypeEnum: string
 {
     case SUPPLIER_REQUEST_CREATED = 'supplier_request_created';
     case SUPPLIER_REQUEST_SENT = 'supplier_request_sent';
+    case SUPPLIER_REQUEST_VERSION_CREATED = 'supplier_request_version_created';
     case SUPPLIER_REQUEST_CANCELLED = 'supplier_request_cancelled';
     case SUPPLIER_PROPOSAL_CREATED = 'supplier_proposal_created';
     case SUPPLIER_PROPOSAL_INTAKE_RECORDED = 'supplier_proposal_intake_recorded';

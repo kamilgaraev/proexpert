@@ -17,6 +17,7 @@ class ProcurementApprovalResource extends JsonResource
         return [
             'id' => $this->id,
             'organization_id' => $this->organization_id,
+            'approval_policy_id' => $this->approval_policy_id,
             'approvable_type' => $this->approvable_type,
             'approvable_id' => $this->approvable_id,
             'reason_code' => $this->reason_code,
@@ -28,6 +29,8 @@ class ProcurementApprovalResource extends JsonResource
             'resolved_at' => $this->resolved_at?->toIso8601String(),
             'comment' => $this->comment,
             'context' => $this->context,
+            'can_resolve' => $this->getAttribute('can_resolve'),
+            'resolution_blockers' => $this->getAttribute('resolution_blockers') ?? [],
             'decision' => $this->whenLoaded('approvable', function () {
                 if (!$this->approvable instanceof SupplierProposalDecision) {
                     return null;

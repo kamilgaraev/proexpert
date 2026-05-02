@@ -71,6 +71,7 @@ class SupplierRequestController extends Controller
                     'supplierParty',
                     'purchaseRequest',
                     'lines',
+                    'currentVersion',
                 ])
                 ->find($id);
 
@@ -171,7 +172,7 @@ class SupplierRequestController extends Controller
 
         return SupplierRequest::query()
             ->forOrganization($organizationId)
-            ->with(['supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest', 'lines'])
+            ->with(['supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest', 'lines', 'currentVersion'])
             ->find($id);
     }
 }

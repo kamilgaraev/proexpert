@@ -9,9 +9,13 @@ use App\BusinessModules\Features\Procurement\Enums\ProcurementApprovalStatusEnum
 use App\BusinessModules\Features\Procurement\Enums\SupplierPartyTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalDecisionEnum;
 use App\BusinessModules\Features\Procurement\Models\ProcurementApproval;
+use App\BusinessModules\Features\Procurement\Models\ProcurementApprovalPolicy;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 use function trans_message;
 
@@ -23,7 +27,10 @@ class ProcurementApprovalService
     public const REASON_ORDER_CHANGED_AFTER_ACCEPTANCE = 'order_changed_after_acceptance';
 
     public function __construct(
-        private readonly ProcurementAuditService $auditService
+        private readonly ProcurementAuditService $auditService,
+        private readonly ProcurementApprovalPolicyService $policyService,
+        private readonly ProcurementDutySeparationService $dutySeparationService,
+        private readonly AuthorizationService $authorizationService
     ) {}
 
     public function evaluateForDecision(
@@ -32,31 +39,54 @@ class ProcurementApprovalService
         array $comparison
     ): array {
         $risks = [];
+        $policy = $this->policyService->resolveForOrganization((int) $decision->organization_id);
         $selectedTotal = $this->selectedComparisonTotal($selectedProposal, $comparison);
         $supplierRequest = $decision->supplierRequest()
             ->with('purchaseRequest')
             ->first();
         $budgetAmount = $supplierRequest?->purchaseRequest?->budget_amount;
 
-        if ($budgetAmount !== null && $selectedTotal > (float) $budgetAmount) {
+        if (
+            $policy->is_active
+            && $budgetAmount !== null
+            && $selectedTotal > ((float) $budgetAmount + (float) $policy->budget_exceed_amount)
+        ) {
             $risks[] = [
                 'reason_code' => self::REASON_BUDGET_EXCEEDED,
                 'context' => [
+                    'approval_policy_id' => $policy->id,
                     'selected_supplier_proposal_id' => $selectedProposal->id,
                     'selected_total' => $selectedTotal,
                     'budget_amount' => (float) $budgetAmount,
+                    'budget_exceed_amount' => (float) $policy->budget_exceed_amount,
                     'currency' => $selectedProposal->currency,
                 ],
             ];
         }
 
-        if (!$decision->is_lowest_price_selected) {
+        $cheapestTotal = $this->cheapestComparisonTotal($comparison);
+        $deltaAmount = $cheapestTotal === null ? null : round($selectedTotal - $cheapestTotal, 2);
+        $deltaPercent = $cheapestTotal === null || $cheapestTotal <= 0.0
+            ? null
+            : round(($selectedTotal - $cheapestTotal) / $cheapestTotal * 100, 2);
+
+        if (
+            $policy->is_active
+            && !$decision->is_lowest_price_selected
+            && $this->nonLowestThresholdExceeded($policy, $deltaAmount, $deltaPercent)
+        ) {
             $risks[] = [
                 'reason_code' => self::REASON_NON_LOWEST_PRICE,
                 'context' => [
+                    'approval_policy_id' => $policy->id,
                     'selected_supplier_proposal_id' => $selectedProposal->id,
                     'cheapest_supplier_proposal_id' => $comparison['cheapest_supplier_proposal_id'] ?? null,
                     'selected_total' => $selectedTotal,
+                    'cheapest_total' => $cheapestTotal,
+                    'delta_amount' => $deltaAmount,
+                    'delta_percent' => $deltaPercent,
+                    'non_lowest_delta_amount' => (float) $policy->non_lowest_delta_amount,
+                    'non_lowest_delta_percent' => (float) $policy->non_lowest_delta_percent,
                     'currency' => $selectedProposal->currency,
                 ],
             ];
@@ -64,12 +94,16 @@ class ProcurementApprovalService
 
         $snapshot = is_array($selectedProposal->supplier_snapshot) ? $selectedProposal->supplier_snapshot : [];
         if (
+            $policy->is_active
+            && $policy->external_supplier_requires_identity
+            &&
             ($snapshot['type'] ?? null) === SupplierPartyTypeEnum::EXTERNAL->value
             && $this->blank($snapshot['tax_id'] ?? null)
         ) {
             $risks[] = [
                 'reason_code' => self::REASON_EXTERNAL_SUPPLIER_MISSING_IDENTITY,
                 'context' => [
+                    'approval_policy_id' => $policy->id,
                     'selected_supplier_proposal_id' => $selectedProposal->id,
                     'supplier_party_id' => $selectedProposal->supplier_party_id,
                     'supplier_name' => $snapshot['display_name'] ?? null,
@@ -128,6 +162,7 @@ class ProcurementApprovalService
             if ($approval === null) {
                 $approval = new ProcurementApproval([
                     'organization_id' => $decision->organization_id,
+                    'approval_policy_id' => $risk['context']['approval_policy_id'] ?? null,
                     'approvable_type' => $decision->getMorphClass(),
                     'approvable_id' => $decision->id,
                     'reason_code' => $risk['reason_code'],
@@ -135,6 +170,7 @@ class ProcurementApprovalService
             }
 
             $approval->fill([
+                'approval_policy_id' => $risk['context']['approval_policy_id'] ?? null,
                 'status' => ProcurementApprovalStatusEnum::PENDING,
                 'requested_by' => $requestedBy,
                 'approved_by' => null,
@@ -179,6 +215,14 @@ class ProcurementApprovalService
 
             $decision = $this->lockDecisionForApproval($lockedApproval);
             $this->ensurePending($lockedApproval);
+            $policy = $this->policyService->resolveForOrganization((int) $lockedApproval->organization_id);
+            $this->ensurePolicyPermission($policy, $actorId, (int) $lockedApproval->organization_id);
+            $this->dutySeparationService->ensureCanResolve(
+                $lockedApproval,
+                $decision,
+                $policy,
+                $actorId
+            );
 
             $lockedApproval->update([
                 'status' => ProcurementApprovalStatusEnum::APPROVED,
@@ -241,6 +285,14 @@ class ProcurementApprovalService
 
             $decision = $this->lockDecisionForApproval($lockedApproval);
             $this->ensurePending($lockedApproval);
+            $policy = $this->policyService->resolveForOrganization((int) $lockedApproval->organization_id);
+            $this->ensurePolicyPermission($policy, $actorId, (int) $lockedApproval->organization_id);
+            $this->dutySeparationService->ensureCanResolve(
+                $lockedApproval,
+                $decision,
+                $policy,
+                $actorId
+            );
 
             $lockedApproval->update([
                 'status' => ProcurementApprovalStatusEnum::REJECTED,
@@ -279,6 +331,33 @@ class ProcurementApprovalService
 
             return $lockedApproval->fresh(['requestedBy', 'approvedBy', 'rejectedBy']);
         });
+    }
+
+    public function resolutionBlockers(ProcurementApproval $approval, int $actorId): array
+    {
+        $decision = $approval->approvable instanceof SupplierProposalDecision
+            ? $approval->approvable
+            : null;
+
+        if ($decision === null) {
+            return [];
+        }
+
+        return $this->dutySeparationService->resolutionBlockers(
+            $approval,
+            $decision,
+            $this->policyService->resolveForOrganization((int) $approval->organization_id),
+            $actorId
+        );
+    }
+
+    public function canResolveByPolicy(ProcurementApproval $approval, int $actorId): bool
+    {
+        return $this->hasPolicyPermission(
+            $this->policyService->resolveForOrganization((int) $approval->organization_id),
+            $actorId,
+            (int) $approval->organization_id
+        );
     }
 
     private function lockDecisionForApproval(ProcurementApproval $approval): SupplierProposalDecision
@@ -325,6 +404,69 @@ class ProcurementApprovalService
         }
 
         return round((float) $selectedProposal->total_amount, 2);
+    }
+
+    private function cheapestComparisonTotal(array $comparison): ?float
+    {
+        $cheapestProposalId = $comparison['cheapest_supplier_proposal_id'] ?? null;
+
+        if ($cheapestProposalId === null) {
+            return null;
+        }
+
+        $cheapestRow = collect($comparison['rows'] ?? [])
+            ->firstWhere('id', $cheapestProposalId);
+
+        if (!is_array($cheapestRow) || !array_key_exists('comparison_total', $cheapestRow)) {
+            return null;
+        }
+
+        return round((float) $cheapestRow['comparison_total'], 2);
+    }
+
+    private function nonLowestThresholdExceeded(
+        ProcurementApprovalPolicy $policy,
+        ?float $deltaAmount,
+        ?float $deltaPercent
+    ): bool {
+        if ($deltaAmount === null) {
+            return true;
+        }
+
+        $amountExceeded = $deltaAmount >= (float) $policy->non_lowest_delta_amount;
+        $percentExceeded = $deltaPercent === null || $deltaPercent >= (float) $policy->non_lowest_delta_percent;
+
+        return $amountExceeded || $percentExceeded;
+    }
+
+    private function ensurePolicyPermission(ProcurementApprovalPolicy $policy, int $actorId, int $organizationId): void
+    {
+        if ($this->hasPolicyPermission($policy, $actorId, $organizationId)) {
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            'approval' => [trans_message('procurement.access_denied')],
+        ]);
+    }
+
+    private function hasPolicyPermission(ProcurementApprovalPolicy $policy, int $actorId, int $organizationId): bool
+    {
+        $permission = trim((string) $policy->required_approval_permission);
+
+        if ($permission === '' || $permission === 'procurement.approvals.resolve') {
+            return true;
+        }
+
+        $user = User::query()->find($actorId);
+
+        if (!$user instanceof User) {
+            return false;
+        }
+
+        return $this->authorizationService->can($user, $permission, [
+            'organization_id' => $organizationId,
+        ]);
     }
 
     private function blank(mixed $value): bool

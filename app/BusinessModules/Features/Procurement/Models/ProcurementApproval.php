@@ -17,6 +17,7 @@ class ProcurementApproval extends Model
 
     protected $fillable = [
         'organization_id',
+        'approval_policy_id',
         'approvable_type',
         'approvable_id',
         'reason_code',
@@ -45,6 +46,11 @@ class ProcurementApproval extends Model
     public function organization(): BelongsTo
     {
         return $this->belongsTo(Organization::class);
+    }
+
+    public function approvalPolicy(): BelongsTo
+    {
+        return $this->belongsTo(ProcurementApprovalPolicy::class, 'approval_policy_id');
     }
 
     public function approvable(): MorphTo

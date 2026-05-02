@@ -17,7 +17,8 @@ class SupplierRequestService
 {
     public function __construct(
         private readonly SupplierPartyService $supplierPartyService,
-        private readonly ProcurementAuditService $auditService
+        private readonly ProcurementAuditService $auditService,
+        private readonly SupplierRequestVersionService $versionService
     ) {
     }
 
@@ -125,6 +126,7 @@ class SupplierRequestService
             ]);
 
             $supplierRequest->loadMissing('purchaseRequest');
+            $version = $this->versionService->createSentVersion($supplierRequest->refresh(), $actorId);
             $snapshot = is_array($supplierRequest->supplier_snapshot) ? $supplierRequest->supplier_snapshot : [];
 
             $this->auditService->record(
@@ -138,12 +140,14 @@ class SupplierRequestService
                     'previous_status' => $previousStatus,
                     'status' => SupplierRequestStatusEnum::SENT->value,
                     'sent_at' => $supplierRequest->sent_at?->toIso8601String(),
+                    'supplier_request_version_id' => $version->id,
+                    'version_number' => $version->version_number,
                     'purchase_request_number' => $supplierRequest->purchaseRequest?->request_number,
                     'supplier_name' => $this->supplierName($snapshot),
                 ]
             );
 
-            return $supplierRequest->refresh()->load(['lines', 'supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest']);
+            return $supplierRequest->refresh()->load(['lines', 'supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest', 'currentVersion']);
         });
     }
 
@@ -190,7 +194,7 @@ class SupplierRequestService
     {
         return SupplierRequest::query()
             ->forOrganization($organizationId)
-            ->with(['supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest'])
+            ->with(['supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest', 'currentVersion'])
             ->latest('id');
     }
 

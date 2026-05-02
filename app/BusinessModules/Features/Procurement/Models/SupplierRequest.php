@@ -13,6 +13,24 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
+/**
+ * @property int $id
+ * @property int $organization_id
+ * @property int $purchase_request_id
+ * @property int|null $supplier_id
+ * @property int|null $external_supplier_contact_id
+ * @property int|null $supplier_party_id
+ * @property array<string, mixed>|null $supplier_snapshot
+ * @property string $request_number
+ * @property SupplierRequestStatusEnum $status
+ * @property \Illuminate\Support\Carbon|null $sent_at
+ * @property \Illuminate\Support\Carbon|null $responded_at
+ * @property \Illuminate\Support\Carbon|null $cancelled_at
+ * @property string|null $comment
+ * @property array<string, mixed>|null $metadata
+ * @property \Illuminate\Support\Carbon|null $created_at
+ * @property \Illuminate\Support\Carbon|null $updated_at
+ */
 class SupplierRequest extends Model
 {
     use SoftDeletes;
@@ -82,6 +100,16 @@ class SupplierRequest extends Model
     public function proposals(): HasMany
     {
         return $this->hasMany(SupplierProposal::class);
+    }
+
+    public function versions(): HasMany
+    {
+        return $this->hasMany(SupplierRequestVersion::class);
+    }
+
+    public function currentVersion(): HasOne
+    {
+        return $this->hasOne(SupplierRequestVersion::class)->latestOfMany('version_number');
     }
 
     public function proposalDecision(): HasOne

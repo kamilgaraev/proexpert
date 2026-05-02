@@ -5,6 +5,7 @@ namespace App\BusinessModules\Features\Procurement\Http\Controllers;
 use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\Procurement\ProcurementModule;
 use App\BusinessModules\Features\Procurement\Http\Requests\UpdateProcurementSettingsRequest;
+use App\BusinessModules\Features\Procurement\Services\ProcurementApprovalPolicyService;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -13,7 +14,8 @@ use Illuminate\Support\Facades\Log;
 class ProcurementSettingsController extends Controller
 {
     public function __construct(
-        private readonly ProcurementModule $module
+        private readonly ProcurementModule $module,
+        private readonly ProcurementApprovalPolicyService $approvalPolicyService
     ) {}
 
     /**
@@ -26,7 +28,7 @@ class ProcurementSettingsController extends Controller
         try {
             $organizationId = $request->attributes->get('current_organization_id');
             
-            $settings = $this->module->getSettings($organizationId);
+            $settings = $this->settingsPayload((int) $organizationId);
             
             return AdminResponse::success($settings, trans_message('procurement.settings_loaded'));
         } catch (\Exception $e) {
@@ -48,11 +50,18 @@ class ProcurementSettingsController extends Controller
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
+            $validated = $request->validated();
+            $approvalPolicy = $validated['approval_policy'] ?? null;
+            unset($validated['approval_policy']);
             
-            $this->module->applySettings($organizationId, $request->validated());
+            $this->module->applySettings($organizationId, $validated);
+
+            if (is_array($approvalPolicy)) {
+                $this->approvalPolicyService->updateForOrganization((int) $organizationId, $approvalPolicy);
+            }
             
             return AdminResponse::success(
-                $this->module->getSettings($organizationId),
+                $this->settingsPayload((int) $organizationId),
                 trans_message('procurement.settings_updated')
             );
         } catch (\InvalidArgumentException $e) {
@@ -80,9 +89,10 @@ class ProcurementSettingsController extends Controller
             
             $defaultSettings = $this->module->getDefaultSettings();
             $this->module->applySettings($organizationId, $defaultSettings);
+            $this->approvalPolicyService->resetForOrganization((int) $organizationId);
             
             return AdminResponse::success(
-                $defaultSettings,
+                $this->settingsPayload((int) $organizationId),
                 trans_message('procurement.settings_reset')
             );
         } catch (\Exception $e) {
@@ -93,5 +103,16 @@ class ProcurementSettingsController extends Controller
             
             return AdminResponse::error(trans_message('procurement.settings_reset_error'), 500);
         }
+    }
+
+    private function settingsPayload(int $organizationId): array
+    {
+        $settings = $this->module->getSettings($organizationId);
+        $policy = $this->approvalPolicyService->resolveForOrganization($organizationId);
+
+        return [
+            ...$settings,
+            'approval_policy' => $this->approvalPolicyService->toSettingsArray($policy),
+        ];
     }
 }
