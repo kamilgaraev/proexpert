@@ -37,6 +37,9 @@ class ProjectPulseReport extends Model
     ];
 
     protected $casts = [
+        'organization_id' => 'integer',
+        'project_id' => 'integer',
+        'created_by_user_id' => 'integer',
         'report_date' => 'date',
         'period_from' => 'datetime',
         'period_to' => 'datetime',
