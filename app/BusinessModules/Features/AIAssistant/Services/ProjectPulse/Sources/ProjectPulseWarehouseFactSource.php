@@ -41,10 +41,22 @@ class ProjectPulseWarehouseFactSource implements ProjectPulseFactSourceInterface
             return $this->empty();
         }
 
+        $dateColumn = $this->hasColumn('warehouse_balances', 'last_movement_at') ? 'last_movement_at' : null;
+        $dateColumn ??= $this->hasColumn('warehouse_balances', 'created_at') ? 'created_at' : null;
+
+        $columns = [
+            'warehouse_balances.id',
+            'warehouse_balances.' . $quantityColumn . ' as quantity',
+        ];
+
+        if ($dateColumn !== null) {
+            $columns[] = 'warehouse_balances.' . $dateColumn . ' as occurred_at';
+        }
+
         return $this->table($context, 'warehouse_balances')
             ->where('warehouse_balances.' . $quantityColumn, '<=', 0)
             ->limit($this->limit())
-            ->get(['warehouse_balances.id', 'warehouse_balances.' . $quantityColumn . ' as quantity', 'warehouse_balances.updated_at'])
+            ->get($columns)
             ->map(fn ($row) => new ProjectPulseFact(
                 id: 'warehouse_balance:' . $row->id . ':empty',
                 type: 'warehouse_balance',
@@ -58,7 +70,7 @@ class ProjectPulseWarehouseFactSource implements ProjectPulseFactSourceInterface
                     'route' => '/warehouse',
                 ],
                 amount: $row->quantity !== null ? (float) $row->quantity : null,
-                occurredAt: $this->dateString($row->updated_at),
+                occurredAt: $this->dateString($row->occurred_at ?? null),
                 source: $this->key(),
                 category: 'warehouse',
                 status: 'empty',
