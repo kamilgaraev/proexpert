@@ -1,6 +1,7 @@
 <?php
 
 use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementDashboardController;
+use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementAuditEventController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementApprovalController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementSettingsController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\PurchaseContractController;
@@ -133,6 +134,10 @@ Route::prefix('api/v1/admin/procurement')
         Route::get('/audit-logs', [PurchaseOrderController::class, 'auditLogs'])
             ->middleware('authorize:procurement.audit.view')
             ->name('audit_logs.index');
+
+        Route::get('/audit-events', [ProcurementAuditEventController::class, 'index'])
+            ->middleware('authorize:procurement.audit.view')
+            ->name('audit_events.index');
 
         Route::prefix('approvals')->name('approvals.')->group(function () {
             Route::get('/', [ProcurementApprovalController::class, 'index'])

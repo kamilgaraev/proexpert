@@ -160,8 +160,6 @@ class SupplierProposalComparisonService
                 'cheapestProposal',
                 'selectedBy',
                 'approvals',
-                'auditEvents.actor',
-                'auditEvents.supplierParty',
             ]);
         });
     }

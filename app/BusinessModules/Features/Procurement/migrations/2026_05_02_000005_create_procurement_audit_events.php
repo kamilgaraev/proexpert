@@ -19,11 +19,11 @@ return new class extends Migration
             $table->foreignId('actor_id')->nullable()->constrained('users')->nullOnDelete();
             $table->foreignId('supplier_party_id')->nullable()->constrained('supplier_parties')->nullOnDelete();
             $table->timestamp('occurred_at')->useCurrent();
-            $table->json('payload')->nullable()->default('{}');
+            $table->jsonb('payload')->nullable()->default('{}');
             $table->timestamps();
 
             $table->index(['organization_id', 'event_type'], 'procurement_audit_events_org_type_idx');
-            $table->index(['organization_id', 'subject_type', 'subject_id'], 'procurement_audit_events_subject_idx');
+            $table->index(['subject_type', 'subject_id', 'organization_id'], 'procurement_audit_events_subject_idx');
             $table->index('supplier_party_id', 'procurement_audit_events_supplier_party_idx');
             $table->index('occurred_at', 'procurement_audit_events_occurred_at_idx');
         });

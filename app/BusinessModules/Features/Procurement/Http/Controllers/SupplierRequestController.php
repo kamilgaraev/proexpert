@@ -71,8 +71,6 @@ class SupplierRequestController extends Controller
                     'supplierParty',
                     'purchaseRequest',
                     'lines',
-                    'auditEvents.actor',
-                    'auditEvents.supplierParty',
                 ])
                 ->find($id);
 

@@ -102,8 +102,6 @@ class PurchaseOrderController extends Controller
                     'items.receiptLines',
                     'receipts.lines',
                     'organization',
-                    'auditEvents.actor',
-                    'auditEvents.supplierParty',
                 ])
                 ->find($id);
 
