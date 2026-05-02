@@ -84,19 +84,29 @@ class ProjectPulseService
 
     public function get(int $organizationId, ProjectPulseReport $report): array
     {
-        if ($report->organization_id !== $organizationId) {
-            throw (new ModelNotFoundException())->setModel(ProjectPulseReport::class, [$report->id]);
-        }
+        $scopedReport = $this->findForOrganization($organizationId, $report);
 
-        return $this->formatter->format($report);
+        return $this->formatter->format($scopedReport);
     }
 
     public function delete(int $organizationId, ProjectPulseReport $report): void
     {
-        if ($report->organization_id !== $organizationId) {
-            throw (new ModelNotFoundException())->setModel(ProjectPulseReport::class, [$report->id]);
+        $scopedReport = $this->findForOrganization($organizationId, $report);
+
+        $scopedReport->delete();
+    }
+
+    private function findForOrganization(int $organizationId, ProjectPulseReport $report): ProjectPulseReport
+    {
+        $scopedReport = ProjectPulseReport::query()
+            ->forOrganization($organizationId)
+            ->whereKey($report->getKey())
+            ->first();
+
+        if (!$scopedReport) {
+            throw (new ModelNotFoundException())->setModel(ProjectPulseReport::class, [$report->getKey()]);
         }
 
-        $report->delete();
+        return $scopedReport;
     }
 }

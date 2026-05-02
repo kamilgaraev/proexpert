@@ -86,6 +86,64 @@ class ProjectPulseReportTest extends TestCase
         ]);
     }
 
+    public function test_owner_can_open_project_pulse_report_from_history(): void
+    {
+        $this->withoutMiddleware();
+
+        $organization = Organization::factory()->create();
+        $user = User::factory()->create([
+            'current_organization_id' => $organization->id,
+        ]);
+        $organization->users()->attach($user->id, [
+            'is_owner' => true,
+            'is_active' => true,
+        ]);
+        $project = Project::factory()->create([
+            'organization_id' => $organization->id,
+            'name' => 'ЖК Северный',
+        ]);
+        $report = ProjectPulseReport::create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'scope_type' => 'project',
+            'report_date' => now()->toDateString(),
+            'period_preset' => 'today',
+            'period_from' => now()->startOfDay(),
+            'period_to' => now()->endOfDay(),
+            'status' => 'warning',
+            'ai_status' => 'rules_only',
+            'summary' => [
+                'title' => 'Есть вопросы для контроля',
+                'text' => 'Система нашла события, которые стоит проверить в рабочем порядке.',
+            ],
+            'metrics' => [],
+            'urgent_actions' => [],
+            'risk_groups' => [],
+            'finance' => [
+                'performed_amount' => 0,
+                'paid_amount' => 0,
+                'pending_acts_amount' => 0,
+                'deviation_items' => [],
+            ],
+            'activity' => [],
+            'recommendations' => [],
+            'raw_facts' => [],
+            'created_by_user_id' => $user->id,
+            'generated_at' => now(),
+        ]);
+
+        $response = $this->actingAs($user, 'api_admin')
+            ->withHeaders([
+                'X-Organization-Id' => (string) $organization->id,
+            ])
+            ->getJson('/api/v1/admin/ai-assistant/project-pulse/reports/' . $report->id);
+
+        $response->assertOk();
+        $response->assertJsonPath('data.id', $report->id);
+        $response->assertJsonPath('data.scope.organization_id', $organization->id);
+        $response->assertJsonPath('data.scope.project_id', $project->id);
+    }
+
     public function test_generate_stores_project_pulse_report(): void
     {
         $this->withoutMiddleware();
