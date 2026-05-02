@@ -81,9 +81,9 @@ class ProjectPulseFormatter
     private function aiMessage(ProjectPulseReport $report): string
     {
         return match ($report->ai_status) {
-            'active' => 'Рекомендации усилены AI на основе фактов из системы.',
-            'unavailable' => 'AI сейчас недоступен. Показаны системные факты и базовые рекомендации.',
-            default => 'AI-обобщение отключено в настройках или запросе.',
+            'active' => 'Рекомендации усилены ИИ на основе фактов из системы.',
+            'unavailable' => 'ИИ сейчас недоступен. Показаны системные факты и базовые рекомендации.',
+            default => 'ИИ-обобщение отключено в настройках или запросе.',
         };
     }
 }

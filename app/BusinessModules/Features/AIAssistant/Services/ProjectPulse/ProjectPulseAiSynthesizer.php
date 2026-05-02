@@ -21,7 +21,7 @@ class ProjectPulseAiSynthesizer
         $provider = config('ai-assistant.llm.provider', 'yandex');
 
         if (!$useAi || !config('ai-assistant.project_pulse.ai_enabled', true)) {
-            return $this->rulesOnly($facts, $ruleRecommendations, 'AI-обобщение отключено в настройках или запросе.');
+            return $this->rulesOnly($facts, $ruleRecommendations, 'ИИ-обобщение отключено в настройках или запросе.');
         }
 
         if (!$this->llmProvider->isAvailable()) {
@@ -49,7 +49,7 @@ class ProjectPulseAiSynthesizer
                 'ai_mode' => [
                     'status' => 'active',
                     'provider' => $provider,
-                    'message' => 'Рекомендации усилены AI на основе фактов из системы.',
+                    'message' => 'Рекомендации усилены ИИ на основе фактов из системы.',
                 ],
                 'summary' => [
                     'title' => (string) data_get($decoded, 'summary.title', $this->ruleEngine->summary($facts)['title']),
@@ -83,7 +83,7 @@ class ProjectPulseAiSynthesizer
             'ai_mode' => [
                 'status' => 'unavailable',
                 'provider' => $provider,
-                'message' => 'AI сейчас недоступен. Показаны системные факты и базовые рекомендации.',
+                'message' => 'ИИ сейчас недоступен. Показаны системные факты и базовые рекомендации.',
             ],
             'summary' => $this->ruleEngine->summary($facts),
             'recommendations' => $ruleRecommendations->map->toArray()->values()->all(),
