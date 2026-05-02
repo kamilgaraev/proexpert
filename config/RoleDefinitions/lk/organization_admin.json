@@ -381,6 +381,7 @@
       "procurement.purchase_requests.edit",
       "procurement.purchase_requests.delete",
       "procurement.purchase_requests.approve",
+      "procurement.purchase_requests.reject",
       "procurement.supplier_requests.view",
       "procurement.supplier_requests.create",
       "procurement.supplier_requests.send",
@@ -390,9 +391,13 @@
       "procurement.purchase_orders.edit",
       "procurement.purchase_orders.delete",
       "procurement.purchase_orders.send",
+      "procurement.purchase_orders.confirm",
+      "procurement.purchase_orders.mark_delivery",
+      "procurement.purchase_orders.receive",
       "procurement.supplier_proposals.view",
       "procurement.supplier_proposals.create",
       "procurement.supplier_proposals.accept",
+      "procurement.supplier_proposals.reject",
       "procurement.proposal_decisions.view",
       "procurement.proposal_decisions.select",
       "procurement.approvals.view",
@@ -401,7 +406,9 @@
       "procurement.contracts.create",
       "procurement.contracts.edit",
       "procurement.dashboard.view",
-      "procurement.statistics.view"
+      "procurement.statistics.view",
+      "procurement.settings.view",
+      "procurement.settings.manage"
     ],
     "brigades": [
       "brigades.view",

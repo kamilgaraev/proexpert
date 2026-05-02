@@ -143,7 +143,7 @@ class PurchaseContractService
     public function linkToPurchaseOrder(Contract $contract, PurchaseOrder $order): void
     {
         if ($order->contract_id && $order->contract_id !== $contract->id) {
-            throw new \DomainException('Заказ уже связан с другим договором');
+            throw new \DomainException(trans_message('procurement.contracts.order_already_linked'));
         }
 
         DB::beginTransaction();
