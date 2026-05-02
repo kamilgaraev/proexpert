@@ -25,7 +25,7 @@ class SupplierProposalComparisonService
     public function comparisonForRequest(SupplierRequest $supplierRequest): array
     {
         $proposals = $supplierRequest->proposals()
-            ->with(['lines', 'supplier', 'externalSupplierContact', 'supplierParty'])
+            ->with(['lines', 'supplier', 'externalSupplierContact', 'supplierParty', 'currentVersion'])
             ->where('organization_id', $supplierRequest->organization_id)
             ->whereIn('status', [
                 SupplierProposalStatusEnum::SUBMITTED->value,
@@ -43,7 +43,22 @@ class SupplierProposalComparisonService
             ->values()
             ->all();
 
+        $baseCurrency = $rows[0]['currency'] ?? null;
+
+        $rows = collect($rows)
+            ->map(function (array $row) use ($baseCurrency): array {
+                $row['is_directly_comparable'] = $baseCurrency === null || $row['currency'] === $baseCurrency;
+                $row['comparison_warnings'] = $row['is_directly_comparable']
+                    ? []
+                    : [trans_message('procurement_enterprise.proposal_decisions.currency_not_comparable')];
+
+                return $row;
+            })
+            ->values()
+            ->all();
+
         $cheapestRow = collect($rows)
+            ->filter(fn (array $row): bool => (bool) ($row['is_directly_comparable'] ?? true))
             ->sortBy([
                 ['comparison_total', 'asc'],
                 ['id', 'asc'],
@@ -100,6 +115,10 @@ class SupplierProposalComparisonService
 
             $isLowestPriceSelected = $proposal->id === $cheapestProposalId;
             $normalizedReason = $this->normalizeReason($reason);
+            $cheapestRow = collect($comparison['rows'])->firstWhere('id', $cheapestProposalId);
+            $cheapestProposalVersionId = is_array($cheapestRow)
+                ? ($cheapestRow['current_version_id'] ?? null)
+                : null;
 
             if (!$isLowestPriceSelected && $normalizedReason === null) {
                 throw ValidationException::withMessages([
@@ -116,7 +135,9 @@ class SupplierProposalComparisonService
             $decision->fill([
                 'organization_id' => $lockedSupplierRequest->organization_id,
                 'winning_supplier_proposal_id' => $proposal->id,
+                'winning_supplier_proposal_version_id' => $proposal->currentVersion?->id,
                 'cheapest_supplier_proposal_id' => $cheapestProposalId,
+                'cheapest_supplier_proposal_version_id' => $cheapestProposalVersionId,
                 'status' => SupplierProposalDecisionEnum::SELECTED,
                 'is_lowest_price_selected' => $isLowestPriceSelected,
                 'decision_reason' => $normalizedReason,
@@ -156,8 +177,10 @@ class SupplierProposalComparisonService
             $this->approvalService->createPendingForDecision($decision, $risks, $actorId);
 
             return $decision->fresh([
-                'winningProposal',
-                'cheapestProposal',
+                'winningProposal.currentVersion',
+                'cheapestProposal.currentVersion',
+                'winningProposalVersion',
+                'cheapestProposalVersion',
                 'selectedBy',
                 'approvals',
             ]);
@@ -184,6 +207,7 @@ class SupplierProposalComparisonService
     private function findComparableProposal(SupplierRequest $supplierRequest, int $proposalId): SupplierProposal
     {
         $proposal = SupplierProposal::query()
+            ->with('currentVersion')
             ->where('organization_id', $supplierRequest->organization_id)
             ->where('supplier_request_id', $supplierRequest->id)
             ->where('id', $proposalId)
@@ -234,9 +258,12 @@ class SupplierProposalComparisonService
     private function proposalComparisonRow(SupplierProposal $proposal): array
     {
         $snapshot = is_array($proposal->supplier_snapshot) ? $proposal->supplier_snapshot : [];
+        $commercial = $this->commercialSnapshot($proposal);
 
         return [
             'id' => $proposal->id,
+            'current_version_id' => $proposal->currentVersion?->id,
+            'current_version_number' => $proposal->currentVersion?->version_number,
             'supplier_request_id' => $proposal->supplier_request_id,
             'supplier_id' => $proposal->supplier_id,
             'external_supplier_contact_id' => $proposal->external_supplier_contact_id,
@@ -246,15 +273,20 @@ class SupplierProposalComparisonService
             'proposal_number' => $proposal->proposal_number,
             'proposal_date' => $proposal->proposal_date?->format('Y-m-d'),
             'status' => $proposal->status->value,
-            'subtotal_amount' => (float) $proposal->subtotal_amount,
-            'delivery_amount' => (float) $proposal->delivery_amount,
-            'vat_amount' => (float) $proposal->vat_amount,
-            'total_amount' => (float) $proposal->total_amount,
+            'subtotal_amount' => (float) $commercial['subtotal_amount'],
+            'delivery_amount' => (float) $commercial['delivery_amount'],
+            'vat_amount' => (float) $commercial['vat_amount'],
+            'total_amount' => (float) $commercial['total_amount'],
             'comparison_total' => $this->comparisonTotal($proposal),
-            'currency' => $proposal->currency,
-            'valid_until' => $proposal->valid_until?->format('Y-m-d'),
-            'payment_terms' => $proposal->payment_terms,
-            'delivery_terms' => $proposal->delivery_terms,
+            'currency' => (string) $commercial['currency'],
+            'vat_mode' => $commercial['vat_mode'] ?? null,
+            'vat_rate' => $commercial['vat_rate'] ?? null,
+            'valid_until' => $commercial['valid_until'] ?? null,
+            'delivery_due_date' => $commercial['delivery_due_date'] ?? null,
+            'lead_time_days' => $commercial['lead_time_days'] ?? null,
+            'payment_terms' => $commercial['payment_terms'] ?? null,
+            'delivery_terms' => $commercial['delivery_terms'] ?? null,
+            'warranty_terms' => $commercial['warranty_terms'] ?? null,
             'is_expired' => $proposal->isExpired(),
             'lines' => $proposal->lines->map(fn ($line): array => [
                 'id' => $line->id,
@@ -272,15 +304,55 @@ class SupplierProposalComparisonService
 
     private function comparisonTotal(SupplierProposal $proposal): float
     {
-        $componentTotal = (float) $proposal->subtotal_amount
-            + (float) $proposal->delivery_amount
-            + (float) $proposal->vat_amount;
+        $commercial = $this->commercialSnapshot($proposal);
+        $componentTotal = (float) $commercial['subtotal_amount']
+            + (float) $commercial['delivery_amount']
+            + (float) $commercial['vat_amount'];
 
         if ($componentTotal > 0.0) {
             return round($componentTotal, 2);
         }
 
-        return round((float) $proposal->total_amount, 2);
+        return round((float) $commercial['total_amount'], 2);
+    }
+
+    private function commercialSnapshot(SupplierProposal $proposal): array
+    {
+        $snapshot = $proposal->currentVersion?->commercial_snapshot;
+
+        if (is_array($snapshot) && $snapshot !== []) {
+            return array_merge([
+                'subtotal_amount' => 0,
+                'delivery_amount' => 0,
+                'vat_amount' => 0,
+                'total_amount' => 0,
+                'currency' => $proposal->currency,
+                'vat_mode' => $proposal->vat_mode,
+                'vat_rate' => $proposal->vat_rate === null ? null : (float) $proposal->vat_rate,
+                'valid_until' => $proposal->valid_until?->format('Y-m-d'),
+                'delivery_due_date' => $proposal->delivery_due_date?->format('Y-m-d'),
+                'lead_time_days' => $proposal->lead_time_days,
+                'payment_terms' => $proposal->payment_terms,
+                'delivery_terms' => $proposal->delivery_terms,
+                'warranty_terms' => $proposal->warranty_terms,
+            ], $snapshot);
+        }
+
+        return [
+            'subtotal_amount' => (float) $proposal->subtotal_amount,
+            'delivery_amount' => (float) $proposal->delivery_amount,
+            'vat_amount' => (float) $proposal->vat_amount,
+            'total_amount' => (float) $proposal->total_amount,
+            'currency' => $proposal->currency,
+            'vat_mode' => $proposal->vat_mode,
+            'vat_rate' => $proposal->vat_rate === null ? null : (float) $proposal->vat_rate,
+            'valid_until' => $proposal->valid_until?->format('Y-m-d'),
+            'delivery_due_date' => $proposal->delivery_due_date?->format('Y-m-d'),
+            'lead_time_days' => $proposal->lead_time_days,
+            'payment_terms' => $proposal->payment_terms,
+            'delivery_terms' => $proposal->delivery_terms,
+            'warranty_terms' => $proposal->warranty_terms,
+        ];
     }
 
     private function supplierName(SupplierProposal $proposal, array $snapshot): ?string

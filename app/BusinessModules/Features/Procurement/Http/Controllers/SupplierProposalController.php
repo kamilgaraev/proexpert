@@ -30,7 +30,16 @@ class SupplierProposalController extends Controller
             $perPage = min((int) $request->input('per_page', 15), 100);
 
             $query = SupplierProposal::forOrganization($organizationId)
-                ->with(['supplier', 'externalSupplierContact', 'supplierParty', 'supplierRequest', 'purchaseOrder', 'lines']);
+                ->with([
+                    'supplier',
+                    'externalSupplierContact',
+                    'supplierParty',
+                    'supplierRequest',
+                    'purchaseOrder',
+                    'lines',
+                    'intake',
+                    'currentVersion',
+                ]);
 
             if ($request->has('supplier_request_id')) {
                 $query->where('supplier_request_id', $request->input('supplier_request_id'));
@@ -76,6 +85,8 @@ class SupplierProposalController extends Controller
                     'supplierRequest',
                     'purchaseOrder',
                     'lines',
+                    'intake',
+                    'currentVersion',
                 ])
                 ->find($id);
 
@@ -118,6 +129,8 @@ class SupplierProposalController extends Controller
             );
         } catch (ModelNotFoundException) {
             return AdminResponse::error(trans_message('procurement.supplier_requests.not_found'), 404);
+        } catch (ValidationException $e) {
+            return AdminResponse::error(trans_message('errors.validation_failed'), 422, $e->errors());
         } catch (\DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {

@@ -14,6 +14,7 @@ class PurchaseOrderResource extends JsonResource
             'organization_id' => $this->organization_id,
             'purchase_request_id' => $this->purchase_request_id,
             'accepted_supplier_proposal_id' => $this->accepted_supplier_proposal_id,
+            'accepted_supplier_proposal_version_id' => $this->accepted_supplier_proposal_version_id,
             'supplier_id' => $this->supplier_id,
             'external_supplier_contact_id' => $this->external_supplier_contact_id,
             'supplier_party_id' => $this->supplier_party_id,
@@ -54,6 +55,12 @@ class PurchaseOrderResource extends JsonResource
                 'number' => $this->contract->number,
             ] : null),
             'proposals' => $this->whenLoaded('proposals', fn() => SupplierProposalResource::collection($this->proposals)),
+            'accepted_supplier_proposal_version' => $this->whenLoaded('acceptedSupplierProposalVersion', fn() => $this->acceptedSupplierProposalVersion ? [
+                'id' => $this->acceptedSupplierProposalVersion->id,
+                'version_number' => $this->acceptedSupplierProposalVersion->version_number,
+                'commercial_snapshot' => $this->acceptedSupplierProposalVersion->commercial_snapshot,
+                'created_at' => $this->acceptedSupplierProposalVersion->created_at?->toIso8601String(),
+            ] : null),
             'items' => $this->whenLoaded('items', fn() => PurchaseOrderItemResource::collection($this->items)),
             'receipts' => $this->whenLoaded('receipts', fn() => PurchaseReceiptResource::collection($this->receipts)),
             'audit_events' => $this->whenLoaded(

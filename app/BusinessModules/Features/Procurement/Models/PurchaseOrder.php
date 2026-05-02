@@ -25,6 +25,7 @@ class PurchaseOrder extends Model
         'organization_id',
         'purchase_request_id',
         'accepted_supplier_proposal_id',
+        'accepted_supplier_proposal_version_id',
         'supplier_id',
         'external_supplier_contact_id',
         'supplier_party_id',
@@ -102,6 +103,11 @@ class PurchaseOrder extends Model
     public function acceptedSupplierProposal(): BelongsTo
     {
         return $this->belongsTo(SupplierProposal::class, 'accepted_supplier_proposal_id');
+    }
+
+    public function acceptedSupplierProposalVersion(): BelongsTo
+    {
+        return $this->belongsTo(SupplierProposalVersion::class, 'accepted_supplier_proposal_version_id');
     }
 
     /**

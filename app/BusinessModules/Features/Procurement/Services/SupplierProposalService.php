@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\Procurement\Services;
 use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalDecisionEnum;
+use App\BusinessModules\Features\Procurement\Enums\SupplierProposalVatModeEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
@@ -21,7 +22,9 @@ use function trans_message;
 class SupplierProposalService
 {
     public function __construct(
-        private readonly ProcurementAuditService $auditService
+        private readonly ProcurementAuditService $auditService,
+        private readonly SupplierProposalIntakeService $intakeService,
+        private readonly SupplierProposalVersionService $versionService
     ) {}
 
     public function createFromSupplierRequest(
@@ -31,7 +34,8 @@ class SupplierProposalService
     ): SupplierProposal
     {
         return DB::transaction(function () use ($supplierRequest, $data, $actorId): SupplierProposal {
-            $supplierRequest->loadMissing('lines');
+            $supplierRequest->loadMissing(['lines', 'supplierParty']);
+            $amounts = $this->commercialAmounts($data);
 
             $proposal = SupplierProposal::query()->create([
                 'organization_id' => $supplierRequest->organization_id,
@@ -43,14 +47,19 @@ class SupplierProposalService
                 'proposal_number' => $this->generateProposalNumber($supplierRequest->organization_id),
                 'proposal_date' => $data['proposal_date'] ?? now(),
                 'status' => SupplierProposalStatusEnum::SUBMITTED,
-                'subtotal_amount' => $data['subtotal_amount'] ?? $data['total_amount'],
-                'delivery_amount' => $data['delivery_amount'] ?? 0,
-                'vat_amount' => $data['vat_amount'] ?? 0,
-                'total_amount' => $data['total_amount'],
+                'subtotal_amount' => $amounts['subtotal_amount'],
+                'delivery_amount' => $amounts['delivery_amount'],
+                'vat_amount' => $amounts['vat_amount'],
+                'total_amount' => $amounts['total_amount'],
                 'currency' => $data['currency'] ?? 'RUB',
+                'vat_mode' => $data['vat_mode'] ?? SupplierProposalVatModeEnum::INCLUDED->value,
+                'vat_rate' => $data['vat_rate'] ?? null,
                 'valid_until' => $data['valid_until'] ?? null,
+                'delivery_due_date' => $data['delivery_due_date'] ?? null,
+                'lead_time_days' => $data['lead_time_days'] ?? null,
                 'payment_terms' => $data['payment_terms'] ?? null,
                 'delivery_terms' => $data['delivery_terms'] ?? null,
+                'warranty_terms' => $data['warranty_terms'] ?? null,
                 'items' => $data['items'] ?? null,
                 'notes' => $data['notes'] ?? null,
                 'metadata' => $data['metadata'] ?? null,
@@ -72,6 +81,11 @@ class SupplierProposalService
                     'metadata' => $item['metadata'] ?? null,
                 ]);
             }
+
+            $proposal->load(['supplierParty', 'lines']);
+            $this->intakeService->recordForProposal($proposal, $data, $actorId);
+            $proposal->load('intake');
+            $this->versionService->createInitialVersion($proposal, $actorId);
 
             $supplierRequest->update([
                 'status' => SupplierRequestStatusEnum::RESPONDED,
@@ -101,7 +115,15 @@ class SupplierProposalService
                 ]
             );
 
-            return $proposal->fresh(['supplier', 'externalSupplierContact', 'supplierParty', 'supplierRequest', 'lines']);
+            return $proposal->fresh([
+                'supplier',
+                'externalSupplierContact',
+                'supplierParty',
+                'supplierRequest',
+                'lines',
+                'intake',
+                'currentVersion',
+            ]);
         });
     }
 
@@ -154,6 +176,14 @@ class SupplierProposalService
                 throw new \DomainException(trans_message('procurement.proposal_decisions.accepted_decision_required'));
             }
 
+            $acceptedVersion = $lockedProposal->currentVersion()->lockForUpdate()->first();
+
+            if ($acceptedVersion === null) {
+                throw ValidationException::withMessages([
+                    'proposal_id' => [trans_message('procurement_enterprise.proposals.version_required')],
+                ]);
+            }
+
             $existingOrder = PurchaseOrder::query()
                 ->where('organization_id', $lockedProposal->organization_id)
                 ->where(function ($query) use ($lockedProposal): void {
@@ -179,10 +209,15 @@ class SupplierProposalService
                 'status' => SupplierProposalStatusEnum::ACCEPTED,
             ]);
 
+            $acceptedSnapshot = is_array($acceptedVersion->commercial_snapshot)
+                ? $acceptedVersion->commercial_snapshot
+                : [];
+
             $order = PurchaseOrder::query()->create([
                 'organization_id' => $lockedProposal->organization_id,
                 'purchase_request_id' => $lockedProposal->supplierRequest?->purchase_request_id,
                 'accepted_supplier_proposal_id' => $lockedProposal->id,
+                'accepted_supplier_proposal_version_id' => $acceptedVersion->id,
                 'supplier_id' => $lockedProposal->supplier_id,
                 'external_supplier_contact_id' => $lockedProposal->external_supplier_contact_id,
                 'supplier_party_id' => $lockedProposal->supplier_party_id,
@@ -190,30 +225,33 @@ class SupplierProposalService
                 'order_number' => $this->generateOrderNumber($lockedProposal->organization_id),
                 'order_date' => now(),
                 'status' => PurchaseOrderStatusEnum::CONFIRMED,
-                'total_amount' => $lockedProposal->total_amount,
-                'currency' => $lockedProposal->currency,
+                'total_amount' => $this->snapshotFloat($acceptedSnapshot, 'total_amount', (float) $lockedProposal->total_amount),
+                'currency' => (string) ($acceptedSnapshot['currency'] ?? $lockedProposal->currency),
                 'pricing_source' => 'accepted_supplier_proposal',
-                'delivery_date' => $lockedProposal->supplierRequest?->purchaseRequest?->needed_by,
+                'delivery_date' => $acceptedSnapshot['delivery_due_date'] ?? $lockedProposal->supplierRequest?->purchaseRequest?->needed_by,
                 'confirmed_at' => now(),
                 'notes' => $lockedProposal->notes,
                 'metadata' => [
                     'accepted_supplier_proposal_id' => $lockedProposal->id,
+                    'accepted_supplier_proposal_version_id' => $acceptedVersion->id,
                     'supplier_request_id' => $lockedProposal->supplier_request_id,
+                    'commercial_snapshot' => $acceptedVersion->commercial_snapshot,
                 ],
             ]);
 
-            foreach ($lockedProposal->lines as $line) {
+            foreach ($this->orderLinesFromVersion($acceptedVersion->commercial_snapshot, $lockedProposal) as $line) {
                 $order->items()->create([
-                    'material_id' => $line->material_id,
-                    'material_name' => $line->name,
-                    'quantity' => $line->quantity,
-                    'unit' => $line->unit,
-                    'unit_price' => $line->unit_price,
-                    'total_price' => $line->total_amount,
-                    'notes' => $line->comment,
+                    'material_id' => $line['material_id'],
+                    'material_name' => $line['name'],
+                    'quantity' => $line['quantity'],
+                    'unit' => $line['unit'],
+                    'unit_price' => $line['unit_price'],
+                    'total_price' => $line['total_amount'],
+                    'notes' => $line['comment'],
                     'metadata' => [
-                        'supplier_proposal_line_id' => $line->id,
-                        'supplier_request_line_id' => $line->supplier_request_line_id,
+                        'supplier_proposal_line_id' => $line['supplier_proposal_line_id'],
+                        'supplier_request_line_id' => $line['supplier_request_line_id'],
+                        'supplier_proposal_version_id' => $acceptedVersion->id,
                     ],
                 ]);
             }
@@ -253,7 +291,10 @@ class SupplierProposalService
             'supplierParty',
             'supplierRequest',
             'purchaseOrder.supplierParty',
+            'purchaseOrder.acceptedSupplierProposalVersion',
             'lines',
+            'intake',
+            'currentVersion',
         ]);
     }
 
@@ -302,6 +343,105 @@ class SupplierProposalService
             ->count() + 1;
 
         return sprintf('%s-%04d', $prefix, $lastNumber);
+    }
+
+    /**
+     * @return array{subtotal_amount: float, delivery_amount: float, vat_amount: float, total_amount: float}
+     */
+    private function commercialAmounts(array $data): array
+    {
+        $deliveryAmount = round((float) ($data['delivery_amount'] ?? 0), 2);
+        $lineSubtotal = $this->itemsSubtotal($data['items'] ?? []);
+        $totalAmount = round((float) $data['total_amount'], 2);
+        $subtotalAmount = array_key_exists('subtotal_amount', $data)
+            ? round((float) $data['subtotal_amount'], 2)
+            : ($lineSubtotal > 0.0 ? $lineSubtotal : max(0.0, round($totalAmount - $deliveryAmount, 2)));
+        $vatAmount = $this->vatAmount($data, $subtotalAmount);
+        $calculatedTotal = round($subtotalAmount + $deliveryAmount + $vatAmount, 2);
+        $totalAmount = abs($totalAmount - $calculatedTotal) > 0.01 ? $calculatedTotal : $totalAmount;
+
+        return [
+            'subtotal_amount' => $subtotalAmount,
+            'delivery_amount' => $deliveryAmount,
+            'vat_amount' => $vatAmount,
+            'total_amount' => $totalAmount,
+        ];
+    }
+
+    private function itemsSubtotal(array $items): float
+    {
+        $sum = 0.0;
+
+        foreach ($items as $item) {
+            $quantity = (float) ($item['quantity'] ?? 0);
+            $unitPrice = (float) ($item['unit_price'] ?? $item['price'] ?? 0);
+            $sum += (float) ($item['total_amount'] ?? round($quantity * $unitPrice, 2));
+        }
+
+        return round($sum, 2);
+    }
+
+    private function vatAmount(array $data, float $subtotalAmount): float
+    {
+        if (array_key_exists('vat_amount', $data)) {
+            return round((float) $data['vat_amount'], 2);
+        }
+
+        if (($data['vat_mode'] ?? null) !== SupplierProposalVatModeEnum::EXCLUDED->value) {
+            return 0.0;
+        }
+
+        $vatRate = (float) ($data['vat_rate'] ?? 0);
+
+        return round($subtotalAmount * $vatRate / 100, 2);
+    }
+
+    private function snapshotFloat(array $snapshot, string $key, float $fallback): float
+    {
+        if (!array_key_exists($key, $snapshot)) {
+            return $fallback;
+        }
+
+        return round((float) $snapshot[$key], 2);
+    }
+
+    private function orderLinesFromVersion(?array $commercialSnapshot, SupplierProposal $proposal): array
+    {
+        $snapshotLines = is_array($commercialSnapshot) && is_array($commercialSnapshot['lines'] ?? null)
+            ? $commercialSnapshot['lines']
+            : [];
+
+        if ($snapshotLines !== []) {
+            return collect($snapshotLines)
+                ->map(static fn (array $line): array => [
+                    'supplier_proposal_line_id' => $line['id'] ?? null,
+                    'supplier_request_line_id' => $line['supplier_request_line_id'] ?? null,
+                    'material_id' => $line['material_id'] ?? null,
+                    'name' => (string) ($line['name'] ?? ''),
+                    'quantity' => (float) ($line['quantity'] ?? 0),
+                    'unit' => (string) ($line['unit'] ?? ''),
+                    'unit_price' => (float) ($line['unit_price'] ?? 0),
+                    'total_amount' => (float) ($line['total_amount'] ?? 0),
+                    'comment' => $line['comment'] ?? null,
+                ])
+                ->values()
+                ->all();
+        }
+
+        return $proposal->lines
+            ->map(static fn ($line): array => [
+                'supplier_proposal_line_id' => $line->id,
+                'supplier_request_line_id' => $line->supplier_request_line_id,
+                'material_id' => $line->material_id,
+                'name' => $line->name,
+                'quantity' => (float) $line->quantity,
+                'unit' => $line->unit,
+                'unit_price' => (float) $line->unit_price,
+                'total_amount' => (float) $line->total_amount,
+                'comment' => $line->comment,
+            ])
+            ->values()
+            ->all();
     }
 
     private function supplierName(SupplierProposal $proposal, array $snapshot): ?string

@@ -20,7 +20,9 @@ class SupplierProposalDecision extends Model
         'organization_id',
         'supplier_request_id',
         'winning_supplier_proposal_id',
+        'winning_supplier_proposal_version_id',
         'cheapest_supplier_proposal_id',
+        'cheapest_supplier_proposal_version_id',
         'status',
         'is_lowest_price_selected',
         'decision_reason',
@@ -57,9 +59,19 @@ class SupplierProposalDecision extends Model
         return $this->belongsTo(SupplierProposal::class, 'winning_supplier_proposal_id');
     }
 
+    public function winningProposalVersion(): BelongsTo
+    {
+        return $this->belongsTo(SupplierProposalVersion::class, 'winning_supplier_proposal_version_id');
+    }
+
     public function cheapestProposal(): BelongsTo
     {
         return $this->belongsTo(SupplierProposal::class, 'cheapest_supplier_proposal_id');
+    }
+
+    public function cheapestProposalVersion(): BelongsTo
+    {
+        return $this->belongsTo(SupplierProposalVersion::class, 'cheapest_supplier_proposal_version_id');
     }
 
     public function selectedBy(): BelongsTo

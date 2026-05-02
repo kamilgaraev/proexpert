@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalStatusEnum;
+use App\BusinessModules\Features\Procurement\Enums\SupplierProposalVatModeEnum;
 use App\Models\Organization;
 use App\Models\Supplier;
 
@@ -31,9 +32,14 @@ use App\Models\Supplier;
  * @property numeric-string|float|int $vat_amount
  * @property numeric-string|float|int $total_amount
  * @property string $currency
+ * @property string $vat_mode
+ * @property numeric-string|float|int|null $vat_rate
  * @property \Illuminate\Support\Carbon|null $valid_until
+ * @property \Illuminate\Support\Carbon|null $delivery_due_date
+ * @property int|null $lead_time_days
  * @property string|null $payment_terms
  * @property string|null $delivery_terms
+ * @property string|null $warranty_terms
  * @property array<int, array<string, mixed>>|null $items
  * @property string|null $notes
  * @property array<string, mixed>|null $metadata
@@ -62,9 +68,14 @@ class SupplierProposal extends Model
         'vat_amount',
         'total_amount',
         'currency',
+        'vat_mode',
+        'vat_rate',
         'valid_until',
+        'delivery_due_date',
+        'lead_time_days',
         'payment_terms',
         'delivery_terms',
+        'warranty_terms',
         'items',
         'notes',
         'metadata',
@@ -78,6 +89,8 @@ class SupplierProposal extends Model
         'delivery_amount' => 'decimal:2',
         'vat_amount' => 'decimal:2',
         'total_amount' => 'decimal:2',
+        'vat_rate' => 'decimal:2',
+        'delivery_due_date' => 'date',
         'items' => 'array',
         'supplier_snapshot' => 'array',
         'metadata' => 'array',
@@ -86,6 +99,7 @@ class SupplierProposal extends Model
     protected $attributes = [
         'status' => 'draft',
         'currency' => 'RUB',
+        'vat_mode' => 'included',
         'supplier_snapshot' => '{}',
     ];
 
@@ -135,6 +149,21 @@ class SupplierProposal extends Model
     public function lines(): HasMany
     {
         return $this->hasMany(SupplierProposalLine::class);
+    }
+
+    public function intake(): HasOne
+    {
+        return $this->hasOne(SupplierProposalIntake::class);
+    }
+
+    public function versions(): HasMany
+    {
+        return $this->hasMany(SupplierProposalVersion::class);
+    }
+
+    public function currentVersion(): HasOne
+    {
+        return $this->hasOne(SupplierProposalVersion::class)->latestOfMany('version_number');
     }
 
     public function decisions(): HasMany
