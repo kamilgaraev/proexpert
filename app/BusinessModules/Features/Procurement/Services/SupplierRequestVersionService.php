@@ -95,16 +95,16 @@ class SupplierRequestVersionService
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            $version = $this->currentSentVersion($lockedRequest);
-
-            if ($version !== null) {
-                return $version;
-            }
-
             if ($lockedRequest->status !== SupplierRequestStatusEnum::SENT) {
                 throw ValidationException::withMessages([
                     'supplier_request_id' => [trans_message('procurement_enterprise.supplier_requests.must_be_sent_for_proposal')],
                 ]);
+            }
+
+            $version = $this->currentSentVersion($lockedRequest);
+
+            if ($version !== null) {
+                return $version;
             }
 
             return $this->createSentVersion($lockedRequest, $actorId);

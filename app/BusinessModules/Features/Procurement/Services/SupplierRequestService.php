@@ -11,6 +11,7 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class SupplierRequestService
@@ -123,6 +124,9 @@ class SupplierRequestService
             $supplierRequest->update([
                 'status' => SupplierRequestStatusEnum::SENT,
                 'sent_at' => now(),
+                'public_token' => $supplierRequest->public_token ?? $this->generatePublicToken(),
+                'public_token_expires_at' => now()->addDays((int) config('procurement.supplier_request_public_link_ttl_days', 14)),
+                'public_opened_at' => null,
             ]);
 
             $supplierRequest->loadMissing('purchaseRequest');
@@ -140,6 +144,8 @@ class SupplierRequestService
                     'previous_status' => $previousStatus,
                     'status' => SupplierRequestStatusEnum::SENT->value,
                     'sent_at' => $supplierRequest->sent_at?->toIso8601String(),
+                    'public_url' => $supplierRequest->publicUrl(),
+                    'public_token_expires_at' => $supplierRequest->public_token_expires_at?->toIso8601String(),
                     'supplier_request_version_id' => $version->id,
                     'version_number' => $version->version_number,
                     'purchase_request_number' => $supplierRequest->purchaseRequest?->request_number,
@@ -227,6 +233,15 @@ class SupplierRequestService
             ->count() + 1;
 
         return sprintf('%s-%04d', $prefix, $lastNumber);
+    }
+
+    private function generatePublicToken(): string
+    {
+        do {
+            $token = Str::random(64);
+        } while (SupplierRequest::query()->where('public_token', $token)->exists());
+
+        return $token;
     }
 
     private function supplierName(array $supplierSnapshot): ?string

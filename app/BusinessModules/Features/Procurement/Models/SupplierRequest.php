@@ -22,8 +22,11 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property int|null $supplier_party_id
  * @property array<string, mixed>|null $supplier_snapshot
  * @property string $request_number
+ * @property string|null $public_token
  * @property SupplierRequestStatusEnum $status
  * @property \Illuminate\Support\Carbon|null $sent_at
+ * @property \Illuminate\Support\Carbon|null $public_token_expires_at
+ * @property \Illuminate\Support\Carbon|null $public_opened_at
  * @property \Illuminate\Support\Carbon|null $responded_at
  * @property \Illuminate\Support\Carbon|null $cancelled_at
  * @property string|null $comment
@@ -45,8 +48,11 @@ class SupplierRequest extends Model
         'supplier_party_id',
         'supplier_snapshot',
         'request_number',
+        'public_token',
         'status',
         'sent_at',
+        'public_token_expires_at',
+        'public_opened_at',
         'responded_at',
         'cancelled_at',
         'comment',
@@ -56,6 +62,8 @@ class SupplierRequest extends Model
     protected $casts = [
         'status' => SupplierRequestStatusEnum::class,
         'sent_at' => 'datetime',
+        'public_token_expires_at' => 'datetime',
+        'public_opened_at' => 'datetime',
         'responded_at' => 'datetime',
         'cancelled_at' => 'datetime',
         'supplier_snapshot' => 'array',
@@ -154,5 +162,24 @@ class SupplierRequest extends Model
         $status = $this->getAttribute('status');
 
         return $status instanceof SupplierRequestStatusEnum && $status->canBeCancelled();
+    }
+
+    public function canReceivePublicProposal(): bool
+    {
+        return $this->status === SupplierRequestStatusEnum::SENT
+            && $this->public_token !== null
+            && (
+                $this->public_token_expires_at === null
+                || $this->public_token_expires_at->isFuture()
+            );
+    }
+
+    public function publicUrl(): ?string
+    {
+        if ($this->public_token === null) {
+            return null;
+        }
+
+        return rtrim((string) config('app.frontend_url'), '/') . '/supplier-requests/' . $this->public_token;
     }
 }

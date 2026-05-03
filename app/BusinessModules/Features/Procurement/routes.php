@@ -4,6 +4,7 @@ use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementDashboa
 use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementAuditEventController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementApprovalController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementSettingsController;
+use App\BusinessModules\Features\Procurement\Http\Controllers\PublicSupplierRequestController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\PurchaseContractController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\PurchaseOrderController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\PurchaseRequestController;
@@ -12,6 +13,14 @@ use App\BusinessModules\Features\Procurement\Http\Controllers\SupplierProposalCo
 use App\BusinessModules\Features\Procurement\Http\Controllers\SupplierRequestController;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Support\Facades\Route;
+
+Route::prefix('api/v1/procurement/supplier-requests')
+    ->name('public.procurement.supplier_requests.')
+    ->middleware(['api', 'throttle:60,1'])
+    ->group(function () {
+        Route::get('/{token}', [PublicSupplierRequestController::class, 'show'])->name('show');
+        Route::post('/{token}/proposals', [PublicSupplierRequestController::class, 'submit'])->name('submit');
+    });
 
 Route::prefix('api/v1/admin/procurement')
     ->name('admin.procurement.')
