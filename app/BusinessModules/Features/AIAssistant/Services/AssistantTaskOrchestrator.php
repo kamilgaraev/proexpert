@@ -63,7 +63,12 @@ class AssistantTaskOrchestrator
         return [
             'answer' => trim($answer),
             'task_type' => $plan['task_type'] ?? 'summary',
-            'confidence' => $this->resolveConfidence($plan, $missingData, (bool) ($options['degraded_mode'] ?? false)),
+            'confidence' => $this->resolveConfidence(
+                $plan,
+                $missingData,
+                (bool) ($options['degraded_mode'] ?? false),
+                !empty($options['tool_evidence'])
+            ),
             'capability' => $plan['capability']['id'] ?? null,
             'evidence' => $this->buildEvidence($plan, $options),
             'missing_data' => $missingData,
@@ -115,6 +120,7 @@ class AssistantTaskOrchestrator
             'allow_actions' => (bool) ($requestPayload['allow_actions'] ?? false),
             'context' => [
                 'source_module' => isset($context['source_module']) ? trim((string) $context['source_module']) : null,
+                'source_route' => isset($context['source_route']) ? trim((string) $context['source_route']) : null,
                 'entity_refs' => $entityRefs,
                 'period' => $context['period'] ?? null,
                 'filters' => is_array($context['filters'] ?? null) ? $context['filters'] : [],
@@ -313,6 +319,14 @@ class AssistantTaskOrchestrator
             ];
         }
 
+        if (!empty($context['source_route'])) {
+            $evidence[] = [
+                'label' => 'Route',
+                'value' => (string) $context['source_route'],
+                'source' => 'assistant_request_context',
+            ];
+        }
+
         foreach (($options['tool_evidence'] ?? []) as $item) {
             if (is_array($item) && isset($item['label'], $item['value'])) {
                 $evidence[] = $item;
@@ -367,7 +381,7 @@ class AssistantTaskOrchestrator
         ];
     }
 
-    private function resolveConfidence(array $plan, array $missingData, bool $degradedMode): string
+    private function resolveConfidence(array $plan, array $missingData, bool $degradedMode, bool $hasToolEvidence): string
     {
         if ($degradedMode) {
             return 'low';
@@ -377,7 +391,32 @@ class AssistantTaskOrchestrator
             return 'medium';
         }
 
-        return !empty($plan['capability']) ? 'high' : 'medium';
+        if (empty($plan['capability'])) {
+            return 'medium';
+        }
+
+        if ($this->requiresDataEvidence($plan) && !$hasToolEvidence) {
+            return 'medium';
+        }
+
+        return 'high';
+    }
+
+    private function requiresDataEvidence(array $plan): bool
+    {
+        $taskType = (string) ($plan['task_type'] ?? 'summary');
+        $capabilityId = (string) ($plan['capability']['id'] ?? '');
+
+        return in_array($taskType, ['summary', 'analyze', 'find'], true)
+            && in_array($capabilityId, [
+                'projects',
+                'contracts',
+                'reports',
+                'warehouse',
+                'payments',
+                'schedules',
+                'procurement',
+            ], true);
     }
 
     private function requiresConfirmation(array $nextActions): bool

@@ -76,6 +76,42 @@ class AIAssistantServiceBudgetTest extends TestCase
         $this->assertContains('get_project_snapshot', $toolNames);
     }
 
+    public function test_reports_capability_exposes_schedule_report_tools(): void
+    {
+        $toolRegistry = new AIToolRegistry();
+        foreach ([
+            'get_schedule_snapshot',
+            'generate_project_timelines_report',
+        ] as $toolName) {
+            $toolRegistry->registerTool($this->makeTool($toolName));
+        }
+
+        $service = $this->makeService($toolRegistry);
+
+        $tools = $service->exposeResolveToolDefinitions([
+            'task_type' => 'summary',
+            'capability' => [
+                'id' => 'reports',
+            ],
+            'request' => [
+                'allow_actions' => false,
+                'context' => [
+                    'ui_state' => [
+                        'assistant_report_focus' => 'schedules',
+                    ],
+                ],
+            ],
+        ]);
+
+        $toolNames = array_map(
+            static fn (array $definition): string => (string) $definition['function']['name'],
+            $tools
+        );
+
+        $this->assertContains('get_schedule_snapshot', $toolNames);
+        $this->assertContains('generate_project_timelines_report', $toolNames);
+    }
+
     public function test_tool_registry_resolves_legacy_schedule_status_alias(): void
     {
         $registry = new AIToolRegistry();
@@ -84,6 +120,48 @@ class AIAssistantServiceBudgetTest extends TestCase
         $registry->registerTool($tool);
 
         $this->assertSame($tool, $registry->getTool('update_task_status'));
+    }
+
+    public function test_follow_up_payload_keeps_previous_schedule_report_intent(): void
+    {
+        $service = $this->makeService(new AIToolRegistry());
+
+        $payload = $service->exposeMergeContinuationRequestPayload(
+            'с 1.04.2026 по 01.05.2026 по текущему проекту',
+            [
+                'context' => [
+                    'source_module' => 'ai-assistant',
+                    'entity_refs' => [
+                        [
+                            'type' => 'project',
+                            'id' => 56,
+                            'label' => 'Строительство склада Литер А',
+                        ],
+                    ],
+                ],
+            ],
+            [
+                'last_task_type' => 'summary',
+                'last_capability' => 'reports',
+                'last_request' => [
+                    'message' => 'Сделай отчет по графику работ',
+                    'context' => [
+                        'source_module' => 'reports',
+                        'source_route' => '/reports',
+                        'entity_refs' => [],
+                        'period' => null,
+                        'filters' => [],
+                        'ui_state' => [],
+                    ],
+                ],
+                'last_report_focus' => 'schedules',
+            ]
+        );
+
+        $this->assertSame('reports', $payload['context']['source_module']);
+        $this->assertSame('/reports', $payload['context']['source_route']);
+        $this->assertSame('schedules', $payload['context']['ui_state']['assistant_report_focus']);
+        $this->assertSame('summary', $payload['desired_mode']);
     }
 
     public function test_prepare_messages_for_provider_preserves_latest_user_message_and_reduces_budget(): void
@@ -243,5 +321,13 @@ class TestableAIAssistantService extends AIAssistantService
     public function exposeFormatStructuredContextForLLM(array $taskPlan): string
     {
         return $this->formatStructuredContextForLLM($taskPlan);
+    }
+
+    public function exposeMergeContinuationRequestPayload(
+        string $query,
+        array $requestPayload,
+        array $conversationContext
+    ): array {
+        return $this->mergeContinuationRequestPayload($query, $requestPayload, $conversationContext);
     }
 }

@@ -155,18 +155,29 @@ class AssistantCapabilityRegistry
         $normalizedQuery = mb_strtolower(trim($query));
         $normalizedGoal = mb_strtolower(trim((string) $goal));
         $sourceModule = mb_strtolower(trim((string) ($context['source_module'] ?? '')));
+        $sourceRoute = mb_strtolower(trim((string) ($context['source_route'] ?? '')));
+        $assistantPath = mb_strtolower(trim((string) ($context['ui_state']['assistant_path'] ?? '')));
 
         $bestMatch = null;
         $bestScore = 0;
 
         foreach ($this->all() as $capability) {
             $score = 0;
+            $capabilityId = (string) $capability['id'];
 
-            if ($sourceModule !== '' && str_contains($sourceModule, (string) $capability['id'])) {
+            if ($sourceModule !== '' && str_contains($sourceModule, $capabilityId)) {
                 $score += 5;
             }
 
-            if ($normalizedGoal !== '' && str_contains($normalizedGoal, (string) $capability['id'])) {
+            if ($this->routeMatchesCapability($sourceRoute, $capabilityId)) {
+                $score += 7;
+            }
+
+            if ($this->routeMatchesCapability($assistantPath, $capabilityId)) {
+                $score += 5;
+            }
+
+            if ($normalizedGoal !== '' && str_contains($normalizedGoal, $capabilityId)) {
                 $score += 4;
             }
 
@@ -183,6 +194,25 @@ class AssistantCapabilityRegistry
         }
 
         return $bestScore > 0 ? $bestMatch : null;
+    }
+
+    private function routeMatchesCapability(string $route, string $capabilityId): bool
+    {
+        if ($route === '') {
+            return false;
+        }
+
+        return match ($capabilityId) {
+            'projects' => str_contains($route, '/projects') && !str_contains($route, '/schedules'),
+            'contracts' => str_contains($route, '/contracts') && !str_contains($route, '/procurement'),
+            'reports' => str_contains($route, '/reports'),
+            'warehouse' => str_contains($route, '/warehouse'),
+            'payments' => str_contains($route, '/payments'),
+            'schedules' => str_contains($route, '/schedules'),
+            'procurement' => str_contains($route, '/procurement'),
+            'notifications' => str_contains($route, '/notifications'),
+            default => false,
+        };
     }
 
     private function makeCapability(

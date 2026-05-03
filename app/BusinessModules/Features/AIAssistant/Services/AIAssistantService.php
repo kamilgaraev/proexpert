@@ -89,6 +89,7 @@ class AIAssistantService
         }
 
         $conversation = $this->getOrCreateConversation($conversationId, $organizationId, $user);
+        $requestPayload = $this->mergeContinuationRequestPayload($query, $requestPayload, $conversation->context ?? []);
         $accessContext = $this->accessContextResolver->resolve($user, $organizationId);
         $taskPlan = $this->taskOrchestrator->plan($query, $requestPayload, $accessContext);
 
@@ -126,14 +127,10 @@ class AIAssistantService
         $currentIntent = $legacyContext['intent'] ?? null;
         $executedAction = null;
 
+        $conversationContext = array_merge($conversation->context ?? [], $this->buildLastRequestContext($query, $taskPlan));
+
         if ($currentIntent) {
-            $conversationContext = array_merge($conversation->context ?? [], [
-                'last_intent' => $currentIntent,
-                'last_task_type' => $taskPlan['task_type'],
-                'last_capability' => $taskPlan['capability']['id'] ?? null,
-                'last_request_context' => $taskPlan['request']['context'],
-                'last_access_context' => $taskPlan['access_context_public'],
-            ]);
+            $conversationContext['last_intent'] = $currentIntent;
 
             if ($this->isWriteIntent($currentIntent) && isset($legacyContext[$currentIntent])) {
                 $executedAction = [
@@ -143,10 +140,10 @@ class AIAssistantService
                 ];
                 $conversationContext['last_executed_action'] = $executedAction;
             }
-
-            $conversation->context = $conversationContext;
-            $conversation->save();
         }
+
+        $conversation->context = $conversationContext;
+        $conversation->save();
 
         $messages = $this->buildMessages($conversation, $legacyContext, $taskPlan);
 
@@ -466,6 +463,169 @@ class AIAssistantService
         return $this->conversationManager->createConversation($organizationId, $user);
     }
 
+    protected function mergeContinuationRequestPayload(
+        string $query,
+        array $requestPayload,
+        array $conversationContext
+    ): array {
+        $previousCapability = (string) ($conversationContext['last_capability'] ?? '');
+        $previousRequest = is_array($conversationContext['last_request'] ?? null)
+            ? $conversationContext['last_request']
+            : [];
+
+        if (!$this->shouldContinuePreviousRequest($query, $requestPayload, $previousCapability, $previousRequest)) {
+            return $requestPayload;
+        }
+
+        $payload = $requestPayload;
+        $currentContext = is_array($payload['context'] ?? null) ? $payload['context'] : [];
+        $previousContext = is_array($previousRequest['context'] ?? null) ? $previousRequest['context'] : [];
+
+        if ($this->isGenericAssistantSource($currentContext['source_module'] ?? null)) {
+            $currentContext['source_module'] = $previousContext['source_module'] ?? $previousCapability;
+        }
+
+        foreach (['source_route', 'period'] as $key) {
+            if (($currentContext[$key] ?? null) === null && array_key_exists($key, $previousContext)) {
+                $currentContext[$key] = $previousContext[$key];
+            }
+        }
+
+        if (empty($currentContext['entity_refs']) && !empty($previousContext['entity_refs'])) {
+            $currentContext['entity_refs'] = $previousContext['entity_refs'];
+        }
+
+        $currentContext['filters'] = is_array($currentContext['filters'] ?? null)
+            ? $currentContext['filters']
+            : (is_array($previousContext['filters'] ?? null) ? $previousContext['filters'] : []);
+        $currentContext['ui_state'] = is_array($currentContext['ui_state'] ?? null)
+            ? $currentContext['ui_state']
+            : [];
+
+        if (is_array($previousContext['ui_state'] ?? null)) {
+            $currentContext['ui_state'] = array_merge($previousContext['ui_state'], $currentContext['ui_state']);
+        }
+
+        $reportFocus = (string) ($conversationContext['last_report_focus'] ?? '');
+        if ($reportFocus !== '') {
+            $currentContext['ui_state']['assistant_report_focus'] = $reportFocus;
+        }
+
+        $payload['context'] = $currentContext;
+
+        if (empty($payload['desired_mode']) && !empty($conversationContext['last_task_type'])) {
+            $payload['desired_mode'] = $conversationContext['last_task_type'];
+        }
+
+        if (empty($payload['goal']) && !empty($previousRequest['goal'])) {
+            $payload['goal'] = $previousRequest['goal'];
+        }
+
+        return $payload;
+    }
+
+    protected function buildLastRequestContext(string $query, array $taskPlan): array
+    {
+        $capabilityId = $taskPlan['capability']['id'] ?? null;
+
+        return [
+            'last_task_type' => $taskPlan['task_type'],
+            'last_capability' => $capabilityId,
+            'last_request' => $taskPlan['request'],
+            'last_request_context' => $taskPlan['request']['context'],
+            'last_access_context' => $taskPlan['access_context_public'],
+            'last_report_focus' => $this->resolveReportFocus($query, $capabilityId, $taskPlan['request']['context'] ?? []),
+        ];
+    }
+
+    private function shouldContinuePreviousRequest(
+        string $query,
+        array $requestPayload,
+        string $previousCapability,
+        array $previousRequest
+    ): bool {
+        if (!in_array($previousCapability, ['reports', 'schedules'], true) || $previousRequest === []) {
+            return false;
+        }
+
+        $normalizedQuery = mb_strtolower(trim($query));
+        if ($this->looksLikeStandaloneRequest($normalizedQuery)) {
+            return false;
+        }
+
+        $context = is_array($requestPayload['context'] ?? null) ? $requestPayload['context'] : [];
+
+        if (!empty($context['period']) || !empty($context['entity_refs'])) {
+            return true;
+        }
+
+        if (preg_match('/\d{1,2}[.\/-]\d{1,2}[.\/-]\d{2,4}/u', $normalizedQuery) === 1) {
+            return true;
+        }
+
+        return str_contains($normalizedQuery, 'текущ') && str_contains($normalizedQuery, 'проект');
+    }
+
+    private function looksLikeStandaloneRequest(string $normalizedQuery): bool
+    {
+        if ($this->containsAnyText($normalizedQuery, [
+            'открой',
+            'перейди',
+            'найди',
+            'создай',
+            'измени',
+        ])) {
+            return true;
+        }
+
+        return $this->containsAnyText($normalizedQuery, [
+            'сделай',
+            'сформируй',
+        ]) && $this->containsAnyText($normalizedQuery, [
+            'отчет',
+            'график',
+            'закуп',
+            'договор',
+            'склад',
+            'платеж',
+        ]);
+    }
+
+    private function isGenericAssistantSource(mixed $sourceModule): bool
+    {
+        $sourceModule = mb_strtolower(trim((string) $sourceModule));
+
+        return $sourceModule === '' || $sourceModule === 'ai-assistant' || $sourceModule === 'assistant';
+    }
+
+    private function resolveReportFocus(string $query, mixed $capabilityId, array $context): ?string
+    {
+        $uiState = is_array($context['ui_state'] ?? null) ? $context['ui_state'] : [];
+        if (!empty($uiState['assistant_report_focus']) && is_string($uiState['assistant_report_focus'])) {
+            return $uiState['assistant_report_focus'];
+        }
+
+        $normalizedQuery = mb_strtolower($query);
+        if ($this->containsAnyText($normalizedQuery, ['график', 'срок', 'этап', 'работ'])) {
+            return 'schedules';
+        }
+
+        return is_string($capabilityId) && in_array($capabilityId, ['reports', 'schedules'], true)
+            ? $capabilityId
+            : null;
+    }
+
+    private function containsAnyText(string $haystack, array $needles): bool
+    {
+        foreach ($needles as $needle) {
+            if (is_string($needle) && $needle !== '' && str_contains($haystack, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     protected function assistantMessage(string $key, string $fallback, array $replace = []): string
     {
         try {
@@ -545,8 +705,10 @@ class AIAssistantService
                 'desired_mode' => $taskPlan['request']['desired_mode'] ?? null,
                 'allow_actions' => (bool) ($taskPlan['request']['allow_actions'] ?? false),
                 'source_module' => $taskPlan['request']['context']['source_module'] ?? null,
+                'source_route' => $taskPlan['request']['context']['source_route'] ?? null,
                 'entity_refs' => array_slice($taskPlan['request']['context']['entity_refs'] ?? [], 0, 3),
                 'period' => $taskPlan['request']['context']['period'] ?? null,
+                'report_focus' => $taskPlan['request']['context']['ui_state']['assistant_report_focus'] ?? null,
                 'filters_count' => is_array($taskPlan['request']['context']['filters'] ?? null)
                     ? count($taskPlan['request']['context']['filters'])
                     : 0,

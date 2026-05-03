@@ -25,6 +25,82 @@ class AssistantTaskOrchestratorTest extends TestCase
         $this->assertSame($expectedTaskType, $plan['task_type']);
     }
 
+    public function test_report_route_keeps_follow_up_on_reports_capability(): void
+    {
+        $orchestrator = $this->makeOrchestratorWithRealRegistry();
+
+        $plan = $orchestrator->plan('с 1.04.2026 по 01.05.2026 по текущему проекту', [
+            'context' => [
+                'source_module' => 'ai-assistant',
+                'source_route' => '/reports',
+                'entity_refs' => [
+                    [
+                        'type' => 'project',
+                        'id' => 56,
+                        'label' => 'Строительство склада Литер А',
+                    ],
+                ],
+            ],
+        ], [
+            'organization_id' => 15,
+            'permissions_flat' => ['reports.view', 'schedule-management.view', 'projects.view'],
+        ]);
+
+        $this->assertSame('reports', $plan['capability']['id'] ?? null);
+        $this->assertSame('/reports', $plan['request']['context']['source_route']);
+        $this->assertSame(['route' => '/reports'], $plan['navigation_target']);
+    }
+
+    public function test_nested_schedule_route_wins_over_project_route(): void
+    {
+        $orchestrator = $this->makeOrchestratorWithRealRegistry();
+
+        $plan = $orchestrator->plan('за текущий период', [
+            'context' => [
+                'source_route' => '/projects/56/schedules',
+                'entity_refs' => [
+                    [
+                        'type' => 'project',
+                        'id' => 56,
+                    ],
+                ],
+            ],
+        ], [
+            'organization_id' => 15,
+            'permissions_flat' => ['schedule-management.view', 'projects.view'],
+        ]);
+
+        $this->assertSame('schedules', $plan['capability']['id'] ?? null);
+        $this->assertSame(['route' => '/projects/56/schedules'], $plan['navigation_target']);
+    }
+
+    public function test_data_capability_is_not_high_confidence_without_tool_evidence(): void
+    {
+        $orchestrator = $this->makeOrchestratorWithRealRegistry();
+
+        $plan = $orchestrator->plan('сводка по отчетам', [
+            'context' => [
+                'source_route' => '/reports',
+            ],
+        ], [
+            'organization_id' => 15,
+            'permissions_flat' => ['reports.view'],
+        ]);
+
+        $withoutToolEvidence = $orchestrator->buildPayload($plan, 'Нет подтвержденных данных.');
+        $withToolEvidence = $orchestrator->buildPayload($plan, 'Отчет основан на данных графика.', [
+            'tool_evidence' => [
+                [
+                    'label' => 'get_schedule_snapshot',
+                    'value' => 'Инструмент выполнен',
+                ],
+            ],
+        ]);
+
+        $this->assertSame('medium', $withoutToolEvidence['confidence']);
+        $this->assertSame('high', $withToolEvidence['confidence']);
+    }
+
     public static function russianIntentProvider(): array
     {
         return [
@@ -51,5 +127,20 @@ class AssistantTaskOrchestratorTest extends TestCase
         ]);
 
         return new AssistantTaskOrchestrator($registry, $accessContextResolver);
+    }
+
+    private function makeOrchestratorWithRealRegistry(): AssistantTaskOrchestrator
+    {
+        $accessContextResolver = $this->createMock(AssistantAccessContextResolver::class);
+        $accessContextResolver->method('toPublicContext')->willReturn([
+            'organization_id' => 15,
+            'available_modules' => ['reports', 'schedules', 'projects'],
+            'permission_count' => 3,
+            'is_read_only' => true,
+            'allowed_action_types' => ['summary', 'find', 'analyze', 'navigate'],
+        ]);
+        $accessContextResolver->method('hasAnyPermission')->willReturn(true);
+
+        return new AssistantTaskOrchestrator(new AssistantCapabilityRegistry(), $accessContextResolver);
     }
 }
