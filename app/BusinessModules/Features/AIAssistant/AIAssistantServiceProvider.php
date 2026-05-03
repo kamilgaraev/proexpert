@@ -2,34 +2,33 @@
 
 namespace App\BusinessModules\Features\AIAssistant;
 
-use Illuminate\Support\ServiceProvider;
-use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
-use App\BusinessModules\Features\AIAssistant\Services\LLM\OpenAIProvider;
-use App\BusinessModules\Features\AIAssistant\Services\LLM\YandexGPTProvider;
-use App\BusinessModules\Features\AIAssistant\Services\LLM\DeepSeekProvider;
-use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchProjectsTool;
-use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchWarehouseTool;
-use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchMaterialsTool;
-use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchUsersTool;
-use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchContractorsTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\ApprovePaymentRequestTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\CreateScheduleTaskTool;
-use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\UpdateScheduleTaskStatusTool;
-use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SendProjectNotificationTool;
-use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
-use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
-use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateProfitabilityReportTool;
-use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateWorkCompletionReportTool;
-use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateMaterialMovementsReportTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateContractorSettlementsReportTool;
-use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateWarehouseStockReportTool;
-use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateTimeTrackingReportTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateContractPaymentsReportTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateMaterialMovementsReportTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateProfitabilityReportTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateProjectTimelinesReportTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateTimeTrackingReportTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateWarehouseStockReportTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateWorkCompletionReportTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\ReadOnly\GetContractSnapshotTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\ReadOnly\GetProcurementSnapshotTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\ReadOnly\GetProjectSnapshotTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\ReadOnly\GetScheduleSnapshotTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchContractorsTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchMaterialsTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchProjectsTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchUsersTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchWarehouseTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SendProjectNotificationTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\UpdateScheduleTaskStatusTool;
+use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantCapabilityCatalog;
+use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
+use App\BusinessModules\Features\AIAssistant\Services\LLM\DeepSeekProvider;
+use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
+use App\BusinessModules\Features\AIAssistant\Services\LLM\OpenAIProvider;
+use App\BusinessModules\Features\AIAssistant\Services\LLM\YandexGPTProvider;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\ProjectPulseFactSourceRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseContractFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseFinanceFactSource;
@@ -41,6 +40,7 @@ use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\Proje
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseSiteRequestFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseWarehouseFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseWorkFactSource;
+use Illuminate\Support\ServiceProvider;
 
 class AIAssistantServiceProvider extends ServiceProvider
 {
@@ -51,10 +51,12 @@ class AIAssistantServiceProvider extends ServiceProvider
         );
 
         // Динамический выбор LLM провайдера на основе конфигурации
+        $this->app->singleton(AssistantCapabilityCatalog::class);
+
         $this->app->singleton(LLMProviderInterface::class, function ($app) {
             $provider = config('ai-assistant.llm.provider', 'yandex');
-            
-            return match($provider) {
+
+            return match ($provider) {
                 'yandex' => $app->make(YandexGPTProvider::class),
                 'openai' => $app->make(OpenAIProvider::class),
                 'deepseek' => $app->make(DeepSeekProvider::class),
@@ -64,8 +66,8 @@ class AIAssistantServiceProvider extends ServiceProvider
 
         // Регистрация реестра инструментов
         $this->app->singleton(AIToolRegistry::class, function ($app) {
-            $registry = new AIToolRegistry();
-            
+            $registry = new AIToolRegistry;
+
             // Регистрируем инструменты
             $registry->registerTool($app->make(GenerateProfitabilityReportTool::class));
             $registry->registerTool($app->make(GenerateWorkCompletionReportTool::class));
@@ -79,7 +81,7 @@ class AIAssistantServiceProvider extends ServiceProvider
             $registry->registerTool($app->make(GetProcurementSnapshotTool::class));
             $registry->registerTool($app->make(GetContractSnapshotTool::class));
             $registry->registerTool($app->make(GetScheduleSnapshotTool::class));
-            
+
             // Phase 2: CRUD and Business Actions
             $registry->registerTool($app->make(SearchProjectsTool::class));
             $registry->registerTool($app->make(SearchWarehouseTool::class));
@@ -90,7 +92,7 @@ class AIAssistantServiceProvider extends ServiceProvider
             $registry->registerTool($app->make(CreateScheduleTaskTool::class));
             $registry->registerTool($app->make(UpdateScheduleTaskStatusTool::class));
             $registry->registerTool($app->make(SendProjectNotificationTool::class));
-            
+
             return $registry;
         });
 
@@ -113,7 +115,7 @@ class AIAssistantServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->loadMigrationsFrom(__DIR__.'/migrations');
-        
+
         $this->loadRoutesFrom(__DIR__.'/routes.php');
 
         if ($this->app->runningInConsole()) {
