@@ -62,6 +62,8 @@ class SupplierRequestService
                 );
             }
 
+            $this->ensureNoActiveDuplicate($purchaseRequest->id, $supplierParty->id);
+
             $supplierSnapshot = $this->supplierPartyService->snapshotForDocument($supplierParty);
 
             $supplierRequest = SupplierRequest::query()->create([
@@ -107,6 +109,33 @@ class SupplierRequestService
             );
 
             return $supplierRequest->load(['lines', 'supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest']);
+        });
+    }
+
+    /**
+     * @return array<int, SupplierRequest>
+     */
+    public function createMany(int $organizationId, array $data, ?int $actorId = null): array
+    {
+        return DB::transaction(function () use ($organizationId, $data, $actorId): array {
+            $supplierRequests = [];
+            $sendImmediately = (bool) ($data['send_immediately'] ?? true);
+
+            foreach ($data['suppliers'] as $supplierData) {
+                $supplierRequest = $this->create($organizationId, [
+                    'purchase_request_id' => $data['purchase_request_id'],
+                    'supplier_id' => $supplierData['supplier_id'] ?? null,
+                    'external_supplier' => $supplierData['external_supplier'] ?? null,
+                    'comment' => $data['comment'] ?? null,
+                    'metadata' => $data['metadata'] ?? null,
+                ], $actorId);
+
+                $supplierRequests[] = $sendImmediately
+                    ? $this->send($supplierRequest, $actorId)
+                    : $supplierRequest;
+            }
+
+            return $supplierRequests;
         });
     }
 
@@ -242,6 +271,24 @@ class SupplierRequestService
         } while (SupplierRequest::query()->where('public_token', $token)->exists());
 
         return $token;
+    }
+
+    private function ensureNoActiveDuplicate(int $purchaseRequestId, int $supplierPartyId): void
+    {
+        $exists = SupplierRequest::query()
+            ->where('purchase_request_id', $purchaseRequestId)
+            ->where('supplier_party_id', $supplierPartyId)
+            ->whereNotIn('status', [
+                SupplierRequestStatusEnum::CANCELLED->value,
+                SupplierRequestStatusEnum::EXPIRED->value,
+            ])
+            ->exists();
+
+        if ($exists) {
+            throw ValidationException::withMessages([
+                'supplier' => trans_message('procurement.supplier_requests.duplicate_active_supplier'),
+            ]);
+        }
     }
 
     private function supplierName(array $supplierSnapshot): ?string

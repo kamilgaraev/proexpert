@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\Procurement\Services;
 use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalDecisionEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalStatusEnum;
+use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
@@ -38,6 +39,37 @@ class SupplierProposalComparisonService
             ->orderBy('id')
             ->get();
 
+        return $this->comparisonPayload($proposals, [
+            'supplier_request_id' => $supplierRequest->id,
+        ], true);
+    }
+
+    public function comparisonForPurchaseRequest(PurchaseRequest $purchaseRequest): array
+    {
+        $proposals = SupplierProposal::query()
+            ->with(['lines', 'supplier', 'externalSupplierContact', 'supplierParty', 'currentVersion', 'supplierRequestVersion'])
+            ->where('organization_id', $purchaseRequest->organization_id)
+            ->whereHas('supplierRequest', static function ($query) use ($purchaseRequest): void {
+                $query->where('purchase_request_id', $purchaseRequest->id);
+            })
+            ->whereIn('status', [
+                SupplierProposalStatusEnum::SUBMITTED->value,
+                SupplierProposalStatusEnum::ACCEPTED->value,
+            ])
+            ->where(function ($query): void {
+                $query->whereNull('valid_until')
+                    ->orWhere('valid_until', '>=', now()->toDateString());
+            })
+            ->orderBy('id')
+            ->get();
+
+        return $this->comparisonPayload($proposals, [
+            'purchase_request_id' => $purchaseRequest->id,
+        ], false);
+    }
+
+    private function comparisonPayload($proposals, array $scope, bool $requireSameSupplierRequestVersion): array
+    {
         $rows = $proposals
             ->map(fn (SupplierProposal $proposal): array => $this->proposalComparisonRow($proposal))
             ->values()
@@ -47,7 +79,7 @@ class SupplierProposalComparisonService
         $baseRequestVersionId = $rows[0]['supplier_request_version_id'] ?? null;
 
         $rows = collect($rows)
-            ->map(function (array $row) use ($baseCurrency, $baseRequestVersionId): array {
+            ->map(function (array $row) use ($baseCurrency, $baseRequestVersionId, $requireSameSupplierRequestVersion): array {
                 $row['is_directly_comparable'] = $baseCurrency === null || $row['currency'] === $baseCurrency;
                 $row['comparison_warnings'] = [];
 
@@ -55,7 +87,11 @@ class SupplierProposalComparisonService
                     $row['comparison_warnings'][] = trans_message('procurement_enterprise.proposal_decisions.currency_not_comparable');
                 }
 
-                if ($baseRequestVersionId !== null && $row['supplier_request_version_id'] !== $baseRequestVersionId) {
+                if (
+                    $requireSameSupplierRequestVersion
+                    && $baseRequestVersionId !== null
+                    && $row['supplier_request_version_id'] !== $baseRequestVersionId
+                ) {
                     $row['is_directly_comparable'] = false;
                     $row['comparison_warnings'][] = trans_message('procurement_enterprise.proposal_decisions.request_version_not_comparable');
                 }
@@ -84,8 +120,7 @@ class SupplierProposalComparisonService
             ->values()
             ->all();
 
-        return [
-            'supplier_request_id' => $supplierRequest->id,
+        return array_merge($scope, [
             'supplier_request_version_ids' => collect($rows)
                 ->pluck('supplier_request_version_id')
                 ->filter()
@@ -94,7 +129,7 @@ class SupplierProposalComparisonService
                 ->all(),
             'cheapest_supplier_proposal_id' => $cheapestProposalId,
             'rows' => $rows,
-        ];
+        ]);
     }
 
     public function selectWinner(
@@ -208,6 +243,130 @@ class SupplierProposalComparisonService
         });
     }
 
+    public function selectWinnerForPurchaseRequest(
+        PurchaseRequest $purchaseRequest,
+        int $proposalId,
+        ?string $reason,
+        ?int $actorId
+    ): SupplierProposalDecision {
+        return DB::transaction(function () use ($purchaseRequest, $proposalId, $reason, $actorId): SupplierProposalDecision {
+            $lockedPurchaseRequest = PurchaseRequest::query()
+                ->whereKey($purchaseRequest->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $this->ensurePurchaseRequestDecisionCanBeChanged($lockedPurchaseRequest);
+
+            $proposal = $this->findComparableProposalForPurchaseRequest($lockedPurchaseRequest, $proposalId);
+            $supplierRequest = SupplierRequest::query()
+                ->where('organization_id', $lockedPurchaseRequest->organization_id)
+                ->whereKey($proposal->supplier_request_id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $decision = SupplierProposalDecision::query()
+                ->where('organization_id', $lockedPurchaseRequest->organization_id)
+                ->whereIn('supplier_request_id', static function ($query) use ($lockedPurchaseRequest): void {
+                    $query->select('id')
+                        ->from('supplier_requests')
+                        ->where('purchase_request_id', $lockedPurchaseRequest->id)
+                        ->whereNull('deleted_at');
+                })
+                ->lockForUpdate()
+                ->first();
+
+            $comparison = $this->comparisonForPurchaseRequest($lockedPurchaseRequest);
+            $cheapestProposalId = $comparison['cheapest_supplier_proposal_id'];
+            $selectedRow = collect($comparison['rows'])->firstWhere('id', $proposal->id);
+
+            if ($cheapestProposalId === null) {
+                throw ValidationException::withMessages([
+                    'proposal_id' => [trans_message('procurement.proposal_decisions.proposal_not_comparable')],
+                ]);
+            }
+
+            if (!is_array($selectedRow) || !($selectedRow['is_directly_comparable'] ?? true)) {
+                throw ValidationException::withMessages([
+                    'proposal_id' => [trans_message('procurement.proposal_decisions.proposal_not_comparable')],
+                ]);
+            }
+
+            $isLowestPriceSelected = $proposal->id === $cheapestProposalId;
+            $normalizedReason = $this->normalizeReason($reason);
+            $cheapestRow = collect($comparison['rows'])->firstWhere('id', $cheapestProposalId);
+            $cheapestProposalVersionId = is_array($cheapestRow)
+                ? ($cheapestRow['current_version_id'] ?? null)
+                : null;
+
+            if (!$isLowestPriceSelected && $normalizedReason === null) {
+                throw ValidationException::withMessages([
+                    'decision_reason' => [trans_message('procurement.proposal_decisions.reason_required')],
+                ]);
+            }
+
+            if ($decision === null) {
+                $decision = new SupplierProposalDecision([
+                    'supplier_request_id' => $supplierRequest->id,
+                ]);
+            }
+
+            $decision->fill([
+                'organization_id' => $lockedPurchaseRequest->organization_id,
+                'supplier_request_id' => $supplierRequest->id,
+                'winning_supplier_proposal_id' => $proposal->id,
+                'winning_supplier_proposal_version_id' => $proposal->currentVersion?->id,
+                'cheapest_supplier_proposal_id' => $cheapestProposalId,
+                'cheapest_supplier_proposal_version_id' => $cheapestProposalVersionId,
+                'status' => SupplierProposalDecisionEnum::SELECTED,
+                'is_lowest_price_selected' => $isLowestPriceSelected,
+                'decision_reason' => $normalizedReason,
+                'comparison_snapshot' => $comparison,
+                'selected_by' => $actorId,
+                'selected_at' => now(),
+            ]);
+
+            $risks = $this->approvalService->evaluateForDecision($decision, $proposal, $comparison);
+            $decision->status = $risks === []
+                ? SupplierProposalDecisionEnum::SELECTED
+                : SupplierProposalDecisionEnum::APPROVAL_REQUIRED;
+            $decision->save();
+
+            $snapshot = is_array($proposal->supplier_snapshot) ? $proposal->supplier_snapshot : [];
+
+            $this->auditService->record(
+                ProcurementAuditEventTypeEnum::SUPPLIER_PROPOSAL_SELECTED->value,
+                $decision,
+                (int) $decision->organization_id,
+                $actorId,
+                $proposal->supplier_party_id,
+                [
+                    'purchase_request_number' => $lockedPurchaseRequest->request_number,
+                    'supplier_request_number' => $supplierRequest->request_number,
+                    'selected_supplier_proposal_number' => $proposal->proposal_number,
+                    'selected_supplier_name' => $this->supplierName($proposal, $snapshot),
+                    'selected_total' => $this->comparisonTotal($proposal),
+                    'currency' => $proposal->currency,
+                    'cheapest_supplier_proposal_id' => $cheapestProposalId,
+                    'is_lowest_price_selected' => $isLowestPriceSelected,
+                    'decision_reason' => $normalizedReason,
+                    'status' => $decision->status->value,
+                    'approval_reason_codes' => collect($risks)->pluck('reason_code')->values()->all(),
+                ]
+            );
+
+            $this->approvalService->createPendingForDecision($decision, $risks, $actorId);
+
+            return $decision->fresh([
+                'winningProposal.currentVersion',
+                'cheapestProposal.currentVersion',
+                'winningProposalVersion',
+                'cheapestProposalVersion',
+                'selectedBy',
+                'approvals',
+            ]);
+        });
+    }
+
     public function hasSelectedDecisionForProposal(SupplierProposal $proposal): bool
     {
         if ($proposal->supplier_request_id === null) {
@@ -250,6 +409,62 @@ class SupplierProposalComparisonService
         }
 
         return $proposal;
+    }
+
+    private function findComparableProposalForPurchaseRequest(PurchaseRequest $purchaseRequest, int $proposalId): SupplierProposal
+    {
+        $proposal = SupplierProposal::query()
+            ->with('currentVersion')
+            ->where('organization_id', $purchaseRequest->organization_id)
+            ->where('id', $proposalId)
+            ->whereHas('supplierRequest', static function ($query) use ($purchaseRequest): void {
+                $query->where('purchase_request_id', $purchaseRequest->id);
+            })
+            ->lockForUpdate()
+            ->whereIn('status', [
+                SupplierProposalStatusEnum::SUBMITTED->value,
+                SupplierProposalStatusEnum::ACCEPTED->value,
+            ])
+            ->where(function ($query): void {
+                $query->whereNull('valid_until')
+                    ->orWhere('valid_until', '>=', now()->toDateString());
+            })
+            ->first();
+
+        if ($proposal === null) {
+            throw ValidationException::withMessages([
+                'proposal_id' => [trans_message('procurement.proposal_decisions.proposal_not_comparable')],
+            ]);
+        }
+
+        return $proposal;
+    }
+
+    private function ensurePurchaseRequestDecisionCanBeChanged(PurchaseRequest $purchaseRequest): void
+    {
+        $acceptedProposal = SupplierProposal::query()
+            ->where('organization_id', $purchaseRequest->organization_id)
+            ->whereHas('supplierRequest', static function ($query) use ($purchaseRequest): void {
+                $query->where('purchase_request_id', $purchaseRequest->id);
+            })
+            ->where('status', SupplierProposalStatusEnum::ACCEPTED->value)
+            ->lockForUpdate()
+            ->first();
+
+        $purchaseOrder = DB::table('purchase_orders')
+            ->join('supplier_proposals', 'supplier_proposals.id', '=', 'purchase_orders.accepted_supplier_proposal_id')
+            ->join('supplier_requests', 'supplier_requests.id', '=', 'supplier_proposals.supplier_request_id')
+            ->where('supplier_proposals.organization_id', $purchaseRequest->organization_id)
+            ->where('supplier_requests.purchase_request_id', $purchaseRequest->id)
+            ->whereNull('purchase_orders.deleted_at')
+            ->lockForUpdate()
+            ->first();
+
+        if ($acceptedProposal !== null || $purchaseOrder !== null) {
+            throw ValidationException::withMessages([
+                'proposal_id' => [trans_message('procurement.proposal_decisions.already_finalized')],
+            ]);
+        }
     }
 
     private function ensureDecisionCanBeChanged(SupplierRequest $supplierRequest): void

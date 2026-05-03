@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Procurement\Http\Controllers;
 
 use App\BusinessModules\Features\Procurement\Http\Requests\StoreSupplierRequestRequest;
+use App\BusinessModules\Features\Procurement\Http\Requests\StoreBulkSupplierRequestsRequest;
 use App\BusinessModules\Features\Procurement\Http\Resources\SupplierRequestResource;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Services\SupplierRequestService;
@@ -111,6 +112,31 @@ class SupplierRequestController extends Controller
             ]);
 
             return AdminResponse::error(trans_message('procurement.supplier_requests.store_error'), 500);
+        }
+    }
+
+    public function bulkStore(StoreBulkSupplierRequestsRequest $request): JsonResponse
+    {
+        try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $supplierRequests = $this->service->createMany($organizationId, $request->validated(), $request->user()?->id);
+
+            return AdminResponse::success(
+                SupplierRequestResource::collection(collect($supplierRequests)),
+                trans_message('procurement.supplier_requests.bulk_created'),
+                201
+            );
+        } catch (ValidationException $e) {
+            return AdminResponse::error($e->getMessage(), 422, $e->errors());
+        } catch (\Exception $e) {
+            Log::error('procurement.supplier_requests.bulk_store.error', [
+                'user_id' => auth()->id(),
+                'payload' => $request->all(),
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return AdminResponse::error(trans_message('procurement.supplier_requests.bulk_store_error'), 500);
         }
     }
 

@@ -36,6 +36,12 @@ Route::prefix('api/v1/admin/procurement')
             Route::get('/{id}', [PurchaseRequestController::class, 'show'])
                 ->middleware('authorize:procurement.purchase_requests.view')
                 ->name('show');
+            Route::get('/{id}/proposal-comparison', [SupplierProposalDecisionController::class, 'purchaseRequestComparison'])
+                ->middleware('authorize:procurement.proposal_decisions.view')
+                ->name('proposal_comparison');
+            Route::post('/{id}/proposal-decision', [SupplierProposalDecisionController::class, 'selectForPurchaseRequest'])
+                ->middleware('authorize:procurement.proposal_decisions.select')
+                ->name('proposal_decision');
             Route::post('/{id}/approve', [PurchaseRequestController::class, 'approve'])
                 ->middleware('authorize:procurement.purchase_requests.approve')
                 ->name('approve');
@@ -54,6 +60,9 @@ Route::prefix('api/v1/admin/procurement')
             Route::post('/', [SupplierRequestController::class, 'store'])
                 ->middleware('authorize:procurement.supplier_requests.create')
                 ->name('store');
+            Route::post('/bulk', [SupplierRequestController::class, 'bulkStore'])
+                ->middleware('authorize:procurement.supplier_requests.create')
+                ->name('bulk_store');
             Route::get('/{id}', [SupplierRequestController::class, 'show'])
                 ->middleware('authorize:procurement.supplier_requests.view')
                 ->name('show');
