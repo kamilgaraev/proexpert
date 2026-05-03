@@ -19,6 +19,10 @@ use Illuminate\Http\Request;
 use Illuminate\Support\MessageBag;
 use Illuminate\Validation\ValidationException;
 use PDOException;
+use Predis\Command\CommandInterface;
+use Predis\Connection\ConnectionException;
+use Predis\Connection\NodeConnectionInterface;
+use Predis\Connection\ParametersInterface;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
@@ -78,6 +82,24 @@ class GlitchTipReportPolicyTest extends TestCase
 
         self::assertFalse($policy->shouldCapture($exception, $request));
         self::assertTrue($policy->shouldCapture($exception));
+    }
+
+    public function test_skips_transient_queue_worker_redis_stream_end_errors(): void
+    {
+        $policy = new GlitchTipReportPolicy($this->config([
+            'capture' => [
+                'exceptions' => [
+                    ConnectionException::class => 'fatal',
+                ],
+            ],
+        ]));
+        $exception = new ConnectionException(
+            self::redisConnection(),
+            'Stream is already at the end [tcp://127.0.0.1:6379]'
+        );
+
+        self::assertFalse($policy->shouldCapture($exception));
+        self::assertTrue($policy->shouldCapture($exception, Request::create('/api/v1/admin/dashboard', 'GET')));
     }
 
     public static function reportableExceptions(): array
@@ -210,5 +232,95 @@ class GlitchTipReportPolicyTest extends TestCase
         };
 
         return new ValidationException($validator);
+    }
+
+    private static function redisConnection(): NodeConnectionInterface
+    {
+        return new class implements NodeConnectionInterface {
+            public function __toString()
+            {
+                return 'tcp://127.0.0.1:6379';
+            }
+
+            public function connect()
+            {
+            }
+
+            public function disconnect()
+            {
+            }
+
+            public function isConnected()
+            {
+                return false;
+            }
+
+            public function writeRequest(CommandInterface $command)
+            {
+            }
+
+            public function readResponse(CommandInterface $command)
+            {
+                return null;
+            }
+
+            public function executeCommand(CommandInterface $command)
+            {
+                return null;
+            }
+
+            public function getResource()
+            {
+                return null;
+            }
+
+            public function getParameters()
+            {
+                return new class implements ParametersInterface {
+                    public function __get($parameter)
+                    {
+                        return null;
+                    }
+
+                    public function __isset($parameter)
+                    {
+                        return false;
+                    }
+
+                    public function __toString()
+                    {
+                        return 'tcp://127.0.0.1:6379';
+                    }
+
+                    public function toArray()
+                    {
+                        return [];
+                    }
+                };
+            }
+
+            public function getClientId(): ?int
+            {
+                return null;
+            }
+
+            public function addConnectCommand(CommandInterface $command)
+            {
+            }
+
+            public function read()
+            {
+                return null;
+            }
+
+            public function write(string $buffer): void
+            {
+            }
+
+            public function hasDataToRead(): bool
+            {
+                return false;
+            }
+        };
     }
 }

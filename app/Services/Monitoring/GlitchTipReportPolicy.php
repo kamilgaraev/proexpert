@@ -7,6 +7,7 @@ namespace App\Services\Monitoring;
 use App\Exceptions\BusinessLogicException;
 use App\Support\LivewirePayloadExceptionClassifier;
 use Illuminate\Http\Request;
+use Predis\Connection\ConnectionException as PredisConnectionException;
 use Sentry\Severity;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Throwable;
@@ -25,6 +26,10 @@ class GlitchTipReportPolicy
         }
 
         if ((new LivewirePayloadExceptionClassifier())->isMalformedClientUpdate($exception, $request)) {
+            return false;
+        }
+
+        if ($this->isTransientQueueWorkerRedisError($exception, $request)) {
             return false;
         }
 
@@ -122,6 +127,13 @@ class GlitchTipReportPolicy
     private function isIgnoredHttpStatus(int $statusCode): bool
     {
         return in_array($statusCode, (array) ($this->reportingConfig['ignore']['http_statuses'] ?? []), true);
+    }
+
+    private function isTransientQueueWorkerRedisError(Throwable $exception, ?Request $request): bool
+    {
+        return $request === null
+            && $exception instanceof PredisConnectionException
+            && str_contains($exception->getMessage(), 'Stream is already at the end');
     }
 
     private function matchesConfiguredException(Throwable $exception, array $classes): bool
