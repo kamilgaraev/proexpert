@@ -538,7 +538,7 @@ class CodexDemoScreenshotSeeder extends Seeder
         $requests = [
             [
                 'title' => 'Доставка бетона на захватку 2',
-                'type' => 'material',
+                'type' => 'material_request',
                 'priority' => 'high',
                 'status' => 'in_progress',
                 'material' => 'MAT-DEMO-001',
@@ -547,7 +547,7 @@ class CodexDemoScreenshotSeeder extends Seeder
             ],
             [
                 'title' => 'Бригада арматурщиков на фундамент',
-                'type' => 'personnel',
+                'type' => 'personnel_request',
                 'priority' => 'medium',
                 'status' => 'approved',
                 'material' => null,
@@ -579,9 +579,9 @@ class CodexDemoScreenshotSeeder extends Seeder
                 'delivery_time_to' => '13:00:00',
                 'contact_person_name' => 'Илья Смирнов',
                 'contact_person_phone' => '+7 495 120-45-78',
-                'personnel_type' => $request['type'] === 'personnel' ? 'Арматурщик' : null,
-                'personnel_count' => $request['type'] === 'personnel' ? 8 : null,
-                'personnel_requirements' => $request['type'] === 'personnel' ? 'Опыт монолитных работ от 3 лет' : null,
+                'personnel_type' => $request['type'] === 'personnel_request' ? 'mason' : null,
+                'personnel_count' => $request['type'] === 'personnel_request' ? 8 : null,
+                'personnel_requirements' => $request['type'] === 'personnel_request' ? 'Опыт монолитных работ от 3 лет' : null,
                 'work_start_date' => $this->now->copy()->addDays(3)->toDateString(),
                 'work_end_date' => $this->now->copy()->addDays(12)->toDateString(),
                 'work_location' => 'Корпус 1, фундаментная плита',
