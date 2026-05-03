@@ -23,7 +23,9 @@ use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchUsersTo
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchWarehouseTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SendProjectNotificationTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\UpdateScheduleTaskStatusTool;
+use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentPlanner;
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantCapabilityCatalog;
+use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantPeriodResolver;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\DeepSeekProvider;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
@@ -52,6 +54,8 @@ class AIAssistantServiceProvider extends ServiceProvider
 
         // Динамический выбор LLM провайдера на основе конфигурации
         $this->app->singleton(AssistantCapabilityCatalog::class);
+        $this->app->singleton(AssistantPeriodResolver::class);
+        $this->app->singleton(AssistantAgentPlanner::class);
 
         $this->app->singleton(LLMProviderInterface::class, function ($app) {
             $provider = config('ai-assistant.llm.provider', 'yandex');
