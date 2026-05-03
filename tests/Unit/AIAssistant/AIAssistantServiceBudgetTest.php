@@ -42,6 +42,50 @@ class AIAssistantServiceBudgetTest extends TestCase
         $this->assertSame([], $tools);
     }
 
+    public function test_domain_capabilities_expose_snapshot_tools(): void
+    {
+        $toolRegistry = new AIToolRegistry();
+        foreach ([
+            'get_project_snapshot',
+            'get_procurement_snapshot',
+            'get_contract_snapshot',
+            'get_schedule_snapshot',
+        ] as $toolName) {
+            $toolRegistry->registerTool($this->makeTool($toolName));
+        }
+
+        $service = $this->makeService($toolRegistry);
+
+        $tools = $service->exposeResolveToolDefinitions([
+            'task_type' => 'analyze',
+            'capability' => [
+                'id' => 'procurement',
+            ],
+            'request' => [
+                'allow_actions' => false,
+                'context' => [],
+            ],
+        ]);
+
+        $toolNames = array_map(
+            static fn (array $definition): string => (string) $definition['function']['name'],
+            $tools
+        );
+
+        $this->assertContains('get_procurement_snapshot', $toolNames);
+        $this->assertContains('get_project_snapshot', $toolNames);
+    }
+
+    public function test_tool_registry_resolves_legacy_schedule_status_alias(): void
+    {
+        $registry = new AIToolRegistry();
+        $tool = $this->makeTool('update_schedule_task_status');
+
+        $registry->registerTool($tool);
+
+        $this->assertSame($tool, $registry->getTool('update_task_status'));
+    }
+
     public function test_prepare_messages_for_provider_preserves_latest_user_message_and_reduces_budget(): void
     {
         $service = $this->makeService(new AIToolRegistry());
@@ -77,6 +121,42 @@ class AIAssistantServiceBudgetTest extends TestCase
         $this->assertLessThanOrEqual(12000, $estimatedTokens);
         $this->assertSame('user', $preparedMessages[array_key_last($preparedMessages)]['role']);
         $this->assertStringContainsString('Найди аптечку', $preparedMessages[array_key_last($preparedMessages)]['content']);
+    }
+
+    public function test_structured_context_policy_is_single_utf8_path(): void
+    {
+        $service = $this->makeService(new AIToolRegistry());
+
+        $context = $service->exposeFormatStructuredContextForLLM([
+            'task_type' => 'summary',
+            'capability' => [
+                'label' => 'Графики',
+            ],
+            'request' => [
+                'goal' => null,
+                'desired_mode' => null,
+                'allow_actions' => false,
+                'context' => [
+                    'source_module' => 'schedules',
+                    'entity_refs' => [],
+                    'period' => null,
+                    'filters' => [],
+                    'ui_state' => [],
+                ],
+            ],
+            'access_context_public' => [
+                'available_modules' => ['schedules'],
+                'permission_count' => 1,
+                'is_read_only' => true,
+                'allowed_action_types' => ['summary', 'find', 'analyze', 'navigate'],
+            ],
+            'navigation_target' => null,
+            'next_actions' => [],
+        ]);
+
+        $this->assertStringContainsString('Опирайся только на подтвержденные данные', $context);
+        $this->assertSame(1, substr_count($context, '=== STRUCTURED WORKSPACE CONTEXT ==='));
+        $this->assertStringNotContainsString('Рџ', $context);
     }
 
     private function makeService(AIToolRegistry $toolRegistry): TestableAIAssistantService
@@ -158,5 +238,10 @@ class TestableAIAssistantService extends AIAssistantService
     public function exposeEstimateProviderInputTokens(array $messages, array $options): int
     {
         return $this->estimateProviderInputTokens($messages, $options);
+    }
+
+    public function exposeFormatStructuredContextForLLM(array $taskPlan): string
+    {
+        return $this->formatStructuredContextForLLM($taskPlan);
     }
 }

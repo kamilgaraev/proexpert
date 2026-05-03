@@ -11,7 +11,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantActionService;
 use App\BusinessModules\Features\AIAssistant\Services\ConversationManager;
 use App\Models\User;
 use App\Services\Logging\LoggingService;
-use Illuminate\Container\Container;
+use Illuminate\Support\Facades\Facade;
 use Mockery;
 use Mockery\Adapter\Phpunit\MockeryPHPUnitIntegration;
 use PHPUnit\Framework\TestCase;
@@ -25,25 +25,14 @@ class AssistantActionServiceTest extends TestCase
     {
         parent::setUp();
 
-        $container = new Container();
-        $container->instance('translator', new class {
-            public function get(string $key, array $replace = [], ?string $locale = null): string
-            {
-                return "translated:{$key}";
-            }
-
-            public function choice(string $key, int|float $number, array $replace = [], ?string $locale = null): string
-            {
-                return "translated:{$key}";
-            }
-        });
-
-        Container::setInstance($container);
+        Facade::clearResolvedInstances();
+        Facade::setFacadeApplication(null);
     }
 
     protected function tearDown(): void
     {
-        Container::setInstance(null);
+        Facade::clearResolvedInstances();
+        Facade::setFacadeApplication(null);
 
         parent::tearDown();
     }
@@ -103,18 +92,19 @@ class AssistantActionServiceTest extends TestCase
         $this->assertSame('project_id', strtolower(str_replace(' ', '_', $result['summary_items'][0]['label'])));
     }
 
-    public function test_execute_requires_explicit_confirmation_for_mutation_action(): void
+    public function test_execute_confirmation_error_uses_fallback_without_facade_root(): void
     {
         $service = $this->makeService();
         $user = Mockery::mock(User::class);
 
         $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Для выполнения действия требуется подтверждение.');
 
         $service->execute([
             'type' => 'act',
             'label' => 'Изменить статус',
             'requires_confirmation' => true,
-            'tool_name' => 'update_task_status',
+            'tool_name' => 'update_schedule_task_status',
             'arguments' => ['task_id' => 10],
             'confirmed' => false,
         ], 15, $user);

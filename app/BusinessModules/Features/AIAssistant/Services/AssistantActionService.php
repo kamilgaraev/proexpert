@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Services\Logging\LoggingService;
 use Illuminate\Auth\Access\AuthorizationException;
 use RuntimeException;
+use Throwable;
 
 class AssistantActionService
 {
@@ -229,7 +230,11 @@ class AssistantActionService
 
     private function assistantMessage(string $key, string $fallback, array $replace = []): string
     {
-        $translated = trans_message($key, $replace, 'ru');
+        try {
+            $translated = trans_message($key, $replace, 'ru');
+        } catch (Throwable) {
+            return $fallback;
+        }
 
         if (!is_string($translated)) {
             return $fallback;

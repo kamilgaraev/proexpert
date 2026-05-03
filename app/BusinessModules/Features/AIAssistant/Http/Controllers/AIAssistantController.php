@@ -152,7 +152,7 @@ class AIAssistantController extends Controller
         try {
             $conversationModel = $this->findConversationForRequest($request, $conversation, $user, $organizationId);
             if (!$conversationModel) {
-                return $this->errorResponse($request, $this->assistantMessage('ai_assistant.conversation_not_found', 'Р”РёР°Р»РѕРі РЅРµ РЅР°Р№РґРµРЅ РёР»Рё РЅРµРґРѕСЃС‚СѓРїРµРЅ.'), 403);
+                return $this->errorResponse($request, $this->assistantMessage('ai_assistant.conversation_not_found', 'Диалог не найден или недоступен.'), 403);
             }
 
             $messages = $this->conversationManager->getHistory($conversationModel, 50);
@@ -184,7 +184,7 @@ class AIAssistantController extends Controller
         try {
             $conversationModel = $this->findConversationForRequest($request, $conversation, $user, $organizationId);
             if (!$conversationModel) {
-                return $this->errorResponse($request, $this->assistantMessage('ai_assistant.conversation_not_found', 'Р”РёР°Р»РѕРі РЅРµ РЅР°Р№РґРµРЅ РёР»Рё РЅРµРґРѕСЃС‚СѓРїРµРЅ.'), 403);
+                return $this->errorResponse($request, $this->assistantMessage('ai_assistant.conversation_not_found', 'Диалог не найден или недоступен.'), 403);
             }
 
             $conversationModel->delete();
@@ -249,13 +249,13 @@ class AIAssistantController extends Controller
         $user = $request->user();
         $organizationId = $this->resolveOrganizationId($request, $user);
         if (!$user instanceof User || !$organizationId) {
-            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.unauthorized', 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ Р°РІС‚РѕСЂРёР·РѕРІР°РЅ.'), 401);
+            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.unauthorized', 'Пользователь не авторизован.'), 401);
         }
 
         try {
             $conversationId = $request->integer('conversation_id') ?: null;
             if ($conversationId !== null && !$this->findConversationForRequest($request, $conversationId, $user, $organizationId)) {
-                return $this->errorResponse($request, $this->assistantMessage('ai_assistant.conversation_not_found', 'Р”РёР°Р»РѕРі РЅРµ РЅР°Р№РґРµРЅ РёР»Рё РЅРµРґРѕСЃС‚СѓРїРµРЅ.'), 403);
+                return $this->errorResponse($request, $this->assistantMessage('ai_assistant.conversation_not_found', 'Диалог не найден или недоступен.'), 403);
             }
 
             $result = $this->assistantActionService->preview(
@@ -305,7 +305,7 @@ class AIAssistantController extends Controller
         $user = $request->user();
         $organizationId = $this->resolveOrganizationId($request, $user);
         if (!$user instanceof User || !$organizationId) {
-            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.unauthorized', 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ Р°РІС‚РѕСЂРёР·РѕРІР°РЅ.'), 401);
+            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.unauthorized', 'Пользователь не авторизован.'), 401);
         }
 
         try {
@@ -314,7 +314,7 @@ class AIAssistantController extends Controller
             if ($conversationId !== null) {
                 $conversation = $this->findConversationForRequest($request, $conversationId, $user, $organizationId);
                 if (!$conversation) {
-                    return $this->errorResponse($request, $this->assistantMessage('ai_assistant.conversation_not_found', 'Р”РёР°Р»РѕРі РЅРµ РЅР°Р№РґРµРЅ РёР»Рё РЅРµРґРѕСЃС‚СѓРїРµРЅ.'), 403);
+                    return $this->errorResponse($request, $this->assistantMessage('ai_assistant.conversation_not_found', 'Диалог не найден или недоступен.'), 403);
                 }
             }
 
@@ -390,7 +390,11 @@ class AIAssistantController extends Controller
 
     private function assistantMessage(string $key, string $fallback, array $replace = []): string
     {
-        $translated = trans_message($key, $replace, 'ru');
+        try {
+            $translated = trans_message($key, $replace, 'ru');
+        } catch (Throwable) {
+            return $fallback;
+        }
 
         if (!is_string($translated)) {
             return $fallback;

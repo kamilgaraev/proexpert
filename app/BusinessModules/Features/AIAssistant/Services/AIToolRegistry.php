@@ -8,6 +8,10 @@ use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
 
 class AIToolRegistry
 {
+    private const TOOL_ALIASES = [
+        'update_task_status' => 'update_schedule_task_status',
+    ];
+
     /**
      * @var AIToolInterface[]
      */
@@ -35,6 +39,8 @@ class AIToolRegistry
      */
     public function getTool(string $name): ?AIToolInterface
     {
+        $name = self::TOOL_ALIASES[$name] ?? $name;
+
         return $this->tools[$name] ?? null;
     }
 

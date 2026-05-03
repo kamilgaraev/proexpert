@@ -18,13 +18,17 @@ class AIPermissionChecker
         'generate_time_tracking_report' => ['reports.view', 'time_tracking.view', 'admin.reports.view'],
         'generate_contract_payments_report' => ['reports.view', 'admin.reports.view'],
         'generate_project_timelines_report' => ['reports.view', 'schedule-management.view', 'admin.reports.view'],
+        'get_project_snapshot' => ['projects.view'],
+        'get_procurement_snapshot' => ['procurement.view', 'procurement.purchase_requests.view'],
+        'get_contract_snapshot' => ['contracts.view', 'admin.contracts.view'],
+        'get_schedule_snapshot' => ['schedule-management.view'],
         'search_projects' => ['projects.view'],
         'search_warehouse' => ['warehouse.view'],
         'search_materials' => ['materials.view'],
         'search_users' => ['users.view'],
         'search_contractors' => ['admin.organizations.view', 'contractors.view'],
         'create_schedule_task' => ['schedule-management.edit'],
-        'update_task_status' => ['schedule-management.edit'],
+        'update_schedule_task_status' => ['schedule-management.edit'],
         'send_project_notification' => ['projects.edit'],
     ];
 
@@ -99,6 +103,8 @@ class AIPermissionChecker
     {
         unset($params);
 
+        $toolName = $this->normalizeToolName($toolName);
+
         $organizationId = (int) $user->current_organization_id;
 
         if (!$this->canUseAssistant($user, $organizationId)) {
@@ -124,7 +130,13 @@ class AIPermissionChecker
 
     public function isMutationTool(string $toolName): bool
     {
+        $toolName = $this->normalizeToolName($toolName);
+
         if (in_array($toolName, self::PRIVILEGED_TOOLS, true)) {
+            return true;
+        }
+
+        if (str_starts_with($toolName, 'generate_') && str_ends_with($toolName, '_report')) {
             return true;
         }
 
@@ -135,5 +147,13 @@ class AIPermissionChecker
         }
 
         return false;
+    }
+
+    private function normalizeToolName(string $toolName): string
+    {
+        return match ($toolName) {
+            'update_task_status' => 'update_schedule_task_status',
+            default => $toolName,
+        };
     }
 }

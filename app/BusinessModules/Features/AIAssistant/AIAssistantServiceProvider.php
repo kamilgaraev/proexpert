@@ -26,6 +26,10 @@ use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateWareh
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateTimeTrackingReportTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateContractPaymentsReportTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateProjectTimelinesReportTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\ReadOnly\GetContractSnapshotTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\ReadOnly\GetProcurementSnapshotTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\ReadOnly\GetProjectSnapshotTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\ReadOnly\GetScheduleSnapshotTool;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\ProjectPulseFactSourceRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseContractFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseFinanceFactSource;
@@ -71,6 +75,10 @@ class AIAssistantServiceProvider extends ServiceProvider
             $registry->registerTool($app->make(GenerateTimeTrackingReportTool::class));
             $registry->registerTool($app->make(GenerateContractPaymentsReportTool::class));
             $registry->registerTool($app->make(GenerateProjectTimelinesReportTool::class));
+            $registry->registerTool($app->make(GetProjectSnapshotTool::class));
+            $registry->registerTool($app->make(GetProcurementSnapshotTool::class));
+            $registry->registerTool($app->make(GetContractSnapshotTool::class));
+            $registry->registerTool($app->make(GetScheduleSnapshotTool::class));
             
             // Phase 2: CRUD and Business Actions
             $registry->registerTool($app->make(SearchProjectsTool::class));

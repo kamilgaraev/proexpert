@@ -12,7 +12,7 @@ class UpdateScheduleTaskStatusTool implements AIToolInterface
 {
     public function getName(): string
     {
-        return 'update_task_status';
+        return 'update_schedule_task_status';
     }
 
     public function getDescription(): string
