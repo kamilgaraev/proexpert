@@ -30,6 +30,15 @@ use App\DTOs\Project\ProjectDTO;
 
 class ProjectService
 {
+    private const ALLOWED_PROJECT_SORTS = [
+        'name' => 'name',
+        'status' => 'status',
+        'start_date' => 'start_date',
+        'end_date' => 'end_date',
+        'created_at' => 'created_at',
+        'updated_at' => 'updated_at',
+    ];
+
     protected ProjectRepositoryInterface $projectRepository;
     protected UserRepositoryInterface $userRepository;
     protected MaterialRepositoryInterface $materialRepository;
@@ -140,14 +149,11 @@ class ProjectService
         $sortBy = $request->query('sort_by', 'created_at');
         $sortDirection = $request->query('sort_direction', 'desc');
 
-        // TODO: Р”РѕР±Р°РІРёС‚СЊ РІР°Р»РёРґР°С†РёСЋ sortBy, С‡С‚РѕР±С‹ СЂР°Р·СЂРµС€РёС‚СЊ С‚РѕР»СЊРєРѕ РѕРїСЂРµРґРµР»РµРЅРЅС‹Рµ РїРѕР»СЏ
-        $allowedSortBy = ['name', 'status', 'start_date', 'end_date', 'created_at', 'updated_at'];
-        if (!in_array(strtolower($sortBy), $allowedSortBy)) {
-            $sortBy = 'created_at'; // РџРѕ СѓРјРѕР»С‡Р°РЅРёСЋ, РµСЃР»Рё РїРµСЂРµРґР°РЅРѕ РЅРµРІР°Р»РёРґРЅРѕРµ РїРѕР»Рµ
-        }
-        if (!in_array(strtolower($sortDirection), ['asc', 'desc'])) {
-            $sortDirection = 'desc';
-        }
+        $sortBy = is_string($sortBy) ? strtolower($sortBy) : 'created_at';
+        $sortDirection = is_string($sortDirection) ? strtolower($sortDirection) : 'desc';
+
+        $sortBy = self::ALLOWED_PROJECT_SORTS[$sortBy] ?? 'created_at';
+        $sortDirection = in_array($sortDirection, ['asc', 'desc'], true) ? $sortDirection : 'desc';
 
         return $this->projectRepository->getProjectsForOrganizationPaginated(
             $organizationId,

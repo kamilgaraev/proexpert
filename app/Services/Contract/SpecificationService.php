@@ -36,4 +36,9 @@ class SpecificationService
     {
         return $this->repository->paginate($perPage);
     }
+
+    public function paginateByProject(int $projectId, int $perPage = 15)
+    {
+        return $this->repository->paginateByProject($projectId, $perPage);
+    }
 } 

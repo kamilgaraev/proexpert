@@ -1,127 +1,163 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1\Landing;
 
 use App\Http\Controllers\Controller;
-// use App\Services\Organization\OrganizationService; // Удаляем зависимость
-use App\Http\Requests\Api\V1\Landing\Organization\StoreOrganizationRequest; // Уточняем путь и добавляем Store
+use App\Http\Requests\Api\V1\Landing\Organization\StoreOrganizationRequest;
 use App\Http\Requests\Api\V1\Landing\Organization\UpdateOrganizationRequest;
 use App\Http\Resources\Api\V1\Landing\Organization\OrganizationResource;
-use App\Http\Responses\Api\V1\ErrorResponse;
-use App\Http\Responses\Api\V1\NotFoundResponse;
-use App\Http\Responses\Api\V1\SuccessResourceResponse;
-// use App\Http\Resources\Api\V1\Landing\OrganizationSummaryResource; // Пока комментируем, ресурс нужно создать
+use App\Http\Resources\Api\V1\Landing\Organization\OrganizationSummaryResource;
+use App\Http\Responses\LandingResponse;
 use App\Models\Organization;
-use App\Models\User; // Добавляем User для type hinting
-use Illuminate\Contracts\Support\Responsable;
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection; // Для коллекции
-use Illuminate\Http\Resources\Json\JsonResource; // Возвращаемый тип для index
+use App\Models\User;
+use App\Services\Storage\OrgBucketService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
-use Illuminate\Http\Request; // Используем базовый Request для store пока
+
+use function trans_message;
 
 class OrganizationController extends Controller
 {
-    // Удаляем конструктор и свойство $organizationService
-    // public function __construct(OrganizationService $organizationService)
-    // {
-    //     $this->organizationService = $organizationService;
-    // }
-
-    /**
-     * Получить список организаций, к которым принадлежит пользователь.
-     * GET /api/v1/landing/user/organizations
-     * (Этот маршрут должен быть определен в users.php или здесь)
-     */
-    public function index(): AnonymousResourceCollection // Возвращаем коллекцию ресурсов
+    public function index(Request $request): JsonResponse
     {
-        /** @var User $user */
-        $user = Auth::user();
-        $organizations = $user->organizations()->get(); // Получаем все организации пользователя
+        try {
+            /** @var User|null $user */
+            $user = $request->user();
 
-        // TODO: Создать и использовать OrganizationSummaryResource
-        // return OrganizationSummaryResource::collection($organizations);
-        // Пока возвращаем стандартный ресурс
-        return OrganizationResource::collection($organizations);
-    }
+            if (!$user) {
+                return LandingResponse::error(
+                    trans_message('organization.access_denied'),
+                    Response::HTTP_FORBIDDEN
+                );
+            }
 
-     /**
-     * Создать новую организацию.
-     * POST /api/v1/landing/organizations
-     */
-    // public function store(StoreOrganizationRequest $request): Responsable // Используем базовый Request пока
-    public function store(Request $request): Responsable
-    {
-        /** @var User $user */
-        $user = Auth::user();
-        
-        // TODO: Добавить валидацию (создать StoreOrganizationRequest)
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-        ]);
+            $organizations = $user->organizations()->get();
 
-        $organization = Organization::create([
-            'name' => $validated['name'],
-            'owner_id' => $user->id,
-        ]);
-
-        // Настраиваем S3 для организации (папка создается автоматически при загрузке файлов)
-        app(\App\Services\Storage\OrgBucketService::class)->createBucket($organization);
-
-        // Привязываем пользователя к созданной организации (если не сделано через observer/event)
-        if (!$user->organizations()->where('organization_id', $organization->id)->exists()) {
-            $user->organizations()->attach($organization->id, [
-                'is_owner' => true,
-                'is_active' => true
+            return LandingResponse::success(
+                OrganizationSummaryResource::collection($organizations)->resolve($request),
+                trans_message('organization.list_loaded')
+            );
+        } catch (\Throwable $e) {
+            Log::error('landing.organization.index_failed', [
+                'user_id' => $request->user()?->id,
+                'error' => $e->getMessage(),
             ]);
-        }
-        $user->current_organization_id = $organization->id;
-        $user->save();
 
-        return new SuccessResourceResponse(
-            new OrganizationResource($organization->fresh()), // Ресурс как первый аргумент
-            statusCode: Response::HTTP_CREATED,
-            message: 'Organization created successfully'
-        );
+            return LandingResponse::error(
+                trans_message('organization.load_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
+        }
     }
 
-    /**
-     * Получить данные конкретной организации.
-     * GET /api/v1/landing/organizations/{organization}
-     */
-    public function show(Organization $organization): Responsable
+    public function store(StoreOrganizationRequest $request, OrgBucketService $bucketService): JsonResponse
     {
-        /** @var User $user */
-        $user = Auth::user();
-        // Проверяем, принадлежит ли пользователь к этой организации  
-        if (!$user->organizations()->where('organization_id', $organization->id)->exists()) {
-             // Или можно использовать Gate/Policy: Gate::authorize('view', $organization);
-            return new ErrorResponse('Access denied to this organization.', Response::HTTP_FORBIDDEN);
-        }
+        try {
+            /** @var User $user */
+            $user = $request->user();
+            $validated = $request->validated();
 
-        return new SuccessResourceResponse(new OrganizationResource($organization));
+            $organization = Organization::create($validated);
+            $bucketService->createBucket($organization);
+
+            $user->organizations()->syncWithoutDetaching([
+                $organization->id => [
+                    'is_owner' => true,
+                    'is_active' => true,
+                ],
+            ]);
+
+            $user->current_organization_id = $organization->id;
+            $user->save();
+
+            return LandingResponse::success(
+                new OrganizationResource($organization->fresh()),
+                trans_message('organization.created'),
+                Response::HTTP_CREATED
+            );
+        } catch (\Throwable $e) {
+            Log::error('landing.organization.store_failed', [
+                'user_id' => $request->user()?->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return LandingResponse::error(
+                trans_message('organization.create_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
+        }
     }
 
-    /**
-     * Обновить данные конкретной организации.
-     * PUT /api/v1/landing/organizations/{organization}
-     */
-    public function update(UpdateOrganizationRequest $request, Organization $organization): Responsable
+    public function show(Request $request): JsonResponse
     {
-        /** @var User $user */ // Добавляем подсказку типа
-        $user = Auth::user();
-        // TODO: Заменить на Gate::authorize('update', $organization);
-        if ($user->id !== $organization->owner_id) { // Используем $user->id
-             return new ErrorResponse('You do not have permission to update this organization.', Response::HTTP_FORBIDDEN);
+        try {
+            $organization = $this->currentOrganization($request);
+
+            if (!$organization) {
+                return LandingResponse::error(
+                    trans_message('organization.not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
+            }
+
+            return LandingResponse::success(
+                new OrganizationResource($organization),
+                trans_message('organization.loaded')
+            );
+        } catch (\Throwable $e) {
+            Log::error('landing.organization.show_failed', [
+                'user_id' => $request->user()?->id,
+                'organization_id' => $request->user()?->current_organization_id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return LandingResponse::error(
+                trans_message('organization.load_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
-
-        $organization->update($request->validated());
-
-        return new SuccessResourceResponse(
-            new OrganizationResource($organization), // Ресурс как первый аргумент
-            message: 'Organization updated successfully'
-        );
     }
-    
-    // Можно добавить метод destroy, если нужно удаление
-} 
+
+    public function update(UpdateOrganizationRequest $request): JsonResponse
+    {
+        try {
+            $organization = $this->currentOrganization($request);
+
+            if (!$organization) {
+                return LandingResponse::error(
+                    trans_message('organization.not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
+            }
+
+            $organization->update($request->validated());
+
+            return LandingResponse::success(
+                new OrganizationResource($organization->refresh()),
+                trans_message('organization.updated')
+            );
+        } catch (\Throwable $e) {
+            Log::error('landing.organization.update_failed', [
+                'user_id' => $request->user()?->id,
+                'organization_id' => $request->user()?->current_organization_id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return LandingResponse::error(
+                trans_message('organization.update_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
+        }
+    }
+
+    private function currentOrganization(Request $request): ?Organization
+    {
+        $organization = $request->user()?->currentOrganization;
+
+        return $organization instanceof Organization ? $organization : null;
+    }
+}

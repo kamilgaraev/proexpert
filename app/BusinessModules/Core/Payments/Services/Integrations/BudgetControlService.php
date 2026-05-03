@@ -2,62 +2,88 @@
 
 namespace App\BusinessModules\Core\Payments\Services\Integrations;
 
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\Models\Estimate;
 use Illuminate\Support\Facades\Log;
 
 class BudgetControlService
 {
-    /**
-     * Check if the payment fits within the budget
-     * This is a mock implementation as the BudgetEstimates module interface is not fully defined
-     */
     public function checkBudget(PaymentDocument $document): array
     {
-        if (!$document->project_id) {
-            return ['allowed' => true, 'reason' => 'No project assigned'];
+        if (!$document->project_id || !$document->estimate_id) {
+            return ['allowed' => true, 'reason' => 'No estimate assigned'];
         }
 
-        // In a real implementation, we would query the BudgetEstimates module
-        // $budget = BudgetEstimates::getForProject($document->project_id);
-        // $available = $budget->getAvailableAmount($document->cost_item_id);
+        $estimate = Estimate::query()
+            ->where('id', $document->estimate_id)
+            ->where('project_id', $document->project_id)
+            ->where('organization_id', $document->organization_id)
+            ->first();
 
-        // Mock logic
-        $isOverBudget = false; // Default safe assumption
-        
-        if ($isOverBudget) {
+        if (!$estimate || (float) $estimate->total_amount <= 0) {
+            return ['allowed' => true, 'reason' => 'No approved budget amount'];
+        }
+
+        $committedStatuses = [
+            PaymentDocumentStatus::APPROVED->value,
+            PaymentDocumentStatus::SCHEDULED->value,
+            PaymentDocumentStatus::PAID->value,
+            PaymentDocumentStatus::PARTIALLY_PAID->value,
+        ];
+
+        $committedQuery = PaymentDocument::query()
+            ->where('organization_id', $document->organization_id)
+            ->where('project_id', $document->project_id)
+            ->where('estimate_id', $document->estimate_id)
+            ->whereIn('status', $committedStatuses);
+
+        if ($document->exists) {
+            $committedQuery->whereKeyNot($document->getKey());
+        }
+
+        $currentCommitted = (float) $committedQuery->sum('amount');
+        $requestedAmount = (float) $document->amount;
+        $budgetLimit = (float) $estimate->total_amount;
+        $projectedAmount = $currentCommitted + $requestedAmount;
+
+        if ($projectedAmount > $budgetLimit) {
             return [
                 'allowed' => false,
-                'reason' => 'Exceeds budget limit for Cost Item X',
-                'limit' => 100000,
-                'current' => 120000
+                'reason' => trans_message('payments.validation.budget_exceeded'),
+                'limit' => $budgetLimit,
+                'current' => $currentCommitted,
+                'requested' => $requestedAmount,
+                'projected' => $projectedAmount,
             ];
         }
 
-        return ['allowed' => true];
+        return [
+            'allowed' => true,
+            'limit' => $budgetLimit,
+            'current' => $currentCommitted,
+            'requested' => $requestedAmount,
+            'projected' => $projectedAmount,
+        ];
     }
 
-    /**
-     * Validate payment against budget rules before approval
-     * @throws \DomainException
-     */
     public function validateForApproval(PaymentDocument $document): void
     {
         $check = $this->checkBudget($document);
 
         if (!$check['allowed']) {
-            // Check if strict mode is enabled in settings
-            // $strict = config('payments.budget_control_strict', true);
-            $strict = true; 
+            $strict = (bool) config('payments.budget_control_strict', true);
 
             if ($strict) {
-                throw new \DomainException("Budget violation: {$check['reason']}");
-            } else {
-                Log::warning('payment_document.budget_warning', [
-                    'document_id' => $document->id,
-                    'reason' => $check['reason']
-                ]);
+                throw new \DomainException((string) $check['reason']);
             }
+
+            Log::warning('payment_document.budget_warning', [
+                'document_id' => $document->id,
+                'reason' => $check['reason'],
+                'limit' => $check['limit'] ?? null,
+                'projected' => $check['projected'] ?? null,
+            ]);
         }
     }
 }
-

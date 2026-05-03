@@ -11,6 +11,18 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 
 class LogViewingService
 {
+    private const ALLOWED_WORK_LOG_SORTS = [
+        'created_at' => 'created_at',
+        'updated_at' => 'updated_at',
+        'completion_date' => 'completion_date',
+        'project_id' => 'project_id',
+        'work_type_id' => 'work_type_id',
+        'user_id' => 'user_id',
+        'quantity' => 'quantity',
+        'unit_price' => 'unit_price',
+        'total_price' => 'total_price',
+    ];
+
     protected WorkCompletionLogRepositoryInterface $workLogRepo;
 
     public function __construct(
@@ -65,10 +77,14 @@ class LogViewingService
 
         // Параметры пагинации и сортировки
         $params['perPage'] = (int)$request->query('per_page', 15);
-        $params['sortBy'] = $request->query('sort_by', 'created_at'); // По умолчанию по дате создания
-        $params['sortDirection'] = $request->query('sort_direction', 'desc');
+        $sortBy = $request->query('sort_by', 'created_at');
+        $sortDirection = $request->query('sort_direction', 'desc');
 
-        // TODO: Валидация sortBy и sortDirection
+        $sortBy = is_string($sortBy) ? strtolower($sortBy) : 'created_at';
+        $sortDirection = is_string($sortDirection) ? strtolower($sortDirection) : 'desc';
+
+        $params['sortBy'] = self::ALLOWED_WORK_LOG_SORTS[$sortBy] ?? 'created_at';
+        $params['sortDirection'] = in_array($sortDirection, ['asc', 'desc'], true) ? $sortDirection : 'desc';
 
         return $params;
     }

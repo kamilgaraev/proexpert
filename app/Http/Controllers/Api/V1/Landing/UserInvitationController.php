@@ -1,87 +1,87 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1\Landing;
 
+use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
-use App\Services\User\InvitationService;
-use Illuminate\Support\Facades\Auth;
+use App\Http\Resources\Api\V1\Landing\UserInvitationResource;
+use App\Http\Responses\LandingResponse;
 use App\Models\UserInvitation;
+use App\Services\UserInvitationService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 
 class UserInvitationController extends Controller
 {
-    protected InvitationService $invitationService;
-
-    public function __construct(InvitationService $invitationService)
-    {
-        $this->invitationService = $invitationService;
+    public function __construct(
+        private readonly UserInvitationService $invitationService
+    ) {
     }
 
-    /**
-     * Display a listing of the resource.
-     */
-    public function index()
+    public function index(): JsonResponse
     {
-        $user = Auth::user();
-
-        $organizationId = $user->current_organization_id;
+        $organizationId = Auth::user()?->current_organization_id;
 
         if (!$organizationId) {
-            return response()->json(['success' => true, 'data' => []]);
+            return LandingResponse::success([]);
         }
 
-        $invitations = \App\Models\UserInvitation::where('organization_id', $organizationId)
+        $invitations = UserInvitation::where('organization_id', $organizationId)
             ->with(['invitedBy', 'acceptedBy', 'organization'])
             ->latest('created_at')
             ->get();
 
-        return response()->json([
-            'success' => true,
-            'data'    => \App\Http\Resources\Api\V1\Landing\UserInvitationResource::collection($invitations),
-        ]);
+        return LandingResponse::success(UserInvitationResource::collection($invitations));
     }
 
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
-    }
-
-    /**
-     * Store a newly created resource in storage.
-     */
-    public function store(Request $request)
+    public function store(Request $request): JsonResponse
     {
         $data = $request->validate([
             'email' => 'required|email',
             'name' => 'required|string|max:255',
-            'roles' => 'array',
-            'roles.*' => 'string',
+            'role_slugs' => 'array',
+            'role_slugs.*' => 'string',
+            'metadata' => 'array',
         ]);
 
         $creator = Auth::user();
-        $invitation = $this->invitationService->invite(
-            $data['email'],
-            $data['name'],
-            $creator,
-            $data['roles'] ?? []
-        );
+        $organizationId = $creator?->current_organization_id;
 
-        return response()->json(['success'=>true,'data'=>$invitation]);
+        if (!$creator || !$organizationId) {
+            return LandingResponse::error(trans_message('user_invitations.errors.organization_required'), 400);
+        }
+
+        try {
+            $invitation = $this->invitationService->createInvitation(
+                [
+                    'email' => $data['email'],
+                    'name' => $data['name'],
+                    'role_slugs' => $data['role_slugs'] ?? [],
+                    'metadata' => $data['metadata'] ?? null,
+                ],
+                (int) $organizationId,
+                $creator
+            );
+
+            return LandingResponse::success(
+                new UserInvitationResource($invitation->fresh(['invitedBy', 'acceptedBy', 'organization'])),
+                trans_message('user_invitations.messages.created'),
+                201
+            );
+        } catch (BusinessLogicException $e) {
+            return LandingResponse::error($e->getMessage(), 422);
+        }
     }
 
-    /**
-     * Display the specified resource.
-     */
-    public function show(int $invitationId)
+    public function show(int $invitationId): JsonResponse
     {
-        $user = Auth::user();
-        $organizationId = $user->current_organization_id;
+        $organizationId = Auth::user()?->current_organization_id;
 
         if (!$organizationId) {
-            return response()->json(['success' => false, 'message' => 'Не определён контекст организации'], 400);
+            return LandingResponse::error(trans_message('user_invitations.errors.organization_required'), 400);
         }
 
         $invitation = UserInvitation::where('id', $invitationId)
@@ -90,94 +90,101 @@ class UserInvitationController extends Controller
             ->first();
 
         if (!$invitation) {
-            return response()->json(['success' => false, 'message' => 'Приглашение не найдено'], 404);
+            return LandingResponse::error(trans_message('user_invitations.errors.not_found'), 404);
         }
 
-        return response()->json([
-            'success' => true,
-            'data' => new \App\Http\Resources\Api\V1\Landing\UserInvitationResource($invitation),
-        ]);
+        return LandingResponse::success(new UserInvitationResource($invitation));
     }
 
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(string $id)
+    public function destroy(int $invitationId): JsonResponse
     {
-        //
-    }
-
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(Request $request, string $id)
-    {
-        //
-    }
-
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(int $invitationId)
-    {
-        $user = Auth::user();
-        $organizationId = $user->current_organization_id;
+        $organizationId = Auth::user()?->current_organization_id;
 
         if (!$organizationId) {
-            return response()->json(['success' => false, 'message' => 'Не определён контекст организации'], 400);
+            return LandingResponse::error(trans_message('user_invitations.errors.organization_required'), 400);
         }
 
-        $invitation = UserInvitation::where('id', $invitationId)
-            ->where('organization_id', $organizationId)
+        try {
+            $this->invitationService->cancelInvitation($invitationId, (int) $organizationId);
+
+            return LandingResponse::success(null, trans_message('user_invitations.messages.cancelled'));
+        } catch (BusinessLogicException $e) {
+            return LandingResponse::error($e->getMessage(), 422);
+        }
+    }
+
+    public function resend(Request $request, int $invitationId): JsonResponse
+    {
+        $organizationId = Auth::user()?->current_organization_id;
+
+        if (!$organizationId) {
+            return LandingResponse::error(trans_message('user_invitations.errors.organization_required'), 400);
+        }
+
+        try {
+            $invitation = $this->invitationService->resendInvitation($invitationId, (int) $organizationId);
+
+            return LandingResponse::success(
+                new UserInvitationResource($invitation->fresh(['invitedBy', 'acceptedBy', 'organization'])),
+                trans_message('user_invitations.messages.resent')
+            );
+        } catch (BusinessLogicException $e) {
+            return LandingResponse::error($e->getMessage(), 422);
+        }
+    }
+
+    public function stats(Request $request): JsonResponse
+    {
+        $organizationId = Auth::user()?->current_organization_id;
+
+        if (!$organizationId) {
+            return LandingResponse::error(trans_message('user_invitations.errors.organization_required'), 400);
+        }
+
+        return LandingResponse::success($this->invitationService->getInvitationStats((int) $organizationId));
+    }
+
+    public function getByToken(string $token): JsonResponse
+    {
+        $invitation = UserInvitation::where('token', $token)
+            ->with(['organization'])
             ->first();
 
         if (!$invitation) {
-            return response()->json(['success' => false, 'message' => 'Приглашение не найдено'], 404);
+            return LandingResponse::error(trans_message('user_invitations.errors.not_found'), 404);
         }
 
-        $invitation->delete();
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Приглашение удалено'
+        return LandingResponse::success([
+            'email' => $invitation->email,
+            'name' => $invitation->name,
+            'organization_name' => $invitation->organization?->name,
+            'role_names' => $invitation->role_names,
+            'status' => $invitation->status->value,
+            'status_text' => $invitation->status_text,
+            'expires_at' => optional($invitation->expires_at)->toIso8601String(),
+            'can_be_accepted' => $invitation->canBeAccepted(),
+            'is_expired' => $invitation->isExpired(),
         ]);
     }
 
-    public function resend(Request $request, int $invitationId)
+    public function accept(Request $request, string $token): JsonResponse
     {
-        $user = Auth::user();
-        $organizationId = $user->current_organization_id;
-
-        if (!$organizationId) {
-            return response()->json(['success' => false, 'message' => 'Не определён контекст организации'], 400);
-        }
-
-        $invitation = UserInvitation::where('id', $invitationId)
-            ->where('organization_id', $organizationId)
-            ->firstOrFail();
-
-        $this->invitationService->resend($invitation);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Приглашение отправлено повторно'
+        $data = $request->validate([
+            'password' => 'required|string|min:8|confirmed',
         ]);
-    }
 
-    public function stats(Request $request)
-    {
-        $user = Auth::user();
-        $organizationId = $user->current_organization_id;
+        try {
+            $user = $this->invitationService->acceptInvitation($token, [
+                'password' => $data['password'],
+            ]);
 
-        if (!$organizationId) {
-            return response()->json(['success' => false, 'message' => 'Не определён контекст организации'], 400);
+            return LandingResponse::success([
+                'user_id' => $user->id,
+                'email' => $user->email,
+                'name' => $user->name,
+            ], trans_message('user_invitations.messages.accepted'));
+        } catch (BusinessLogicException $e) {
+            return LandingResponse::error($e->getMessage(), 422);
         }
-
-        $stats = $this->invitationService->getInvitationStats($organizationId);
-
-        return response()->json([
-            'success' => true,
-            'data' => $stats,
-        ]);
     }
 }

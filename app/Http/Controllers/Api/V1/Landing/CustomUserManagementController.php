@@ -13,6 +13,7 @@ use App\Repositories\UserRepository;
 use App\Services\Billing\SubscriptionLimitsService;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
+use App\Models\User;
 
 /**
  * Контроллер для управления пользователями с кастомными ролями
@@ -243,13 +244,14 @@ class CustomUserManagementController extends Controller
                 ], 403);
             }
 
-            // Обновляем роли (пока используем простую логику)
-            // TODO: Реализовать метод updateUserRoles в CustomRoleService
             $authContext = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
-            foreach ($data['custom_role_ids'] as $roleId) {
-                $role = \App\Domain\Authorization\Models\OrganizationCustomRole::findOrFail($roleId);
-                $this->customRoleService->assignRoleToUser($role, $user, $authContext);
-            }
+            $actor = $request->user();
+            $this->customRoleService->syncUserRoles(
+                $user,
+                $data['custom_role_ids'],
+                $authContext,
+                $actor instanceof User ? $actor : null
+            );
 
             return response()->json([
                 'success' => true,
@@ -346,7 +348,13 @@ class CustomUserManagementController extends Controller
             }
             
             $authContext = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
-            $this->authService->revokeRole($user, $role->slug, $authContext);
+            $revokedBy = $request->user();
+            $this->authService->revokeRole(
+                $user,
+                $role->slug,
+                $authContext,
+                $revokedBy instanceof User ? $revokedBy : null
+            );
 
             return response()->json([
                 'success' => true,

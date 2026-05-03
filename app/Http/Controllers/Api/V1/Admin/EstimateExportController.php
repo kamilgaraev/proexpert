@@ -5,11 +5,14 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\OfficialFormsExportService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\EstimateExportService;
+use App\Models\ContractPerformanceAct;
 use App\Models\Estimate;
 use App\Models\ConstructionJournal;
+use Exception;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 use App\Http\Responses\AdminResponse;
@@ -277,19 +280,25 @@ class EstimateExportController extends Controller
         $validated = $request->validate([
             'date_from' => 'required|date',
             'date_to' => 'required|date|after_or_equal:date_from',
-            'estimate_id' => 'nullable|exists:estimates,id',
+            'estimate_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('estimates', 'id')
+                    ->where('project_id', $projectId)
+                    ->where('organization_id', $organizationId),
+            ],
         ]);
 
         $from = Carbon::parse($validated['date_from']);
         $to = Carbon::parse($validated['date_to']);
 
-        // Если указан estimate_id, фильтруем записи журнала
-        if (isset($validated['estimate_id'])) {
-            // TODO: Добавить фильтрацию по estimate_id в экспорт
-        }
-
         try {
-            $path = $this->exportService->exportKS6ToPdf($journal, $from, $to);
+            $path = $this->exportService->exportKS6ToPdf(
+                $journal,
+                $from,
+                $to,
+                isset($validated['estimate_id']) ? (int) $validated['estimate_id'] : null
+            );
             $url = $this->exportService->getFileService()->temporaryUrl($path, 15);
 
             return AdminResponse::success(['url' => $url]);
@@ -324,7 +333,13 @@ class EstimateExportController extends Controller
         $validated = $request->validate([
             'date_from' => 'required|date',
             'date_to' => 'required|date|after_or_equal:date_from',
-            'estimate_id' => 'nullable|exists:estimates,id',
+            'estimate_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('estimates', 'id')
+                    ->where('project_id', $projectId)
+                    ->where('organization_id', $organizationId),
+            ],
             'include_volumes' => 'boolean',
             'include_workers' => 'boolean',
             'include_equipment' => 'boolean',
@@ -340,9 +355,8 @@ class EstimateExportController extends Controller
             'include_workers' => $validated['include_workers'] ?? true,
         ];
 
-        // Если указан estimate_id, фильтруем записи журнала
         if (isset($validated['estimate_id'])) {
-            // TODO: Добавить фильтрацию по estimate_id в экспорт
+            $options['estimate_id'] = (int) $validated['estimate_id'];
         }
 
         try {
@@ -382,4 +396,3 @@ class EstimateExportController extends Controller
         }
     }
 }
-

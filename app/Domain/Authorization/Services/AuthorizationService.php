@@ -11,7 +11,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 
 /**
- * Главный сервис авторизации
+ * Р“Р»Р°РІРЅС‹Р№ СЃРµСЂРІРёСЃ Р°РІС‚РѕСЂРёР·Р°С†РёРё
  */
 class AuthorizationService
 {
@@ -30,7 +30,7 @@ class AuthorizationService
     }
 
     /**
-     * Проверить, есть ли у пользователя право
+     * РџСЂРѕРІРµСЂРёС‚СЊ, РµСЃС‚СЊ Р»Рё Сѓ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ РїСЂР°РІРѕ
      */
     public function can(User $user, string $permission, ?array $context = null): bool
     {
@@ -82,7 +82,7 @@ class AuthorizationService
     }
 
     /**
-     * Проверить, есть ли у пользователя роль
+     * РџСЂРѕРІРµСЂРёС‚СЊ, РµСЃС‚СЊ Р»Рё Сѓ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ СЂРѕР»СЊ
      */
     public function hasRole(User $user, string $roleSlug, ?int $contextId = null): bool
     {
@@ -96,7 +96,7 @@ class AuthorizationService
     }
 
     /**
-     * Получить все роли пользователя в контексте
+     * РџРѕР»СѓС‡РёС‚СЊ РІСЃРµ СЂРѕР»Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ РІ РєРѕРЅС‚РµРєСЃС‚Рµ
      */
     public function getUserRoles(User $user, ?AuthorizationContext $context = null): Collection
     {
@@ -110,8 +110,8 @@ class AuthorizationService
             if ($context) {
                 $contextIds = $this->getContextHierarchy($context)->pluck('id');
                 
-                // Для проектных контекстов также добавляем все проектные контексты организации
-                // (роли могут быть назначены в разных проектных контекстах)
+                // Р”Р»СЏ РїСЂРѕРµРєС‚РЅС‹С… РєРѕРЅС‚РµРєСЃС‚РѕРІ С‚Р°РєР¶Рµ РґРѕР±Р°РІР»СЏРµРј РІСЃРµ РїСЂРѕРµРєС‚РЅС‹Рµ РєРѕРЅС‚РµРєСЃС‚С‹ РѕСЂРіР°РЅРёР·Р°С†РёРё
+                // (СЂРѕР»Рё РјРѕРіСѓС‚ Р±С‹С‚СЊ РЅР°Р·РЅР°С‡РµРЅС‹ РІ СЂР°Р·РЅС‹С… РїСЂРѕРµРєС‚РЅС‹С… РєРѕРЅС‚РµРєСЃС‚Р°С…)
                 if ($context->type === AuthorizationContext::TYPE_PROJECT && $context->parent_context_id) {
                     try {
                         $orgContext = AuthorizationContext::find($context->parent_context_id);
@@ -122,7 +122,7 @@ class AuthorizationService
                             $contextIds = $contextIds->merge($projectContexts)->unique();
                         }
                     } catch (\Exception $e) {
-                        // Игнорируем ошибки при поиске контекстов - используем только иерархию
+                        // РРіРЅРѕСЂРёСЂСѓРµРј РѕС€РёР±РєРё РїСЂРё РїРѕРёСЃРєРµ РєРѕРЅС‚РµРєСЃС‚РѕРІ - РёСЃРїРѕР»СЊР·СѓРµРј С‚РѕР»СЊРєРѕ РёРµСЂР°СЂС…РёСЋ
                     }
                 }
                 
@@ -134,7 +134,7 @@ class AuthorizationService
     }
 
     /**
-     * Получить все права пользователя (плоский список)
+     * РџРѕР»СѓС‡РёС‚СЊ РІСЃРµ РїСЂР°РІР° РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ (РїР»РѕСЃРєРёР№ СЃРїРёСЃРѕРє)
      */
     public function getUserPermissions(User $user, ?AuthorizationContext $context = null): array
     {
@@ -151,7 +151,7 @@ class AuthorizationService
     }
 
     /**
-     * Получить структурированные права пользователя (system + modules)
+     * РџРѕР»СѓС‡РёС‚СЊ СЃС‚СЂСѓРєС‚СѓСЂРёСЂРѕРІР°РЅРЅС‹Рµ РїСЂР°РІР° РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ (system + modules)
      */
     public function getUserPermissionsStructured(User $user, ?AuthorizationContext $context = null): array
     {
@@ -160,11 +160,11 @@ class AuthorizationService
         $modulePermissions = [];
         
         foreach ($roles as $assignment) {
-            // Получаем системные права
+            // РџРѕР»СѓС‡Р°РµРј СЃРёСЃС‚РµРјРЅС‹Рµ РїСЂР°РІР°
             $systemPerms = $this->permissionResolver->getSystemPermissions($assignment);
             $systemPermissions = array_merge($systemPermissions, $systemPerms);
             
-            // Получаем модульные права
+            // РџРѕР»СѓС‡Р°РµРј РјРѕРґСѓР»СЊРЅС‹Рµ РїСЂР°РІР°
             $modulePerms = $this->permissionResolver->getModulePermissions($assignment);
             foreach ($modulePerms as $module => $perms) {
                 if (!isset($modulePermissions[$module])) {
@@ -174,7 +174,7 @@ class AuthorizationService
             }
         }
         
-        // Убираем дубликаты
+        // РЈР±РёСЂР°РµРј РґСѓР±Р»РёРєР°С‚С‹
         $systemPermissions = array_unique($systemPermissions);
         foreach ($modulePermissions as $module => $perms) {
             $modulePermissions[$module] = array_unique($perms);
@@ -187,7 +187,7 @@ class AuthorizationService
     }
 
     /**
-     * Назначить роль пользователю
+     * РќР°Р·РЅР°С‡РёС‚СЊ СЂРѕР»СЊ РїРѕР»СЊР·РѕРІР°С‚РµР»СЋ
      */
     public function assignRole(
         User $user,
@@ -197,9 +197,9 @@ class AuthorizationService
         ?User $assignedBy = null,
         ?\Carbon\Carbon $expiresAt = null
     ): UserRoleAssignment {
-        // Контекст назначающего передается в параметрах audit логирования
+        // РљРѕРЅС‚РµРєСЃС‚ РЅР°Р·РЅР°С‡Р°СЋС‰РµРіРѕ РїРµСЂРµРґР°РµС‚СЃСЏ РІ РїР°СЂР°РјРµС‚СЂР°С… audit Р»РѕРіРёСЂРѕРІР°РЅРёСЏ
 
-        // Проверяем существование роли
+        // РџСЂРѕРІРµСЂСЏРµРј СЃСѓС‰РµСЃС‚РІРѕРІР°РЅРёРµ СЂРѕР»Рё
         if ($roleType === UserRoleAssignment::TYPE_SYSTEM) {
             if (!$this->roleScanner->roleExists($roleSlug)) {
                 $this->logging->security('auth.role.assign.failed', [
@@ -212,7 +212,7 @@ class AuthorizationService
                     'context_id' => $context->id,
                     'error' => 'System role does not exist'
                 ], 'error');
-                throw new \InvalidArgumentException("Системная роль '$roleSlug' не существует");
+                throw new \InvalidArgumentException("РЎРёСЃС‚РµРјРЅР°СЏ СЂРѕР»СЊ '$roleSlug' РЅРµ СЃСѓС‰РµСЃС‚РІСѓРµС‚");
             }
         } else {
             if (!OrganizationCustomRole::where('slug', $roleSlug)->exists()) {
@@ -226,13 +226,13 @@ class AuthorizationService
                     'context_id' => $context->id,
                     'error' => 'Custom role does not exist'
                 ], 'error');
-                throw new \InvalidArgumentException("Кастомная роль '$roleSlug' не существует");
+                throw new \InvalidArgumentException("РљР°СЃС‚РѕРјРЅР°СЏ СЂРѕР»СЊ '$roleSlug' РЅРµ СЃСѓС‰РµСЃС‚РІСѓРµС‚");
             }
         }
 
         $assignment = UserRoleAssignment::assignRole($user, $roleSlug, $context, $roleType, $assignedBy, $expiresAt);
 
-        // AUDIT: Назначение роли - критически важное событие
+        // AUDIT: РќР°Р·РЅР°С‡РµРЅРёРµ СЂРѕР»Рё - РєСЂРёС‚РёС‡РµСЃРєРё РІР°Р¶РЅРѕРµ СЃРѕР±С‹С‚РёРµ
         $this->logging->audit('auth.role.assigned', [
             'target_user_id' => $user->id,
             'target_email' => $user->email,
@@ -250,9 +250,9 @@ class AuthorizationService
     }
 
     /**
-     * Отозвать роль у пользователя
+     * РћС‚РѕР·РІР°С‚СЊ СЂРѕР»СЊ Сѓ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
      */
-    public function revokeRole(User $user, string $roleSlug, AuthorizationContext $context): bool
+    public function revokeRole(User $user, string $roleSlug, AuthorizationContext $context, ?User $revokedBy = null): bool
     {
         $assignment = $user->roleAssignments()
             ->where('role_slug', $roleSlug)
@@ -263,13 +263,15 @@ class AuthorizationService
             $result = $assignment->revoke();
             
             if ($result) {
-                // AUDIT: Отзыв роли - критически важное событие
+                // AUDIT: РћС‚Р·С‹РІ СЂРѕР»Рё - РєСЂРёС‚РёС‡РµСЃРєРё РІР°Р¶РЅРѕРµ СЃРѕР±С‹С‚РёРµ
                 $this->logging->audit('auth.role.revoked', [
                     'target_user_id' => $user->id,
                     'target_email' => $user->email,
                     'role_slug' => $roleSlug,
                     'role_type' => $assignment->role_type,
-                    'revoked_by' => 'system', // TODO: добавить определение текущего пользователя
+                    'revoked_by' => $revokedBy?->id,
+                    'revoked_by_email' => $revokedBy?->email,
+                    'revoked_by_type' => $revokedBy ? 'user' : 'system',
                     'context_type' => $context->type,
                     'context_id' => $context->id,
                     'assignment_id' => $assignment->id,
@@ -297,7 +299,7 @@ class AuthorizationService
     }
 
     /**
-     * Проверить, может ли пользователь управлять другим пользователем
+     * РџСЂРѕРІРµСЂРёС‚СЊ, РјРѕР¶РµС‚ Р»Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ СѓРїСЂР°РІР»СЏС‚СЊ РґСЂСѓРіРёРј РїРѕР»СЊР·РѕРІР°С‚РµР»РµРј
      */
     public function canManageUser(User $manager, User $target, AuthorizationContext $context): bool
     {
@@ -316,7 +318,7 @@ class AuthorizationService
     }
 
     /**
-     * Проверить доступ к интерфейсу
+     * РџСЂРѕРІРµСЂРёС‚СЊ РґРѕСЃС‚СѓРї Рє РёРЅС‚РµСЂС„РµР№СЃСѓ
      */
     public function canAccessInterface(User $user, string $interface, ?AuthorizationContext $context = null): bool
     {
@@ -334,7 +336,7 @@ class AuthorizationService
     }
 
     /**
-     * Получить контексты, в которых у пользователя есть роли
+     * РџРѕР»СѓС‡РёС‚СЊ РєРѕРЅС‚РµРєСЃС‚С‹, РІ РєРѕС‚РѕСЂС‹С… Сѓ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ РµСЃС‚СЊ СЂРѕР»Рё
      */
     public function getUserContexts(User $user): Collection
     {
@@ -344,18 +346,18 @@ class AuthorizationService
     }
 
     /**
-     * Проверка конкретного права
+     * РџСЂРѕРІРµСЂРєР° РєРѕРЅРєСЂРµС‚РЅРѕРіРѕ РїСЂР°РІР°
      */
     protected function checkPermission(User $user, string $permission, ?array $context = null): bool
     {
-        // Если контекст не передан, но есть модульное право - определяем контекст организации автоматически
+        // Р•СЃР»Рё РєРѕРЅС‚РµРєСЃС‚ РЅРµ РїРµСЂРµРґР°РЅ, РЅРѕ РµСЃС‚СЊ РјРѕРґСѓР»СЊРЅРѕРµ РїСЂР°РІРѕ - РѕРїСЂРµРґРµР»СЏРµРј РєРѕРЅС‚РµРєСЃС‚ РѕСЂРіР°РЅРёР·Р°С†РёРё Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё
         if (!$context && $user->current_organization_id) {
-            // Проверяем, является ли право модульным (содержит точку)
+            // РџСЂРѕРІРµСЂСЏРµРј, СЏРІР»СЏРµС‚СЃСЏ Р»Рё РїСЂР°РІРѕ РјРѕРґСѓР»СЊРЅС‹Рј (СЃРѕРґРµСЂР¶РёС‚ С‚РѕС‡РєСѓ)
             if (strpos($permission, '.') !== false) {
                 $parts = explode('.', $permission, 2);
                 $module = $parts[0];
                 
-                // Для модульных прав используем контекст организации
+                // Р”Р»СЏ РјРѕРґСѓР»СЊРЅС‹С… РїСЂР°РІ РёСЃРїРѕР»СЊР·СѓРµРј РєРѕРЅС‚РµРєСЃС‚ РѕСЂРіР°РЅРёР·Р°С†РёРё
                 $context = [
                     'context_type' => 'organization',
                     'organization_id' => $user->current_organization_id
@@ -414,7 +416,7 @@ class AuthorizationService
             }
         }
 
-        // Проверка родительских организаций для организационных контекстов
+        // РџСЂРѕРІРµСЂРєР° СЂРѕРґРёС‚РµР»СЊСЃРєРёС… РѕСЂРіР°РЅРёР·Р°С†РёР№ РґР»СЏ РѕСЂРіР°РЅРёР·Р°С†РёРѕРЅРЅС‹С… РєРѕРЅС‚РµРєСЃС‚РѕРІ
         if ($authContext && $authContext->type === AuthorizationContext::TYPE_ORGANIZATION) {
             $cacheKey = "org_parent_{$authContext->resource_id}";
             $orgData = Cache::driver('array')->remember($cacheKey, 300, function () use ($authContext) {
@@ -435,7 +437,7 @@ class AuthorizationService
             }
         }
         
-        // Для проектных контекстов также проверяем контекст организации (роли могут быть назначены там)
+        // Р”Р»СЏ РїСЂРѕРµРєС‚РЅС‹С… РєРѕРЅС‚РµРєСЃС‚РѕРІ С‚Р°РєР¶Рµ РїСЂРѕРІРµСЂСЏРµРј РєРѕРЅС‚РµРєСЃС‚ РѕСЂРіР°РЅРёР·Р°С†РёРё (СЂРѕР»Рё РјРѕРіСѓС‚ Р±С‹С‚СЊ РЅР°Р·РЅР°С‡РµРЅС‹ С‚Р°Рј)
         if ($authContext && $authContext->type === AuthorizationContext::TYPE_PROJECT && $authContext->parent_context_id) {
             try {
                 $orgContext = AuthorizationContext::find($authContext->parent_context_id);
@@ -443,7 +445,7 @@ class AuthorizationService
                     return true;
                 }
             } catch (\Exception $e) {
-                // Игнорируем ошибки при поиске контекста организации
+                // РРіРЅРѕСЂРёСЂСѓРµРј РѕС€РёР±РєРё РїСЂРё РїРѕРёСЃРєРµ РєРѕРЅС‚РµРєСЃС‚Р° РѕСЂРіР°РЅРёР·Р°С†РёРё
             }
         }
         
@@ -466,17 +468,17 @@ class AuthorizationService
     }
 
     /**
-     * Получить все права роли
+     * РџРѕР»СѓС‡РёС‚СЊ РІСЃРµ РїСЂР°РІР° СЂРѕР»Рё
      */
     protected function getRolePermissions(string $roleSlug, string $roleType, ?int $organizationId = null): array
     {
-        // 1. Пытаемся получить системные права из файлов (если тип system или если не уверены)
+        // 1. РџС‹С‚Р°РµРјСЃСЏ РїРѕР»СѓС‡РёС‚СЊ СЃРёСЃС‚РµРјРЅС‹Рµ РїСЂР°РІР° РёР· С„Р°Р№Р»РѕРІ (РµСЃР»Рё С‚РёРї system РёР»Рё РµСЃР»Рё РЅРµ СѓРІРµСЂРµРЅС‹)
         $permissions = [];
         if ($roleType === UserRoleAssignment::TYPE_SYSTEM || empty($roleType)) {
             $permissions = $this->roleScanner->getSystemPermissions($roleSlug);
         }
 
-        // 2. Если системных прав нет, ищем в кастомных ролях в БД
+        // 2. Р•СЃР»Рё СЃРёСЃС‚РµРјРЅС‹С… РїСЂР°РІ РЅРµС‚, РёС‰РµРј РІ РєР°СЃС‚РѕРјРЅС‹С… СЂРѕР»СЏС… РІ Р‘Р”
         if (empty($permissions)) {
             return $this->permissionResolver->getCustomRolePermissions($roleSlug, $organizationId);
         }
@@ -485,17 +487,17 @@ class AuthorizationService
     }
 
     /**
-     * Получить доступ к интерфейсам для роли
+     * РџРѕР»СѓС‡РёС‚СЊ РґРѕСЃС‚СѓРї Рє РёРЅС‚РµСЂС„РµР№СЃР°Рј РґР»СЏ СЂРѕР»Рё
      */
     protected function getRoleInterfaceAccess(string $roleSlug, string $roleType, ?int $organizationId = null): array
     {
-        // 1. Пытаемся получить доступ из системных файлов
+        // 1. РџС‹С‚Р°РµРјСЃСЏ РїРѕР»СѓС‡РёС‚СЊ РґРѕСЃС‚СѓРї РёР· СЃРёСЃС‚РµРјРЅС‹С… С„Р°Р№Р»РѕРІ
         $access = [];
         if ($roleType === UserRoleAssignment::TYPE_SYSTEM || empty($roleType)) {
             $access = $this->roleScanner->getInterfaceAccess($roleSlug);
         }
 
-        // 2. Если в файлах ничего не найдено, ищем в кастомных ролях (БД)
+        // 2. Р•СЃР»Рё РІ С„Р°Р№Р»Р°С… РЅРёС‡РµРіРѕ РЅРµ РЅР°Р№РґРµРЅРѕ, РёС‰РµРј РІ РєР°СЃС‚РѕРјРЅС‹С… СЂРѕР»СЏС… (Р‘Р”)
         if (empty($access)) {
             $query = OrganizationCustomRole::where('slug', $roleSlug);
             
@@ -511,7 +513,7 @@ class AuthorizationService
     }
 
     /**
-     * Определить контекст авторизации из массива
+     * РћРїСЂРµРґРµР»РёС‚СЊ РєРѕРЅС‚РµРєСЃС‚ Р°РІС‚РѕСЂРёР·Р°С†РёРё РёР· РјР°СЃСЃРёРІР°
      */
     protected function resolveAuthContext(?array $context): ?AuthorizationContext
     {
@@ -545,7 +547,7 @@ class AuthorizationService
     }
 
     /**
-     * Получить иерархию контекста (от текущего к корню)
+     * РџРѕР»СѓС‡РёС‚СЊ РёРµСЂР°СЂС…РёСЋ РєРѕРЅС‚РµРєСЃС‚Р° (РѕС‚ С‚РµРєСѓС‰РµРіРѕ Рє РєРѕСЂРЅСЋ)
      */
     protected function getContextHierarchy(AuthorizationContext $context): Collection
     {
@@ -553,7 +555,7 @@ class AuthorizationService
     }
 
     /**
-     * Оценить условия роли (ABAC)
+     * РћС†РµРЅРёС‚СЊ СѓСЃР»РѕРІРёСЏ СЂРѕР»Рё (ABAC)
      */
     protected function evaluateConditions(UserRoleAssignment $assignment, array $context): bool
     {
@@ -569,7 +571,7 @@ class AuthorizationService
     }
 
     /**
-     * Получить слаги ролей пользователя для совместимости со старой системой
+     * РџРѕР»СѓС‡РёС‚СЊ СЃР»Р°РіРё СЂРѕР»РµР№ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ РґР»СЏ СЃРѕРІРјРµСЃС‚РёРјРѕСЃС‚Рё СЃРѕ СЃС‚Р°СЂРѕР№ СЃРёСЃС‚РµРјРѕР№
      */
     public function getUserRoleSlugs(User $user, ?array $context = null): array
     {
@@ -581,7 +583,7 @@ class AuthorizationService
             
             return $this->getUserRoles($user, $authContext)->pluck('role_slug')->toArray();
         } catch (\Exception $e) {
-            // Если таблицы новой системы еще не созданы - возвращаем пустой массив
+            // Р•СЃР»Рё С‚Р°Р±Р»РёС†С‹ РЅРѕРІРѕР№ СЃРёСЃС‚РµРјС‹ РµС‰Рµ РЅРµ СЃРѕР·РґР°РЅС‹ - РІРѕР·РІСЂР°С‰Р°РµРј РїСѓСЃС‚РѕР№ РјР°СЃСЃРёРІ
             return [];
         }
     }

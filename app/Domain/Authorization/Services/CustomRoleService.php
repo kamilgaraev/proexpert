@@ -166,6 +166,68 @@ class CustomRoleService
         );
     }
 
+    public function syncUserRoles(
+        User $user,
+        array $roleIds,
+        AuthorizationContext $context,
+        ?User $assignedBy = null
+    ): Collection {
+        if ($context->type !== AuthorizationContext::TYPE_ORGANIZATION || !$context->resource_id) {
+            throw ValidationException::withMessages([
+                'context' => trans_message('permissions.invalid_organization_context'),
+            ]);
+        }
+
+        $roleIds = collect($roleIds)
+            ->map(static fn ($roleId): int => (int) $roleId)
+            ->unique()
+            ->values();
+
+        $roles = OrganizationCustomRole::query()
+            ->where('organization_id', $context->resource_id)
+            ->whereIn('id', $roleIds)
+            ->active()
+            ->get();
+
+        if ($roles->count() !== $roleIds->count()) {
+            throw ValidationException::withMessages([
+                'custom_role_ids' => trans_message('permissions.invalid_custom_roles'),
+            ]);
+        }
+
+        return DB::transaction(function () use ($user, $roles, $context, $assignedBy): Collection {
+            $roleSlugs = $roles->pluck('slug')->all();
+
+            UserRoleAssignment::query()
+                ->where('user_id', $user->id)
+                ->where('context_id', $context->id)
+                ->where('role_type', UserRoleAssignment::TYPE_CUSTOM)
+                ->whereNotIn('role_slug', $roleSlugs)
+                ->update(['is_active' => false]);
+
+            $activeAssignments = UserRoleAssignment::query()
+                ->where('user_id', $user->id)
+                ->where('context_id', $context->id)
+                ->where('role_type', UserRoleAssignment::TYPE_CUSTOM)
+                ->active()
+                ->pluck('role_slug')
+                ->all();
+
+            foreach ($roles as $role) {
+                if (!in_array($role->slug, $activeAssignments, true)) {
+                    $this->assignRoleToUser($role, $user, $context, $assignedBy);
+                }
+            }
+
+            return UserRoleAssignment::query()
+                ->where('user_id', $user->id)
+                ->where('context_id', $context->id)
+                ->where('role_type', UserRoleAssignment::TYPE_CUSTOM)
+                ->active()
+                ->get();
+        });
+    }
+
     /**
      * Получить пользователей с указанной ролью
      */

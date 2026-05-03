@@ -13,7 +13,6 @@ class MaterialCollection extends ResourceCollection
     {
         return [
             'data' => $this->collection,
-            // TODO: Добавить пагинацию, если необходимо
         ];
     }
-} 
+}

@@ -13,6 +13,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\Log;
+use PhpOffice\PhpSpreadsheet\IOFactory;
+use Symfony\Component\HttpFoundation\File\UploadedFile;
 
 class CostCategoryController extends Controller
 {
@@ -187,28 +189,8 @@ class CostCategoryController extends Controller
                 'format' => 'nullable|string|in:simple,sbis,onec',
             ]);
             
-            // Получаем формат импорта или используем 'simple' по умолчанию
             $format = $validatedData['format'] ?? 'simple';
-            
-            // TODO: Здесь должен быть код обработки файла и извлечения данных
-            // в зависимости от указанного формата
-            
-            // Пример данных для тестирования
-            $categoriesData = [
-                [
-                    'name' => 'Тестовая категория 1',
-                    'code' => 'test-1',
-                    'external_code' => 'ext-001',
-                    'description' => 'Описание тестовой категории 1',
-                ],
-                [
-                    'name' => 'Тестовая категория 2',
-                    'code' => 'test-2',
-                    'external_code' => 'ext-002',
-                    'description' => 'Описание тестовой категории 2',
-                    'parent_external_code' => 'ext-001',
-                ],
-            ];
+            $categoriesData = $this->extractCategoriesFromFile($validatedData['file'], $format);
             
             // Импортируем данные
             $importResult = $this->costCategoryService->importCostCategories(
@@ -236,5 +218,88 @@ class CostCategoryController extends Controller
             ]);
             return AdminResponse::error(trans_message('cost_category.internal_error_import'), 500);
         }
+    }
+
+    private function extractCategoriesFromFile(UploadedFile $file, string $format): array
+    {
+        $spreadsheet = IOFactory::load($file->getRealPath());
+        $sheet = $spreadsheet->getActiveSheet();
+        $rows = $sheet->toArray(null, true, true, true);
+
+        if (count($rows) < 2) {
+            throw new BusinessLogicException(trans_message('cost_category.import_empty'), 422);
+        }
+
+        $headers = array_map(
+            fn ($value): ?string => $this->normalizeImportHeader((string) $value, $format),
+            array_shift($rows)
+        );
+
+        $categories = [];
+        foreach ($rows as $row) {
+            $category = [];
+
+            foreach ($row as $column => $value) {
+                $field = $headers[$column] ?? null;
+                if (!$field || $value === null || $value === '') {
+                    continue;
+                }
+
+                $category[$field] = is_string($value) ? trim($value) : $value;
+            }
+
+            if ($category !== []) {
+                $categories[] = $category;
+            }
+        }
+
+        if ($categories === []) {
+            throw new BusinessLogicException(trans_message('cost_category.import_empty'), 422);
+        }
+
+        return $categories;
+    }
+
+    private function normalizeImportHeader(string $header, string $format): ?string
+    {
+        $normalized = mb_strtolower(trim($header));
+        $normalized = str_replace([' ', '-', '.'], '_', $normalized);
+
+        $maps = [
+            'simple' => [
+                'name' => 'name',
+                'название' => 'name',
+                'наименование' => 'name',
+                'code' => 'code',
+                'код' => 'code',
+                'external_code' => 'external_code',
+                'внешний_код' => 'external_code',
+                'description' => 'description',
+                'описание' => 'description',
+                'parent_external_code' => 'parent_external_code',
+                'код_родителя' => 'parent_external_code',
+                'parent_code' => 'parent_external_code',
+                'is_active' => 'is_active',
+                'активна' => 'is_active',
+                'sort_order' => 'sort_order',
+                'порядок' => 'sort_order',
+            ],
+            'sbis' => [
+                'наименование' => 'name',
+                'код' => 'external_code',
+                'родитель' => 'parent_external_code',
+                'комментарий' => 'description',
+            ],
+            'onec' => [
+                'наименование' => 'name',
+                'код' => 'external_code',
+                'родитель' => 'parent_external_code',
+                'описание' => 'description',
+            ],
+        ];
+
+        return ($maps[$format] ?? $maps['simple'])[$normalized]
+            ?? $maps['simple'][$normalized]
+            ?? null;
     }
 }

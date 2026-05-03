@@ -84,7 +84,11 @@
             "Composer\\Config::disableProcessTimeout",
             "npx concurrently -c \"#93c5fd,#c4b5fd,#fb7185,#fdba74\" \"php artisan serve\" \"php artisan queue:listen --tries=1\" \"php artisan pail --timeout=0\" \"npm run dev\" --names=server,queue,logs,vite"
         ],
-        "analyse": "phpstan analyse --memory-limit=1G"
+        "analyse": "phpstan analyse --memory-limit=1G",
+        "analyse:quick": "phpstan analyse app/Http app/Services app/BusinessModules routes --memory-limit=1G --no-progress",
+        "test:unit": "php artisan test tests/Unit --stop-on-failure",
+        "test:feature": "php artisan test tests/Feature --stop-on-failure",
+        "test:quick": "php artisan test --stop-on-failure --exclude-group=slow"
     },
     "extra": {
         "laravel": {

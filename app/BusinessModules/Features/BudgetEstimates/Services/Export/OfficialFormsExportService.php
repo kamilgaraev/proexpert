@@ -911,13 +911,18 @@ class OfficialFormsExportService
 
     // === EXPORT KS-6 (CONSTRUCTION JOURNAL) ===
 
-    public function exportKS6ToExcel(\App\Models\ConstructionJournal $journal, \Carbon\Carbon $from, \Carbon\Carbon $to): string
+    public function exportKS6ToExcel(
+        \App\Models\ConstructionJournal $journal,
+        \Carbon\Carbon $from,
+        \Carbon\Carbon $to,
+        ?int $estimateId = null
+    ): string
     {
         $spreadsheet = new Spreadsheet();
         $sheet = $spreadsheet->getActiveSheet();
 
         $this->setKS6Header($sheet, $journal, $from, $to);
-        $this->setKS6Items($sheet, $journal, $from, $to);
+        $this->setKS6Items($sheet, $journal, $from, $to, $estimateId);
         $this->setKS6Footer($sheet, $journal);
         $this->applyKS6Styles($sheet);
 
@@ -928,9 +933,14 @@ class OfficialFormsExportService
         return $this->saveSpreadsheetToS3($spreadsheet, $path, $journal->project->organization);
     }
 
-    public function exportKS6ToPdf(\App\Models\ConstructionJournal $journal, \Carbon\Carbon $from, \Carbon\Carbon $to): string
+    public function exportKS6ToPdf(
+        \App\Models\ConstructionJournal $journal,
+        \Carbon\Carbon $from,
+        \Carbon\Carbon $to,
+        ?int $estimateId = null
+    ): string
     {
-        $data = $this->prepareKS6Data($journal, $from, $to);
+        $data = $this->prepareKS6Data($journal, $from, $to, $estimateId);
         $pdf = Pdf::loadView('estimates.exports.ks6', $data)
             ->setPaper('a4', 'landscape')
             ->setOption('defaultFont', 'DejaVu Serif');
@@ -1023,13 +1033,18 @@ class OfficialFormsExportService
         $sheet->setCellValue("H{$row}", 'Статус');
     }
 
-    protected function setKS6Items($sheet, \App\Models\ConstructionJournal $journal, \Carbon\Carbon $from, \Carbon\Carbon $to): void
+    protected function setKS6Items(
+        $sheet,
+        \App\Models\ConstructionJournal $journal,
+        \Carbon\Carbon $from,
+        \Carbon\Carbon $to,
+        ?int $estimateId = null
+    ): void
     {
         $startRow = $sheet->getHighestRow() + 1;
         $row = $startRow;
 
-        $entries = $journal->entries()
-            ->whereBetween('entry_date', [$from, $to])
+        $entries = $this->journalEntriesForExport($journal, $from, $to, $estimateId)
             ->with(['workVolumes', 'workers', 'equipment', 'createdBy'])
             ->orderBy('entry_date')
             ->orderBy('entry_number')
@@ -1108,10 +1123,14 @@ class OfficialFormsExportService
         $sheet->getColumnDimension('H')->setWidth(15);
     }
 
-    protected function prepareKS6Data(\App\Models\ConstructionJournal $journal, \Carbon\Carbon $from, \Carbon\Carbon $to): array
+    protected function prepareKS6Data(
+        \App\Models\ConstructionJournal $journal,
+        \Carbon\Carbon $from,
+        \Carbon\Carbon $to,
+        ?int $estimateId = null
+    ): array
     {
-        $entries = $journal->entries()
-            ->whereBetween('entry_date', [$from, $to])
+        $entries = $this->journalEntriesForExport($journal, $from, $to, $estimateId)
             ->with([
                 'workVolumes.estimateItem.measurementUnit',
                 'workVolumes.measurementUnit',
@@ -1132,6 +1151,19 @@ class OfficialFormsExportService
             'period_from' => $from,
             'period_to' => $to,
         ];
+    }
+
+    protected function journalEntriesForExport(
+        \App\Models\ConstructionJournal $journal,
+        \Carbon\Carbon $from,
+        \Carbon\Carbon $to,
+        ?int $estimateId = null,
+        bool $approvedOnly = false
+    ) {
+        return $journal->entries()
+            ->whereBetween('entry_date', [$from, $to])
+            ->when($estimateId !== null, fn ($query) => $query->where('estimate_id', $estimateId))
+            ->when($approvedOnly, fn ($query) => $query->approved());
     }
 
     protected function prepareKS6aData(Contract $contract): array
@@ -1391,9 +1423,7 @@ class OfficialFormsExportService
     {
         $row = $sheet->getHighestRow() + 1;
         
-        $entries = $journal->entries()
-            ->whereBetween('entry_date', [$from, $to])
-            ->approved()
+        $entries = $this->journalEntriesForExport($journal, $from, $to, $options['estimate_id'] ?? null, true)
             ->with(['workVolumes', 'workers', 'equipment', 'materials'])
             ->get();
 

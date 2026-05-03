@@ -117,7 +117,3 @@ Route::get('/available-roles', [CustomUserManagementController::class, 'getAvail
 // Получить доступные права для создания кастомных ролей
 Route::get('/available-permissions', [CustomRoleController::class, 'getAvailablePermissions'])
     ->middleware(['authorize:roles.view_custom,organization']);
-
-// Публичные маршруты для приглашений (без аутентификации)
-Route::get('/invitation/{token}', [UserInvitationController::class, 'getByToken'])->name('invitation.get');
-Route::post('/invitation/{token}/accept', [UserInvitationController::class, 'accept'])->name('invitation.accept'); 

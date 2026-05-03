@@ -11,6 +11,18 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 
 class WorkCompletionLogRepository extends BaseRepository implements WorkCompletionLogRepositoryInterface
 {
+    private const ALLOWED_SORTS = [
+        'created_at' => 'created_at',
+        'updated_at' => 'updated_at',
+        'completion_date' => 'completion_date',
+        'project_id' => 'project_id',
+        'work_type_id' => 'work_type_id',
+        'user_id' => 'user_id',
+        'quantity' => 'quantity',
+        'unit_price' => 'unit_price',
+        'total_price' => 'total_price',
+    ];
+
     /**
      * Конструктор репозитория логов выполнения работ
      */
@@ -133,7 +145,11 @@ class WorkCompletionLogRepository extends BaseRepository implements WorkCompleti
             $query->where('completion_date', '<=', $filters['date_to']);
         }
 
-        // TODO: Добавить валидацию $sortBy
+        $sortBy = self::ALLOWED_SORTS[strtolower($sortBy)] ?? 'completion_date';
+        $sortDirection = in_array(strtolower($sortDirection), ['asc', 'desc'], true)
+            ? strtolower($sortDirection)
+            : 'desc';
+
         $query->orderBy($sortBy, $sortDirection);
 
         return $query->paginate($perPage);

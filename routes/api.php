@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AdvanceAccountTransactionController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\V1\Landing\MultiOrganizationController;
+use App\Http\Controllers\Api\V1\Landing\UserInvitationController;
 use App\Http\Controllers\Api\V1\HoldingApiController;
 use App\Http\Controllers\Api\V1\System\GlitchTipController;
 
@@ -88,6 +89,13 @@ Route::prefix('landing')->name('landing.')->group(function () {
     
     require __DIR__ . '/api/v1/landing/organization.php';
 
+    Route::prefix('user-management')
+        ->name('userManagement.')
+        ->group(function () {
+            Route::get('/invitation/{token}', [UserInvitationController::class, 'getByToken'])->name('invitation.get');
+            Route::post('/invitation/{token}/accept', [UserInvitationController::class, 'accept'])->name('invitation.accept');
+        });
+
     // Подключение маршрутов биллинга для лендинга/ЛК
     // Эти маршруты должны быть доступны аутентифицированному владельцу организации
     Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context', 'authorize:billing.manage'])
@@ -122,6 +130,8 @@ Route::prefix('landing')->name('landing.')->group(function () {
             
             // Organization Profile & Capabilities Management
             require __DIR__ . '/api/v1/landing/organization-profile.php';
+
+            require __DIR__ . '/api/v1/landing/support.php';
             
             // Подключение маршрутов приглашений подрядчиков для лендинга/ЛК
             Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context'])

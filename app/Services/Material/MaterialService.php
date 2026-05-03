@@ -16,6 +16,7 @@ use App\Models\Material;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use Illuminate\Support\Facades\DB;
+use function trans_message;
 
 class MaterialService
 {
@@ -34,7 +35,7 @@ class MaterialService
     }
 
     /**
-     * Helper для получения ID организации из запроса.
+     * Helper РґР»СЏ РїРѕР»СѓС‡РµРЅРёСЏ ID РѕСЂРіР°РЅРёР·Р°С†РёРё РёР· Р·Р°РїСЂРѕСЃР°.
      */
     protected function getCurrentOrgId(Request $request): int
     {
@@ -46,7 +47,7 @@ class MaterialService
         }
         if (!$organizationId) {
             Log::error('Failed to determine organization context in MaterialService', ['user_id' => $user?->id, 'request_attributes' => $request->attributes->all()]);
-            throw new BusinessLogicException('Контекст организации не определен.', 500);
+            throw new BusinessLogicException('РљРѕРЅС‚РµРєСЃС‚ РѕСЂРіР°РЅРёР·Р°С†РёРё РЅРµ РѕРїСЂРµРґРµР»РµРЅ.', 500);
         }
         return (int)$organizationId;
     }
@@ -55,9 +56,9 @@ class MaterialService
     {
         $user = $request->user();
         if (!$user || !$user->current_organization_id) {
-            // Если getCurrentOrgId не может получить ID из $request (например, $request->user() пуст)
-            // то он выбросит BusinessLogicException. Это более последовательно.
-            // throw new BusinessLogicException('Не удалось определить организацию пользователя.');
+            // Р•СЃР»Рё getCurrentOrgId РЅРµ РјРѕР¶РµС‚ РїРѕР»СѓС‡РёС‚СЊ ID РёР· $request (РЅР°РїСЂРёРјРµСЂ, $request->user() РїСѓСЃС‚)
+            // С‚Рѕ РѕРЅ РІС‹Р±СЂРѕСЃРёС‚ BusinessLogicException. Р­С‚Рѕ Р±РѕР»РµРµ РїРѕСЃР»РµРґРѕРІР°С‚РµР»СЊРЅРѕ.
+            // throw new BusinessLogicException('РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ РѕСЂРіР°РЅРёР·Р°С†РёСЋ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ.');
         }
         $organizationId = $this->getCurrentOrgId($request);
         return $this->materialRepository->getActiveMaterials($organizationId);
@@ -69,7 +70,7 @@ class MaterialService
         $user = $request->user();
         $data['organization_id'] = $organizationId;
 
-        // BUSINESS: Начало создания материала - важная метрика склада
+        // BUSINESS: РќР°С‡Р°Р»Рѕ СЃРѕР·РґР°РЅРёСЏ РјР°С‚РµСЂРёР°Р»Р° - РІР°Р¶РЅР°СЏ РјРµС‚СЂРёРєР° СЃРєР»Р°РґР°
         $this->logging->business('material.creation.started', [
             'material_name' => $data['name'] ?? null,
             'material_category' => $data['category'] ?? null,
@@ -79,10 +80,10 @@ class MaterialService
             'created_by_email' => $user?->email
         ]);
 
-        // Проверяем measurement_unit_id, если репозиторий доступен
+        // РџСЂРѕРІРµСЂСЏРµРј measurement_unit_id, РµСЃР»Рё СЂРµРїРѕР·РёС‚РѕСЂРёР№ РґРѕСЃС‚СѓРїРµРЅ
         if (isset($data['measurement_unit_id'])) {
             if (!$this->measurementUnitRepository->find($data['measurement_unit_id'])) {
-                // TECHNICAL: Ошибка валидации единицы измерения
+                // TECHNICAL: РћС€РёР±РєР° РІР°Р»РёРґР°С†РёРё РµРґРёРЅРёС†С‹ РёР·РјРµСЂРµРЅРёСЏ
                 $this->logging->technical('material.creation.validation.failed', [
                     'material_name' => $data['name'] ?? null,
                     'invalid_unit_id' => $data['measurement_unit_id'],
@@ -90,13 +91,13 @@ class MaterialService
                     'attempted_by' => $user?->id,
                     'error' => 'Measurement unit not found'
                 ], 'error');
-                throw new BusinessLogicException('Указанная единица измерения не найдена', 400);
+                throw new BusinessLogicException('РЈРєР°Р·Р°РЅРЅР°СЏ РµРґРёРЅРёС†Р° РёР·РјРµСЂРµРЅРёСЏ РЅРµ РЅР°Р№РґРµРЅР°', 400);
             }
         }
 
         $material = $this->materialRepository->create($data);
 
-        // AUDIT: Создание материала - важно для отслеживания склада
+        // AUDIT: РЎРѕР·РґР°РЅРёРµ РјР°С‚РµСЂРёР°Р»Р° - РІР°Р¶РЅРѕ РґР»СЏ РѕС‚СЃР»РµР¶РёРІР°РЅРёСЏ СЃРєР»Р°РґР°
         $this->logging->audit('material.created', [
             'material_id' => $material->id,
             'material_name' => $material->name,
@@ -109,7 +110,7 @@ class MaterialService
             'creation_date' => $material->created_at?->toISOString()
         ]);
 
-        // BUSINESS: Успешное создание материала - метрика роста каталога
+        // BUSINESS: РЈСЃРїРµС€РЅРѕРµ СЃРѕР·РґР°РЅРёРµ РјР°С‚РµСЂРёР°Р»Р° - РјРµС‚СЂРёРєР° СЂРѕСЃС‚Р° РєР°С‚Р°Р»РѕРіР°
         $this->logging->business('material.created', [
             'material_id' => $material->id,
             'material_name' => $material->name,
@@ -132,20 +133,20 @@ class MaterialService
 
     public function updateMaterial(int $id, array $data, Request $request): bool
     {
-        // Проверка принадлежности к организации через findMaterialById
+        // РџСЂРѕРІРµСЂРєР° РїСЂРёРЅР°РґР»РµР¶РЅРѕСЃС‚Рё Рє РѕСЂРіР°РЅРёР·Р°С†РёРё С‡РµСЂРµР· findMaterialById
         $material = $this->findMaterialById($id, $request);
         if (!$material) {
-             throw new BusinessLogicException('Материал не найден или не принадлежит вашей организации.', 404);
+             throw new BusinessLogicException('РњР°С‚РµСЂРёР°Р» РЅРµ РЅР°Р№РґРµРЅ РёР»Рё РЅРµ РїСЂРёРЅР°РґР»РµР¶РёС‚ РІР°С€РµР№ РѕСЂРіР°РЅРёР·Р°С†РёРё.', 404);
         }
         
-        // Проверяем measurement_unit_id, если он передан и репозиторий доступен
+        // РџСЂРѕРІРµСЂСЏРµРј measurement_unit_id, РµСЃР»Рё РѕРЅ РїРµСЂРµРґР°РЅ Рё СЂРµРїРѕР·РёС‚РѕСЂРёР№ РґРѕСЃС‚СѓРїРµРЅ
         if (isset($data['measurement_unit_id'])) {
             if (!$this->measurementUnitRepository->find($data['measurement_unit_id'])) {
-                throw new BusinessLogicException('Указанная единица измерения не найдена', 400);
+                throw new BusinessLogicException('РЈРєР°Р·Р°РЅРЅР°СЏ РµРґРёРЅРёС†Р° РёР·РјРµСЂРµРЅРёСЏ РЅРµ РЅР°Р№РґРµРЅР°', 400);
             }
         }
 
-        // Убедимся, что organization_id не меняется
+        // РЈР±РµРґРёРјСЃСЏ, С‡С‚Рѕ organization_id РЅРµ РјРµРЅСЏРµС‚СЃСЏ
         unset($data['organization_id']);
         
         return $this->materialRepository->update($id, $data);
@@ -153,17 +154,27 @@ class MaterialService
 
     public function deleteMaterial(int $id, Request $request): bool
     {
-        // Проверка принадлежности к организации через findMaterialById
-         $material = $this->findMaterialById($id, $request);
-         if (!$material) {
-             throw new BusinessLogicException('Материал не найден или не принадлежит вашей организации.', 404);
-         }
-        // TODO: Проверка, используется ли материал где-либо
+        $material = $this->findMaterialById($id, $request);
+
+        if (!$material) {
+            throw new BusinessLogicException(trans_message('catalog.errors.material_not_found'), 404);
+        }
+
+        if ($this->hasMaterialUsage($material)) {
+            throw new BusinessLogicException(trans_message('catalog.errors.material_in_use'), 422);
+        }
+
         return $this->materialRepository->delete($id);
     }
 
+    protected function hasMaterialUsage(Material $material): bool
+    {
+        return $material->workTypes()->exists()
+            || $material->completedWorks()->exists();
+    }
+
     /**
-     * Получить пагинированный список материалов для текущей организации.
+     * РџРѕР»СѓС‡РёС‚СЊ РїР°РіРёРЅРёСЂРѕРІР°РЅРЅС‹Р№ СЃРїРёСЃРѕРє РјР°С‚РµСЂРёР°Р»РѕРІ РґР»СЏ С‚РµРєСѓС‰РµР№ РѕСЂРіР°РЅРёР·Р°С†РёРё.
      */
     public function getMaterialsPaginated(Request $request, int $perPage = 15): \Illuminate\Contracts\Pagination\LengthAwarePaginator
     {
@@ -172,7 +183,7 @@ class MaterialService
         $filters = [
             'name' => $request->query('name'),
             'category' => $request->query('category'),
-            'is_active' => $request->query('is_active'), // Принимаем 'true', 'false', '1', '0' или null
+            'is_active' => $request->query('is_active'), // РџСЂРёРЅРёРјР°РµРј 'true', 'false', '1', '0' РёР»Рё null
         ];
         if (isset($filters['is_active'])) {
             $filters['is_active'] = filter_var($filters['is_active'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
@@ -184,7 +195,6 @@ class MaterialService
         $sortBy = $request->query('sort_by', 'name');
         $sortDirection = $request->query('sort_direction', 'asc');
 
-        // TODO: Валидация sortBy и sortDirection
         $allowedSortBy = ['name', 'category', 'created_at', 'updated_at'];
         if (!in_array(strtolower($sortBy), $allowedSortBy)) {
             $sortBy = 'name';
@@ -203,7 +213,7 @@ class MaterialService
     }
 
     /**
-     * Получить балансы материалов для указанного проекта.
+     * РџРѕР»СѓС‡РёС‚СЊ Р±Р°Р»Р°РЅСЃС‹ РјР°С‚РµСЂРёР°Р»РѕРІ РґР»СЏ СѓРєР°Р·Р°РЅРЅРѕРіРѕ РїСЂРѕРµРєС‚Р°.
      *
      * @param int $organizationId
      * @param int $projectId
@@ -211,7 +221,7 @@ class MaterialService
      */
     public function getMaterialBalancesForProject(int $organizationId, int $projectId): \Illuminate\Support\Collection
     {
-        // Переключено на warehouse_balances - показываем агрегированные данные со всех складов организации
+        // РџРµСЂРµРєР»СЋС‡РµРЅРѕ РЅР° warehouse_balances - РїРѕРєР°Р·С‹РІР°РµРј Р°РіСЂРµРіРёСЂРѕРІР°РЅРЅС‹Рµ РґР°РЅРЅС‹Рµ СЃРѕ РІСЃРµС… СЃРєР»Р°РґРѕРІ РѕСЂРіР°РЅРёР·Р°С†РёРё
         $balances = DB::table('warehouse_balances')
             ->join('organization_warehouses', 'warehouse_balances.warehouse_id', '=', 'organization_warehouses.id')
             ->join('materials', 'warehouse_balances.material_id', '=', 'materials.id')
@@ -228,7 +238,7 @@ class MaterialService
             ->groupBy('materials.id', 'materials.name', 'materials.measurement_unit_id', 'measurement_units.short_name')
             ->get();
 
-        // Возвращаем данные из warehouse_balances (уже получены выше)
+        // Р’РѕР·РІСЂР°С‰Р°РµРј РґР°РЅРЅС‹Рµ РёР· warehouse_balances (СѓР¶Рµ РїРѕР»СѓС‡РµРЅС‹ РІС‹С€Рµ)
         return $balances->map(function ($balance) {
             return [
                 'material_id' => $balance->material_id,
@@ -245,10 +255,10 @@ class MaterialService
         try {
             $material = $this->materialRepository->find($materialId);
             if (!$material) {
-                throw new BusinessLogicException('Материал не найден.', 404);
+                throw new BusinessLogicException('РњР°С‚РµСЂРёР°Р» РЅРµ РЅР°Р№РґРµРЅ.', 404);
             }
 
-            // Переключено на warehouse_balances
+            // РџРµСЂРµРєР»СЋС‡РµРЅРѕ РЅР° warehouse_balances
             $query = DB::table('warehouse_balances as wb')
                 ->join('organization_warehouses as w', 'wb.warehouse_id', '=', 'w.id')
                 ->leftJoin('materials as m', 'wb.material_id', '=', 'm.id')
@@ -268,7 +278,7 @@ class MaterialService
                     DB::raw('wb.available_quantity as free_quantity')
                 ]);
 
-            // Удалена фильтрация по project_id, так как теперь используем склады
+            // РЈРґР°Р»РµРЅР° С„РёР»СЊС‚СЂР°С†РёСЏ РїРѕ project_id, С‚Р°Рє РєР°Рє С‚РµРїРµСЂСЊ РёСЃРїРѕР»СЊР·СѓРµРј СЃРєР»Р°РґС‹
 
             $allowedSortBy = ['warehouse_name', 'available_quantity', 'reserved_quantity', 'free_quantity', 'unit_price', 'last_update_date'];
             if (!in_array($sortBy, $allowedSortBy)) {
@@ -315,7 +325,7 @@ class MaterialService
                 'material_id' => $materialId,
                 'error' => $e->getMessage()
             ]);
-            throw new BusinessLogicException('Ошибка при получении остатков материала.', 500);
+            throw new BusinessLogicException('РћС€РёР±РєР° РїСЂРё РїРѕР»СѓС‡РµРЅРёРё РѕСЃС‚Р°С‚РєРѕРІ РјР°С‚РµСЂРёР°Р»Р°.', 500);
         }
     }
 
@@ -325,19 +335,19 @@ class MaterialService
             $organizationId = $this->getCurrentOrgId($request);
             $units = $this->measurementUnitRepository->getByOrganization($organizationId);
             
-            // Предполагается, что у вас есть или будет ресурс MeasurementUnitResource
-            // Если его нет, можно просто вернуть $units->toArray() или $units
+            // РџСЂРµРґРїРѕР»Р°РіР°РµС‚СЃСЏ, С‡С‚Рѕ Сѓ РІР°СЃ РµСЃС‚СЊ РёР»Рё Р±СѓРґРµС‚ СЂРµСЃСѓСЂСЃ MeasurementUnitResource
+            // Р•СЃР»Рё РµРіРѕ РЅРµС‚, РјРѕР¶РЅРѕ РїСЂРѕСЃС‚Рѕ РІРµСЂРЅСѓС‚СЊ $units->toArray() РёР»Рё $units
             if (class_exists(MeasurementUnitResource::class)) {
                 return MeasurementUnitResource::collection($units);
             }
             Log::info('MeasurementUnitResource not found, returning raw collection/array for measurement units.');
-            return $units->toArray(); // или return $units; если хотите вернуть коллекцию Eloquent
-        } catch (BusinessLogicException $e) { // Сначала ловим BusinessLogicException, если getCurrentOrgId ее бросит
+            return $units->toArray(); // РёР»Рё return $units; РµСЃР»Рё С…РѕС‚РёС‚Рµ РІРµСЂРЅСѓС‚СЊ РєРѕР»Р»РµРєС†РёСЋ Eloquent
+        } catch (BusinessLogicException $e) { // РЎРЅР°С‡Р°Р»Р° Р»РѕРІРёРј BusinessLogicException, РµСЃР»Рё getCurrentOrgId РµРµ Р±СЂРѕСЃРёС‚
             Log::warning('BusinessLogicException in MaterialService@getMeasurementUnits: ' . $e->getMessage());
             return ['message' => $e->getMessage(), 'success' => false]; 
         } catch (\Throwable $e) {
             Log::error('Error in MaterialService@getMeasurementUnits: ' . $e->getMessage());
-            return ['message' => 'Не удалось получить список единиц измерения.', 'success' => false];
+            return ['message' => 'РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ СЃРїРёСЃРѕРє РµРґРёРЅРёС† РёР·РјРµСЂРµРЅРёСЏ.', 'success' => false];
         }
     }
 
@@ -351,7 +361,7 @@ class MaterialService
         $rows = [];
         $ext = strtolower($file->getClientOriginalExtension());
         
-        // BUSINESS: Начало импорта материалов - критическая функция управления складом
+        // BUSINESS: РќР°С‡Р°Р»Рѕ РёРјРїРѕСЂС‚Р° РјР°С‚РµСЂРёР°Р»РѕРІ - РєСЂРёС‚РёС‡РµСЃРєР°СЏ С„СѓРЅРєС†РёСЏ СѓРїСЂР°РІР»РµРЅРёСЏ СЃРєР»Р°РґРѕРј
         $this->logging->business('material.import.started', [
             'filename' => $file->getClientOriginalName(),
             'file_size_bytes' => $file->getSize(),
@@ -369,13 +379,13 @@ class MaterialService
             } elseif ($ext === 'csv') {
                 $rows = array_map('str_getcsv', file($file->getPathname()));
             } else {
-                throw new BusinessLogicException('Неподдерживаемый формат файла', 400);
+                throw new BusinessLogicException('РќРµРїРѕРґРґРµСЂР¶РёРІР°РµРјС‹Р№ С„РѕСЂРјР°С‚ С„Р°Р№Р»Р°', 400);
             }
         } catch (\Throwable $e) {
-            Log::error('Ошибка чтения файла импорта материалов', ['error' => $e->getMessage()]);
+            Log::error('РћС€РёР±РєР° С‡С‚РµРЅРёСЏ С„Р°Р№Р»Р° РёРјРїРѕСЂС‚Р° РјР°С‚РµСЂРёР°Р»РѕРІ', ['error' => $e->getMessage()]);
             return [
                 'success' => false,
-                'message' => 'Ошибка чтения файла: ' . $e->getMessage(),
+                'message' => 'РћС€РёР±РєР° С‡С‚РµРЅРёСЏ С„Р°Р№Р»Р°: ' . $e->getMessage(),
                 'imported' => 0,
                 'updated' => 0,
                 'errors' => [$e->getMessage()]
@@ -384,22 +394,22 @@ class MaterialService
         if (empty($rows) || count($rows) < 2) {
             return [
                 'success' => false,
-                'message' => 'Файл пуст или не содержит данных',
+                'message' => 'Р¤Р°Р№Р» РїСѓСЃС‚ РёР»Рё РЅРµ СЃРѕРґРµСЂР¶РёС‚ РґР°РЅРЅС‹С…',
                 'imported' => 0,
                 'updated' => 0,
-                'errors' => ['Файл пуст или не содержит данных']
+                'errors' => ['Р¤Р°Р№Р» РїСѓСЃС‚ РёР»Рё РЅРµ СЃРѕРґРµСЂР¶РёС‚ РґР°РЅРЅС‹С…']
             ];
         }
-        // Корректно определяем первую строку (заголовки) для xlsx/csv
+        // РљРѕСЂСЂРµРєС‚РЅРѕ РѕРїСЂРµРґРµР»СЏРµРј РїРµСЂРІСѓСЋ СЃС‚СЂРѕРєСѓ (Р·Р°РіРѕР»РѕРІРєРё) РґР»СЏ xlsx/csv
         $firstRowKey = array_key_first($rows);
         $rawHeaders = array_values($rows[$firstRowKey]);
         if (count(array_filter($rawHeaders, fn($h) => !is_string($h) || trim($h) === '')) > 0) {
             return [
                 'success' => false,
-                'message' => 'Некорректный формат заголовков файла',
+                'message' => 'РќРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ С„РѕСЂРјР°С‚ Р·Р°РіРѕР»РѕРІРєРѕРІ С„Р°Р№Р»Р°',
                 'imported' => 0,
                 'updated' => 0,
-                'errors' => ['Некорректный формат заголовков файла (проверьте первую строку)']
+                'errors' => ['РќРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ С„РѕСЂРјР°С‚ Р·Р°РіРѕР»РѕРІРєРѕРІ С„Р°Р№Р»Р° (РїСЂРѕРІРµСЂСЊС‚Рµ РїРµСЂРІСѓСЋ СЃС‚СЂРѕРєСѓ)']
             ];
         }
         $headers = array_map(fn($h) => trim(mb_strtolower($h)), $rawHeaders);
@@ -408,21 +418,21 @@ class MaterialService
         if (!empty($missing)) {
             return [
                 'success' => false,
-                'message' => 'В файле отсутствуют обязательные колонки',
+                'message' => 'Р’ С„Р°Р№Р»Рµ РѕС‚СЃСѓС‚СЃС‚РІСѓСЋС‚ РѕР±СЏР·Р°С‚РµР»СЊРЅС‹Рµ РєРѕР»РѕРЅРєРё',
                 'imported' => 0,
                 'updated' => 0,
-                'errors' => ['Отсутствуют обязательные колонки: ' . implode(', ', $missing)]
+                'errors' => ['РћС‚СЃСѓС‚СЃС‚РІСѓСЋС‚ РѕР±СЏР·Р°С‚РµР»СЊРЅС‹Рµ РєРѕР»РѕРЅРєРё: ' . implode(', ', $missing)]
             ];
         }
         unset($rows[$firstRowKey]);
-        // orgId должен быть передан явно через options (контроллер обязан это делать)
+        // orgId РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ РїРµСЂРµРґР°РЅ СЏРІРЅРѕ С‡РµСЂРµР· options (РєРѕРЅС‚СЂРѕР»Р»РµСЂ РѕР±СЏР·Р°РЅ СЌС‚Рѕ РґРµР»Р°С‚СЊ)
         if (!$orgId) {
             return [
                 'success' => false,
-                'message' => 'Не удалось определить организацию',
+                'message' => 'РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ РѕСЂРіР°РЅРёР·Р°С†РёСЋ',
                 'imported' => 0,
                 'updated' => 0,
-                'errors' => ['Не удалось определить организацию']
+                'errors' => ['РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ РѕСЂРіР°РЅРёР·Р°С†РёСЋ']
             ];
         }
         $unitCache = [];
@@ -432,12 +442,12 @@ class MaterialService
                 $row = is_array($row) ? array_values($row) : $row;
                 $data = array_combine($headers, array_map('trim', $row));
                 $line = $i + 2;
-                // Валидация
+                // Р’Р°Р»РёРґР°С†РёСЏ
                 if (empty($data['name'])) {
-                    $errors[] = "Строка $line: не указано имя материала";
+                    $errors[] = "РЎС‚СЂРѕРєР° $line: РЅРµ СѓРєР°Р·Р°РЅРѕ РёРјСЏ РјР°С‚РµСЂРёР°Р»Р°";
                     continue;
                 }
-                // Единица измерения
+                // Р•РґРёРЅРёС†Р° РёР·РјРµСЂРµРЅРёСЏ
                 $unitId = null;
                 if (!empty($data['measurement_unit_id'])) {
                     $unitId = (int)$data['measurement_unit_id'];
@@ -453,10 +463,10 @@ class MaterialService
                     $unitId = $unitCache[$unitKey] ?? null;
                 }
                 if (!$unitId) {
-                    $errors[] = "Строка $line: не найдена единица измерения";
+                    $errors[] = "РЎС‚СЂРѕРєР° $line: РЅРµ РЅР°Р№РґРµРЅР° РµРґРёРЅРёС†Р° РёР·РјРµСЂРµРЅРёСЏ";
                     continue;
                 }
-                // Поиск существующего материала
+                // РџРѕРёСЃРє СЃСѓС‰РµСЃС‚РІСѓСЋС‰РµРіРѕ РјР°С‚РµСЂРёР°Р»Р°
                 $material = null;
                 if (!empty($data['external_code'])) {
                     $material = $this->materialRepository->findByExternalCode($data['external_code'], $orgId);
@@ -467,7 +477,7 @@ class MaterialService
                 if (!$material && !empty($data['name'])) {
                     $material = $this->materialRepository->findByNameAndOrganization($data['name'], $orgId);
                 }
-                // Подготовка данных
+                // РџРѕРґРіРѕС‚РѕРІРєР° РґР°РЅРЅС‹С…
                 $materialData = [
                     'organization_id' => $orgId,
                     'name' => $data['name'],
@@ -494,8 +504,8 @@ class MaterialService
                         $imported++;
                     }
                 } catch (\Throwable $e) {
-                    $errors[] = "Строка $line: " . $e->getMessage();
-                    Log::error('[MaterialImport] Ошибка при создании/обновлении', ['line' => $line, 'data' => $materialData, 'error' => $e->getMessage()]);
+                    $errors[] = "РЎС‚СЂРѕРєР° $line: " . $e->getMessage();
+                    Log::error('[MaterialImport] РћС€РёР±РєР° РїСЂРё СЃРѕР·РґР°РЅРёРё/РѕР±РЅРѕРІР»РµРЅРёРё', ['line' => $line, 'data' => $materialData, 'error' => $e->getMessage()]);
                 }
             }
             if ($dryRun) {
@@ -506,7 +516,7 @@ class MaterialService
         } catch (\Throwable $e) {
             DB::rollBack();
             
-            // TECHNICAL: Критическая ошибка при импорте материалов
+            // TECHNICAL: РљСЂРёС‚РёС‡РµСЃРєР°СЏ РѕС€РёР±РєР° РїСЂРё РёРјРїРѕСЂС‚Рµ РјР°С‚РµСЂРёР°Р»РѕРІ
             $this->logging->technical('material.import.critical_error', [
                 'filename' => $file->getClientOriginalName(),
                 'file_size_bytes' => $file->getSize(),
@@ -519,10 +529,10 @@ class MaterialService
                 'user_id' => null
             ], 'critical');
             
-            Log::error('Критическая ошибка при импорте материалов', ['error' => $e->getMessage()]);
+            Log::error('РљСЂРёС‚РёС‡РµСЃРєР°СЏ РѕС€РёР±РєР° РїСЂРё РёРјРїРѕСЂС‚Рµ РјР°С‚РµСЂРёР°Р»РѕРІ', ['error' => $e->getMessage()]);
             return [
                 'success' => false,
-                'message' => 'Критическая ошибка: ' . $e->getMessage(),
+                'message' => 'РљСЂРёС‚РёС‡РµСЃРєР°СЏ РѕС€РёР±РєР°: ' . $e->getMessage(),
                 'imported' => $imported,
                 'updated' => $updated,
                 'errors' => $errors
@@ -532,7 +542,7 @@ class MaterialService
         $isSuccess = empty($errors);
         $totalProcessed = $imported + $updated;
         
-        // BUSINESS: Завершение импорта материалов - ключевая метрика
+        // BUSINESS: Р—Р°РІРµСЂС€РµРЅРёРµ РёРјРїРѕСЂС‚Р° РјР°С‚РµСЂРёР°Р»РѕРІ - РєР»СЋС‡РµРІР°СЏ РјРµС‚СЂРёРєР°
         $this->logging->business('material.import.completed', [
             'filename' => $file->getClientOriginalName(),
             'organization_id' => $orgId,
@@ -546,7 +556,7 @@ class MaterialService
             'user_id' => null
         ], $isSuccess ? 'info' : 'warning');
         
-        // AUDIT: Массовое изменение каталога материалов - важно для compliance
+        // AUDIT: РњР°СЃСЃРѕРІРѕРµ РёР·РјРµРЅРµРЅРёРµ РєР°С‚Р°Р»РѕРіР° РјР°С‚РµСЂРёР°Р»РѕРІ - РІР°Р¶РЅРѕ РґР»СЏ compliance
         if (!$dryRun && ($imported > 0 || $updated > 0)) {
             $this->logging->audit('material.bulk.import', [
                 'filename' => $file->getClientOriginalName(),
@@ -560,7 +570,7 @@ class MaterialService
         
         return [
             'success' => $isSuccess,
-            'message' => $isSuccess ? 'Импорт завершён успешно' : 'Импорт завершён с ошибками',
+            'message' => $isSuccess ? 'РРјРїРѕСЂС‚ Р·Р°РІРµСЂС€С‘РЅ СѓСЃРїРµС€РЅРѕ' : 'РРјРїРѕСЂС‚ Р·Р°РІРµСЂС€С‘РЅ СЃ РѕС€РёР±РєР°РјРё',
             'imported' => $imported,
             'updated' => $updated,
             'errors' => $errors
@@ -576,7 +586,7 @@ class MaterialService
             'external_code', 'sbis_nomenclature_code', 'sbis_unit_code', 'accounting_account', 'is_active'
         ];
         $examples = [
-            'Цемент М500', 'CEM500', 'кг', 'Основной строительный материал', 'Строительные материалы', '4500.50',
+            'Р¦РµРјРµРЅС‚ Рњ500', 'CEM500', 'РєРі', 'РћСЃРЅРѕРІРЅРѕР№ СЃС‚СЂРѕРёС‚РµР»СЊРЅС‹Р№ РјР°С‚РµСЂРёР°Р»', 'РЎС‚СЂРѕРёС‚РµР»СЊРЅС‹Рµ РјР°С‚РµСЂРёР°Р»С‹', '4500.50',
             'EXT-001', '123456', '796', '10.01', 'true'
         ];
         foreach ($headers as $i => $header) {

@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Api\V1\Landing\Auth;
 use App\DTOs\Auth\LoginDTO;
 use App\DTOs\Auth\RegisterDTO;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\V1\Landing\Auth\ForgotPasswordRequest;
 use App\Http\Requests\Api\V1\Landing\Auth\LoginRequest;
 use App\Http\Requests\Api\V1\Landing\Auth\RegisterRequest;
+use App\Http\Requests\Api\V1\Landing\Auth\ResetPasswordRequest;
 use App\Http\Responses\Auth\LoginResponse;
 use App\Http\Responses\Auth\ProfileResponse;
 use App\Http\Responses\Auth\RegisterResponse;
@@ -172,6 +174,45 @@ class AuthController extends Controller
      *
      * @return \Illuminate\Http\JsonResponse
      */
+    public function forgotPassword(ForgotPasswordRequest $request): JsonResponse
+    {
+        try {
+            $this->authService->sendResetLink((string) $request->validated('email'));
+
+            return LandingResponse::success(null, trans_message('auth.password_reset.email_sent'));
+        } catch (\Throwable $e) {
+            Log::error('[LandingAuthController] Password reset link failed', [
+                'email' => $request->input('email'),
+                'error' => $e->getMessage(),
+            ]);
+
+            return LandingResponse::error(trans_message('auth.password_reset.email_error'), 500);
+        }
+    }
+
+    public function resetPassword(ResetPasswordRequest $request): JsonResponse
+    {
+        try {
+            $result = $this->authService->resetPassword($request->validated());
+
+            if (!$result['success']) {
+                return LandingResponse::error(
+                    $result['message'] ?? trans_message('auth.password_reset.invalid'),
+                    $result['status_code'] ?? 422
+                );
+            }
+
+            return LandingResponse::success(['reset' => true], trans_message('auth.password_reset.success'));
+        } catch (\Throwable $e) {
+            Log::error('[LandingAuthController] Password reset failed', [
+                'email' => $request->input('email'),
+                'error' => $e->getMessage(),
+            ]);
+
+            return LandingResponse::error(trans_message('auth.password_reset.error'), 500);
+        }
+    }
+
     public function me()
     {
         return PerformanceMonitor::measure('landing.me', function() {

@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Api\V1\Landing;
 
 use App\Http\Controllers\Controller;
 use App\Http\Responses\LandingResponse;
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Services\Landing\MultiOrganizationService;
 use App\Services\Landing\OrganizationModuleService;
 use App\Services\Landing\ChildOrganizationUserService;
@@ -499,6 +501,13 @@ class MultiOrganizationController extends Controller
             
             // Получаем кастомные роли организации
             $customRoles = $customRoleService->getOrganizationRoles($childOrgId);
+            $authContext = AuthorizationContext::getOrganizationContext($childOrgId);
+            $roleUserCounts = UserRoleAssignment::query()
+                ->where('context_id', $authContext->id)
+                ->active()
+                ->selectRaw('role_slug, count(distinct user_id) as users_count')
+                ->groupBy('role_slug')
+                ->pluck('users_count', 'role_slug');
             
             // Объединяем системные и кастомные роли
             $allRoles = collect();
@@ -516,7 +525,7 @@ class MultiOrganizationController extends Controller
                         array_values($roleData['module_permissions'] ?? [])
                     ),
                     'permissions_count' => count($roleData['system_permissions'] ?? []) + count($roleData['module_permissions'] ?? []),
-                    'users_count' => 0, // TODO: подсчитать количество пользователей с этой ролью
+                    'users_count' => (int) ($roleUserCounts[$roleSlug] ?? 0),
                     'is_system' => true,
                     'is_active' => true,
                 ]);
@@ -532,7 +541,7 @@ class MultiOrganizationController extends Controller
                     'color' => $customRole->color,
                     'permissions' => $customRole->permissions,
                     'permissions_count' => count($customRole->permissions),
-                    'users_count' => 0, // TODO: подсчитать количество пользователей с этой ролью
+                    'users_count' => (int) ($roleUserCounts[$customRole->slug] ?? 0),
                     'is_system' => false,
                     'is_active' => $customRole->is_active,
                 ]);

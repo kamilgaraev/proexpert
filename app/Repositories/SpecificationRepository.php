@@ -18,6 +18,17 @@ class SpecificationRepository extends BaseRepository implements SpecificationRep
         return Specification::orderBy('spec_date', 'desc')->paginate($perPage);
     }
 
+    public function paginateByProject(int $projectId, int $perPage = 15): LengthAwarePaginator
+    {
+        return Specification::query()
+            ->whereHas('contracts', function ($query) use ($projectId): void {
+                $query->where('contracts.project_id', $projectId)
+                    ->orWhereHas('projects', fn ($projectQuery) => $projectQuery->where('projects.id', $projectId));
+            })
+            ->orderBy('spec_date', 'desc')
+            ->paginate($perPage);
+    }
+
     public function create(array $data): Specification
     {
         /** @var Specification $model */

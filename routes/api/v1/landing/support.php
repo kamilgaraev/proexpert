@@ -1,11 +1,13 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\Api\V1\Landing\SupportController;
+declare(strict_types=1);
 
-Route::middleware(['auth:api_landing']) // Исправляем гвард на api_landing
+use App\Http\Controllers\Api\V1\Landing\SupportController;
+use Illuminate\Support\Facades\Route;
+
+Route::middleware(['auth:api_landing'])
     ->prefix('support')
-    ->group(function () {
+    ->group(function (): void {
         Route::post('/', [SupportController::class, 'store'])
-             ->name('landing.support.store'); // Имя маршрута
-    }); 
+            ->name('landing.support.store');
+    });

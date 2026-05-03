@@ -19,12 +19,13 @@ class SpecificationController extends Controller
     public function index(Request $request)
     {
         try {
-            // Получаем project_id из URL (обязательный параметр для project-based маршрутов)
-            $projectId = $request->route('project');
-            $perPage = $request->query('per_page', 15);
-            
-            // TODO: Добавить фильтрацию по project_id в SpecificationService
-            // Пока возвращаем все спецификации (требует доработки сервиса)
+            $projectId = $request->route('project') ?? $request->query('project_id');
+            $perPage = (int) $request->query('per_page', 15);
+
+            if ($projectId !== null) {
+                return $this->service->paginateByProject((int) $projectId, $perPage);
+            }
+
             return $this->service->paginate($perPage);
         } catch (\Throwable $e) {
             Log::error('SpecificationController@index Exception', [

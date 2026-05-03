@@ -272,7 +272,7 @@ const response = await fetch('/api/v1/ai-assistant/chat', {
 });
 
 const data = await response.json();
-console.log(data.data.message.content);
+const assistantMessage = data.data.message.content;
 ```
 
 ### С продолжением диалога
@@ -447,4 +447,3 @@ OPENAI_API_KEY=sk-...
 - [ ] Function calling для действий
 - [ ] Голосовой ввод
 - [ ] Проактивные уведомления
-

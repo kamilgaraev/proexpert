@@ -8,6 +8,7 @@ use App\DTOs\WorkTypeMaterial\WorkTypeMaterialDTO;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class StoreWorkTypeMaterialRequest extends FormRequest
@@ -19,9 +20,19 @@ class StoreWorkTypeMaterialRequest extends FormRequest
 
     public function rules(): array
     {
+        $organizationId = $this->attributes->get('current_organization_id') ?? $this->user()?->current_organization_id;
+
         return [
             'materials' => 'required|array|min:1',
-            'materials.*.material_id' => 'required|integer|exists:materials,id', // TODO: Добавить проверку на принадлежность материала организации
+            'materials.*.material_id' => [
+                'required',
+                'integer',
+                Rule::exists('materials', 'id')->where(function ($query) use ($organizationId): void {
+                    if ($organizationId) {
+                        $query->where('organization_id', (int) $organizationId);
+                    }
+                }),
+            ],
             'materials.*.default_quantity' => 'required|numeric|min:0',
             'materials.*.notes' => 'nullable|string|max:1000',
         ];

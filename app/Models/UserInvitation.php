@@ -1,13 +1,20 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
+use App\Enums\UserInvitation\InvitationStatus;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use App\Enums\UserInvitation\InvitationStatus;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Str;
-use Carbon\Carbon;
 
+/**
+ * @property Carbon|null $expires_at
+ * @property string|null $token
+ */
 class UserInvitation extends Model
 {
     use HasFactory;
@@ -33,8 +40,8 @@ class UserInvitation extends Model
         'role_slugs' => 'array',
         'expires_at' => 'datetime',
         'accepted_at' => 'datetime',
-        'sent_at'    => 'datetime',
-        'metadata'   => 'array',
+        'sent_at' => 'datetime',
+        'metadata' => 'array',
         'status' => InvitationStatus::class,
     ];
 
@@ -45,46 +52,45 @@ class UserInvitation extends Model
         'invitation_url',
     ];
 
-    // Добавляем token при создании
     protected static function boot()
     {
         parent::boot();
-        
+
         static::creating(function ($invitation) {
             if (!$invitation->token) {
                 $invitation->token = Str::random(64);
             }
+
             if (!$invitation->expires_at) {
                 $invitation->expires_at = Carbon::now()->addDays(7);
             }
+
             if (!$invitation->status) {
                 $invitation->status = InvitationStatus::PENDING;
             }
         });
     }
 
-    // Связи
-    public function user()
+    public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
     }
 
-    public function organization()
+    public function organization(): BelongsTo
     {
         return $this->belongsTo(Organization::class);
     }
 
-    public function invitedBy()
+    public function invitedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'invited_by_user_id');
     }
 
-    public function acceptedBy()
+    public function acceptedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'accepted_by_user_id');
     }
 
-    // Методы проверки статуса
     public function isExpired(): bool
     {
         return $this->expires_at->isPast() || $this->status === InvitationStatus::EXPIRED;
@@ -95,7 +101,6 @@ class UserInvitation extends Model
         return $this->status === InvitationStatus::PENDING && !$this->isExpired();
     }
 
-    // Методы изменения статуса
     public function markAsExpired(): void
     {
         $this->update(['status' => InvitationStatus::EXPIRED]);
@@ -106,7 +111,7 @@ class UserInvitation extends Model
         $this->update([
             'status' => InvitationStatus::ACCEPTED,
             'accepted_by_user_id' => $user->id,
-            'accepted_at' => now()
+            'accepted_at' => now(),
         ]);
     }
 
@@ -119,19 +124,19 @@ class UserInvitation extends Model
     {
         $this->update([
             'token' => Str::random(64),
-            'expires_at' => Carbon::now()->addDays(7)
+            'expires_at' => Carbon::now()->addDays(7),
         ]);
     }
 
     public function getRoleNamesAttribute(): array
     {
         $roleMap = [
-            'organization_admin' => 'Администратор организации',
-            'foreman' => 'Прораб',
-            'web_admin' => 'Веб-администратор',
-            'accountant' => 'Бухгалтер',
-            'worker' => 'Рабочий',
-            'admin' => 'Администратор',
+            'organization_admin' => trans_message('user_invitations.roles.organization_admin'),
+            'foreman' => trans_message('user_invitations.roles.foreman'),
+            'web_admin' => trans_message('user_invitations.roles.web_admin'),
+            'accountant' => trans_message('user_invitations.roles.accountant'),
+            'worker' => trans_message('user_invitations.roles.worker'),
+            'admin' => trans_message('user_invitations.roles.admin'),
         ];
 
         return array_map(function ($slug) use ($roleMap) {
@@ -142,10 +147,10 @@ class UserInvitation extends Model
     public function getStatusTextAttribute(): string
     {
         return match ($this->status) {
-            InvitationStatus::PENDING => 'Ожидает принятия',
-            InvitationStatus::ACCEPTED => 'Принято',
-            InvitationStatus::EXPIRED => 'Истекло',
-            InvitationStatus::CANCELLED => 'Отменено',
+            InvitationStatus::PENDING => trans_message('user_invitations.statuses.pending'),
+            InvitationStatus::ACCEPTED => trans_message('user_invitations.statuses.accepted'),
+            InvitationStatus::EXPIRED => trans_message('user_invitations.statuses.expired'),
+            InvitationStatus::CANCELLED => trans_message('user_invitations.statuses.cancelled'),
         };
     }
 
@@ -162,6 +167,7 @@ class UserInvitation extends Model
     public function getInvitationUrlAttribute(): string
     {
         $baseUrl = config('app.url');
+
         return "{$baseUrl}/invitation/{$this->token}";
     }
 }

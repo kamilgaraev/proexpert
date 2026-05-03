@@ -89,6 +89,7 @@ class AdminPanelUserController extends Controller
             unset($validatedData['role_slug']);
 
             $user = $this->userService->createAdminPanelUser($validatedData, $roleSlug, $request);
+            $user->load('roleAssignments');
 
             Log::info('[AdminPanelUserController] Пользователь админ-панели успешно создан', [
                 'user_id' => $user->id,
@@ -98,7 +99,7 @@ class AdminPanelUserController extends Controller
 
             // Возвращаем правильный Responsable ответ
             return new SuccessCreationResponse(
-                new AdminPanelUserResource($user), // TODO: load('roleAssignments') когда будет готова новая система
+                new AdminPanelUserResource($user),
                 'Пользователь админ-панели успешно создан'
             );
          } catch (\Illuminate\Validation\ValidationException $e) {

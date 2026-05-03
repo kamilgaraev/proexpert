@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Mail\UserInvitationMail;
 use App\Models\UserInvitation;
 use App\Models\User;
 use App\Models\Organization;
@@ -466,8 +467,12 @@ class UserInvitationService
 
     private function sendInvitationEmail(UserInvitation $invitation): void
     {
-        // TODO: Реализовать отправку email
-        // Mail::to($invitation->email)->send(new InvitationMail($invitation));
+        $acceptUrl = rtrim((string) config('app.frontend_url', config('app.url')), '/')
+            . '/invitations/accept?token=' . urlencode($invitation->token);
+
+        Mail::to($invitation->email)->send(new UserInvitationMail($invitation, $acceptUrl));
+
+        $invitation->forceFill(['sent_at' => now()])->save();
     }
 
     private function addExistingUserToOrganization(User $user, UserInvitation $invitation): User
@@ -545,4 +550,4 @@ class UserInvitationService
             'acceptance_rate' => $total > 0 ? round(($accepted / $total) * 100, 1) : 0,
         ];
     }
-} 
+}

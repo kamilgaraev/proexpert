@@ -409,11 +409,26 @@ class AdvanceAccountReportService
             if ($format === 'xlsx') {
                 return $this->excelExporter->streamDownload($fileName . '.xlsx', $headers, $rows);
             }
-            // Для csv пока оставляем заглушку
+            if ($format === 'csv') {
+                return response()->streamDownload(function () use ($headers, $rows): void {
+                    $output = fopen('php://output', 'w');
+                    fputs($output, "\xEF\xBB\xBF");
+                    fputcsv($output, $headers);
+
+                    foreach ($rows as $row) {
+                        fputcsv($output, $row);
+                    }
+
+                    fclose($output);
+                }, $fileName . '.csv', [
+                    'Content-Type' => 'text/csv; charset=UTF-8',
+                ]);
+            }
+
             return response()->json([
-                'message' => 'Экспорт в формате ' . $format . ' временно недоступен. Для экспорта в Excel или CSV используйте JSON формат и конвертируйте его.',
+                'message' => trans_message('reports.unsupported_export_format'),
                 'data' => $reportData
-            ]);
+            ], 422);
         } catch (Exception $e) {
             Log::error('Error exporting advance account report: ' . $e->getMessage(), [
                 'exception' => $e,

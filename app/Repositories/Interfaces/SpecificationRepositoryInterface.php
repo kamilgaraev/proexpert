@@ -12,4 +12,5 @@ interface SpecificationRepositoryInterface
     public function update(int $id, array $data): bool;
     public function delete(int $id): bool;
     public function paginate(int $perPage = 15): LengthAwarePaginator;
+    public function paginateByProject(int $projectId, int $perPage = 15): LengthAwarePaginator;
 } 

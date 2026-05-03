@@ -11,6 +11,8 @@ Route::get('email/verify/{id}/{hash}', [EmailVerificationController::class, 'ver
 Route::prefix('auth')->name('auth.')->group(function () {
     Route::post('register', [AuthController::class, 'register'])->name('register');
     Route::post('login', [AuthController::class, 'login'])->name('landing.login');
+    Route::post('password/email', [AuthController::class, 'forgotPassword'])->name('password.email');
+    Route::post('password/reset', [AuthController::class, 'resetPassword'])->name('password.reset');
     Route::middleware(['auth.jwt:api_landing', 'throttle:dashboard'])
         ->post('refresh', [AuthController::class, 'refresh'])
         ->name('refresh');

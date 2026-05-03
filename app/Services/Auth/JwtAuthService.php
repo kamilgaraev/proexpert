@@ -6,14 +6,18 @@ use App\DTOs\Auth\LoginDTO;
 use App\DTOs\Auth\RegisterDTO;
 use App\Models\User;
 use App\Models\Organization;
+use App\Notifications\LandingResetPasswordNotification;
 use App\Repositories\Interfaces\OrganizationRepositoryInterface;
 use App\Repositories\Interfaces\UserRepositoryInterface;
 use App\Services\LogService;
 use App\Services\PerformanceMonitor;
 use App\Interfaces\Billing\BalanceServiceInterface;
+use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Str;
 use Tymon\JWTAuth\Facades\JWTAuth;
 use Tymon\JWTAuth\Exceptions\JWTException;
@@ -338,6 +342,66 @@ class JwtAuthService
      *
      * @return int|null ID РѕСЂРіР°РЅРёР·Р°С†РёРё РёР»Рё null, РµСЃР»Рё С‚РѕРєРµРЅ РЅРµ СЃРѕРґРµСЂР¶РёС‚ organization_id.
      */
+    public function sendResetLink(string $email): array
+    {
+        $user = $this->userRepository->findByEmail($email);
+
+        if (!$user instanceof User) {
+            return [
+                'success' => true,
+                'status_code' => 200,
+            ];
+        }
+
+        $token = Password::broker('users')->createToken($user);
+        $url = sprintf(
+            '%s/reset-password?token=%s&email=%s',
+            rtrim((string) config('app.frontend_url'), '/'),
+            urlencode($token),
+            urlencode($user->email)
+        );
+
+        $user->notify(new LandingResetPasswordNotification($url));
+
+        return [
+            'success' => true,
+            'status_code' => 200,
+        ];
+    }
+
+    public function resetPassword(array $payload): array
+    {
+        $status = Password::broker('users')->reset(
+            [
+                'email' => $payload['email'],
+                'password' => $payload['password'],
+                'password_confirmation' => $payload['password_confirmation'],
+                'token' => $payload['token'],
+            ],
+            function (User $user, string $password): void {
+                $user->forceFill([
+                    'password' => Hash::make($password),
+                    'remember_token' => Str::random(60),
+                ])->save();
+
+                event(new PasswordReset($user));
+            }
+        );
+
+        if ($status !== Password::PASSWORD_RESET) {
+            return [
+                'success' => false,
+                'status_code' => 422,
+                'message' => trans_message('auth.password_reset.invalid'),
+            ];
+        }
+
+        return [
+            'success' => true,
+            'status_code' => 200,
+        ];
+    }
+
     public function getCurrentOrganizationId(): ?int
     {
         try {
@@ -903,4 +967,3 @@ class JwtAuthService
         }
     }
 } 
-
