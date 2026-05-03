@@ -164,6 +164,119 @@ class AIAssistantServiceBudgetTest extends TestCase
         $this->assertSame('summary', $payload['desired_mode']);
     }
 
+    public function test_follow_up_payload_accepts_relative_period_without_project_context(): void
+    {
+        $service = $this->makeService(new AIToolRegistry());
+
+        $payload = $service->exposeMergeContinuationRequestPayload(
+            'За 2 месяца',
+            [
+                'context' => [
+                    'source_module' => 'ai-assistant',
+                ],
+            ],
+            [
+                'last_task_type' => 'summary',
+                'last_capability' => 'reports',
+                'last_request' => [
+                    'message' => 'Сделай отчет по графику работ',
+                    'context' => [
+                        'source_module' => 'reports',
+                        'source_route' => '/reports',
+                        'entity_refs' => [
+                            [
+                                'type' => 'project',
+                                'id' => 56,
+                                'label' => 'Строительство склада Литер А',
+                            ],
+                        ],
+                        'period' => null,
+                        'filters' => [],
+                        'ui_state' => [],
+                    ],
+                ],
+                'last_report_focus' => 'schedules',
+            ]
+        );
+
+        $this->assertSame('reports', $payload['context']['source_module']);
+        $this->assertSame('/reports', $payload['context']['source_route']);
+        $this->assertSame('За 2 месяца', $payload['context']['period']);
+        $this->assertSame(56, $payload['context']['entity_refs'][0]['id']);
+    }
+
+    public function test_follow_up_payload_keeps_relative_period_when_project_context_is_present(): void
+    {
+        $service = $this->makeService(new AIToolRegistry());
+
+        $payload = $service->exposeMergeContinuationRequestPayload(
+            'За 2 месяца',
+            [
+                'context' => [
+                    'source_module' => 'ai-assistant',
+                    'entity_refs' => [
+                        [
+                            'type' => 'project',
+                            'id' => 56,
+                        ],
+                    ],
+                ],
+            ],
+            [
+                'last_task_type' => 'summary',
+                'last_capability' => 'reports',
+                'last_request' => [
+                    'message' => 'Сделай отчет по графику работ',
+                    'context' => [
+                        'source_module' => 'reports',
+                        'source_route' => '/reports',
+                        'entity_refs' => [],
+                        'period' => null,
+                        'filters' => [],
+                        'ui_state' => [],
+                    ],
+                ],
+                'last_report_focus' => 'schedules',
+            ]
+        );
+
+        $this->assertSame('За 2 месяца', $payload['context']['period']);
+        $this->assertSame(56, $payload['context']['entity_refs'][0]['id']);
+    }
+
+    public function test_follow_up_payload_passes_short_period_reply_to_model_context(): void
+    {
+        $service = $this->makeService(new AIToolRegistry());
+
+        $payload = $service->exposeMergeContinuationRequestPayload(
+            'за ноябрь',
+            [
+                'context' => [
+                    'source_module' => 'ai-assistant',
+                ],
+            ],
+            [
+                'last_task_type' => 'summary',
+                'last_capability' => 'reports',
+                'last_request' => [
+                    'message' => 'Сделай отчет по графику работ',
+                    'context' => [
+                        'source_module' => 'reports',
+                        'source_route' => '/reports',
+                        'entity_refs' => [],
+                        'period' => null,
+                        'filters' => [],
+                        'ui_state' => [],
+                    ],
+                ],
+                'last_report_focus' => 'schedules',
+            ]
+        );
+
+        $this->assertSame('reports', $payload['context']['source_module']);
+        $this->assertSame('за ноябрь', $payload['context']['period']);
+    }
+
     public function test_prepare_messages_for_provider_preserves_latest_user_message_and_reduces_budget(): void
     {
         $service = $this->makeService(new AIToolRegistry());

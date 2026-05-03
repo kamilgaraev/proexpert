@@ -491,6 +491,10 @@ class AIAssistantService
             }
         }
 
+        if (($currentContext['period'] ?? null) === null && $this->expectsPeriodContinuation($previousContext, $query)) {
+            $currentContext['period'] = trim($query);
+        }
+
         if (empty($currentContext['entity_refs']) && !empty($previousContext['entity_refs'])) {
             $currentContext['entity_refs'] = $previousContext['entity_refs'];
         }
@@ -563,7 +567,26 @@ class AIAssistantService
             return true;
         }
 
-        return str_contains($normalizedQuery, 'текущ') && str_contains($normalizedQuery, 'проект');
+        if (str_contains($normalizedQuery, 'текущ') && str_contains($normalizedQuery, 'проект')) {
+            return true;
+        }
+
+        $previousContext = is_array($previousRequest['context'] ?? null) ? $previousRequest['context'] : [];
+
+        return $this->expectsPeriodContinuation($previousContext, $query);
+    }
+
+    private function expectsPeriodContinuation(array $previousContext, string $query): bool
+    {
+        if (($previousContext['period'] ?? null) !== null) {
+            return false;
+        }
+
+        $normalizedQuery = trim($query);
+
+        return $normalizedQuery !== ''
+            && mb_strlen($normalizedQuery) <= 140
+            && preg_match('/[?]/u', $normalizedQuery) !== 1;
     }
 
     private function looksLikeStandaloneRequest(string $normalizedQuery): bool
