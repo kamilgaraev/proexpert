@@ -1,83 +1,154 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools;
 
 use Carbon\Carbon;
+use Carbon\CarbonInterface;
+use DateTimeInterface;
+use Throwable;
 
 trait ReportDateHelper
 {
     /**
-     * Преобразует текстовое описание периода в даты 'date_from' и 'date_to'.
-     *
-     * @param string $query Текстовое описание из промпта
-     * @return array Возвращает массив с 'date_from' и 'date_to' (формат Y-m-d H:i:s)
+     * @param  array<string, mixed>  $arguments
+     * @return array{date_from: string|null, date_to: string|null}
+     */
+    protected function extractPeriodFromArguments(array $arguments, string $defaultPeriod): array
+    {
+        $dateFrom = $this->normalizeDateArgument($arguments['date_from'] ?? null);
+        $dateTo = $this->normalizeDateArgument($arguments['date_to'] ?? null, true);
+
+        if ($dateFrom !== null && $dateTo !== null) {
+            $from = $this->carbonFromDateTimeString($dateFrom);
+            $to = $this->carbonFromDateTimeString($dateTo);
+
+            if ($from === null || $to === null || $from->greaterThan($to)) {
+                return $this->extractPeriod((string) ($arguments['period'] ?? $defaultPeriod));
+            }
+
+            return [
+                'date_from' => $dateFrom,
+                'date_to' => $dateTo,
+            ];
+        }
+
+        return $this->extractPeriod((string) ($arguments['period'] ?? $defaultPeriod));
+    }
+
+    /**
+     * @return array{date_from: string|null, date_to: string|null}
      */
     protected function extractPeriod(string $query): array
     {
         $query = mb_strtolower($query);
         $now = Carbon::now();
-        
-        // Последний месяц
+
         if (preg_match('/(последн|прошл).* месяц/ui', $query)) {
             return [
                 'date_from' => $now->copy()->subMonth()->startOfMonth()->toDateTimeString(),
                 'date_to' => $now->copy()->subMonth()->endOfMonth()->toDateTimeString(),
             ];
         }
-        
-        // Этот месяц
+
         if (preg_match('/(этот|текущ|за).* месяц/ui', $query)) {
             return [
                 'date_from' => $now->copy()->startOfMonth()->toDateTimeString(),
                 'date_to' => $now->copy()->endOfMonth()->toDateTimeString(),
             ];
         }
-        
-        // Квартал
+
         if (preg_match('/(квартал|кварт)/ui', $query)) {
             return [
                 'date_from' => $now->copy()->startOfQuarter()->toDateTimeString(),
                 'date_to' => $now->copy()->endOfQuarter()->toDateTimeString(),
             ];
         }
-        
-        // Год
+
         if (preg_match('/(год|за год|в год)/ui', $query)) {
             return [
                 'date_from' => $now->copy()->startOfYear()->toDateTimeString(),
                 'date_to' => $now->copy()->endOfYear()->toDateTimeString(),
             ];
         }
-        
-        // Конкретный месяц (сентябрь, октябрь и т.д.)
+
         $months = [
-            'январ' => 1, 'феврал' => 2, 'март' => 3, 'апрел' => 4, 'ма[йя]' => 5, 'июн' => 6,
-            'июл' => 7, 'август' => 8, 'сентябр' => 9, 'октябр' => 10, 'ноябр' => 11, 'декабр' => 12,
+            'январ' => 1,
+            'феврал' => 2,
+            'март' => 3,
+            'апрел' => 4,
+            'ма[йя]' => 5,
+            'июн' => 6,
+            'июл' => 7,
+            'август' => 8,
+            'сентябр' => 9,
+            'октябр' => 10,
+            'ноябр' => 11,
+            'декабр' => 12,
         ];
-        
-        foreach ($months as $pattern => $monthNum) {
-            if (preg_match("/$pattern/ui", $query)) {
-                $date = Carbon::create($now->year, $monthNum, 1);
+
+        foreach ($months as $pattern => $monthNumber) {
+            if (preg_match("/{$pattern}/ui", $query)) {
+                $date = Carbon::create($now->year, $monthNumber, 1);
+
                 return [
                     'date_from' => $date->copy()->startOfMonth()->toDateTimeString(),
                     'date_to' => $date->copy()->endOfMonth()->toDateTimeString(),
                 ];
             }
         }
-        
-        // Неопределенный/далекий период - по умолчанию с начала месяца
-        // Если указан "весь период"
-        if (preg_match('/(весь|вс[её]).* (период|время)/ui', $query)) {
+
+        if (preg_match('/(весь|всё|все).* (период|время)/ui', $query)) {
             return [
                 'date_from' => null,
                 'date_to' => null,
             ];
         }
 
-        // По умолчанию - за текущий месяц (чтобы не перегружать сервис гигантскими выборками)
         return [
             'date_from' => $now->copy()->startOfMonth()->toDateTimeString(),
             'date_to' => $now->copy()->endOfMonth()->toDateTimeString(),
         ];
+    }
+
+    private function normalizeDateArgument(mixed $value, bool $endOfDay = false): ?string
+    {
+        if ($value instanceof DateTimeInterface) {
+            $date = Carbon::instance($value)->copy();
+
+            return $endOfDay
+                ? $date->endOfDay()->toDateTimeString()
+                : $date->startOfDay()->toDateTimeString();
+        }
+
+        if (! is_string($value) || ! preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
+            return null;
+        }
+
+        try {
+            $date = Carbon::createFromFormat('Y-m-d', $value);
+        } catch (Throwable) {
+            return null;
+        }
+
+        if (! $date instanceof Carbon || $date->format('Y-m-d') !== $value) {
+            return null;
+        }
+
+        return $endOfDay
+            ? $date->endOfDay()->toDateTimeString()
+            : $date->startOfDay()->toDateTimeString();
+    }
+
+    private function carbonFromDateTimeString(string $value): ?Carbon
+    {
+        try {
+            $date = Carbon::createFromFormat('Y-m-d H:i:s', $value);
+        } catch (Throwable) {
+            return null;
+        }
+
+        return $date instanceof CarbonInterface ? $date : null;
     }
 }

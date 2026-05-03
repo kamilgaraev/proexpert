@@ -2,14 +2,14 @@
 
 namespace App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools;
 
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Log;
+use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
 use App\Models\Organization;
 use App\Models\User;
-use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
 use App\Services\Report\ReportService;
 use App\Services\Storage\OrganizationStoragePath;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 class GenerateProfitabilityReportTool implements AIToolInterface
 {
@@ -39,21 +39,30 @@ class GenerateProfitabilityReportTool implements AIToolInterface
             'properties' => [
                 'period' => [
                     'type' => 'string',
-                    'description' => 'Текстовое описание периода (например: "за последний месяц", "за этот год", "сентябрь")'
+                    'description' => 'Текстовое описание периода (например: "за последний месяц", "за этот год", "сентябрь")',
+                ],
+                'date_from' => [
+                    'type' => 'string',
+                    'description' => 'Дата начала периода в формате YYYY-MM-DD. Если указана вместе с date_to, используется вместо текстового period.',
+                ],
+                'date_to' => [
+                    'type' => 'string',
+                    'description' => 'Дата окончания периода в формате YYYY-MM-DD. Если указана вместе с date_from, используется вместо текстового period.',
                 ],
                 'project_id' => [
                     'type' => 'integer',
-                    'description' => 'ID проекта, если нужно посмотреть рентабельность конкретного проекта (необязательно)'
-                ]
+                    'description' => 'ID проекта, если нужно посмотреть рентабельность конкретного проекта (необязательно)',
+                ],
             ],
-            'required' => ['period']
+            'required' => ['period'],
         ];
     }
 
     public function execute(array $arguments, ?User $user, Organization $organization): array|string
     {
-        $dates = $this->extractPeriod($arguments['period'] ?? 'за этот месяц');
-        
+        $period = (string) ($arguments['period'] ?? 'за этот месяц');
+        $dates = $this->extractPeriodFromArguments($arguments, $period);
+
         $requestData = [
             'format' => 'pdf',
             'date_from' => $dates['date_from'],
@@ -65,37 +74,43 @@ class GenerateProfitabilityReportTool implements AIToolInterface
         }
 
         $request = Request::create('/api/v1/admin/reports/project-profitability', 'GET', $requestData);
-        $request->setUserResolver(fn() => $user);
+        $request->setUserResolver(fn () => $user);
         $request->attributes->set('current_organization_id', $organization->id);
 
         try {
             /** @var \Symfony\Component\HttpFoundation\StreamedResponse $response */
             $response = $this->reportService->getProjectProfitabilityReport($request);
-            
+
             // Захватываем сгенерированный PDF контент из StreamedResponse
             ob_start();
             $response->sendContent();
             $content = ob_get_clean();
-            
-            $filename = 'project_profitability_report_' . time() . '.pdf';
+
+            $filename = 'project_profitability_report_'.time().'.pdf';
             $path = OrganizationStoragePath::forOrganization($organization->id, "reports/{$filename}");
-            
+
             if (Storage::disk('s3')->put($path, $content) !== true) {
                 throw new \RuntimeException('Не удалось сохранить отчет в S3.');
             }
-            $url = Storage::disk('s3')->temporaryUrl($path, now()->addHours(24));
-            
+            $expiresAt = now()->addHours(24);
+            $url = Storage::disk('s3')->temporaryUrl($path, $expiresAt);
+
             return [
                 'status' => 'success',
                 'message' => 'Отчет о рентабельности успешно сгенерирован',
-                'period' => $arguments['period'] ?? 'за этот месяц',
+                'period' => $period,
                 'pdf_url' => $url,
+                'filename' => $filename,
+                'storage_disk' => 's3',
+                'storage_path' => $path,
+                'expires_at' => $expiresAt->toIso8601String(),
             ];
         } catch (\Exception $e) {
-            Log::error('AI Tool Error (GenerateProfitabilityReportTool): ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
+            Log::error('AI Tool Error (GenerateProfitabilityReportTool): '.$e->getMessage(), ['trace' => $e->getTraceAsString()]);
+
             return [
                 'status' => 'error',
-                'message' => 'Ошибка при генерации отчета: ' . $e->getMessage(),
+                'message' => 'Ошибка при генерации отчета: '.$e->getMessage(),
             ];
         }
     }
