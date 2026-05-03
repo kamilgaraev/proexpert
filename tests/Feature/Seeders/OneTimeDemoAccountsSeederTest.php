@@ -76,6 +76,7 @@ class OneTimeDemoAccountsSeederTest extends TestCase
                 UserRoleAssignment::query()
                     ->where('user_id', $user->id)
                     ->where('context_id', $context->id)
+                    ->where('role_slug', 'organization_owner')
                     ->where('is_active', true)
                     ->exists()
             );
