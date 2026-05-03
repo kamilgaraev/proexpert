@@ -11,6 +11,25 @@ use Illuminate\Validation\Rule;
 
 class StoreSupplierRequestRequest extends FormRequest
 {
+    protected function prepareForValidation(): void
+    {
+        $externalSupplier = $this->input('external_supplier');
+
+        if (!is_array($externalSupplier)) {
+            return;
+        }
+
+        foreach (['contact_person', 'phone', 'email', 'tax_number', 'address'] as $field) {
+            if (($externalSupplier[$field] ?? null) === 'null') {
+                $externalSupplier[$field] = null;
+            }
+        }
+
+        $this->merge([
+            'external_supplier' => $externalSupplier,
+        ]);
+    }
+
     public function authorize(): bool
     {
         /** @var User|null $user */
@@ -41,7 +60,7 @@ class StoreSupplierRequestRequest extends FormRequest
             ],
             'supplier_id' => [
                 'required_without:external_supplier',
-                'prohibited_with:external_supplier',
+                Rule::prohibitedIf(fn (): bool => $this->has('external_supplier')),
                 'integer',
                 Rule::exists('suppliers', 'id')->where(static function ($query) use ($organizationId) {
                     $query->where('organization_id', $organizationId)
@@ -49,7 +68,11 @@ class StoreSupplierRequestRequest extends FormRequest
                         ->whereNull('deleted_at');
                 }),
             ],
-            'external_supplier' => ['required_without:supplier_id', 'prohibited_with:supplier_id', 'array'],
+            'external_supplier' => [
+                'required_without:supplier_id',
+                Rule::prohibitedIf(fn (): bool => $this->filled('supplier_id')),
+                'array',
+            ],
             'external_supplier.name' => ['required_with:external_supplier', 'string', 'max:255'],
             'external_supplier.contact_person' => ['sometimes', 'nullable', 'string', 'max:255'],
             'external_supplier.phone' => ['sometimes', 'nullable', 'string', 'max:64'],
