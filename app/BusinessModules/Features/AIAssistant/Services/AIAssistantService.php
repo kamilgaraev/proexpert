@@ -157,6 +157,7 @@ class AIAssistantService
             $toolFailures = [];
             $toolEvidence = [];
             $proposedActions = [];
+            $trustedDownloadUrls = [];
             $degradedMode = false;
 
             $responseEnvelope = $this->requestAssistantResponse($messages, $options, $organizationId, $user);
@@ -195,7 +196,8 @@ class AIAssistantService
                         $executedAction,
                         $toolEvidence,
                         $toolFailures,
-                        $proposedActions
+                        $proposedActions,
+                        $trustedDownloadUrls
                     );
 
                     $toolContent = is_string($toolResult)
@@ -230,6 +232,8 @@ class AIAssistantService
             if ($assistantContent === '') {
                 $assistantContent = $this->assistantMessage('ai_assistant.empty_response', 'Не удалось сформировать содержательный ответ по текущему запросу.');
             }
+            $assistantContent = $this->stripUntrustedMarkdownLinks($assistantContent, $trustedDownloadUrls);
+            $assistantContent = $this->guardUnconfirmedReportCompletion($assistantContent, $taskPlan, $trustedDownloadUrls);
 
             $assistantPayload = $this->taskOrchestrator->buildPayload($taskPlan, $assistantContent, [
                 'degraded_mode' => $degradedMode,
@@ -312,7 +316,8 @@ class AIAssistantService
         ?array &$executedAction,
         array &$toolEvidence,
         array &$toolFailures,
-        array &$proposedActions
+        array &$proposedActions,
+        array &$trustedDownloadUrls
     ): array|string {
         $toolName = (string) ($toolCall['function']['name'] ?? '');
         $arguments = json_decode((string) ($toolCall['function']['arguments'] ?? '{}'), true);
@@ -381,6 +386,10 @@ class AIAssistantService
             }
 
             $toolResult = $tool->execute($args, $user, $organization);
+            $trustedDownloadUrls = array_values(array_unique(array_merge(
+                $trustedDownloadUrls,
+                $this->collectTrustedDownloadUrls($toolResult)
+            )));
 
             if (is_array($toolResult) && isset($toolResult['_executed_action']) && is_array($toolResult['_executed_action'])) {
                 $executedAction = $toolResult['_executed_action'];
@@ -647,6 +656,102 @@ class AIAssistantService
         }
 
         return false;
+    }
+
+    protected function stripUntrustedMarkdownLinks(string $content, array $trustedUrls = []): string
+    {
+        $trustedLookup = array_flip(array_values(array_unique(array_filter(
+            array_map(static fn (mixed $value): string => trim((string) $value), $trustedUrls),
+            static fn (string $value): bool => $value !== ''
+        ))));
+
+        return preg_replace_callback(
+            '/\[([^\]\n]+)\]\(([^)\s]+)\)/u',
+            static function (array $matches) use ($trustedLookup): string {
+                $label = trim((string) ($matches[1] ?? ''));
+                $href = trim((string) ($matches[2] ?? ''));
+
+                return isset($trustedLookup[$href]) ? $matches[0] : $label;
+            },
+            $content
+        ) ?? $content;
+    }
+
+    protected function guardUnconfirmedReportCompletion(string $content, array $taskPlan, array $trustedUrls = []): string
+    {
+        if (!$this->isReportTaskPlan($taskPlan) || $trustedUrls !== []) {
+            return $content;
+        }
+
+        $normalized = mb_strtolower($content);
+        $mentionsReport = $this->containsAnyText($normalized, ['отчет', 'отчёт', 'pdf']);
+        $claimsCompletion = $this->containsAnyText($normalized, ['готов', 'сформирован', 'скачать']);
+
+        if (!$mentionsReport || !$claimsCompletion) {
+            return $content;
+        }
+
+        return $this->assistantMessage(
+            'ai_assistant.report_download_missing',
+            'Не удалось сформировать файл отчета по текущему запросу. Попробуйте повторить запрос или уточнить период и проект.'
+        );
+    }
+
+    protected function collectTrustedDownloadUrls(mixed $value): array
+    {
+        if (!is_array($value)) {
+            return [];
+        }
+
+        $urls = [];
+        foreach ($value as $key => $item) {
+            if (in_array($key, ['pdf_url', 'excel_url', 'download_url', 'file_url'], true) && $this->isTrustedDownloadUrl($item)) {
+                $urls[] = trim((string) $item);
+                continue;
+            }
+
+            if (is_array($item)) {
+                $urls = array_merge($urls, $this->collectTrustedDownloadUrls($item));
+            }
+        }
+
+        return array_values(array_unique($urls));
+    }
+
+    protected function isTrustedDownloadUrl(mixed $value): bool
+    {
+        if (!is_string($value)) {
+            return false;
+        }
+
+        $url = trim($value);
+        if ($url === '') {
+            return false;
+        }
+
+        if (str_starts_with($url, '/api/') || str_starts_with($url, '/storage/')) {
+            return true;
+        }
+
+        $scheme = parse_url($url, PHP_URL_SCHEME);
+
+        return is_string($scheme)
+            && in_array(mb_strtolower($scheme), ['http', 'https'], true)
+            && filter_var($url, FILTER_VALIDATE_URL) !== false;
+    }
+
+    private function isReportTaskPlan(array $taskPlan): bool
+    {
+        $capabilityId = $taskPlan['capability']['id'] ?? null;
+        if ($capabilityId === 'reports') {
+            return true;
+        }
+
+        $request = is_array($taskPlan['request'] ?? null) ? $taskPlan['request'] : [];
+        $context = is_array($request['context'] ?? null) ? $request['context'] : [];
+
+        return ($context['source_module'] ?? null) === 'reports'
+            || ($context['ui_state']['assistant_report_focus'] ?? null) !== null;
     }
 
     protected function assistantMessage(string $key, string $fallback, array $replace = []): string

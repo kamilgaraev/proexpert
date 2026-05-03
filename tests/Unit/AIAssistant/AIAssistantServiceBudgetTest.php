@@ -314,6 +314,75 @@ class AIAssistantServiceBudgetTest extends TestCase
         $this->assertStringContainsString('Найди аптечку', $preparedMessages[array_key_last($preparedMessages)]['content']);
     }
 
+    public function test_untrusted_report_markdown_link_is_rendered_as_text(): void
+    {
+        $service = $this->makeService(new AIToolRegistry());
+
+        $content = 'Готово! [Скачать отчет](реальный_pdf_url_из_данных)';
+
+        $this->assertSame('Готово! Скачать отчет', $service->exposeStripUntrustedMarkdownLinks($content));
+    }
+
+    public function test_trusted_report_markdown_link_is_preserved(): void
+    {
+        $service = $this->makeService(new AIToolRegistry());
+        $url = 'https://storage.yandexcloud.net/prohelper/reports/report.pdf?X-Amz-Signature=test';
+        $content = "Готово! [Скачать отчет]({$url})";
+
+        $this->assertSame($content, $service->exposeStripUntrustedMarkdownLinks($content, [$url]));
+    }
+
+    public function test_report_completion_without_trusted_download_url_is_replaced(): void
+    {
+        $service = $this->makeService(new AIToolRegistry());
+
+        $content = $service->exposeGuardUnconfirmedReportCompletion(
+            'Готово! Отчет по графику работ готов. Скачать отчет',
+            [
+                'task_type' => 'summary',
+                'capability' => [
+                    'id' => 'reports',
+                ],
+                'request' => [
+                    'context' => [
+                        'source_module' => 'reports',
+                    ],
+                ],
+            ],
+            []
+        );
+
+        $this->assertSame(
+            'Не удалось сформировать файл отчета по текущему запросу. Попробуйте повторить запрос или уточнить период и проект.',
+            $content
+        );
+    }
+
+    public function test_report_completion_with_trusted_download_url_is_preserved(): void
+    {
+        $service = $this->makeService(new AIToolRegistry());
+        $content = 'Готово! Отчет по графику работ готов. [Скачать отчет](https://example.test/report.pdf)';
+
+        $this->assertSame(
+            $content,
+            $service->exposeGuardUnconfirmedReportCompletion(
+                $content,
+                [
+                    'task_type' => 'summary',
+                    'capability' => [
+                        'id' => 'reports',
+                    ],
+                    'request' => [
+                        'context' => [
+                            'source_module' => 'reports',
+                        ],
+                    ],
+                ],
+                ['https://example.test/report.pdf']
+            )
+        );
+    }
+
     public function test_structured_context_policy_is_single_utf8_path(): void
     {
         $service = $this->makeService(new AIToolRegistry());
@@ -442,5 +511,18 @@ class TestableAIAssistantService extends AIAssistantService
         array $conversationContext
     ): array {
         return $this->mergeContinuationRequestPayload($query, $requestPayload, $conversationContext);
+    }
+
+    public function exposeStripUntrustedMarkdownLinks(string $content, array $trustedUrls = []): string
+    {
+        return $this->stripUntrustedMarkdownLinks($content, $trustedUrls);
+    }
+
+    public function exposeGuardUnconfirmedReportCompletion(
+        string $content,
+        array $taskPlan,
+        array $trustedUrls = []
+    ): string {
+        return $this->guardUnconfirmedReportCompletion($content, $taskPlan, $trustedUrls);
     }
 }

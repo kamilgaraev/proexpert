@@ -94,7 +94,9 @@ class GenerateTimeTrackingReportTool implements AIToolInterface
             $filename = 'time_tracking_report_' . time() . '.pdf';
             $path = OrganizationStoragePath::forOrganization($organization->id, "reports/{$filename}");
             
-            Storage::disk('s3')->put($path, $content);
+            if (Storage::disk('s3')->put($path, $content) !== true) {
+                throw new \RuntimeException('Не удалось сохранить отчет в S3.');
+            }
             $url = Storage::disk('s3')->temporaryUrl($path, now()->addHours(24));
             
             return [

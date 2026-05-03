@@ -22,6 +22,19 @@ class AIAssistantSourceEncodingTest extends TestCase
         );
     }
 
+    public function test_system_prompt_does_not_teach_fake_report_links(): void
+    {
+        $contents = file_get_contents(
+            dirname(__DIR__, 3)
+            . DIRECTORY_SEPARATOR
+            . 'app/BusinessModules/Features/AIAssistant/Services/ContextBuilder.php'
+        );
+
+        $this->assertIsString($contents);
+        $this->assertStringNotContainsString('реальный_pdf_url_из_данных', $contents);
+        $this->assertStringNotContainsString('ТУТ_ССЫЛКА', $contents);
+    }
+
     public static function criticalSourceProvider(): array
     {
         return [
