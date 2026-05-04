@@ -4,7 +4,12 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
+use App\BusinessModules\Features\AIAssistant\DTOs\Agent\AssistantTaskState;
 use App\BusinessModules\Features\AIAssistant\Models\Conversation;
+use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentExecutor;
+use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentPlanner;
+use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentStateStore;
+use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantResponseVerifier;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\Models\Organization;
 use App\Models\User;
@@ -16,32 +21,64 @@ use Throwable;
 class AIAssistantService
 {
     private const HISTORY_MESSAGE_LIMIT = 6;
+
     private const HISTORY_TOTAL_CHARS = 4000;
+
     private const HISTORY_USER_MESSAGE_CHARS = 500;
+
     private const HISTORY_ASSISTANT_MESSAGE_CHARS = 900;
+
     private const LEGACY_CONTEXT_CHARS = 3500;
+
     private const STRUCTURED_CONTEXT_CHARS = 2500;
+
     private const MESSAGE_CHAR_BUDGET = 18000;
+
     private const STRICT_MESSAGE_CHAR_BUDGET = 12000;
+
     private const SYSTEM_PROMPT_CHAR_LIMIT = 8000;
+
     private const USER_MESSAGE_CHAR_LIMIT = 1200;
+
     private const ASSISTANT_MESSAGE_CHAR_LIMIT = 1800;
+
     private const TOOL_MESSAGE_CHAR_LIMIT = 1400;
+
     private const PROVIDER_INPUT_TOKEN_BUDGET = 12000;
+
     private const CONTEXT_MAX_DEPTH = 3;
+
     private const CONTEXT_LIST_LIMIT = 5;
+
     private const CONTEXT_MAP_LIMIT = 8;
 
     protected LLMProviderInterface $llmProvider;
+
     protected ConversationManager $conversationManager;
+
     protected ContextBuilder $contextBuilder;
+
     protected IntentRecognizer $intentRecognizer;
+
     protected UsageTracker $usageTracker;
+
     protected LoggingService $logging;
+
     protected AIToolRegistry $toolRegistry;
+
     protected AIPermissionChecker $permissionChecker;
+
     protected AssistantAccessContextResolver $accessContextResolver;
+
     protected AssistantTaskOrchestrator $taskOrchestrator;
+
+    protected AssistantAgentStateStore $agentStateStore;
+
+    protected AssistantAgentPlanner $agentPlanner;
+
+    protected AssistantAgentExecutor $agentExecutor;
+
+    protected AssistantResponseVerifier $responseVerifier;
 
     public function __construct(
         LLMProviderInterface $llmProvider,
@@ -53,7 +90,11 @@ class AIAssistantService
         AIToolRegistry $toolRegistry,
         AIPermissionChecker $permissionChecker,
         AssistantAccessContextResolver $accessContextResolver,
-        AssistantTaskOrchestrator $taskOrchestrator
+        AssistantTaskOrchestrator $taskOrchestrator,
+        AssistantAgentStateStore $agentStateStore,
+        AssistantAgentPlanner $agentPlanner,
+        AssistantAgentExecutor $agentExecutor,
+        AssistantResponseVerifier $responseVerifier
     ) {
         $this->llmProvider = $llmProvider;
         $this->conversationManager = $conversationManager;
@@ -65,6 +106,10 @@ class AIAssistantService
         $this->permissionChecker = $permissionChecker;
         $this->accessContextResolver = $accessContextResolver;
         $this->taskOrchestrator = $taskOrchestrator;
+        $this->agentStateStore = $agentStateStore;
+        $this->agentPlanner = $agentPlanner;
+        $this->agentExecutor = $agentExecutor;
+        $this->responseVerifier = $responseVerifier;
     }
 
     public function ask(
@@ -74,7 +119,7 @@ class AIAssistantService
         ?int $conversationId = null,
         array $requestPayload = []
     ): array {
-        if (!$this->permissionChecker->canUseAssistant($user, $organizationId)) {
+        if (! $this->permissionChecker->canUseAssistant($user, $organizationId)) {
             throw new AuthorizationException($this->assistantMessage('ai_assistant.access_denied', 'Недостаточно прав для работы с AI-ассистентом.'));
         }
 
@@ -84,7 +129,7 @@ class AIAssistantService
             'query_length' => strlen($query),
         ]);
 
-        if (!$this->usageTracker->canMakeRequest($organizationId)) {
+        if (! $this->usageTracker->canMakeRequest($organizationId)) {
             throw new RuntimeException($this->assistantMessage('ai_assistant.limit_exceeded', 'Исчерпан месячный лимит запросов к AI-ассистенту.'));
         }
 
@@ -145,12 +190,17 @@ class AIAssistantService
         $conversation->context = $conversationContext;
         $conversation->save();
 
+        $agentResult = $this->handleAgentFlow($query, $organizationId, $user, $conversation, $taskPlan);
+        if ($agentResult !== null) {
+            return $agentResult;
+        }
+
         $messages = $this->buildMessages($conversation, $legacyContext, $taskPlan);
 
         try {
             $options = [];
             $tools = $this->resolveToolDefinitions($taskPlan);
-            if (!empty($tools)) {
+            if (! empty($tools)) {
                 $options['tools'] = $tools;
             }
 
@@ -172,12 +222,9 @@ class AIAssistantService
             $maxLoops = 5;
             $organization = null;
 
-            while (!empty($response['tool_calls']) && $loopCount < $maxLoops) {
-                if (!$organization instanceof Organization) {
-                    $organization = Organization::find($organizationId);
-                    if (!$organization instanceof Organization) {
-                        throw new RuntimeException($this->assistantMessage('ai_assistant.organization_not_found', 'Организация для AI-ассистента не найдена.'));
-                    }
+            while (! empty($response['tool_calls']) && $loopCount < $maxLoops) {
+                if (! $organization instanceof Organization) {
+                    $organization = $this->resolveOrganization($organizationId);
                 }
 
                 $messages[] = [
@@ -307,6 +354,228 @@ class AIAssistantService
         }
     }
 
+    protected function handleAgentFlow(
+        string $query,
+        int $organizationId,
+        User $user,
+        Conversation $conversation,
+        array $taskPlan
+    ): ?array {
+        $pendingState = $this->agentStateStore->load($conversation);
+        $context = is_array($taskPlan['request']['context'] ?? null) ? $taskPlan['request']['context'] : [];
+        $decision = $this->agentPlanner->decide($query, $context, $pendingState);
+
+        if ($decision->type === 'answer') {
+            return null;
+        }
+
+        if ($decision->type === 'ask_clarification' && $decision->state instanceof AssistantTaskState) {
+            return $this->answerAgentClarification($conversation, $organizationId, $user, $decision->state, $taskPlan, $decision->clarificationQuestion);
+        }
+
+        if (
+            $decision->type === 'execute_tool'
+            && $decision->state instanceof AssistantTaskState
+            && is_string($decision->toolName)
+            && $decision->toolName !== ''
+        ) {
+            if (! $this->canAgentExecuteTool($decision->state, $decision->toolName)) {
+                return null;
+            }
+
+            return $this->executeAgentTool($conversation, $organizationId, $user, $decision->state, $taskPlan, $decision->toolName, $decision->toolArguments);
+        }
+
+        return null;
+    }
+
+    protected function answerAgentClarification(
+        Conversation $conversation,
+        int $organizationId,
+        User $user,
+        AssistantTaskState $state,
+        array $taskPlan,
+        ?string $question
+    ): array {
+        $this->agentStateStore->save($conversation, $state);
+
+        $answer = trim((string) $question);
+        if ($answer === '') {
+            $answer = $this->assistantMessage(
+                'ai_assistant.agent_clarification_required',
+                'Уточните недостающие данные, чтобы я мог продолжить.'
+            );
+        }
+
+        $missingSlots = $state->missingRequiredSlotNames();
+        $payload = $this->taskOrchestrator->buildPayload($taskPlan, $answer, [
+            'missing_data' => $missingSlots,
+            'agent_state' => $state->toArray(),
+            'confidence' => 'medium',
+        ]);
+
+        $assistantMessage = $this->conversationManager->addMessage(
+            $conversation,
+            'assistant',
+            $answer,
+            0,
+            'agent-flow',
+            $payload
+        );
+
+        return $this->agentAskResult($conversation, $assistantMessage, $answer, $payload, $organizationId, $user);
+    }
+
+    protected function executeAgentTool(
+        Conversation $conversation,
+        int $organizationId,
+        User $user,
+        AssistantTaskState $state,
+        array $taskPlan,
+        string $toolName,
+        array $toolArguments
+    ): array {
+        $organization = $this->resolveOrganization($organizationId);
+        $toolResult = $this->agentExecutor->execute($toolName, $toolArguments, $user, $organization);
+
+        $artifacts = $this->filterAgentArtifactsForOrganization($organizationId, array_values(array_filter(
+            $toolResult['artifacts'] ?? [],
+            static fn (mixed $artifact): bool => is_array($artifact)
+        )));
+
+        $toolStatus = (string) ($toolResult['status'] ?? 'error');
+        $finalState = $this->stateWithStatus(
+            $state,
+            $toolStatus === 'error' || $artifacts === [] ? 'failed' : 'completed'
+        );
+
+        $answer = $this->buildAgentToolAnswer($toolStatus, $artifacts);
+        $answer = $this->responseVerifier->verify($answer, [
+            'task_id' => $finalState->id,
+            'state' => $finalState->toArray(),
+            'artifacts' => $artifacts,
+        ]);
+
+        $this->agentStateStore->save($conversation, $finalState);
+
+        $payload = $this->taskOrchestrator->buildPayload($taskPlan, $answer, [
+            'agent_state' => $finalState->toArray(),
+            'artifacts' => $artifacts,
+            'tool_result' => [
+                'status' => $toolStatus,
+                'tool_name' => (string) ($toolResult['tool_name'] ?? $toolName),
+                'evidence' => array_values($toolResult['evidence'] ?? []),
+            ],
+            'tool_evidence' => array_values($toolResult['evidence'] ?? []),
+            'missing_data' => $artifacts === [] ? ['artifacts'] : [],
+            'confidence' => $artifacts === [] ? 'low' : 'high',
+        ]);
+
+        $assistantMessage = $this->conversationManager->addMessage(
+            $conversation,
+            'assistant',
+            $answer,
+            0,
+            'agent-flow',
+            $payload
+        );
+
+        return $this->agentAskResult($conversation, $assistantMessage, $answer, $payload, $organizationId, $user);
+    }
+
+    protected function canAgentExecuteTool(AssistantTaskState $state, string $toolName): bool
+    {
+        return str_starts_with($state->id, 'report.')
+            && str_starts_with($toolName, 'generate_')
+            && str_ends_with($toolName, '_report');
+    }
+
+    protected function filterAgentArtifactsForOrganization(int $organizationId, array $artifacts): array
+    {
+        $expectedPrefix = sprintf('org-%d/reports/', $organizationId);
+
+        return array_values(array_filter($artifacts, static function (array $artifact) use ($expectedPrefix): bool {
+            return ($artifact['storage_disk'] ?? null) === 's3'
+                && is_string($artifact['storage_path'] ?? null)
+                && str_starts_with($artifact['storage_path'], $expectedPrefix);
+        }));
+    }
+
+    protected function buildAgentToolAnswer(string $status, array $artifacts): string
+    {
+        if ($status === 'error' || $artifacts === []) {
+            return $this->assistantMessage(
+                'ai_assistant.report_download_missing',
+                'Не удалось сформировать файл отчета по текущему запросу.'
+            );
+        }
+
+        $artifact = $artifacts[0];
+        $url = trim((string) ($artifact['url'] ?? ''));
+        $filename = trim((string) ($artifact['filename'] ?? ''));
+        $label = $filename !== '' ? $filename : 'Скачать файл';
+
+        return $url !== ''
+            ? $this->assistantMessage('ai_assistant.report_ready', 'Отчет сформирован: :link', [
+                'link' => "[{$label}]({$url})",
+            ])
+            : $this->assistantMessage(
+                'ai_assistant.report_download_missing',
+                'Не удалось сформировать файл отчета по текущему запросу.'
+            );
+    }
+
+    protected function stateWithStatus(AssistantTaskState $state, string $status): AssistantTaskState
+    {
+        return new AssistantTaskState(
+            id: $state->id,
+            domain: $state->domain,
+            capability: $state->capability,
+            toolName: $state->toolName,
+            status: $status,
+            slots: $state->slots,
+            sourceMessage: $state->sourceMessage
+        );
+    }
+
+    protected function agentAskResult(
+        Conversation $conversation,
+        mixed $assistantMessage,
+        string $answer,
+        array $payload,
+        int $organizationId,
+        User $user
+    ): array {
+        $this->usageTracker->trackRequest($organizationId, $user, 0, 0.0);
+
+        return [
+            'conversation_id' => $conversation->id,
+            'message' => [
+                'id' => $assistantMessage->id ?? null,
+                'role' => 'assistant',
+                'content' => $answer,
+                'tokens_used' => 0,
+                'metadata' => $payload,
+                'created_at' => $assistantMessage->created_at?->toISOString(),
+            ],
+            'tokens_used' => 0,
+            'usage' => $this->usageTracker->getUsageStats($organizationId),
+        ];
+    }
+
+    protected function resolveOrganization(int $organizationId): Organization
+    {
+        $organization = Organization::find($organizationId);
+        if (! $organization instanceof Organization) {
+            throw new RuntimeException($this->assistantMessage(
+                'ai_assistant.organization_not_found',
+                'Организация для AI-ассистента не найдена.'
+            ));
+        }
+
+        return $organization;
+    }
+
     protected function handleToolCall(
         array $toolCall,
         Organization $organization,
@@ -324,7 +593,7 @@ class AIAssistantService
         $args = is_array($arguments) ? $arguments : [];
         $tool = $this->toolRegistry->getTool($toolName);
 
-        if (!$tool) {
+        if (! $tool) {
             $message = "Tool {$toolName} not found or not registered.";
             $toolFailures[] = $message;
 
@@ -355,7 +624,7 @@ class AIAssistantService
                     'can_execute' => $canExecuteTool,
                 ], 'info');
 
-                if (!$canExecuteTool) {
+                if (! $canExecuteTool) {
                     $toolFailures[] = $this->assistantMessage('ai_assistant.tool_access_denied', 'Недостаточно прав для выполнения инструмента :tool.', [
                         'tool' => $toolName,
                     ]);
@@ -368,7 +637,7 @@ class AIAssistantService
                 ];
             }
 
-            if (!$canExecuteTool) {
+            if (! $canExecuteTool) {
                 $message = $this->assistantMessage(
                     'ai_assistant.tool_access_denied',
                     "Недостаточно прав для выполнения инструмента {$toolName}.",
@@ -482,7 +751,7 @@ class AIAssistantService
             ? $conversationContext['last_request']
             : [];
 
-        if (!$this->shouldContinuePreviousRequest($query, $requestPayload, $previousCapability, $previousRequest)) {
+        if (! $this->shouldContinuePreviousRequest($query, $requestPayload, $previousCapability, $previousRequest)) {
             return $requestPayload;
         }
 
@@ -504,7 +773,7 @@ class AIAssistantService
             $currentContext['period'] = trim($query);
         }
 
-        if (empty($currentContext['entity_refs']) && !empty($previousContext['entity_refs'])) {
+        if (empty($currentContext['entity_refs']) && ! empty($previousContext['entity_refs'])) {
             $currentContext['entity_refs'] = $previousContext['entity_refs'];
         }
 
@@ -526,11 +795,11 @@ class AIAssistantService
 
         $payload['context'] = $currentContext;
 
-        if (empty($payload['desired_mode']) && !empty($conversationContext['last_task_type'])) {
+        if (empty($payload['desired_mode']) && ! empty($conversationContext['last_task_type'])) {
             $payload['desired_mode'] = $conversationContext['last_task_type'];
         }
 
-        if (empty($payload['goal']) && !empty($previousRequest['goal'])) {
+        if (empty($payload['goal']) && ! empty($previousRequest['goal'])) {
             $payload['goal'] = $previousRequest['goal'];
         }
 
@@ -557,7 +826,7 @@ class AIAssistantService
         string $previousCapability,
         array $previousRequest
     ): bool {
-        if (!in_array($previousCapability, ['reports', 'schedules'], true) || $previousRequest === []) {
+        if (! in_array($previousCapability, ['reports', 'schedules'], true) || $previousRequest === []) {
             return false;
         }
 
@@ -568,7 +837,7 @@ class AIAssistantService
 
         $context = is_array($requestPayload['context'] ?? null) ? $requestPayload['context'] : [];
 
-        if (!empty($context['period']) || !empty($context['entity_refs'])) {
+        if (! empty($context['period']) || ! empty($context['entity_refs'])) {
             return true;
         }
 
@@ -633,7 +902,7 @@ class AIAssistantService
     private function resolveReportFocus(string $query, mixed $capabilityId, array $context): ?string
     {
         $uiState = is_array($context['ui_state'] ?? null) ? $context['ui_state'] : [];
-        if (!empty($uiState['assistant_report_focus']) && is_string($uiState['assistant_report_focus'])) {
+        if (! empty($uiState['assistant_report_focus']) && is_string($uiState['assistant_report_focus'])) {
             return $uiState['assistant_report_focus'];
         }
 
@@ -679,7 +948,7 @@ class AIAssistantService
 
     protected function guardUnconfirmedReportCompletion(string $content, array $taskPlan, array $trustedUrls = []): string
     {
-        if (!$this->isReportTaskPlan($taskPlan) || $trustedUrls !== []) {
+        if (! $this->isReportTaskPlan($taskPlan) || $trustedUrls !== []) {
             return $content;
         }
 
@@ -687,7 +956,7 @@ class AIAssistantService
         $mentionsReport = $this->containsAnyText($normalized, ['отчет', 'отчёт', 'pdf']);
         $claimsCompletion = $this->containsAnyText($normalized, ['готов', 'сформирован', 'скачать']);
 
-        if (!$mentionsReport || !$claimsCompletion) {
+        if (! $mentionsReport || ! $claimsCompletion) {
             return $content;
         }
 
@@ -699,7 +968,7 @@ class AIAssistantService
 
     protected function collectTrustedDownloadUrls(mixed $value): array
     {
-        if (!is_array($value)) {
+        if (! is_array($value)) {
             return [];
         }
 
@@ -707,6 +976,7 @@ class AIAssistantService
         foreach ($value as $key => $item) {
             if (in_array($key, ['pdf_url', 'excel_url', 'download_url', 'file_url'], true) && $this->isTrustedDownloadUrl($item)) {
                 $urls[] = trim((string) $item);
+
                 continue;
             }
 
@@ -720,7 +990,7 @@ class AIAssistantService
 
     protected function isTrustedDownloadUrl(mixed $value): bool
     {
-        if (!is_string($value)) {
+        if (! is_string($value)) {
             return false;
         }
 
@@ -759,20 +1029,33 @@ class AIAssistantService
         try {
             $translated = trans_message($key, $replace, 'ru');
         } catch (Throwable) {
-            return $fallback;
+            return $this->replaceMessagePlaceholders($fallback, $replace);
         }
 
-        if (!is_string($translated)) {
-            return $fallback;
+        if (! is_string($translated)) {
+            return $this->replaceMessagePlaceholders($fallback, $replace);
         }
 
         $translated = trim($translated);
 
         if ($translated === '' || $translated === $key) {
-            return $fallback;
+            return $this->replaceMessagePlaceholders($fallback, $replace);
         }
 
-        return $translated;
+        return $this->replaceMessagePlaceholders($translated, $replace);
+    }
+
+    protected function replaceMessagePlaceholders(string $message, array $replace): string
+    {
+        foreach ($replace as $key => $value) {
+            if (! is_scalar($value) && ! $value instanceof \Stringable) {
+                continue;
+            }
+
+            $message = str_replace(':'.$key, (string) $value, $message);
+        }
+
+        return $message;
     }
 
     protected function buildMessages(Conversation $conversation, array $context, array $taskPlan): array
@@ -780,7 +1063,7 @@ class AIAssistantService
         $messages = [];
         $systemSections = [$this->contextBuilder->buildSystemPrompt()];
 
-        if (!empty($context)) {
+        if (! empty($context)) {
             $systemSections[] = $this->formatContextForLLM($context);
         }
 
@@ -818,7 +1101,7 @@ class AIAssistantService
         }
 
         return $this->truncateText(
-            "=== LEGACY CONTEXT ===\n" . $this->formatValueForLLM($payload),
+            "=== LEGACY CONTEXT ===\n".$this->formatValueForLLM($payload),
             self::LEGACY_CONTEXT_CHARS
         );
     }
@@ -858,16 +1141,16 @@ class AIAssistantService
         ];
 
         $policy = "=== RESPONSE POLICY ===\n"
-            . "1. Опирайся только на подтвержденные данные и доступный контекст.\n"
-            . "2. Если данных или прав не хватает, прямо скажи об ограничении.\n"
-            . "3. Не придумывай технические причины отказа и обходные пути.\n"
-            . "4. Отвечай коротко и по делу, затем предлагай конкретный следующий шаг.\n";
+            ."1. Опирайся только на подтвержденные данные и доступный контекст.\n"
+            ."2. Если данных или прав не хватает, прямо скажи об ограничении.\n"
+            ."3. Не придумывай технические причины отказа и обходные пути.\n"
+            ."4. Отвечай коротко и по делу, затем предлагай конкретный следующий шаг.\n";
 
         return $this->truncateText(
             "=== STRUCTURED WORKSPACE CONTEXT ===\n"
-            . $this->formatValueForLLM($this->compactValueForLLM($structuredContext))
-            . "\n\n"
-            . $policy,
+            .$this->formatValueForLLM($this->compactValueForLLM($structuredContext))
+            ."\n\n"
+            .$policy,
             self::STRUCTURED_CONTEXT_CHARS
         );
 
@@ -895,7 +1178,7 @@ class AIAssistantService
             return (string) $value;
         }
 
-        if (!is_array($value)) {
+        if (! is_array($value)) {
             return $this->normalizeText((string) json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
         }
 
@@ -904,7 +1187,7 @@ class AIAssistantService
             $prefix = str_repeat('  ', $depth);
             $formattedKey = is_string($key) ? $key : (string) $key;
             $formattedValue = is_array($item)
-                ? "\n" . $this->formatValueForLLM($item, $depth + 1)
+                ? "\n".$this->formatValueForLLM($item, $depth + 1)
                 : $this->formatValueForLLM($item, $depth + 1);
 
             $lines[] = "{$prefix}{$formattedKey}: {$formattedValue}";
@@ -920,7 +1203,7 @@ class AIAssistantService
             return var_export($value, true);
         }
 
-        if (!is_array($value)) {
+        if (! is_array($value)) {
             return (string) json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         }
 
@@ -929,7 +1212,7 @@ class AIAssistantService
             $prefix = str_repeat('  ', $depth);
             $formattedKey = is_string($key) ? $key : (string) $key;
             $formattedValue = is_array($item)
-                ? "\n" . $this->formatValueForLLM($item, $depth + 1)
+                ? "\n".$this->formatValueForLLM($item, $depth + 1)
                 : $this->formatValueForLLM($item, $depth + 1);
 
             $lines[] = "{$prefix}{$formattedKey}: {$formattedValue}";
@@ -952,7 +1235,7 @@ class AIAssistantService
             return $this->truncateText($this->normalizeText($value), $depth === 0 ? 300 : 180);
         }
 
-        if (!is_array($value)) {
+        if (! is_array($value)) {
             return $this->truncateText(
                 $this->normalizeText((string) json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)),
                 200
@@ -1043,7 +1326,7 @@ class AIAssistantService
 
         $estimatedTokens = $this->estimateProviderInputTokens($preparedMessages, $preparedOptions);
 
-        if ($estimatedTokens > self::PROVIDER_INPUT_TOKEN_BUDGET && !empty($preparedOptions['tools'])) {
+        if ($estimatedTokens > self::PROVIDER_INPUT_TOKEN_BUDGET && ! empty($preparedOptions['tools'])) {
             unset($preparedOptions['tools']);
             $degraded = true;
 
@@ -1179,13 +1462,13 @@ class AIAssistantService
             $payload .= (string) ($message['content'] ?? '');
             $payload .= "\n";
 
-            if (!empty($message['tool_calls'])) {
+            if (! empty($message['tool_calls'])) {
                 $payload .= (string) json_encode($message['tool_calls'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                 $payload .= "\n";
             }
         }
 
-        if (!empty($options['tools'])) {
+        if (! empty($options['tools'])) {
             $payload .= (string) json_encode($options['tools'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         }
 
@@ -1213,7 +1496,7 @@ class AIAssistantService
             return mb_substr($value, 0, $maxChars);
         }
 
-        return rtrim(mb_substr($value, 0, $maxChars - 3)) . '...';
+        return rtrim(mb_substr($value, 0, $maxChars - 3)).'...';
     }
 
     protected function humanizeToolName(string $toolName): string
@@ -1230,7 +1513,7 @@ class AIAssistantService
         $allowed = $allowActions && $canExecuteTool;
 
         return [
-            'id' => 'tool-' . $toolName . '-' . substr(md5(json_encode($arguments, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: $toolName), 0, 12),
+            'id' => 'tool-'.$toolName.'-'.substr(md5(json_encode($arguments, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: $toolName), 0, 12),
             'type' => 'act',
             'label' => $this->humanizeToolName($toolName),
             'allowed' => $allowed,

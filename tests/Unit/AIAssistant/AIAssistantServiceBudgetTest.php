@@ -5,6 +5,13 @@ declare(strict_types=1);
 namespace Tests\Unit\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentExecutor;
+use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentPlanner;
+use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentStateStore;
+use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantArtifactNormalizer;
+use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantCapabilityCatalog;
+use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantPeriodResolver;
+use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantResponseVerifier;
 use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
@@ -24,7 +31,7 @@ class AIAssistantServiceBudgetTest extends TestCase
 {
     public function test_generic_summary_request_skips_tool_definitions(): void
     {
-        $toolRegistry = new AIToolRegistry();
+        $toolRegistry = new AIToolRegistry;
         $toolRegistry->registerTool($this->makeTool('search_projects'));
         $toolRegistry->registerTool($this->makeTool('create_schedule_task'));
 
@@ -44,7 +51,7 @@ class AIAssistantServiceBudgetTest extends TestCase
 
     public function test_domain_capabilities_expose_snapshot_tools(): void
     {
-        $toolRegistry = new AIToolRegistry();
+        $toolRegistry = new AIToolRegistry;
         foreach ([
             'get_project_snapshot',
             'get_procurement_snapshot',
@@ -78,7 +85,7 @@ class AIAssistantServiceBudgetTest extends TestCase
 
     public function test_reports_capability_exposes_schedule_report_tools(): void
     {
-        $toolRegistry = new AIToolRegistry();
+        $toolRegistry = new AIToolRegistry;
         foreach ([
             'get_schedule_snapshot',
             'generate_project_timelines_report',
@@ -114,7 +121,7 @@ class AIAssistantServiceBudgetTest extends TestCase
 
     public function test_tool_registry_resolves_legacy_schedule_status_alias(): void
     {
-        $registry = new AIToolRegistry();
+        $registry = new AIToolRegistry;
         $tool = $this->makeTool('update_schedule_task_status');
 
         $registry->registerTool($tool);
@@ -124,7 +131,7 @@ class AIAssistantServiceBudgetTest extends TestCase
 
     public function test_follow_up_payload_keeps_previous_schedule_report_intent(): void
     {
-        $service = $this->makeService(new AIToolRegistry());
+        $service = $this->makeService(new AIToolRegistry);
 
         $payload = $service->exposeMergeContinuationRequestPayload(
             'с 1.04.2026 по 01.05.2026 по текущему проекту',
@@ -166,7 +173,7 @@ class AIAssistantServiceBudgetTest extends TestCase
 
     public function test_follow_up_payload_accepts_relative_period_without_project_context(): void
     {
-        $service = $this->makeService(new AIToolRegistry());
+        $service = $this->makeService(new AIToolRegistry);
 
         $payload = $service->exposeMergeContinuationRequestPayload(
             'За 2 месяца',
@@ -207,7 +214,7 @@ class AIAssistantServiceBudgetTest extends TestCase
 
     public function test_follow_up_payload_keeps_relative_period_when_project_context_is_present(): void
     {
-        $service = $this->makeService(new AIToolRegistry());
+        $service = $this->makeService(new AIToolRegistry);
 
         $payload = $service->exposeMergeContinuationRequestPayload(
             'За 2 месяца',
@@ -246,7 +253,7 @@ class AIAssistantServiceBudgetTest extends TestCase
 
     public function test_follow_up_payload_passes_short_period_reply_to_model_context(): void
     {
-        $service = $this->makeService(new AIToolRegistry());
+        $service = $this->makeService(new AIToolRegistry);
 
         $payload = $service->exposeMergeContinuationRequestPayload(
             'за ноябрь',
@@ -279,7 +286,7 @@ class AIAssistantServiceBudgetTest extends TestCase
 
     public function test_prepare_messages_for_provider_preserves_latest_user_message_and_reduces_budget(): void
     {
-        $service = $this->makeService(new AIToolRegistry());
+        $service = $this->makeService(new AIToolRegistry);
 
         $messages = [
             [
@@ -316,7 +323,7 @@ class AIAssistantServiceBudgetTest extends TestCase
 
     public function test_untrusted_report_markdown_link_is_rendered_as_text(): void
     {
-        $service = $this->makeService(new AIToolRegistry());
+        $service = $this->makeService(new AIToolRegistry);
 
         $content = 'Готово! [Скачать отчет](реальный_pdf_url_из_данных)';
 
@@ -325,7 +332,7 @@ class AIAssistantServiceBudgetTest extends TestCase
 
     public function test_trusted_report_markdown_link_is_preserved(): void
     {
-        $service = $this->makeService(new AIToolRegistry());
+        $service = $this->makeService(new AIToolRegistry);
         $url = 'https://storage.yandexcloud.net/prohelper/reports/report.pdf?X-Amz-Signature=test';
         $content = "Готово! [Скачать отчет]({$url})";
 
@@ -334,7 +341,7 @@ class AIAssistantServiceBudgetTest extends TestCase
 
     public function test_report_completion_without_trusted_download_url_is_replaced(): void
     {
-        $service = $this->makeService(new AIToolRegistry());
+        $service = $this->makeService(new AIToolRegistry);
 
         $content = $service->exposeGuardUnconfirmedReportCompletion(
             'Готово! Отчет по графику работ готов. Скачать отчет',
@@ -360,7 +367,7 @@ class AIAssistantServiceBudgetTest extends TestCase
 
     public function test_report_completion_with_trusted_download_url_is_preserved(): void
     {
-        $service = $this->makeService(new AIToolRegistry());
+        $service = $this->makeService(new AIToolRegistry);
         $content = 'Готово! Отчет по графику работ готов. [Скачать отчет](https://example.test/report.pdf)';
 
         $this->assertSame(
@@ -385,7 +392,7 @@ class AIAssistantServiceBudgetTest extends TestCase
 
     public function test_structured_context_policy_is_single_utf8_path(): void
     {
-        $service = $this->makeService(new AIToolRegistry());
+        $service = $this->makeService(new AIToolRegistry);
 
         $context = $service->exposeFormatStructuredContextForLLM([
             'task_type' => 'summary',
@@ -441,17 +448,21 @@ class AIAssistantServiceBudgetTest extends TestCase
             $toolRegistry,
             $permissionChecker,
             $accessContextResolver,
-            $taskOrchestrator
+            $taskOrchestrator,
+            new AssistantAgentStateStore,
+            new AssistantAgentPlanner(new AssistantCapabilityCatalog, new AssistantPeriodResolver),
+            new AssistantAgentExecutor($toolRegistry, $permissionChecker, new AssistantArtifactNormalizer),
+            new AssistantResponseVerifier
         );
     }
 
     private function makeTool(string $name): AIToolInterface
     {
-        return new class ($name) implements AIToolInterface {
+        return new class($name) implements AIToolInterface
+        {
             public function __construct(
                 private readonly string $name
-            ) {
-            }
+            ) {}
 
             public function getName(): string
             {

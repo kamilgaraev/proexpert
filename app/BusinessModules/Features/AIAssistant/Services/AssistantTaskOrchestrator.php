@@ -9,8 +9,7 @@ class AssistantTaskOrchestrator
     public function __construct(
         private readonly AssistantCapabilityRegistry $capabilityRegistry,
         private readonly AssistantAccessContextResolver $accessContextResolver
-    ) {
-    }
+    ) {}
 
     public function plan(string $query, array $requestPayload, array $accessContext): array
     {
@@ -51,7 +50,7 @@ class AssistantTaskOrchestrator
         ), static fn (mixed $item): bool => is_string($item) && trim($item) !== '')));
 
         $executedActions = [];
-        if (!empty($options['executed_action']) && is_array($options['executed_action'])) {
+        if (! empty($options['executed_action']) && is_array($options['executed_action'])) {
             $executedActions[] = $options['executed_action'];
         }
 
@@ -67,7 +66,7 @@ class AssistantTaskOrchestrator
                 $plan,
                 $missingData,
                 (bool) ($options['degraded_mode'] ?? false),
-                !empty($options['tool_evidence'])
+                ! empty($options['tool_evidence'])
             ),
             'capability' => $plan['capability']['id'] ?? null,
             'evidence' => $this->buildEvidence($plan, $options),
@@ -76,6 +75,12 @@ class AssistantTaskOrchestrator
             'navigation_target' => $plan['navigation_target'] ?? null,
             'wizard' => $wizard,
             'executed_actions' => $executedActions,
+            'agent_state' => is_array($options['agent_state'] ?? null) ? $options['agent_state'] : null,
+            'artifacts' => array_values(array_filter(
+                $options['artifacts'] ?? [],
+                static fn (mixed $artifact): bool => is_array($artifact)
+            )),
+            'tool_result' => is_array($options['tool_result'] ?? null) ? $options['tool_result'] : null,
             'requires_confirmation' => $this->requiresConfirmation($nextActions),
             'access_limits' => array_values(array_unique(array_merge(
                 $plan['access_limits'] ?? [],
@@ -97,7 +102,7 @@ class AssistantTaskOrchestrator
         $entityRefs = [];
 
         foreach (($context['entity_refs'] ?? []) as $entityRef) {
-            if (!is_array($entityRef)) {
+            if (! is_array($entityRef)) {
                 continue;
             }
 
@@ -168,14 +173,14 @@ class AssistantTaskOrchestrator
 
     private function buildNextActions(?array $capability, array $accessContext, array $request, ?array $navigationTarget): array
     {
-        if (!is_array($capability)) {
+        if (! is_array($capability)) {
             return [];
         }
 
         $actions = [];
 
         foreach (($capability['actions'] ?? []) as $action) {
-            if (!is_array($action)) {
+            if (! is_array($action)) {
                 continue;
             }
 
@@ -187,11 +192,11 @@ class AssistantTaskOrchestrator
             $allowedByPermissions = $this->accessContextResolver->hasAnyPermission($accessContext, $requiredPermissions);
             $requiresConfirmation = (bool) ($action['requires_confirmation'] ?? false);
             $actionType = (string) ($action['type'] ?? 'navigate');
-            $allowedByMode = !$requiresConfirmation || (bool) ($request['allow_actions'] ?? false);
+            $allowedByMode = ! $requiresConfirmation || (bool) ($request['allow_actions'] ?? false);
             $target = is_array($action['target'] ?? null) ? $action['target'] : $navigationTarget;
 
             $actions[] = [
-                'id' => "{$capability['id']}-" . count($actions),
+                'id' => "{$capability['id']}-".count($actions),
                 'type' => $actionType,
                 'label' => (string) ($action['label'] ?? 'Открыть раздел'),
                 'allowed' => $allowedByPermissions && $allowedByMode,
@@ -218,7 +223,7 @@ class AssistantTaskOrchestrator
                 static fn (mixed $permission): bool => is_string($permission) && $permission !== ''
             ));
 
-            if (!$this->accessContextResolver->hasAnyPermission($accessContext, $readPermissions)) {
+            if (! $this->accessContextResolver->hasAnyPermission($accessContext, $readPermissions)) {
                 $limits[] = [
                     'code' => 'read_permission_required',
                     'message' => "Доступ к разделу \"{$capability['label']}\" ограничен текущими правами пользователя.",
@@ -228,7 +233,7 @@ class AssistantTaskOrchestrator
             }
         }
 
-        if (!(bool) ($request['allow_actions'] ?? false)) {
+        if (! (bool) ($request['allow_actions'] ?? false)) {
             $limits[] = [
                 'code' => 'actions_locked',
                 'message' => 'Изменяющие действия отключены до отдельного подтверждения.',
@@ -253,7 +258,7 @@ class AssistantTaskOrchestrator
 
     private function resolveNavigationTarget(?array $capability, array $context): ?array
     {
-        if (!is_array($capability)) {
+        if (! is_array($capability)) {
             return null;
         }
 
@@ -285,7 +290,7 @@ class AssistantTaskOrchestrator
         $request = $plan['request'] ?? [];
         $context = is_array($request['context'] ?? null) ? $request['context'] : [];
 
-        if (!empty($plan['capability']['label'])) {
+        if (! empty($plan['capability']['label'])) {
             $evidence[] = [
                 'label' => 'Домен',
                 'value' => (string) $plan['capability']['label'],
@@ -293,7 +298,7 @@ class AssistantTaskOrchestrator
             ];
         }
 
-        if (!empty($context['source_module'])) {
+        if (! empty($context['source_module'])) {
             $evidence[] = [
                 'label' => 'Источник запроса',
                 'value' => (string) $context['source_module'],
@@ -302,7 +307,7 @@ class AssistantTaskOrchestrator
         }
 
         foreach (($context['entity_refs'] ?? []) as $entityRef) {
-            if (!is_array($entityRef)) {
+            if (! is_array($entityRef)) {
                 continue;
             }
 
@@ -319,7 +324,7 @@ class AssistantTaskOrchestrator
             ];
         }
 
-        if (!empty($context['source_route'])) {
+        if (! empty($context['source_route'])) {
             $evidence[] = [
                 'label' => 'Route',
                 'value' => (string) $context['source_route'],
@@ -350,7 +355,7 @@ class AssistantTaskOrchestrator
     private function buildWizard(array $plan): ?array
     {
         $capability = $plan['capability'] ?? null;
-        if (!is_array($capability)) {
+        if (! is_array($capability)) {
             return null;
         }
 
@@ -395,7 +400,7 @@ class AssistantTaskOrchestrator
             return 'medium';
         }
 
-        if ($this->requiresDataEvidence($plan) && !$hasToolEvidence) {
+        if ($this->requiresDataEvidence($plan) && ! $hasToolEvidence) {
             return 'medium';
         }
 
@@ -432,11 +437,11 @@ class AssistantTaskOrchestrator
 
     private function resolveDisabledReason(bool $allowedByPermissions, bool $allowedByMode, bool $requiresConfirmation): ?string
     {
-        if (!$allowedByPermissions) {
+        if (! $allowedByPermissions) {
             return 'Недостаточно прав для этого действия.';
         }
 
-        if ($requiresConfirmation && !$allowedByMode) {
+        if ($requiresConfirmation && ! $allowedByMode) {
             return 'Действие станет доступно после отдельного подтверждения.';
         }
 
@@ -446,7 +451,7 @@ class AssistantTaskOrchestrator
     private function findEntityId(array $context, string $entityType): int|string|null
     {
         foreach (($context['entity_refs'] ?? []) as $entityRef) {
-            if (!is_array($entityRef)) {
+            if (! is_array($entityRef)) {
                 continue;
             }
 
