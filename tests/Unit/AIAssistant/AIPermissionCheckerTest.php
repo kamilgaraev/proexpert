@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Unit\AIAssistant;
 
-use App\BusinessModules\Features\AIAssistant\Models\Conversation;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\UpdateScheduleTaskStatusTool;
+use App\BusinessModules\Features\AIAssistant\Models\Conversation;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\Models\User;
 use Mockery;
@@ -18,7 +18,7 @@ class AIPermissionCheckerTest extends TestCase
 
     public function test_regular_member_cannot_execute_privileged_tool(): void
     {
-        $checker = new AIPermissionChecker();
+        $checker = new AIPermissionChecker;
         $user = $this->makeUserDouble(15, true, false, false);
 
         $this->assertFalse($checker->canExecuteTool($user, 'approve_payment_request'));
@@ -26,7 +26,7 @@ class AIPermissionCheckerTest extends TestCase
 
     public function test_regular_member_can_execute_read_only_tool(): void
     {
-        $checker = new AIPermissionChecker();
+        $checker = new AIPermissionChecker;
         $user = $this->makeUserDouble(15, true, false, false);
 
         $this->assertTrue($checker->canExecuteTool($user, 'search_projects'));
@@ -34,7 +34,7 @@ class AIPermissionCheckerTest extends TestCase
 
     public function test_domain_snapshot_tools_require_domain_permission(): void
     {
-        $checker = new AIPermissionChecker();
+        $checker = new AIPermissionChecker;
         $userWithoutContractAccess = $this->makeUserDouble(15, true, false, false);
         $userWithContractAccess = $this->makeUserDouble(15, true, false, false, 1, ['contracts.view']);
 
@@ -44,7 +44,7 @@ class AIPermissionCheckerTest extends TestCase
 
     public function test_admin_can_execute_privileged_tool(): void
     {
-        $checker = new AIPermissionChecker();
+        $checker = new AIPermissionChecker;
         $user = $this->makeUserDouble(15, true, true, false);
 
         $this->assertTrue($checker->canExecuteTool($user, 'create_schedule_task'));
@@ -53,7 +53,7 @@ class AIPermissionCheckerTest extends TestCase
 
     public function test_mutation_tool_is_detected_by_name(): void
     {
-        $checker = new AIPermissionChecker();
+        $checker = new AIPermissionChecker;
 
         $this->assertTrue($checker->isMutationTool('update_schedule_task_status'));
         $this->assertTrue($checker->isMutationTool('generate_profitability_report'));
@@ -63,8 +63,8 @@ class AIPermissionCheckerTest extends TestCase
 
     public function test_schedule_status_tool_name_matches_permission_mapping(): void
     {
-        $tool = new UpdateScheduleTaskStatusTool();
-        $checker = new AIPermissionChecker();
+        $tool = new UpdateScheduleTaskStatusTool;
+        $checker = new AIPermissionChecker;
         $user = $this->makeUserDouble(15, true, false, false, 1, ['schedule-management.edit']);
 
         $this->assertSame('update_schedule_task_status', $tool->getName());
@@ -74,7 +74,7 @@ class AIPermissionCheckerTest extends TestCase
 
     public function test_conversation_access_requires_same_user_and_organization(): void
     {
-        $checker = new AIPermissionChecker();
+        $checker = new AIPermissionChecker;
         $user = $this->makeUserDouble(15, true, false, false, 42);
         $conversation = new Conversation([
             'organization_id' => 15,

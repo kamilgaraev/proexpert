@@ -66,7 +66,7 @@ class AIPermissionChecker
 
     public function canAccessConversation(User $user, Conversation $conversation, int $organizationId): bool
     {
-        if (!$this->canUseAssistant($user, $organizationId)) {
+        if (! $this->canUseAssistant($user, $organizationId)) {
             return false;
         }
 
@@ -83,7 +83,7 @@ class AIPermissionChecker
 
     public function canManageOrganizationConversations(User $user, int $organizationId): bool
     {
-        if (!$this->canUseAssistant($user, $organizationId)) {
+        if (! $this->canUseAssistant($user, $organizationId)) {
             return false;
         }
 
@@ -92,7 +92,7 @@ class AIPermissionChecker
 
     public function canAccessOrganizationConversationsInAdmin(User $user, int $organizationId): bool
     {
-        if (!$this->canUseAssistant($user, $organizationId)) {
+        if (! $this->canUseAssistant($user, $organizationId)) {
             return false;
         }
 
@@ -107,7 +107,7 @@ class AIPermissionChecker
 
         $organizationId = (int) $user->current_organization_id;
 
-        if (!$this->canUseAssistant($user, $organizationId)) {
+        if (! $this->canUseAssistant($user, $organizationId)) {
             return false;
         }
 

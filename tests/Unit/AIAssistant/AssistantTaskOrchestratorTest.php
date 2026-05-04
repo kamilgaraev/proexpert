@@ -141,6 +141,6 @@ class AssistantTaskOrchestratorTest extends TestCase
         ]);
         $accessContextResolver->method('hasAnyPermission')->willReturn(true);
 
-        return new AssistantTaskOrchestrator(new AssistantCapabilityRegistry(), $accessContextResolver);
+        return new AssistantTaskOrchestrator(new AssistantCapabilityRegistry, $accessContextResolver);
     }
 }

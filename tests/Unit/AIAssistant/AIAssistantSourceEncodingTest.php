@@ -12,7 +12,7 @@ class AIAssistantSourceEncodingTest extends TestCase
     #[DataProvider('criticalSourceProvider')]
     public function test_critical_source_strings_do_not_contain_mojibake_markers(string $path): void
     {
-        $contents = file_get_contents(dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . $path);
+        $contents = file_get_contents(dirname(__DIR__, 3).DIRECTORY_SEPARATOR.$path);
 
         $this->assertIsString($contents);
         $this->assertDoesNotMatchRegularExpression(
@@ -26,8 +26,8 @@ class AIAssistantSourceEncodingTest extends TestCase
     {
         $contents = file_get_contents(
             dirname(__DIR__, 3)
-            . DIRECTORY_SEPARATOR
-            . 'app/BusinessModules/Features/AIAssistant/Services/ContextBuilder.php'
+            .DIRECTORY_SEPARATOR
+            .'app/BusinessModules/Features/AIAssistant/Services/ContextBuilder.php'
         );
 
         $this->assertIsString($contents);
