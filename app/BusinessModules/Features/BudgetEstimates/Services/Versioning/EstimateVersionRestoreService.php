@@ -214,7 +214,7 @@ class EstimateVersionRestoreService
         ));
 
         foreach ($itemPayload['children'] ?? [] as $childPayload) {
-            $this->createItem($estimate, $childPayload, $resolvedSectionId, $item->id, $sectionIdsByStableKey);
+            $this->createItem($estimate, $childPayload, null, $item->id, $sectionIdsByStableKey);
         }
 
         return $item;

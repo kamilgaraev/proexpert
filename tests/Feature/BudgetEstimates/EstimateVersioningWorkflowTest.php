@@ -276,6 +276,7 @@ class EstimateVersioningWorkflowTest extends TestCase
         $this->assertNotSame($item->id, $restoredItem->id);
         $this->assertNotNull($restoredChildItem);
         $this->assertSame($restoredItem->id, $restoredChildItem->parent_work_id);
+        $this->assertNull($restoredChildItem->estimate_section_id);
         $this->assertNotNull($restoredChildSection);
         $this->assertSame($restoredChildSection->id, $restoredItem->estimate_section_id);
         $this->assertNotNull($restoredUnsectionedItem);
