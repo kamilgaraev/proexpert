@@ -3,6 +3,7 @@
 use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementDashboardController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementAuditEventController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementApprovalController;
+use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementIssueController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementSettingsController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\PublicSupplierRequestController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\PurchaseContractController;
@@ -148,6 +149,10 @@ Route::prefix('api/v1/admin/procurement')
                 ->middleware('authorize:procurement.statistics.view')
                 ->name('statistics');
         });
+
+        Route::get('/issues', [ProcurementIssueController::class, 'index'])
+            ->middleware('authorize:procurement.view')
+            ->name('issues.index');
 
         Route::get('/audit-logs', [PurchaseOrderController::class, 'auditLogs'])
             ->middleware('authorize:procurement.audit.view')

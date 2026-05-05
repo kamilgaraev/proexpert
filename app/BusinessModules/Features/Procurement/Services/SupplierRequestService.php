@@ -19,7 +19,8 @@ class SupplierRequestService
     public function __construct(
         private readonly SupplierPartyService $supplierPartyService,
         private readonly ProcurementAuditService $auditService,
-        private readonly SupplierRequestVersionService $versionService
+        private readonly SupplierRequestVersionService $versionService,
+        private readonly ProcurementLifecycleService $lifecycleService
     ) {
     }
 
@@ -31,11 +32,7 @@ class SupplierRequestService
                 ->with('lines')
                 ->findOrFail($data['purchase_request_id']);
 
-            if ($purchaseRequest->lines->isEmpty()) {
-                throw ValidationException::withMessages([
-                    'purchase_request_id' => trans_message('procurement.supplier_requests.purchase_request_lines_required'),
-                ]);
-            }
+            $this->lifecycleService->assertCanCreateSupplierRequest($purchaseRequest);
 
             $supplierId = $data['supplier_id'] ?? null;
             $externalSupplierContact = $this->resolveExternalSupplierContact($organizationId, $data);
@@ -141,6 +138,8 @@ class SupplierRequestService
 
     public function send(SupplierRequest $supplierRequest, ?int $actorId = null): SupplierRequest
     {
+        $supplierRequest = $this->lifecycleService->syncSupplierRequestExpiry($supplierRequest);
+
         if (!$supplierRequest->canBeSent()) {
             throw ValidationException::withMessages([
                 'status' => trans_message('procurement.supplier_requests.cannot_be_sent'),
@@ -188,6 +187,8 @@ class SupplierRequestService
 
     public function cancel(SupplierRequest $supplierRequest, ?int $actorId = null): SupplierRequest
     {
+        $supplierRequest = $this->lifecycleService->syncSupplierRequestExpiry($supplierRequest);
+
         if (!$supplierRequest->canBeCancelled()) {
             throw ValidationException::withMessages([
                 'status' => trans_message('procurement.supplier_requests.cannot_be_cancelled'),

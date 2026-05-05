@@ -9,6 +9,7 @@ use App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Http\Requests\StorePublicSupplierProposalRequest;
 use App\BusinessModules\Features\Procurement\Http\Resources\PublicSupplierRequestResource;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
+use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleService;
 use App\BusinessModules\Features\Procurement\Services\SupplierProposalService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\LandingResponse;
@@ -24,7 +25,8 @@ use function trans_message;
 class PublicSupplierRequestController extends Controller
 {
     public function __construct(
-        private readonly SupplierProposalService $proposalService
+        private readonly SupplierProposalService $proposalService,
+        private readonly ProcurementLifecycleService $lifecycleService
     ) {
     }
 
@@ -37,6 +39,7 @@ class PublicSupplierRequestController extends Controller
                 return LandingResponse::error(trans_message('procurement.public_supplier_requests.not_found'), 404);
             }
 
+            $supplierRequest = $this->lifecycleService->syncSupplierRequestExpiry($supplierRequest);
             $blockedResponse = $this->blockedResponse($supplierRequest, false);
 
             if ($blockedResponse instanceof JsonResponse) {
@@ -68,6 +71,7 @@ class PublicSupplierRequestController extends Controller
                 return LandingResponse::error(trans_message('procurement.public_supplier_requests.not_found'), 404);
             }
 
+            $supplierRequest = $this->lifecycleService->syncSupplierRequestExpiry($supplierRequest);
             $blockedResponse = $this->blockedResponse($supplierRequest, true);
 
             if ($blockedResponse instanceof JsonResponse) {
@@ -128,10 +132,7 @@ class PublicSupplierRequestController extends Controller
             );
         }
 
-        if (
-            $supplierRequest->public_token_expires_at !== null
-            && $supplierRequest->public_token_expires_at->isPast()
-        ) {
+        if ($supplierRequest->status === SupplierRequestStatusEnum::EXPIRED) {
             return LandingResponse::error(
                 trans_message('procurement.public_supplier_requests.expired'),
                 Response::HTTP_GONE

@@ -24,12 +24,15 @@ class PurchaseOrderService
     public function __construct(
         private readonly PurchaseOrderPdfService $pdfService,
         private readonly SupplierPartyService $supplierPartyService,
-        private readonly ProcurementAuditService $auditService
+        private readonly ProcurementAuditService $auditService,
+        private readonly ProcurementLifecycleService $lifecycleService
     ) {
     }
 
     public function create(PurchaseRequest $request, int $supplierId, array $data, ?int $actorId = null): PurchaseOrder
     {
+        $this->lifecycleService->assertCanCreateSupplierRequest($request);
+
         if ($request->purchaseOrders()->exists()) {
             throw new \DomainException(trans_message('procurement.purchase_orders.already_exists_for_request'));
         }
@@ -191,9 +194,7 @@ class PurchaseOrderService
         int $userId,
         array $receiptData = []
     ): PurchaseOrder {
-        if (!$order->status->canReceiveMaterials()) {
-            throw new \DomainException(trans_message('procurement.purchase_orders.invalid_status_for_receive'));
-        }
+        $this->lifecycleService->assertCanReceiveMaterials($order, $items);
 
         $warehouse = OrganizationWarehouse::query()
             ->where('organization_id', $order->organization_id)
@@ -206,7 +207,6 @@ class PurchaseOrderService
         }
 
         $orderItems = $this->resolveOrderItems($order, $items);
-        $this->assertReceivableQuantities($order, $orderItems, $items);
 
         DB::beginTransaction();
 
@@ -242,7 +242,7 @@ class PurchaseOrderService
             ));
 
             $order->update([
-                'status' => $this->resolveDeliveryStatus($order),
+                'status' => $this->lifecycleService->resolveOrderReceiptStatus($order),
             ]);
 
             $receipt->loadMissing('lines');
@@ -356,53 +356,6 @@ class PurchaseOrderService
         }
 
         return $orderItems->values();
-    }
-
-    private function assertReceivableQuantities(PurchaseOrder $order, Collection $orderItems, array $items): void
-    {
-        $requestedByItemId = collect($items)
-            ->groupBy(static fn (array $item): int => (int) $item['item_id'])
-            ->map(static fn (Collection $rows): float => (float) $rows->sum('quantity_received'));
-
-        $receivedByItemId = $this->receivedQuantitiesByItemId($order);
-
-        foreach ($orderItems as $orderItem) {
-            $orderedQuantity = (float) $orderItem->quantity;
-            $alreadyReceived = (float) ($receivedByItemId[$orderItem->id] ?? 0);
-            $requestedQuantity = (float) ($requestedByItemId[$orderItem->id] ?? 0);
-
-            if ($alreadyReceived + $requestedQuantity > $orderedQuantity + 0.0001) {
-                throw new \DomainException(trans_message('procurement.purchase_orders.quantity_exceeds_order'));
-            }
-        }
-    }
-
-    private function resolveDeliveryStatus(PurchaseOrder $order): PurchaseOrderStatusEnum
-    {
-        $order->loadMissing('items');
-        $receivedByItemId = $this->receivedQuantitiesByItemId($order);
-
-        foreach ($order->items as $item) {
-            if ((float) ($receivedByItemId[$item->id] ?? 0) + 0.0001 < (float) $item->quantity) {
-                return PurchaseOrderStatusEnum::PARTIALLY_DELIVERED;
-            }
-        }
-
-        return PurchaseOrderStatusEnum::DELIVERED;
-    }
-
-    private function receivedQuantitiesByItemId(PurchaseOrder $order): array
-    {
-        return DB::table('purchase_receipt_lines')
-            ->join('purchase_receipts', 'purchase_receipts.id', '=', 'purchase_receipt_lines.purchase_receipt_id')
-            ->where('purchase_receipts.purchase_order_id', $order->id)
-            ->where('purchase_receipts.status', 'posted')
-            ->whereNull('purchase_receipts.deleted_at')
-            ->groupBy('purchase_receipt_lines.purchase_order_item_id')
-            ->selectRaw('purchase_receipt_lines.purchase_order_item_id, SUM(purchase_receipt_lines.quantity_received) as received_quantity')
-            ->pluck('received_quantity', 'purchase_receipt_lines.purchase_order_item_id')
-            ->map(static fn ($value): float => (float) $value)
-            ->all();
     }
 
     private function generateReceiptNumber(int $organizationId): string
