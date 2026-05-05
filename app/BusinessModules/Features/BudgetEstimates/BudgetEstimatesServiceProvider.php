@@ -12,6 +12,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\{
     EstimateSectionService,
     EstimateItemService,
     EstimateVersionService,
+    EstimateVersioningService,
     EstimateTemplateService,
     EstimateSectionNumberingService,
     EstimateItemNumberingService,
@@ -113,6 +114,7 @@ class BudgetEstimatesServiceProvider extends ServiceProvider
         $this->app->singleton(EstimateSectionService::class);
         $this->app->singleton(EstimateItemService::class);
         $this->app->singleton(EstimateVersionService::class);
+        $this->app->singleton(EstimateVersioningService::class);
         $this->app->singleton(EstimateTemplateService::class);
         
         // Numbering сервисы для автоматической нумерации
@@ -327,6 +329,11 @@ class BudgetEstimatesServiceProvider extends ServiceProvider
             \App\BusinessModules\Features\BudgetEstimates\Events\JournalWorkVolumesRecorded::class,
             \App\BusinessModules\Features\BudgetEstimates\Listeners\UpdateEstimateActualVolumes::class
         );
+
+        \Illuminate\Support\Facades\Event::listen(
+            \App\BusinessModules\Features\BudgetEstimates\Events\EstimateApproved::class,
+            \App\BusinessModules\Features\BudgetEstimates\Listeners\CreateEstimateApprovalSnapshot::class
+        );
     }
 
     /**
@@ -352,4 +359,3 @@ class BudgetEstimatesServiceProvider extends ServiceProvider
         );
     }
 }
-

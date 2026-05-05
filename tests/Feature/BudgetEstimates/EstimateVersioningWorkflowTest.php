@@ -116,6 +116,45 @@ class EstimateVersioningWorkflowTest extends TestCase
         $this->assertDatabaseCount('estimate_versions', 1);
     }
 
+    public function test_list_versions_returns_canonical_resource_payload(): void
+    {
+        $actor = User::factory()->create();
+        $estimate = $this->createEstimate();
+        $service = app(EstimateVersioningService::class);
+
+        $version = $service->createSnapshot($estimate, $actor->id, 'Baseline');
+        $payload = $service->listVersions($estimate);
+
+        $this->assertCount(1, $payload);
+        $this->assertSame($version->id, $payload[0]['id']);
+        $this->assertSame($estimate->id, $payload[0]['estimateId']);
+        $this->assertSame($estimate->organization_id, $payload[0]['organizationId']);
+        $this->assertSame('manual', $payload[0]['snapshotType']);
+        $this->assertNotEmpty($payload[0]['snapshotHash']);
+        $this->assertArrayHasKey('snapshot', $payload[0]);
+        $this->assertArrayHasKey('totals', $payload[0]);
+    }
+
+    public function test_approval_status_change_creates_approval_snapshot(): void
+    {
+        $actor = User::factory()->create();
+        $estimate = $this->createEstimate(['status' => 'in_review']);
+
+        $estimate->update([
+            'status' => 'approved',
+            'approved_by_user_id' => $actor->id,
+            'approved_at' => now(),
+        ]);
+
+        $this->assertDatabaseHas('estimate_versions', [
+            'estimate_id' => $estimate->id,
+            'organization_id' => $estimate->organization_id,
+            'snapshot_type' => 'approval',
+            'estimate_status' => 'approved',
+            'approved_by_user_id' => $actor->id,
+        ]);
+    }
+
     private function createEstimate(array $overrides = []): Estimate
     {
         $organization = Organization::factory()->create();

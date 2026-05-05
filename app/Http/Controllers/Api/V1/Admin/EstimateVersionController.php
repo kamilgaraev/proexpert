@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateVersioningService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateVersionService;
 use App\BusinessModules\Features\BudgetEstimates\Services\StructuralDiffService;
 use App\BusinessModules\Features\BudgetEstimates\Services\WhatIfSimulatorService;
@@ -22,7 +23,8 @@ use function trans_message;
 class EstimateVersionController extends Controller
 {
     public function __construct(
-        protected EstimateVersionService $versionService,
+        protected EstimateVersioningService $versioningService,
+        protected EstimateVersionService $legacyVersionService,
         protected StructuralDiffService $diffService,
         protected WhatIfSimulatorService $whatIfService,
         protected AutoSchedulingService $schedulerService,
@@ -34,7 +36,7 @@ class EstimateVersionController extends Controller
         $estimate = $this->findEstimateOrFail($estimateId);
         $this->authorize('view', $estimate);
         
-        $history = $this->versionService->getVersionHistory($estimate);
+        $history = $this->versioningService->listVersions($estimate);
         
         return AdminResponse::success($history);
     }
@@ -49,14 +51,15 @@ class EstimateVersionController extends Controller
             'comment' => 'nullable|string|max:1000',
         ]);
         
-        $newVersion = $this->versionService->createVersion(
-            $estimate,
-            $validated['label'],
-            $validated['comment'] ?? null
+        $version = $this->versioningService->createSnapshot(
+            estimate: $estimate,
+            actorId: (int) $request->user()->id,
+            label: $validated['label'],
+            comment: $validated['comment'] ?? null
         );
         
         return AdminResponse::success(
-            new EstimateResource($newVersion),
+            $this->versioningService->resourcePayload($version),
             trans_message('estimate.version_created'),
             Response::HTTP_CREATED
         );
@@ -75,7 +78,7 @@ class EstimateVersionController extends Controller
         $this->authorize('view', $version1);
         $this->authorize('view', $version2);
         
-        $comparison = $this->versionService->compareVersions($version1, $version2);
+        $comparison = $this->legacyVersionService->compareVersions($version1, $version2);
         
         return AdminResponse::success($comparison);
     }
@@ -85,7 +88,7 @@ class EstimateVersionController extends Controller
         $version = $this->findEstimateOrFail($versionId);
         $this->authorize('update', $version);
         
-        $newVersion = $this->versionService->rollback($version);
+        $newVersion = $this->legacyVersionService->rollback($version);
         
         return AdminResponse::success(
             new EstimateResource($newVersion),
@@ -200,4 +203,3 @@ class EstimateVersionController extends Controller
             ->firstOrFail();
     }
 }
-

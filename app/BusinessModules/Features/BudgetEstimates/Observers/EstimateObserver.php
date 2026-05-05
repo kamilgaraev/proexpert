@@ -24,7 +24,7 @@ class EstimateObserver
     public function updated(Estimate $estimate): void
     {
         // Проверить, изменился ли статус на approved
-        if ($estimate->isDirty('status') && $estimate->status === 'approved') {
+        if ($estimate->wasChanged('status') && $estimate->status === 'approved') {
             event(new EstimateApproved($estimate));
         }
     }
@@ -54,4 +54,3 @@ class EstimateObserver
         ]);
     }
 }
-
