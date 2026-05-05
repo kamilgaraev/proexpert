@@ -5,9 +5,11 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateVersioningService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateVersionComparisonService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateVersionRestoreService;
 use App\BusinessModules\Features\BudgetEstimates\Services\WhatIfSimulatorService;
 use App\BusinessModules\Features\BudgetEstimates\Services\AutoSchedulingService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\MemoryLayerService;
+use App\Http\Resources\Api\V1\Admin\Estimate\EstimateResource;
 use App\Http\Responses\AdminResponse;
 use App\Models\Estimate;
 use App\Models\EstimateVersion;
@@ -24,6 +26,7 @@ class EstimateVersionController extends Controller
     public function __construct(
         protected EstimateVersioningService $versioningService,
         protected EstimateVersionComparisonService $versionComparisonService,
+        protected EstimateVersionRestoreService $versionRestoreService,
         protected WhatIfSimulatorService $whatIfService,
         protected AutoSchedulingService $schedulerService,
         protected MemoryLayerService $memoryLayer
@@ -89,10 +92,16 @@ class EstimateVersionController extends Controller
     {
         $version = $this->findVersionForCurrentOrganization($versionId);
         $this->authorize('update', $version->estimate);
+        $restoredEstimate = $this->versionRestoreService->restore(
+            estimate: $version->estimate,
+            version: $version,
+            actorId: (int) request()->user()->id
+        );
 
-        return AdminResponse::error(
-            trans_message('estimate.version_restore_not_available'),
-            Response::HTTP_NOT_IMPLEMENTED
+        return AdminResponse::success(
+            new EstimateResource($restoredEstimate),
+            trans_message('estimate.version_rollback'),
+            Response::HTTP_CREATED
         );
     }
 

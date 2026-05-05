@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\BudgetEstimates;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateVersioningService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateVersionRestoreService;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\EstimateSection;
@@ -13,6 +14,7 @@ use App\Models\Project;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
 use Tests\TestCase;
 
 class EstimateVersioningWorkflowTest extends TestCase
@@ -159,6 +161,152 @@ class EstimateVersioningWorkflowTest extends TestCase
             'estimate_status' => 'approved',
             'approved_by_user_id' => $actor->id,
         ]);
+    }
+
+    public function test_restore_recreates_working_estimate_from_snapshot(): void
+    {
+        $actor = User::factory()->create();
+        $estimate = $this->createEstimate([
+            'status' => 'approved',
+            'approved_by_user_id' => $actor->id,
+            'approved_at' => now(),
+        ]);
+        $section = EstimateSection::query()->create([
+            'estimate_id' => $estimate->id,
+            'stable_key' => '11111111-1111-1111-1111-111111111111',
+            'section_number' => '1',
+            'full_section_number' => '1',
+            'name' => 'Snapshot section',
+            'sort_order' => 1,
+            'section_total_amount' => 1200,
+        ]);
+        $childSection = EstimateSection::query()->create([
+            'estimate_id' => $estimate->id,
+            'stable_key' => '22222222-2222-2222-2222-222222222222',
+            'parent_section_id' => $section->id,
+            'section_number' => '1',
+            'full_section_number' => '1.1',
+            'name' => 'Snapshot child section',
+            'sort_order' => 1,
+            'section_total_amount' => 300,
+        ]);
+        $item = EstimateItem::query()->create([
+            'estimate_id' => $estimate->id,
+            'stable_key' => '33333333-3333-3333-3333-333333333333',
+            'estimate_section_id' => $childSection->id,
+            'position_number' => '1.1',
+            'name' => 'Snapshot item',
+            'item_type' => 'work',
+            'quantity' => 2,
+            'unit_price' => 600,
+            'total_amount' => 1200,
+            'direct_costs' => 1200,
+        ]);
+        EstimateItem::query()->create([
+            'estimate_id' => $estimate->id,
+            'stable_key' => '44444444-4444-4444-4444-444444444444',
+            'parent_work_id' => $item->id,
+            'position_number' => '1.1.1',
+            'name' => 'Snapshot child item',
+            'item_type' => 'material',
+            'quantity' => 1,
+            'unit_price' => 300,
+            'total_amount' => 300,
+            'direct_costs' => 300,
+        ]);
+        EstimateItem::query()->create([
+            'estimate_id' => $estimate->id,
+            'stable_key' => '55555555-5555-5555-5555-555555555555',
+            'position_number' => '2',
+            'name' => 'Snapshot unsectioned item',
+            'item_type' => 'work',
+            'quantity' => 1,
+            'unit_price' => 50,
+            'total_amount' => 50,
+            'direct_costs' => 50,
+        ]);
+
+        $version = app(EstimateVersioningService::class)->createSnapshot(
+            estimate: $estimate,
+            actorId: $actor->id,
+            label: 'Baseline'
+        );
+
+        DB::table('estimates')->whereKey($estimate->id)->update([
+            'status' => 'approved',
+            'approved_by_user_id' => $actor->id,
+            'approved_at' => now(),
+            'name' => 'Mutated estimate',
+            'total_direct_costs' => 2400,
+            'total_amount' => 2400,
+            'total_amount_with_vat' => 2880,
+        ]);
+        EstimateItem::query()->whereKey($item->id)->update([
+            'name' => 'Mutated item',
+            'total_amount' => 2400,
+            'direct_costs' => 2400,
+        ]);
+        EstimateItem::query()->create([
+            'estimate_id' => $estimate->id,
+            'position_number' => '999',
+            'name' => 'Extra item',
+            'item_type' => 'work',
+            'quantity' => 1,
+            'unit_price' => 1,
+            'total_amount' => 1,
+        ]);
+
+        $restored = app(EstimateVersionRestoreService::class)->restore($estimate->fresh(), $version, $actor->id);
+
+        $restoredItem = $restored->items->firstWhere('stable_key', '33333333-3333-3333-3333-333333333333');
+        $restoredChildItem = $restored->items->firstWhere('stable_key', '44444444-4444-4444-4444-444444444444');
+        $restoredUnsectionedItem = $restored->items->firstWhere('stable_key', '55555555-5555-5555-5555-555555555555');
+        $restoredChildSection = $restored->sections->firstWhere('stable_key', '22222222-2222-2222-2222-222222222222');
+
+        $this->assertSame('Test estimate', $restored->name);
+        $this->assertSame('1200.00', $restored->total_amount);
+        $this->assertSame('1440.00', $restored->total_amount_with_vat);
+        $this->assertSame('1200.00', $restored->total_direct_costs);
+        $this->assertSame('draft', $restored->status);
+        $this->assertNull($restored->approved_at);
+        $this->assertNull($restored->approved_by_user_id);
+        $this->assertNotNull($restoredItem);
+        $this->assertSame('Snapshot item', $restoredItem->name);
+        $this->assertSame('1200.00', $restoredItem->total_amount);
+        $this->assertNotSame($item->id, $restoredItem->id);
+        $this->assertNotNull($restoredChildItem);
+        $this->assertSame($restoredItem->id, $restoredChildItem->parent_work_id);
+        $this->assertNotNull($restoredChildSection);
+        $this->assertSame($restoredChildSection->id, $restoredItem->estimate_section_id);
+        $this->assertNotNull($restoredUnsectionedItem);
+        $this->assertNull($restoredUnsectionedItem->estimate_section_id);
+        $this->assertFalse($restored->items->contains('name', 'Extra item'));
+        $this->assertDatabaseCount('estimate_versions', 3);
+        $this->assertSame(
+            ['manual', 'pre_restore', 'restore'],
+            DB::table('estimate_versions')
+                ->where('estimate_id', $estimate->id)
+                ->orderBy('version_number')
+                ->pluck('snapshot_type')
+                ->all()
+        );
+    }
+
+    public function test_restore_rejects_version_from_another_estimate(): void
+    {
+        $actor = User::factory()->create();
+        $estimate = $this->createEstimate();
+        $anotherEstimate = $this->createEstimate();
+        $version = app(EstimateVersioningService::class)->createSnapshot(
+            estimate: $anotherEstimate,
+            actorId: $actor->id,
+            label: 'Foreign version'
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Версия не принадлежит выбранной смете');
+
+        app(EstimateVersionRestoreService::class)->restore($estimate, $version, $actor->id);
     }
 
     private function createEstimate(array $overrides = []): Estimate
