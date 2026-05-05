@@ -2,13 +2,19 @@
 
 namespace App\BusinessModules\Features\Procurement\Http\Resources;
 
+use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
+use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
+/** @mixin PurchaseRequest */
 class PurchaseRequestResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        $workflowSummary = app(ProcurementLifecycleService::class)
+            ->forPurchaseRequest($this->resource);
+
         return [
             'id' => $this->id,
             'organization_id' => $this->organization_id,
@@ -26,6 +32,7 @@ class PurchaseRequestResource extends JsonResource
             'can_be_edited' => $this->canBeEdited(),
             'can_be_approved' => $this->canBeApproved(),
             'can_be_rejected' => $this->canBeRejected(),
+            'workflow_summary' => $workflowSummary->toArray(),
             'site_request' => $this->whenLoaded('siteRequest', fn() => [
                 'id' => $this->siteRequest->id,
                 'title' => $this->siteRequest->title,
@@ -61,4 +68,3 @@ class PurchaseRequestResource extends JsonResource
         ];
     }
 }
-

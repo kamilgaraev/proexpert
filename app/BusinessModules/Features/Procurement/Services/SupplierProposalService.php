@@ -25,7 +25,8 @@ class SupplierProposalService
         private readonly ProcurementAuditService $auditService,
         private readonly SupplierProposalIntakeService $intakeService,
         private readonly SupplierProposalVersionService $versionService,
-        private readonly SupplierRequestVersionService $requestVersionService
+        private readonly SupplierRequestVersionService $requestVersionService,
+        private readonly ProcurementLifecycleService $lifecycleService
     ) {}
 
     public function createFromSupplierRequest(
@@ -35,6 +36,14 @@ class SupplierProposalService
     ): SupplierProposal
     {
         return DB::transaction(function () use ($supplierRequest, $data, $actorId): SupplierProposal {
+            $supplierRequest = $this->lifecycleService->syncSupplierRequestExpiry($supplierRequest);
+
+            if (!$supplierRequest->canReceivePublicProposal()) {
+                throw ValidationException::withMessages([
+                    'supplier_request_id' => trans_message('procurement.supplier_requests.cannot_receive_proposal'),
+                ]);
+            }
+
             $supplierRequest->loadMissing(['lines', 'supplierParty']);
             $supplierRequestVersion = $this->requestVersionService->resolveForProposal($supplierRequest, $actorId);
             $amounts = $this->commercialAmounts($data);
@@ -144,6 +153,8 @@ class SupplierProposalService
             if (!$lockedProposal->canBeAccepted()) {
                 throw new \DomainException(trans_message('procurement.proposals.accept_invalid_status'));
             }
+
+            $this->lifecycleService->assertCanAcceptProposal($lockedProposal);
 
             if ($lockedProposal->supplier_request_id === null) {
                 throw new \DomainException(trans_message('procurement.proposal_decisions.accepted_decision_required'));

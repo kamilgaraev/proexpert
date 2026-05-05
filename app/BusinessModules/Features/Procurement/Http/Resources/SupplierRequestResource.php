@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Procurement\Http\Resources;
 
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
+use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -13,6 +14,9 @@ class SupplierRequestResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        $workflowSummary = app(ProcurementLifecycleService::class)
+            ->forSupplierRequest($this->resource);
+
         return [
             'id' => $this->id,
             'organization_id' => $this->organization_id,
@@ -37,6 +41,7 @@ class SupplierRequestResource extends JsonResource
             'can_be_sent' => $this->canBeSent(),
             'can_be_cancelled' => $this->canBeCancelled(),
             'can_receive_public_proposal' => $this->canReceivePublicProposal(),
+            'workflow_summary' => $workflowSummary->toArray(),
             'supplier' => $this->whenLoaded('supplier', fn () => $this->supplier ? [
                 'id' => $this->supplier->id,
                 'name' => $this->supplier->name,

@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Features\Procurement\Http\Resources;
 
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
+use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -11,6 +12,9 @@ class SupplierProposalResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        $workflowSummary = app(ProcurementLifecycleService::class)
+            ->forSupplierProposal($this->resource);
+
         return [
             'id' => $this->id,
             'organization_id' => $this->organization_id,
@@ -42,7 +46,8 @@ class SupplierProposalResource extends JsonResource
             'items' => $this->items,
             'notes' => $this->notes,
             'metadata' => $this->metadata,
-            'can_be_accepted' => $this->canBeAccepted(),
+            'can_be_accepted' => $workflowSummary->canAcceptProposal,
+            'workflow_summary' => $workflowSummary->toArray(),
             'is_expired' => $this->isExpired(),
             'supplier' => $this->supplierPayload(),
             'external_supplier_contact' => $this->whenLoaded(

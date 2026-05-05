@@ -256,6 +256,6 @@ class SupplierProposal extends Model
             return false;
         }
 
-        return $validUntil->isPast();
+        return $validUntil->lt(now()->startOfDay());
     }
 }
