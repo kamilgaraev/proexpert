@@ -364,6 +364,8 @@ class EstimateController extends Controller
         
         // Валидация переходов статусов
         $this->validateStatusTransition($estimateModel, $newStatus);
+
+        $oldStatus = $estimateModel->status;
         
         // Обновление статуса
         $estimateModel->status = $newStatus;
@@ -381,7 +383,7 @@ class EstimateController extends Controller
         
         Log::info('estimate.status_updated', [
             'estimate_id' => $estimateModel->id,
-            'old_status' => $estimateModel->getOriginal('status'),
+            'old_status' => $oldStatus,
             'new_status' => $newStatus,
             'user_id' => $request->user()->id,
             'comment' => $comment,

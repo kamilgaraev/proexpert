@@ -15,8 +15,10 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 use InvalidArgumentException;
+use Mockery;
 use Tests\TestCase;
 
 class EstimateVersioningWorkflowTest extends TestCase
@@ -198,6 +200,15 @@ class EstimateVersioningWorkflowTest extends TestCase
         $actor = User::factory()->create([
             'current_organization_id' => $estimate->organization_id,
         ]);
+
+        Log::shouldReceive('info')
+            ->once()
+            ->with('estimate.status_updated', Mockery::on(static function (array $context) use ($estimate, $actor): bool {
+                return $context['estimate_id'] === $estimate->id
+                    && $context['old_status'] === 'in_review'
+                    && $context['new_status'] === 'approved'
+                    && $context['user_id'] === $actor->id;
+            }));
 
         $this->updateEstimateStatus($estimate, $actor, 'approved');
 
