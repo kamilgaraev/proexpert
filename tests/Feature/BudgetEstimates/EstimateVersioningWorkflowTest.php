@@ -286,6 +286,14 @@ class EstimateVersioningWorkflowTest extends TestCase
             'unit_price' => 600,
             'total_amount' => 1200,
             'direct_costs' => 1200,
+            'labor_hours' => 8,
+            'machinery_hours' => 3,
+            'materials_index' => 1.2,
+            'machinery_index' => 1.3,
+            'labor_index' => 1.4,
+            'coefficient_total' => 1.5,
+            'resource_calculation' => ['mode' => 'snapshot'],
+            'custom_resources' => [['name' => 'resource']],
         ]);
         EstimateItem::query()->create([
             'estimate_id' => $estimate->id,
@@ -330,6 +338,14 @@ class EstimateVersioningWorkflowTest extends TestCase
             'name' => 'Mutated item',
             'total_amount' => 2400,
             'direct_costs' => 2400,
+            'labor_hours' => 99,
+            'machinery_hours' => 99,
+            'materials_index' => 9.9,
+            'machinery_index' => 9.9,
+            'labor_index' => 9.9,
+            'coefficient_total' => 9.9,
+            'resource_calculation' => ['mode' => 'mutated'],
+            'custom_resources' => [['name' => 'mutated']],
         ]);
         EstimateItem::query()->create([
             'estimate_id' => $estimate->id,
@@ -358,6 +374,14 @@ class EstimateVersioningWorkflowTest extends TestCase
         $this->assertNotNull($restoredItem);
         $this->assertSame('Snapshot item', $restoredItem->name);
         $this->assertSame('1200.00', $restoredItem->total_amount);
+        $this->assertSame('8.00000000', $restoredItem->labor_hours);
+        $this->assertSame('3.00000000', $restoredItem->machinery_hours);
+        $this->assertSame('1.2000', $restoredItem->materials_index);
+        $this->assertSame('1.3000', $restoredItem->machinery_index);
+        $this->assertSame('1.4000', $restoredItem->labor_index);
+        $this->assertSame('1.5000', $restoredItem->coefficient_total);
+        $this->assertSame(['mode' => 'snapshot'], $restoredItem->resource_calculation);
+        $this->assertSame([['name' => 'resource']], $restoredItem->custom_resources);
         $this->assertSame($item->id, $restoredItem->id);
         $this->assertNotNull($restoredChildItem);
         $this->assertSame($restoredItem->id, $restoredChildItem->parent_work_id);
