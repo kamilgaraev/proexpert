@@ -134,6 +134,35 @@ class EstimateVersionComparisonServiceTest extends TestCase
         $this->assertSame('0.50000000', $result['changed'][0]['changes']['quantity']['delta']);
     }
 
+    public function test_compare_matches_by_legacy_id_when_stable_and_structural_keys_are_absent(): void
+    {
+        $estimate = $this->createEstimate(['total_amount' => 100]);
+        $versionA = $this->createVersion($estimate, 1, $this->snapshot([
+            [
+                ...$this->item(null, null, '1', 'Old name', 'm2', '1.00000000', '100.00', '100.00'),
+                'id' => 777,
+            ],
+        ], totalAmount: '100.00'), totalAmount: '100.00');
+        $versionB = $this->createVersion($estimate, 2, $this->snapshot([
+            [
+                ...$this->item(null, null, '2', 'New name', 'm2', '1.00000000', '100.00', '100.00'),
+                'id' => 777,
+            ],
+        ], totalAmount: '100.00'), totalAmount: '100.00');
+
+        $result = app(EstimateVersionComparisonService::class)->compare($versionA, $versionB);
+
+        $this->assertSame(0, $result['summary']['added']);
+        $this->assertSame(0, $result['summary']['removed']);
+        $this->assertSame(1, $result['summary']['changed']);
+        $this->assertSame('legacy-id:777', $result['changed'][0]['stable_key']);
+        $this->assertSame('legacy_id', $result['changed'][0]['match_key_type']);
+        $this->assertSame('Old name', $result['changed'][0]['changes']['name']['before']);
+        $this->assertSame('New name', $result['changed'][0]['changes']['name']['after']);
+        $this->assertSame('1', $result['changed'][0]['changes']['position_number']['before']);
+        $this->assertSame('2', $result['changed'][0]['changes']['position_number']['after']);
+    }
+
     private function createVersion(Estimate $estimate, int $versionNumber, array $snapshot, string $totalAmount = '0.00'): EstimateVersion
     {
         return EstimateVersion::query()->create([

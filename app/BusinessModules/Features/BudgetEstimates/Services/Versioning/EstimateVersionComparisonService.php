@@ -113,43 +113,49 @@ class EstimateVersionComparisonService
     private function flattenSnapshotItems(array $snapshot): array
     {
         return [
-            ...$this->flattenItems($snapshot['unsectioned_items'] ?? []),
-            ...$this->flattenSections($snapshot['sections'] ?? []),
+            ...$this->flattenItems($snapshot['unsectioned_items'] ?? [], 'unsectioned'),
+            ...$this->flattenSections($snapshot['sections'] ?? [], 'sections'),
         ];
     }
 
-    private function flattenSections(array $sections): array
+    private function flattenSections(array $sections, string $path): array
     {
         $items = [];
 
-        foreach ($sections as $section) {
+        foreach ($sections as $index => $section) {
             if (!is_array($section)) {
                 continue;
             }
 
+            $sectionPath = $path . '.' . $index;
+
             $items = [
                 ...$items,
-                ...$this->flattenItems($section['items'] ?? []),
-                ...$this->flattenSections($section['children'] ?? []),
+                ...$this->flattenItems($section['items'] ?? [], $sectionPath . '.items'),
+                ...$this->flattenSections($section['children'] ?? [], $sectionPath . '.children'),
             ];
         }
 
         return $items;
     }
 
-    private function flattenItems(array $items): array
+    private function flattenItems(array $items, string $path): array
     {
         $flattened = [];
 
-        foreach ($items as $item) {
+        foreach ($items as $index => $item) {
             if (!is_array($item)) {
                 continue;
             }
 
-            $flattened[] = $item;
+            $itemPath = $path . '.' . $index;
+            $flattened[] = [
+                'item' => $item,
+                'ordinal_path' => $itemPath,
+            ];
             $flattened = [
                 ...$flattened,
-                ...$this->flattenItems($item['children'] ?? []),
+                ...$this->flattenItems($item['children'] ?? [], $itemPath . '.children'),
             ];
         }
 
@@ -162,7 +168,7 @@ class EstimateVersionComparisonService
         $occurrences = [];
 
         foreach ($items as $item) {
-            $entry = $this->itemEntry($item);
+            $entry = $this->itemEntry($item['item'], $item['ordinal_path']);
             $baseKey = $entry['key'];
             $occurrences[$baseKey] = ($occurrences[$baseKey] ?? 0) + 1;
             $key = $occurrences[$baseKey] === 1
@@ -179,7 +185,7 @@ class EstimateVersionComparisonService
         return $indexed;
     }
 
-    private function itemEntry(array $item): array
+    private function itemEntry(array $item, string $ordinalPath): array
     {
         $stableKey = $this->filledString($item['stable_key'] ?? null);
 
@@ -201,8 +207,18 @@ class EstimateVersionComparisonService
             ];
         }
 
+        $legacyId = $this->filledScalar($item['id'] ?? null);
+
+        if ($legacyId !== null) {
+            return [
+                'key' => 'legacy-id:' . $legacyId,
+                'match_key_type' => 'legacy_id',
+                'item' => $item,
+            ];
+        }
+
         return [
-            'key' => $this->fallbackKey($item),
+            'key' => 'ordinal-path:' . $ordinalPath,
             'match_key_type' => 'fallback',
             'item' => $item,
         ];
@@ -279,19 +295,6 @@ class EstimateVersionComparisonService
         return null;
     }
 
-    private function fallbackKey(array $item): string
-    {
-        return implode(':', array_map(
-            static fn (mixed $value): string => mb_strtolower(trim((string) $value)),
-            [
-                'item',
-                $item['position_number'] ?? '',
-                $item['name'] ?? '',
-                $item['unit'] ?? ($item['measurement_unit']['short_name'] ?? $item['measurement_unit']['name'] ?? ''),
-            ]
-        ));
-    }
-
     private function filledString(mixed $value): ?string
     {
         if (!is_string($value)) {
@@ -299,6 +302,17 @@ class EstimateVersionComparisonService
         }
 
         $value = trim($value);
+
+        return $value === '' ? null : $value;
+    }
+
+    private function filledScalar(mixed $value): ?string
+    {
+        if (!is_scalar($value)) {
+            return null;
+        }
+
+        $value = trim((string) $value);
 
         return $value === '' ? null : $value;
     }

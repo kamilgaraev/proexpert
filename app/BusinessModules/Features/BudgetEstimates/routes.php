@@ -60,11 +60,11 @@ Route::prefix('api/v1/admin')
         // ВЕРСИОНИРОВАНИЕ
         // ============================================
         Route::prefix('estimate-versions')->name('estimate_versions.')->group(function () {
-            Route::get('/{estimateId}', [EstimateVersionController::class, 'index'])->name('index');
-            Route::post('/{estimateId}', [EstimateVersionController::class, 'store'])->name('store');
             Route::post('/compare', [EstimateVersionController::class, 'compare'])->name('compare');
-            Route::post('/{versionId}/rollback', [EstimateVersionController::class, 'rollback'])->name('rollback');
             Route::post('/snapshot-diff', [EstimateVersionController::class, 'snapshotDiff'])->name('snapshot_diff');
+            Route::get('/{estimateId}', [EstimateVersionController::class, 'index'])->whereNumber('estimateId')->name('index');
+            Route::post('/{estimateId}', [EstimateVersionController::class, 'store'])->whereNumber('estimateId')->name('store');
+            Route::post('/{versionId}/rollback', [EstimateVersionController::class, 'rollback'])->whereNumber('versionId')->name('rollback');
         });
 
         // ============================================
@@ -97,4 +97,3 @@ Route::prefix('api/v1/admin')
             Route::get('/info', [BudgetEstimatesSettingsController::class, 'info'])->name('info');
         });
     });
-
