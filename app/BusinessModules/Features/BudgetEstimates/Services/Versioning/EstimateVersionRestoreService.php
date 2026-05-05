@@ -10,6 +10,7 @@ use App\Models\EstimateItem;
 use App\Models\EstimateSection;
 use App\Models\EstimateVersion;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Collection;
 use InvalidArgumentException;
 
 class EstimateVersionRestoreService
@@ -103,31 +104,65 @@ class EstimateVersionRestoreService
 
     private function replaceStructure(Estimate $estimate, array $snapshot): void
     {
-        EstimateItem::withTrashed()
+        $existingSectionsByStableKey = EstimateSection::query()
             ->where('estimate_id', $estimate->id)
-            ->forceDelete();
-        EstimateSection::query()
+            ->whereNotNull('stable_key')
+            ->get()
+            ->keyBy('stable_key');
+        $existingItemsByStableKey = EstimateItem::query()
             ->where('estimate_id', $estimate->id)
-            ->delete();
-
+            ->whereNotNull('stable_key')
+            ->get()
+            ->keyBy('stable_key');
         $sectionIdsByStableKey = [];
+        $restoredSectionIds = [];
+        $restoredItemIds = [];
+        $pendingParentAssignments = [];
 
         foreach ($snapshot['sections'] ?? [] as $sectionPayload) {
-            $this->createSection($estimate, $sectionPayload, null, $sectionIdsByStableKey);
+            $this->restoreSection(
+                $estimate,
+                $sectionPayload,
+                null,
+                $existingSectionsByStableKey,
+                $existingItemsByStableKey,
+                $sectionIdsByStableKey,
+                $restoredSectionIds,
+                $restoredItemIds,
+                $pendingParentAssignments
+            );
         }
 
         foreach ($snapshot['unsectioned_items'] ?? [] as $itemPayload) {
-            $this->createItem($estimate, $itemPayload, null, null, $sectionIdsByStableKey);
+            $this->restoreItem(
+                $estimate,
+                $itemPayload,
+                null,
+                null,
+                $existingItemsByStableKey,
+                $sectionIdsByStableKey,
+                $restoredItemIds,
+                $pendingParentAssignments
+            );
         }
+
+        $this->applyParentAssignments($pendingParentAssignments);
+        $this->deleteStaleItems($estimate, $restoredItemIds);
+        $this->deleteStaleSections($estimate, $restoredSectionIds);
     }
 
-    private function createSection(
+    private function restoreSection(
         Estimate $estimate,
         array $sectionPayload,
         ?int $parentSectionId,
-        array &$sectionIdsByStableKey
+        Collection $existingSectionsByStableKey,
+        Collection $existingItemsByStableKey,
+        array &$sectionIdsByStableKey,
+        array &$restoredSectionIds,
+        array &$restoredItemIds,
+        array &$pendingParentAssignments
     ): EstimateSection {
-        $section = EstimateSection::query()->create([
+        $attributes = [
             'estimate_id' => $estimate->id,
             'stable_key' => $sectionPayload['stable_key'] ?? null,
             'parent_section_id' => $parentSectionId,
@@ -138,32 +173,65 @@ class EstimateVersionRestoreService
             'sort_order' => $sectionPayload['sort_order'] ?? 0,
             'is_summary' => $sectionPayload['is_summary'] ?? false,
             'section_total_amount' => $sectionPayload['section_total_amount'] ?? 0,
-        ]);
+        ];
+
+        $stableKey = $sectionPayload['stable_key'] ?? null;
+        $section = $stableKey !== null ? $existingSectionsByStableKey->get($stableKey) : null;
+
+        if ($section instanceof EstimateSection) {
+            $section->forceFill($attributes)->save();
+        } else {
+            $section = EstimateSection::query()->create($attributes);
+        }
+
+        $restoredSectionIds[] = $section->id;
 
         if ($section->stable_key !== null) {
             $sectionIdsByStableKey[$section->stable_key] = $section->id;
         }
 
         foreach ($sectionPayload['items'] ?? [] as $itemPayload) {
-            $this->createItem($estimate, $itemPayload, $section->id, null, $sectionIdsByStableKey);
+            $this->restoreItem(
+                $estimate,
+                $itemPayload,
+                $section->id,
+                null,
+                $existingItemsByStableKey,
+                $sectionIdsByStableKey,
+                $restoredItemIds,
+                $pendingParentAssignments
+            );
         }
 
         foreach ($sectionPayload['children'] ?? [] as $childPayload) {
-            $this->createSection($estimate, $childPayload, $section->id, $sectionIdsByStableKey);
+            $this->restoreSection(
+                $estimate,
+                $childPayload,
+                $section->id,
+                $existingSectionsByStableKey,
+                $existingItemsByStableKey,
+                $sectionIdsByStableKey,
+                $restoredSectionIds,
+                $restoredItemIds,
+                $pendingParentAssignments
+            );
         }
 
         return $section;
     }
 
-    private function createItem(
+    private function restoreItem(
         Estimate $estimate,
         array $itemPayload,
         ?int $sectionId,
         ?int $parentItemId,
-        array $sectionIdsByStableKey
+        Collection $existingItemsByStableKey,
+        array $sectionIdsByStableKey,
+        array &$restoredItemIds,
+        array &$pendingParentAssignments
     ): EstimateItem {
         $resolvedSectionId = $this->resolveSectionId($itemPayload, $sectionId, $sectionIdsByStableKey);
-        $item = EstimateItem::query()->create(array_merge(
+        $attributes = array_merge(
             $this->only($itemPayload, [
                 'stable_key',
                 'catalog_item_id',
@@ -208,21 +276,71 @@ class EstimateVersionRestoreService
             [
                 'estimate_id' => $estimate->id,
                 'estimate_section_id' => $resolvedSectionId,
-                'parent_work_id' => $parentItemId,
                 'measurement_unit_id' => $itemPayload['measurement_unit']['id'] ?? null,
             ]
-        ));
+        );
+
+        $stableKey = $itemPayload['stable_key'] ?? null;
+        $item = $stableKey !== null ? $existingItemsByStableKey->get($stableKey) : null;
+
+        if ($item instanceof EstimateItem) {
+            $item->forceFill($attributes)->save();
+        } else {
+            $item = EstimateItem::query()->create($attributes);
+        }
+
+        $restoredItemIds[] = $item->id;
+        $pendingParentAssignments[$item->id] = $parentItemId;
 
         foreach ($itemPayload['children'] ?? [] as $childPayload) {
-            $this->createItem($estimate, $childPayload, null, $item->id, $sectionIdsByStableKey);
+            $this->restoreItem(
+                $estimate,
+                $childPayload,
+                null,
+                $item->id,
+                $existingItemsByStableKey,
+                $sectionIdsByStableKey,
+                $restoredItemIds,
+                $pendingParentAssignments
+            );
         }
 
         return $item;
     }
 
+    private function applyParentAssignments(array $pendingParentAssignments): void
+    {
+        foreach ($pendingParentAssignments as $itemId => $parentItemId) {
+            EstimateItem::query()
+                ->whereKey($itemId)
+                ->update(['parent_work_id' => $parentItemId]);
+        }
+    }
+
+    private function deleteStaleItems(Estimate $estimate, array $restoredItemIds): void
+    {
+        EstimateItem::query()
+            ->where('estimate_id', $estimate->id)
+            ->when($restoredItemIds !== [], fn ($query) => $query->whereNotIn('id', $restoredItemIds))
+            ->delete();
+    }
+
+    private function deleteStaleSections(Estimate $estimate, array $restoredSectionIds): void
+    {
+        EstimateSection::query()
+            ->where('estimate_id', $estimate->id)
+            ->when($restoredSectionIds !== [], fn ($query) => $query->whereNotIn('id', $restoredSectionIds))
+            ->orderByDesc('id')
+            ->delete();
+    }
+
     private function resolveSectionId(array $itemPayload, ?int $fallbackSectionId, array $sectionIdsByStableKey): ?int
     {
-        $sectionStableKey = $itemPayload['estimate_section_stable_key'] ?? null;
+        if (!array_key_exists('estimate_section_stable_key', $itemPayload)) {
+            return $fallbackSectionId;
+        }
+
+        $sectionStableKey = $itemPayload['estimate_section_stable_key'];
 
         if ($sectionStableKey !== null && isset($sectionIdsByStableKey[$sectionStableKey])) {
             return $sectionIdsByStableKey[$sectionStableKey];

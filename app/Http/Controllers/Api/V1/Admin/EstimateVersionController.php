@@ -91,7 +91,7 @@ class EstimateVersionController extends Controller
     public function rollback(int $versionId): JsonResponse
     {
         $version = $this->findVersionForCurrentOrganization($versionId);
-        $this->authorize('update', $version->estimate);
+        $this->authorize('rollbackVersion', $version->estimate);
         $restoredEstimate = $this->versionRestoreService->restore(
             estimate: $version->estimate,
             version: $version,

@@ -315,5 +315,27 @@ class EstimatePolicy
 
         return $user->hasPermission('budget-estimates.versions.compare', $context);
     }
-}
 
+    public function rollbackVersion(User $user, Estimate $estimate): bool
+    {
+        if (!$user->current_organization_id) {
+            return false;
+        }
+
+        if ((int)$user->current_organization_id !== (int)$estimate->organization_id) {
+            return false;
+        }
+
+        $context = [
+            'context_type' => 'organization',
+            'organization_id' => $user->current_organization_id
+        ];
+
+        if ($user->hasPermission('budget-estimates.*', $context)) {
+            return true;
+        }
+
+        return $this->update($user, $estimate)
+            && $user->hasPermission('budget-estimates.versions.rollback', $context);
+    }
+}
