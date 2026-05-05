@@ -9,7 +9,8 @@ return new class extends Migration
 {
     public function up(): void
     {
-        DB::statement(<<<'SQL'
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            DB::statement(<<<'SQL'
 ALTER TABLE contracts
 ADD CONSTRAINT contracts_contract_side_type_consistency_check
 CHECK (
@@ -38,6 +39,7 @@ CHECK (
     )
 )
 SQL);
+        }
 
         DB::statement(<<<'SQL'
 CREATE INDEX IF NOT EXISTS contracts_customer_side_lookup_idx
@@ -58,6 +60,9 @@ SQL);
     {
         DB::statement('DROP INDEX IF EXISTS contracts_customer_side_executor_idx');
         DB::statement('DROP INDEX IF EXISTS contracts_customer_side_lookup_idx');
-        DB::statement('ALTER TABLE contracts DROP CONSTRAINT IF EXISTS contracts_contract_side_type_consistency_check');
+
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            DB::statement('ALTER TABLE contracts DROP CONSTRAINT IF EXISTS contracts_contract_side_type_consistency_check');
+        }
     }
 };

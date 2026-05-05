@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (DB::connection()->getDriverName() !== 'pgsql') {
+            return;
+        }
+
         if (!Schema::hasTable('purchase_requests') || !Schema::hasTable('purchase_request_number_counters')) {
             return;
         }

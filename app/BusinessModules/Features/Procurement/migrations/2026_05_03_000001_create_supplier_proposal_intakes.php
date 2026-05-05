@@ -11,7 +11,11 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('supplier_proposal_intakes', function (Blueprint $table): void {
+        $emptyJsonArray = DB::connection()->getDriverName() === 'pgsql'
+            ? DB::raw("'[]'::jsonb")
+            : '[]';
+
+        Schema::create('supplier_proposal_intakes', function (Blueprint $table) use ($emptyJsonArray): void {
             $table->id();
             $table->foreignId('organization_id')->constrained('organizations')->cascadeOnDelete();
             $table->foreignId('supplier_proposal_id')->constrained('supplier_proposals')->cascadeOnDelete();
@@ -21,7 +25,7 @@ return new class extends Migration
             $table->foreignId('entered_by')->nullable()->constrained('users')->nullOnDelete();
             $table->text('external_reference')->nullable();
             $table->text('comment')->nullable();
-            $table->jsonb('attachment_ids')->default(DB::raw("'[]'::jsonb"));
+            $table->jsonb('attachment_ids')->default($emptyJsonArray);
             $table->timestamps();
 
             $table->unique('supplier_proposal_id', 'supplier_proposal_intakes_proposal_unique');

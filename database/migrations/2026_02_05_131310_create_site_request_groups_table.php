@@ -23,13 +23,15 @@ return new class extends Migration
             $table->softDeletes();
         });
 
-        Schema::table('site_requests', function (Blueprint $table) {
-            $table->foreignId('site_request_group_id')
-                ->nullable()
-                ->after('id')
-                ->constrained('site_request_groups')
-                ->nullOnDelete();
-        });
+        if (Schema::hasTable('site_requests') && !Schema::hasColumn('site_requests', 'site_request_group_id')) {
+            Schema::table('site_requests', function (Blueprint $table) {
+                $table->foreignId('site_request_group_id')
+                    ->nullable()
+                    ->after('id')
+                    ->constrained('site_request_groups')
+                    ->nullOnDelete();
+            });
+        }
     }
 
     /**
@@ -37,10 +39,12 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('site_requests', function (Blueprint $table) {
-            $table->dropForeign(['site_request_group_id']);
-            $table->dropColumn('site_request_group_id');
-        });
+        if (Schema::hasTable('site_requests') && Schema::hasColumn('site_requests', 'site_request_group_id')) {
+            Schema::table('site_requests', function (Blueprint $table) {
+                $table->dropForeign(['site_request_group_id']);
+                $table->dropColumn('site_request_group_id');
+            });
+        }
 
         Schema::dropIfExists('site_request_groups');
     }

@@ -67,21 +67,23 @@ return new class extends Migration
             }
         });
 
-        Schema::table('site_requests', function (Blueprint $table): void {
-            if (!Schema::hasColumn('site_requests', 'estimate_item_id')) {
-                $table->foreignId('estimate_item_id')
-                    ->nullable()
-                    ->after('material_id')
-                    ->constrained('estimate_items')
-                    ->nullOnDelete();
-            }
+        if (Schema::hasTable('site_requests')) {
+            Schema::table('site_requests', function (Blueprint $table): void {
+                if (!Schema::hasColumn('site_requests', 'estimate_item_id')) {
+                    $table->foreignId('estimate_item_id')
+                        ->nullable()
+                        ->after('material_id')
+                        ->constrained('estimate_items')
+                        ->nullOnDelete();
+                }
 
-            if (!Schema::hasColumn('site_requests', 'equipment_count')) {
-                $table->unsignedInteger('equipment_count')
-                    ->nullable()
-                    ->after('equipment_type');
-            }
-        });
+                if (!Schema::hasColumn('site_requests', 'equipment_count')) {
+                    $table->unsignedInteger('equipment_count')
+                        ->nullable()
+                        ->after('equipment_type');
+                }
+            });
+        }
 
         $this->backfillJournalMaterialEstimateItems();
         $this->backfillJournalEquipmentEstimateItems();
@@ -105,24 +107,27 @@ return new class extends Migration
             $table->index('journal_worker_id', 'completed_works_journal_worker_idx');
         });
 
-        Schema::table('site_requests', function (Blueprint $table): void {
-            $table->index('estimate_item_id', 'site_requests_estimate_item_idx');
-        });
+        if (Schema::hasTable('site_requests') && Schema::hasColumn('site_requests', 'estimate_item_id')) {
+            Schema::table('site_requests', function (Blueprint $table): void {
+                $table->index('estimate_item_id', 'site_requests_estimate_item_idx');
+            });
+        }
     }
 
     public function down(): void
     {
-        Schema::table('site_requests', function (Blueprint $table): void {
-            $table->dropIndex('site_requests_estimate_item_idx');
+        if (Schema::hasTable('site_requests')) {
+            Schema::table('site_requests', function (Blueprint $table): void {
+                if (Schema::hasColumn('site_requests', 'estimate_item_id')) {
+                    $table->dropIndex('site_requests_estimate_item_idx');
+                    $table->dropConstrainedForeignId('estimate_item_id');
+                }
 
-            if (Schema::hasColumn('site_requests', 'estimate_item_id')) {
-                $table->dropConstrainedForeignId('estimate_item_id');
-            }
-
-            if (Schema::hasColumn('site_requests', 'equipment_count')) {
-                $table->dropColumn('equipment_count');
-            }
-        });
+                if (Schema::hasColumn('site_requests', 'equipment_count')) {
+                    $table->dropColumn('equipment_count');
+                }
+            });
+        }
 
         Schema::table('completed_works', function (Blueprint $table): void {
             $table->dropIndex('completed_works_journal_worker_idx');

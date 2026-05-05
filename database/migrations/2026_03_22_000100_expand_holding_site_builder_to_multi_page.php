@@ -95,7 +95,9 @@ return new class extends Migration
             $table->index(['organization_group_id', 'status', 'published_at'], 'blog_articles_group_status_index');
         });
 
-        DB::statement('ALTER TABLE blog_articles ALTER COLUMN author_id DROP NOT NULL');
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            DB::statement('ALTER TABLE blog_articles ALTER COLUMN author_id DROP NOT NULL');
+        }
 
         $sites = DB::table('holding_sites')
             ->select(['id', 'title', 'description', 'created_by_user_id', 'updated_by_user_id', 'created_at', 'updated_at'])
@@ -160,7 +162,9 @@ return new class extends Migration
 
     public function down(): void
     {
-        DB::statement('ALTER TABLE blog_articles ALTER COLUMN author_id SET NOT NULL');
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            DB::statement('ALTER TABLE blog_articles ALTER COLUMN author_id SET NOT NULL');
+        }
 
         Schema::table('blog_articles', function (Blueprint $table) {
             $table->dropIndex('blog_articles_group_status_index');

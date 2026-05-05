@@ -9,6 +9,10 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (DB::connection()->getDriverName() !== 'pgsql') {
+            return;
+        }
+
         DB::statement('ALTER TABLE contracts DROP CONSTRAINT IF EXISTS contracts_contract_side_type_consistency_check');
 
         DB::statement(<<<'SQL'
@@ -58,6 +62,10 @@ SQL);
 
     public function down(): void
     {
+        if (DB::connection()->getDriverName() !== 'pgsql') {
+            return;
+        }
+
         DB::statement('ALTER TABLE contracts DROP CONSTRAINT IF EXISTS contracts_contract_side_type_consistency_check');
 
         DB::statement(<<<'SQL'

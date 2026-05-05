@@ -11,13 +11,17 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('supplier_proposal_versions', function (Blueprint $table): void {
+        $emptyJsonObject = DB::connection()->getDriverName() === 'pgsql'
+            ? DB::raw("'{}'::jsonb")
+            : '{}';
+
+        Schema::create('supplier_proposal_versions', function (Blueprint $table) use ($emptyJsonObject): void {
             $table->id();
             $table->foreignId('organization_id')->constrained('organizations')->cascadeOnDelete();
             $table->foreignId('supplier_proposal_id')->constrained('supplier_proposals')->cascadeOnDelete();
             $table->unsignedInteger('version_number');
-            $table->jsonb('commercial_snapshot')->default(DB::raw("'{}'::jsonb"));
-            $table->jsonb('attachment_snapshot')->default(DB::raw("'{}'::jsonb"));
+            $table->jsonb('commercial_snapshot')->default($emptyJsonObject);
+            $table->jsonb('attachment_snapshot')->default($emptyJsonObject);
             $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
             $table->timestampTz('created_at')->useCurrent();
 

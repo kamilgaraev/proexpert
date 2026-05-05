@@ -27,8 +27,8 @@ return new class extends Migration
                 ei.quantity_total,
                 COALESCE(ei.total_amount, ROUND(COALESCE(ei.quantity_total, 0) * COALESCE(ei.unit_price, 0), 2)),
                 'legacy_backfill_from_estimates_contract_id',
-                NOW(),
-                NOW()
+                CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP
             FROM estimates e
             INNER JOIN estimate_items ei ON ei.estimate_id = e.id
             INNER JOIN contracts c ON c.id = e.contract_id

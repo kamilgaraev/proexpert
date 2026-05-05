@@ -30,18 +30,20 @@ return new class extends Migration
             $table->index('completed_work_id', 'performance_act_lines_completed_work_idx');
         });
 
-        DB::statement(
-            "ALTER TABLE performance_act_lines ADD CONSTRAINT performance_act_lines_line_type_check CHECK (line_type IN ('completed_work', 'manual'))"
-        );
-        DB::statement(
-            'ALTER TABLE performance_act_lines ADD CONSTRAINT performance_act_lines_quantity_positive_check CHECK (quantity > 0)'
-        );
-        DB::statement(
-            'ALTER TABLE performance_act_lines ADD CONSTRAINT performance_act_lines_amount_non_negative_check CHECK (amount >= 0)'
-        );
-        DB::statement(
-            'ALTER TABLE performance_act_lines ADD CONSTRAINT performance_act_lines_unit_price_non_negative_check CHECK (unit_price IS NULL OR unit_price >= 0)'
-        );
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            DB::statement(
+                "ALTER TABLE performance_act_lines ADD CONSTRAINT performance_act_lines_line_type_check CHECK (line_type IN ('completed_work', 'manual'))"
+            );
+            DB::statement(
+                'ALTER TABLE performance_act_lines ADD CONSTRAINT performance_act_lines_quantity_positive_check CHECK (quantity > 0)'
+            );
+            DB::statement(
+                'ALTER TABLE performance_act_lines ADD CONSTRAINT performance_act_lines_amount_non_negative_check CHECK (amount >= 0)'
+            );
+            DB::statement(
+                'ALTER TABLE performance_act_lines ADD CONSTRAINT performance_act_lines_unit_price_non_negative_check CHECK (unit_price IS NULL OR unit_price >= 0)'
+            );
+        }
     }
 
     public function down(): void
