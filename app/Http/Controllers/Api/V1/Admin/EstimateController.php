@@ -372,6 +372,9 @@ class EstimateController extends Controller
         if ($newStatus === 'approved') {
             $estimateModel->approved_by_user_id = $request->user()->id;
             $estimateModel->approved_at = now();
+        } else {
+            $estimateModel->approved_by_user_id = null;
+            $estimateModel->approved_at = null;
         }
         
         $estimateModel->save();
@@ -437,4 +440,3 @@ class EstimateController extends Controller
         };
     }
 }
-

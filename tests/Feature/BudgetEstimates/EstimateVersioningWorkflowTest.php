@@ -14,6 +14,7 @@ use App\Models\Project;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Route;
 use InvalidArgumentException;
 use Tests\TestCase;
@@ -187,6 +188,53 @@ class EstimateVersioningWorkflowTest extends TestCase
             'estimate_status' => 'approved',
             'approved_by_user_id' => $actor->id,
         ]);
+    }
+
+    public function test_update_status_approval_workflow_creates_one_approval_snapshot_with_metadata(): void
+    {
+        Gate::before(static fn (): bool => true);
+
+        $estimate = $this->createEstimate(['status' => 'in_review']);
+        $actor = User::factory()->create([
+            'current_organization_id' => $estimate->organization_id,
+        ]);
+
+        $this->updateEstimateStatus($estimate, $actor, 'approved');
+
+        $estimate->refresh();
+
+        $this->assertSame('approved', $estimate->status);
+        $this->assertSame($actor->id, $estimate->approved_by_user_id);
+        $this->assertNotNull($estimate->approved_at);
+        $this->assertSame(1, DB::table('estimate_versions')->where('estimate_id', $estimate->id)->count());
+        $this->assertDatabaseHas('estimate_versions', [
+            'estimate_id' => $estimate->id,
+            'organization_id' => $estimate->organization_id,
+            'snapshot_type' => 'approval',
+            'estimate_status' => 'approved',
+            'approved_by_user_id' => $actor->id,
+        ]);
+    }
+
+    public function test_update_status_leaving_approved_clears_approval_metadata(): void
+    {
+        Gate::before(static fn (): bool => true);
+
+        $actor = User::factory()->create();
+        $estimate = $this->createEstimate([
+            'status' => 'approved',
+            'approved_by_user_id' => $actor->id,
+            'approved_at' => now(),
+        ]);
+        $actor->forceFill(['current_organization_id' => $estimate->organization_id])->save();
+
+        $this->updateEstimateStatus($estimate, $actor, 'in_review');
+
+        $estimate->refresh();
+
+        $this->assertSame('in_review', $estimate->status);
+        $this->assertNull($estimate->approved_by_user_id);
+        $this->assertNull($estimate->approved_at);
     }
 
     public function test_restore_recreates_working_estimate_from_snapshot(): void
@@ -408,5 +456,24 @@ class EstimateVersioningWorkflowTest extends TestCase
             'profit_rate' => 0,
             'calculation_method' => 'resource',
         ], $overrides));
+    }
+
+    private function updateEstimateStatus(Estimate $estimate, User $actor, string $status): void
+    {
+        $this->actingAs($actor);
+
+        $request = \App\Http\Requests\Admin\Estimate\UpdateEstimateStatusRequest::create(
+            "/api/v1/admin/projects/{$estimate->project_id}/estimates/{$estimate->id}/status",
+            'PUT',
+            ['status' => $status]
+        );
+        $request->setContainer($this->app);
+        $request->setRedirector($this->app['redirect']);
+        $request->setUserResolver(static fn (): User => $actor);
+        $request->attributes->set('current_organization_id', $estimate->organization_id);
+        $request->validateResolved();
+
+        $this->app->make(\App\Http\Controllers\Api\V1\Admin\EstimateController::class)
+            ->updateStatus($request, $estimate->project_id, $estimate->id);
     }
 }
