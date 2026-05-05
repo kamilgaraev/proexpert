@@ -293,6 +293,53 @@ class EstimateVersioningWorkflowTest extends TestCase
         );
     }
 
+    public function test_restore_reuses_soft_deleted_item_with_same_stable_key(): void
+    {
+        $actor = User::factory()->create();
+        $estimate = $this->createEstimate();
+        $item = EstimateItem::query()->create([
+            'estimate_id' => $estimate->id,
+            'stable_key' => '66666666-6666-6666-6666-666666666666',
+            'position_number' => '1',
+            'name' => 'Version A item',
+            'item_type' => 'work',
+            'quantity' => 1,
+            'unit_price' => 100,
+            'total_amount' => 100,
+            'direct_costs' => 100,
+        ]);
+        $versionA = app(EstimateVersioningService::class)->createSnapshot(
+            estimate: $estimate,
+            actorId: $actor->id,
+            label: 'Version A'
+        );
+
+        $item->delete();
+        $versionB = app(EstimateVersioningService::class)->createSnapshot(
+            estimate: $estimate->fresh(),
+            actorId: $actor->id,
+            label: 'Version B'
+        );
+
+        $restoreService = app(EstimateVersionRestoreService::class);
+        $restoreService->restore($estimate->fresh(), $versionA, $actor->id);
+        $restoreService->restore($estimate->fresh(), $versionB, $actor->id);
+
+        $this->assertSoftDeleted('estimate_items', ['id' => $item->id]);
+
+        $restored = $restoreService->restore($estimate->fresh(), $versionA, $actor->id);
+        $restoredItem = $restored->items->firstWhere('stable_key', '66666666-6666-6666-6666-666666666666');
+
+        $this->assertNotNull($restoredItem);
+        $this->assertSame($item->id, $restoredItem->id);
+        $this->assertNull($restoredItem->deleted_at);
+        $this->assertDatabaseHas('estimate_items', [
+            'id' => $item->id,
+            'stable_key' => '66666666-6666-6666-6666-666666666666',
+            'deleted_at' => null,
+        ]);
+    }
+
     public function test_restore_rejects_version_from_another_estimate(): void
     {
         $actor = User::factory()->create();

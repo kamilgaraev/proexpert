@@ -31,7 +31,7 @@
     "estimates.analytics",
     "estimates.versions.create",
     "estimates.versions.compare",
-    "estimates.versions.rollback",
+    "budget-estimates.versions.rollback",
     "construction-journal.view",
     "construction-journal.create",
     "construction-journal.edit",

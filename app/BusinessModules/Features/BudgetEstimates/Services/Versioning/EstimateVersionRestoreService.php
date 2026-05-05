@@ -109,7 +109,7 @@ class EstimateVersionRestoreService
             ->whereNotNull('stable_key')
             ->get()
             ->keyBy('stable_key');
-        $existingItemsByStableKey = EstimateItem::query()
+        $existingItemsByStableKey = EstimateItem::withTrashed()
             ->where('estimate_id', $estimate->id)
             ->whereNotNull('stable_key')
             ->get()
@@ -284,6 +284,10 @@ class EstimateVersionRestoreService
         $item = $stableKey !== null ? $existingItemsByStableKey->get($stableKey) : null;
 
         if ($item instanceof EstimateItem) {
+            if ($item->trashed()) {
+                $item->restore();
+            }
+
             $item->forceFill($attributes)->save();
         } else {
             $item = EstimateItem::query()->create($attributes);
