@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateVersioningService;
-use App\BusinessModules\Features\BudgetEstimates\Services\StructuralDiffService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateVersionComparisonService;
 use App\BusinessModules\Features\BudgetEstimates\Services\WhatIfSimulatorService;
 use App\BusinessModules\Features\BudgetEstimates\Services\AutoSchedulingService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\MemoryLayerService;
@@ -23,7 +23,7 @@ class EstimateVersionController extends Controller
 {
     public function __construct(
         protected EstimateVersioningService $versioningService,
-        protected StructuralDiffService $diffService,
+        protected EstimateVersionComparisonService $versionComparisonService,
         protected WhatIfSimulatorService $whatIfService,
         protected AutoSchedulingService $schedulerService,
         protected MemoryLayerService $memoryLayer
@@ -76,7 +76,7 @@ class EstimateVersionController extends Controller
         $this->authorize('view', $version1->estimate);
         $this->authorize('view', $version2->estimate);
 
-        $comparison = $this->diffService->diff($version1->id, $version2->id);
+        $comparison = $this->versionComparisonService->compare($version1, $version2);
         
         return AdminResponse::success($comparison);
     }
@@ -106,10 +106,7 @@ class EstimateVersionController extends Controller
             $this->authorize('view', $versionA->estimate);
             $this->authorize('view', $versionB->estimate);
 
-            $diff = $this->diffService->diff(
-                $versionA->id,
-                $versionB->id
-            );
+            $diff = $this->versionComparisonService->compare($versionA, $versionB);
             return AdminResponse::success($diff);
         } catch (\InvalidArgumentException $e) {
             return AdminResponse::error($e->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY);
