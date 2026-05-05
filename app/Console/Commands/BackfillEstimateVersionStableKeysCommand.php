@@ -9,6 +9,7 @@ use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\EstimateSection;
 use Illuminate\Console\Command;
+use InvalidArgumentException;
 
 class BackfillEstimateVersionStableKeysCommand extends Command
 {
@@ -19,7 +20,14 @@ class BackfillEstimateVersionStableKeysCommand extends Command
     public function handle(EstimateStableKeyService $stableKeyService): int
     {
         $dryRun = (bool) $this->option('dry-run');
-        $organizationId = $this->organizationId();
+
+        try {
+            $organizationId = $this->organizationId();
+        } catch (InvalidArgumentException $exception) {
+            $this->error($exception->getMessage());
+
+            return Command::FAILURE;
+        }
 
         $summary = [
             'estimates' => 0,
@@ -75,8 +83,14 @@ class BackfillEstimateVersionStableKeysCommand extends Command
     {
         $value = $this->option('organization_id');
 
-        if ($value === null || $value === '') {
+        if ($value === null) {
             return null;
+        }
+
+        $value = is_scalar($value) ? (string) $value : '';
+
+        if (preg_match('/^[1-9][0-9]*$/', $value) !== 1) {
+            throw new InvalidArgumentException('The --organization_id option must be a positive integer.');
         }
 
         return (int) $value;

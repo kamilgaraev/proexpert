@@ -46,6 +46,22 @@ class EstimateBackfillCommandsTest extends TestCase
         $this->assertNotNull($item->refresh()->stable_key);
     }
 
+    public function test_stable_keys_rejects_invalid_organization_id_without_writes(): void
+    {
+        $estimate = $this->createEstimate();
+        $section = $this->createSection($estimate);
+        $item = $this->createItem($estimate, $section);
+
+        foreach (['0', '-1', 'abc', '12abc', ''] as $organizationId) {
+            $this->artisan('estimates:backfill-stable-keys', ['--organization_id' => $organizationId])
+                ->expectsOutput('The --organization_id option must be a positive integer.')
+                ->assertExitCode(1);
+        }
+
+        $this->assertNull($section->refresh()->stable_key);
+        $this->assertNull($item->refresh()->stable_key);
+    }
+
     public function test_approval_versions_dry_run_does_not_create_versions_or_stable_keys(): void
     {
         $actor = User::factory()->create();
@@ -92,6 +108,28 @@ class EstimateBackfillCommandsTest extends TestCase
         $this->assertNotNull(DB::table('estimate_versions')->where('estimate_id', $estimate->id)->value('snapshot_hash'));
         $this->assertNotNull($section->refresh()->stable_key);
         $this->assertNotNull($item->refresh()->stable_key);
+    }
+
+    public function test_approval_versions_rejects_invalid_organization_id_without_writes(): void
+    {
+        $actor = User::factory()->create();
+        $estimate = $this->createEstimate([
+            'status' => 'approved',
+            'approved_by_user_id' => $actor->id,
+            'approved_at' => now(),
+        ]);
+        $section = $this->createSection($estimate);
+        $item = $this->createItem($estimate, $section);
+
+        foreach (['0', '-1', 'abc', '12abc', ''] as $organizationId) {
+            $this->artisan('estimates:backfill-approval-versions', ['--organization_id' => $organizationId])
+                ->expectsOutput('The --organization_id option must be a positive integer.')
+                ->assertExitCode(1);
+        }
+
+        $this->assertDatabaseCount('estimate_versions', 0);
+        $this->assertNull($section->refresh()->stable_key);
+        $this->assertNull($item->refresh()->stable_key);
     }
 
     private function createEstimate(array $overrides = []): Estimate

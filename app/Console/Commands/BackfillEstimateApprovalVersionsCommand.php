@@ -8,6 +8,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\EstimateVersioningServ
 use App\Models\Estimate;
 use App\Models\EstimateVersion;
 use Illuminate\Console\Command;
+use InvalidArgumentException;
 
 class BackfillEstimateApprovalVersionsCommand extends Command
 {
@@ -18,7 +19,14 @@ class BackfillEstimateApprovalVersionsCommand extends Command
     public function handle(EstimateVersioningService $versioningService): int
     {
         $dryRun = (bool) $this->option('dry-run');
-        $organizationId = $this->organizationId();
+
+        try {
+            $organizationId = $this->organizationId();
+        } catch (InvalidArgumentException $exception) {
+            $this->error($exception->getMessage());
+
+            return Command::FAILURE;
+        }
 
         $summary = [
             'candidates' => 0,
@@ -79,8 +87,14 @@ class BackfillEstimateApprovalVersionsCommand extends Command
     {
         $value = $this->option('organization_id');
 
-        if ($value === null || $value === '') {
+        if ($value === null) {
             return null;
+        }
+
+        $value = is_scalar($value) ? (string) $value : '';
+
+        if (preg_match('/^[1-9][0-9]*$/', $value) !== 1) {
+            throw new InvalidArgumentException('The --organization_id option must be a positive integer.');
         }
 
         return (int) $value;
