@@ -70,13 +70,17 @@ class EstimateVersionController extends Controller
             'version2_id' => 'required|integer',
         ]);
 
-        $version1 = $this->findVersionForCurrentOrganization((int) $validated['version1_id']);
-        $version2 = $this->findVersionForCurrentOrganization((int) $validated['version2_id']);
+        try {
+            $version1 = $this->findVersionForCurrentOrganization((int) $validated['version1_id']);
+            $version2 = $this->findVersionForCurrentOrganization((int) $validated['version2_id']);
 
-        $this->authorize('view', $version1->estimate);
-        $this->authorize('view', $version2->estimate);
+            $this->authorize('view', $version1->estimate);
+            $this->authorize('view', $version2->estimate);
 
-        $comparison = $this->versionComparisonService->compare($version1, $version2);
+            $comparison = $this->versionComparisonService->compare($version1, $version2);
+        } catch (\InvalidArgumentException $e) {
+            return AdminResponse::error($e->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
         
         return AdminResponse::success($comparison);
     }

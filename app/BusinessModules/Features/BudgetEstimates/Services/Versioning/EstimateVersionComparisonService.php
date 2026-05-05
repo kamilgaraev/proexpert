@@ -91,7 +91,8 @@ class EstimateVersionComparisonService
                 'removed' => count($removed),
                 'changed' => count($changed),
                 'unchanged' => $unchanged,
-                'total_delta_amount' => $this->money($totalDeltaAmount),
+                'total_delta_amount' => $this->roundMoney($totalDeltaAmount),
+                'total_delta_amount_formatted' => $this->money($totalDeltaAmount),
                 'total_delta_pct' => $this->deltaPct($this->numericTotalAmount($versionA), $totalDeltaAmount),
             ],
             'added' => $added,
@@ -106,7 +107,8 @@ class EstimateVersionComparisonService
             'id' => $version->id,
             'version_number' => $version->version_number,
             'label' => $version->label,
-            'total_amount' => $this->money($this->numericTotalAmount($version)),
+            'total_amount' => $this->roundMoney($this->numericTotalAmount($version)),
+            'total_amount_formatted' => $this->money($this->numericTotalAmount($version)),
         ];
     }
 
@@ -259,6 +261,7 @@ class EstimateVersionComparisonService
             $precision = in_array($field, self::QUANTITY_FIELDS, true) ? 8 : 2;
             $formattedBefore = $this->formatNumeric($before, $precision);
             $formattedAfter = $this->formatNumeric($after, $precision);
+            $delta = $before !== null && $after !== null ? $after - $before : null;
 
             if ($formattedBefore === $formattedAfter) {
                 continue;
@@ -267,9 +270,9 @@ class EstimateVersionComparisonService
             $changes[$field] = [
                 'before' => $formattedBefore,
                 'after' => $formattedAfter,
-                'delta' => $before !== null && $after !== null
-                    ? $this->formatNumeric($after - $before, $precision)
-                    : null,
+                'delta' => $delta !== null ? $this->roundNumeric($delta, $precision) : null,
+                'delta_formatted' => $delta !== null ? $this->formatNumeric($delta, $precision) : null,
+                'delta_pct' => $before !== null && $after !== null ? $this->deltaPct($before, $delta) : null,
             ];
         }
 
@@ -355,12 +358,22 @@ class EstimateVersionComparisonService
         return number_format($value, 2, '.', '');
     }
 
-    private function deltaPct(float $baseAmount, float $deltaAmount): ?string
+    private function roundMoney(float $value): float
+    {
+        return round($value, 2);
+    }
+
+    private function roundNumeric(float $value, int $precision): float
+    {
+        return round($value, $precision);
+    }
+
+    private function deltaPct(float $baseAmount, float $deltaAmount): ?float
     {
         if ($baseAmount == 0.0) {
             return null;
         }
 
-        return number_format($deltaAmount / abs($baseAmount) * 100, 2, '.', '');
+        return round($deltaAmount / abs($baseAmount) * 100, 2);
     }
 }

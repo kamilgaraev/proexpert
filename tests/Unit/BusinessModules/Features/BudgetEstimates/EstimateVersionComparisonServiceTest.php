@@ -38,7 +38,10 @@ class EstimateVersionComparisonServiceTest extends TestCase
         $this->assertSame(1, $result['summary']['removed']);
         $this->assertSame(1, $result['summary']['changed']);
         $this->assertSame(1, $result['summary']['unchanged']);
-        $this->assertSame('150.00', $result['summary']['total_delta_amount']);
+        $this->assertSame(150.0, $result['summary']['total_delta_amount']);
+        $this->assertSame(15.0, $result['summary']['total_delta_pct']);
+        $this->assertSame(1000.0, $result['version_a']['total_amount']);
+        $this->assertSame(1150.0, $result['version_b']['total_amount']);
         $this->assertSame('added', $result['added'][0]['diff_type']);
         $this->assertSame('added', $result['added'][0]['_diff']);
         $this->assertSame('added-1', $result['added'][0]['stable_key']);
@@ -48,8 +51,10 @@ class EstimateVersionComparisonServiceTest extends TestCase
         $this->assertSame('work-1', $result['changed'][0]['stable_key']);
         $this->assertSame('500.00', $result['changed'][0]['changes']['unit_price']['before']);
         $this->assertSame('575.00', $result['changed'][0]['changes']['unit_price']['after']);
-        $this->assertSame('75.00', $result['changed'][0]['changes']['unit_price']['delta']);
-        $this->assertSame('150.00', $result['changed'][0]['changes']['total_amount']['delta']);
+        $this->assertSame(75.0, $result['changed'][0]['changes']['unit_price']['delta']);
+        $this->assertSame(15.0, $result['changed'][0]['changes']['unit_price']['delta_pct']);
+        $this->assertSame(150.0, $result['changed'][0]['changes']['total_amount']['delta']);
+        $this->assertSame(15.0, $result['changed'][0]['changes']['total_amount']['delta_pct']);
     }
 
     public function test_compare_refuses_versions_from_different_estimates(): void
@@ -110,8 +115,10 @@ class EstimateVersionComparisonServiceTest extends TestCase
         $this->assertSame(1, $result['summary']['changed']);
         $this->assertSame(1, $result['summary']['unchanged']);
         $this->assertSame('child-resource', $result['changed'][0]['stable_key']);
-        $this->assertSame('1.00000000', $result['changed'][0]['changes']['quantity']['delta']);
-        $this->assertSame('10.00', $result['changed'][0]['changes']['total_amount']['delta']);
+        $this->assertSame(1.0, $result['changed'][0]['changes']['quantity']['delta']);
+        $this->assertSame(50.0, $result['changed'][0]['changes']['quantity']['delta_pct']);
+        $this->assertSame(10.0, $result['changed'][0]['changes']['total_amount']['delta']);
+        $this->assertSame(50.0, $result['changed'][0]['changes']['total_amount']['delta_pct']);
     }
 
     public function test_compare_matches_by_structural_key_when_stable_key_is_absent(): void
@@ -131,7 +138,8 @@ class EstimateVersionComparisonServiceTest extends TestCase
         $this->assertSame(1, $result['summary']['changed']);
         $this->assertSame('item:root:section:1::work:structural work', $result['changed'][0]['stable_key']);
         $this->assertSame('structural_key', $result['changed'][0]['match_key_type']);
-        $this->assertSame('0.50000000', $result['changed'][0]['changes']['quantity']['delta']);
+        $this->assertSame(0.5, $result['changed'][0]['changes']['quantity']['delta']);
+        $this->assertSame(50.0, $result['changed'][0]['changes']['quantity']['delta_pct']);
     }
 
     public function test_compare_matches_by_legacy_id_when_stable_and_structural_keys_are_absent(): void
