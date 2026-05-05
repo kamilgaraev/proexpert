@@ -210,8 +210,8 @@ curl -X POST http://your-domain/api/v1/estimates/1/items \
 'estimates.delete'            // Удаление
 'estimates.approve'           // Утверждение
 'estimates.templates.manage'  // Управление шаблонами
-'estimates.versions.create'   // Создание версий
-'estimates.versions.compare'  // Сравнение версий
+'budget-estimates.versions.create'   // Создание версий
+'budget-estimates.versions.compare'  // Сравнение версий
 ```
 
 ## Настройки
