@@ -4,115 +4,139 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BudgetEstimates\Services;
 
+use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateSnapshotBuilder;
 use App\Models\Estimate;
 use App\Models\EstimateVersion;
-use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 
 class EstimateVersioningService
 {
-    public function createSnapshot(Estimate $estimate, int $userId, ?string $label = null, ?string $comment = null): EstimateVersion
-    {
-        $lastVersion = EstimateVersion::where('estimate_id', $estimate->id)
-            ->max('version_number') ?? 0;
-
-        $snapshot = $this->buildSnapshot($estimate);
-
-        $version = EstimateVersion::create([
-            'estimate_id'        => $estimate->id,
-            'created_by_user_id' => $userId,
-            'version_number'     => $lastVersion + 1,
-            'label'              => $label ?? "Версия " . ($lastVersion + 1),
-            'comment'            => $comment,
-            'snapshot'           => $snapshot,
-            'total_amount'       => (float)$estimate->total_amount,
-            'total_amount_with_vat' => (float)$estimate->total_amount_with_vat,
-            'total_direct_costs' => (float)$estimate->total_direct_costs,
-        ]);
-
-        Log::info("[Versioning] Snapshot v{$version->version_number} created for estimate {$estimate->id}");
-
-        return $version;
+    public function __construct(
+        private readonly EstimateSnapshotBuilder $snapshotBuilder,
+    ) {
     }
 
-    public function listVersions(int $estimateId): array
+    public function createSnapshot(
+        Estimate $estimate,
+        int $actorId,
+        ?string $label = null,
+        ?string $comment = null,
+        string $snapshotType = 'manual'
+    ): EstimateVersion {
+        return DB::transaction(function () use ($estimate, $actorId, $label, $comment, $snapshotType): EstimateVersion {
+            $lockedEstimate = Estimate::query()
+                ->whereKey($estimate->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $snapshot = $this->snapshotBuilder->build($lockedEstimate);
+            $snapshotHash = $this->snapshotBuilder->hash($snapshot);
+
+            if ($snapshotType === 'approval') {
+                $existingVersion = EstimateVersion::query()
+                    ->where('estimate_id', $lockedEstimate->id)
+                    ->where('snapshot_type', 'approval')
+                    ->where('snapshot_hash', $snapshotHash)
+                    ->first();
+
+                if ($existingVersion !== null) {
+                    return $existingVersion;
+                }
+            }
+
+            $lastVersionNumber = EstimateVersion::query()
+                ->where('estimate_id', $lockedEstimate->id)
+                ->orderByDesc('version_number')
+                ->lockForUpdate()
+                ->value('version_number');
+            $versionNumber = ((int) $lastVersionNumber) + 1;
+
+            $approvedByUserId = $snapshotType === 'approval'
+                ? ($lockedEstimate->approved_by_user_id ?? $actorId)
+                : $lockedEstimate->approved_by_user_id;
+            $approvedAt = $snapshotType === 'approval'
+                ? ($lockedEstimate->approved_at ?? now())
+                : $lockedEstimate->approved_at;
+
+            return EstimateVersion::query()->create([
+                'estimate_id' => $lockedEstimate->id,
+                'organization_id' => $lockedEstimate->organization_id,
+                'created_by_user_id' => $actorId,
+                'approved_by_user_id' => $approvedByUserId,
+                'approved_at' => $approvedAt,
+                'version_number' => $versionNumber,
+                'label' => $label ?? 'Версия ' . $versionNumber,
+                'comment' => $comment,
+                'snapshot_type' => $snapshotType,
+                'estimate_status' => $lockedEstimate->status,
+                'snapshot' => $snapshot,
+                'snapshot_hash' => $snapshotHash,
+                'total_amount' => $lockedEstimate->total_amount ?? 0,
+                'total_amount_with_vat' => $lockedEstimate->total_amount_with_vat ?? 0,
+                'total_direct_costs' => $lockedEstimate->total_direct_costs ?? 0,
+            ]);
+        });
+    }
+
+    public function createApprovalSnapshot(Estimate $estimate, int $actorId): EstimateVersion
     {
-        return EstimateVersion::where('estimate_id', $estimateId)
-            ->with('createdBy:id,name')
+        return $this->createSnapshot(
+            estimate: $estimate,
+            actorId: $actorId,
+            label: 'Утвержденная версия',
+            snapshotType: 'approval'
+        );
+    }
+
+    public function listVersions(Estimate $estimate): array
+    {
+        return EstimateVersion::query()
+            ->where('estimate_id', $estimate->id)
+            ->with(['createdBy:id,name', 'approvedBy:id,name'])
             ->orderByDesc('version_number')
             ->get()
-            ->map(fn($v) => [
-                'id'                    => $v->id,
-                'version_number'        => $v->version_number,
-                'label'                 => $v->label,
-                'comment'               => $v->comment,
-                'total_amount'          => $v->total_amount,
-                'total_amount_with_vat' => $v->total_amount_with_vat,
-                'total_direct_costs'    => $v->total_direct_costs,
-                'created_by'            => $v->createdBy?->name,
-                'created_at'            => $v->created_at->toIso8601String(),
-            ])
+            ->map(fn (EstimateVersion $version): array => $this->resourcePayload($version))
             ->all();
     }
 
-    public function getVersion(int $versionId): ?array
+    public function findVersionForEstimate(Estimate $estimate, int $versionId): EstimateVersion
     {
-        $version = EstimateVersion::with('createdBy:id,name')->find($versionId);
-
-        if (!$version) {
-            return null;
-        }
-
-        return [
-            'id'             => $version->id,
-            'version_number' => $version->version_number,
-            'label'          => $version->label,
-            'comment'        => $version->comment,
-            'snapshot'       => $version->snapshot,
-            'totals'         => [
-                'total_amount'          => $version->total_amount,
-                'total_amount_with_vat' => $version->total_amount_with_vat,
-                'total_direct_costs'    => $version->total_direct_costs,
-            ],
-            'created_by'     => $version->createdBy?->name,
-            'created_at'     => $version->created_at->toIso8601String(),
-        ];
+        return EstimateVersion::query()
+            ->where('estimate_id', $estimate->id)
+            ->with(['createdBy:id,name', 'approvedBy:id,name'])
+            ->findOrFail($versionId);
     }
 
-    private function buildSnapshot(Estimate $estimate): array
+    public function resourcePayload(EstimateVersion $version): array
     {
-        $estimate->loadMissing(['sections.items.measurementUnit']);
-
-        $sections = $estimate->sections->map(fn($s) => [
-            'id'            => $s->id,
-            'number'        => $s->section_number,
-            'name'          => $s->name,
-            'total'         => $s->total_amount ?? 0,
-            'items'         => $s->items->map(fn($i) => [
-                'id'                => $i->id,
-                'name'              => $i->name,
-                'code'              => $i->normative_rate_code,
-                'unit'              => $i->measurementUnit?->name,
-                'quantity'          => $i->quantity,
-                'unit_price'        => $i->unit_price,
-                'base_unit_price'   => $i->base_unit_price,
-                'price_index'       => $i->price_index,
-                'total_amount'      => $i->total_amount,
-                'current_total'     => $i->current_total_amount,
-            ])->values()->all(),
-        ])->values()->all();
+        $version->loadMissing(['createdBy:id,name', 'approvedBy:id,name']);
 
         return [
-            'estimate_id'         => $estimate->id,
-            'name'                => $estimate->name,
-            'calculation_method'  => $estimate->calculation_method,
-            'sections'            => $sections,
-            'totals'              => [
-                'total_amount'          => $estimate->total_amount,
-                'total_direct_costs'    => $estimate->total_direct_costs,
-                'total_overhead_costs'  => $estimate->total_overhead_costs,
-                'total_amount_with_vat' => $estimate->total_amount_with_vat,
+            'id' => $version->id,
+            'estimateId' => $version->estimate_id,
+            'organizationId' => $version->organization_id,
+            'versionNumber' => $version->version_number,
+            'label' => $version->label,
+            'comment' => $version->comment,
+            'snapshotType' => $version->snapshot_type,
+            'estimateStatus' => $version->estimate_status,
+            'snapshotHash' => $version->snapshot_hash,
+            'snapshot' => $version->snapshot,
+            'totals' => [
+                'totalAmount' => $version->total_amount,
+                'totalAmountWithVat' => $version->total_amount_with_vat,
+                'totalDirectCosts' => $version->total_direct_costs,
             ],
-            'snapshotted_at'      => now()->toIso8601String(),
+            'createdBy' => $version->createdBy ? [
+                'id' => $version->createdBy->id,
+                'name' => $version->createdBy->name,
+            ] : null,
+            'approvedBy' => $version->approvedBy ? [
+                'id' => $version->approvedBy->id,
+                'name' => $version->approvedBy->name,
+            ] : null,
+            'approvedAt' => $version->approved_at?->toISOString(),
+            'createdAt' => $version->created_at?->toISOString(),
         ];
     }
 }
