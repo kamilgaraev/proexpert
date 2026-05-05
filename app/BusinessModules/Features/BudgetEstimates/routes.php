@@ -59,13 +59,17 @@ Route::prefix('api/v1/admin')
         // ============================================
         // ВЕРСИОНИРОВАНИЕ
         // ============================================
-        Route::prefix('estimate-versions')->name('estimate_versions.')->group(function () {
-            Route::post('/compare', [EstimateVersionController::class, 'compare'])->name('compare');
-            Route::post('/snapshot-diff', [EstimateVersionController::class, 'snapshotDiff'])->name('snapshot_diff');
-            Route::get('/{estimateId}', [EstimateVersionController::class, 'index'])->whereNumber('estimateId')->name('index');
-            Route::post('/{estimateId}', [EstimateVersionController::class, 'store'])->whereNumber('estimateId')->name('store');
-            Route::post('/{versionId}/rollback', [EstimateVersionController::class, 'rollback'])->whereNumber('versionId')->name('rollback');
-        });
+        Route::prefix('estimates/{estimateId}/versions')
+            ->name('estimates.versions.')
+            ->whereNumber('estimateId')
+            ->group(function () {
+                Route::get('/', [EstimateVersionController::class, 'index'])->name('index');
+                Route::post('/', [EstimateVersionController::class, 'store'])->name('store');
+                Route::post('/compare', [EstimateVersionController::class, 'compare'])->name('compare');
+                Route::post('/{versionId}/rollback', [EstimateVersionController::class, 'rollback'])
+                    ->whereNumber('versionId')
+                    ->name('rollback');
+            });
 
         // ============================================
         // СЛОЙ ПАМЯТИ ИМПОРТА

@@ -54,6 +54,8 @@ return [
     'version_created' => 'Версия сметы сохранена.',
     'version_rollback' => 'Смета восстановлена из выбранной версии.',
     'version_restore_not_available' => 'Восстановление из версии будет доступно после обновления механизма версий.',
+    'version_compare_failed' => 'Не удалось сравнить версии сметы.',
+    'version_not_found' => 'Версия сметы не найдена.',
 
     'import_no_file' => 'Выберите файл сметы.',
     'import_file_id_empty' => 'Файл сметы не найден.',

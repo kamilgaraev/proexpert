@@ -13,10 +13,12 @@ use App\Http\Resources\Api\V1\Admin\Estimate\EstimateResource;
 use App\Http\Responses\AdminResponse;
 use App\Models\Estimate;
 use App\Models\EstimateVersion;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
 
 use function trans_message;
@@ -45,7 +47,7 @@ class EstimateVersionController extends Controller
     public function store(Request $request, int $estimateId): JsonResponse
     {
         $estimate = $this->findEstimateOrFail($estimateId);
-        $this->authorize('update', $estimate);
+        $this->authorizeVersionCreation($estimate);
         
         $validated = $request->validate([
             'label' => 'required|string|max:255',
@@ -66,37 +68,47 @@ class EstimateVersionController extends Controller
         );
     }
 
-    public function compare(Request $request): JsonResponse
+    public function compare(Request $request, int $estimateId): JsonResponse
     {
         $validated = $request->validate([
-            'version1_id' => 'required|integer',
-            'version2_id' => 'required|integer',
+            'version_a_id' => ['required', 'integer'],
+            'version_b_id' => ['required', 'integer'],
         ]);
 
         try {
-            $version1 = $this->findVersionForCurrentOrganization((int) $validated['version1_id']);
-            $version2 = $this->findVersionForCurrentOrganization((int) $validated['version2_id']);
+            $estimate = $this->findEstimateOrFail($estimateId);
+            $this->authorize('view', $estimate);
+            $this->authorize('compareVersions', Estimate::class);
 
-            $this->authorize('view', $version1->estimate);
-            $this->authorize('view', $version2->estimate);
+            $versionA = $this->findVersionForEstimate($estimate, (int) $validated['version_a_id']);
+            $versionB = $this->findVersionForEstimate($estimate, (int) $validated['version_b_id']);
 
-            $comparison = $this->versionComparisonService->compare($version1, $version2);
+            $comparison = $this->versionComparisonService->compare($versionA, $versionB);
         } catch (\InvalidArgumentException $e) {
             return AdminResponse::error($e->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY);
+        } catch (ModelNotFoundException $e) {
+            return AdminResponse::error(trans_message('estimate.version_not_found'), Response::HTTP_NOT_FOUND);
         }
         
         return AdminResponse::success($comparison);
     }
 
-    public function rollback(int $versionId): JsonResponse
+    public function rollback(Request $request, int $estimateId, int $versionId): JsonResponse
     {
-        $version = $this->findVersionForCurrentOrganization($versionId);
-        $this->authorize('rollbackVersion', $version->estimate);
-        $restoredEstimate = $this->versionRestoreService->restore(
-            estimate: $version->estimate,
-            version: $version,
-            actorId: (int) request()->user()->id
-        );
+        try {
+            $estimate = $this->findEstimateOrFail($estimateId);
+            $version = $this->findVersionForEstimate($estimate, $versionId);
+            $this->authorize('rollbackVersion', $version->estimate);
+            $restoredEstimate = $this->versionRestoreService->restore(
+                estimate: $version->estimate,
+                version: $version,
+                actorId: (int) $request->user()->id
+            );
+        } catch (\InvalidArgumentException $e) {
+            return AdminResponse::error($e->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY);
+        } catch (ModelNotFoundException $e) {
+            return AdminResponse::error(trans_message('estimate.version_not_found'), Response::HTTP_NOT_FOUND);
+        }
 
         return AdminResponse::success(
             new EstimateResource($restoredEstimate),
@@ -105,29 +117,6 @@ class EstimateVersionController extends Controller
         );
     }
 
-    public function snapshotDiff(Request $request): JsonResponse
-    {
-        $request->validate([
-            'version_a_id' => ['required', 'integer', 'exists:estimate_versions,id'],
-            'version_b_id' => ['required', 'integer', 'exists:estimate_versions,id'],
-        ]);
-
-        try {
-            $versionA = $this->findVersionForCurrentOrganization((int) $request->input('version_a_id'));
-            $versionB = $this->findVersionForCurrentOrganization((int) $request->input('version_b_id'));
-
-            $this->authorize('view', $versionA->estimate);
-            $this->authorize('view', $versionB->estimate);
-
-            $diff = $this->versionComparisonService->compare($versionA, $versionB);
-            return AdminResponse::success($diff);
-        } catch (\InvalidArgumentException $e) {
-            return AdminResponse::error($e->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY);
-        } catch (\Throwable $e) {
-            Log::error('[EstimateVersion] SnapshotDiff failed', ['error' => $e->getMessage()]);
-            return AdminResponse::error('Ошибка сравнения версий', Response::HTTP_INTERNAL_SERVER_ERROR);
-        }
-    }
 
     public function whatIf(Request $request, int $estimateId): JsonResponse
     {
@@ -214,14 +203,25 @@ class EstimateVersionController extends Controller
             ->firstOrFail();
     }
 
-    private function findVersionForCurrentOrganization(int $versionId): EstimateVersion
+    private function findVersionForEstimate(Estimate $estimate, int $versionId): EstimateVersion
     {
-        $organizationId = request()->attributes->get('current_organization_id');
-
         return EstimateVersion::query()
             ->whereKey($versionId)
-            ->where('organization_id', $organizationId)
+            ->where('estimate_id', $estimate->id)
+            ->where('organization_id', $estimate->organization_id)
             ->with('estimate')
             ->firstOrFail();
+    }
+
+    private function authorizeVersionCreation(Estimate $estimate): void
+    {
+        $policy = Gate::getPolicyFor($estimate);
+
+        if ($policy !== null && method_exists($policy, 'createVersion')) {
+            $this->authorize('createVersion', $estimate);
+            return;
+        }
+
+        $this->authorize('update', $estimate);
     }
 }

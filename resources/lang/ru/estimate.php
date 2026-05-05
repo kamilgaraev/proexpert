@@ -54,6 +54,8 @@ return [
     // Версии
     'version_created' => 'Новая версия сметы создана',
     'version_rollback' => 'Выполнен откат к версии сметы',
+    'version_compare_failed' => 'Не удалось сравнить версии сметы',
+    'version_not_found' => 'Версия сметы не найдена',
     
     // Шаблоны
     'template_created' => 'Шаблон успешно создан',

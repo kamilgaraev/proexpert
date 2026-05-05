@@ -14,12 +14,38 @@ use App\Models\Project;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Route;
 use InvalidArgumentException;
 use Tests\TestCase;
 
 class EstimateVersioningWorkflowTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_estimate_version_routes_use_canonical_nested_api_only(): void
+    {
+        $this->assertTrue(Route::has('admin.estimates.versions.index'));
+        $this->assertTrue(Route::has('admin.estimates.versions.store'));
+        $this->assertTrue(Route::has('admin.estimates.versions.compare'));
+        $this->assertTrue(Route::has('admin.estimates.versions.rollback'));
+        $this->assertFalse(Route::has('admin.estimate_versions.index'));
+        $this->assertFalse(Route::has('admin.estimate_versions.store'));
+        $this->assertFalse(Route::has('admin.estimate_versions.compare'));
+        $this->assertFalse(Route::has('admin.estimate_versions.rollback'));
+
+        $this->assertSame(
+            'api/v1/admin/estimates/{estimateId}/versions',
+            Route::getRoutes()->getByName('admin.estimates.versions.index')?->uri()
+        );
+        $this->assertSame(
+            'api/v1/admin/estimates/{estimateId}/versions/compare',
+            Route::getRoutes()->getByName('admin.estimates.versions.compare')?->uri()
+        );
+        $this->assertSame(
+            'api/v1/admin/estimates/{estimateId}/versions/{versionId}/rollback',
+            Route::getRoutes()->getByName('admin.estimates.versions.rollback')?->uri()
+        );
+    }
 
     public function test_manual_snapshot_creates_immutable_estimate_version(): void
     {
