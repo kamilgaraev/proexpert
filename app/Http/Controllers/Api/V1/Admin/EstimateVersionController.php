@@ -4,14 +4,13 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateVersioningService;
-use App\BusinessModules\Features\BudgetEstimates\Services\EstimateVersionService;
 use App\BusinessModules\Features\BudgetEstimates\Services\StructuralDiffService;
 use App\BusinessModules\Features\BudgetEstimates\Services\WhatIfSimulatorService;
 use App\BusinessModules\Features\BudgetEstimates\Services\AutoSchedulingService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\MemoryLayerService;
-use App\Http\Resources\Api\V1\Admin\Estimate\EstimateResource;
 use App\Http\Responses\AdminResponse;
 use App\Models\Estimate;
+use App\Models\EstimateVersion;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -24,7 +23,6 @@ class EstimateVersionController extends Controller
 {
     public function __construct(
         protected EstimateVersioningService $versioningService,
-        protected EstimateVersionService $legacyVersionService,
         protected StructuralDiffService $diffService,
         protected WhatIfSimulatorService $whatIfService,
         protected AutoSchedulingService $schedulerService,
@@ -71,29 +69,26 @@ class EstimateVersionController extends Controller
             'version1_id' => 'required|integer',
             'version2_id' => 'required|integer',
         ]);
-        
-        $version1 = $this->findEstimateOrFail((int)$validated['version1_id']);
-        $version2 = $this->findEstimateOrFail((int)$validated['version2_id']);
-        
-        $this->authorize('view', $version1);
-        $this->authorize('view', $version2);
-        
-        $comparison = $this->legacyVersionService->compareVersions($version1, $version2);
+
+        $version1 = $this->findVersionForCurrentOrganization((int) $validated['version1_id']);
+        $version2 = $this->findVersionForCurrentOrganization((int) $validated['version2_id']);
+
+        $this->authorize('view', $version1->estimate);
+        $this->authorize('view', $version2->estimate);
+
+        $comparison = $this->diffService->diff($version1->id, $version2->id);
         
         return AdminResponse::success($comparison);
     }
 
     public function rollback(int $versionId): JsonResponse
     {
-        $version = $this->findEstimateOrFail($versionId);
-        $this->authorize('update', $version);
-        
-        $newVersion = $this->legacyVersionService->rollback($version);
-        
-        return AdminResponse::success(
-            new EstimateResource($newVersion),
-            trans_message('estimate.version_rollback'),
-            Response::HTTP_CREATED
+        $version = $this->findVersionForCurrentOrganization($versionId);
+        $this->authorize('update', $version->estimate);
+
+        return AdminResponse::error(
+            trans_message('estimate.version_restore_not_available'),
+            Response::HTTP_NOT_IMPLEMENTED
         );
     }
 
@@ -105,9 +100,15 @@ class EstimateVersionController extends Controller
         ]);
 
         try {
+            $versionA = $this->findVersionForCurrentOrganization((int) $request->input('version_a_id'));
+            $versionB = $this->findVersionForCurrentOrganization((int) $request->input('version_b_id'));
+
+            $this->authorize('view', $versionA->estimate);
+            $this->authorize('view', $versionB->estimate);
+
             $diff = $this->diffService->diff(
-                (int)$request->input('version_a_id'),
-                (int)$request->input('version_b_id')
+                $versionA->id,
+                $versionB->id
             );
             return AdminResponse::success($diff);
         } catch (\InvalidArgumentException $e) {
@@ -200,6 +201,17 @@ class EstimateVersionController extends Controller
         
         return Estimate::where('id', $estimateId)
             ->where('organization_id', $organizationId)
+            ->firstOrFail();
+    }
+
+    private function findVersionForCurrentOrganization(int $versionId): EstimateVersion
+    {
+        $organizationId = request()->attributes->get('current_organization_id');
+
+        return EstimateVersion::query()
+            ->whereKey($versionId)
+            ->where('organization_id', $organizationId)
+            ->with('estimate')
             ->firstOrFail();
     }
 }

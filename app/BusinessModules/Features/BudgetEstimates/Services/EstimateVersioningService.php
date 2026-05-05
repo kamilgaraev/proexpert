@@ -113,15 +113,24 @@ class EstimateVersioningService
 
         return [
             'id' => $version->id,
+            'estimate_id' => $version->estimate_id,
             'estimateId' => $version->estimate_id,
+            'organization_id' => $version->organization_id,
             'organizationId' => $version->organization_id,
+            'version_number' => $version->version_number,
             'versionNumber' => $version->version_number,
             'label' => $version->label,
             'comment' => $version->comment,
+            'snapshot_type' => $version->snapshot_type,
             'snapshotType' => $version->snapshot_type,
+            'estimate_status' => $version->estimate_status,
             'estimateStatus' => $version->estimate_status,
+            'snapshot_hash' => $version->snapshot_hash,
             'snapshotHash' => $version->snapshot_hash,
             'snapshot' => $version->snapshot,
+            'total_amount' => $version->total_amount,
+            'total_amount_with_vat' => $version->total_amount_with_vat,
+            'total_direct_costs' => $version->total_direct_costs,
             'totals' => [
                 'totalAmount' => $version->total_amount,
                 'totalAmountWithVat' => $version->total_amount_with_vat,
@@ -131,11 +140,21 @@ class EstimateVersioningService
                 'id' => $version->createdBy->id,
                 'name' => $version->createdBy->name,
             ] : null,
+            'created_by' => $version->createdBy ? [
+                'id' => $version->createdBy->id,
+                'name' => $version->createdBy->name,
+            ] : null,
             'approvedBy' => $version->approvedBy ? [
                 'id' => $version->approvedBy->id,
                 'name' => $version->approvedBy->name,
             ] : null,
+            'approved_by' => $version->approvedBy ? [
+                'id' => $version->approvedBy->id,
+                'name' => $version->approvedBy->name,
+            ] : null,
+            'approved_at' => $version->approved_at?->toISOString(),
             'approvedAt' => $version->approved_at?->toISOString(),
+            'created_at' => $version->created_at?->toISOString(),
             'createdAt' => $version->created_at?->toISOString(),
         ];
     }

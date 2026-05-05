@@ -128,9 +128,15 @@ class EstimateVersioningWorkflowTest extends TestCase
         $this->assertCount(1, $payload);
         $this->assertSame($version->id, $payload[0]['id']);
         $this->assertSame($estimate->id, $payload[0]['estimateId']);
+        $this->assertSame($estimate->id, $payload[0]['estimate_id']);
         $this->assertSame($estimate->organization_id, $payload[0]['organizationId']);
+        $this->assertSame($estimate->organization_id, $payload[0]['organization_id']);
         $this->assertSame('manual', $payload[0]['snapshotType']);
+        $this->assertSame('manual', $payload[0]['snapshot_type']);
         $this->assertNotEmpty($payload[0]['snapshotHash']);
+        $this->assertSame($payload[0]['snapshotHash'], $payload[0]['snapshot_hash']);
+        $this->assertSame($payload[0]['totals']['totalAmount'], $payload[0]['total_amount']);
+        $this->assertArrayHasKey('created_at', $payload[0]);
         $this->assertArrayHasKey('snapshot', $payload[0]);
         $this->assertArrayHasKey('totals', $payload[0]);
     }
