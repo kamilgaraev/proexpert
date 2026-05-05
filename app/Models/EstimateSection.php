@@ -14,6 +14,7 @@ class EstimateSection extends Model
 
     protected $fillable = [
         'estimate_id',
+        'stable_key',
         'parent_section_id',
         'section_number',
         'full_section_number',

@@ -19,6 +19,7 @@ class EstimateItem extends Model
 
     protected $fillable = [
         'estimate_id',
+        'stable_key',
         'estimate_section_id',
         'catalog_item_id', // ID позиции из справочника
         'parent_work_id', // ⭐ ID родительской работы ГЭСН
