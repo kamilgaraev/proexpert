@@ -4,13 +4,14 @@ namespace App\Repositories;
 
 use App\Models\EstimateLibrary;
 use App\Models\EstimateLibraryItem;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\Cache;
 
 class EstimateLibraryRepository
 {
     protected const CACHE_TTL = 1800;
+
     protected const CACHE_TAG = 'estimate_libraries';
 
     public function find(int $id): ?EstimateLibrary
@@ -18,7 +19,31 @@ class EstimateLibraryRepository
         return Cache::tags([self::CACHE_TAG])->remember(
             "estimate_library.{$id}",
             self::CACHE_TTL,
-            fn() => EstimateLibrary::with(['items.positions'])->find($id)
+            fn () => EstimateLibrary::with(['items.positions'])->find($id)
+        );
+    }
+
+    public function findAccessible(int $id, int $organizationId): ?EstimateLibrary
+    {
+        return Cache::tags([self::CACHE_TAG])->remember(
+            "estimate_library.{$id}.accessible.{$organizationId}",
+            self::CACHE_TTL,
+            fn () => EstimateLibrary::with(['items.positions'])
+                ->active()
+                ->accessibleBy($organizationId)
+                ->find($id)
+        );
+    }
+
+    public function findOwned(int $id, int $organizationId): ?EstimateLibrary
+    {
+        return Cache::tags([self::CACHE_TAG])->remember(
+            "estimate_library.{$id}.owned.{$organizationId}",
+            self::CACHE_TTL,
+            fn () => EstimateLibrary::with(['items.positions'])
+                ->active()
+                ->byOrganization($organizationId)
+                ->find($id)
         );
     }
 
@@ -28,9 +53,9 @@ class EstimateLibraryRepository
     ): LengthAwarePaginator {
         $query = EstimateLibrary::where('organization_id', $organizationId)
             ->where('is_active', true);
-        
+
         $this->applyFilters($query, $filters);
-        
+
         return $query->withCount('items')
             ->orderBy('usage_count', 'desc')
             ->orderBy('name')
@@ -43,11 +68,11 @@ class EstimateLibraryRepository
     ): LengthAwarePaginator {
         $query = EstimateLibrary::where(function ($q) use ($organizationId) {
             $q->where('organization_id', $organizationId)
-              ->orWhere('access_level', 'public');
+                ->orWhere('access_level', 'public');
         })->where('is_active', true);
-        
+
         $this->applyFilters($query, $filters);
-        
+
         return $query->withCount('items')
             ->orderBy('usage_count', 'desc')
             ->orderBy('name')
@@ -61,20 +86,20 @@ class EstimateLibraryRepository
             [$searchTerm]
         )->where(function ($q) use ($organizationId) {
             $q->where('organization_id', $organizationId)
-              ->orWhere('access_level', 'public');
+                ->orWhere('access_level', 'public');
         })->where('is_active', true)
-        ->orderByRaw(
-            "ts_rank(search_vector, plainto_tsquery('russian', ?)) DESC",
-            [$searchTerm]
-        )
-        ->limit(50)
-        ->get();
+            ->orderByRaw(
+                "ts_rank(search_vector, plainto_tsquery('russian', ?)) DESC",
+                [$searchTerm]
+            )
+            ->limit(50)
+            ->get();
     }
 
     public function getByCategory(string $category, int $organizationId): Collection
     {
         $cacheKey = "estimate_libraries.category.{$category}.{$organizationId}";
-        
+
         return Cache::tags([self::CACHE_TAG])->remember(
             $cacheKey,
             self::CACHE_TTL,
@@ -82,7 +107,7 @@ class EstimateLibraryRepository
                 return EstimateLibrary::where('category', $category)
                     ->where(function ($q) use ($organizationId) {
                         $q->where('organization_id', $organizationId)
-                          ->orWhere('access_level', 'public');
+                            ->orWhere('access_level', 'public');
                     })
                     ->where('is_active', true)
                     ->withCount('items')
@@ -112,7 +137,33 @@ class EstimateLibraryRepository
         return Cache::tags([self::CACHE_TAG])->remember(
             "estimate_library_item.{$itemId}",
             self::CACHE_TTL,
-            fn() => EstimateLibraryItem::with(['library', 'positions.normativeRate'])->find($itemId)
+            fn () => EstimateLibraryItem::with(['library', 'positions.normativeRate'])->find($itemId)
+        );
+    }
+
+    public function findAccessibleItem(int $itemId, int $organizationId): ?EstimateLibraryItem
+    {
+        return Cache::tags([self::CACHE_TAG])->remember(
+            "estimate_library_item.{$itemId}.accessible.{$organizationId}",
+            self::CACHE_TTL,
+            fn () => EstimateLibraryItem::with(['library', 'positions.normativeRate'])
+                ->whereHas('library', function ($query) use ($organizationId) {
+                    $query->active()->accessibleBy($organizationId);
+                })
+                ->find($itemId)
+        );
+    }
+
+    public function findOwnedItem(int $itemId, int $organizationId): ?EstimateLibraryItem
+    {
+        return Cache::tags([self::CACHE_TAG])->remember(
+            "estimate_library_item.{$itemId}.owned.{$organizationId}",
+            self::CACHE_TTL,
+            fn () => EstimateLibraryItem::with(['library', 'positions.normativeRate'])
+                ->whereHas('library', function ($query) use ($organizationId) {
+                    $query->active()->byOrganization($organizationId);
+                })
+                ->find($itemId)
         );
     }
 
@@ -121,7 +172,23 @@ class EstimateLibraryRepository
         return Cache::tags([self::CACHE_TAG])->remember(
             "estimate_library.{$libraryId}.items",
             self::CACHE_TTL,
-            fn() => EstimateLibraryItem::where('library_id', $libraryId)
+            fn () => EstimateLibraryItem::where('library_id', $libraryId)
+                ->with('positions')
+                ->orderBy('usage_count', 'desc')
+                ->orderBy('name')
+                ->get()
+        );
+    }
+
+    public function getItemsByAccessibleLibrary(int $libraryId, int $organizationId): Collection
+    {
+        return Cache::tags([self::CACHE_TAG])->remember(
+            "estimate_library.{$libraryId}.items.accessible.{$organizationId}",
+            self::CACHE_TTL,
+            fn () => EstimateLibraryItem::where('library_id', $libraryId)
+                ->whereHas('library', function ($query) use ($organizationId) {
+                    $query->active()->accessibleBy($organizationId);
+                })
                 ->with('positions')
                 ->orderBy('usage_count', 'desc')
                 ->orderBy('name')
@@ -131,12 +198,7 @@ class EstimateLibraryRepository
 
     public function clearCache(?int $id = null): void
     {
-        if ($id) {
-            Cache::tags([self::CACHE_TAG])->forget("estimate_library.{$id}");
-            Cache::tags([self::CACHE_TAG])->forget("estimate_library.{$id}.items");
-        } else {
-            Cache::tags([self::CACHE_TAG])->flush();
-        }
+        Cache::tags([self::CACHE_TAG])->flush();
     }
 
     protected function applyFilters($query, array $filters): void
@@ -144,11 +206,11 @@ class EstimateLibraryRepository
         if (isset($filters['category'])) {
             $query->where('category', $filters['category']);
         }
-        
+
         if (isset($filters['access_level'])) {
             $query->where('access_level', $filters['access_level']);
         }
-        
+
         if (isset($filters['search'])) {
             $query->whereRaw(
                 "search_vector @@ plainto_tsquery('russian', ?)",
@@ -157,4 +219,3 @@ class EstimateLibraryRepository
         }
     }
 }
-

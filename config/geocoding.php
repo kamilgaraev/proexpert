@@ -25,8 +25,8 @@ return [
     'providers' => [
         'dadata' => [
             'enabled' => env('DADATA_ENABLED', true),
-            'api_key' => env('DADATA_API_KEY', 'c2110ee53431438f940545629894ebb5dc1fb1a4'),
-            'secret_key' => env('DADATA_SECRET_KEY', '9acd90e91b45e9105f0a7fac58bfebca6addf914'),
+            'api_key' => env('DADATA_API_KEY'),
+            'secret_key' => env('DADATA_SECRET_KEY'),
             'url' => 'https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/address',
             'clean_url' => 'https://cleaner.dadata.ru/api/v1/clean/address',
             'timeout' => 5,
@@ -44,7 +44,7 @@ return [
         'nominatim' => [
             'enabled' => env('NOMINATIM_ENABLED', true),
             'url' => 'https://nominatim.openstreetmap.org/search',
-            'user_agent' => env('APP_NAME', 'ProHelper') . ' Geocoding Service',
+            'user_agent' => env('APP_NAME', 'ProHelper').' Geocoding Service',
             'timeout' => 10,
             'priority' => 3, // Fallback option
             'rate_limit' => 1, // Max 1 request per second
@@ -128,4 +128,3 @@ return [
         'log_responses' => env('GEOCODING_LOG_RESPONSES', false),
     ],
 ];
-

@@ -1,15 +1,15 @@
 <?php
 
 return [
-    'bot_token' => env('TELEGRAM_BOT_TOKEN', '8153490735:AAHxVV8BQDa9rHVAZWuvEmlEW0pNGu484RE'),
-    
-    'chat_id' => env('TELEGRAM_CHAT_ID', '-4885866847'),
-    
+    'bot_token' => env('TELEGRAM_BOT_TOKEN'),
+
+    'chat_id' => env('TELEGRAM_CHAT_ID'),
+
     'notifications' => [
         'contact_forms' => env('TELEGRAM_NOTIFY_CONTACT_FORMS', true),
     ],
-    
+
     'api_timeout' => env('TELEGRAM_API_TIMEOUT', 30),
-    
+
     'bot_username' => '@prohelpersbot',
 ];

@@ -3,10 +3,10 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use App\Models\ContractorVerification;
 use App\Models\OrganizationAccessRestriction;
 use App\Models\OrganizationDispute;
-use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -42,7 +42,7 @@ class ContractorVerificationController extends Controller
                     'verification_id' => $verification->id,
                     'contractor_id' => $verification->contractor_id,
                     'registered_org_id' => $verification->registered_organization_id,
-                    'confirmed_by' => auth()->id()
+                    'confirmed_by' => auth()->id(),
                 ]);
             });
 
@@ -54,13 +54,13 @@ class ContractorVerificationController extends Controller
                 'organization' => [
                     'id' => $verification->registeredOrganization->id,
                     'name' => $verification->registeredOrganization->name,
-                ]
+                ],
             ], trans_message('contract.verification_confirmed'));
 
         } catch (\Exception $e) {
             Log::error('Contractor verification confirmation failed', [
                 'token' => $token,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ]);
 
             return AdminResponse::error(trans_message('contract.verification_error'), 500);
@@ -96,7 +96,7 @@ class ContractorVerificationController extends Controller
                     'contractor_id' => $verification->contractor_id,
                     'registered_org_id' => $verification->registered_organization_id,
                     'rejected_by' => auth()->id(),
-                    'reason' => $reason
+                    'reason' => $reason,
                 ]);
             });
 
@@ -108,14 +108,14 @@ class ContractorVerificationController extends Controller
                 'organization' => [
                     'id' => $verification->registeredOrganization->id,
                     'name' => $verification->registeredOrganization->name,
-                    'status' => 'blocked'
-                ]
+                    'status' => 'blocked',
+                ],
             ], trans_message('contract.verification_rejected'));
 
         } catch (\Exception $e) {
             Log::error('Contractor verification rejection failed', [
                 'token' => $token,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ]);
 
             return AdminResponse::error(trans_message('contract.rejection_error'), 500);
@@ -140,18 +140,18 @@ class ContractorVerificationController extends Controller
                 'dispute_id' => $dispute->id,
                 'contractor_id' => $verification->contractor_id,
                 'registered_org_id' => $verification->registered_organization_id,
-                'reported_by' => auth()->id()
+                'reported_by' => auth()->id(),
             ]);
 
             return AdminResponse::success([
                 'dispute_id' => $dispute->id,
-                'status' => 'under_investigation'
+                'status' => 'under_investigation',
             ], trans_message('contract.dispute_created'));
 
         } catch (\Exception $e) {
             Log::error('Dispute creation failed', [
                 'token' => $token,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ]);
 
             return AdminResponse::error(trans_message('contract.dispute_error'), 500);
@@ -167,7 +167,7 @@ class ContractorVerificationController extends Controller
             ]);
 
         Log::info('Access restrictions lifted', [
-            'organization_id' => $organization->id
+            'organization_id' => $organization->id,
         ]);
     }
 
@@ -192,17 +192,48 @@ class ContractorVerificationController extends Controller
             ],
         ]);
 
-        DB::table('project_organization')
-            ->where('organization_id', $organization->id)
-            ->update([
-                'is_active' => false,
-                'metadata' => DB::raw("jsonb_set(COALESCE(metadata, '{}'), '{suspended_reason}', '\"" . addslashes($reason) . "\"')")
-            ]);
+        $this->deactivateProjectOrganizations((int) $organization->id, $reason);
 
         Log::channel('security')->critical('Organization access blocked', [
             'organization_id' => $organization->id,
-            'reason' => $reason
+            'reason' => $reason,
         ]);
+    }
+
+    private function deactivateProjectOrganizations(int $organizationId, string $reason): void
+    {
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            DB::update(
+                "UPDATE project_organization
+                 SET is_active = false,
+                     metadata = jsonb_set(
+                         COALESCE(metadata::jsonb, '{}'::jsonb),
+                         '{suspended_reason}',
+                         to_jsonb(CAST(? AS text)),
+                         true
+                     )
+                 WHERE organization_id = ?",
+                [$reason, $organizationId]
+            );
+
+            return;
+        }
+
+        DB::table('project_organization')
+            ->where('organization_id', $organizationId)
+            ->get(['id', 'metadata'])
+            ->each(function ($projectOrganization) use ($reason): void {
+                $metadata = json_decode((string) $projectOrganization->metadata, true);
+                $metadata = is_array($metadata) ? $metadata : [];
+                $metadata['suspended_reason'] = $reason;
+
+                DB::table('project_organization')
+                    ->where('id', $projectOrganization->id)
+                    ->update([
+                        'is_active' => false,
+                        'metadata' => json_encode($metadata, JSON_UNESCAPED_UNICODE),
+                    ]);
+            });
     }
 
     private function applyTemporaryRestrictions($organization): void
@@ -244,4 +275,3 @@ class ContractorVerificationController extends Controller
         ]);
     }
 }
-
