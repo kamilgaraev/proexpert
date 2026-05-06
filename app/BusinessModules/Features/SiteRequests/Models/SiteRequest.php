@@ -21,9 +21,24 @@ use App\Models\Project;
 use App\Models\User;
 use App\Models\EstimateItem;
 use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 
 /**
  * Модель заявки с объекта
+ *
+ * @property int $user_id
+ * @property int|null $assigned_to
+ * @property int|null $payment_document_id
+ * @property SiteRequestStatusEnum $status
+ * @property SiteRequestTypeEnum $request_type
+ * @property Carbon|null $required_date
+ * @property Carbon|null $work_start_date
+ * @property Carbon|null $work_end_date
+ * @property Carbon|null $rental_start_date
+ * @property Carbon|null $rental_end_date
+ * @property int|null $personnel_count
+ * @property float|int|string|null $hourly_rate
+ * @property float|int|string|null $work_hours_per_day
  */
 class SiteRequest extends Model
 {
@@ -83,7 +98,6 @@ class SiteRequest extends Model
     protected $casts = [
         'status' => SiteRequestStatusEnum::class,
         'priority' => SiteRequestPriorityEnum::class,
-        'request_type' => SiteRequestTypeEnum::class,
         'personnel_type' => PersonnelTypeEnum::class,
         'equipment_type' => EquipmentTypeEnum::class,
         'required_date' => 'date',
@@ -340,6 +354,16 @@ class SiteRequest extends Model
     // ============================================
     // ACCESSORS
     // ============================================
+
+    protected function requestType(): Attribute
+    {
+        return Attribute::make(
+            get: static fn (?string $value): SiteRequestTypeEnum => SiteRequestTypeEnum::fromStoredValue($value),
+            set: static fn (SiteRequestTypeEnum|string|null $value): ?string => $value === null
+                ? null
+                : SiteRequestTypeEnum::fromStoredValue($value)->value,
+        );
+    }
 
     /**
      * Форматированная сумма для персонала

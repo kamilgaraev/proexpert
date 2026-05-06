@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\SiteRequests\Enums;
 
 /**
@@ -13,6 +15,22 @@ enum SiteRequestTypeEnum: string
     case INFO_REQUEST = 'info_request';
     case ISSUE_REPORT = 'issue_report';
     case OTHER = 'other';
+
+    public static function fromStoredValue(self|string|null $value): self
+    {
+        if ($value instanceof self) {
+            return $value;
+        }
+
+        return self::tryFrom((string) $value) ?? match ($value) {
+            'material' => self::MATERIAL_REQUEST,
+            'personnel' => self::PERSONNEL_REQUEST,
+            'equipment' => self::EQUIPMENT_REQUEST,
+            'info' => self::INFO_REQUEST,
+            'issue' => self::ISSUE_REPORT,
+            default => self::OTHER,
+        };
+    }
 
     /**
      * Получить человекочитаемое название
