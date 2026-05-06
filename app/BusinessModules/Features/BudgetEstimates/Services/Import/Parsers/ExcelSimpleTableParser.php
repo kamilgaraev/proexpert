@@ -12,6 +12,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\HeaderDetection
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\HeaderDetection\Detectors\NumericHeaderDetector;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\MergedCellResolver;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateItemTypeDetector;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportMappingService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\NormativeCodeService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Detection\AISectionDetector;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Mapping\AIColumnMapper;
@@ -32,6 +33,7 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
     private ?AIColumnMapper $aiColumnMapper;
     private ?AIPriceStrategyService $priceStrategyService;
     private ?AIRowClassifierService $rowClassifierService;
+    private array $columnKeywords;
     private array $headerCandidates = [];
     private bool $useAI = true; // Флаг для включения/отключения AI
     private string $priceStrategy = PriceStrategyEnum::DEFAULT; // Текущая стратегия цен
@@ -54,7 +56,8 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         ?AISectionDetector $aiSectionDetector = null,
         ?AIColumnMapper $aiColumnMapper = null,
         ?AIPriceStrategyService $priceStrategyService = null,
-        ?AIRowClassifierService $rowClassifierService = null
+        ?AIRowClassifierService $rowClassifierService = null,
+        ?ImportMappingService $importMappingService = null
     ) {
         $this->typeDetector = new EstimateItemTypeDetector();
         $this->codeService = new NormativeCodeService();
@@ -62,6 +65,7 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         $this->aiColumnMapper = $aiColumnMapper;
         $this->priceStrategyService = $priceStrategyService ?? new AIPriceStrategyService();
         $this->rowClassifierService = $rowClassifierService ?? new AIRowClassifierService();
+        $this->columnKeywords = ($importMappingService ?? app(ImportMappingService::class))->getColumnKeywords();
         
         // AI опционален - если не передан, работаем без него
         if ($aiSectionDetector === null || $aiColumnMapper === null) {
@@ -136,6 +140,30 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             }
         }
         return $items;
+    }
+
+    public function readContent(string $filePath, int $maxRows = 100): array
+    {
+        $reader = IOFactory::createReaderForFile($filePath);
+        $reader->setReadDataOnly(true);
+
+        $spreadsheet = $reader->load($filePath);
+        $sheet = $spreadsheet->getActiveSheet();
+        $highestRow = min($sheet->getHighestDataRow(), $maxRows);
+        $highestColumn = $sheet->getHighestDataColumn();
+        $rows = [];
+
+        for ($row = 1; $row <= $highestRow; $row++) {
+            $values = $sheet->rangeToArray("A{$row}:{$highestColumn}{$row}", null, true, false)[0] ?? [];
+            $rows[] = array_map(
+                static fn (mixed $value): mixed => is_string($value) ? trim($value) : $value,
+                $values
+            );
+        }
+
+        $spreadsheet->disconnectWorksheets();
+
+        return $rows;
     }
 
     /**
@@ -1984,5 +2012,3 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         return $scores;
     }
 }
-
-

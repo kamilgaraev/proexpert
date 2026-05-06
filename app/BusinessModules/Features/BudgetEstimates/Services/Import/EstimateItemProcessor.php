@@ -194,6 +194,8 @@ class EstimateItemProcessor
                 'is_section' => $dto->isSection
             ]);
 
+            $processed = false;
+
             foreach ($this->strategies as $strategy) {
                 if ($strategy->canHandle($dto)) {
                     $strategy->process($dto, $context);

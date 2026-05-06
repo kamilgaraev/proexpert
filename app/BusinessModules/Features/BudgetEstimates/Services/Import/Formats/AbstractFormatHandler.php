@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats;
 
 use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateTypeDetectionDTO;
-use Illuminate\Support\Log;
+use Illuminate\Support\Facades\Log;
 
 abstract class AbstractFormatHandler implements ImportFormatHandlerInterface
 {

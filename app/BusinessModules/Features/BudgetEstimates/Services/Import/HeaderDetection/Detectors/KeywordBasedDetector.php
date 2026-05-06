@@ -286,7 +286,6 @@ class KeywordBasedDetector extends AbstractHeaderDetector
             'ед изм' => 0.9,
             
             'количество' => 0.9,
-            'кол-во' => 0.9,
             'кол.во' => 0.9,
             'кол.' => 0.8,
             'кол-во' => 0.9,

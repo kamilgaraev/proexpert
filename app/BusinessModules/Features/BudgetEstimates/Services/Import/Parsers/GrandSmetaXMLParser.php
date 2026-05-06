@@ -35,7 +35,17 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface, StreamParser
         $estimateNode = $this->findEstimateNode($xml);
         
         // Парсим структуру
-        $this->parseNodeRecursively($estimateNode, $sections, $items);
+        $allRows = [];
+        $this->collectNodesRecursively($estimateNode, $allRows);
+
+        foreach ($allRows as $row) {
+            if (($row['is_section'] ?? false) === true) {
+                $sections[] = $row;
+                continue;
+            }
+
+            $items[] = $row;
+        }
         
         // Получаем метаданные
         $metadata = $this->parseMetadata($xml);

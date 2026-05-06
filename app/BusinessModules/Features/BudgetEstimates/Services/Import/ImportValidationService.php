@@ -202,10 +202,10 @@ class ImportValidationService
             $this->standardUnits = [];
         }
 
-        $this->standardUnits = array_merge($this->standardUnits ?? [], [
+        $this->standardUnits = array_values(array_unique(array_merge($this->standardUnits, [
             'шт', 'м', 'м2', 'м3', 'кг', 'т', 'л', 'компл', 'п.м', 'кв.м', 'куб.m',
             'шт.', 'м.', 'кг.', 'т.', 'л.', 'компл.',
-        ]);
+        ])));
     }
 
     private function isStandardUnit(string $unit): bool

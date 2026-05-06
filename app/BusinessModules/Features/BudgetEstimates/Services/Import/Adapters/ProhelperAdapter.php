@@ -2,6 +2,7 @@
 
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Import\Adapters;
 
+use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportDTO;
 use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportRowDTO;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\ProhelperEstimateParser;
 use Illuminate\Support\Facades\Log;
@@ -18,14 +19,25 @@ class ProhelperAdapter implements EstimateAdapterInterface
         return $estimateType === 'prohelper';
     }
 
+    public function adapt(EstimateImportDTO $dto, array $metadata): EstimateImportDTO
+    {
+        Log::debug('prohelper_adapter.adapt', [
+            'sections_count' => count($dto->sections),
+            'items_count' => count($dto->items),
+            'source_version' => $metadata['source_version'] ?? null,
+        ]);
+
+        return $dto;
+    }
+
     public function transform(EstimateImportRowDTO $row): EstimateImportRowDTO
     {
         // Prohelper format doesn't need transformation - data is already in correct format
         // Just validate and return as is
         
         Log::debug('prohelper_adapter.transform', [
-            'position_number' => $row->positionNumber,
-            'name' => $row->name,
+            'section_number' => $row->sectionNumber,
+            'item_name' => $row->itemName,
             'item_type' => $row->itemType,
             'has_metadata' => isset($row->rawData['prohelper_metadata']),
         ]);
@@ -44,6 +56,18 @@ class ProhelperAdapter implements EstimateAdapterInterface
      * @param ProhelperEstimateParser $parser
      * @return array Структура для создания сметы
      */
+    public function getSpecificFields(): array
+    {
+        return [
+            'source_version',
+            'source_project_id',
+            'source_estimate_id',
+            'source_item_id',
+            'stable_key',
+            'prohelper_metadata',
+        ];
+    }
+
     public function restoreStructure(ProhelperEstimateParser $parser): array
     {
         $metadata = $parser->getMetadata();

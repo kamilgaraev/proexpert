@@ -24,7 +24,7 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
         // If called by ParserFactory or specifically for streaming execution
         if (str_contains($callerClass, 'ParserFactory') || 
            (str_contains($callerClass, 'EstimateImportService') && str_contains($callerFunction, 'createEstimateFromStream'))) {
-             return $this->streamParse($filePath);
+             return $this->getStream($filePath);
         }
         
         // Default to full DTO (for preview and other usages)
