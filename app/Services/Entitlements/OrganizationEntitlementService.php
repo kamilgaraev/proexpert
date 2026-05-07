@@ -9,12 +9,17 @@ use App\Models\OrganizationModuleActivation;
 use App\Models\OrganizationPackageSubscription;
 use App\Models\OrganizationSubscription;
 use App\Models\SubscriptionPlan;
+use App\Services\Modules\PackageCatalogService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 
 class OrganizationEntitlementService
 {
     private const PACKAGES_PATH = 'Packages';
+
+    public function __construct(
+        private readonly PackageCatalogService $packageCatalog
+    ) {}
 
     public function getEffectiveModuleSlugs(int $organizationId): array
     {
@@ -216,14 +221,7 @@ class OrganizationEntitlementService
 
     private function getPackageTierModules(string $packageSlug, string $tier): array
     {
-        $config = $this->getPackageConfig($packageSlug);
-        $modules = $config['tiers'][$tier]['modules'] ?? [];
-
-        if (! is_array($modules)) {
-            return [];
-        }
-
-        return array_values(array_filter($modules, fn ($moduleSlug): bool => is_string($moduleSlug)));
+        return $this->packageCatalog->tierModules($packageSlug, $tier);
     }
 
     private function getPackageConfig(string $packageSlug): array

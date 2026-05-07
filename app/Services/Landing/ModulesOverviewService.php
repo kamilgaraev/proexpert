@@ -8,13 +8,17 @@ use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
 use App\Models\OrganizationPackageSubscription;
 use App\Models\OrganizationSubscription;
+use App\Services\Modules\PackageCatalogService;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
 
 class ModulesOverviewService
 {
-    private const PACKAGES_PATH = 'Packages';
     private const TIER_ORDER = ['base', 'pro', 'enterprise'];
+
+    public function __construct(
+        private readonly PackageCatalogService $packageCatalog
+    ) {}
 
     public function build(int $organizationId): array
     {
@@ -59,22 +63,7 @@ class ModulesOverviewService
 
     private function loadPackages(): array
     {
-        $packageFiles = glob(config_path(self::PACKAGES_PATH . '/*.json'));
-        $packages = [];
-
-        foreach ($packageFiles as $filePath) {
-            $config = json_decode((string) file_get_contents($filePath), true);
-
-            if (! is_array($config) || ! isset($config['slug'], $config['tiers'])) {
-                continue;
-            }
-
-            $packages[] = $config;
-        }
-
-        usort($packages, fn (array $a, array $b): int => ($a['sort_order'] ?? 99) <=> ($b['sort_order'] ?? 99));
-
-        return $packages;
+        return $this->packageCatalog->allPackages();
     }
 
     private function buildPackageMembership(array $packages): array
@@ -83,7 +72,7 @@ class ModulesOverviewService
 
         foreach ($packages as $package) {
             foreach ($package['tiers'] as $tier) {
-                foreach (($tier['modules'] ?? []) as $moduleSlug) {
+                foreach (($tier['included_modules'] ?? $tier['modules'] ?? []) as $moduleSlug) {
                     $membership[$moduleSlug] ??= [];
                     $membership[$moduleSlug][] = $package['slug'];
                 }
@@ -126,13 +115,20 @@ class ModulesOverviewService
                     'current_tier' => $currentTier,
                     'active_tier' => $currentTier,
                     'effective_monthly_price' => (float) ($currentTierData['price'] ?? 0),
-                    'included_modules_count' => $currentTierData ? count($currentTierData['modules'] ?? []) : count($this->uniquePackageModules($package)),
-                    'active_included_modules_count' => $currentTierData ? $this->countActiveModules($currentTierData['modules'] ?? [], $activeSlugs) : 0,
+                    'included_modules_count' => $currentTierData ? count($currentTierData['included_modules'] ?? $currentTierData['modules'] ?? []) : count($this->uniquePackageModules($package)),
+                    'active_included_modules_count' => $currentTierData ? $this->countActiveModules($currentTierData['included_modules'] ?? $currentTierData['modules'] ?? [], $activeSlugs) : 0,
                     'can_upgrade' => $this->hasHigherTier($package['tiers'], $currentTier),
                     'can_downgrade' => $this->hasLowerTier($package['tiers'], $currentTier),
                     'expires_at' => $subscription?->expires_at?->toISOString(),
                     'access_source' => $subscription?->is_bundled_with_plan ? 'subscription' : ($currentTier ? 'standalone' : null),
                     'is_bundled_with_plan' => (bool) ($subscription?->is_bundled_with_plan ?? false),
+                    'schema_version' => $package['schema_version'] ?? 2,
+                    'foundation_modules' => $package['foundation_modules'] ?? [],
+                    'integrations' => $package['integrations'] ?? [],
+                    'recommended_addons' => $package['recommended_addons'] ?? [],
+                    'business_outcomes' => $package['business_outcomes'] ?? [],
+                    'data_sources' => $package['data_sources'] ?? [],
+                    'capabilities' => $this->filterCapabilities($package['capabilities'] ?? [], $activeSlugs),
                     'tiers' => $tiers,
                 ];
             })
@@ -148,14 +144,15 @@ class ModulesOverviewService
             ->filter(fn (string $tierKey): bool => isset($tiersConfig[$tierKey]))
             ->map(function (string $tierKey) use ($tiersConfig, $currentTier, $activeSlugs): array {
                 $tier = $tiersConfig[$tierKey];
-                $modules = $tier['modules'] ?? [];
+                $modules = $tier['included_modules'] ?? $tier['modules'] ?? [];
 
                 return [
                     'key' => $tierKey,
                     'label' => $tier['label'],
                     'description' => $tier['description'],
                     'price' => (float) ($tier['price'] ?? 0),
-                    'modules' => $modules,
+                    'modules' => $tier['modules'] ?? $modules,
+                    'included_modules' => $modules,
                     'highlights' => $tier['highlights'] ?? [],
                     'is_current' => $currentTier === $tierKey,
                     'included_modules_count' => count($modules),
@@ -204,6 +201,11 @@ class ModulesOverviewService
             'description' => $module->description,
             'classification' => $classification,
             'package_slugs' => $packageSlugs,
+            'linked_packages' => $packageSlugs,
+            'source' => $this->moduleSource($classification, $activation),
+            'source_label' => $this->moduleSourceLabel($classification, $activation),
+            'integration_status' => $classification === 'packaged' ? 'included' : 'standalone',
+            'is_foundation' => in_array($module->slug, $this->packageCatalog->foundationModules(), true),
             'is_system' => $isSystem,
             'is_bundled_with_plan' => (bool) ($activation?->is_bundled_with_plan ?? false),
             'billing_model' => $module->billing_model,
@@ -236,7 +238,7 @@ class ModulesOverviewService
                 continue;
             }
 
-            $modules = $tiersConfig[$tierKey]['modules'] ?? [];
+            $modules = $tiersConfig[$tierKey]['included_modules'] ?? $tiersConfig[$tierKey]['modules'] ?? [];
 
             if ($modules !== [] && collect($modules)->every(fn (string $slug): bool => isset($activeSet[$slug]))) {
                 return $tierKey;
@@ -251,10 +253,38 @@ class ModulesOverviewService
         $modules = [];
 
         foreach ($package['tiers'] as $tier) {
-            $modules = array_merge($modules, $tier['modules'] ?? []);
+            $modules = array_merge($modules, $tier['included_modules'] ?? $tier['modules'] ?? []);
         }
 
         return array_values(array_unique($modules));
+    }
+
+    private function filterCapabilities(array $capabilities, array $activeSlugs): array
+    {
+        $activeSet = array_fill_keys($activeSlugs, true);
+
+        return collect($capabilities)
+            ->filter(function (mixed $capability) use ($activeSet): bool {
+                if (! is_array($capability)) {
+                    return false;
+                }
+
+                $requiredModules = $capability['requires_modules'] ?? [];
+
+                if (! is_array($requiredModules) || $requiredModules === []) {
+                    return true;
+                }
+
+                foreach ($requiredModules as $moduleSlug) {
+                    if (is_string($moduleSlug) && isset($activeSet[$moduleSlug])) {
+                        return true;
+                    }
+                }
+
+                return false;
+            })
+            ->values()
+            ->all();
     }
 
     private function countActiveModules(array $modules, array $activeSlugs): int
@@ -292,6 +322,29 @@ class ModulesOverviewService
     {
         return (bool) ($module->is_system_module ?? false)
             || (($module->can_deactivate ?? true) === false && $module->billing_model === 'free');
+    }
+
+    private function moduleSource(string $classification, ?OrganizationModuleActivation $activation): string
+    {
+        if ((bool) ($activation?->is_bundled_with_plan ?? false)) {
+            return 'subscription';
+        }
+
+        if ($activation !== null) {
+            return 'standalone';
+        }
+
+        return $classification === 'system' ? 'foundation' : 'catalog';
+    }
+
+    private function moduleSourceLabel(string $classification, ?OrganizationModuleActivation $activation): string
+    {
+        return match ($this->moduleSource($classification, $activation)) {
+            'subscription' => 'В тарифе',
+            'standalone' => 'Куплено',
+            'foundation' => 'Базовый слой',
+            default => 'Доступно',
+        };
     }
 
     private function calculateMonthlyTotal(int $organizationId, array $solutions, array $standaloneModules): float

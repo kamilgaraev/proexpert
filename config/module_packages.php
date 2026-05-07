@@ -1,0 +1,50 @@
+<?php
+
+declare(strict_types=1);
+
+return [
+    'foundation_modules' => [
+        'organizations',
+        'users',
+        'project-management',
+        'contract-management',
+        'catalog-management',
+        'dashboard-widgets',
+        'data-filters',
+        'brigades',
+    ],
+
+    'module_classifications' => [
+        'organizations' => 'foundation',
+        'users' => 'foundation',
+        'project-management' => 'foundation',
+        'contract-management' => 'foundation',
+        'catalog-management' => 'foundation',
+        'dashboard-widgets' => 'foundation',
+        'data-filters' => 'foundation',
+        'brigades' => 'foundation',
+        'schedule-management' => 'package',
+        'site-requests' => 'package',
+        'time-tracking' => 'package',
+        'basic-warehouse' => 'package',
+        'procurement' => 'package',
+        'budget-estimates' => 'package',
+        'workflow-management' => 'package',
+        'payments' => 'package',
+        'reports' => 'package',
+        'multi-organization' => 'package',
+        'material-analytics' => 'addon',
+        'data-export' => 'integration',
+        'advance-accounting' => 'addon',
+        'act-reporting' => 'package',
+        'file-management' => 'addon',
+        'rate-management' => 'addon',
+        'report-templates' => 'addon',
+        'ai-assistant' => 'addon',
+        'ai-estimates' => 'addon',
+        'integrations' => 'integration',
+        'video-monitoring' => 'addon',
+        'contractor-portal' => 'addon',
+        'system-logs' => 'internal',
+    ],
+];

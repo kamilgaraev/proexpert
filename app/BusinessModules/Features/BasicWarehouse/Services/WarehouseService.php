@@ -1305,7 +1305,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 'reservation_id' => $reservation->id,
                 'quantity' => (float)$quantity,
                 'expires_at' => $expiresAt->toDateTimeString(),
-                'remaining_available' => $balance ? (float)$balance->available_quantity : 0,
+                'remaining_available' => $balance ? (float)$balance->availableQuantity : 0,
             ];
             
         } catch (\Exception $e) {

@@ -5,6 +5,60 @@
     "icon": "chart-bar",
     "color": "#334155",
     "sort_order": 5,
+    "schema_version": 2,
+    "foundation_modules": [
+        "organizations",
+        "users",
+        "project-management",
+        "contract-management",
+        "catalog-management",
+        "dashboard-widgets",
+        "data-filters",
+        "brigades"
+    ],
+    "integrations": [
+        {
+            "package_slug": "objects-execution",
+            "module_slug": "schedule-management",
+            "label": "Исполнение"
+        },
+        {
+            "package_slug": "finance-acts",
+            "module_slug": "payments",
+            "label": "Финансы"
+        },
+        {
+            "package_slug": "supply-warehouse",
+            "module_slug": "basic-warehouse",
+            "label": "Склад"
+        }
+    ],
+    "recommended_addons": [
+        {
+            "module_slug": "integrations",
+            "label": "Внешние интеграции"
+        }
+    ],
+    "business_outcomes": [
+        "Управленческий обзор по компаниям",
+        "Консолидация данных",
+        "Фильтры, дашборды и выгрузки"
+    ],
+    "data_sources": [
+        {
+            "module_slug": "dashboard-widgets",
+            "label": "Дашборды"
+        },
+        {
+            "module_slug": "data-filters",
+            "label": "Фильтры"
+        },
+        {
+            "module_slug": "multi-organization",
+            "label": "Группа компаний"
+        }
+    ],
+    "capabilities": [],
     "tiers": {
         "base": {
             "label": "Старт",

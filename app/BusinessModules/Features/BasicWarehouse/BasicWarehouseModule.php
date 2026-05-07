@@ -72,10 +72,8 @@ class BasicWarehouseModule implements ModuleInterface, ConfigurableInterface
     public function getDependencies(): array
     {
         return [
-            'materials',
             'organizations',
-            'users',
-            'projects'
+            'users'
         ];
     }
 

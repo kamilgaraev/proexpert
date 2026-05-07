@@ -10,6 +10,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\Models\Material;
 use App\Models\Organization;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -22,6 +23,7 @@ class AdvancedWarehouseFeaturesTest extends TestCase
 
     protected WarehouseService $service;
     protected Organization $organization;
+    protected User $user;
     protected OrganizationWarehouse $warehouse;
     protected Material $material;
 
@@ -32,16 +34,21 @@ class AdvancedWarehouseFeaturesTest extends TestCase
         $this->service = app(WarehouseService::class);
 
         $this->organization = Organization::factory()->create();
+        $this->user = User::factory()->create();
         
         $this->warehouse = OrganizationWarehouse::create([
             'organization_id' => $this->organization->id,
             'name' => 'Тестовый склад',
-            'type' => 'main',
+            'code' => 'MAIN-TEST',
+            'warehouse_type' => 'central',
+            'is_main' => true,
             'is_active' => true,
         ]);
 
-        $this->material = Material::factory()->create([
+        $this->material = Material::create([
             'organization_id' => $this->organization->id,
+            'code' => 'TEST-001',
+            'is_active' => true,
             'name' => 'Тестовый материал',
         ]);
 

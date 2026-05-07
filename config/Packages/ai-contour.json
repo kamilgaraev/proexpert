@@ -5,6 +5,81 @@
     "icon": "cpu-chip",
     "color": "#DB2777",
     "sort_order": 6,
+    "schema_version": 2,
+    "foundation_modules": [
+        "organizations",
+        "users",
+        "project-management",
+        "contract-management",
+        "catalog-management",
+        "dashboard-widgets",
+        "data-filters",
+        "brigades"
+    ],
+    "integrations": [
+        {
+            "package_slug": "estimates-pto",
+            "module_slug": "budget-estimates",
+            "label": "Сметные сценарии"
+        },
+        {
+            "package_slug": "finance-acts",
+            "module_slug": "payments",
+            "label": "Финансовые вопросы"
+        },
+        {
+            "package_slug": "supply-warehouse",
+            "module_slug": "basic-warehouse",
+            "label": "Вопросы по складу"
+        }
+    ],
+    "recommended_addons": [],
+    "business_outcomes": [
+        "AI-помощник по данным компании",
+        "AI-старт сметы",
+        "Проверка рисков и быстрые сводки"
+    ],
+    "data_sources": [
+        {
+            "module_slug": "ai-assistant",
+            "label": "AI-помощник"
+        },
+        {
+            "module_slug": "ai-estimates",
+            "label": "AI-сметы"
+        }
+    ],
+    "capabilities": [
+        {
+            "key": "project_questions",
+            "label": "Вопросы по объектам",
+            "requires_modules": [
+                "project-management"
+            ]
+        },
+        {
+            "key": "estimate_start",
+            "label": "AI-старт сметы",
+            "requires_modules": [
+                "budget-estimates",
+                "ai-estimates"
+            ]
+        },
+        {
+            "key": "finance_questions",
+            "label": "Вопросы по финансам",
+            "requires_modules": [
+                "payments"
+            ]
+        },
+        {
+            "key": "warehouse_questions",
+            "label": "Вопросы по складу",
+            "requires_modules": [
+                "basic-warehouse"
+            ]
+        }
+    ],
     "tiers": {
         "base": {
             "label": "Старт",

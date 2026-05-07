@@ -10,33 +10,27 @@ use App\Models\OrganizationModuleActivation;
 use App\Models\OrganizationPackageSubscription;
 use App\Interfaces\Billing\BalanceServiceInterface;
 use App\Exceptions\Billing\InsufficientBalanceException;
+use App\Services\Modules\PackageCatalogService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class PackageService
 {
-    private const PACKAGES_PATH = 'Packages';
     private const TIER_ORDER = ['base', 'pro', 'enterprise'];
 
     public function __construct(
-        private readonly BalanceServiceInterface $balanceService
+        private readonly BalanceServiceInterface $balanceService,
+        private readonly PackageCatalogService $packageCatalog
     ) {}
 
     public function getAllPackages(int $organizationId): array
     {
-        $packageFiles = glob(config_path(self::PACKAGES_PATH.'/*.json'));
         $activeSubscriptions = $this->getOrganizationSubscriptions($organizationId);
         $activeModuleSlugs = $this->getActiveModuleSlugs($organizationId);
 
         $packages = [];
 
-        foreach ($packageFiles as $filePath) {
-            $config = json_decode(file_get_contents($filePath), true);
-
-            if (! $config) {
-                continue;
-            }
-
+        foreach ($this->packageCatalog->allPackages() as $config) {
             $packageSlug = $config['slug'];
             $subscription = $activeSubscriptions[$packageSlug] ?? null;
 
@@ -61,7 +55,7 @@ class PackageService
         }
 
         $tierConfig = $config['tiers'][$tier];
-        $moduleSlugsList = $tierConfig['modules'];
+        $moduleSlugsList = $tierConfig['included_modules'] ?? $tierConfig['modules'];
         $price = (float) ($tierConfig['price'] ?? 0);
 
         $bundledSubscription = OrganizationPackageSubscription::where('organization_id', $organizationId)
@@ -85,7 +79,7 @@ class PackageService
             return [
                 'package_slug' => $packageSlug,
                 'tier' => $coveredTier,
-                'modules' => $coveredTierConfig['modules'] ?? $moduleSlugsList,
+                'modules' => $coveredTierConfig['included_modules'] ?? $coveredTierConfig['modules'] ?? $moduleSlugsList,
                 'price_paid' => (float) ($coveredSubscription?->price_paid ?? 0),
                 'expires_at' => $coveredSubscription?->expires_at,
                 'access_source' => $coveredSubscription?->is_bundled_with_plan ? 'subscription' : 'standalone',
@@ -124,7 +118,7 @@ class PackageService
         ) {
             $expiresAt = $price > 0 ? now()->addDays($durationDays) : null;
             $bundledModules = $bundledSubscription
-                ? ($config['tiers'][$bundledSubscription->tier]['modules'] ?? [])
+                ? ($config['tiers'][$bundledSubscription->tier]['included_modules'] ?? $config['tiers'][$bundledSubscription->tier]['modules'] ?? [])
                 : [];
             $modulesToActivate = array_values(array_diff($moduleSlugsList, $bundledModules));
 
@@ -180,7 +174,7 @@ class PackageService
         }
 
         $currentTier = $subscription->tier;
-        $modulesToDeactivate = $config['tiers'][$currentTier]['modules'] ?? [];
+        $modulesToDeactivate = $config['tiers'][$currentTier]['included_modules'] ?? $config['tiers'][$currentTier]['modules'] ?? [];
 
         DB::transaction(function () use ($organizationId, $packageSlug, $modulesToDeactivate) {
             $modulesProtected = $this->getModulesProtectedByOtherPackages($organizationId, $packageSlug);
@@ -211,6 +205,7 @@ class PackageService
                 'description' => $tierData['description'],
                 'price' => $tierData['price'],
                 'modules' => $tierData['modules'],
+                'included_modules' => $tierData['included_modules'] ?? $tierData['modules'],
                 'highlights' => $tierData['highlights'] ?? [],
             ];
         }
@@ -222,6 +217,13 @@ class PackageService
             'icon' => $config['icon'],
             'color' => $config['color'],
             'sort_order' => $config['sort_order'] ?? 99,
+            'schema_version' => $config['schema_version'] ?? 2,
+            'foundation_modules' => $config['foundation_modules'] ?? [],
+            'integrations' => $config['integrations'] ?? [],
+            'recommended_addons' => $config['recommended_addons'] ?? [],
+            'business_outcomes' => $config['business_outcomes'] ?? [],
+            'data_sources' => $config['data_sources'] ?? [],
+            'capabilities' => $config['capabilities'] ?? [],
             'tiers' => $tiers,
             'active_tier' => $activeTier,
             'expires_at' => $subscription?->expires_at?->toISOString(),
@@ -240,7 +242,7 @@ class PackageService
                 continue;
             }
 
-            $tierModules = $tiersConfig[$tierKey]['modules'] ?? [];
+            $tierModules = $tiersConfig[$tierKey]['included_modules'] ?? $tiersConfig[$tierKey]['modules'] ?? [];
 
             if (empty($tierModules)) {
                 continue;
@@ -331,7 +333,7 @@ class PackageService
 
         foreach ($otherSubscriptions as $sub) {
             $config = $this->getPackageConfig($sub->package_slug);
-            $tierModules = $config['tiers'][$sub->tier]['modules'] ?? [];
+            $tierModules = $config['tiers'][$sub->tier]['included_modules'] ?? $config['tiers'][$sub->tier]['modules'] ?? [];
             $protected = array_merge($protected, $tierModules);
         }
 
@@ -395,12 +397,15 @@ class PackageService
 
     private function getPackageConfig(string $packageSlug): array
     {
-        $path = config_path(self::PACKAGES_PATH.'/'.$packageSlug.'.json');
+        $config = $this->packageCatalog->package($packageSlug);
 
-        if (! file_exists($path)) {
-            throw new \RuntimeException("Конфигурация пакета '{$packageSlug}' не найдена");
+        if ($config !== null) {
+            return $config;
         }
 
-        return json_decode(file_get_contents($path), true);
+        throw new \RuntimeException("Package '{$packageSlug}' is not configured.");
+
+
+
     }
 }

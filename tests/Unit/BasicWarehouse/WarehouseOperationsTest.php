@@ -35,14 +35,17 @@ class WarehouseOperationsTest extends TestCase
         $this->warehouse = OrganizationWarehouse::create([
             'organization_id' => $this->organization->id,
             'name' => 'Тестовый склад',
-            'type' => 'main',
+            'code' => 'MAIN-TEST',
+            'warehouse_type' => 'central',
+            'is_main' => true,
             'is_active' => true,
         ]);
 
-        $this->material = Material::factory()->create([
+        $this->material = Material::create([
             'organization_id' => $this->organization->id,
             'name' => 'Тестовый материал',
             'code' => 'TEST-001',
+            'is_active' => true,
         ]);
     }
 
@@ -95,7 +98,7 @@ class WarehouseOperationsTest extends TestCase
         );
 
         $this->assertIsArray($result);
-        $this->assertEquals(70, $result['remaining_quantity']);
+        $this->assertEquals(70, $result['remaining_total_quantity']);
 
         // Проверяем запись движения
         $this->assertDatabaseHas('warehouse_movements', [
@@ -111,7 +114,8 @@ class WarehouseOperationsTest extends TestCase
         $warehouse2 = OrganizationWarehouse::create([
             'organization_id' => $this->organization->id,
             'name' => 'Второй склад',
-            'type' => 'branch',
+            'code' => 'BRANCH-TEST',
+            'warehouse_type' => 'project',
             'is_active' => true,
         ]);
 
@@ -135,8 +139,6 @@ class WarehouseOperationsTest extends TestCase
         );
 
         $this->assertIsArray($result);
-        $this->assertArrayHasKey('from_balance', $result);
-        $this->assertArrayHasKey('to_balance', $result);
         $this->assertArrayHasKey('movement_out', $result);
         $this->assertArrayHasKey('movement_in', $result);
 

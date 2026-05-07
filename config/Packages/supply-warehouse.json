@@ -5,6 +5,60 @@
     "icon": "truck",
     "color": "#D97706",
     "sort_order": 2,
+    "schema_version": 2,
+    "foundation_modules": [
+        "organizations",
+        "users",
+        "project-management",
+        "contract-management",
+        "catalog-management",
+        "dashboard-widgets",
+        "data-filters",
+        "brigades"
+    ],
+    "integrations": [
+        {
+            "package_slug": "objects-execution",
+            "module_slug": "schedule-management",
+            "label": "График работ"
+        },
+        {
+            "package_slug": "finance-acts",
+            "module_slug": "payments",
+            "label": "Платежи по закупкам"
+        },
+        {
+            "package_slug": "estimates-pto",
+            "module_slug": "budget-estimates",
+            "label": "Материалы из смет"
+        }
+    ],
+    "recommended_addons": [
+        {
+            "module_slug": "data-export",
+            "label": "Выгрузки для снабжения"
+        }
+    ],
+    "business_outcomes": [
+        "Контроль заявок, закупок и остатков",
+        "Движение материалов по объектам",
+        "Прозрачный процесс снабжения"
+    ],
+    "data_sources": [
+        {
+            "module_slug": "site-requests",
+            "label": "Заявки"
+        },
+        {
+            "module_slug": "basic-warehouse",
+            "label": "Склад"
+        },
+        {
+            "module_slug": "procurement",
+            "label": "Закупки"
+        }
+    ],
+    "capabilities": [],
     "tiers": {
         "base": {
             "label": "Старт",

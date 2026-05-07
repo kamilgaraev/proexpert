@@ -150,7 +150,7 @@ class SubscriptionPackageBundlingTest extends TestCase
             $table->timestamp('activated_at')->nullable();
             $table->timestamp('expires_at')->nullable();
             $table->timestamps();
-            $table->unique(['organization_id', 'package_slug']);
+            $table->unique(['organization_id', 'package_slug', 'is_bundled_with_plan']);
         });
     }
 

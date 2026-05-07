@@ -5,6 +5,64 @@
     "icon": "rectangle-group",
     "color": "#7C3AED",
     "sort_order": 4,
+    "schema_version": 2,
+    "foundation_modules": [
+        "organizations",
+        "users",
+        "project-management",
+        "contract-management",
+        "catalog-management",
+        "dashboard-widgets",
+        "data-filters",
+        "brigades"
+    ],
+    "integrations": [
+        {
+            "package_slug": "ai-contour",
+            "module_slug": "ai-estimates",
+            "label": "AI-старт сметы"
+        },
+        {
+            "package_slug": "finance-acts",
+            "module_slug": "payments",
+            "label": "Финансовый план-факт"
+        },
+        {
+            "package_slug": "supply-warehouse",
+            "module_slug": "basic-warehouse",
+            "label": "Материалы и склад"
+        }
+    ],
+    "recommended_addons": [
+        {
+            "module_slug": "file-management",
+            "label": "Файлы объекта"
+        },
+        {
+            "module_slug": "data-export",
+            "label": "Выгрузки ПТО"
+        }
+    ],
+    "business_outcomes": [
+        "Сметы, расценки и шаблоны отчетов",
+        "Единая инженерная база объекта",
+        "Быстрый старт первичной сметной работы"
+    ],
+    "data_sources": [
+        {
+            "module_slug": "budget-estimates",
+            "label": "Сметы"
+        },
+        {
+            "module_slug": "reports",
+            "label": "Отчеты"
+        },
+        {
+            "module_slug": "report-templates",
+            "label": "Шаблоны"
+        }
+    ],
+    "capabilities": [],
     "tiers": {
         "base": {
             "label": "Старт",

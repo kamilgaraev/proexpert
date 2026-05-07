@@ -10,6 +10,7 @@ use App\Models\OrganizationSubscription;
 use App\Models\SubscriptionPlan;
 use App\Modules\Core\AccessController;
 use App\Services\Entitlements\OrganizationEntitlementService;
+use App\Services\Modules\PackageCatalogService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -20,7 +21,8 @@ class SubscriptionModuleSyncService
     private const PACKAGES_PATH = 'Packages';
 
     public function __construct(
-        private readonly OrganizationEntitlementService $entitlementService
+        private readonly OrganizationEntitlementService $entitlementService,
+        private readonly PackageCatalogService $packageCatalog
     ) {
     }
 
@@ -54,7 +56,6 @@ class SubscriptionModuleSyncService
                 $existingPackage = OrganizationPackageSubscription::query()
                     ->where('organization_id', $organizationId)
                     ->where('package_slug', $package['package_slug'])
-                    ->where('is_bundled_with_plan', true)
                     ->first();
 
                 if ($existingPackage?->isActive() && ! $existingPackage->isBundled()) {
@@ -581,8 +582,7 @@ class SubscriptionModuleSyncService
             ->all();
 
         foreach ($this->getIncludedPackages($plan) as $package) {
-            $config = $this->getPackageConfig($package['package_slug']);
-            $tierModules = $config['tiers'][$package['tier']]['modules'] ?? [];
+            $tierModules = $this->packageCatalog->tierModules($package['package_slug'], $package['tier']);
             $slugs = array_merge($slugs, $tierModules);
         }
 
@@ -614,9 +614,7 @@ class SubscriptionModuleSyncService
                     return null;
                 }
 
-                $config = $this->getPackageConfig($packageSlug);
-
-                if (! isset($config['tiers'][$tier])) {
+                if (! $this->packageCatalog->tierExists($packageSlug, $tier)) {
                     return null;
                 }
 
@@ -637,6 +635,12 @@ class SubscriptionModuleSyncService
 
     private function getPackageConfig(string $packageSlug): array
     {
+        $package = $this->packageCatalog->package($packageSlug);
+
+        if ($package !== null) {
+            return $package;
+        }
+
         $path = config_path(self::PACKAGES_PATH.'/'.$packageSlug.'.json');
 
         if (! file_exists($path)) {

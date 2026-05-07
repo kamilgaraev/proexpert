@@ -5,6 +5,60 @@
     "icon": "banknotes",
     "color": "#0F766E",
     "sort_order": 3,
+    "schema_version": 2,
+    "foundation_modules": [
+        "organizations",
+        "users",
+        "project-management",
+        "contract-management",
+        "catalog-management",
+        "dashboard-widgets",
+        "data-filters",
+        "brigades"
+    ],
+    "integrations": [
+        {
+            "package_slug": "supply-warehouse",
+            "module_slug": "basic-warehouse",
+            "label": "Складские движения"
+        },
+        {
+            "package_slug": "objects-execution",
+            "module_slug": "site-requests",
+            "label": "Заявки с объекта"
+        },
+        {
+            "package_slug": "estimates-pto",
+            "module_slug": "budget-estimates",
+            "label": "Сметный план-факт"
+        }
+    ],
+    "recommended_addons": [
+        {
+            "module_slug": "multi-organization",
+            "label": "Финансы группы компаний"
+        }
+    ],
+    "business_outcomes": [
+        "Платежи и акты в одном контуре",
+        "Связь финансов с объектами и контрагентами",
+        "Контроль авансов и подотчета"
+    ],
+    "data_sources": [
+        {
+            "module_slug": "payments",
+            "label": "Платежи"
+        },
+        {
+            "module_slug": "act-reporting",
+            "label": "Акты"
+        },
+        {
+            "module_slug": "advance-accounting",
+            "label": "Авансы и подотчет"
+        }
+    ],
+    "capabilities": [],
     "tiers": {
         "base": {
             "label": "Старт",
