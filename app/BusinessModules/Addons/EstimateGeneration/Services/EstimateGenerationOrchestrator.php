@@ -50,7 +50,12 @@ class EstimateGenerationOrchestrator
         foreach ($localEstimates as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 $workItems = $this->workItemGenerationService->build($localEstimate, $analysis);
-                $workItems = $this->resourceAssemblyService->enrich($workItems);
+                $workItems = $this->resourceAssemblyService->enrich($workItems, [
+                    'scope_type' => $localEstimate['scope_type'] ?? null,
+                    'local_estimate_title' => $localEstimate['title'] ?? null,
+                    'section_title' => $section['title'] ?? null,
+                    'source_refs' => $section['source_refs'] ?? $localEstimate['source_refs'] ?? [],
+                ]);
                 $workItems = $this->pricingService->price($workItems);
                 $localEstimates[$localIndex]['sections'][$sectionIndex]['work_items'] = $workItems;
             }
@@ -64,6 +69,7 @@ class EstimateGenerationOrchestrator
                 'analysis' => Arr::get($analysis, 'detected_structure', []),
             ],
         ];
+        $draft['normative_matching'] = $this->normativeMatchingSummary($localEstimates);
 
         $draft = $this->validationService->validate($draft);
 
@@ -77,6 +83,46 @@ class EstimateGenerationOrchestrator
         ])->save();
 
         return $session->fresh(['documents']);
+    }
+
+    private function normativeMatchingSummary(array $localEstimates): array
+    {
+        $matched = 0;
+        $unmatched = 0;
+        $lowConfidence = 0;
+        $sourceType = null;
+        $versionKey = null;
+
+        foreach ($localEstimates as $localEstimate) {
+            foreach ($localEstimate['sections'] ?? [] as $section) {
+                foreach ($section['work_items'] ?? [] as $workItem) {
+                    $match = $workItem['normative_match'] ?? [];
+
+                    if (($match['status'] ?? null) === 'matched') {
+                        $matched++;
+                        $sourceType = $match['dataset_version']['source_type'] ?? $sourceType;
+                        $versionKey = $match['dataset_version']['version_key'] ?? $versionKey;
+
+                        if ((float) ($match['confidence'] ?? 0) < 0.55) {
+                            $lowConfidence++;
+                        }
+
+                        continue;
+                    }
+
+                    $unmatched++;
+                }
+            }
+        }
+
+        return [
+            'enabled' => true,
+            'source_type' => $sourceType,
+            'version_key' => $versionKey,
+            'matched_work_items' => $matched,
+            'unmatched_work_items' => $unmatched,
+            'low_confidence_work_items' => $lowConfidence,
+        ];
     }
 
     public function rebuildSection(EstimateGenerationSession $session, string $localEstimateKey): EstimateGenerationSession

@@ -14,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\Est
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateResourceClassificationService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateResourceClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateSourceImportService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\EstimateSourceStorageService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
 use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
@@ -52,6 +53,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(EstimateNormativeQualityService::class);
         $this->app->singleton(EstimateResourceClassifier::class);
         $this->app->singleton(EstimateResourceClassificationService::class);
+        $this->app->singleton(EstimateNormativeMatcher::class);
     }
 
     public function boot(): void

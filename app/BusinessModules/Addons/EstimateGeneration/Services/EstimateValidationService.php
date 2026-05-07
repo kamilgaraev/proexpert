@@ -27,7 +27,7 @@ class EstimateValidationService
 
                 $sectionTotal = 0.0;
                 foreach ($section['work_items'] as $workIndex => $workItem) {
-                    $flags = [];
+                    $flags = $workItem['validation_flags'] ?? [];
                     if (($workItem['quantity_basis'] ?? null) === null || $workItem['quantity_basis'] === '') {
                         $flags[] = 'missing_quantity_basis';
                     }
@@ -44,10 +44,12 @@ class EstimateValidationService
                         $flags[] = 'low_confidence';
                     }
 
+                    $flags = array_values(array_unique($flags));
                     $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex]['validation_flags'] = $flags;
                     $sectionTotal += (float) ($workItem['total_cost'] ?? 0);
                     $confidenceSum += (float) ($workItem['confidence'] ?? 0);
                     $confidenceCount++;
+                    $sectionFlags = array_values(array_unique([...$sectionFlags, ...$flags]));
                 }
 
                 $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['validation_flags'] = $sectionFlags;

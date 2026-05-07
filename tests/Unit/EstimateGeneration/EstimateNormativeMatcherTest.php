@@ -1,0 +1,208 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Unit\EstimateGeneration;
+
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
+use Illuminate\Support\Facades\DB;
+use Tests\TestCase;
+
+class EstimateNormativeMatcherTest extends TestCase
+{
+    public function test_matcher_selects_best_norm_and_groups_resources(): void
+    {
+        $versionId = $this->createVersion('fsnb_2022', '2026-05-07');
+        $collectionId = $this->createCollection($versionId);
+        $sectionId = $this->createSection($collectionId, 'Фундаменты');
+        $normId = $this->createNorm($collectionId, $sectionId, '01-01-001-01', 'Бетонирование фундаментов', 'м3');
+        $this->createNorm($collectionId, $sectionId, '08-02-001-01', 'Кладка наружных стен', 'м3');
+        $this->createNormResource($normId, '01.1.01.01-0001', 'Бетон тяжелый', 'м3', 1.02, 'material');
+        $this->createNormResource($normId, '1-100-34', 'Затраты труда рабочих', 'чел.-ч', 2.5, 'labor');
+        $this->createNormResource($normId, '91.05.13-021', 'Автомобиль бортовой', 'маш.-ч', 0.3, 'machine');
+        $this->createResourcePrice($versionId, '01.1.01.01-0001', 'Бетон тяжелый', 'м3', 4200, 'material');
+        $this->createResourcePrice($versionId, '91.05.13-021', 'Автомобиль бортовой', 'маш.-ч', 1500, 'machine');
+
+        $match = app(EstimateNormativeMatcher::class)->matchWorkItem([
+            'name' => 'Бетонирование фундаментов',
+            'description' => 'Устройство фундаментных конструкций',
+            'work_category' => 'concrete',
+            'unit' => 'м3',
+        ], [
+            'scope_type' => 'foundation',
+            'section_title' => 'Фундаменты',
+            'local_estimate_title' => 'Фундамент',
+        ]);
+
+        $this->assertNotNull($match);
+        $this->assertSame('01-01-001-01', $match['selected']['code']);
+        $this->assertSame('2026-05-07', $match['version']['version_key']);
+        $this->assertCount(1, $match['selected']['resources']['materials']);
+        $this->assertCount(1, $match['selected']['resources']['labor']);
+        $this->assertCount(1, $match['selected']['resources']['machinery']);
+        $this->assertSame(4200.0, $match['selected']['resources']['materials'][0]['unit_price']);
+    }
+
+    public function test_resource_assembly_uses_normative_resources_without_template_prices(): void
+    {
+        $versionId = $this->createVersion('fsnb_2022', '2026-05-07');
+        $collectionId = $this->createCollection($versionId);
+        $sectionId = $this->createSection($collectionId, 'Фундаменты');
+        $normId = $this->createNorm($collectionId, $sectionId, '01-01-001-01', 'Бетонирование фундаментов', 'м3');
+        $this->createNormResource($normId, '01.1.01.01-0001', 'Бетон тяжелый', 'м3', 1.5, 'material');
+        $this->createResourcePrice($versionId, '01.1.01.01-0001', 'Бетон тяжелый', 'м3', 1000, 'material');
+
+        $items = app(ResourceAssemblyService::class)->enrich([[
+            'key' => 'foundation-work-1',
+            'name' => 'Бетонирование фундаментов',
+            'description' => 'Устройство фундаментных конструкций',
+            'work_category' => 'concrete',
+            'unit' => 'м3',
+            'quantity' => 2,
+            'confidence' => 0.7,
+            'validation_flags' => [],
+        ]], [
+            'scope_type' => 'foundation',
+            'section_title' => 'Фундаменты',
+            'local_estimate_title' => 'Фундамент',
+        ]);
+
+        $item = $items[0];
+
+        $this->assertSame('matched', $item['normative_match']['status']);
+        $this->assertSame('01-01-001-01', $item['normative_rate_code']);
+        $this->assertSame(3.0, $item['materials'][0]['quantity']);
+        $this->assertSame(3000.0, $item['materials'][0]['total_price']);
+        $this->assertSame('01.1.01.01-0001', $item['materials'][0]['normative_ref']['resource_code']);
+        $this->assertNotContains('normative_not_found', $item['validation_flags']);
+    }
+
+    public function test_validation_preserves_normative_flags(): void
+    {
+        $draft = app(EstimateValidationService::class)->validate([
+            'local_estimates' => [[
+                'key' => 'local-1',
+                'title' => 'Локальная смета',
+                'scope_type' => 'custom',
+                'source_refs' => ['doc-1'],
+                'sections' => [[
+                    'key' => 'section-1',
+                    'title' => 'Раздел',
+                    'source_refs' => ['doc-1'],
+                    'work_items' => [[
+                        'key' => 'work-1',
+                        'name' => 'Работа',
+                        'quantity' => 1,
+                        'quantity_basis' => 'manual',
+                        'total_cost' => 0,
+                        'materials' => [],
+                        'labor' => [],
+                        'machinery' => [],
+                        'confidence' => 0.5,
+                        'validation_flags' => ['normative_not_found'],
+                    ]],
+                ]],
+            ]],
+        ]);
+
+        $flags = $draft['local_estimates'][0]['sections'][0]['work_items'][0]['validation_flags'];
+
+        $this->assertContains('normative_not_found', $flags);
+        $this->assertContains('missing_price', $flags);
+        $this->assertContains('missing_resources', $flags);
+        $this->assertContains('normative_not_found', $draft['problem_flags']);
+    }
+
+    private function createVersion(string $sourceType, string $versionKey): int
+    {
+        return (int) DB::table('estimate_dataset_versions')->insertGetId([
+            'source_type' => $sourceType,
+            'version_key' => $versionKey,
+            'bucket' => 'test-bucket',
+            'prefix' => 'test-prefix',
+            'status' => 'parsed',
+            'files_count' => 1,
+            'rows_read' => 1,
+            'rows_imported' => 1,
+            'errors_count' => 0,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function createCollection(int $versionId): int
+    {
+        return (int) DB::table('estimate_norm_collections')->insertGetId([
+            'dataset_version_id' => $versionId,
+            'code' => 'gesn',
+            'name' => 'ГЭСН',
+            'norm_type' => 'gesn',
+            'source_file' => 'ГЭСН.xml',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function createSection(int $collectionId, string $name): int
+    {
+        return (int) DB::table('estimate_norm_sections')->insertGetId([
+            'collection_id' => $collectionId,
+            'parent_id' => null,
+            'code' => '01',
+            'name' => $name,
+            'section_type' => 'Сборник',
+            'depth' => 0,
+            'path' => '01',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function createNorm(int $collectionId, int $sectionId, string $code, string $name, string $unit): int
+    {
+        return (int) DB::table('estimate_norms')->insertGetId([
+            'collection_id' => $collectionId,
+            'section_id' => $sectionId,
+            'code' => $code,
+            'name' => $name,
+            'unit' => $unit,
+            'section_code' => '01-01-001',
+            'section_name' => 'Фундаменты',
+            'work_composition' => json_encode(['Подготовка основания', 'Укладка бетонной смеси'], JSON_UNESCAPED_UNICODE),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function createNormResource(int $normId, string $code, string $name, string $unit, float $quantity, string $type): void
+    {
+        DB::table('estimate_norm_resources')->insert([
+            'estimate_norm_id' => $normId,
+            'construction_resource_id' => null,
+            'resource_code' => $code,
+            'resource_name' => $name,
+            'unit' => $unit,
+            'quantity' => $quantity,
+            'resource_type' => $type,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function createResourcePrice(int $versionId, string $code, string $name, string $unit, float $price, string $type): void
+    {
+        DB::table('estimate_resource_prices')->insert([
+            'dataset_version_id' => $versionId,
+            'construction_resource_id' => null,
+            'resource_code' => $code,
+            'resource_name' => $name,
+            'unit' => $unit,
+            'base_price' => $price,
+            'price_type' => $type,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+}
