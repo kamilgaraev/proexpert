@@ -91,9 +91,10 @@ final class KsrCsvParser
 
         if ($mapping === []) {
             $mapping = [
-                'code' => 0,
-                'name' => 1,
-                'unit' => 2,
+                'okpd2_code' => 0,
+                'code' => 1,
+                'name' => 2,
+                'unit' => 3,
             ];
         }
 
@@ -183,7 +184,9 @@ final class KsrCsvParser
         foreach ($headers as $index => $header) {
             $token = $this->normalizeToken((string) $header);
 
-            if ($this->matchesAny($token, ['код', 'шифр', 'обоснование'])) {
+            if ($this->matchesAny($token, ['окпд'])) {
+                $mapping['okpd2_code'] ??= $index;
+            } elseif ($this->matchesAny($token, ['код', 'шифр', 'обоснование'])) {
                 $mapping['code'] ??= $index;
             } elseif ($this->matchesAny($token, ['наименование', 'название', 'ресурс'])) {
                 $mapping['name'] ??= $index;
@@ -216,6 +219,7 @@ final class KsrCsvParser
             group: $this->cell($row, $mapping['group'] ?? null),
             rawData: [
                 'row_number' => $rowNumber,
+                'okpd2_code' => $this->cell($row, $mapping['okpd2_code'] ?? null),
                 'row' => $row,
             ],
         );

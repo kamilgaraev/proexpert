@@ -13,19 +13,8 @@ use XMLReader;
 final class FsbcXmlParser
 {
     private const PRICE_TAGS = [
-        'price',
-        'item',
-        'position',
         'resource',
-        'material',
-        'machine',
-        'equipment',
-        'цена',
-        'позиция',
         'ресурс',
-        'материал',
-        'машина',
-        'оборудование',
     ];
 
     public function parse(string $filePath): iterable
@@ -39,14 +28,11 @@ final class FsbcXmlParser
                     continue;
                 }
 
-                $nodeName = $reader->name;
                 $dto = $this->parsePriceElement($reader, $collectionType);
 
                 if ($dto !== null) {
                     yield $dto;
                 }
-
-                $reader->next($nodeName);
             }
         } finally {
             $reader->close();
@@ -97,13 +83,14 @@ final class FsbcXmlParser
             collectionType: $collectionType,
             code: $code,
             name: $name,
-            unit: $this->firstValue($node, ['unit', 'measure', 'measurement', 'единица', 'едизм', 'измеритель']),
-            basePrice: $this->toFloat($this->firstValue($node, ['base_price', 'price', 'cost', 'value', 'цена', 'стоимость', 'базиснаяцена', 'сметнаяцена'])),
+            unit: $this->firstValue($node, ['measureunit', 'measure_unit', 'unit', 'measure', 'measurement', 'единица', 'едизм', 'измеритель']),
+            basePrice: $this->extractBasePrice($node),
             resourceType: $this->firstValue($node, ['type', 'kind', 'resource_type', 'тип', 'вид'])
                 ?? $this->defaultResourceType($collectionType),
             rawData: [
                 'source_tag' => $node->getName(),
                 'attributes' => $this->attributesToArray($node),
+                'price_attributes' => $this->priceAttributes($node),
             ],
         );
     }
@@ -116,8 +103,7 @@ final class FsbcXmlParser
             return true;
         }
 
-        return $this->readerHasAliasAttribute($reader, ['code', 'cipher', 'id', 'number', 'код', 'шифр', 'номер'])
-            && $this->readerHasAliasAttribute($reader, ['name', 'title', 'description', 'наименование', 'название']);
+        return false;
     }
 
     private function firstValue(SimpleXMLElement $node, array $aliases): ?string
@@ -194,6 +180,13 @@ final class FsbcXmlParser
         return $attributes;
     }
 
+    private function priceAttributes(SimpleXMLElement $node): ?array
+    {
+        $priceNode = $this->firstPriceNode($node);
+
+        return $priceNode !== null ? $this->attributesToArray($priceNode) : null;
+    }
+
     private function defaultResourceType(string $collectionType): ?string
     {
         return match ($collectionType) {
@@ -201,6 +194,35 @@ final class FsbcXmlParser
             'fsbc_material' => 'material',
             default => null,
         };
+    }
+
+    private function extractBasePrice(SimpleXMLElement $node): ?float
+    {
+        $priceNode = $this->firstPriceNode($node);
+
+        if ($priceNode === null) {
+            return null;
+        }
+
+        $salary = $this->toFloat($this->firstValue($priceNode, ['salarymach']));
+        $withoutSalary = $this->toFloat($this->firstValue($priceNode, ['pricecostwithoutsalary']));
+
+        if ($salary !== null || $withoutSalary !== null) {
+            return round((float) ($salary ?? 0) + (float) ($withoutSalary ?? 0), 4);
+        }
+
+        return $this->toFloat($this->firstValue($priceNode, ['cost', 'optcost', 'price', 'value']));
+    }
+
+    private function firstPriceNode(SimpleXMLElement $node): ?SimpleXMLElement
+    {
+        foreach ($this->descendants($node) as $child) {
+            if ($this->normalizeName($child->getName()) === 'price') {
+                return $child;
+            }
+        }
+
+        return null;
     }
 
     private function toFloat(?string $value): ?float

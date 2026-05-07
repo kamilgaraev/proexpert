@@ -190,7 +190,7 @@ class EstimateSourceImportService
         $rowsRead = 0;
         $rowsImported = 0;
         $errorsCount = 0;
-        $collectionType = $this->fsnbXmlParser->detectCollectionType($localPath);
+        $collectionType = $this->fsnbXmlParser->detectCollectionType($fileKey);
         $collection = $this->resolveCollection($datasetVersion, $collectionType, $fileKey);
 
         foreach ($this->fsnbXmlParser->parse($localPath) as $norm) {
@@ -571,6 +571,12 @@ class EstimateSourceImportService
      */
     private function extractOkpd2(?array $rawData): ?string
     {
+        $okpd2Code = $rawData['okpd2_code'] ?? null;
+
+        if (is_string($okpd2Code) && trim($okpd2Code) !== '') {
+            return trim($okpd2Code);
+        }
+
         $row = $rawData['row'] ?? null;
 
         if (!is_array($row)) {
