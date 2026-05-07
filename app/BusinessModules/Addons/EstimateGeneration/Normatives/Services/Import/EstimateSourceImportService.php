@@ -18,6 +18,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateImpo
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNormCollection;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNormResource;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNormSection;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateResourcePrice;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\EstimateSourceStorageService;
 use Illuminate\Support\Facades\DB;
@@ -174,16 +175,20 @@ class EstimateSourceImportService
 
             try {
                 DB::transaction(function () use ($collection, $norm, &$rowsImported): void {
+                    $section = $this->resolveSectionChain($collection, $norm->rawData['sections'] ?? []);
+
                     $estimateNorm = EstimateNorm::query()->updateOrCreate(
                         [
                             'collection_id' => $collection->id,
                             'code' => $this->normalizeCode($norm->code),
                         ],
                         [
+                            'section_id' => $section?->id,
                             'name' => $norm->name,
                             'unit' => $norm->unit,
+                            'section_code' => $norm->rawData['section_code'] ?? null,
                             'section_name' => $norm->section,
-                            'work_composition' => [],
+                            'work_composition' => $norm->rawData['content'] ?? [],
                             'raw_payload' => $norm->rawData,
                         ]
                     );
@@ -221,6 +226,9 @@ class EstimateSourceImportService
         $rowsRead = 0;
         $rowsImported = 0;
         $errorsCount = 0;
+        $filePriceType = $this->isFsbcMachineFile($fileKey)
+            ? EstimateResourceType::MACHINE->value
+            : EstimateResourceType::MATERIAL->value;
 
         foreach ($this->fsbcXmlParser->parse($localPath) as $price) {
             $rowsRead++;
@@ -236,13 +244,13 @@ class EstimateSourceImportService
                     [
                         'dataset_version_id' => $datasetVersion->id,
                         'resource_code' => $resourceCode,
-                        'price_type' => $this->normalizeResourceType($price->resourceType),
+                        'price_type' => $this->normalizeResourceType($price->resourceType ?? $filePriceType),
                     ],
                     [
                         'construction_resource_id' => $this->findConstructionResourceId($resourceCode),
                         'resource_name' => $price->name,
                         'unit' => $price->unit,
-                        'base_price' => $price->basePrice,
+                        'base_price' => $price->basePrice ?? 0,
                         'raw_payload' => $price->rawData,
                     ]
                 );
@@ -344,6 +352,45 @@ class EstimateSourceImportService
         );
     }
 
+    /**
+     * @param array<int, array{code?: ?string, name?: ?string, type?: ?string}> $sections
+     */
+    private function resolveSectionChain(EstimateNormCollection $collection, array $sections): ?EstimateNormSection
+    {
+        $parent = null;
+        $pathParts = [];
+
+        foreach ($sections as $index => $sectionData) {
+            $name = trim((string) ($sectionData['name'] ?? ''));
+
+            if ($name === '') {
+                continue;
+            }
+
+            $code = $this->nullableString($sectionData['code'] ?? null);
+            $type = $this->nullableString($sectionData['type'] ?? null);
+            $pathParts[] = $this->sectionPathPart($index, $code, $name, $type);
+            $path = implode('/', $pathParts);
+
+            $parent = EstimateNormSection::query()->updateOrCreate(
+                [
+                    'collection_id' => $collection->id,
+                    'path' => $path,
+                ],
+                [
+                    'parent_id' => $parent?->id,
+                    'code' => $code,
+                    'name' => $name,
+                    'section_type' => $type,
+                    'depth' => count($pathParts) - 1,
+                    'raw_payload' => $sectionData,
+                ]
+            );
+        }
+
+        return $parent;
+    }
+
     private function storeNormResource(EstimateNorm $estimateNorm, FsnbNormResourceDTO $resource): void
     {
         $resourceCode = $resource->code !== null ? $this->normalizeCode($resource->code) : null;
@@ -351,7 +398,7 @@ class EstimateSourceImportService
         EstimateNormResource::query()->create([
             'estimate_norm_id' => $estimateNorm->id,
             'construction_resource_id' => $resourceCode !== null ? $this->findConstructionResourceId($resourceCode) : null,
-            'resource_code' => $resourceCode,
+            'resource_code' => $resourceCode ?? '',
             'resource_name' => $resource->name,
             'unit' => $resource->unit,
             'quantity' => $resource->quantity,
@@ -426,6 +473,25 @@ class EstimateSourceImportService
         };
     }
 
+    private function sectionPathPart(int $index, ?string $code, string $name, ?string $type): string
+    {
+        $base = implode('|', array_filter([
+            (string) $index,
+            $code,
+            $type,
+            $name,
+        ], static fn (?string $value): bool => $value !== null && $value !== ''));
+
+        return mb_substr(sha1($base), 0, 16);
+    }
+
+    private function nullableString(?string $value): ?string
+    {
+        $value = trim((string) $value);
+
+        return $value === '' ? null : $value;
+    }
+
     private function normalizeNormType(string $normType): string
     {
         $value = mb_strtolower(trim($normType));
@@ -443,6 +509,13 @@ class EstimateSourceImportService
         $name = mb_strtolower(basename($fileKey));
 
         return str_contains($name, 'фсбц') || str_contains($name, 'fsbc');
+    }
+
+    private function isFsbcMachineFile(string $fileKey): bool
+    {
+        $name = mb_strtolower(basename($fileKey));
+
+        return str_contains($name, 'маш') || str_contains($name, 'machine');
     }
 
     private function collectionName(string $normType, string $fileKey): string

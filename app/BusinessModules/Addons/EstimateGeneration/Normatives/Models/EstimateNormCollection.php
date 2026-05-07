@@ -35,4 +35,9 @@ class EstimateNormCollection extends Model
     {
         return $this->hasMany(EstimateNorm::class, 'collection_id');
     }
+
+    public function sections(): HasMany
+    {
+        return $this->hasMany(EstimateNormSection::class, 'collection_id');
+    }
 }

@@ -20,6 +20,7 @@ class EstimateImportStatisticsService
         return [
             'versions' => $this->listVersions($sourceType, $versionKey),
             'errors' => $this->listErrors($sourceType, $versionKey, $errorsLimit),
+            'totals' => $this->totals(),
         ];
     }
 
@@ -105,5 +106,28 @@ class EstimateImportStatisticsService
             ->get()
             ->map(static fn (object $error): array => (array) $error)
             ->all();
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    private function totals(): array
+    {
+        $tables = [
+            'resources' => 'construction_resources',
+            'collections' => 'estimate_norm_collections',
+            'sections' => 'estimate_norm_sections',
+            'norms' => 'estimate_norms',
+            'norm_resources' => 'estimate_norm_resources',
+            'prices' => 'estimate_resource_prices',
+        ];
+
+        $totals = [];
+
+        foreach ($tables as $key => $table) {
+            $totals[$key] = Schema::hasTable($table) ? DB::table($table)->count() : 0;
+        }
+
+        return $totals;
     }
 }

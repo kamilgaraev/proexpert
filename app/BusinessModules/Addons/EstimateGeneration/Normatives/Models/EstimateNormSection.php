@@ -8,26 +8,25 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-class EstimateNorm extends Model
+class EstimateNormSection extends Model
 {
-    protected $table = 'estimate_norms';
+    protected $table = 'estimate_norm_sections';
 
     protected $fillable = [
         'collection_id',
-        'section_id',
+        'parent_id',
         'code',
         'name',
-        'unit',
-        'section_code',
-        'section_name',
-        'work_composition',
+        'section_type',
+        'depth',
+        'path',
         'raw_payload',
     ];
 
     protected $casts = [
         'collection_id' => 'integer',
-        'section_id' => 'integer',
-        'work_composition' => 'array',
+        'parent_id' => 'integer',
+        'depth' => 'integer',
         'raw_payload' => 'array',
     ];
 
@@ -36,13 +35,18 @@ class EstimateNorm extends Model
         return $this->belongsTo(EstimateNormCollection::class, 'collection_id');
     }
 
-    public function section(): BelongsTo
+    public function parent(): BelongsTo
     {
-        return $this->belongsTo(EstimateNormSection::class, 'section_id');
+        return $this->belongsTo(self::class, 'parent_id');
     }
 
-    public function resources(): HasMany
+    public function children(): HasMany
     {
-        return $this->hasMany(EstimateNormResource::class, 'estimate_norm_id');
+        return $this->hasMany(self::class, 'parent_id');
+    }
+
+    public function norms(): HasMany
+    {
+        return $this->hasMany(EstimateNorm::class, 'section_id');
     }
 }
