@@ -75,14 +75,11 @@ final class FsnbXmlParser
                     continue;
                 }
 
-                $nodeName = $reader->name;
                 $dto = $this->parseNormElement($reader, $collectionType, $sections, $nameGroups);
 
                 if ($dto !== null) {
                     yield $dto;
                 }
-
-                $reader->next($nodeName);
             }
         } finally {
             $reader->close();
