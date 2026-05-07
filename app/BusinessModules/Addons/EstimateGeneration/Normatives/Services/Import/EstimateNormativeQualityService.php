@@ -10,6 +10,9 @@ use RuntimeException;
 
 class EstimateNormativeQualityService
 {
+    private const LINKABLE_TYPES = ['material', 'equipment', 'machine'];
+    private const NON_PROBLEM_TYPES = ['labor', 'summary'];
+
     private const VERSIONS_TABLE = 'estimate_dataset_versions';
     private const RESOURCES_TABLE = 'construction_resources';
     private const COLLECTIONS_TABLE = 'estimate_norm_collections';
@@ -80,6 +83,12 @@ class EstimateNormativeQualityService
         $normResources = (int) (clone $normResourcesQuery)->count();
         $linkedResources = (int) (clone $normResourcesQuery)->whereNotNull('norm_resources.construction_resource_id')->count();
         $unlinkedResources = max(0, $normResources - $linkedResources);
+        $linkableResources = (int) (clone $normResourcesQuery)->whereIn('norm_resources.resource_type', self::LINKABLE_TYPES)->count();
+        $linkedLinkableResources = (int) (clone $normResourcesQuery)
+            ->whereIn('norm_resources.resource_type', self::LINKABLE_TYPES)
+            ->whereNotNull('norm_resources.construction_resource_id')
+            ->count();
+        $unlinkedLinkableResources = max(0, $linkableResources - $linkedLinkableResources);
         $norms = (int) (clone $normsQuery)->count();
         $prices = (int) (clone $pricesQuery)->count();
         $linkedPrices = (int) (clone $pricesQuery)->whereNotNull('construction_resource_id')->count();
@@ -97,6 +106,12 @@ class EstimateNormativeQualityService
             'linked_norm_resources' => $linkedResources,
             'unlinked_norm_resources' => $unlinkedResources,
             'link_rate_percent' => $this->percent($linkedResources, $normResources),
+            'linkable_norm_resources' => $linkableResources,
+            'linked_linkable_norm_resources' => $linkedLinkableResources,
+            'unlinked_linkable_norm_resources' => $unlinkedLinkableResources,
+            'linkable_link_rate_percent' => $this->percent($linkedLinkableResources, $linkableResources),
+            'labor_norm_resources' => (int) (clone $normResourcesQuery)->where('norm_resources.resource_type', 'labor')->count(),
+            'summary_norm_resources' => (int) (clone $normResourcesQuery)->where('norm_resources.resource_type', 'summary')->count(),
             'resource_prices' => $prices,
             'linked_resource_prices' => $linkedPrices,
             'price_link_rate_percent' => $this->percent($linkedPrices, $prices),
@@ -120,6 +135,8 @@ class EstimateNormativeQualityService
                 DB::raw('COUNT(DISTINCT norms.id) as norms_count'),
                 DB::raw('COUNT(norm_resources.id) as resources_count'),
                 DB::raw('COUNT(norm_resources.construction_resource_id) as linked_resources_count'),
+                DB::raw("SUM(CASE WHEN norm_resources.resource_type IN ('material', 'equipment', 'machine') THEN 1 ELSE 0 END) as linkable_resources_count"),
+                DB::raw("SUM(CASE WHEN norm_resources.resource_type IN ('material', 'equipment', 'machine') AND norm_resources.construction_resource_id IS NOT NULL THEN 1 ELSE 0 END) as linked_linkable_resources_count"),
             ])
             ->where('collections.dataset_version_id', $versionId)
             ->groupBy('collections.id', 'collections.code', 'collections.norm_type', 'collections.name', 'collections.source_file')
@@ -129,7 +146,10 @@ class EstimateNormativeQualityService
                 $row = (array) $collection;
                 $resources = (int) $row['resources_count'];
                 $linked = (int) $row['linked_resources_count'];
+                $linkable = (int) $row['linkable_resources_count'];
+                $linkedLinkable = (int) $row['linked_linkable_resources_count'];
                 $row['link_rate_percent'] = $this->percent($linked, $resources);
+                $row['linkable_link_rate_percent'] = $this->percent($linkedLinkable, $linkable);
 
                 return $row;
             })
@@ -176,6 +196,7 @@ class EstimateNormativeQualityService
                 DB::raw('COUNT(DISTINCT norm_resources.estimate_norm_id) as norms_count'),
             ])
             ->whereNull('norm_resources.construction_resource_id')
+            ->whereNotIn('norm_resources.resource_type', self::NON_PROBLEM_TYPES)
             ->whereNotNull('norm_resources.resource_code')
             ->where('norm_resources.resource_code', '<>', '')
             ->groupBy('norm_resources.resource_code')
@@ -199,10 +220,11 @@ class EstimateNormativeQualityService
                 'norms.name',
                 DB::raw('COUNT(norm_resources.id) as resources_count'),
                 DB::raw('COUNT(norm_resources.construction_resource_id) as linked_resources_count'),
+                DB::raw("SUM(CASE WHEN norm_resources.resource_type NOT IN ('labor', 'summary') AND norm_resources.construction_resource_id IS NULL THEN 1 ELSE 0 END) as suspicious_unlinked_count"),
             ])
             ->groupBy('collections.code', 'norms.id', 'norms.code', 'norms.name')
-            ->havingRaw('COUNT(norm_resources.id) = 0 OR COUNT(norm_resources.id) > COUNT(norm_resources.construction_resource_id)')
-            ->orderByDesc(DB::raw('COUNT(norm_resources.id) - COUNT(norm_resources.construction_resource_id)'))
+            ->havingRaw("COUNT(norm_resources.id) = 0 OR SUM(CASE WHEN norm_resources.resource_type NOT IN ('labor', 'summary') AND norm_resources.construction_resource_id IS NULL THEN 1 ELSE 0 END) > 0")
+            ->orderByDesc('suspicious_unlinked_count')
             ->orderBy('norms.code')
             ->limit($limit)
             ->get()

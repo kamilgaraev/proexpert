@@ -86,6 +86,12 @@ class QualityEstimateNormativesCommand extends Command
                 ['Связанных ресурсов', $totals['linked_norm_resources']],
                 ['Несвязанных ресурсов', $totals['unlinked_norm_resources']],
                 ['Связность ресурсов, %', $totals['link_rate_percent']],
+                ['Ресурсов для связи с КСР', $totals['linkable_norm_resources']],
+                ['Связанных с КСР', $totals['linked_linkable_norm_resources']],
+                ['Несвязанных с КСР', $totals['unlinked_linkable_norm_resources']],
+                ['Связность КСР-ресурсов, %', $totals['linkable_link_rate_percent']],
+                ['Трудовых ресурсов', $totals['labor_norm_resources']],
+                ['Служебных ресурсов', $totals['summary_norm_resources']],
                 ['Цен ресурсов', $totals['resource_prices']],
                 ['Связанных цен', $totals['linked_resource_prices']],
                 ['Связность цен, %', $totals['price_link_rate_percent']],
@@ -104,7 +110,7 @@ class QualityEstimateNormativesCommand extends Command
 
         $this->info('Сборники');
         $this->table(
-            ['Код', 'Тип', 'Норм', 'Ресурсов', 'Связано', 'Связность, %', 'Файл'],
+            ['Код', 'Тип', 'Норм', 'Ресурсов', 'Связано', 'Связность, %', 'Связность КСР, %', 'Файл'],
             array_map(
                 static fn (array $row): array => [
                     $row['code'],
@@ -113,6 +119,7 @@ class QualityEstimateNormativesCommand extends Command
                     $row['resources_count'],
                     $row['linked_resources_count'],
                     $row['link_rate_percent'],
+                    $row['linkable_link_rate_percent'],
                     basename((string) $row['source_file']),
                 ],
                 $collections

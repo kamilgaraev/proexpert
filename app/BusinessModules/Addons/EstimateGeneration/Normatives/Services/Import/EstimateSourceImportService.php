@@ -32,6 +32,7 @@ class EstimateSourceImportService
         private readonly KsrCsvParser $ksrCsvParser,
         private readonly FsnbXmlParser $fsnbXmlParser,
         private readonly FsbcXmlParser $fsbcXmlParser,
+        private readonly EstimateResourceClassifier $resourceClassifier,
     ) {}
 
     /**
@@ -155,7 +156,7 @@ class EstimateSourceImportService
                     [
                         'name' => $resource->name,
                         'unit' => $resource->unit,
-                        'resource_type' => $this->normalizeResourceType($resource->resourceType),
+                        'resource_type' => $this->normalizeResourceType($resource->resourceType, $resource->code, $resource->name),
                         'okpd2_code' => $this->extractOkpd2($resource->rawData),
                         'raw_payload' => $resource->rawData,
                     ]
@@ -277,7 +278,7 @@ class EstimateSourceImportService
                     [
                         'dataset_version_id' => $datasetVersion->id,
                         'resource_code' => $resourceCode,
-                        'price_type' => $this->normalizeResourceType($price->resourceType ?? $filePriceType),
+                        'price_type' => $this->normalizeResourceType($price->resourceType ?? $filePriceType, $resourceCode, $price->name),
                     ],
                     [
                         'construction_resource_id' => $this->findConstructionResourceId($resourceCode),
@@ -436,7 +437,7 @@ class EstimateSourceImportService
             'resource_name' => $resource->name,
             'unit' => $resource->unit,
             'quantity' => $resource->quantity,
-            'resource_type' => $this->normalizeResourceType($resource->resourceType),
+            'resource_type' => $this->normalizeResourceType($resource->resourceType, $resourceCode, $resource->name),
             'raw_payload' => $resource->rawData,
         ]);
     }
@@ -494,17 +495,9 @@ class EstimateSourceImportService
         return $targetPath;
     }
 
-    private function normalizeResourceType(?string $resourceType): string
+    private function normalizeResourceType(?string $resourceType, ?string $code = null, ?string $name = null): string
     {
-        $value = mb_strtolower(trim((string) $resourceType));
-
-        return match (true) {
-            str_contains($value, 'маш') || str_contains($value, 'механ') || $value === 'machine' => EstimateResourceType::MACHINE->value,
-            str_contains($value, 'обор') || $value === 'equipment' => EstimateResourceType::EQUIPMENT->value,
-            str_contains($value, 'труд') || str_contains($value, 'рабоч') || $value === 'labor' => EstimateResourceType::LABOR->value,
-            str_contains($value, 'мат') || $value === 'material' => EstimateResourceType::MATERIAL->value,
-            default => EstimateResourceType::OTHER->value,
-        };
+        return $this->resourceClassifier->classify($code, $name, $resourceType);
     }
 
     private function sectionPathPart(int $index, ?string $code, string $name, ?string $type): string

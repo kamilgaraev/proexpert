@@ -21,7 +21,8 @@ class EstimateNormativeQualityServiceTest extends TestCase
         $this->createNorm($collectionId, $sectionId, '01-01-001-02');
 
         $this->createNormResource($normId, $resourceId, '01.1.01.01-0002');
-        $this->createNormResource($normId, null, '1-100-34');
+        $this->createNormResource($normId, null, '1-100-34', 'labor');
+        $this->createNormResource($normId, null, '01.1.01.01-9999', 'material');
         $this->createResourcePrice($sourceVersionId, $resourceId);
 
         $report = app(EstimateNormativeQualityService::class)->analyze('fsnb_2022', '2026-05-07', 10);
@@ -30,11 +31,15 @@ class EstimateNormativeQualityServiceTest extends TestCase
         $this->assertSame(1, $report['totals']['sections']);
         $this->assertSame(2, $report['totals']['norms']);
         $this->assertSame(1, $report['totals']['norms_without_resources']);
-        $this->assertSame(2, $report['totals']['norm_resources']);
+        $this->assertSame(3, $report['totals']['norm_resources']);
         $this->assertSame(1, $report['totals']['linked_norm_resources']);
-        $this->assertSame(1, $report['totals']['unlinked_norm_resources']);
-        $this->assertSame(50.0, $report['totals']['link_rate_percent']);
-        $this->assertSame('1-100-34', $report['top_unlinked_resources'][0]['resource_code']);
+        $this->assertSame(2, $report['totals']['unlinked_norm_resources']);
+        $this->assertSame(33.33, $report['totals']['link_rate_percent']);
+        $this->assertSame(2, $report['totals']['linkable_norm_resources']);
+        $this->assertSame(1, $report['totals']['linked_linkable_norm_resources']);
+        $this->assertSame(50.0, $report['totals']['linkable_link_rate_percent']);
+        $this->assertSame(1, $report['totals']['labor_norm_resources']);
+        $this->assertSame('01.1.01.01-9999', $report['top_unlinked_resources'][0]['resource_code']);
     }
 
     public function test_quality_command_accepts_existing_version(): void
@@ -49,6 +54,31 @@ class EstimateNormativeQualityServiceTest extends TestCase
             '--version-key' => '2026-05-07',
             '--limit' => 5,
         ])->assertExitCode(0);
+    }
+
+    public function test_classify_command_recalculates_existing_resource_types(): void
+    {
+        $sourceVersionId = $this->createVersion('fsnb_2022', '2026-05-07');
+        $collectionId = $this->createCollection($sourceVersionId);
+        $sectionId = $this->createSection($collectionId);
+        $normId = $this->createNorm($collectionId, $sectionId);
+        $this->createNormResource($normId, null, '1-100-34', 'other');
+        $this->createNormResource($normId, null, '91.05.13-021', 'other');
+
+        $this->artisan('estimates:normatives:classify', [
+            '--source' => 'fsnb_2022',
+            '--version-key' => '2026-05-07',
+            '--chunk' => 100,
+        ])->assertExitCode(0);
+
+        $this->assertDatabaseHas('estimate_norm_resources', [
+            'resource_code' => '1-100-34',
+            'resource_type' => 'labor',
+        ]);
+        $this->assertDatabaseHas('estimate_norm_resources', [
+            'resource_code' => '91.05.13-021',
+            'resource_type' => 'machine',
+        ]);
     }
 
     private function createVersion(string $sourceType, string $versionKey): int
@@ -125,7 +155,7 @@ class EstimateNormativeQualityServiceTest extends TestCase
         ]);
     }
 
-    private function createNormResource(int $normId, ?int $resourceId, string $code): void
+    private function createNormResource(int $normId, ?int $resourceId, string $code, string $type = 'material'): void
     {
         DB::table('estimate_norm_resources')->insert([
             'estimate_norm_id' => $normId,
@@ -134,7 +164,7 @@ class EstimateNormativeQualityServiceTest extends TestCase
             'resource_name' => 'Ресурс ' . $code,
             'unit' => 'шт',
             'quantity' => 1,
-            'resource_type' => 'material',
+            'resource_type' => $type,
             'created_at' => now(),
             'updated_at' => now(),
         ]);

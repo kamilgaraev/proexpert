@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration;
 
 use App\BusinessModules\Addons\AIEstimates\Services\FileProcessing\FileParserService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\ClassifyEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\ImportEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\InspectEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\QualityEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateImportStatisticsService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateNormativeQualityService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateResourceClassificationService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateResourceClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateSourceImportService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\EstimateSourceStorageService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
@@ -47,6 +50,8 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(EstimateSourceImportService::class);
         $this->app->singleton(EstimateImportStatisticsService::class);
         $this->app->singleton(EstimateNormativeQualityService::class);
+        $this->app->singleton(EstimateResourceClassifier::class);
+        $this->app->singleton(EstimateResourceClassificationService::class);
     }
 
     public function boot(): void
@@ -60,6 +65,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
 
         if ($this->app->runningInConsole()) {
             $this->commands([
+                ClassifyEstimateNormativesCommand::class,
                 ImportEstimateNormativesCommand::class,
                 InspectEstimateNormativesCommand::class,
                 QualityEstimateNormativesCommand::class,
