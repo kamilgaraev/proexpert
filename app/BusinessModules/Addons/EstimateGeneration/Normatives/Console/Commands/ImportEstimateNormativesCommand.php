@@ -32,7 +32,41 @@ class ImportEstimateNormativesCommand extends Command
         }
 
         try {
-            $stats = $importService->import($sourceType, $bucket, $prefix, $version);
+            $startedAt = microtime(true);
+            $stats = $importService->import($sourceType, $bucket, $prefix, $version, function (string $event, array $payload) use ($startedAt): void {
+                $elapsed = max(0, (int) floor(microtime(true) - $startedAt));
+                $prefix = sprintf('[%s +%ss]', now()->format('Y-m-d H:i:s'), $elapsed);
+
+                if ($event === 'file_started') {
+                    $this->line(sprintf('%s Начат файл: %s', $prefix, $payload['file'] ?? ''));
+
+                    return;
+                }
+
+                if ($event === 'file_finished') {
+                    $this->line(sprintf(
+                        '%s Завершен файл: %s, прочитано: %s, импортировано: %s, ошибок: %s',
+                        $prefix,
+                        $payload['file'] ?? '',
+                        $payload['rows_read'] ?? 0,
+                        $payload['rows_imported'] ?? 0,
+                        $payload['errors_count'] ?? 0
+                    ));
+
+                    return;
+                }
+
+                if ($event === 'rows_progress') {
+                    $this->line(sprintf(
+                        '%s Прогресс: %s, прочитано: %s, импортировано: %s, ошибок: %s',
+                        $prefix,
+                        basename((string) ($payload['file'] ?? '')),
+                        $payload['rows_read'] ?? 0,
+                        $payload['rows_imported'] ?? 0,
+                        $payload['errors_count'] ?? 0
+                    ));
+                }
+            });
 
             $this->info('Импорт нормативной базы завершен.');
             $this->table(

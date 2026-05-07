@@ -37,7 +37,7 @@ class EstimateSourceImportService
     /**
      * @return array<string, mixed>
      */
-    public function import(string $sourceType, string $bucket, string $prefix, string $versionKey): array
+    public function import(string $sourceType, string $bucket, string $prefix, string $versionKey, ?callable $progress = null): array
     {
         $sourceType = $this->normalizeToken($sourceType, 'source_type');
         $versionKey = $this->normalizeToken($versionKey, 'version_key');
@@ -53,10 +53,20 @@ class EstimateSourceImportService
             ];
 
             foreach ($files as $fileKey) {
-                $result = $this->importStoredFile($datasetVersion, $sourceType, $bucket, $fileKey);
+                $this->reportProgress($progress, 'file_started', [
+                    'file' => $fileKey,
+                    'source_type' => $sourceType,
+                ]);
+
+                $result = $this->importStoredFile($datasetVersion, $sourceType, $bucket, $fileKey, $progress);
                 $stats['rows_read'] += (int) ($result['rows_read'] ?? 0);
                 $stats['rows_imported'] += (int) ($result['rows_imported'] ?? 0);
                 $stats['errors_count'] += (int) ($result['errors_count'] ?? 0);
+
+                $this->reportProgress($progress, 'file_finished', array_merge([
+                    'file' => $fileKey,
+                    'source_type' => $sourceType,
+                ], $result));
             }
 
             $this->markDatasetVersionFinished($datasetVersion, EstimateImportStatus::PARSED->value, $stats);
@@ -82,7 +92,13 @@ class EstimateSourceImportService
     /**
      * @return array<string, mixed>
      */
-    private function importStoredFile(EstimateDatasetVersion $datasetVersion, string $sourceType, string $bucket, string $fileKey): array
+    private function importStoredFile(
+        EstimateDatasetVersion $datasetVersion,
+        string $sourceType,
+        string $bucket,
+        string $fileKey,
+        ?callable $progress = null
+    ): array
     {
         $extension = mb_strtolower(pathinfo($fileKey, PATHINFO_EXTENSION));
 
@@ -94,14 +110,14 @@ class EstimateSourceImportService
 
         try {
             if ($sourceType === EstimateSourceType::KSR->value || $extension === 'csv') {
-                return $this->importKsrFile($datasetVersion, $localPath, $fileKey);
+                return $this->importKsrFile($datasetVersion, $localPath, $fileKey, $progress);
             }
 
             if ($this->isFsbcFile($fileKey)) {
-                return $this->importFsbcFile($datasetVersion, $localPath, $fileKey);
+                return $this->importFsbcFile($datasetVersion, $localPath, $fileKey, $progress);
             }
 
-            return $this->importFsnbFile($datasetVersion, $localPath, $fileKey);
+            return $this->importFsnbFile($datasetVersion, $localPath, $fileKey, $progress);
         } finally {
             if (is_file($localPath)) {
                 @unlink($localPath);
@@ -112,7 +128,12 @@ class EstimateSourceImportService
     /**
      * @return array<string, int>
      */
-    private function importKsrFile(EstimateDatasetVersion $datasetVersion, string $localPath, string $fileKey): array
+    private function importKsrFile(
+        EstimateDatasetVersion $datasetVersion,
+        string $localPath,
+        string $fileKey,
+        ?callable $progress = null
+    ): array
     {
         $rowsRead = 0;
         $rowsImported = 0;
@@ -140,6 +161,7 @@ class EstimateSourceImportService
                     ]
                 );
                 $rowsImported++;
+                $this->reportRowsProgress($progress, $fileKey, $rowsRead, $rowsImported, $errorsCount);
             } catch (Throwable $exception) {
                 $errorsCount++;
                 $this->recordImportError($datasetVersion, $fileKey, 'error', $exception->getMessage(), $rowsRead, [
@@ -158,7 +180,12 @@ class EstimateSourceImportService
     /**
      * @return array<string, int>
      */
-    private function importFsnbFile(EstimateDatasetVersion $datasetVersion, string $localPath, string $fileKey): array
+    private function importFsnbFile(
+        EstimateDatasetVersion $datasetVersion,
+        string $localPath,
+        string $fileKey,
+        ?callable $progress = null
+    ): array
     {
         $rowsRead = 0;
         $rowsImported = 0;
@@ -174,7 +201,7 @@ class EstimateSourceImportService
             }
 
             try {
-                DB::transaction(function () use ($collection, $norm, &$rowsImported): void {
+                DB::transaction(function () use ($collection, $norm, $progress, $fileKey, $rowsRead, &$rowsImported, &$errorsCount): void {
                     $section = $this->resolveSectionChain($collection, $norm->rawData['sections'] ?? []);
 
                     $estimateNorm = EstimateNorm::query()->updateOrCreate(
@@ -202,6 +229,7 @@ class EstimateSourceImportService
                     }
 
                     $rowsImported++;
+                    $this->reportRowsProgress($progress, $fileKey, $rowsRead, $rowsImported, $errorsCount);
                 });
             } catch (Throwable $exception) {
                 $errorsCount++;
@@ -221,7 +249,12 @@ class EstimateSourceImportService
     /**
      * @return array<string, int>
      */
-    private function importFsbcFile(EstimateDatasetVersion $datasetVersion, string $localPath, string $fileKey): array
+    private function importFsbcFile(
+        EstimateDatasetVersion $datasetVersion,
+        string $localPath,
+        string $fileKey,
+        ?callable $progress = null
+    ): array
     {
         $rowsRead = 0;
         $rowsImported = 0;
@@ -255,6 +288,7 @@ class EstimateSourceImportService
                     ]
                 );
                 $rowsImported++;
+                $this->reportRowsProgress($progress, $fileKey, $rowsRead, $rowsImported, $errorsCount);
             } catch (Throwable $exception) {
                 $errorsCount++;
                 $this->recordImportError($datasetVersion, $fileKey, 'error', $exception->getMessage(), $rowsRead, [
@@ -563,5 +597,34 @@ class EstimateSourceImportService
         }
 
         return $normalized;
+    }
+
+    private function reportRowsProgress(
+        ?callable $progress,
+        string $fileKey,
+        int $rowsRead,
+        int $rowsImported,
+        int $errorsCount
+    ): void {
+        if ($rowsRead === 1 || $rowsRead % 1000 === 0) {
+            $this->reportProgress($progress, 'rows_progress', [
+                'file' => $fileKey,
+                'rows_read' => $rowsRead,
+                'rows_imported' => $rowsImported,
+                'errors_count' => $errorsCount,
+            ]);
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function reportProgress(?callable $progress, string $event, array $payload): void
+    {
+        if ($progress === null) {
+            return;
+        }
+
+        $progress($event, $payload);
     }
 }
