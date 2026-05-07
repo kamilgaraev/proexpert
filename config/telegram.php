@@ -1,9 +1,9 @@
 <?php
 
 return [
-    'bot_token' => env('TELEGRAM_BOT_TOKEN'),
+    'bot_token' => (string) env('TELEGRAM_BOT_TOKEN', ''),
 
-    'chat_id' => env('TELEGRAM_CHAT_ID'),
+    'chat_id' => (string) env('TELEGRAM_CHAT_ID', ''),
 
     'notifications' => [
         'contact_forms' => env('TELEGRAM_NOTIFY_CONTACT_FORMS', true),

@@ -26,6 +26,10 @@ class LivewirePayloadExceptionClassifier
             return true;
         }
 
+        if (is_a($exception, 'Filament\\Actions\\Exceptions\\ActionNotResolvableException')) {
+            return true;
+        }
+
         if (!$exception instanceof TypeError) {
             return false;
         }

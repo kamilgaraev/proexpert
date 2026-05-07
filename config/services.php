@@ -25,7 +25,7 @@ return [
     ],
 
     'resend' => [
-        'key' => env('RESEND_KEY'),
+        'key' => (string) env('RESEND_KEY', ''),
     ],
 
     'slack' => [
@@ -36,8 +36,8 @@ return [
     ],
 
     'dadata' => [
-        'api_key' => env('DADATA_API_KEY'),
-        'secret_key' => env('DADATA_SECRET_KEY'),
+        'api_key' => (string) env('DADATA_API_KEY', ''),
+        'secret_key' => (string) env('DADATA_SECRET_KEY', ''),
         'base_url' => 'https://suggestions.dadata.ru/suggestions/api/4_1/rs/',
         'clean_url' => 'https://cleaner.dadata.ru/api/v1/clean/',
     ],

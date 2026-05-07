@@ -10,6 +10,7 @@ use App\Exceptions\AI\AIQuotaExceededException;
 use App\Exceptions\Billing\InsufficientBalanceException;
 use App\Exceptions\BusinessLogicException;
 use App\Services\Monitoring\GlitchTipReportPolicy;
+use Filament\Actions\Exceptions\ActionNotResolvableException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\QueryException;
@@ -79,6 +80,16 @@ class GlitchTipReportPolicyTest extends TestCase
         $exception = new \TypeError(
             'Cannot assign array to property Filament\\Notifications\\Livewire\\Notifications::$isFilamentNotificationsComponent of type bool'
         );
+
+        self::assertFalse($policy->shouldCapture($exception, $request));
+        self::assertTrue($policy->shouldCapture($exception));
+    }
+
+    public function test_skips_malformed_filament_action_livewire_updates(): void
+    {
+        $policy = new GlitchTipReportPolicy($this->config());
+        $request = Request::create('/livewire-6949a084/update', 'POST');
+        $exception = new ActionNotResolvableException('An action tried to resolve without a name.');
 
         self::assertFalse($policy->shouldCapture($exception, $request));
         self::assertTrue($policy->shouldCapture($exception));
