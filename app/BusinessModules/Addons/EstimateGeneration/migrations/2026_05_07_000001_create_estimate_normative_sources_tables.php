@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -46,7 +47,9 @@ return new class extends Migration
             $table->unique(['dataset_version_id', 'ksr_code']);
             $table->index('ksr_code');
             $table->index('resource_type');
-            $table->fullText('name');
+            if (DB::connection()->getDriverName() !== 'sqlite') {
+                $table->fullText('name');
+            }
         });
 
         Schema::create('estimate_norm_collections', function (Blueprint $table): void {
@@ -81,7 +84,9 @@ return new class extends Migration
             $table->unique(['collection_id', 'code']);
             $table->index('code');
             $table->index('section_code');
-            $table->fullText('name');
+            if (DB::connection()->getDriverName() !== 'sqlite') {
+                $table->fullText('name');
+            }
         });
 
         Schema::create('estimate_norm_resources', function (Blueprint $table): void {
