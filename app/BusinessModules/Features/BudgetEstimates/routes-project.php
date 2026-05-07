@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\V1\Admin\EstimateProgressController;
 use App\Http\Controllers\Api\V1\Admin\EstimateContractController;
 use App\Http\Controllers\Api\V1\Admin\EstimateExportController;
 use App\Http\Controllers\Api\V1\Admin\EstimatePaymentController;
+use App\BusinessModules\Features\BudgetEstimates\Http\Controllers\EstimateNormativeController;
 
 /*
 |--------------------------------------------------------------------------
@@ -58,6 +59,11 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
             Route::get('/{estimate}/dashboard', [EstimateController::class, 'dashboard'])->name('dashboard');
             Route::get('/{estimate}/structure', [EstimateController::class, 'structure'])->name('structure');
 
+            Route::prefix('{estimate}/normatives')->name('normatives.')->group(function () {
+                Route::get('/search', [EstimateNormativeController::class, 'search'])->name('search');
+                Route::get('/{norm}', [EstimateNormativeController::class, 'show'])->name('show');
+            });
+
             // Временно отключено - контроллер не существует
             // Route::post('/{estimate}/what-if', [EstimateVersionController::class, 'whatIf'])->name('what_if');
             // Route::post('/{estimate}/schedule', [EstimateVersionController::class, 'schedule'])->name('schedule');
@@ -86,6 +92,7 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
                 Route::get('/', [EstimateItemController::class, 'index'])->name('index');
                 Route::post('/', [EstimateItemController::class, 'store'])->name('store');
                 Route::post('/bulk', [EstimateItemController::class, 'bulkStore'])->name('bulk_store');
+                Route::post('/from-estimate-norms', [EstimateNormativeController::class, 'storeItems'])->name('from_estimate_norms');
                 
                 // Массовое изменение порядка позиций (для drag-and-drop)
                 Route::post('/reorder', [EstimateItemController::class, 'reorder'])->name('reorder');

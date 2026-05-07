@@ -75,6 +75,7 @@ class EstimateDraftPersistenceService
                             'position_number' => ($localIndex + 1) . '.' . ($sectionIndex + 1) . '.' . ($workIndex + 1),
                             'name' => $workItem['name'],
                             'description' => $workItem['description'],
+                            'normative_rate_code' => $workItem['normative_rate_code'] ?? null,
                             'measurement_unit_id' => $this->resolveMeasurementUnitId($session->organization_id, $workItem['unit']),
                             'quantity' => $workItem['quantity'],
                             'quantity_total' => $workItem['quantity'],
@@ -91,6 +92,9 @@ class EstimateDraftPersistenceService
                                 'source_refs' => $workItem['source_refs'],
                                 'confidence' => $workItem['confidence'],
                                 'validation_flags' => $workItem['validation_flags'],
+                                'normative_dataset' => $workItem['normative_dataset'] ?? null,
+                                'normative_match' => $workItem['normative_match'] ?? null,
+                                'normative_candidates' => $workItem['normative_candidates'] ?? [],
                             ],
                         ]);
 
@@ -122,6 +126,7 @@ class EstimateDraftPersistenceService
                 'position_number' => $parent->position_number . '.' . ($resourceIndex + 1),
                 'name' => $resource['name'],
                 'description' => $resource['source'] ?? null,
+                'normative_rate_code' => $resource['normative_ref']['resource_code'] ?? null,
                 'measurement_unit_id' => $this->resolveMeasurementUnitId($organizationId, $resource['unit']),
                 'quantity' => $resource['quantity'],
                 'quantity_total' => $resource['quantity'],
@@ -132,6 +137,8 @@ class EstimateDraftPersistenceService
                 'metadata' => [
                     'confidence' => $resource['confidence'] ?? null,
                     'quantity_basis' => $resource['quantity_basis'] ?? null,
+                    'quantity_per_unit' => $resource['quantity_per_unit'] ?? null,
+                    'normative_ref' => $resource['normative_ref'] ?? null,
                 ],
             ]);
 
@@ -139,8 +146,9 @@ class EstimateDraftPersistenceService
                 'estimate_item_id' => $parent->id,
                 'resource_type' => $itemType === EstimatePositionItemType::MACHINERY->value ? 'equipment' : $itemType,
                 'name' => $resource['name'],
+                'description' => $resource['normative_ref']['resource_code'] ?? ($resource['source'] ?? null),
                 'measurement_unit_id' => $this->resolveMeasurementUnitId($organizationId, $resource['unit']),
-                'quantity_per_unit' => 1,
+                'quantity_per_unit' => $resource['quantity_per_unit'] ?? 1,
                 'total_quantity' => $resource['quantity'],
                 'unit_price' => $resource['unit_price'],
                 'total_amount' => $resource['total_price'],

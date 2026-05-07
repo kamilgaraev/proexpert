@@ -39,15 +39,17 @@ class ResourceAssemblyService
     {
         $selected = $match['selected'];
         $version = $match['version'];
-        $workQuantity = max((float) ($workItem['quantity'] ?? 1), 1.0);
+        $priceVersion = $match['price_version'] ?? null;
+        $workQuantity = max((float) ($workItem['quantity'] ?? 0), 0.0);
         $resources = $selected['resources'];
 
-        $workItem['materials'] = $this->mapResources($resources['materials'] ?? [], 'material', $workQuantity, $selected, $version);
-        $workItem['labor'] = $this->mapResources($resources['labor'] ?? [], 'labor', $workQuantity, $selected, $version);
-        $workItem['machinery'] = $this->mapResources($resources['machinery'] ?? [], 'machinery', $workQuantity, $selected, $version);
-        $workItem['other_resources'] = $this->mapResources($resources['other'] ?? [], 'other', $workQuantity, $selected, $version);
+        $workItem['materials'] = $this->mapResources($resources['materials'] ?? [], 'material', $workQuantity, $selected, $version, $workItem);
+        $workItem['labor'] = $this->mapResources($resources['labor'] ?? [], 'labor', $workQuantity, $selected, $version, $workItem);
+        $workItem['machinery'] = $this->mapResources($resources['machinery'] ?? [], 'machinery', $workQuantity, $selected, $version, $workItem);
+        $workItem['other_resources'] = $this->mapResources($resources['other'] ?? [], 'other', $workQuantity, $selected, $version, $workItem);
         $workItem['normative_rate_code'] = $selected['code'];
         $workItem['normative_dataset'] = $version;
+        $workItem['price_dataset'] = $priceVersion;
         $workItem['normative_match'] = [
             'status' => 'matched',
             'selected_candidate_key' => $selected['key'],
@@ -58,6 +60,7 @@ class ResourceAssemblyService
             'collection' => $selected['collection'],
             'section' => $selected['section'],
             'dataset_version' => $version,
+            'price_version' => $priceVersion,
             'score' => $selected['score'],
             'confidence' => $selected['confidence'],
             'match_reasons' => $selected['match_reasons'],
@@ -96,16 +99,16 @@ class ResourceAssemblyService
      * @param array<string, mixed> $version
      * @return array<int, array<string, mixed>>
      */
-    private function mapResources(array $resources, string $targetType, float $workQuantity, array $selected, array $version): array
+    private function mapResources(array $resources, string $targetType, float $workQuantity, array $selected, array $version, array $workItem): array
     {
         return array_map(
-            function (array $resource, int $index) use ($targetType, $workQuantity, $selected, $version): array {
+            function (array $resource, int $index) use ($targetType, $workQuantity, $selected, $version, $workItem): array {
                 $quantityPerUnit = $resource['quantity'] !== null ? (float) $resource['quantity'] : 0.0;
                 $quantity = round($quantityPerUnit * $workQuantity, 6);
                 $unitPrice = (float) ($resource['unit_price'] ?? 0);
 
                 return [
-                    'key' => 'norm-' . $selected['norm_id'] . '-' . $targetType . '-' . ($index + 1),
+                    'key' => ($workItem['key'] ?? 'work') . '-norm-' . $selected['norm_id'] . '-' . $targetType . '-' . ($index + 1),
                     'name' => $resource['name'] ?? $resource['code'] ?? 'resource',
                     'resource_type' => $targetType,
                     'unit' => $resource['unit'],

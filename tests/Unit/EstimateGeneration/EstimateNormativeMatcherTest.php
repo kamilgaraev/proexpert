@@ -15,6 +15,7 @@ class EstimateNormativeMatcherTest extends TestCase
     public function test_matcher_selects_best_norm_and_groups_resources(): void
     {
         $versionId = $this->createVersion('fsnb_2022', '2026-05-07');
+        $priceVersionId = $this->createVersion('fsbc', '2026-05-07');
         $collectionId = $this->createCollection($versionId);
         $sectionId = $this->createSection($collectionId, 'Фундаменты');
         $normId = $this->createNorm($collectionId, $sectionId, '01-01-001-01', 'Бетонирование фундаментов', 'м3');
@@ -22,8 +23,8 @@ class EstimateNormativeMatcherTest extends TestCase
         $this->createNormResource($normId, '01.1.01.01-0001', 'Бетон тяжелый', 'м3', 1.02, 'material');
         $this->createNormResource($normId, '1-100-34', 'Затраты труда рабочих', 'чел.-ч', 2.5, 'labor');
         $this->createNormResource($normId, '91.05.13-021', 'Автомобиль бортовой', 'маш.-ч', 0.3, 'machine');
-        $this->createResourcePrice($versionId, '01.1.01.01-0001', 'Бетон тяжелый', 'м3', 4200, 'material');
-        $this->createResourcePrice($versionId, '91.05.13-021', 'Автомобиль бортовой', 'маш.-ч', 1500, 'machine');
+        $this->createResourcePrice($priceVersionId, '01.1.01.01-0001', 'Бетон тяжелый', 'м3', 4200, 'material');
+        $this->createResourcePrice($priceVersionId, '91.05.13-021', 'Автомобиль бортовой', 'маш.-ч', 1500, 'machine');
 
         $match = app(EstimateNormativeMatcher::class)->matchWorkItem([
             'name' => 'Бетонирование фундаментов',
@@ -39,6 +40,7 @@ class EstimateNormativeMatcherTest extends TestCase
         $this->assertNotNull($match);
         $this->assertSame('01-01-001-01', $match['selected']['code']);
         $this->assertSame('2026-05-07', $match['version']['version_key']);
+        $this->assertSame('fsbc', $match['price_version']['source_type']);
         $this->assertCount(1, $match['selected']['resources']['materials']);
         $this->assertCount(1, $match['selected']['resources']['labor']);
         $this->assertCount(1, $match['selected']['resources']['machinery']);
@@ -48,11 +50,12 @@ class EstimateNormativeMatcherTest extends TestCase
     public function test_resource_assembly_uses_normative_resources_without_template_prices(): void
     {
         $versionId = $this->createVersion('fsnb_2022', '2026-05-07');
+        $priceVersionId = $this->createVersion('fsbc', '2026-05-07');
         $collectionId = $this->createCollection($versionId);
         $sectionId = $this->createSection($collectionId, 'Фундаменты');
         $normId = $this->createNorm($collectionId, $sectionId, '01-01-001-01', 'Бетонирование фундаментов', 'м3');
         $this->createNormResource($normId, '01.1.01.01-0001', 'Бетон тяжелый', 'м3', 1.5, 'material');
-        $this->createResourcePrice($versionId, '01.1.01.01-0001', 'Бетон тяжелый', 'м3', 1000, 'material');
+        $this->createResourcePrice($priceVersionId, '01.1.01.01-0001', 'Бетон тяжелый', 'м3', 1000, 'material');
 
         $items = app(ResourceAssemblyService::class)->enrich([[
             'key' => 'foundation-work-1',
