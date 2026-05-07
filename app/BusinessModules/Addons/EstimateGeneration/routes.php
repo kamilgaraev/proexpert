@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationController;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Http\Controllers\EstimateNormativeStatusController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware([
@@ -28,4 +29,18 @@ Route::middleware([
         Route::post('/{session}/apply', [EstimateGenerationController::class, 'apply'])->name('apply');
         Route::post('/{session}/rebuild-section', [EstimateGenerationController::class, 'rebuildSection'])->name('rebuild-section');
         Route::post('/{session}/feedback', [EstimateGenerationController::class, 'feedback'])->name('feedback');
+    });
+
+Route::middleware([
+    'api',
+    'auth:api_admin',
+    'auth.jwt:api_admin',
+    'organization.context',
+    'authorize:admin.access',
+    'interface:admin',
+])
+    ->prefix('api/v1/admin/estimate-generation/normatives')
+    ->name('api.v1.admin.estimate-generation.normatives.')
+    ->group(function (): void {
+        Route::get('/statuses', [EstimateNormativeStatusController::class, 'index'])->name('statuses.index');
     });

@@ -5,6 +5,11 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration;
 
 use App\BusinessModules\Addons\AIEstimates\Services\FileProcessing\FileParserService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\ImportEstimateNormativesCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\InspectEstimateNormativesCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateImportStatisticsService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateSourceImportService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\EstimateSourceStorageService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
 use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecompositionService;
@@ -36,6 +41,9 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             app(ExcelEstimateBuilder::class)
         ));
         $this->app->singleton(EstimateGenerationOrchestrator::class);
+        $this->app->singleton(EstimateSourceStorageService::class);
+        $this->app->singleton(EstimateSourceImportService::class);
+        $this->app->singleton(EstimateImportStatisticsService::class);
     }
 
     public function boot(): void
@@ -45,6 +53,13 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $routesPath = __DIR__ . '/routes.php';
         if (file_exists($routesPath)) {
             require $routesPath;
+        }
+
+        if ($this->app->runningInConsole()) {
+            $this->commands([
+                ImportEstimateNormativesCommand::class,
+                InspectEstimateNormativesCommand::class,
+            ]);
         }
     }
 }
