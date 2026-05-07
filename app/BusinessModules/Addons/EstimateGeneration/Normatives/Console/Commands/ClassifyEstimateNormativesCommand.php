@@ -24,6 +24,7 @@ class ClassifyEstimateNormativesCommand extends Command
         $versionKey = trim((string) $this->option('version-key'));
         $chunkSize = $this->normalizeChunkSize($this->option('chunk'));
         $dryRun = (bool) $this->option('dry-run');
+        $startedAt = microtime(true);
 
         if ($source === '' || $versionKey === '') {
             $this->error('Укажите --source и --version-key.');
@@ -32,7 +33,13 @@ class ClassifyEstimateNormativesCommand extends Command
         }
 
         try {
-            $summary = $classificationService->classify($source, $versionKey, $chunkSize, $dryRun);
+            $summary = $classificationService->classify(
+                $source,
+                $versionKey,
+                $chunkSize,
+                $dryRun,
+                fn (string $event, array $payload): null => $this->reportProgress($event, $payload, $startedAt)
+            );
         } catch (RuntimeException $exception) {
             $this->error($exception->getMessage());
 
@@ -68,5 +75,33 @@ class ClassifyEstimateNormativesCommand extends Command
         $chunkSize = filter_var($value, FILTER_VALIDATE_INT);
 
         return is_int($chunkSize) ? max(100, min($chunkSize, 10000)) : 1000;
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function reportProgress(string $event, array $payload, float $startedAt): null
+    {
+        $seconds = (int) floor(microtime(true) - $startedAt);
+
+        $message = match ($event) {
+            'started' => 'Начат пересчет типов ресурсов',
+            'resources_progress' => 'Прогресс КСР-ресурсов',
+            'norm_resources_progress' => 'Прогресс ресурсов норм',
+            'prices_progress' => 'Прогресс цен ресурсов',
+            'finished' => 'Пересчет типов ресурсов завершен',
+            default => 'Прогресс пересчета типов ресурсов',
+        };
+
+        $this->line(sprintf(
+            '[%s +%ds] %s: обработано %d, изменено %d',
+            now()->format('Y-m-d H:i:s'),
+            $seconds,
+            $message,
+            (int) ($payload['processed'] ?? 0),
+            (int) ($payload['updated'] ?? 0)
+        ));
+
+        return null;
     }
 }
