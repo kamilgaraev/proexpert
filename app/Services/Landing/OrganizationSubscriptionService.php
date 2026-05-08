@@ -6,10 +6,11 @@ use App\Repositories\Landing\OrganizationSubscriptionRepository;
 use App\Models\SubscriptionPlan;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Carbon;
-use App\Services\Billing\BalanceService;
 use App\Interfaces\Billing\BalanceServiceInterface;
+use App\Services\Contractor\ContractorReferralRewardService;
 use App\Services\Logging\LoggingService;
 use App\Models\Organization;
+use App\Models\OrganizationSubscription;
 use App\Exceptions\Billing\InsufficientBalanceException;
 use App\Services\SubscriptionModuleSyncService;
 use App\Services\Billing\SubscriptionLimitsService;
@@ -21,17 +22,20 @@ class OrganizationSubscriptionService
     protected LoggingService $logging;
     protected SubscriptionModuleSyncService $moduleSyncService;
     protected SubscriptionLimitsService $limitsService;
+    protected ContractorReferralRewardService $contractorReferralRewardService;
 
     public function __construct(
         LoggingService $logging,
         SubscriptionModuleSyncService $moduleSyncService,
-        SubscriptionLimitsService $limitsService
+        SubscriptionLimitsService $limitsService,
+        ContractorReferralRewardService $contractorReferralRewardService
     ) {
         $this->repo = new OrganizationSubscriptionRepository();
         $this->balanceService = app(BalanceServiceInterface::class);
         $this->logging = $logging;
         $this->moduleSyncService = $moduleSyncService;
         $this->limitsService = $limitsService;
+        $this->contractorReferralRewardService = $contractorReferralRewardService;
     }
 
     public function getCurrentSubscription($organizationId)
@@ -44,6 +48,8 @@ class OrganizationSubscriptionService
         $plan = SubscriptionPlan::where('slug', $planSlug)->where('is_active', true)->firstOrFail();
         $organization = Organization::findOrFail($organizationId);
         $now = Carbon::now();
+        $hadPaidSubscription = $this->organizationHadPaidSubscription((int) $organizationId);
+        $amountCents = 0;
         
         $finalPrice = $this->calculatePriceWithDuration($plan->price, $durationDays);
         
@@ -84,6 +90,7 @@ class OrganizationSubscriptionService
             }
 
             $subscription = $this->repo->createOrUpdate($organizationId, $plan->id, $data);
+            $subscription = $subscription->fresh('plan') ?? $subscription;
 
             // BUSINESS: Подписка успешно создана
             $this->logging->business('subscription.created', [
@@ -110,6 +117,7 @@ class OrganizationSubscriptionService
             ]);
 
             $moduleSyncResult = $this->moduleSyncService->syncModulesOnSubscribe($subscription);
+            $this->handleContractorReferralAfterFirstPayment($subscription, $amountCents, $hadPaidSubscription);
             
             if ($moduleSyncResult['activated_count'] > 0 || $moduleSyncResult['converted_count'] > 0) {
                 $this->logging->business('subscription.modules.synced', [
@@ -167,6 +175,8 @@ class OrganizationSubscriptionService
         // Получаем текущую подписку для сравнения
         $currentSubscription = $this->repo->getByOrganizationId($organizationId);
         $oldPlan = $currentSubscription?->plan;
+        $hadPaidSubscription = $this->organizationHadPaidSubscription((int) $organizationId);
+        $amountCents = 0;
         
         // Апгрейд/даунгрейд: смена тарифа, перерасчёт дат
         $plan = SubscriptionPlan::where('slug', $planSlug)->where('is_active', true)->firstOrFail();
@@ -204,6 +214,7 @@ class OrganizationSubscriptionService
             }
 
             $subscription = $this->repo->createOrUpdate($organizationId, $plan->id, $data);
+            $subscription = $subscription->fresh('plan') ?? $subscription;
 
             // BUSINESS: Подписка успешно обновлена
             $this->logging->business('subscription.updated', [
@@ -249,6 +260,7 @@ class OrganizationSubscriptionService
             }
 
             $this->limitsService->clearOrganizationSubscriptionCache($organizationId);
+            $this->handleContractorReferralAfterFirstPayment($subscription, $amountCents, $hadPaidSubscription);
 
             return $subscription;
 
@@ -480,6 +492,7 @@ class OrganizationSubscriptionService
     {
         $organization = Organization::findOrFail($organizationId);
         $now = Carbon::now();
+        $hadPaidSubscription = $this->organizationHadPaidSubscription((int) $organizationId);
         
         // Рассчитываем перерасчет
         $billingCalculation = $this->calculatePlanChange($currentSubscription, $newPlan, $now);
@@ -522,6 +535,7 @@ class OrganizationSubscriptionService
             'is_auto_payment_enabled' => $currentSubscription->is_auto_payment_enabled,
             'canceled_at' => null
         ]);
+        $updatedSubscription = $updatedSubscription->fresh('plan') ?? $updatedSubscription;
 
         $moduleSyncResult = $this->moduleSyncService->syncModulesOnPlanChange(
             $updatedSubscription,
@@ -545,6 +559,11 @@ class OrganizationSubscriptionService
         }
 
         $this->limitsService->clearOrganizationSubscriptionCache($organizationId);
+        $this->handleContractorReferralAfterFirstPayment(
+            $updatedSubscription,
+            (int) $billingCalculation['amount_to_charge'],
+            $hadPaidSubscription
+        );
 
         return [
             'success' => true,
@@ -617,6 +636,26 @@ class OrganizationSubscriptionService
         }
     }
 
+    private function organizationHadPaidSubscription(int $organizationId): bool
+    {
+        return OrganizationSubscription::query()
+            ->where('organization_id', $organizationId)
+            ->whereHas('plan', fn ($query) => $query->where('price', '>', 0))
+            ->exists();
+    }
+
+    private function handleContractorReferralAfterFirstPayment(
+        OrganizationSubscription $subscription,
+        int $amountCents,
+        bool $hadPaidSubscription
+    ): void {
+        if ($hadPaidSubscription || $amountCents <= 0) {
+            return;
+        }
+
+        $this->contractorReferralRewardService->handleFirstPaidSubscription($subscription, $amountCents);
+    }
+
     public function renewSubscription($organizationId): array
     {
         $subscription = $this->repo->getByOrganizationId($organizationId);
@@ -682,6 +721,7 @@ class OrganizationSubscriptionService
         $organization = Organization::findOrFail($organizationId);
         $now = Carbon::now();
         $durationDays = $plan->duration_in_days ?? 30;
+        $amountCents = 0;
         
         $this->logging->business('subscription.renewal.started', [
             'organization_id' => $organizationId,

@@ -76,6 +76,14 @@ Schedule::command('contractors:sync-invited')
     })
     ->appendOutputTo(storage_path('logs/schedule-contractors-sync-invited.log'));
 
+Schedule::command('contractor-referrals:accrue')
+    ->hourly()
+    ->withoutOverlapping(60)
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled contractor-referrals:accrue command failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-contractor-referrals-accrue.log'));
+
 // Сканирование модулей каждые 15 минут для обновления прав
 Schedule::command('modules:scan')
     ->everyFifteenMinutes()

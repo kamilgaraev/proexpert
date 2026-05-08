@@ -94,7 +94,8 @@ class AppServiceProvider extends ServiceProvider
             return new \App\Services\Landing\OrganizationSubscriptionService(
                 $app->make(\App\Services\Logging\LoggingService::class),
                 $app->make(\App\Services\SubscriptionModuleSyncService::class),
-                $app->make(\App\Services\Billing\SubscriptionLimitsService::class)
+                $app->make(\App\Services\Billing\SubscriptionLimitsService::class),
+                $app->make(\App\Services\Contractor\ContractorReferralRewardService::class)
             );
         });
 

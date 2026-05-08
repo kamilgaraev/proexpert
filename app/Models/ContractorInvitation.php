@@ -76,6 +76,11 @@ class ContractorInvitation extends Model
         return $this->hasOne(Contractor::class, 'contractor_invitation_id');
     }
 
+    public function referralReward(): HasOne
+    {
+        return $this->hasOne(ContractorReferralReward::class, 'contractor_invitation_id');
+    }
+
     public function scopePending($query)
     {
         return $query->where('status', self::STATUS_PENDING)
