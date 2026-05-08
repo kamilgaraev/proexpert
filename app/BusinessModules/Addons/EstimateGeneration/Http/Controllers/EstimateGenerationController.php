@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\EstimateGenerati
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\RebuildEstimateGenerationSectionRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\UploadEstimateGenerationDocumentsRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationSessionResource;
+use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationFeedback;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
@@ -144,9 +145,23 @@ class EstimateGenerationController extends Controller
     {
         try {
             $this->guardSession($request, $project, $session);
-            $session = $this->orchestrator->generate($session);
 
-            return AdminResponse::success($session->draft_payload, trans_message('estimate_generation.generation_completed'));
+            if (!in_array($session->status, ['queued', 'processing'], true)) {
+                $session->forceFill([
+                    'status' => 'queued',
+                    'processing_stage' => 'queued',
+                    'processing_progress' => 40,
+                    'last_error' => null,
+                ])->save();
+
+                GenerateEstimateDraftJob::dispatch($session->id)->onQueue(GenerateEstimateDraftJob::QUEUE);
+            }
+
+            return AdminResponse::success(
+                (new EstimateGenerationSessionResource($session->fresh(['documents'])))->resolve(),
+                trans_message('estimate_generation.generation_queued'),
+                202
+            );
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Generate failed', [
                 'error' => $e->getMessage(),

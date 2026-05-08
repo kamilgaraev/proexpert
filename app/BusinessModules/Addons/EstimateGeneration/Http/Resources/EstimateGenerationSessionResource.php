@@ -27,6 +27,7 @@ class EstimateGenerationSessionResource extends JsonResource
             'analysis' => $session->analysis_payload ?? [],
             'problem_flags' => $session->problem_flags ?? [],
             'applied_estimate_id' => $session->applied_estimate_id,
+            'last_error' => $session->last_error,
             'documents' => $this->whenLoaded('documents', function (): array {
                 return $this->documents->map(static fn ($document): array => [
                     'id' => $document->id,
