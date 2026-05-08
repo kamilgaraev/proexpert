@@ -46,6 +46,7 @@ class EstimateGenerationOrchestrator
 
         $analysis = $session->analysis_payload ?? [];
         $localEstimates = $this->decompositionService->decompose($analysis);
+        $regionalContext = $session->input_payload['regional_context'] ?? $analysis['regional_context'] ?? [];
 
         foreach ($localEstimates as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
@@ -55,6 +56,7 @@ class EstimateGenerationOrchestrator
                     'local_estimate_title' => $localEstimate['title'] ?? null,
                     'section_title' => $section['title'] ?? null,
                     'source_refs' => $section['source_refs'] ?? $localEstimate['source_refs'] ?? [],
+                    'regional_context' => $regionalContext,
                 ]);
                 $workItems = $this->pricingService->price($workItems);
                 $localEstimates[$localIndex]['sections'][$sectionIndex]['work_items'] = $workItems;
@@ -68,6 +70,8 @@ class EstimateGenerationOrchestrator
             'traceability' => [
                 'analysis' => Arr::get($analysis, 'detected_structure', []),
             ],
+            'regional_context' => $regionalContext,
+            'contingency_percent' => Arr::get($analysis, 'object.contingency_percent'),
         ];
         $draft['normative_matching'] = $this->normativeMatchingSummary($localEstimates);
 

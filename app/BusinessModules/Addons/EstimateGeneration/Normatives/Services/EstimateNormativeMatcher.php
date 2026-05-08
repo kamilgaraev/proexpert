@@ -7,9 +7,11 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\EstimateImportStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\EstimateResourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\EstimateSourceType;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\RegionalPriceStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateDatasetVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNormResource;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegionalPriceVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateResourcePrice;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -26,7 +28,7 @@ class EstimateNormativeMatcher
     public function matchWorkItem(array $workItem, array $context = [], int $limit = 5): ?array
     {
         $version = $this->latestFsnbVersion();
-        $priceVersions = $this->latestPriceVersions();
+        $priceVersions = $this->latestPriceVersions($context);
 
         if ($version === null) {
             return null;
@@ -88,7 +90,7 @@ class EstimateNormativeMatcher
         return $this->latestPriceVersions()->first();
     }
 
-    public function latestPriceVersions(): Collection
+    public function latestPriceVersions(array $context = []): Collection
     {
         $fsbcVersion = EstimateDatasetVersion::query()
             ->where('source_type', EstimateSourceType::FSBC->value)
@@ -108,12 +110,22 @@ class EstimateNormativeMatcher
                 ->first();
         }
 
-        $laborVersion = EstimateDatasetVersion::query()
-            ->where('source_type', EstimateSourceType::FGIS_LABOR_PRICES->value)
-            ->where('status', EstimateImportStatus::PARSED->value)
-            ->whereHas('resourcePrices')
-            ->latest('id')
-            ->first();
+        $regionalVersion = $this->regionalPriceVersionForContext($context);
+        $laborVersion = $regionalVersion !== null
+            ? EstimateDatasetVersion::query()
+                ->where('source_type', EstimateSourceType::FGIS_LABOR_PRICES->value)
+                ->where('status', EstimateImportStatus::PARSED->value)
+                ->whereHas('resourcePrices', static function (Builder $query) use ($regionalVersion): void {
+                    $query->where('regional_price_version_id', $regionalVersion->id);
+                })
+                ->latest('id')
+                ->first()
+            : EstimateDatasetVersion::query()
+                ->where('source_type', EstimateSourceType::FGIS_LABOR_PRICES->value)
+                ->where('status', EstimateImportStatus::PARSED->value)
+                ->whereHas('resourcePrices')
+                ->latest('id')
+                ->first();
 
         return collect([$fsbcVersion ?? $fallbackFsnbVersion, $laborVersion])->filter()->values();
     }
@@ -230,7 +242,7 @@ class EstimateNormativeMatcher
             $reasons[] = 'scope_collection';
         }
 
-        $resources = $this->resourcesForNorm($norm, $priceVersions);
+        $resources = $this->resourcesForNorm($norm, $priceVersions, $context);
         $resourceCount = count($resources['materials']) + count($resources['machinery']) + count($resources['labor']) + count($resources['other']);
         $pricedCount = $this->pricedResourcesCount($resources);
 
@@ -276,7 +288,7 @@ class EstimateNormativeMatcher
     /**
      * @return array{materials: array<int, array<string, mixed>>, machinery: array<int, array<string, mixed>>, labor: array<int, array<string, mixed>>, other: array<int, array<string, mixed>>}
      */
-    private function resourcesForNorm(EstimateNorm $norm, Collection $priceVersions): array
+    private function resourcesForNorm(EstimateNorm $norm, Collection $priceVersions, array $context = []): array
     {
         $resources = EstimateNormResource::query()
             ->where('estimate_norm_id', $norm->id)
@@ -285,10 +297,21 @@ class EstimateNormativeMatcher
             ->limit(120)
             ->get();
 
+        $regionalPriceVersionId = $this->regionalPriceVersionIdFromContext($context);
         $prices = $priceVersions->isNotEmpty()
             ? EstimateResourcePrice::query()
                 ->whereIn('dataset_version_id', $priceVersions->pluck('id')->values()->all())
                 ->whereIn('resource_code', $resources->pluck('resource_code')->filter()->values()->all())
+                ->when($regionalPriceVersionId !== null, static function (Builder $query) use ($regionalPriceVersionId): void {
+                    $query->where(function (Builder $query) use ($regionalPriceVersionId): void {
+                        $query->whereNull('regional_price_version_id')
+                            ->orWhere('regional_price_version_id', $regionalPriceVersionId);
+                    });
+                })
+                ->when(
+                    $regionalPriceVersionId !== null,
+                    static fn (Builder $query): Builder => $query->orderByRaw('CASE WHEN regional_price_version_id IS NULL THEN 1 ELSE 0 END')
+                )
                 ->orderByDesc('dataset_version_id')
                 ->get()
                 ->groupBy('resource_code')
@@ -531,10 +554,92 @@ class EstimateNormativeMatcher
 
     private function collectionMatchesScope(string $normType, string $scopeType): bool
     {
-        if ($scopeType === 'engineering') {
+        if (in_array($scopeType, ['engineering', 'electrical', 'plumbing', 'heating', 'ventilation'], true)) {
             return in_array($normType, ['gesnm', 'gesnp'], true);
         }
 
         return in_array($normType, ['gesn', 'gesnr'], true);
+    }
+
+    /**
+     * @param array<string, mixed> $context
+     */
+    private function regionalPriceVersionForContext(array $context): ?EstimateRegionalPriceVersion
+    {
+        $context = $this->regionalContext($context);
+        $versionId = $this->regionalPriceVersionIdFromContext($context);
+
+        if ($versionId !== null) {
+            return EstimateRegionalPriceVersion::query()
+                ->with(['region', 'priceZone', 'period'])
+                ->find($versionId);
+        }
+
+        $regionId = $this->nullableInt($context['region_id'] ?? null);
+        if ($regionId === null) {
+            return null;
+        }
+
+        $query = EstimateRegionalPriceVersion::query()
+            ->with(['region', 'priceZone', 'period'])
+            ->where('region_id', $regionId)
+            ->whereIn('status', [
+                RegionalPriceStatus::ACTIVE->value,
+                RegionalPriceStatus::CHECKED->value,
+                RegionalPriceStatus::PARSED->value,
+            ]);
+
+        $priceZoneId = $this->nullableInt($context['price_zone_id'] ?? null);
+        if ($priceZoneId !== null) {
+            $query->where('price_zone_id', $priceZoneId);
+        }
+
+        $periodId = $this->nullableInt($context['period_id'] ?? null);
+        if ($periodId !== null) {
+            $query->where('period_id', $periodId);
+        } elseif (($context['year'] ?? null) !== null && ($context['quarter'] ?? null) !== null) {
+            $year = (int) $context['year'];
+            $quarter = (int) $context['quarter'];
+            $query->whereHas('period', static function (Builder $query) use ($year, $quarter): void {
+                $query->where('year', $year)->where('quarter', $quarter);
+            });
+        }
+
+        return $query
+            ->orderByRaw("CASE status WHEN 'active' THEN 0 WHEN 'checked' THEN 1 WHEN 'parsed' THEN 2 ELSE 3 END")
+            ->latest('id')
+            ->first();
+    }
+
+    /**
+     * @param array<string, mixed> $context
+     */
+    private function regionalPriceVersionIdFromContext(array $context): ?int
+    {
+        $context = $this->regionalContext($context);
+
+        return $this->nullableInt($context['estimate_regional_price_version_id'] ?? $context['version_id'] ?? null);
+    }
+
+    /**
+     * @param array<string, mixed> $context
+     * @return array<string, mixed>
+     */
+    private function regionalContext(array $context): array
+    {
+        if (is_array($context['regional_context'] ?? null)) {
+            return $context['regional_context'];
+        }
+
+        return $context;
+    }
+
+    private function nullableInt(mixed $value): ?int
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return (int) $value;
     }
 }

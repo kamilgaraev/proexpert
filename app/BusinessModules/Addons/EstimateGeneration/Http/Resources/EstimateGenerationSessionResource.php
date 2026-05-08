@@ -17,14 +17,18 @@ class EstimateGenerationSessionResource extends JsonResource
     {
         /** @var EstimateGenerationSession $session */
         $session = $this->resource;
+        $input = $session->input_payload ?? [];
+        $analysis = $session->analysis_payload ?? [];
+        $regionalContext = $input['regional_context'] ?? $analysis['regional_context'] ?? null;
 
         return [
             'id' => $session->id,
             'status' => $session->status,
             'processing_stage' => $session->processing_stage,
             'processing_progress' => $session->processing_progress,
-            'input' => $session->input_payload ?? [],
-            'analysis' => $session->analysis_payload ?? [],
+            'input' => $input,
+            'analysis' => $analysis,
+            'regional_context' => $regionalContext,
             'problem_flags' => $session->problem_flags ?? [],
             'applied_estimate_id' => $session->applied_estimate_id,
             'last_error' => $session->last_error,

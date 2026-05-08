@@ -6,24 +6,33 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
 class WorkItemGenerationService
 {
+    public function __construct(
+        protected MarketFallbackPricingService $fallbackPricingService,
+    ) {}
+
+    /**
+     * @param array<string, mixed> $localEstimate
+     * @param array<string, mixed> $analysis
+     * @return array<int, array<string, mixed>>
+     */
     public function build(array $localEstimate, array $analysis): array
     {
-        $template = $this->templateForScope($localEstimate['scope_type']);
+        $scopeType = (string) ($localEstimate['scope_type'] ?? 'custom');
+        $template = $this->templateForScope($scopeType);
         $area = (float) ($analysis['object']['area'] ?? 0);
-        $multiplier = $area > 0 ? max($area / 100, 1) : 1;
         $workItems = [];
 
         foreach ($template as $index => $item) {
-            $quantity = round(($item['base_quantity'] * $multiplier), 2);
-            $workItems[] = [
+            $quantity = $this->quantityForTemplate($item, $area);
+            $workItem = [
                 'key' => $localEstimate['key'] . '-work-' . ($index + 1),
                 'name' => $item['name'],
                 'work_category' => $item['category'],
                 'description' => $item['description'],
                 'unit' => $item['unit'],
                 'quantity' => $quantity,
-                'quantity_formula' => $area > 0 ? 'Базовый коэффициент x площадь/100' : 'Эвристический шаблон по конструктиву',
-                'quantity_basis' => $area > 0 ? 'Площадь объекта ' . $area . ' м2 и тип конструктивного блока' : 'Текстовые признаки в описании и чертежах',
+                'quantity_formula' => $area > 0 ? (string) ($item['quantity_formula'] ?? 'Расчет от площади объекта') : 'Ориентировочный шаблон по конструктиву',
+                'quantity_basis' => $area > 0 ? 'Площадь объекта ' . $area . ' м2 и тип конструктивного блока' : 'Текстовые признаки в описании и документах',
                 'work_cost' => 0,
                 'materials_cost' => 0,
                 'machinery_cost' => 0,
@@ -32,54 +41,133 @@ class WorkItemGenerationService
                 'materials' => [],
                 'labor' => [],
                 'machinery' => [],
+                'other_resources' => [],
                 'source_refs' => $localEstimate['source_refs'],
                 'confidence' => $item['confidence'],
-                'validation_flags' => [],
+                'validation_flags' => ['market_price_used'],
+                'price_source' => 'market_estimate',
             ];
+            $resources = $this->fallbackPricingService->resourcesForTemplate($item, $workItem);
+            $workItem['materials'] = $resources['materials'];
+            $workItem['labor'] = $resources['labor'];
+            $workItem['machinery'] = $resources['machinery'];
+            $workItems[] = $workItem;
         }
 
         return $workItems;
     }
 
+    /**
+     * @param array<string, mixed> $template
+     */
+    private function quantityForTemplate(array $template, float $area): float
+    {
+        $baseQuantity = (float) $template['base_quantity'];
+        $mode = (string) ($template['quantity_mode'] ?? 'area_factor');
+
+        if ($area <= 0) {
+            return round($baseQuantity, 2);
+        }
+
+        return match ($mode) {
+            'area' => round($area * $baseQuantity, 2),
+            'fixed' => round($baseQuantity, 2),
+            default => round($baseQuantity * max($area / 100, 1), 2),
+        };
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
     protected function templateForScope(string $scopeType): array
     {
         $templates = [
             'foundation' => [
-                ['name' => 'Разработка грунта', 'category' => 'earthworks', 'description' => 'Подготовка котлована и траншей', 'unit' => 'м3', 'base_quantity' => 18, 'confidence' => 0.76],
-                ['name' => 'Устройство песчаной подготовки', 'category' => 'base', 'description' => 'Выравнивающий и дренирующий слой', 'unit' => 'м3', 'base_quantity' => 6, 'confidence' => 0.72],
-                ['name' => 'Армирование фундаментов', 'category' => 'reinforcement', 'description' => 'Монтаж арматурных каркасов', 'unit' => 'т', 'base_quantity' => 0.8, 'confidence' => 0.74],
-                ['name' => 'Бетонирование фундаментов', 'category' => 'concrete', 'description' => 'Устройство фундаментных конструкций', 'unit' => 'м3', 'base_quantity' => 12, 'confidence' => 0.79],
-                ['name' => 'Гидроизоляция фундаментных поверхностей', 'category' => 'waterproofing', 'description' => 'Защита конструкций от влаги', 'unit' => 'м2', 'base_quantity' => 45, 'confidence' => 0.71],
+                $this->template('Разработка грунта под ленточный фундамент', 'earthworks', 'Подготовка траншей и вывоз лишнего грунта', 'м3', 0.28, 850, ['material' => 0.05, 'labor' => 0.45, 'machinery' => 0.5], 0.74, 'area'),
+                $this->template('Устройство песчаной подготовки', 'base', 'Песчаная подушка с послойным уплотнением', 'м3', 0.08, 2400, ['material' => 0.65, 'labor' => 0.2, 'machinery' => 0.15], 0.72, 'area'),
+                $this->template('Армирование фундаментной ленты', 'reinforcement', 'Монтаж арматурных каркасов', 'т', 0.008, 92000, ['material' => 0.78, 'labor' => 0.2, 'machinery' => 0.02], 0.72, 'area'),
+                $this->template('Бетонирование фундаментной ленты В22.5', 'concrete', 'Укладка бетона в фундаментные конструкции', 'м3', 0.12, 9800, ['material' => 0.72, 'labor' => 0.18, 'machinery' => 0.1], 0.76, 'area'),
+                $this->template('Гидроизоляция фундаментных поверхностей', 'waterproofing', 'Защита конструкций от влаги', 'м2', 0.45, 720, ['material' => 0.55, 'labor' => 0.4, 'machinery' => 0.05], 0.68, 'area'),
             ],
             'walls' => [
-                ['name' => 'Кладка наружных стен', 'category' => 'masonry', 'description' => 'Основная кладка наружного контура', 'unit' => 'м3', 'base_quantity' => 14, 'confidence' => 0.78],
-                ['name' => 'Кладка внутренних перегородок', 'category' => 'masonry', 'description' => 'Перегородки и внутренние стены', 'unit' => 'м2', 'base_quantity' => 65, 'confidence' => 0.74],
-                ['name' => 'Устройство перемычек', 'category' => 'structural', 'description' => 'Монтаж перемычек над проемами', 'unit' => 'шт', 'base_quantity' => 18, 'confidence' => 0.69],
-                ['name' => 'Локальное армирование кладки', 'category' => 'reinforcement', 'description' => 'Усиление отдельных зон кладки', 'unit' => 'м2', 'base_quantity' => 35, 'confidence' => 0.67],
+                $this->template('Кладка наружных стен из газобетона D500 400 мм', 'masonry', 'Наружные стены жилого дома', 'м3', 0.23, 7600, ['material' => 0.68, 'labor' => 0.28, 'machinery' => 0.04], 0.74, 'area'),
+                $this->template('Кладка внутренних перегородок', 'masonry', 'Внутренние перегородки и простенки', 'м2', 0.55, 1450, ['material' => 0.58, 'labor' => 0.38, 'machinery' => 0.04], 0.7, 'area'),
+                $this->template('Штукатурка стен по газобетону', 'finishing', 'Подготовка стен под чистовую отделку', 'м2', 2.4, 780, ['material' => 0.35, 'labor' => 0.6, 'machinery' => 0.05], 0.67, 'area'),
             ],
             'slabs' => [
-                ['name' => 'Устройство опалубки плит', 'category' => 'formwork', 'description' => 'Формирование нижней поверхности перекрытия', 'unit' => 'м2', 'base_quantity' => 90, 'confidence' => 0.73],
-                ['name' => 'Армирование плит перекрытия', 'category' => 'reinforcement', 'description' => 'Монтаж сеток и каркасов', 'unit' => 'т', 'base_quantity' => 1.1, 'confidence' => 0.75],
-                ['name' => 'Бетонирование плит перекрытия', 'category' => 'concrete', 'description' => 'Устройство монолитного перекрытия', 'unit' => 'м3', 'base_quantity' => 18, 'confidence' => 0.77],
+                $this->template('Устройство монолитного перекрытия', 'concrete', 'Опалубка, армирование и бетонирование перекрытия', 'м2', 1, 7800, ['material' => 0.7, 'labor' => 0.22, 'machinery' => 0.08], 0.7, 'area'),
+                $this->template('Монтаж лестничных и доборных элементов перекрытия', 'structural', 'Локальные элементы перекрытий и проемов', 'компл', 1, 115000, ['material' => 0.62, 'labor' => 0.28, 'machinery' => 0.1], 0.55, 'fixed'),
             ],
             'roof' => [
-                ['name' => 'Монтаж стропильной системы', 'category' => 'frame', 'description' => 'Несущая конструкция кровли', 'unit' => 'м2', 'base_quantity' => 90, 'confidence' => 0.74],
-                ['name' => 'Устройство пароизоляции', 'category' => 'insulation', 'description' => 'Пароизоляционный слой кровельного пирога', 'unit' => 'м2', 'base_quantity' => 90, 'confidence' => 0.71],
-                ['name' => 'Устройство утепления кровли', 'category' => 'insulation', 'description' => 'Теплоизоляционный слой', 'unit' => 'м2', 'base_quantity' => 90, 'confidence' => 0.72],
-                ['name' => 'Устройство гидроизоляции кровли', 'category' => 'waterproofing', 'description' => 'Гидроизоляционная мембрана', 'unit' => 'м2', 'base_quantity' => 90, 'confidence' => 0.71],
-                ['name' => 'Монтаж кровельного покрытия', 'category' => 'covering', 'description' => 'Финишный кровельный слой', 'unit' => 'м2', 'base_quantity' => 90, 'confidence' => 0.76],
+                $this->template('Монтаж стропильной системы', 'frame', 'Несущая деревянная конструкция кровли', 'м2', 1.25, 1450, ['material' => 0.58, 'labor' => 0.36, 'machinery' => 0.06], 0.7, 'area'),
+                $this->template('Утепление кровли 200 мм', 'insulation', 'Теплоизоляция кровельного пирога', 'м2', 1.25, 1350, ['material' => 0.7, 'labor' => 0.28, 'machinery' => 0.02], 0.7, 'area'),
+                $this->template('Монтаж металлочерепицы с доборными элементами', 'covering', 'Финишное кровельное покрытие', 'м2', 1.25, 1850, ['material' => 0.68, 'labor' => 0.28, 'machinery' => 0.04], 0.72, 'area'),
             ],
-            'engineering' => [
-                ['name' => 'Подготовка основания и закладных', 'category' => 'preparation', 'description' => 'Работы под инженерное оборудование', 'unit' => 'компл', 'base_quantity' => 1, 'confidence' => 0.68],
-                ['name' => 'Монтаж технологических опор', 'category' => 'structural', 'description' => 'Локальные основания и крепления', 'unit' => 'шт', 'base_quantity' => 4, 'confidence' => 0.66],
-                ['name' => 'Антикоррозионная и защитная обработка', 'category' => 'protection', 'description' => 'Защитные покрытия металлоконструкций', 'unit' => 'м2', 'base_quantity' => 20, 'confidence' => 0.63],
+            'openings' => [
+                $this->template('Установка окон ПВХ с двухкамерным стеклопакетом', 'openings', 'Оконные блоки жилого дома', 'м2', 0.18, 14500, ['material' => 0.78, 'labor' => 0.2, 'machinery' => 0.02], 0.62, 'area'),
+                $this->template('Установка входной металлической двери', 'openings', 'Входная дверь с монтажом', 'шт', 1, 52000, ['material' => 0.82, 'labor' => 0.18, 'machinery' => 0], 0.68, 'fixed'),
+            ],
+            'electrical' => [
+                $this->template('Монтаж электрического щита', 'electrical', 'Вводной щит и автоматика', 'компл', 1, 65000, ['material' => 0.72, 'labor' => 0.26, 'machinery' => 0.02], 0.66, 'fixed'),
+                $this->template('Прокладка кабельных линий', 'electrical', 'Кабельные линии по дому', 'м', 5.5, 390, ['material' => 0.55, 'labor' => 0.43, 'machinery' => 0.02], 0.64, 'area'),
+                $this->template('Монтаж розеток, выключателей и световых точек', 'electrical', 'Финишные электромонтажные точки', 'точка', 0.55, 1850, ['material' => 0.45, 'labor' => 0.53, 'machinery' => 0.02], 0.62, 'area'),
+            ],
+            'plumbing' => [
+                $this->template('Разводка водоснабжения и канализации', 'plumbing', 'Внутридомовые трубы и подключение приборов', 'точка', 0.16, 9200, ['material' => 0.58, 'labor' => 0.38, 'machinery' => 0.04], 0.62, 'area'),
+                $this->template('Устройство септика или локальной канализации', 'plumbing', 'Наружная канализация для дома', 'компл', 1, 260000, ['material' => 0.68, 'labor' => 0.2, 'machinery' => 0.12], 0.54, 'fixed'),
+                $this->template('Устройство скважины или колодца', 'plumbing', 'Источник водоснабжения', 'компл', 1, 230000, ['material' => 0.5, 'labor' => 0.18, 'machinery' => 0.32], 0.5, 'fixed'),
+            ],
+            'heating' => [
+                $this->template('Монтаж газового котла и обвязки', 'heating', 'Котельное оборудование и подключение', 'компл', 1, 185000, ['material' => 0.72, 'labor' => 0.25, 'machinery' => 0.03], 0.58, 'fixed'),
+                $this->template('Монтаж радиаторов отопления', 'heating', 'Радиаторы и арматура', 'шт', 0.08, 13500, ['material' => 0.7, 'labor' => 0.28, 'machinery' => 0.02], 0.62, 'area'),
+                $this->template('Разводка труб отопления', 'heating', 'Трубная разводка системы отопления', 'м', 1.2, 980, ['material' => 0.56, 'labor' => 0.42, 'machinery' => 0.02], 0.62, 'area'),
+            ],
+            'ventilation' => [
+                $this->template('Устройство естественной вентиляции', 'ventilation', 'Вентиляционные каналы и выводы', 'компл', 1, 65000, ['material' => 0.55, 'labor' => 0.4, 'machinery' => 0.05], 0.58, 'fixed'),
+                $this->template('Монтаж приточных клапанов', 'ventilation', 'Приточные клапаны в жилых помещениях', 'шт', 0.06, 4500, ['material' => 0.7, 'labor' => 0.28, 'machinery' => 0.02], 0.6, 'area'),
+            ],
+            'rough_finishing' => [
+                $this->template('Устройство стяжки пола', 'finishing', 'Черновое выравнивание пола', 'м2', 1, 1050, ['material' => 0.48, 'labor' => 0.45, 'machinery' => 0.07], 0.66, 'area'),
+                $this->template('Штукатурка внутренних стен', 'finishing', 'Черновая подготовка стен', 'м2', 2.2, 760, ['material' => 0.35, 'labor' => 0.6, 'machinery' => 0.05], 0.66, 'area'),
+            ],
+            'finish_finishing' => [
+                $this->template('Укладка ламината', 'finishing', 'Бюджетное напольное покрытие', 'м2', 0.65, 1550, ['material' => 0.64, 'labor' => 0.34, 'machinery' => 0.02], 0.58, 'area'),
+                $this->template('Укладка плитки в санузлах', 'finishing', 'Плиточные работы во влажных помещениях', 'м2', 0.18, 3200, ['material' => 0.55, 'labor' => 0.43, 'machinery' => 0.02], 0.55, 'area'),
+                $this->template('Оклейка обоев под покраску и окраска', 'finishing', 'Финишная отделка стен', 'м2', 1.8, 980, ['material' => 0.48, 'labor' => 0.5, 'machinery' => 0.02], 0.56, 'area'),
             ],
             'custom' => [
-                ['name' => 'Подготовительные строительные работы', 'category' => 'preparation', 'description' => 'Организация и подготовка фронта работ', 'unit' => 'компл', 'base_quantity' => 1, 'confidence' => 0.55],
-                ['name' => 'Основные строительные работы', 'category' => 'construction', 'description' => 'Исполнение основного объема блока', 'unit' => 'м2', 'base_quantity' => 50, 'confidence' => 0.58],
+                $this->template('Подготовительные строительные работы', 'preparation', 'Организация и подготовка фронта работ', 'компл', 1, 45000, ['material' => 0.25, 'labor' => 0.65, 'machinery' => 0.1], 0.5, 'fixed'),
             ],
         ];
 
         return $templates[$scopeType] ?? $templates['custom'];
+    }
+
+    /**
+     * @param array<string, float> $mix
+     * @return array<string, mixed>
+     */
+    private function template(
+        string $name,
+        string $category,
+        string $description,
+        string $unit,
+        float $baseQuantity,
+        float $fallbackUnitPrice,
+        array $mix,
+        float $confidence,
+        string $quantityMode
+    ): array {
+        return [
+            'name' => $name,
+            'category' => $category,
+            'description' => $description,
+            'unit' => $unit,
+            'base_quantity' => $baseQuantity,
+            'fallback_unit_price' => $fallbackUnitPrice,
+            'fallback_mix' => $mix,
+            'confidence' => $confidence,
+            'quantity_mode' => $quantityMode,
+        ];
     }
 }

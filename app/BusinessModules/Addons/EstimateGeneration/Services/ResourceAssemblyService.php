@@ -142,11 +142,14 @@ class ResourceAssemblyService
     {
         $flags = $workItem['validation_flags'] ?? [];
         $flags[] = 'normative_not_found';
+        if (($workItem['materials'] ?? []) !== [] || ($workItem['labor'] ?? []) !== [] || ($workItem['machinery'] ?? []) !== []) {
+            $flags[] = 'market_price_used';
+        }
 
-        $workItem['materials'] = [];
-        $workItem['labor'] = [];
-        $workItem['machinery'] = [];
-        $workItem['other_resources'] = [];
+        $workItem['materials'] = $workItem['materials'] ?? [];
+        $workItem['labor'] = $workItem['labor'] ?? [];
+        $workItem['machinery'] = $workItem['machinery'] ?? [];
+        $workItem['other_resources'] = $workItem['other_resources'] ?? [];
         $workItem['normative_match'] = [
             'status' => 'not_found',
         ];

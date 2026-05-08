@@ -38,6 +38,8 @@ class LaborPriceSpreadsheetParserTest extends TestCase
 
     public function test_parse_reads_fgiscs_worker_salary_xlsx_with_title_rows(): void
     {
+        ini_set('memory_limit', '512M');
+
         $filePath = tempnam(sys_get_temp_dir(), 'fgiscs-labor-prices-') . '.xlsx';
         $spreadsheet = new Spreadsheet();
         $sheet = $spreadsheet->getActiveSheet();

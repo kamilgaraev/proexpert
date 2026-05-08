@@ -17,6 +17,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingServic
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationExcelExportService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
@@ -35,6 +36,7 @@ class EstimateGenerationController extends Controller
         protected DocumentParsingService $documentParsingService,
         protected EstimateDraftPersistenceService $draftPersistenceService,
         protected EstimateGenerationExcelExportService $excelExportService,
+        protected EstimateGenerationRegionalContextResolver $regionalContextResolver,
     ) {}
 
     public function index(Request $request, Project $project): JsonResponse
@@ -63,6 +65,7 @@ class EstimateGenerationController extends Controller
     {
         try {
             $user = $request->user();
+            $validated = $request->validated();
 
             $session = EstimateGenerationSession::create([
                 'organization_id' => $user->current_organization_id,
@@ -71,8 +74,9 @@ class EstimateGenerationController extends Controller
                 'status' => 'created',
                 'processing_stage' => 'created',
                 'processing_progress' => 0,
-                'input_payload' => array_merge($request->validated(), [
-                    'parameters' => $request->validated('parameters', []),
+                'input_payload' => array_merge($validated, [
+                    'parameters' => $validated['parameters'] ?? [],
+                    'regional_context' => $this->regionalContextResolver->resolve($validated),
                 ]),
                 'problem_flags' => [],
             ]);

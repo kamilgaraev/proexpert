@@ -22,8 +22,12 @@ class EstimateDraftPersistenceService
         if (($draft['local_estimates'] ?? []) === []) {
             throw new \RuntimeException('Draft is empty.');
         }
+        if (($draft['quality_summary']['status'] ?? null) === 'critical') {
+            throw new \RuntimeException('Draft requires review before applying.');
+        }
 
         return DB::transaction(function () use ($session, $payload, $draft): Estimate {
+            $regionalContext = $draft['regional_context'] ?? $session->input_payload['regional_context'] ?? [];
             $estimate = Estimate::create([
                 'organization_id' => $session->organization_id,
                 'project_id' => $session->project_id,
@@ -34,10 +38,14 @@ class EstimateDraftPersistenceService
                 'status' => 'draft',
                 'estimate_date' => $payload['estimate_date'] ?? now()->toDateString(),
                 'calculation_method' => 'resource',
+                'estimate_regional_price_version_id' => $regionalContext['estimate_regional_price_version_id'] ?? null,
+                'regional_price_snapshot' => $regionalContext !== [] ? $regionalContext : null,
                 'metadata' => [
                     'is_ai_generated' => true,
                     'generation_session_id' => $session->id,
                     'draft_traceability' => $draft['traceability'] ?? [],
+                    'quality_summary' => $draft['quality_summary'] ?? null,
+                    'regional_context' => $regionalContext,
                 ],
                 'total_direct_costs' => $draft['totals']['total_cost'] ?? 0,
                 'total_amount' => $draft['totals']['total_cost'] ?? 0,
@@ -95,6 +103,7 @@ class EstimateDraftPersistenceService
                                 'normative_dataset' => $workItem['normative_dataset'] ?? null,
                                 'normative_match' => $workItem['normative_match'] ?? null,
                                 'normative_candidates' => $workItem['normative_candidates'] ?? [],
+                                'price_source' => $workItem['price_source'] ?? null,
                             ],
                         ]);
 
@@ -139,6 +148,7 @@ class EstimateDraftPersistenceService
                     'quantity_basis' => $resource['quantity_basis'] ?? null,
                     'quantity_per_unit' => $resource['quantity_per_unit'] ?? null,
                     'normative_ref' => $resource['normative_ref'] ?? null,
+                    'source' => $resource['source'] ?? null,
                 ],
             ]);
 
