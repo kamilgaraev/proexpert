@@ -27,6 +27,10 @@ class EstimateResourceClassifier
             return EstimateResourceType::SUMMARY->value;
         }
 
+        if ($this->isMachineLaborCode($code) || $this->looksLikeMachineLaborName($name)) {
+            return EstimateResourceType::MACHINE_LABOR->value;
+        }
+
         if ($this->isLaborCode($code) || $this->looksLikeLaborName($name)) {
             return EstimateResourceType::LABOR->value;
         }
@@ -49,6 +53,7 @@ class EstimateResourceClassifier
     private function fromDeclaredType(string $type): string
     {
         return match (true) {
+            str_contains($type, 'machine_labor') || str_contains($type, 'machinist') => EstimateResourceType::MACHINE_LABOR->value,
             str_contains($type, 'маш') || str_contains($type, 'механ') || $type === 'machine' => EstimateResourceType::MACHINE->value,
             str_contains($type, 'обор') || $type === 'equipment' => EstimateResourceType::EQUIPMENT->value,
             str_contains($type, 'труд') || str_contains($type, 'рабоч') || str_contains($type, 'инженер') || $type === 'labor' => EstimateResourceType::LABOR->value,
@@ -68,6 +73,11 @@ class EstimateResourceClassifier
         return preg_match('/^(?:1-100-\d+|2-100-\d+|3-\d{3}-\d+)$/', $code) === 1;
     }
 
+    private function isMachineLaborCode(string $code): bool
+    {
+        return preg_match('/^4-100-\d+$/', $code) === 1;
+    }
+
     private function isMachineCode(string $code): bool
     {
         return preg_match('/^9[0-9]\./', $code) === 1;
@@ -85,6 +95,13 @@ class EstimateResourceClassifier
             || str_contains($name, 'инженер')
             || str_contains($name, 'техник')
             || str_contains($name, 'чел.-ч');
+    }
+
+    private function looksLikeMachineLaborName(string $name): bool
+    {
+        return str_contains($name, 'машинист')
+            || str_contains($name, 'отм')
+            || str_contains($name, 'зтм');
     }
 
     private function looksLikeMachineName(string $name): bool

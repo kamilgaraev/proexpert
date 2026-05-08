@@ -14,6 +14,11 @@ final readonly class FsbcPriceDTO
         public ?float $basePrice = null,
         public ?string $resourceType = null,
         public ?array $rawData = null,
+        public ?float $salaryMach = null,
+        public ?float $priceCostWithoutSalary = null,
+        public ?float $labourMach = null,
+        public ?string $driverCode = null,
+        public ?string $machinistCategory = null,
     ) {
     }
 
@@ -27,6 +32,11 @@ final readonly class FsbcPriceDTO
             'base_price' => $this->basePrice,
             'resource_type' => $this->resourceType,
             'raw_data' => $this->rawData,
+            'salary_mach' => $this->salaryMach,
+            'price_cost_without_salary' => $this->priceCostWithoutSalary,
+            'labour_mach' => $this->labourMach,
+            'driver_code' => $this->driverCode,
+            'machinist_category' => $this->machinistCategory,
         ];
     }
 }

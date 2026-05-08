@@ -17,6 +17,7 @@ class EstimateResourceClassifierTest extends TestCase
         $this->assertSame(EstimateResourceType::SUMMARY->value, $classifier->classify('1', '1'));
         $this->assertSame(EstimateResourceType::LABOR->value, $classifier->classify('1-100-40', 'Средний разряд работы 4,0'));
         $this->assertSame(EstimateResourceType::LABOR->value, $classifier->classify('3-200-01', 'Инженер I категории'));
+        $this->assertSame(EstimateResourceType::MACHINE_LABOR->value, $classifier->classify('4-100-040', 'ОТм(ЗТм) Средний разряд машинистов 4'));
         $this->assertSame(EstimateResourceType::MACHINE->value, $classifier->classify('91.05.13-021', 'Автомобили бортовые'));
         $this->assertSame(EstimateResourceType::MATERIAL->value, $classifier->classify('01.1.01.01-0002', 'Детали фасонные'));
         $this->assertSame(EstimateResourceType::EQUIPMENT->value, $classifier->classify(null, 'Шкаф управления'));

@@ -26,7 +26,7 @@ class EstimateNormativeMatcher
     public function matchWorkItem(array $workItem, array $context = [], int $limit = 5): ?array
     {
         $version = $this->latestFsnbVersion();
-        $priceVersion = $this->latestPriceVersion();
+        $priceVersions = $this->latestPriceVersions();
 
         if ($version === null) {
             return null;
@@ -40,7 +40,7 @@ class EstimateNormativeMatcher
         }
 
         $ranked = $candidates
-            ->map(fn (EstimateNorm $norm): array => $this->scoreNorm($norm, $workItem, $context, $tokens, $priceVersion?->id))
+            ->map(fn (EstimateNorm $norm): array => $this->scoreNorm($norm, $workItem, $context, $tokens, $priceVersions))
             ->filter(static fn (array $candidate): bool => (float) $candidate['score'] > 0)
             ->sortByDesc('score')
             ->values()
@@ -56,10 +56,14 @@ class EstimateNormativeMatcher
                 'source_type' => $version->source_type->value,
                 'version_key' => $version->version_key,
             ],
-            'price_version' => $priceVersion !== null ? [
-                'source_type' => $priceVersion->source_type->value,
-                'version_key' => $priceVersion->version_key,
+            'price_version' => $priceVersions->first() !== null ? [
+                'source_type' => $priceVersions->first()->source_type->value,
+                'version_key' => $priceVersions->first()->version_key,
             ] : null,
+            'price_versions' => $priceVersions->map(static fn (EstimateDatasetVersion $version): array => [
+                'source_type' => $version->source_type->value,
+                'version_key' => $version->version_key,
+            ])->values()->all(),
             'selected' => $ranked[0],
             'candidates' => $ranked,
         ];
@@ -81,6 +85,11 @@ class EstimateNormativeMatcher
 
     public function latestPriceVersion(): ?EstimateDatasetVersion
     {
+        return $this->latestPriceVersions()->first();
+    }
+
+    public function latestPriceVersions(): Collection
+    {
         $fsbcVersion = EstimateDatasetVersion::query()
             ->where('source_type', EstimateSourceType::FSBC->value)
             ->where('status', EstimateImportStatus::PARSED->value)
@@ -88,16 +97,25 @@ class EstimateNormativeMatcher
             ->latest('id')
             ->first();
 
-        if ($fsbcVersion !== null) {
-            return $fsbcVersion;
+        $fallbackFsnbVersion = null;
+
+        if ($fsbcVersion === null) {
+            $fallbackFsnbVersion = EstimateDatasetVersion::query()
+                ->where('source_type', EstimateSourceType::FSNB_2022->value)
+                ->where('status', EstimateImportStatus::PARSED->value)
+                ->whereHas('resourcePrices')
+                ->latest('id')
+                ->first();
         }
 
-        return EstimateDatasetVersion::query()
-            ->where('source_type', EstimateSourceType::FSNB_2022->value)
+        $laborVersion = EstimateDatasetVersion::query()
+            ->where('source_type', EstimateSourceType::FGIS_LABOR_PRICES->value)
             ->where('status', EstimateImportStatus::PARSED->value)
             ->whereHas('resourcePrices')
             ->latest('id')
             ->first();
+
+        return collect([$fsbcVersion ?? $fallbackFsnbVersion, $laborVersion])->filter()->values();
     }
 
     /**
@@ -167,7 +185,7 @@ class EstimateNormativeMatcher
      * @param array<int, string> $tokens
      * @return array<string, mixed>
      */
-    private function scoreNorm(EstimateNorm $norm, array $workItem, array $context, array $tokens, ?int $priceVersionId): array
+    private function scoreNorm(EstimateNorm $norm, array $workItem, array $context, array $tokens, Collection $priceVersions): array
     {
         $name = mb_strtolower($norm->name);
         $section = mb_strtolower((string) ($norm->section_name ?? ''));
@@ -212,7 +230,7 @@ class EstimateNormativeMatcher
             $reasons[] = 'scope_collection';
         }
 
-        $resources = $this->resourcesForNorm($norm, $priceVersionId);
+        $resources = $this->resourcesForNorm($norm, $priceVersions);
         $resourceCount = count($resources['materials']) + count($resources['machinery']) + count($resources['labor']) + count($resources['other']);
         $pricedCount = $this->pricedResourcesCount($resources);
 
@@ -258,18 +276,20 @@ class EstimateNormativeMatcher
     /**
      * @return array{materials: array<int, array<string, mixed>>, machinery: array<int, array<string, mixed>>, labor: array<int, array<string, mixed>>, other: array<int, array<string, mixed>>}
      */
-    private function resourcesForNorm(EstimateNorm $norm, ?int $priceVersionId): array
+    private function resourcesForNorm(EstimateNorm $norm, Collection $priceVersions): array
     {
         $resources = EstimateNormResource::query()
             ->where('estimate_norm_id', $norm->id)
+            ->where('resource_type', '<>', EstimateResourceType::SUMMARY->value)
             ->orderBy('id')
             ->limit(120)
             ->get();
 
-        $prices = $priceVersionId !== null
+        $prices = $priceVersions->isNotEmpty()
             ? EstimateResourcePrice::query()
-                ->where('dataset_version_id', $priceVersionId)
+                ->whereIn('dataset_version_id', $priceVersions->pluck('id')->values()->all())
                 ->whereIn('resource_code', $resources->pluck('resource_code')->filter()->values()->all())
+                ->orderByDesc('dataset_version_id')
                 ->get()
                 ->groupBy('resource_code')
             : collect();
@@ -290,15 +310,16 @@ class EstimateNormativeMatcher
                 'resource_type' => $type,
                 'unit' => $resource->unit,
                 'quantity' => $resource->quantity !== null ? (float) $resource->quantity : null,
-                'unit_price' => $price?->base_price !== null ? (float) $price->base_price : 0.0,
-                'total_price' => $price?->base_price !== null && $resource->quantity !== null
-                    ? round((float) $price->base_price * (float) $resource->quantity, 2)
+                'unit_price' => $this->effectiveUnitPrice($price, $type),
+                'total_price' => $price !== null && $resource->quantity !== null
+                    ? round($this->effectiveUnitPrice($price, $type) * (float) $resource->quantity, 2)
                     : 0.0,
                 'price_source' => $price !== null && $price->datasetVersion !== null
                     ? $price->datasetVersion->source_type->value . '_base'
                     : null,
                 'price_id' => $price?->id,
                 'linked_resource_id' => $resource->construction_resource_id,
+                'pricing' => $this->pricePayload($price),
             ];
 
             if ($type === EstimateResourceType::MATERIAL->value || $type === EstimateResourceType::EQUIPMENT->value) {
@@ -308,10 +329,16 @@ class EstimateNormativeMatcher
 
             if ($type === EstimateResourceType::MACHINE->value) {
                 $grouped['machinery'][] = $payload;
+                $machineLabor = $this->machineLaborPayload($payload);
+
+                if ($machineLabor !== null) {
+                    $grouped['labor'][] = $machineLabor;
+                }
+
                 continue;
             }
 
-            if ($type === EstimateResourceType::LABOR->value) {
+            if ($type === EstimateResourceType::LABOR->value || $type === EstimateResourceType::MACHINE_LABOR->value) {
                 $grouped['labor'][] = $payload;
                 continue;
             }
@@ -382,6 +409,67 @@ class EstimateNormativeMatcher
         }) ?? $prices->first(function (EstimateResourcePrice $price) use ($preferredType): bool {
             return ($price->price_type?->value ?? $price->price_type) === $preferredType;
         }) ?? $prices->first();
+    }
+
+    private function effectiveUnitPrice(?EstimateResourcePrice $price, string $resourceType): float
+    {
+        if ($price === null) {
+            return 0.0;
+        }
+
+        if ($resourceType === EstimateResourceType::MACHINE->value && $price->machine_price_without_salary !== null) {
+            return (float) $price->machine_price_without_salary;
+        }
+
+        return $price->base_price !== null ? (float) $price->base_price : 0.0;
+    }
+
+    private function pricePayload(?EstimateResourcePrice $price): array
+    {
+        return [
+            'base_price' => $price?->base_price !== null ? (float) $price->base_price : 0.0,
+            'machine_salary_price' => $price?->machine_salary_price !== null ? (float) $price->machine_salary_price : null,
+            'machine_price_without_salary' => $price?->machine_price_without_salary !== null ? (float) $price->machine_price_without_salary : null,
+            'machine_labor_quantity' => $price?->machine_labor_quantity !== null ? (float) $price->machine_labor_quantity : null,
+            'driver_code' => $price?->driver_code,
+            'machinist_category' => $price?->machinist_category,
+            'source_price_kind' => $price?->source_price_kind,
+        ];
+    }
+
+    private function machineLaborPayload(array $machineResource): ?array
+    {
+        $pricing = $machineResource['pricing'] ?? [];
+        $driverCode = $pricing['driver_code'] ?? null;
+        $machinistCategory = $pricing['machinist_category'] ?? null;
+        $machineLaborQuantity = (float) ($pricing['machine_labor_quantity'] ?? 0);
+        $machineSalaryPrice = (float) ($pricing['machine_salary_price'] ?? 0);
+        $machineQuantity = $machineResource['quantity'] !== null ? (float) $machineResource['quantity'] : 0.0;
+
+        if ($driverCode === null || $machineLaborQuantity <= 0 || $machineSalaryPrice <= 0 || $machineQuantity <= 0) {
+            return null;
+        }
+
+        $quantity = round($machineQuantity * $machineLaborQuantity, 6);
+
+        return [
+            'code' => $driverCode,
+            'name' => trim('ОТм(ЗТм) Средний разряд машинистов ' . (string) $machinistCategory),
+            'resource_type' => EstimateResourceType::MACHINE_LABOR->value,
+            'unit' => 'чел.-ч',
+            'quantity' => $quantity,
+            'unit_price' => $machineSalaryPrice,
+            'total_price' => round($quantity * $machineSalaryPrice, 2),
+            'price_source' => $machineResource['price_source'] ?? null,
+            'price_id' => null,
+            'linked_resource_id' => null,
+            'pricing' => [
+                'base_price' => $machineSalaryPrice,
+                'driver_code' => $driverCode,
+                'machinist_category' => $machinistCategory,
+                'source_price_kind' => 'fsbc_machine_salary',
+            ],
+        ];
     }
 
     /**

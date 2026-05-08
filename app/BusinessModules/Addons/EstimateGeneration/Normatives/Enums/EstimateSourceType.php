@@ -9,4 +9,5 @@ enum EstimateSourceType: string
     case FSNB_2022 = 'fsnb_2022';
     case KSR = 'ksr';
     case FSBC = 'fsbc';
+    case FGIS_LABOR_PRICES = 'fgis_labor_prices';
 }

@@ -73,6 +73,11 @@ class EstimateNormativeCatalogServiceTest extends TestCase
         $this->assertSame('01.1.01.01-0001', $resource->normative_rate_code);
         $this->assertSame(3.0, (float) $resource->quantity);
         $this->assertSame(3000.0, (float) $resource->total_amount);
+        $this->assertSame(1, EstimateItem::query()->where('parent_work_id', $work->id)->count());
+        $this->assertDatabaseMissing('estimate_items', [
+            'parent_work_id' => $work->id,
+            'name' => '2',
+        ]);
     }
 
     public function test_add_items_uses_prices_from_fsnb_version_when_separate_fsbc_version_is_absent(): void
@@ -115,6 +120,101 @@ class EstimateNormativeCatalogServiceTest extends TestCase
         $this->assertSame('fsnb_2022', $work->metadata['price_dataset']['source_type']);
     }
 
+    public function test_add_items_splits_machine_price_and_machinist_labor_from_fsbc_price(): void
+    {
+        $fsnbVersionId = $this->createVersion('fsnb_2022', '2026-05-07');
+        $fsbcVersionId = $this->createVersion('fsbc', '2026-05-07');
+        $collectionId = $this->createCollection($fsnbVersionId);
+        $sectionId = $this->createSection($collectionId);
+        $normId = $this->createNorm($collectionId, $sectionId);
+
+        DB::table('estimate_norm_resources')->insert([
+            [
+                'estimate_norm_id' => $normId,
+                'construction_resource_id' => null,
+                'resource_code' => '2',
+                'resource_name' => 'ЭМ',
+                'unit' => null,
+                'quantity' => 0,
+                'resource_type' => 'summary',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'estimate_norm_id' => $normId,
+                'construction_resource_id' => null,
+                'resource_code' => '91.14.02-001',
+                'resource_name' => 'Автомобили бортовые, грузоподъемность до 5 т',
+                'unit' => 'маш.-ч',
+                'quantity' => 0.01,
+                'resource_type' => 'machine',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        ]);
+
+        DB::table('estimate_resource_prices')->insert([
+            'dataset_version_id' => $fsbcVersionId,
+            'construction_resource_id' => null,
+            'resource_code' => '91.14.02-001',
+            'resource_name' => 'Автомобили бортовые, грузоподъемность до 5 т',
+            'unit' => 'маш.-ч',
+            'base_price' => 814.35,
+            'machine_salary_price' => 336.43,
+            'machine_price_without_salary' => 477.92,
+            'machine_labor_quantity' => 1,
+            'driver_code' => '4-100-040',
+            'machinist_category' => '4.0',
+            'price_type' => 'machine',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $estimate = Estimate::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'number' => 'T-3',
+            'name' => 'Смета',
+            'type' => 'local',
+            'status' => 'draft',
+            'estimate_date' => now()->toDateString(),
+            'calculation_method' => 'resource',
+        ]);
+
+        $calculationService = Mockery::mock(EstimateCalculationService::class);
+        $calculationService->shouldReceive('calculateItemTotal')->andReturn(0.0);
+        $calculationService->shouldReceive('calculateEstimateTotal')->andReturn([]);
+        $service = new EstimateNormativeCatalogService(app(EstimateItemRepository::class), $calculationService);
+
+        $service->addItemsFromNormatives($estimate, [[
+            'estimate_norm_id' => $normId,
+            'quantity' => 1,
+            'position_number' => '1',
+        ]]);
+
+        $work = EstimateItem::query()
+            ->where('estimate_id', $estimate->id)
+            ->where('item_type', EstimatePositionItemType::WORK->value)
+            ->firstOrFail();
+        $children = EstimateItem::query()
+            ->where('parent_work_id', $work->id)
+            ->orderBy('position_number')
+            ->get();
+
+        $this->assertCount(2, $children);
+        $this->assertSame('91.14.02-001', $children[0]->normative_rate_code);
+        $this->assertSame(477.92, (float) $children[0]->unit_price);
+        $this->assertSame(4.78, (float) $children[0]->total_amount);
+        $this->assertSame('4-100-040', $children[1]->normative_rate_code);
+        $this->assertSame(EstimatePositionItemType::LABOR->value, $children[1]->item_type->value);
+        $this->assertSame(0.01, (float) $children[1]->quantity);
+        $this->assertSame(336.43, (float) $children[1]->unit_price);
+        $this->assertSame(3.36, (float) $children[1]->total_amount);
+        $this->assertSame(8.14, (float) $work->direct_costs);
+    }
+
     private function seedNormative(bool $separatePriceVersion = true): array
     {
         $fsnbVersionId = $this->createVersion('fsnb_2022', '2026-05-07');
@@ -126,15 +226,28 @@ class EstimateNormativeCatalogServiceTest extends TestCase
         $normId = $this->createNorm($collectionId, $sectionId);
 
         DB::table('estimate_norm_resources')->insert([
-            'estimate_norm_id' => $normId,
-            'construction_resource_id' => null,
-            'resource_code' => '01.1.01.01-0001',
-            'resource_name' => 'Бетон тяжелый',
-            'unit' => 'м3',
-            'quantity' => 1.5,
-            'resource_type' => 'material',
-            'created_at' => now(),
-            'updated_at' => now(),
+            [
+                'estimate_norm_id' => $normId,
+                'construction_resource_id' => null,
+                'resource_code' => '2',
+                'resource_name' => 'М',
+                'unit' => null,
+                'quantity' => 0,
+                'resource_type' => 'summary',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'estimate_norm_id' => $normId,
+                'construction_resource_id' => null,
+                'resource_code' => '01.1.01.01-0001',
+                'resource_name' => 'Бетон тяжелый',
+                'unit' => 'м3',
+                'quantity' => 1.5,
+                'resource_type' => 'material',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
         ]);
 
         DB::table('estimate_resource_prices')->insert([

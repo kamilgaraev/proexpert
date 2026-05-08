@@ -79,6 +79,8 @@ final class FsbcXmlParser
             return null;
         }
 
+        $priceNode = $this->firstPriceNode($node);
+
         return new FsbcPriceDTO(
             collectionType: $collectionType,
             code: $code,
@@ -92,6 +94,11 @@ final class FsbcXmlParser
                 'attributes' => $this->attributesToArray($node),
                 'price_attributes' => $this->priceAttributes($node),
             ],
+            salaryMach: $priceNode !== null ? $this->toFloat($this->firstValue($priceNode, ['salarymach'])) : null,
+            priceCostWithoutSalary: $priceNode !== null ? $this->toFloat($this->firstValue($priceNode, ['pricecostwithoutsalary'])) : null,
+            labourMach: $priceNode !== null ? $this->toFloat($this->firstValue($priceNode, ['labourmach'])) : null,
+            driverCode: $priceNode !== null ? $this->firstValue($priceNode, ['drivercode']) : null,
+            machinistCategory: $priceNode !== null ? $this->firstValue($priceNode, ['machinistcategory']) : null,
         );
     }
 

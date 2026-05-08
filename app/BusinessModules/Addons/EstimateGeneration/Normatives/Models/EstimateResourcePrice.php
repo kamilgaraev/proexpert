@@ -19,7 +19,13 @@ class EstimateResourcePrice extends Model
         'resource_name',
         'unit',
         'base_price',
+        'machine_salary_price',
+        'machine_price_without_salary',
+        'machine_labor_quantity',
+        'driver_code',
+        'machinist_category',
         'price_type',
+        'source_price_kind',
         'raw_payload',
     ];
 
@@ -27,6 +33,9 @@ class EstimateResourcePrice extends Model
         'dataset_version_id' => 'integer',
         'construction_resource_id' => 'integer',
         'base_price' => 'decimal:4',
+        'machine_salary_price' => 'decimal:4',
+        'machine_price_without_salary' => 'decimal:4',
+        'machine_labor_quantity' => 'decimal:6',
         'price_type' => EstimateResourceType::class,
         'raw_payload' => 'array',
     ];

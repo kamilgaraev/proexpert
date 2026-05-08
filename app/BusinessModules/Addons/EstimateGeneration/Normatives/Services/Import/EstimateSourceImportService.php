@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTOs\FsbcPriceDTO;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTOs\FsnbNormDTO;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTOs\FsnbNormResourceDTO;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTOs\KsrResourceDTO;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTOs\LaborPriceDTO;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\EstimateImportStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\EstimateNormType;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\EstimateResourceType;
@@ -32,6 +33,7 @@ class EstimateSourceImportService
         private readonly KsrCsvParser $ksrCsvParser,
         private readonly FsnbXmlParser $fsnbXmlParser,
         private readonly FsbcXmlParser $fsbcXmlParser,
+        private readonly LaborPriceSpreadsheetParser $laborPriceSpreadsheetParser,
         private readonly EstimateResourceClassifier $resourceClassifier,
     ) {}
 
@@ -103,13 +105,17 @@ class EstimateSourceImportService
     {
         $extension = mb_strtolower(pathinfo($fileKey, PATHINFO_EXTENSION));
 
-        if (!in_array($extension, ['csv', 'xml'], true)) {
+        if (!in_array($extension, ['csv', 'xml', 'xlsx', 'xls'], true)) {
             return ['rows_read' => 0, 'rows_imported' => 0, 'errors_count' => 0];
         }
 
         $localPath = $this->copySourceToTemporaryFile($bucket, $fileKey);
 
         try {
+            if ($sourceType === EstimateSourceType::FGIS_LABOR_PRICES->value) {
+                return $this->importLaborPricesFile($datasetVersion, $localPath, $fileKey, $progress);
+            }
+
             if ($sourceType === EstimateSourceType::KSR->value || $extension === 'csv') {
                 return $this->importKsrFile($datasetVersion, $localPath, $fileKey, $progress);
             }
@@ -285,9 +291,71 @@ class EstimateSourceImportService
                         'resource_name' => $price->name,
                         'unit' => $price->unit,
                         'base_price' => $price->basePrice ?? 0,
+                        'machine_salary_price' => $price->salaryMach,
+                        'machine_price_without_salary' => $price->priceCostWithoutSalary,
+                        'machine_labor_quantity' => $price->labourMach,
+                        'driver_code' => $price->driverCode,
+                        'machinist_category' => $price->machinistCategory,
+                        'source_price_kind' => $price->collectionType,
                         'raw_payload' => $price->rawData,
                     ]
                 );
+                $rowsImported++;
+                $this->reportRowsProgress($progress, $fileKey, $rowsRead, $rowsImported, $errorsCount);
+            } catch (Throwable $exception) {
+                $errorsCount++;
+                $this->recordImportError($datasetVersion, $fileKey, 'error', $exception->getMessage(), $rowsRead, [
+                    'price' => $price->toArray(),
+                ]);
+            }
+        }
+
+        return [
+            'rows_read' => $rowsRead,
+            'rows_imported' => $rowsImported,
+            'errors_count' => $errorsCount,
+        ];
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    private function importLaborPricesFile(
+        EstimateDatasetVersion $datasetVersion,
+        string $localPath,
+        string $fileKey,
+        ?callable $progress = null
+    ): array {
+        $rowsRead = 0;
+        $rowsImported = 0;
+        $errorsCount = 0;
+
+        foreach ($this->laborPriceSpreadsheetParser->parse($localPath) as $price) {
+            $rowsRead++;
+
+            if (!$price instanceof LaborPriceDTO) {
+                continue;
+            }
+
+            try {
+                $resourceCode = $this->normalizeCode($price->code);
+
+                EstimateResourcePrice::query()->updateOrCreate(
+                    [
+                        'dataset_version_id' => $datasetVersion->id,
+                        'resource_code' => $resourceCode,
+                        'price_type' => $price->resourceType,
+                    ],
+                    [
+                        'construction_resource_id' => $this->findConstructionResourceId($resourceCode),
+                        'resource_name' => $price->name,
+                        'unit' => $price->unit,
+                        'base_price' => $price->basePrice,
+                        'source_price_kind' => EstimateSourceType::FGIS_LABOR_PRICES->value,
+                        'raw_payload' => $price->rawData,
+                    ]
+                );
+
                 $rowsImported++;
                 $this->reportRowsProgress($progress, $fileKey, $rowsRead, $rowsImported, $errorsCount);
             } catch (Throwable $exception) {

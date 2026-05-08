@@ -94,7 +94,12 @@ class EstimateItemResource extends JsonResource
             'resources' => EstimateItemResourceResource::collection($this->whenLoaded('resources')),
             'works' => EstimateItemWorkResource::collection($this->whenLoaded('works')),
             'totals' => EstimateItemTotalResource::collection($this->whenLoaded('totals')),
-            'children' => EstimateItemResource::collection($this->whenLoaded('childItems')),
+            'children' => EstimateItemResource::collection($this->whenLoaded(
+                'childItems',
+                fn () => $this->childItems
+                    ->reject(fn (EstimateItem $item): bool => ($item->metadata['normative_ref']['resource_type'] ?? null) === 'summary')
+                    ->values()
+            )),
         ];
     }
 }
