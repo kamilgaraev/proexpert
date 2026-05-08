@@ -62,6 +62,30 @@ class EstimateGenerationQueueTest extends TestCase
         $this->assertLessThanOrEqual(500, mb_strlen($session->last_error));
     }
 
+    public function test_status_returns_lightweight_generation_state(): void
+    {
+        [$user, $project, $session] = $this->makeGenerationSession('processing');
+        $session->forceFill([
+            'processing_stage' => 'draft_generation',
+            'processing_progress' => 45,
+        ])->save();
+
+        $request = Request::create('/status', 'GET');
+        $request->setUserResolver(static fn (): User => $user);
+
+        $response = app(EstimateGenerationController::class)->status($request, $project, $session);
+        $payload = json_decode($response->getContent(), true, 512, JSON_THROW_ON_ERROR);
+
+        $this->assertTrue($payload['success']);
+        $this->assertSame($session->id, $payload['data']['id']);
+        $this->assertSame('processing', $payload['data']['status']);
+        $this->assertSame('draft_generation', $payload['data']['processing_stage']);
+        $this->assertSame(45, $payload['data']['processing_progress']);
+        $this->assertArrayNotHasKey('input', $payload['data']);
+        $this->assertArrayNotHasKey('analysis', $payload['data']);
+        $this->assertArrayNotHasKey('draft_payload', $payload['data']);
+    }
+
     /**
      * @return array{0: User, 1: Project, 2: EstimateGenerationSession}
      */

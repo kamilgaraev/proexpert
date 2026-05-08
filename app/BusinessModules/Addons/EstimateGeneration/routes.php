@@ -23,6 +23,7 @@ Route::middleware([
         Route::post('/{session}/documents', [EstimateGenerationController::class, 'uploadDocuments'])->name('documents.store');
         Route::post('/{session}/analyze', [EstimateGenerationController::class, 'analyze'])->name('analyze');
         Route::post('/{session}/generate', [EstimateGenerationController::class, 'generate'])->name('generate');
+        Route::get('/{session}/status', [EstimateGenerationController::class, 'status'])->name('status');
         Route::get('/{session}', [EstimateGenerationController::class, 'show'])->name('show');
         Route::get('/{session}/draft', [EstimateGenerationController::class, 'draft'])->name('draft');
         Route::get('/{session}/export', [EstimateGenerationController::class, 'export'])->name('export');

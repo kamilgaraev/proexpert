@@ -183,6 +183,21 @@ class EstimateGenerationController extends Controller
         return AdminResponse::success((new EstimateGenerationSessionResource($session->load('documents')))->resolve());
     }
 
+    public function status(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
+    {
+        $this->guardSession($request, $project, $session);
+
+        return AdminResponse::success([
+            'id' => $session->id,
+            'status' => $session->status,
+            'processing_stage' => $session->processing_stage,
+            'processing_progress' => $session->processing_progress,
+            'problem_flags_count' => count($session->problem_flags ?? []),
+            'last_error' => $session->last_error,
+            'updated_at' => $session->updated_at?->toISOString(),
+        ]);
+    }
+
     public function draft(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
     {
         $this->guardSession($request, $project, $session);
