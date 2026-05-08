@@ -134,9 +134,10 @@ final class EnterpriseConstructorCheckoutControllerTest extends TestCase
 
     private function createEnterprisePlan(): SubscriptionPlan
     {
-        return SubscriptionPlan::query()->create([
+        return SubscriptionPlan::query()->updateOrCreate(
+            ['slug' => 'enterprise'],
+            [
             'name' => 'Enterprise Конструктор',
-            'slug' => 'enterprise',
             'description' => 'Конструктор для крупных команд',
             'price' => 99000,
             'currency' => 'RUB',
@@ -150,7 +151,8 @@ final class EnterpriseConstructorCheckoutControllerTest extends TestCase
             'included_packages' => [],
             'is_active' => true,
             'display_order' => 50,
-        ]);
+            ]
+        );
     }
 
     private function createOrganizationWithOwner(): array
