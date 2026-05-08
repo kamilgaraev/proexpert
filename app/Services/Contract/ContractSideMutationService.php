@@ -109,6 +109,7 @@ class ContractSideMutationService
 
             $this->logging->business('contract.created', [
                 'organization_id' => $targetOrganizationId,
+                'project_id' => $contract->project_id ?? $contractDTO->project_id,
                 'contract_id' => $contract->id,
                 'contract_number' => $contract->number,
                 'contractor_id' => $contract->contractor_id,
@@ -119,6 +120,7 @@ class ContractSideMutationService
 
             $this->logging->audit('contract.created', [
                 'organization_id' => $targetOrganizationId,
+                'project_id' => $contract->project_id ?? $contractDTO->project_id,
                 'contract_id' => $contract->id,
                 'contract_number' => $contract->number,
                 'transaction_type' => 'contract_created',
@@ -199,6 +201,7 @@ class ContractSideMutationService
 
             $this->logging->audit('contract.updated', [
                 'organization_id' => $targetOrganizationId,
+                'project_id' => $contract->project_id ?? $contractDTO->project_id,
                 'contract_id' => $contractId,
                 'contract_number' => $contract->number,
                 'transaction_type' => 'contract_updated',
@@ -243,8 +246,8 @@ class ContractSideMutationService
             subject: $contract->subject,
             work_type_category: $contract->work_type_category,
             payment_terms: $contract->payment_terms,
-            base_amount: $contract->base_amount,
-            total_amount: $contract->total_amount,
+            base_amount: $contract->base_amount !== null ? (float) $contract->base_amount : null,
+            total_amount: $contract->total_amount !== null ? (float) $contract->total_amount : null,
             gp_percentage: $contract->gp_percentage !== null ? (float) $contract->gp_percentage : null,
             gp_calculation_type: $contract->gp_calculation_type,
             gp_coefficient: $contract->gp_coefficient !== null ? (float) $contract->gp_coefficient : null,
@@ -289,6 +292,7 @@ class ContractSideMutationService
 
         $this->logging->business('contract.side_review.resolved', [
             'organization_id' => $targetOrganizationId,
+            'project_id' => $contract->project_id,
             'contract_id' => $contract->id,
             'contract_number' => $contract->number,
             'old_contract_side_type' => $previousSide,
@@ -298,6 +302,7 @@ class ContractSideMutationService
 
         $this->logging->audit('contract.side_review.resolved', [
             'organization_id' => $targetOrganizationId,
+            'project_id' => $contract->project_id,
             'contract_id' => $contract->id,
             'contract_number' => $contract->number,
             'transaction_type' => 'contract_side_review_resolved',

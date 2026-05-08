@@ -10,6 +10,7 @@ use App\Http\Resources\Api\V1\Schedule\ScheduleTaskResource;
 use App\Http\Responses\AdminResponse;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
+use App\Services\Logging\LoggingService;
 use App\Services\Schedule\ScheduleTaskMutationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -21,6 +22,7 @@ class ScheduleTaskController extends Controller
 {
     public function __construct(
         protected ScheduleTaskMutationService $scheduleTaskMutationService,
+        protected LoggingService $logging,
     ) {
     }
 
@@ -44,6 +46,7 @@ class ScheduleTaskController extends Controller
             }
 
             $result = $this->scheduleTaskMutationService->updateTask($scheduleModel, $taskModel, $request->validated());
+            $this->recordScheduleTaskAudit('schedule_task.updated', $scheduleModel, $result['task'], $request);
 
             return AdminResponse::success([
                 'task' => new ScheduleTaskResource($result['task']),
@@ -88,6 +91,7 @@ class ScheduleTaskController extends Controller
 
             $scheduleModel->update(['critical_path_calculated' => false]);
             $scheduleModel->recalculateProgress();
+            $this->recordScheduleTaskAudit('schedule_task.deleted', $scheduleModel, $taskModel, $request);
 
             return AdminResponse::success(null, trans_message('schedule_management.task_deleted'));
         } catch (\Throwable $e) {
@@ -143,5 +147,22 @@ class ScheduleTaskController extends Controller
 
             return AdminResponse::error(trans_message('schedule_management.task_load_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    private function recordScheduleTaskAudit(
+        string $event,
+        ProjectSchedule $schedule,
+        ScheduleTask $task,
+        Request $request
+    ): void {
+        $this->logging->audit($event, [
+            'organization_id' => $task->organization_id ?? $schedule->organization_id,
+            'project_id' => $schedule->project_id,
+            'schedule_id' => $schedule->id,
+            'schedule_name' => $schedule->name,
+            'task_id' => $task->id,
+            'task_name' => $task->name,
+            'performed_by' => $request->user()?->id,
+        ]);
     }
 }

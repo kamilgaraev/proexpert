@@ -2,11 +2,13 @@
 
 namespace App\Services\Logging;
 
+use App\Services\Activity\ActivityAuditBridge;
 use App\Services\Logging\Context\RequestContext;
 use App\Services\Logging\Context\UserContext;
 use App\Services\Logging\Context\PerformanceContext;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Throwable;
 
 class LoggingService
 {
@@ -67,6 +69,7 @@ class LoggingService
     public function audit(string $event, array $context = []): void
     {
         $this->auditLogger->log($event, $context);
+        $this->recordUserActivity($event, $context);
     }
 
     /**
@@ -186,5 +189,14 @@ class LoggingService
             'metadata' => $this->requestContext->getMetadata(),
             'performance' => $this->performanceContext->getMetrics()
         ];
+    }
+
+    private function recordUserActivity(string $event, array $context): void
+    {
+        try {
+            app(ActivityAuditBridge::class)->record($event, $context);
+        } catch (Throwable) {
+            return;
+        }
     }
 }

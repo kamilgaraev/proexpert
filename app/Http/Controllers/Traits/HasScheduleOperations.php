@@ -17,6 +17,7 @@ use App\Http\Resources\Api\V1\Schedule\ScheduleTaskResource;
 use App\Http\Responses\AdminResponse;
 use App\Models\ScheduleTask;
 use App\Models\TaskDependency;
+use App\Services\Logging\LoggingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -97,6 +98,13 @@ trait HasScheduleOperations
                 'critical_path_calculated' => true,
                 'critical_path_duration_days' => $criticalPath['duration'],
             ]);
+            $this->recordScheduleOperationAudit('project_schedule.critical_path_calculated', [
+                'organization_id' => $schedule->organization_id,
+                'project_id' => $schedule->project_id,
+                'schedule_id' => $schedule->id,
+                'schedule_name' => $schedule->name,
+                'performed_by' => request()->user()?->id,
+            ]);
 
             return AdminResponse::success(
                 $criticalPath,
@@ -126,6 +134,13 @@ trait HasScheduleOperations
 
         try {
             $this->scheduleRepository->saveBaseline($schedule->id, $request->user()->id);
+            $this->recordScheduleOperationAudit('project_schedule.baseline_saved', [
+                'organization_id' => $schedule->organization_id,
+                'project_id' => $schedule->project_id,
+                'schedule_id' => $schedule->id,
+                'schedule_name' => $schedule->name,
+                'performed_by' => $request->user()?->id,
+            ]);
 
             return AdminResponse::success(null, trans_message('schedule_management.baseline_saved'));
         } catch (\Throwable $e) {
@@ -145,6 +160,13 @@ trait HasScheduleOperations
 
         try {
             $this->scheduleRepository->clearBaseline($schedule->id);
+            $this->recordScheduleOperationAudit('project_schedule.baseline_cleared', [
+                'organization_id' => $schedule->organization_id,
+                'project_id' => $schedule->project_id,
+                'schedule_id' => $schedule->id,
+                'schedule_name' => $schedule->name,
+                'performed_by' => request()->user()?->id,
+            ]);
 
             return AdminResponse::success(null, trans_message('schedule_management.baseline_cleared'));
         } catch (\Throwable $e) {
@@ -228,6 +250,15 @@ trait HasScheduleOperations
             }
 
             $task->load(['assignedUser', 'workType', 'parentTask', 'intervals']);
+            $this->recordScheduleOperationAudit('schedule_task.created', [
+                'organization_id' => $organizationId,
+                'project_id' => $schedule->project_id,
+                'schedule_id' => $schedule->id,
+                'schedule_name' => $schedule->name,
+                'task_id' => $task->id,
+                'task_name' => $task->name,
+                'performed_by' => $request->user()?->id,
+            ]);
 
             return AdminResponse::success(
                 new ScheduleTaskResource($task),
@@ -284,6 +315,15 @@ trait HasScheduleOperations
         try {
             $dependency = TaskDependency::create($data);
             $dependency->load(['predecessorTask', 'successorTask', 'createdBy']);
+            $this->recordScheduleOperationAudit('schedule_dependency.created', [
+                'organization_id' => $organizationId,
+                'project_id' => $schedule->project_id,
+                'schedule_id' => $schedule->id,
+                'schedule_name' => $schedule->name,
+                'dependency_id' => $dependency->id,
+                'dependency_type' => $dependency->dependency_type->value,
+                'performed_by' => $request->user()?->id,
+            ]);
 
             return AdminResponse::success([
                 'id' => $dependency->id,
@@ -367,6 +407,15 @@ trait HasScheduleOperations
             $dependency->update($data);
             $schedule->update(['critical_path_calculated' => false]);
             $dependency->load(['predecessorTask', 'successorTask', 'createdBy']);
+            $this->recordScheduleOperationAudit('schedule_dependency.updated', [
+                'organization_id' => $organizationId,
+                'project_id' => $schedule->project_id,
+                'schedule_id' => $schedule->id,
+                'schedule_name' => $schedule->name,
+                'dependency_id' => $dependency->id,
+                'dependency_type' => $dependency->dependency_type->value,
+                'performed_by' => $request->user()?->id,
+            ]);
 
             return AdminResponse::success([
                 'id' => $dependency->id,
@@ -434,8 +483,18 @@ trait HasScheduleOperations
         }
 
         try {
+            $dependencyType = $dependency->dependency_type?->value;
             $dependency->delete();
             $schedule->update(['critical_path_calculated' => false]);
+            $this->recordScheduleOperationAudit('schedule_dependency.deleted', [
+                'organization_id' => $dependency->organization_id,
+                'project_id' => $schedule->project_id,
+                'schedule_id' => $schedule->id,
+                'schedule_name' => $schedule->name,
+                'dependency_id' => $dependency->id,
+                'dependency_type' => $dependencyType,
+                'performed_by' => request()->user()?->id,
+            ]);
 
             return AdminResponse::success(null, trans_message('schedule_management.dependency_deleted'));
         } catch (\Throwable $e) {
@@ -499,5 +558,10 @@ trait HasScheduleOperations
 
             return AdminResponse::error(trans_message('schedule_management.resource_conflicts_details_error'), 500);
         }
+    }
+
+    private function recordScheduleOperationAudit(string $event, array $context): void
+    {
+        app(LoggingService::class)->audit($event, $context);
     }
 }

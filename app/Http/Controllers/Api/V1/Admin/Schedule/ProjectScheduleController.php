@@ -19,6 +19,7 @@ use App\Http\Resources\Api\V1\Schedule\ProjectScheduleResource;
 use App\Http\Resources\Api\V1\Schedule\ScheduleGanttResource;
 use App\Http\Responses\AdminResponse;
 use App\Repositories\Interfaces\ProjectScheduleRepositoryInterface;
+use App\Services\Logging\LoggingService;
 use App\Services\Schedule\CriticalPathService;
 use App\Services\Schedule\GanttExcelExportService;
 use Illuminate\Http\JsonResponse;
@@ -37,7 +38,8 @@ class ProjectScheduleController extends Controller
 
     public function __construct(
         protected ProjectScheduleRepositoryInterface $scheduleRepository,
-        protected CriticalPathService $criticalPathService
+        protected CriticalPathService $criticalPathService,
+        protected LoggingService $logging
     ) {
     }
 
@@ -84,6 +86,7 @@ class ProjectScheduleController extends Controller
             $data['critical_path_calculated'] = false;
 
             $schedule = $this->scheduleRepository->create($data);
+            $this->recordScheduleAudit('project_schedule.created', $schedule, $request);
 
             return AdminResponse::success(
                 new ProjectScheduleResource($schedule->load(['project', 'createdBy'])),
@@ -137,6 +140,7 @@ class ProjectScheduleController extends Controller
 
             $this->scheduleRepository->update($scheduleModel->id, $data);
             $scheduleModel = $this->scheduleRepository->findForProject($scheduleModel->id, $project);
+            $this->recordScheduleAudit('project_schedule.updated', $scheduleModel, $request);
 
             return AdminResponse::success(
                 new ProjectScheduleResource($scheduleModel->load(['project', 'createdBy'])),
@@ -147,9 +151,10 @@ class ProjectScheduleController extends Controller
 
     public function destroy(Request $request, int $project, int $schedule): JsonResponse
     {
-        return $this->runAction('destroy', $request, function () use ($project, $schedule) {
+        return $this->runAction('destroy', $request, function () use ($request, $project, $schedule) {
             $scheduleModel = $this->findProjectScheduleOrFail($project, $schedule);
             $this->scheduleRepository->delete($scheduleModel->id);
+            $this->recordScheduleAudit('project_schedule.deleted', $scheduleModel, $request);
 
             return AdminResponse::success(null, trans_message('schedule_management.schedule_deleted'));
         });
@@ -281,6 +286,7 @@ class ProjectScheduleController extends Controller
         $scheduleModel = $this->findProjectScheduleOrFail($project, $schedule);
         $exportService = app(GanttExcelExportService::class);
         $filePath = $exportService->export($scheduleModel);
+        $this->recordScheduleAudit('project_schedule.exported', $scheduleModel, $request);
         $filename = 'График_' . preg_replace('/[^a-zA-Z0-9А-Яа-я_-]/u', '_', $scheduleModel->name)
             . '_' . now()->format('Y-m-d') . '.xlsx';
 
@@ -384,5 +390,16 @@ class ProjectScheduleController extends Controller
             'resourceConflicts' => trans_message('schedule_management.resource_conflicts_details_error'),
             default => trans_message('schedule_management.schedule_load_error'),
         };
+    }
+
+    private function recordScheduleAudit(string $event, object $schedule, Request $request): void
+    {
+        $this->logging->audit($event, [
+            'organization_id' => $this->getOrganizationId($request),
+            'project_id' => $schedule->project_id ?? $request->route('project'),
+            'schedule_id' => $schedule->id,
+            'schedule_name' => $schedule->name ?? null,
+            'performed_by' => $request->user()?->id,
+        ]);
     }
 }

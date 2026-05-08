@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BudgetEstimates\Services;
 
+use BackedEnum;
 use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
 use App\Enums\ConstructionJournal\JournalStatusEnum;
 use App\Models\ConstructionJournal;
@@ -18,9 +19,11 @@ use App\Models\ScheduleTask;
 use App\Models\User;
 use App\Models\WorkType;
 use App\Services\CompletedWork\CompletedWorkFactService;
+use App\Services\Logging\LoggingService;
 use Carbon\Carbon;
 use DomainException;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
 class ConstructionJournalService
@@ -28,6 +31,7 @@ class ConstructionJournalService
     public function __construct(
         private readonly CompletedWorkFactService $completedWorkFactService,
         private readonly JournalContractCoverageService $journalContractCoverageService,
+        private readonly LoggingService $logging,
     ) {
     }
 
@@ -48,7 +52,10 @@ class ConstructionJournalService
                 'created_by_user_id' => $user->id,
             ]);
 
-            return $journal->load(['project', 'contract', 'createdBy']);
+            $journal->load(['project', 'contract', 'createdBy']);
+            $this->recordJournalAudit('construction_journal.created', $journal, $user);
+
+            return $journal;
         });
     }
 
@@ -60,12 +67,20 @@ class ConstructionJournalService
 
         $journal->update($data);
 
-        return $journal->fresh(['project', 'contract', 'createdBy']);
+        $journal = $journal->fresh(['project', 'contract', 'createdBy']);
+        $this->recordJournalAudit('construction_journal.updated', $journal);
+
+        return $journal;
     }
 
     public function deleteJournal(ConstructionJournal $journal): bool
     {
-        return DB::transaction(fn (): bool => (bool) $journal->delete());
+        return DB::transaction(function () use ($journal): bool {
+            $deleted = (bool) $journal->delete();
+            $this->recordJournalAudit('construction_journal.deleted', $journal);
+
+            return $deleted;
+        });
     }
 
     public function createEntry(ConstructionJournal $journal, array $data, User $user): ConstructionJournalEntry
@@ -118,7 +133,7 @@ class ConstructionJournalService
                 'workers.estimateItem.contractLinks.contract.contractor',
             ]));
 
-            return $entry->load([
+            $entry->load([
                 'journal',
                 'scheduleTask',
                 'estimate',
@@ -132,6 +147,10 @@ class ConstructionJournalService
                 'materials.material',
                 'materials.estimateItem',
             ]);
+
+            $this->recordEntryAudit('construction_journal_entry.created', $entry, $user);
+
+            return $entry;
         });
     }
 
@@ -212,7 +231,7 @@ class ConstructionJournalService
                 'workers.estimateItem.contractLinks.contract.contractor',
             ]));
 
-            return $entry->fresh([
+            $entry = $entry->fresh([
                 'journal',
                 'scheduleTask',
                 'estimate',
@@ -227,15 +246,22 @@ class ConstructionJournalService
                 'materials.material',
                 'materials.estimateItem',
             ]);
+
+            $this->recordEntryAudit('construction_journal_entry.updated', $entry);
+
+            return $entry;
         });
     }
 
     public function deleteEntry(ConstructionJournalEntry $entry): bool
     {
         return DB::transaction(function () use ($entry): bool {
+            $entry->loadMissing('journal');
             $this->completedWorkFactService->deleteJournalEntryFacts($entry);
+            $deleted = (bool) $entry->delete();
+            $this->recordEntryAudit('construction_journal_entry.deleted', $entry);
 
-            return (bool) $entry->delete();
+            return $deleted;
         });
     }
 
@@ -638,5 +664,54 @@ class ConstructionJournalService
         if (!$unit) {
             throw new DomainException(trans_message('construction_journal.errors.invalid_measurement_unit'));
         }
+    }
+
+    private function recordJournalAudit(string $event, ConstructionJournal $journal, ?User $user = null): void
+    {
+        $this->logging->audit($event, [
+            'organization_id' => $journal->organization_id,
+            'project_id' => $journal->project_id,
+            'journal_id' => $journal->id,
+            'journal_name' => $journal->name,
+            'journal_number' => $journal->journal_number,
+            'contract_id' => $journal->contract_id,
+            'status' => $this->enumValue($journal->status),
+            'performed_by' => $user?->id ?? Auth::id(),
+        ]);
+    }
+
+    private function recordEntryAudit(string $event, ConstructionJournalEntry $entry, ?User $user = null): void
+    {
+        $entry->loadMissing('journal');
+
+        $this->logging->audit($event, [
+            'organization_id' => $entry->journal?->organization_id,
+            'project_id' => $entry->journal?->project_id,
+            'journal_id' => $entry->journal_id,
+            'journal_name' => $entry->journal?->name,
+            'journal_entry_id' => $entry->id,
+            'entry_number' => $entry->entry_number,
+            'entry_date' => $this->dateValue($entry->entry_date),
+            'status' => $this->enumValue($entry->status),
+            'performed_by' => $user?->id ?? Auth::id(),
+        ]);
+    }
+
+    private function enumValue(mixed $value): ?string
+    {
+        if ($value instanceof BackedEnum) {
+            return (string) $value->value;
+        }
+
+        return $value !== null ? (string) $value : null;
+    }
+
+    private function dateValue(mixed $value): ?string
+    {
+        if ($value instanceof Carbon) {
+            return $value->toDateString();
+        }
+
+        return is_string($value) ? $value : null;
     }
 }

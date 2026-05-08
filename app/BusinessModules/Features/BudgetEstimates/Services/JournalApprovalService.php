@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BudgetEstimates\Services;
 
+use BackedEnum;
 use App\BusinessModules\Features\BudgetEstimates\Events\JournalEntryApproved;
 use App\BusinessModules\Features\BudgetEstimates\Events\JournalEntryRejected;
 use App\BusinessModules\Features\BudgetEstimates\Events\JournalEntrySubmitted;
@@ -14,8 +15,11 @@ use App\Models\User;
 use App\Notifications\Journal\JournalEntryApprovedNotification;
 use App\Notifications\Journal\JournalEntryRejectedNotification;
 use App\Services\CompletedWork\CompletedWorkFactService;
+use App\Services\Logging\LoggingService;
 use App\Services\Workflow\WorkflowGuardService;
+use Carbon\Carbon;
 use DomainException;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
 class JournalApprovalService
@@ -24,6 +28,7 @@ class JournalApprovalService
         private readonly JournalScheduleIntegrationService $journalScheduleIntegrationService,
         private readonly CompletedWorkFactService $completedWorkFactService,
         private readonly WorkflowGuardService $workflowGuardService,
+        private readonly LoggingService $logging,
     ) {
     }
 
@@ -44,6 +49,7 @@ class JournalApprovalService
         ]));
 
         event(new JournalEntrySubmitted($entry));
+        $this->recordEntryAudit('construction_journal_entry.submitted', $entry);
 
         return $entry->fresh();
     }
@@ -75,6 +81,7 @@ class JournalApprovalService
             ]));
             $this->journalScheduleIntegrationService->updateTaskProgressFromEntry($entry->fresh(['scheduleTask.estimateItem', 'workVolumes']));
 
+            $this->recordEntryAudit('construction_journal_entry.approved', $entry, $approver);
             event(new JournalEntryApproved($entry));
 
             if ($entry->createdBy) {
@@ -108,6 +115,7 @@ class JournalApprovalService
                 'workVolumes.workType',
             ]));
 
+            $this->recordEntryAudit('construction_journal_entry.rejected', $entry, $approver);
             event(new JournalEntryRejected($entry, $reason));
 
             if ($entry->createdBy) {
@@ -198,5 +206,40 @@ class JournalApprovalService
                 trans_message('construction_journal.errors.submit_validation_prefix') . ': ' . implode('; ', $errors)
             );
         }
+    }
+
+    private function recordEntryAudit(string $event, ConstructionJournalEntry $entry, ?User $user = null): void
+    {
+        $entry->loadMissing('journal');
+
+        $this->logging->audit($event, [
+            'organization_id' => $entry->journal?->organization_id,
+            'project_id' => $entry->journal?->project_id,
+            'journal_id' => $entry->journal_id,
+            'journal_name' => $entry->journal?->name,
+            'journal_entry_id' => $entry->id,
+            'entry_number' => $entry->entry_number,
+            'entry_date' => $this->dateValue($entry->entry_date),
+            'status' => $this->enumValue($entry->status),
+            'performed_by' => $user?->id ?? Auth::id() ?? $entry->created_by_user_id,
+        ]);
+    }
+
+    private function enumValue(mixed $value): ?string
+    {
+        if ($value instanceof BackedEnum) {
+            return (string) $value->value;
+        }
+
+        return $value !== null ? (string) $value : null;
+    }
+
+    private function dateValue(mixed $value): ?string
+    {
+        if ($value instanceof Carbon) {
+            return $value->toDateString();
+        }
+
+        return is_string($value) ? $value : null;
     }
 }

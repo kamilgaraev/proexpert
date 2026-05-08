@@ -354,6 +354,7 @@ class ContractService
             // AUDIT: Создание договора для compliance
             $this->logging->audit('contract.created', [
                 'organization_id' => $organizationId,
+                'project_id' => $contract->project_id,
                 'contract_id' => $contract->id,
                 'contract_number' => $contract->number,
                 'transaction_type' => 'contract_created',
@@ -491,6 +492,7 @@ class ContractService
 
             $this->logging->audit('contract.created', [
                 'organization_id' => $targetOrganizationId,
+                'project_id' => $contract->project_id ?? $contractDTO->project_id,
                 'contract_id' => $contract->id,
                 'contract_number' => $contract->number,
                 'transaction_type' => 'contract_created',
@@ -1152,6 +1154,7 @@ class ContractService
             // AUDIT: Изменение договора для compliance
             $this->logging->audit('contract.updated', [
                 'organization_id' => $organizationId,
+                'project_id' => $updatedContract->project_id,
                 'contract_id' => $contractId,
                 'contract_number' => $updatedContract->number,
                 'transaction_type' => 'contract_updated',
@@ -1246,6 +1249,7 @@ class ContractService
                 // AUDIT: Удаление договора - критично для compliance
                 $this->logging->audit('contract.deleted', [
                     'organization_id' => $organizationId,
+                    'project_id' => $contract->project_id,
                     'contract_id' => $contractId,
                     'contract_number' => $contract->number,
                     'transaction_type' => 'contract_deleted',
