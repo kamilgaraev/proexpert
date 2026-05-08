@@ -14,6 +14,7 @@ class SupplierProposalResource extends JsonResource
     {
         $workflowSummary = app(ProcurementLifecycleService::class)
             ->forSupplierProposal($this->resource);
+        $proposalDecision = $this->proposalDecisionResource();
 
         return [
             'id' => $this->id,
@@ -48,6 +49,8 @@ class SupplierProposalResource extends JsonResource
             'metadata' => $this->metadata,
             'can_be_accepted' => $workflowSummary->canAcceptProposal,
             'workflow_summary' => $workflowSummary->toArray(),
+            'decision' => $proposalDecision,
+            'proposal_decision' => $proposalDecision,
             'is_expired' => $this->isExpired(),
             'supplier' => $this->supplierPayload(),
             'external_supplier_contact' => $this->whenLoaded(
@@ -138,5 +141,19 @@ class SupplierProposalResource extends JsonResource
             'name' => $externalSupplierContact?->name ?? 'Внешний поставщик',
             'inn' => $externalSupplierContact?->tax_number,
         ];
+    }
+
+    private function proposalDecisionResource(): ?SupplierProposalDecisionResource
+    {
+        if (
+            !$this->relationLoaded('supplierRequest')
+            || $this->supplierRequest === null
+            || !$this->supplierRequest->relationLoaded('proposalDecision')
+            || $this->supplierRequest->proposalDecision === null
+        ) {
+            return null;
+        }
+
+        return new SupplierProposalDecisionResource($this->supplierRequest->proposalDecision);
     }
 }
