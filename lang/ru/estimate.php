@@ -29,6 +29,8 @@ return [
     'items_added' => 'Позиции добавлены.',
     'operation_failed' => 'Не удалось выполнить операцию со сметой.',
     'item_updated' => 'Позиция обновлена.',
+    'items_updated' => 'Позиции обновлены.',
+    'items_update_error' => 'Не удалось обновить позиции.',
     'item_deleted' => 'Позиция удалена.',
     'item_moved' => 'Позиция перемещена.',
     'item_not_belongs_to_estimate' => 'Позиция не относится к выбранной смете.',

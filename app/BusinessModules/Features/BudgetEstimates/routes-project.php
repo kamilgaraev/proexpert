@@ -92,6 +92,7 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
                 Route::get('/', [EstimateItemController::class, 'index'])->name('index');
                 Route::post('/', [EstimateItemController::class, 'store'])->name('store');
                 Route::post('/bulk', [EstimateItemController::class, 'bulkStore'])->name('bulk_store');
+                Route::put('/bulk', [EstimateItemController::class, 'bulkUpdate'])->name('bulk_update');
                 Route::post('/from-estimate-norms', [EstimateNormativeController::class, 'storeItems'])->name('from_estimate_norms');
                 
                 // Массовое изменение порядка позиций (для drag-and-drop)

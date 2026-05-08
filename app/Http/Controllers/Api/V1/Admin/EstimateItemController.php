@@ -17,6 +17,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
+use Throwable;
 
 use function trans_message;
 
@@ -309,6 +311,91 @@ class EstimateItemController extends Controller
         $item = $this->resolveProjectItem($item, $estimateId);
 
         return $this->update($request, $item);
+    }
+
+    public function bulkUpdate(Request $request, $project, int $estimate): JsonResponse
+    {
+        $organizationId = $request->attributes->get('current_organization_id');
+
+        $estimateModel = Estimate::where('id', $estimate)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+
+        $this->authorize('update', $estimateModel);
+
+        $validated = $request->validate([
+            'items' => ['required', 'array', 'min:1', 'max:200'],
+            'items.*.id' => [
+                'required',
+                'integer',
+                Rule::exists('estimate_items', 'id')->where('estimate_id', $estimateModel->id),
+            ],
+            'items.*.estimate_section_id' => [
+                'sometimes',
+                'nullable',
+                'integer',
+                Rule::exists('estimate_sections', 'id')->where('estimate_id', $estimateModel->id),
+            ],
+            'items.*.section_id' => [
+                'sometimes',
+                'nullable',
+                'integer',
+                Rule::exists('estimate_sections', 'id')->where('estimate_id', $estimateModel->id),
+            ],
+            'items.*.item_type' => ['sometimes', Rule::in(EstimatePositionItemType::values())],
+            'items.*.position_number' => ['sometimes', 'string', 'max:50'],
+            'items.*.name' => ['sometimes', 'string', 'max:255'],
+            'items.*.description' => ['sometimes', 'nullable', 'string'],
+            'items.*.work_type_id' => ['sometimes', 'nullable', 'integer', 'exists:work_types,id'],
+            'items.*.measurement_unit_id' => ['sometimes', 'nullable', 'integer', 'exists:measurement_units,id'],
+            'items.*.quantity' => ['sometimes', 'numeric', 'min:0'],
+            'items.*.quantity_coefficient' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'items.*.quantity_total' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'items.*.unit_price' => ['sometimes', 'numeric', 'min:0'],
+            'items.*.base_unit_price' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'items.*.price_index' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'items.*.current_unit_price' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'items.*.price_coefficient' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'items.*.current_total_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'items.*.labor_hours' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'items.*.machinery_hours' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'items.*.materials_cost' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'items.*.machinery_cost' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'items.*.labor_cost' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'items.*.equipment_cost' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'items.*.direct_costs' => ['sometimes', 'numeric', 'min:0'],
+            'items.*.overhead_amount' => ['sometimes', 'numeric', 'min:0'],
+            'items.*.profit_amount' => ['sometimes', 'numeric', 'min:0'],
+            'items.*.justification' => ['sometimes', 'nullable', 'string'],
+            'items.*.is_manual' => ['sometimes', 'boolean'],
+            'items.*.metadata' => ['sometimes', 'nullable', 'array'],
+        ]);
+
+        try {
+            $items = $this->itemService->bulkUpdate($estimateModel, $validated['items']);
+            $this->cacheService->invalidateStructure($estimateModel);
+
+            return AdminResponse::success(
+                [
+                    'updated_count' => count($items),
+                    'items' => EstimateItemResource::collection($items),
+                ],
+                trans_message('estimate.items_updated')
+            );
+        } catch (Throwable $exception) {
+            Log::error('estimate.items.bulk_update.error', [
+                'estimate_id' => $estimateModel->id,
+                'project_id' => $project,
+                'user_id' => $request->user()?->id,
+                'item_ids' => collect($validated['items'])->pluck('id')->all(),
+                'error' => $exception->getMessage(),
+            ]);
+
+            return AdminResponse::error(
+                trans_message('estimate.items_update_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
+        }
     }
 
     public function destroy(EstimateItem $item): JsonResponse
