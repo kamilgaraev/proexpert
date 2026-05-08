@@ -12,6 +12,11 @@ class SyncFgiscsRegionalPricesCommand extends Command
 {
     protected $signature = 'estimates:regional-prices:sync-fgiscs
         {--region=RU-TA}
+        {--subject-id=}
+        {--all-supported}
+        {--all-regions}
+        {--all-periods}
+        {--limit=}
         {--bucket=prohelper-storage}
         {--latest-only}
         {--period-id=}
@@ -21,12 +26,6 @@ class SyncFgiscsRegionalPricesCommand extends Command
 
     public function handle(FgiscsRegionalPriceUpdateService $service): int
     {
-        if ((string) $this->option('region') !== 'RU-TA') {
-            $this->error('Сейчас поддерживается только Республика Татарстан.');
-
-            return self::FAILURE;
-        }
-
         try {
             $startedAt = microtime(true);
             $progress = function (string $event, array $payload) use ($startedAt): void {
@@ -34,19 +33,11 @@ class SyncFgiscsRegionalPricesCommand extends Command
                 $this->line(sprintf('[%s +%ds] %s: %s', now()->format('Y-m-d H:i:s'), $elapsed, $event, json_encode($payload, JSON_UNESCAPED_UNICODE)));
             };
 
-            $result = $service->syncTatarstan(
-                bucket: (string) $this->option('bucket'),
-                periodId: $this->option('period-id') !== null ? (int) $this->option('period-id') : null,
-                latestOnly: (bool) $this->option('latest-only'),
-                force: (bool) $this->option('force'),
-                progress: $progress,
-            );
+            $results = $this->runSync($service, $progress);
 
             $this->newLine();
             $this->info('Синхронизация региональных цен завершена.');
-            $this->table(['Показатель', 'Значение'], collect($result)->map(
-                static fn ($value, string $key): array => [$key, is_scalar($value) ? (string) $value : json_encode($value, JSON_UNESCAPED_UNICODE)]
-            )->values()->all());
+            $this->table(['Показатель', 'Значение'], $this->summaryRows($results));
 
             return self::SUCCESS;
         } catch (Throwable $exception) {
@@ -54,5 +45,89 @@ class SyncFgiscsRegionalPricesCommand extends Command
 
             return self::FAILURE;
         }
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function runSync(FgiscsRegionalPriceUpdateService $service, callable $progress): array
+    {
+        $bucket = (string) $this->option('bucket');
+        $periodId = $this->option('period-id') !== null ? (int) $this->option('period-id') : null;
+        $allPeriods = (bool) $this->option('all-periods');
+        $force = (bool) $this->option('force');
+
+        if ((bool) $this->option('all-regions')) {
+            return $service->syncAllRegions(
+                bucket: $bucket,
+                periodId: $periodId,
+                latestOnly: !(bool) $this->option('all-periods'),
+                allPeriods: $allPeriods,
+                force: $force,
+                limit: $this->option('limit') !== null ? (int) $this->option('limit') : null,
+                progress: $progress,
+            );
+        }
+
+        if ((bool) $this->option('all-supported')) {
+            return $service->syncSupportedRegions(
+                bucket: $bucket,
+                periodId: $periodId,
+                latestOnly: !(bool) $this->option('all-periods'),
+                allPeriods: $allPeriods,
+                force: $force,
+                progress: $progress,
+            );
+        }
+
+        if ($this->option('subject-id') !== null) {
+            return $service->syncSubject(
+                subjectId: (int) $this->option('subject-id'),
+                bucket: $bucket,
+                periodId: $periodId,
+                latestOnly: !(bool) $this->option('all-periods'),
+                allPeriods: $allPeriods,
+                force: $force,
+                progress: $progress,
+            );
+        }
+
+        if ((string) $this->option('region') !== 'RU-TA') {
+            throw new \RuntimeException('Для произвольного региона укажите --subject-id или используйте --all-regions.');
+        }
+
+        return [
+            $service->syncTatarstan(
+                bucket: $bucket,
+                periodId: $periodId,
+                latestOnly: !(bool) $this->option('all-periods'),
+                force: $force,
+                progress: $progress,
+            ),
+        ];
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $results
+     * @return array<int, array{0:string,1:string}>
+     */
+    private function summaryRows(array $results): array
+    {
+        $rows = [
+            ['regions', (string) count(array_unique(array_filter(array_map(static fn (array $result): ?string => $result['region'] ?? null, $results))))],
+            ['versions', (string) count($results)],
+            ['active', (string) count(array_filter($results, static fn (array $result): bool => ($result['status'] ?? null) === 'active'))],
+            ['skipped', (string) count(array_filter($results, static fn (array $result): bool => ($result['skipped'] ?? false) === true))],
+            ['failed', (string) count(array_filter($results, static fn (array $result): bool => ($result['status'] ?? null) === 'failed'))],
+        ];
+
+        foreach (array_slice($results, 0, 20) as $result) {
+            $rows[] = [
+                (string) ($result['region'] ?? $result['version_key'] ?? 'result'),
+                json_encode($result, JSON_UNESCAPED_UNICODE),
+            ];
+        }
+
+        return $rows;
     }
 }

@@ -16,20 +16,37 @@ class FgiscsClient
     /**
      * @return array<int, array{id:int,name:string}>
      */
+    public function countrySubjects(): array
+    {
+        $response = Http::timeout(60)->get(self::BASE_URL . '/EstimatedPrice/CountrySubjects');
+
+        if (!$response->successful() || !is_array($response->json())) {
+            throw new RuntimeException('Не удалось получить список регионов ФГИС ЦС.');
+        }
+
+        return array_values(array_map(static fn (array $item): array => [
+            'id' => (int) $item['id'],
+            'name' => (string) $item['name'],
+        ], $response->json()));
+    }
+
+    /**
+     * @return array<int, array{id:int,name:string}>
+     */
     public function priceZones(int $subjectId): array
     {
         $response = Http::timeout(60)->get(self::BASE_URL . '/EstimatedPrice/PriceZones', [
             'subjectId' => $subjectId,
         ]);
 
-        if (!$response->successful()) {
+        if (!$response->successful() || !is_array($response->json())) {
             throw new RuntimeException('Не удалось получить ценовые зоны ФГИС ЦС.');
         }
 
-        return array_map(static fn (array $item): array => [
+        return array_values(array_map(static fn (array $item): array => [
             'id' => (int) $item['id'],
             'name' => (string) $item['name'],
-        ], $response->json() ?? []);
+        ], $response->json()));
     }
 
     /**
@@ -41,7 +58,7 @@ class FgiscsClient
             'priceZoneId' => $priceZoneId,
         ]);
 
-        if (!$response->successful()) {
+        if (!$response->successful() || !is_array($response->json())) {
             throw new RuntimeException('Не удалось получить периоды цен ФГИС ЦС.');
         }
 
@@ -58,7 +75,7 @@ class FgiscsClient
                 year: $parsed['year'],
                 quarter: $parsed['quarter'],
             );
-        }, $response->json() ?? [])));
+        }, $response->json())));
     }
 
     public function downloadWorkerSalary(int $priceZoneId, int $periodId): FgiscsDownloadDTO

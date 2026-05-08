@@ -12,6 +12,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\RegionalPrice
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\ConstructionResource;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateDatasetVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimatePricePeriod;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimatePriceZone;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegion;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegionalPriceVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateResourcePrice;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\LaborPriceSpreadsheetParser;
@@ -24,7 +26,7 @@ class FgiscsRegionalPriceUpdateService
 {
     public function __construct(
         private readonly FgiscsClient $client,
-        private readonly FgiscsTatarstanCatalogService $catalogService,
+        private readonly FgiscsRegionalCatalogService $catalogService,
         private readonly LaborPriceSpreadsheetParser $parser,
         private readonly EstimateSourceStorageService $storageService,
         private readonly RegionalPriceQualityService $qualityService,
@@ -37,13 +39,123 @@ class FgiscsRegionalPriceUpdateService
      */
     public function syncTatarstan(string $bucket, ?int $periodId = null, bool $latestOnly = true, bool $force = false, ?callable $progress = null): array
     {
-        $catalog = $this->catalogService->syncRegionAndZone();
-        $period = $periodId !== null
-            ? $this->resolveExactPeriod($periodId)
-            : $this->catalogService->latestPeriod();
+        $catalog = $this->catalogService->syncTatarstan();
 
-        $versionKey = $this->versionKey($period);
-        $prefix = $this->prefix($period, $catalog['region']->fgiscs_subject_id, $catalog['price_zone']->fgiscs_price_zone_id);
+        return $this->syncPriceZone(
+            bucket: $bucket,
+            region: $catalog['region'],
+            priceZone: $catalog['price_zone'],
+            periodId: $periodId,
+            latestOnly: $latestOnly,
+            allPeriods: false,
+            force: $force,
+            progress: $progress,
+        )[0];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function syncSupportedRegions(string $bucket, ?int $periodId = null, bool $latestOnly = true, bool $allPeriods = false, bool $force = false, ?callable $progress = null): array
+    {
+        $results = [];
+
+        foreach ($this->catalogService->supportedRegions() as $region) {
+            if ($region->priceZones->isEmpty()) {
+                $catalog = $this->catalogService->syncSubject((int) $region->fgiscs_subject_id, $region->code, $region->name, true);
+                $region = $catalog['region']->load('priceZones');
+            }
+
+            foreach ($region->priceZones as $priceZone) {
+                array_push($results, ...$this->syncPriceZone($bucket, $region, $priceZone, $periodId, $latestOnly, $allPeriods, $force, $progress));
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function syncSubject(int $subjectId, string $bucket, ?int $periodId = null, bool $latestOnly = true, bool $allPeriods = false, bool $force = false, ?callable $progress = null): array
+    {
+        $catalog = $this->catalogService->syncSubject($subjectId);
+        $results = [];
+
+        foreach ($catalog['price_zones'] as $priceZone) {
+            array_push($results, ...$this->syncPriceZone($bucket, $catalog['region'], $priceZone, $periodId, $latestOnly, $allPeriods, $force, $progress));
+        }
+
+        return $results;
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function syncAllRegions(string $bucket, ?int $periodId = null, bool $latestOnly = true, bool $allPeriods = false, bool $force = false, ?int $limit = null, ?callable $progress = null): array
+    {
+        $results = [];
+        $subjects = $this->catalogService->countrySubjects();
+
+        foreach ($subjects as $index => $subject) {
+            if ($limit !== null && $index >= $limit) {
+                break;
+            }
+
+            $this->report($progress, 'region_started', [
+                'subject_id' => $subject['id'],
+                'name' => $subject['name'],
+            ]);
+
+            try {
+                $catalog = $this->catalogService->syncSubject((int) $subject['id'], null, (string) $subject['name'], true);
+
+                foreach ($catalog['price_zones'] as $priceZone) {
+                    array_push($results, ...$this->syncPriceZone($bucket, $catalog['region'], $priceZone, $periodId, $latestOnly, $allPeriods, $force, $progress));
+                }
+            } catch (Throwable $exception) {
+                $results[] = [
+                    'status' => RegionalPriceStatus::FAILED->value,
+                    'subject_id' => $subject['id'],
+                    'region' => $subject['name'],
+                    'error' => $exception->getMessage(),
+                ];
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function syncPriceZone(
+        string $bucket,
+        EstimateRegion $region,
+        EstimatePriceZone $priceZone,
+        ?int $periodId,
+        bool $latestOnly,
+        bool $allPeriods,
+        bool $force,
+        ?callable $progress,
+    ): array {
+        $periods = $this->resolvePeriods((int) $priceZone->fgiscs_price_zone_id, $periodId, $allPeriods);
+        $results = [];
+
+        foreach ($periods as $index => $period) {
+            $results[] = $this->syncPeriod($bucket, $region, $priceZone, $period, $latestOnly, !$allPeriods || $index === 0, $force, $progress);
+        }
+
+        return $results;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function syncPeriod(string $bucket, EstimateRegion $region, EstimatePriceZone $priceZone, EstimatePricePeriod $period, bool $latestOnly, bool $activate, bool $force, ?callable $progress): array
+    {
+        $versionKey = $this->versionKey($period, $region, $priceZone);
+        $prefix = $this->prefix($period, (int) $region->fgiscs_subject_id, (int) $priceZone->fgiscs_price_zone_id);
         $fileKey = $prefix . 'worker-salary.xlsx';
 
         $datasetVersion = EstimateDatasetVersion::query()->updateOrCreate(
@@ -62,8 +174,9 @@ class FgiscsRegionalPriceUpdateService
                 'started_at' => now(),
                 'finished_at' => null,
                 'meta' => [
-                    'region_code' => FgiscsTatarstanCatalogService::REGION_CODE,
-                    'price_zone_id' => FgiscsTatarstanCatalogService::PRICE_ZONE_ID,
+                    'region_code' => $region->code,
+                    'region_id' => $region->id,
+                    'price_zone_id' => $priceZone->fgiscs_price_zone_id,
                     'fgiscs_period_id' => $period->fgiscs_period_id,
                     'regional' => true,
                 ],
@@ -73,8 +186,8 @@ class FgiscsRegionalPriceUpdateService
         $regionalVersion = EstimateRegionalPriceVersion::query()->firstOrCreate(
             [
                 'source' => EstimateSourceType::FGIS_LABOR_PRICES->value,
-                'region_id' => $catalog['region']->id,
-                'price_zone_id' => $catalog['price_zone']->id,
+                'region_id' => $region->id,
+                'price_zone_id' => $priceZone->id,
                 'period_id' => $period->id,
                 'version_key' => $versionKey,
             ],
@@ -92,6 +205,8 @@ class FgiscsRegionalPriceUpdateService
             return [
                 'skipped' => true,
                 'reason' => 'period_already_imported',
+                'region' => $region->name,
+                'price_zone' => $priceZone->name,
                 'version_id' => $regionalVersion->id,
                 'version_key' => $regionalVersion->version_key,
                 'status' => $regionalVersion->status->value,
@@ -99,8 +214,12 @@ class FgiscsRegionalPriceUpdateService
         }
 
         try {
-            $this->report($progress, 'download_started', ['file' => $fileKey]);
-            $download = $this->client->downloadWorkerSalary($catalog['price_zone']->fgiscs_price_zone_id, $period->fgiscs_period_id);
+            $this->report($progress, 'download_started', [
+                'region' => $region->name,
+                'period' => $period->name,
+                'file' => $fileKey,
+            ]);
+            $download = $this->client->downloadWorkerSalary((int) $priceZone->fgiscs_price_zone_id, (int) $period->fgiscs_period_id);
             $this->storageService->disk($bucket)->put($fileKey, $download->content);
 
             $regionalVersion->update([
@@ -132,6 +251,8 @@ class FgiscsRegionalPriceUpdateService
 
                 return array_merge($stats, [
                     'status' => RegionalPriceStatus::FAILED->value,
+                    'region' => $region->name,
+                    'price_zone' => $priceZone->name,
                     'quality' => $quality,
                 ]);
             }
@@ -141,7 +262,7 @@ class FgiscsRegionalPriceUpdateService
                 'metadata' => array_merge($regionalVersion->metadata ?? [], ['quality' => $quality]),
             ]);
 
-            $activation = $this->activationService->activate($regionalVersion);
+            $activation = $activate ? $this->activationService->activate($regionalVersion) : null;
 
             $datasetVersion->update([
                 'status' => EstimateImportStatus::PARSED->value,
@@ -149,9 +270,11 @@ class FgiscsRegionalPriceUpdateService
             ]);
 
             return array_merge($stats, [
-                'status' => RegionalPriceStatus::ACTIVE->value,
+                'status' => $activate ? RegionalPriceStatus::ACTIVE->value : RegionalPriceStatus::CHECKED->value,
+                'region' => $region->name,
+                'price_zone' => $priceZone->name,
                 'quality' => $quality,
-                'activation_id' => $activation->id,
+                'activation_id' => $activation?->id,
                 'version_id' => $regionalVersion->id,
                 'version_key' => $versionKey,
                 'period' => $period->name,
@@ -294,18 +417,39 @@ class FgiscsRegionalPriceUpdateService
             ->value('id');
     }
 
-    private function resolveExactPeriod(int $periodId): EstimatePricePeriod
+    /**
+     * @return array<int, EstimatePricePeriod>
+     */
+    private function resolvePeriods(int $priceZoneId, ?int $periodId, bool $allPeriods): array
     {
-        $this->catalogService->syncPeriods();
+        if ($periodId !== null) {
+            $this->catalogService->syncPeriods($priceZoneId);
 
-        return EstimatePricePeriod::query()
-            ->where('fgiscs_period_id', $periodId)
-            ->first() ?? throw new RuntimeException('Указанный период ФГИС ЦС не найден.');
+            $period = EstimatePricePeriod::query()
+                ->where('fgiscs_period_id', $periodId)
+                ->first() ?? throw new RuntimeException('Указанный период ФГИС ЦС не найден.');
+
+            return [$period];
+        }
+
+        return $allPeriods
+            ? $this->catalogService->allPeriods($priceZoneId)
+            : [$this->catalogService->latestPeriod($priceZoneId)];
     }
 
-    private function versionKey(EstimatePricePeriod $period): string
+    private function versionKey(EstimatePricePeriod $period, EstimateRegion $region, EstimatePriceZone $priceZone): string
     {
-        return sprintf('%d-q%d-ru-ta', $period->year, $period->quarter);
+        if ($region->code === FgiscsRegionalCatalogService::DEFAULT_REGION_CODE && (int) $priceZone->fgiscs_price_zone_id === FgiscsRegionalCatalogService::TATARSTAN_PRICE_ZONE_ID) {
+            return sprintf('%d-q%d-ru-ta', $period->year, $period->quarter);
+        }
+
+        return sprintf(
+            '%d-q%d-%s-pz-%d',
+            $period->year,
+            $period->quarter,
+            strtolower((string) $region->code),
+            (int) $priceZone->fgiscs_price_zone_id
+        );
     }
 
     private function prefix(EstimatePricePeriod $period, int $subjectId, int $priceZoneId): string

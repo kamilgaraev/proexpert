@@ -10,6 +10,23 @@ use Tests\TestCase;
 
 class FgiscsClientTest extends TestCase
 {
+    public function test_it_reads_country_subjects_from_fgiscs_contract(): void
+    {
+        Http::fake([
+            'https://fgiscs.minstroyrf.ru/api/EstimatedPrice/CountrySubjects*' => Http::response([
+                ['id' => 296, 'name' => 'Республика Татарстан'],
+                ['id' => 281, 'name' => 'Алтайский край'],
+            ]),
+        ]);
+
+        $subjects = (new FgiscsClient())->countrySubjects();
+
+        $this->assertSame([
+            ['id' => 296, 'name' => 'Республика Татарстан'],
+            ['id' => 281, 'name' => 'Алтайский край'],
+        ], $subjects);
+    }
+
     public function test_it_reads_tatarstan_zone_and_periods_from_fgiscs_contract(): void
     {
         Http::fake([
