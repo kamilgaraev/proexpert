@@ -200,6 +200,8 @@ class ModulesOverviewControllerTest extends TestCase
         $usersModule = $this->createModule('users', 'Пользователи', 'free', false, true, 0);
         $organizationsModule = $this->createModule('organizations', 'Организации', 'free', false, true, 0);
 
+        $this->createModule('contractor-portal', 'Contractor portal', 'subscription', true, false, 3490, false);
+
         foreach ([$projectModule, $brigadesModule, $usersModule, $organizationsModule] as $module) {
             OrganizationModuleActivation::create([
                 'organization_id' => $this->organization->id,
@@ -228,14 +230,22 @@ class ModulesOverviewControllerTest extends TestCase
 
         $this->assertContains('brigades', $standaloneSlugs);
         $this->assertContains('video-monitoring', $standaloneSlugs);
+        $this->assertNotContains('contractor-portal', $standaloneSlugs);
         $this->assertNotContains('users', $standaloneSlugs);
         $this->assertNotContains('organizations', $standaloneSlugs);
 
         $advancedModules = collect($response->json('data.advanced_modules'));
 
+        $this->assertNull($advancedModules->firstWhere('slug', 'contractor-portal'));
         $this->assertTrue($advancedModules->firstWhere('slug', 'users')['is_system']);
         $this->assertSame('packaged', $advancedModules->firstWhere('slug', 'project-management')['classification']);
         $this->assertSame('standalone', $advancedModules->firstWhere('slug', 'brigades')['classification']);
+
+        $objectsExecution = collect($response->json('data.solutions'))->firstWhere('slug', 'objects-execution');
+        $recommendedAddonSlugs = collect($objectsExecution['recommended_addons'] ?? [])->pluck('module_slug')->all();
+
+        $this->assertContains('video-monitoring', $recommendedAddonSlugs);
+        $this->assertNotContains('contractor-portal', $recommendedAddonSlugs);
     }
 
     public function test_monthly_total_counts_subscription_and_excludes_bundled_package_prices(): void
@@ -347,7 +357,8 @@ class ModulesOverviewControllerTest extends TestCase
         string $billingModel,
         bool $canDeactivate,
         bool $isSystem,
-        int $price
+        int $price,
+        bool $marketplaceVisible = true
     ): Module {
         return Module::create([
             'name' => $name,
@@ -361,6 +372,7 @@ class ModulesOverviewControllerTest extends TestCase
                 'base_price' => $price,
                 'currency' => 'RUB',
                 'duration_days' => 30,
+                'marketplace_visible' => $marketplaceVisible,
             ],
             'features' => [$name],
             'permissions' => [],

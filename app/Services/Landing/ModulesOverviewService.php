@@ -30,9 +30,13 @@ class ModulesOverviewService
             ->orderBy('display_order')
             ->orderBy('name')
             ->get();
+        $visibleModules = $modules
+            ->filter(fn (Module $module): bool => $this->isMarketplaceVisible($module))
+            ->values();
+        $visibleModuleSlugs = $visibleModules->pluck('slug')->all();
 
-        $solutions = $this->buildSolutions($organizationId, $packages, $activations, $activeSlugs);
-        $advancedModules = $modules
+        $solutions = $this->buildSolutions($organizationId, $packages, $activations, $activeSlugs, $visibleModuleSlugs);
+        $advancedModules = $visibleModules
             ->map(fn (Module $module): array => $this->buildAdvancedModule($module, $membership, $activations))
             ->values()
             ->all();
@@ -96,10 +100,16 @@ class ModulesOverviewService
             ->keyBy(fn (OrganizationModuleActivation $activation): string => $activation->module->slug);
     }
 
-    private function buildSolutions(int $organizationId, array $packages, Collection $activations, array $activeSlugs): array
+    private function buildSolutions(
+        int $organizationId,
+        array $packages,
+        Collection $activations,
+        array $activeSlugs,
+        array $visibleModuleSlugs
+    ): array
     {
         return collect($packages)
-            ->map(function (array $package) use ($organizationId, $activations, $activeSlugs): array {
+            ->map(function (array $package) use ($organizationId, $activations, $activeSlugs, $visibleModuleSlugs): array {
                 $subscription = $this->getEffectivePackageSubscription($organizationId, $package['slug']);
 
                 $currentTier = $subscription?->tier ?? $this->inferActiveTier($package['tiers'], $activeSlugs);
@@ -125,7 +135,10 @@ class ModulesOverviewService
                     'schema_version' => $package['schema_version'] ?? 2,
                     'foundation_modules' => $package['foundation_modules'] ?? [],
                     'integrations' => $package['integrations'] ?? [],
-                    'recommended_addons' => $package['recommended_addons'] ?? [],
+                    'recommended_addons' => $this->filterRecommendedAddons(
+                        $package['recommended_addons'] ?? [],
+                        $visibleModuleSlugs
+                    ),
                     'business_outcomes' => $package['business_outcomes'] ?? [],
                     'data_sources' => $package['data_sources'] ?? [],
                     'capabilities' => $this->filterCapabilities($package['capabilities'] ?? [], $activeSlugs),
@@ -287,6 +300,24 @@ class ModulesOverviewService
             ->all();
     }
 
+    private function filterRecommendedAddons(array $addons, array $visibleModuleSlugs): array
+    {
+        $visibleSet = array_fill_keys($visibleModuleSlugs, true);
+
+        return collect($addons)
+            ->filter(function (mixed $addon) use ($visibleSet): bool {
+                if (! is_array($addon)) {
+                    return false;
+                }
+
+                $moduleSlug = $addon['module_slug'] ?? null;
+
+                return ! is_string($moduleSlug) || isset($visibleSet[$moduleSlug]);
+            })
+            ->values()
+            ->all();
+    }
+
     private function countActiveModules(array $modules, array $activeSlugs): int
     {
         return count(array_intersect($modules, $activeSlugs));
@@ -322,6 +353,17 @@ class ModulesOverviewService
     {
         return (bool) ($module->is_system_module ?? false)
             || (($module->can_deactivate ?? true) === false && $module->billing_model === 'free');
+    }
+
+    private function isMarketplaceVisible(Module $module): bool
+    {
+        $pricingConfig = $module->pricing_config ?? [];
+
+        if (! array_key_exists('marketplace_visible', $pricingConfig)) {
+            return true;
+        }
+
+        return filter_var($pricingConfig['marketplace_visible'], FILTER_VALIDATE_BOOLEAN);
     }
 
     private function moduleSource(string $classification, ?OrganizationModuleActivation $activation): string

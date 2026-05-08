@@ -79,6 +79,12 @@ class ModuleScanner
     
     private function registerModule(array $config): void 
     {
+        $pricingConfig = $config['pricing'] ?? [];
+
+        if (array_key_exists('marketplace_visible', $config)) {
+            $pricingConfig['marketplace_visible'] = (bool) $config['marketplace_visible'];
+        }
+
         // Автоматически создаем/обновляем запись в БД
         Module::updateOrCreate(
             ['slug' => $config['slug']],
@@ -89,7 +95,7 @@ class ModuleScanner
                 'billing_model' => $config['billing_model'],
                 'category' => $config['category'] ?? 'general',
                 'description' => $config['description'] ?? '',
-                'pricing_config' => $config['pricing'] ?? [],
+                'pricing_config' => $pricingConfig,
                 'permissions' => $config['permissions'] ?? [],
                 'features' => $config['features'] ?? [],
                 'dependencies' => $config['dependencies'] ?? [],
