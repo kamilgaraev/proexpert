@@ -26,7 +26,7 @@ class EstimateNormativeMatcher
     public function matchWorkItem(array $workItem, array $context = [], int $limit = 5): ?array
     {
         $version = $this->latestFsnbVersion();
-        $priceVersion = $this->latestFsbcVersion();
+        $priceVersion = $this->latestPriceVersion();
 
         if ($version === null) {
             return null;
@@ -76,9 +76,26 @@ class EstimateNormativeMatcher
 
     public function latestFsbcVersion(): ?EstimateDatasetVersion
     {
-        return EstimateDatasetVersion::query()
+        return $this->latestPriceVersion();
+    }
+
+    public function latestPriceVersion(): ?EstimateDatasetVersion
+    {
+        $fsbcVersion = EstimateDatasetVersion::query()
             ->where('source_type', EstimateSourceType::FSBC->value)
             ->where('status', EstimateImportStatus::PARSED->value)
+            ->whereHas('resourcePrices')
+            ->latest('id')
+            ->first();
+
+        if ($fsbcVersion !== null) {
+            return $fsbcVersion;
+        }
+
+        return EstimateDatasetVersion::query()
+            ->where('source_type', EstimateSourceType::FSNB_2022->value)
+            ->where('status', EstimateImportStatus::PARSED->value)
+            ->whereHas('resourcePrices')
             ->latest('id')
             ->first();
     }
@@ -277,7 +294,9 @@ class EstimateNormativeMatcher
                 'total_price' => $price?->base_price !== null && $resource->quantity !== null
                     ? round((float) $price->base_price * (float) $resource->quantity, 2)
                     : 0.0,
-                'price_source' => $price !== null ? 'fsbc_2022_base' : null,
+                'price_source' => $price !== null && $price->datasetVersion !== null
+                    ? $price->datasetVersion->source_type->value . '_base'
+                    : null,
                 'price_id' => $price?->id,
                 'linked_resource_id' => $resource->construction_resource_id,
             ];

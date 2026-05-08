@@ -75,10 +75,52 @@ class EstimateNormativeCatalogServiceTest extends TestCase
         $this->assertSame(3000.0, (float) $resource->total_amount);
     }
 
-    private function seedNormative(): array
+    public function test_add_items_uses_prices_from_fsnb_version_when_separate_fsbc_version_is_absent(): void
+    {
+        [$normId] = $this->seedNormative(false);
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $estimate = Estimate::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'number' => 'T-2',
+            'name' => 'Смета',
+            'type' => 'local',
+            'status' => 'draft',
+            'estimate_date' => now()->toDateString(),
+            'calculation_method' => 'resource',
+        ]);
+
+        $calculationService = Mockery::mock(EstimateCalculationService::class);
+        $calculationService->shouldReceive('calculateItemTotal')->andReturn(0.0);
+        $calculationService->shouldReceive('calculateEstimateTotal')->andReturn([]);
+        $service = new EstimateNormativeCatalogService(app(EstimateItemRepository::class), $calculationService);
+
+        $service->addItemsFromNormatives($estimate, [[
+            'estimate_norm_id' => $normId,
+            'quantity' => 2,
+            'position_number' => '1',
+        ]]);
+
+        $work = EstimateItem::query()
+            ->where('estimate_id', $estimate->id)
+            ->where('item_type', EstimatePositionItemType::WORK->value)
+            ->firstOrFail();
+        $resource = EstimateItem::query()
+            ->where('parent_work_id', $work->id)
+            ->firstOrFail();
+
+        $this->assertSame(1000.0, (float) $resource->unit_price);
+        $this->assertSame(3000.0, (float) $resource->total_amount);
+        $this->assertSame('fsnb_2022', $work->metadata['price_dataset']['source_type']);
+    }
+
+    private function seedNormative(bool $separatePriceVersion = true): array
     {
         $fsnbVersionId = $this->createVersion('fsnb_2022', '2026-05-07');
-        $fsbcVersionId = $this->createVersion('fsbc', '2026-05-07');
+        $priceVersionId = $separatePriceVersion
+            ? $this->createVersion('fsbc', '2026-05-07')
+            : $fsnbVersionId;
         $collectionId = $this->createCollection($fsnbVersionId);
         $sectionId = $this->createSection($collectionId);
         $normId = $this->createNorm($collectionId, $sectionId);
@@ -96,7 +138,7 @@ class EstimateNormativeCatalogServiceTest extends TestCase
         ]);
 
         DB::table('estimate_resource_prices')->insert([
-            'dataset_version_id' => $fsbcVersionId,
+            'dataset_version_id' => $priceVersionId,
             'construction_resource_id' => null,
             'resource_code' => '01.1.01.01-0001',
             'resource_name' => 'Бетон тяжелый',

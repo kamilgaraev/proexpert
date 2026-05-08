@@ -33,7 +33,7 @@ class EstimateNormativeCatalogService
     public function search(array $filters): LengthAwarePaginator
     {
         $version = $this->latestFsnbVersion();
-        $priceVersion = $this->latestFsbcVersion();
+        $priceVersion = $this->latestPriceVersion();
 
         $query = EstimateNorm::query()
             ->with(['collection', 'section'])
@@ -81,14 +81,14 @@ class EstimateNormativeCatalogService
 
     public function detail(EstimateNorm $norm): array
     {
-        return $this->normPayload($norm->load(['collection', 'section', 'resources']), $this->latestFsbcVersion(), true);
+        return $this->normPayload($norm->load(['collection', 'section', 'resources']), $this->latestPriceVersion(), true);
     }
 
     public function addItemsFromNormatives(Estimate $estimate, array $items): array
     {
         return DB::transaction(function () use ($estimate, $items): array {
             $created = [];
-            $priceVersion = $this->latestFsbcVersion();
+            $priceVersion = $this->latestPriceVersion();
 
             foreach ($items as $itemData) {
                 $norm = EstimateNorm::query()
@@ -115,6 +115,8 @@ class EstimateNormativeCatalogService
                     'materials_cost' => $totals['materials'],
                     'machinery_cost' => $totals['machinery'],
                     'labor_cost' => $totals['labor'],
+                    'labor_hours' => $totals['labor_hours'],
+                    'machinery_hours' => $totals['machinery_hours'],
                     'direct_costs' => $totals['total'],
                     'total_amount' => $totals['total'],
                     'current_total_amount' => $totals['total'],
@@ -191,7 +193,11 @@ class EstimateNormativeCatalogService
                 ->groupBy('resource_code')
             : collect();
 
-        return $resources->map(function ($resource) use ($prices): array {
+        $priceSource = $priceVersion !== null
+            ? $priceVersion->source_type->value . '_base'
+            : null;
+
+        return $resources->map(function ($resource) use ($prices, $priceSource): array {
             $type = $resource->resource_type?->value ?? EstimateResourceType::OTHER->value;
             $price = $this->resolvePrice($prices->get($resource->resource_code) ?? collect(), $type, (string) ($resource->unit ?? ''));
 
@@ -203,7 +209,7 @@ class EstimateNormativeCatalogService
                 'quantity_per_unit' => $resource->quantity !== null ? (float) $resource->quantity : 0.0,
                 'unit_price' => $price?->base_price !== null ? (float) $price->base_price : 0.0,
                 'price_id' => $price?->id,
-                'price_source' => $price !== null ? 'fsbc_2022_base' : null,
+                'price_source' => $price !== null ? $priceSource : null,
                 'construction_resource_id' => $resource->construction_resource_id,
             ];
         });
@@ -229,7 +235,12 @@ class EstimateNormativeCatalogService
                 'quantity' => $quantity,
                 'quantity_total' => $quantity,
                 'unit_price' => $resource['unit_price'],
+                'labor_hours' => $itemType === EstimatePositionItemType::LABOR->value ? $quantity : 0,
+                'machinery_hours' => $itemType === EstimatePositionItemType::MACHINERY->value ? $quantity : 0,
                 'direct_costs' => $total,
+                'materials_cost' => $itemType === EstimatePositionItemType::MATERIAL->value ? $total : 0,
+                'machinery_cost' => $itemType === EstimatePositionItemType::MACHINERY->value ? $total : 0,
+                'labor_cost' => $itemType === EstimatePositionItemType::LABOR->value ? $total : 0,
                 'total_amount' => $total,
                 'current_total_amount' => $total,
                 'is_manual' => false,
@@ -257,16 +268,26 @@ class EstimateNormativeCatalogService
 
     private function resourceTotals(Collection $resources, float $workQuantity): array
     {
-        $totals = ['materials' => 0.0, 'machinery' => 0.0, 'labor' => 0.0, 'total' => 0.0];
+        $totals = [
+            'materials' => 0.0,
+            'machinery' => 0.0,
+            'labor' => 0.0,
+            'total' => 0.0,
+            'labor_hours' => 0.0,
+            'machinery_hours' => 0.0,
+        ];
 
         foreach ($resources as $resource) {
-            $total = round((float) $resource['quantity_per_unit'] * $workQuantity * (float) $resource['unit_price'], 2);
+            $quantity = (float) $resource['quantity_per_unit'] * $workQuantity;
+            $total = round($quantity * (float) $resource['unit_price'], 2);
             $itemType = $this->estimateItemType((string) $resource['resource_type']);
 
             if ($itemType === EstimatePositionItemType::MACHINERY->value) {
                 $totals['machinery'] += $total;
+                $totals['machinery_hours'] += $quantity;
             } elseif ($itemType === EstimatePositionItemType::LABOR->value) {
                 $totals['labor'] += $total;
+                $totals['labor_hours'] += $quantity;
             } else {
                 $totals['materials'] += $total;
             }
@@ -340,11 +361,23 @@ class EstimateNormativeCatalogService
             ->first();
     }
 
-    private function latestFsbcVersion(): ?EstimateDatasetVersion
+    private function latestPriceVersion(): ?EstimateDatasetVersion
     {
-        return EstimateDatasetVersion::query()
+        $fsbcVersion = EstimateDatasetVersion::query()
             ->where('source_type', EstimateSourceType::FSBC->value)
             ->where('status', EstimateImportStatus::PARSED->value)
+            ->whereHas('resourcePrices')
+            ->latest('id')
+            ->first();
+
+        if ($fsbcVersion !== null) {
+            return $fsbcVersion;
+        }
+
+        return EstimateDatasetVersion::query()
+            ->where('source_type', EstimateSourceType::FSNB_2022->value)
+            ->where('status', EstimateImportStatus::PARSED->value)
+            ->whereHas('resourcePrices')
             ->latest('id')
             ->first();
     }

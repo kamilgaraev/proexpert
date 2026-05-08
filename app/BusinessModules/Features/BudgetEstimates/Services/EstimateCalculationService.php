@@ -87,7 +87,7 @@ class EstimateCalculationService
                  $name = mb_strtolower(trim($child->name));
                  $type = $child->item_type;
 
-                 if ($type === \App\Enums\EstimatePositionItemType::LABOR) {
+                 if ($type === \App\Enums\EstimatePositionItemType::LABOR->value) {
                      // Детальные разряды (1-100-XXX)
                      if (str_starts_with($code, '1-100-')) {
                          $fotOtDet += (float)$child->labor_cost;
@@ -108,7 +108,7 @@ class EstimateCalculationService
                          $fotOtAgg += (float)$child->labor_cost;
                          $hoursOtAgg += (float)$child->labor_hours;
                      }
-                 } elseif ($type === \App\Enums\EstimatePositionItemType::MACHINERY) {
+                 } elseif ($type === \App\Enums\EstimatePositionItemType::MACHINERY->value) {
                      $machineryHours += (float)$child->machinery_hours;
                  }
              }
