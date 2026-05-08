@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Billing;
 
+use App\Http\Resources\Billing\SubscriptionPlanResource;
+use App\Models\SubscriptionPlan;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -27,5 +29,17 @@ final class MarketReadySubscriptionPlansMigrationTest extends TestCase
         self::assertSame(99000, (int) $plans['enterprise']->price);
         self::assertSame(100, (int) $plans['enterprise']->max_users);
         self::assertSame(500, (int) $plans['enterprise']->max_contractor_invitations);
+    }
+
+    public function test_subscription_plan_resource_exposes_user_limits(): void
+    {
+        $plan = SubscriptionPlan::query()
+            ->where('slug', 'business')
+            ->firstOrFail();
+
+        $payload = (new SubscriptionPlanResource($plan))->resolve();
+
+        self::assertSame(10, $payload['max_users']);
+        self::assertSame(50, $payload['max_contractor_invitations']);
     }
 }

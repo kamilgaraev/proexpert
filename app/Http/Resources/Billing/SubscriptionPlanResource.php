@@ -21,7 +21,9 @@ use Illuminate\Http\Resources\Json\JsonResource;
  *     @OA\Property(property="duration_in_days", type="integer", example=30),
  *     @OA\Property(property="max_foremen", type="integer", nullable=true, example=1),
  *     @OA\Property(property="max_projects", type="integer", nullable=true, example=1),
+ *     @OA\Property(property="max_users", type="integer", nullable=true, example=5),
  *     @OA\Property(property="max_storage_gb", type="integer", nullable=true, example=1),
+ *     @OA\Property(property="max_contractor_invitations", type="integer", nullable=true, example=10),
  *     @OA\Property(property="features", type="array", @OA\Items(type="string"), example={"Фича 1", "Фича 2"}),
  *     @OA\Property(property="display_order", type="integer", example=1)
  * )
@@ -45,7 +47,9 @@ class SubscriptionPlanResource extends JsonResource
             'duration_in_days' => $this->duration_in_days,
             'max_foremen' => $this->max_foremen,
             'max_projects' => $this->max_projects,
+            'max_users' => $this->max_users,
             'max_storage_gb' => $this->max_storage_gb,
+            'max_contractor_invitations' => $this->max_contractor_invitations,
             'features' => $this->features, // Already an AsArrayObject, should cast to array
             'included_packages' => $this->included_packages ?? [],
             'display_order' => $this->display_order,
