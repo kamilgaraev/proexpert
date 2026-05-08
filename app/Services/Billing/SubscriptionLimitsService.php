@@ -431,6 +431,13 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
     {
         $plan = $subscription->plan;
         $currentUsage = $this->getCurrentUsage($user);
+        $constructorLimits = $this->getEnterpriseConstructorLimits($subscription);
+        $maxForemen = $constructorLimits['foremen'] ?? $plan->max_foremen;
+        $maxProjects = $constructorLimits['projects'] ?? $plan->max_projects;
+        $maxUsers = $constructorLimits['users'] ?? $plan->max_users;
+        $maxStorageGb = $constructorLimits['storage_gb'] ?? $plan->max_storage_gb;
+        $maxContractorInvitations = $constructorLimits['contractor_invitations']
+            ?? ($plan->max_contractor_invitations ?? null);
 
         return [
             'has_subscription' => true,
@@ -449,14 +456,43 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
                 'upgrade_required' => false,
             ],
             'limits' => [
-                'foremen' => $this->formatLimitData($plan->max_foremen, $currentUsage['foremen']),
-                'projects' => $this->formatLimitData($plan->max_projects, $currentUsage['projects']),
-                'users' => $this->formatLimitData($plan->max_users, $currentUsage['users']),
-                'storage' => $this->formatStorageLimitData($plan->max_storage_gb, $currentUsage['storage_mb']),
-                'contractor_invitations' => $this->formatLimitData($plan->max_contractor_invitations ?? null, $currentUsage['contractor_invitations']),
+                'foremen' => $this->formatLimitData($maxForemen, $currentUsage['foremen']),
+                'projects' => $this->formatLimitData($maxProjects, $currentUsage['projects']),
+                'users' => $this->formatLimitData($maxUsers, $currentUsage['users']),
+                'storage' => $this->formatStorageLimitData($maxStorageGb, $currentUsage['storage_mb']),
+                'contractor_invitations' => $this->formatLimitData(
+                    $maxContractorInvitations,
+                    $currentUsage['contractor_invitations']
+                ),
             ],
             'features' => $plan->features ? (array) $plan->features : [],
             'warnings' => $this->generateSubscriptionWarnings($subscription, $plan, $currentUsage),
         ];
     }
-} 
+
+    /**
+     * @return array<string, int>
+     */
+    private function getEnterpriseConstructorLimits(OrganizationSubscription $subscription): array
+    {
+        if (($subscription->plan?->slug ?? null) !== 'enterprise') {
+            return [];
+        }
+
+        $limits = $subscription->enterprise_constructor_config['limits'] ?? null;
+
+        if (!is_array($limits)) {
+            return [];
+        }
+
+        return array_filter([
+            'users' => isset($limits['users']) ? (int) $limits['users'] : null,
+            'foremen' => isset($limits['foremen']) ? (int) $limits['foremen'] : null,
+            'projects' => isset($limits['projects']) ? (int) $limits['projects'] : null,
+            'storage_gb' => isset($limits['storage_gb']) ? (int) $limits['storage_gb'] : null,
+            'contractor_invitations' => isset($limits['contractor_invitations'])
+                ? (int) $limits['contractor_invitations']
+                : null,
+        ], static fn ($value) => $value !== null);
+    }
+}

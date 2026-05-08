@@ -21,6 +21,7 @@ class SubscriptionPlan extends Model
         'max_projects',
         'max_storage_gb',
         'max_users',
+        'max_contractor_invitations',
         'features',
         'included_packages',
         'is_active',
@@ -36,6 +37,7 @@ class SubscriptionPlan extends Model
         'max_projects' => 'integer',
         'max_storage_gb' => 'integer',
         'max_users' => 'integer',
+        'max_contractor_invitations' => 'integer',
         'duration_in_days' => 'integer',
         'display_order' => 'integer',
     ];

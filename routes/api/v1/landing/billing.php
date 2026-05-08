@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\Billing\SubscriptionPlanController;
 use App\Http\Controllers\Api\Billing\BalanceController;
 use App\Http\Controllers\Api\Landing\OrganizationSubscriptionController;
 use App\Http\Controllers\Api\V1\Landing\OrganizationDashboardController;
+use App\Http\Controllers\Api\V1\Landing\Billing\EnterpriseConstructorController;
 use App\Http\Controllers\Api\V1\Landing\Billing\SubscriptionLimitsController;
 
 // Маршруты биллинга, предполагается, что они будут доступны
@@ -48,4 +49,8 @@ Route::middleware(['auth:api_landing', 'authorize:billing.manage', 'interface:lk
         
         // --- Лимиты подписки ---
         Route::get('subscription/limits', [SubscriptionLimitsController::class, 'show'])->name('subscription.limits');
-    }); 
+        Route::post('enterprise-constructor/preview', [EnterpriseConstructorController::class, 'preview'])
+            ->name('enterprise_constructor.preview');
+        Route::post('enterprise-constructor/checkout', [EnterpriseConstructorController::class, 'checkout'])
+            ->name('enterprise_constructor.checkout');
+    });
