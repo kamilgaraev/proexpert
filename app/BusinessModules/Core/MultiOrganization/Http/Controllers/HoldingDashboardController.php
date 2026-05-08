@@ -6,7 +6,7 @@ namespace App\BusinessModules\Core\MultiOrganization\Http\Controllers;
 
 use App\BusinessModules\Core\MultiOrganization\Models\OrganizationMetrics;
 use App\Http\Controllers\Controller;
-use App\Http\Responses\AdminResponse;
+use App\Http\Responses\LandingResponse;
 use App\Models\Organization;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -23,12 +23,12 @@ class HoldingDashboardController extends Controller
             $org = Organization::findOrFail($orgId);
 
             if (!$org->is_holding) {
-                return AdminResponse::error(trans_message('holding.access_denied'), Response::HTTP_FORBIDDEN);
+                return LandingResponse::error(trans_message('holding.access_denied'), Response::HTTP_FORBIDDEN);
             }
 
             $metrics = OrganizationMetrics::getHoldingMetrics($orgId);
 
-            return AdminResponse::success([
+            return LandingResponse::success([
                 'holding_info' => [
                     'id' => $org->id,
                     'name' => $org->name,
@@ -45,7 +45,7 @@ class HoldingDashboardController extends Controller
                 'user_id' => $request->user()?->id,
             ]);
 
-            return AdminResponse::error(
+            return LandingResponse::error(
                 trans_message('holding.dashboard_load_error'),
                 Response::HTTP_INTERNAL_SERVER_ERROR
             );

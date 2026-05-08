@@ -63,7 +63,7 @@ class OrganizationGroup extends Model
     {
         return $this->childOrganizations()
             ->where('organization_type', 'child')
-            ->where('status', 'active');
+            ->where('is_active', true);
     }
 
     public function getTotalUsers(): int
@@ -84,4 +84,4 @@ class OrganizationGroup extends Model
         
         return $parentProjects + $childProjects;
     }
-} 
+}

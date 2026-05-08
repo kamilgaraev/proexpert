@@ -6,7 +6,7 @@ namespace App\BusinessModules\Core\MultiOrganization\Http\Controllers;
 
 use App\BusinessModules\Core\MultiOrganization\Services\FilterScopeManager;
 use App\Http\Controllers\Controller;
-use App\Http\Responses\AdminResponse;
+use App\Http\Responses\LandingResponse;
 use App\Models\Contract;
 use App\Models\Organization;
 use Illuminate\Http\JsonResponse;
@@ -29,11 +29,11 @@ class HoldingContractsController extends Controller
             $org = Organization::findOrFail($orgId);
 
             if (!$org->is_holding) {
-                return AdminResponse::error(trans_message('holding.access_denied'), Response::HTTP_FORBIDDEN);
+                return LandingResponse::error(trans_message('holding.access_denied'), Response::HTTP_FORBIDDEN);
             }
 
             $filters = (array) $request->get('filters', []);
-            $perPage = (int) $request->get('per_page', 50);
+            $perPage = min(max((int) $request->get('per_page', 50), 1), 100);
 
             $query = Contract::query();
             $this->filterManager->applyHoldingFilters($query, $orgId, $filters);
@@ -41,7 +41,7 @@ class HoldingContractsController extends Controller
 
             $contracts = $query->orderByDesc('date')->paginate($perPage);
 
-            return AdminResponse::paginated(
+            return LandingResponse::paginated(
                 $contracts->items(),
                 [
                     'current_page' => $contracts->currentPage(),
@@ -70,7 +70,7 @@ class HoldingContractsController extends Controller
                 'user_id' => $request->user()?->id,
             ]);
 
-            return AdminResponse::error(
+            return LandingResponse::error(
                 trans_message('holding.contracts_load_error'),
                 Response::HTTP_INTERNAL_SERVER_ERROR
             );
@@ -84,7 +84,7 @@ class HoldingContractsController extends Controller
             $org = Organization::findOrFail($orgId);
 
             if (!$org->is_holding) {
-                return AdminResponse::error(trans_message('holding.access_denied'), Response::HTTP_FORBIDDEN);
+                return LandingResponse::error(trans_message('holding.access_denied'), Response::HTTP_FORBIDDEN);
             }
 
             $childOrgs = Organization::where('parent_organization_id', $orgId)
@@ -108,7 +108,7 @@ class HoldingContractsController extends Controller
                 ->find($contractId);
 
             if (!$contract) {
-                return AdminResponse::error(trans_message('holding.contract_not_found'), Response::HTTP_NOT_FOUND);
+                return LandingResponse::error(trans_message('holding.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
 
             $totalPaid = $contract->payments->sum('paid_amount');
@@ -152,7 +152,7 @@ class HoldingContractsController extends Controller
                 ];
             });
 
-            return AdminResponse::success([
+            return LandingResponse::success([
                 'contract' => $contract,
                 'financial_summary' => $financialSummary,
                 'child_contracts_summary' => $childContractsSummary,
@@ -180,7 +180,7 @@ class HoldingContractsController extends Controller
                 'user_id' => $request->user()?->id,
             ]);
 
-            return AdminResponse::error(
+            return LandingResponse::error(
                 trans_message('holding.contract_load_error'),
                 Response::HTTP_INTERNAL_SERVER_ERROR
             );

@@ -16,5 +16,51 @@
     $ref: './paths/multi_organization.yaml#/multi-organization/create-holding'
   /multi-organization/add-child:
     $ref: './paths/multi_organization.yaml#/multi-organization/add-child'
+  /multi-organization/dashboard-v2:
+    $ref: './paths/multi_organization.yaml#/multi-organization/dashboard-v2'
+  /multi-organization/filter-options:
+    $ref: './paths/multi_organization.yaml#/multi-organization/filter-options'
+  /multi-organization/projects:
+    $ref: './paths/multi_organization.yaml#/multi-organization/projects'
+  /multi-organization/projects/{projectId}:
+    $ref: './paths/multi_organization.yaml#/multi-organization/projects/{projectId}'
+  /multi-organization/contracts-v2:
+    $ref: './paths/multi_organization.yaml#/multi-organization/contracts-v2'
+  /multi-organization/contracts/{contractId}:
+    $ref: './paths/multi_organization.yaml#/multi-organization/contracts/{contractId}'
+  /multi-organization/child-organizations/{childOrgId}:
+    $ref: './paths/multi_organization.yaml#/multi-organization/child-organizations/{childOrgId}'
+  /multi-organization/child-organizations/{childOrgId}/stats:
+    $ref: './paths/multi_organization.yaml#/multi-organization/child-organizations/{childOrgId}/stats'
+  /multi-organization/child-organizations/{childOrgId}/roles:
+    $ref: './paths/multi_organization.yaml#/multi-organization/child-organizations/{childOrgId}/roles'
+  /multi-organization/child-organizations/{childOrgId}/users:
+    $ref: './paths/multi_organization.yaml#/multi-organization/child-organizations/{childOrgId}/users'
+  /multi-organization/child-organizations/{childOrgId}/users/bulk:
+    $ref: './paths/multi_organization.yaml#/multi-organization/child-organizations/{childOrgId}/users/bulk'
+  /multi-organization/child-organizations/{childOrgId}/users/{userId}:
+    $ref: './paths/multi_organization.yaml#/multi-organization/child-organizations/{childOrgId}/users/{userId}'
+  /multi-organization/holding-settings:
+    $ref: './paths/multi_organization.yaml#/multi-organization/holding-settings'
+  /multi-organization/role-templates:
+    $ref: './paths/multi_organization.yaml#/multi-organization/role-templates'
+  /multi-organization/reports/projects-summary:
+    $ref: './paths/multi_organization.yaml#/multi-organization/reports/projects-summary'
+  /multi-organization/reports/contracts-summary:
+    $ref: './paths/multi_organization.yaml#/multi-organization/reports/contracts-summary'
+  /multi-organization/reports/intra-group:
+    $ref: './paths/multi_organization.yaml#/multi-organization/reports/intra-group'
+  /multi-organization/reports/consolidated:
+    $ref: './paths/multi_organization.yaml#/multi-organization/reports/consolidated'
+  /multi-organization/reports/detailed-contracts:
+    $ref: './paths/multi_organization.yaml#/multi-organization/reports/detailed-contracts'
+  /multi-organization/reports/contracts:
+    $ref: './paths/multi_organization.yaml#/multi-organization/reports/contracts'
+  /multi-organization/reports/contracts/summary:
+    $ref: './paths/multi_organization.yaml#/multi-organization/reports/contracts/summary'
+  /multi-organization/reports/acts:
+    $ref: './paths/multi_organization.yaml#/multi-organization/reports/acts'
+  /multi-organization/reports/movements:
+    $ref: './paths/multi_organization.yaml#/multi-organization/reports/movements'
   /multi-organization/summary:
-    $ref: './paths/multi_organization.yaml#/multi-organization/summary' 
+    $ref: './paths/multi_organization.yaml#/multi-organization/summary'

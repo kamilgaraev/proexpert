@@ -6,7 +6,7 @@ namespace App\BusinessModules\Core\MultiOrganization\Http\Controllers;
 
 use App\BusinessModules\Core\MultiOrganization\Services\FilterScopeManager;
 use App\Http\Controllers\Controller;
-use App\Http\Responses\AdminResponse;
+use App\Http\Responses\LandingResponse;
 use App\Models\Organization;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -28,10 +28,10 @@ class HoldingFilterController extends Controller
             $org = Organization::findOrFail($orgId);
 
             if (!$org->is_holding) {
-                return AdminResponse::error(trans_message('holding.access_denied'), Response::HTTP_FORBIDDEN);
+                return LandingResponse::error(trans_message('holding.access_denied'), Response::HTTP_FORBIDDEN);
             }
 
-            return AdminResponse::success($this->filterManager->getFilterOptions($orgId));
+            return LandingResponse::success($this->filterManager->getFilterOptions($orgId));
         } catch (\Throwable $e) {
             Log::error('[HoldingFilterController.getFilterOptions] Unexpected error', [
                 'message' => $e->getMessage(),
@@ -39,7 +39,7 @@ class HoldingFilterController extends Controller
                 'user_id' => $request->user()?->id,
             ]);
 
-            return AdminResponse::error(
+            return LandingResponse::error(
                 trans_message('holding.filters_load_error'),
                 Response::HTTP_INTERNAL_SERVER_ERROR
             );

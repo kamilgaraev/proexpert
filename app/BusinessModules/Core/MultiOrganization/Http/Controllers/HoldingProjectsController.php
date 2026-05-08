@@ -7,7 +7,7 @@ namespace App\BusinessModules\Core\MultiOrganization\Http\Controllers;
 use App\BusinessModules\Core\MultiOrganization\Services\ContextAwareOrganizationScope;
 use App\BusinessModules\Core\MultiOrganization\Services\FilterScopeManager;
 use App\Http\Controllers\Controller;
-use App\Http\Responses\AdminResponse;
+use App\Http\Responses\LandingResponse;
 use App\Models\Organization;
 use App\Models\Project;
 use Illuminate\Http\JsonResponse;
@@ -30,11 +30,11 @@ class HoldingProjectsController extends Controller
             $org = Organization::findOrFail($orgId);
 
             if (!$org->is_holding) {
-                return AdminResponse::error(trans_message('holding.access_denied'), Response::HTTP_FORBIDDEN);
+                return LandingResponse::error(trans_message('holding.access_denied'), Response::HTTP_FORBIDDEN);
             }
 
             $filters = (array) $request->get('filters', []);
-            $perPage = (int) $request->get('per_page', 50);
+            $perPage = min(max((int) $request->get('per_page', 50), 1), 100);
 
             $query = Project::query();
             $this->filterManager->applyHoldingFilters($query, $orgId, $filters);
@@ -43,7 +43,7 @@ class HoldingProjectsController extends Controller
 
             $projects = $query->orderByDesc('created_at')->paginate($perPage);
 
-            return AdminResponse::paginated(
+            return LandingResponse::paginated(
                 $projects->items(),
                 [
                     'current_page' => $projects->currentPage(),
@@ -72,7 +72,7 @@ class HoldingProjectsController extends Controller
                 'user_id' => $request->user()?->id,
             ]);
 
-            return AdminResponse::error(
+            return LandingResponse::error(
                 trans_message('holding.projects_load_error'),
                 Response::HTTP_INTERNAL_SERVER_ERROR
             );
@@ -86,7 +86,7 @@ class HoldingProjectsController extends Controller
             $org = Organization::findOrFail($orgId);
 
             if (!$org->is_holding) {
-                return AdminResponse::error(trans_message('holding.access_denied'), Response::HTTP_FORBIDDEN);
+                return LandingResponse::error(trans_message('holding.access_denied'), Response::HTTP_FORBIDDEN);
             }
 
             $scope = app(ContextAwareOrganizationScope::class);
@@ -96,7 +96,7 @@ class HoldingProjectsController extends Controller
                 ->whereIn('organization_id', $allowedOrgIds)
                 ->findOrFail($projectId);
 
-            return AdminResponse::success($project);
+            return LandingResponse::success($project);
         } catch (\Throwable $e) {
             Log::error('[HoldingProjectsController.show] Unexpected error', [
                 'message' => $e->getMessage(),
@@ -105,7 +105,7 @@ class HoldingProjectsController extends Controller
                 'user_id' => $request->user()?->id,
             ]);
 
-            return AdminResponse::error(
+            return LandingResponse::error(
                 trans_message('holding.project_load_error'),
                 Response::HTTP_INTERNAL_SERVER_ERROR
             );

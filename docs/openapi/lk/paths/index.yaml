@@ -114,6 +114,52 @@
   $ref: './multi_organization.yaml#/~1multi-organization~1create-holding'
 /multi-organization/add-child:
   $ref: './multi_organization.yaml#/~1multi-organization~1add-child'
+/multi-organization/dashboard-v2:
+  $ref: './multi_organization.yaml#/~1multi-organization~1dashboard-v2'
+/multi-organization/filter-options:
+  $ref: './multi_organization.yaml#/~1multi-organization~1filter-options'
+/multi-organization/projects:
+  $ref: './multi_organization.yaml#/~1multi-organization~1projects'
+/multi-organization/projects/{projectId}:
+  $ref: './multi_organization.yaml#/~1multi-organization~1projects~1{projectId}'
+/multi-organization/contracts-v2:
+  $ref: './multi_organization.yaml#/~1multi-organization~1contracts-v2'
+/multi-organization/contracts/{contractId}:
+  $ref: './multi_organization.yaml#/~1multi-organization~1contracts~1{contractId}'
+/multi-organization/child-organizations/{childOrgId}:
+  $ref: './multi_organization.yaml#/~1multi-organization~1child-organizations~1{childOrgId}'
+/multi-organization/child-organizations/{childOrgId}/stats:
+  $ref: './multi_organization.yaml#/~1multi-organization~1child-organizations~1{childOrgId}~1stats'
+/multi-organization/child-organizations/{childOrgId}/roles:
+  $ref: './multi_organization.yaml#/~1multi-organization~1child-organizations~1{childOrgId}~1roles'
+/multi-organization/child-organizations/{childOrgId}/users:
+  $ref: './multi_organization.yaml#/~1multi-organization~1child-organizations~1{childOrgId}~1users'
+/multi-organization/child-organizations/{childOrgId}/users/bulk:
+  $ref: './multi_organization.yaml#/~1multi-organization~1child-organizations~1{childOrgId}~1users~1bulk'
+/multi-organization/child-organizations/{childOrgId}/users/{userId}:
+  $ref: './multi_organization.yaml#/~1multi-organization~1child-organizations~1{childOrgId}~1users~1{userId}'
+/multi-organization/holding-settings:
+  $ref: './multi_organization.yaml#/~1multi-organization~1holding-settings'
+/multi-organization/role-templates:
+  $ref: './multi_organization.yaml#/~1multi-organization~1role-templates'
+/multi-organization/reports/projects-summary:
+  $ref: './multi_organization.yaml#/~1multi-organization~1reports~1projects-summary'
+/multi-organization/reports/contracts-summary:
+  $ref: './multi_organization.yaml#/~1multi-organization~1reports~1contracts-summary'
+/multi-organization/reports/intra-group:
+  $ref: './multi_organization.yaml#/~1multi-organization~1reports~1intra-group'
+/multi-organization/reports/consolidated:
+  $ref: './multi_organization.yaml#/~1multi-organization~1reports~1consolidated'
+/multi-organization/reports/detailed-contracts:
+  $ref: './multi_organization.yaml#/~1multi-organization~1reports~1detailed-contracts'
+/multi-organization/reports/contracts:
+  $ref: './multi_organization.yaml#/~1multi-organization~1reports~1contracts'
+/multi-organization/reports/contracts/summary:
+  $ref: './multi_organization.yaml#/~1multi-organization~1reports~1contracts~1summary'
+/multi-organization/reports/acts:
+  $ref: './multi_organization.yaml#/~1multi-organization~1reports~1acts'
+/multi-organization/reports/movements:
+  $ref: './multi_organization.yaml#/~1multi-organization~1reports~1movements'
 /support:
   $ref: './support.yaml#/~1support'
 /adminPanelUsers:
@@ -129,4 +175,4 @@
 /dashboard:
   $ref: './dashboard.yaml#/~1dashboard'
 /multi-organization/summary:
-  $ref: './multi_organization.yaml#/~1multi-organization~1summary' 
+  $ref: './multi_organization.yaml#/~1multi-organization~1summary'

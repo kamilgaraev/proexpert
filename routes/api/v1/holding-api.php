@@ -2,7 +2,6 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\HoldingApiController;
-use App\Http\Controllers\Api\V1\Landing\MultiOrganizationController;
 
 // ============================================================================
 // API ХОЛДИНГОВ - ПУБЛИЧНЫЕ И ЗАЩИЩЕННЫЕ ЭНДПОИНТЫ
@@ -28,10 +27,5 @@ Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.con
         // Данные конкретной организации
         Route::get('{slug}/organization/{organizationId}', [HoldingApiController::class, 'getOrganizationData'])
             ->name('organizationData');
-        
-        // Добавление дочерней организации (только владельцы)
-        Route::middleware(['authorize:multi-organization.manage'])
-            ->post('{slug}/add-child', [MultiOrganizationController::class, 'addChildOrganization'])
-            ->name('addChild');
     });
 

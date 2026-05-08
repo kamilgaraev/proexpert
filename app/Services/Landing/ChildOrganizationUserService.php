@@ -47,13 +47,15 @@ class ChildOrganizationUserService
             if (isset($userData['role_data']['is_custom']) && $userData['role_data']['is_custom']) {
                 $role = $this->createCustomRole($childOrg->id, $userData['role_data'], $createdBy);
                 $roleSlug = $role->slug;
+                $roleType = UserRoleAssignment::TYPE_CUSTOM;
             } else {
                 // Используем системную роль
                 $roleSlug = $userData['role_data']['slug'] ?? 'organization_user';
                 $role = null;
+                $roleType = UserRoleAssignment::TYPE_SYSTEM;
             }
             
-            $this->attachUserToOrganization($user, $childOrg, $roleSlug);
+            $this->attachUserToOrganization($user, $childOrg, $roleSlug, $roleType, $createdBy);
             
             if ($userData['send_invitation'] ?? false) {
                 $this->sendInvitation($user, $childOrg, $roleSlug);
@@ -224,7 +226,16 @@ class ChildOrganizationUserService
             'is_active' => true,
         ];
 
-        return $this->customRoleService->createRole($roleData, $organizationId, $createdBy);
+        return $this->customRoleService->createRole(
+            $organizationId,
+            $roleData['name'],
+            $roleData['permissions'],
+            [],
+            ['lk'],
+            null,
+            $roleData['description'],
+            $createdBy
+        );
     }
 
     public function getOrganizationRolesWithStats(int $organizationId): array
@@ -359,16 +370,31 @@ class ChildOrganizationUserService
             'is_active' => true,
         ];
 
-        return $this->customRoleService->createRole($data, $organizationId, $createdBy);
+        return $this->customRoleService->createRole(
+            $organizationId,
+            $data['name'],
+            $data['permissions'],
+            [],
+            ['lk'],
+            null,
+            $data['description'],
+            $createdBy
+        );
     }
 
-    private function attachUserToOrganization(User $user, Organization $organization, string $roleSlug): void
+    private function attachUserToOrganization(
+        User $user,
+        Organization $organization,
+        string $roleSlug,
+        string $roleType,
+        User $assignedBy
+    ): void
     {
         if (!$organization->users()->where('user_id', $user->id)->exists()) {
             $organization->users()->attach($user->id, [
                 'is_owner' => false, // Определяется через роли
                 'is_active' => true,
-                'settings' => ['primary_role_slug' => $roleSlug]
+                'settings' => json_encode(['primary_role_slug' => $roleSlug])
             ]);
         }
 
@@ -382,8 +408,8 @@ class ChildOrganizationUserService
                 'context_id' => $context->id,
             ],
             [
-                'role_type' => 'system', // По умолчанию системная
-                'assigned_by' => Auth::id(),
+                'role_type' => $roleType,
+                'assigned_by' => $assignedBy->id,
                 'is_active' => true,
                 'expires_at' => null,
             ]
@@ -517,4 +543,4 @@ class ChildOrganizationUserService
             'created_at' => null,
         ];
     }
-} 
+}

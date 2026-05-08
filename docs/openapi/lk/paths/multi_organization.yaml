@@ -580,3 +580,363 @@
                 message:
                   type: string
                   example: "Неверная секция для экспорта"
+
+/multi-organization/dashboard-v2:
+  get:
+    tags: [MultiOrganization, Dashboard]
+    summary: Получить канонический дашборд холдинга
+    security:
+      - bearerAuth: []
+    responses:
+      "200":
+        description: Дашборд получен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/multi-organization/filter-options:
+  get:
+    tags: [MultiOrganization, Filters]
+    summary: Получить фильтры для холдинга
+    security:
+      - bearerAuth: []
+    responses:
+      "200":
+        description: Фильтры получены
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/multi-organization/projects:
+  get:
+    tags: [MultiOrganization, Projects]
+    summary: Получить проекты холдинга
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: per_page
+        in: query
+        schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    responses:
+      "200":
+        description: Проекты получены
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/multi-organization/projects/{projectId}:
+  get:
+    tags: [MultiOrganization, Projects]
+    summary: Получить проект холдинга
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema: { type: integer }
+    responses:
+      "200":
+        description: Проект получен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "404":
+        description: Проект не найден
+
+/multi-organization/contracts-v2:
+  get:
+    tags: [MultiOrganization, Contracts]
+    summary: Получить договоры холдинга
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: per_page
+        in: query
+        schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    responses:
+      "200":
+        description: Договоры получены
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/multi-organization/contracts/{contractId}:
+  get:
+    tags: [MultiOrganization, Contracts]
+    summary: Получить договор холдинга
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: contractId
+        in: path
+        required: true
+        schema: { type: integer }
+    responses:
+      "200":
+        description: Договор получен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "404":
+        description: Договор не найден
+
+/multi-organization/child-organizations/{childOrgId}:
+  put:
+    tags: [MultiOrganization, ChildOrganizations]
+    summary: Обновить дочернюю организацию
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: childOrgId
+        in: path
+        required: true
+        schema: { type: integer }
+    responses:
+      "200":
+        description: Организация обновлена
+  delete:
+    tags: [MultiOrganization, ChildOrganizations]
+    summary: Безопасно удалить или архивировать дочернюю организацию
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: childOrgId
+        in: path
+        required: true
+        schema: { type: integer }
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [confirm_deletion]
+            properties:
+              confirm_deletion: { type: boolean }
+              transfer_data_to:
+                type: integer
+                description: ID головной или дочерней организации того же холдинга
+    responses:
+      "200":
+        description: Организация удалена или архивирована
+      "403":
+        description: Нет доступа
+      "422":
+        description: Некорректная организация для переноса данных
+
+/multi-organization/child-organizations/{childOrgId}/stats:
+  get:
+    tags: [MultiOrganization, ChildOrganizations]
+    summary: Получить статистику дочерней организации
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: childOrgId
+        in: path
+        required: true
+        schema: { type: integer }
+    responses:
+      "200":
+        description: Статистика получена
+
+/multi-organization/child-organizations/{childOrgId}/roles:
+  get:
+    tags: [MultiOrganization, ChildUsers]
+    summary: Получить роли дочерней организации
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: childOrgId
+        in: path
+        required: true
+        schema: { type: integer }
+    responses:
+      "200":
+        description: Роли получены
+
+/multi-organization/child-organizations/{childOrgId}/users:
+  get:
+    tags: [MultiOrganization, ChildUsers]
+    summary: Получить пользователей дочерней организации
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: childOrgId
+        in: path
+        required: true
+        schema: { type: integer }
+    responses:
+      "200":
+        description: Пользователи получены
+  post:
+    tags: [MultiOrganization, ChildUsers]
+    summary: Добавить пользователя в дочернюю организацию
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: childOrgId
+        in: path
+        required: true
+        schema: { type: integer }
+    responses:
+      "200":
+        description: Пользователь добавлен
+
+/multi-organization/child-organizations/{childOrgId}/users/bulk:
+  post:
+    tags: [MultiOrganization, ChildUsers]
+    summary: Массово создать пользователей дочерней организации
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: childOrgId
+        in: path
+        required: true
+        schema: { type: integer }
+    responses:
+      "200":
+        description: Пользователи обработаны
+
+/multi-organization/child-organizations/{childOrgId}/users/{userId}:
+  put:
+    tags: [MultiOrganization, ChildUsers]
+    summary: Обновить роль пользователя дочерней организации
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: childOrgId
+        in: path
+        required: true
+        schema: { type: integer }
+      - name: userId
+        in: path
+        required: true
+        schema: { type: integer }
+    responses:
+      "200":
+        description: Пользователь обновлен
+  delete:
+    tags: [MultiOrganization, ChildUsers]
+    summary: Удалить пользователя из дочерней организации
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: childOrgId
+        in: path
+        required: true
+        schema: { type: integer }
+      - name: userId
+        in: path
+        required: true
+        schema: { type: integer }
+    responses:
+      "200":
+        description: Пользователь удален
+
+/multi-organization/holding-settings:
+  put:
+    tags: [MultiOrganization, Holdings]
+    summary: Обновить настройки холдинга
+    security:
+      - bearerAuth: []
+    responses:
+      "200":
+        description: Настройки обновлены
+
+/multi-organization/role-templates:
+  get:
+    tags: [MultiOrganization, ChildUsers]
+    summary: Получить шаблоны ролей дочерних организаций
+    security:
+      - bearerAuth: []
+    responses:
+      "200":
+        description: Шаблоны ролей получены
+
+/multi-organization/reports/projects-summary:
+  get:
+    tags: [MultiOrganization, Reports]
+    summary: Сводка проектов холдинга
+    security:
+      - bearerAuth: []
+    responses:
+      "200": { description: Сводка получена }
+
+/multi-organization/reports/contracts-summary:
+  get:
+    tags: [MultiOrganization, Reports]
+    summary: Сводка договоров холдинга
+    security:
+      - bearerAuth: []
+    responses:
+      "200": { description: Сводка получена }
+
+/multi-organization/reports/intra-group:
+  get:
+    tags: [MultiOrganization, Reports]
+    summary: Внутригрупповые операции холдинга
+    security:
+      - bearerAuth: []
+    responses:
+      "200": { description: Отчет получен }
+
+/multi-organization/reports/consolidated:
+  get:
+    tags: [MultiOrganization, Reports]
+    summary: Консолидированный отчет холдинга
+    security:
+      - bearerAuth: []
+    responses:
+      "200": { description: Отчет получен }
+
+/multi-organization/reports/detailed-contracts:
+  get:
+    tags: [MultiOrganization, Reports]
+    summary: Детальный отчет по договорам холдинга
+    security:
+      - bearerAuth: []
+    responses:
+      "200": { description: Отчет получен }
+
+/multi-organization/reports/contracts:
+  get:
+    tags: [MultiOrganization, Reports]
+    summary: Договоры холдинга для отчетности
+    security:
+      - bearerAuth: []
+    responses:
+      "200": { description: Отчет получен }
+
+/multi-organization/reports/contracts/summary:
+  get:
+    tags: [MultiOrganization, Reports]
+    summary: Финансовая сводка договоров холдинга
+    security:
+      - bearerAuth: []
+    responses:
+      "200": { description: Сводка получена }
+
+/multi-organization/reports/acts:
+  get:
+    tags: [MultiOrganization, Reports]
+    summary: Акты холдинга для отчетности
+    security:
+      - bearerAuth: []
+    responses:
+      "200": { description: Отчет получен }
+
+/multi-organization/reports/movements:
+  get:
+    tags: [MultiOrganization, Reports]
+    summary: Движения материалов холдинга
+    security:
+      - bearerAuth: []
+    responses:
+      "200": { description: Отчет получен }

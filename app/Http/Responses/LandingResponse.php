@@ -63,6 +63,32 @@ class LandingResponse
         return response()->json($response, $code);
     }
 
+    public static function paginated(
+        mixed $data,
+        array $meta,
+        ?string $message = null,
+        int $code = 200,
+        ?array $summary = null,
+        ?array $links = null
+    ): JsonResponse {
+        $response = [
+            'success' => true,
+            'message' => $message,
+            'data' => self::transformData($data),
+            'meta' => $meta,
+        ];
+
+        if ($summary !== null) {
+            $response['summary'] = $summary;
+        }
+
+        if ($links !== null) {
+            $response['links'] = $links;
+        }
+
+        return response()->json($response, $code);
+    }
+
     /**
      * Transform data to array if needed.
      *

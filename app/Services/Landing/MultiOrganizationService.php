@@ -84,7 +84,7 @@ class MultiOrganizationService
                 'organization_type' => 'child',
                 'is_holding' => false,
                 'hierarchy_level' => 1,
-                'hierarchy_path' => $parentOrg->hierarchy_path . '.' . $parentOrg->id,
+                'hierarchy_path' => null,
                 'tax_number' => $organizationData['inn'] ?? null,
                 'registration_number' => $organizationData['kpp'] ?? null,
                 'address' => $organizationData['address'] ?? null,
@@ -93,6 +93,10 @@ class MultiOrganizationService
                 's3_bucket' => $mainBucket,
                 'bucket_region' => 'ru-central1',
             ]);
+
+            $childOrg->forceFill([
+                'hierarchy_path' => ($parentOrg->hierarchy_path ?: (string) $parentOrg->id) . '.' . $childOrg->id,
+            ])->save();
 
             // Папка org-{id}/ в бакете создастся автоматически при первой загрузке файла
             // Но вызовем createBucket на случай если понадобится дополнительная логика
@@ -411,6 +415,17 @@ class MultiOrganizationService
         DB::transaction(function () use ($childOrg, $transferDataTo) {
             if ($transferDataTo) {
                 $targetOrg = Organization::findOrFail($transferDataTo);
+
+                if ($targetOrg->id === $childOrg->id) {
+                    throw new \Exception('Нельзя перенести данные в удаляемую организацию');
+                }
+
+                if (
+                    $targetOrg->id !== $childOrg->parent_organization_id
+                    && $targetOrg->parent_organization_id !== $childOrg->parent_organization_id
+                ) {
+                    throw new \Exception('Организация для переноса данных должна входить в тот же холдинг');
+                }
                 
                 $childOrg->projects()->update(['organization_id' => $transferDataTo]);
                 $childOrg->contracts()->update(['organization_id' => $transferDataTo]);
@@ -596,6 +611,13 @@ class MultiOrganizationService
             }
         }
 
+        $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($childOrg->id);
+        \App\Domain\Authorization\Models\UserRoleAssignment::where([
+            'user_id' => $userId,
+            'context_id' => $context->id,
+            'is_active' => true,
+        ])->update(['is_active' => false]);
+
         $childOrg->users()->detach($userId);
     }
 
@@ -697,7 +719,7 @@ class MultiOrganizationService
                 'total_users' => $organization->users()->count() + $childOrgs->sum(fn($org) => $org->users()->count()),
                 'total_projects' => $organization->projects()->count() + $childOrgs->sum(fn($org) => $org->projects()->count()),
                 'total_contracts' => $organization->contracts()->count() + $childOrgs->sum(fn($org) => $org->contracts()->count()),
-                'total_balance' => $organization->balance?->current_balance ?? 0 + $childOrgs->sum(fn($org) => $org->balance?->current_balance ?? 0),
+                'total_balance' => ($organization->balance?->current_balance ?? 0) + $childOrgs->sum(fn($org) => $org->balance?->current_balance ?? 0),
             ],
             'child_organizations' => $childOrgs->map(function ($org) {
                 return [
@@ -715,4 +737,4 @@ class MultiOrganizationService
             ],
         ];
     }
-} 
+}

@@ -20,43 +20,56 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context', 'modu
         
         // Получение иерархии организаций
         Route::get('/hierarchy', [MultiOrganizationController::class, 'getHierarchy'])
+            ->middleware(['authorize:multi-organization.view'])
             ->name('hierarchy');
         
         // Получение доступных организаций
         Route::get('/accessible', [MultiOrganizationController::class, 'getAccessibleOrganizations'])
+            ->middleware(['authorize:multi-organization.view'])
             ->name('accessible');
         
         // Получение данных организации
         Route::get('/organization/{organizationId}', [MultiOrganizationController::class, 'getOrganizationData'])
+            ->middleware(['authorize:multi-organization.view'])
             ->name('organizationData');
         
         // Переключение контекста организации
         Route::post('/switch-context', [MultiOrganizationController::class, 'switchOrganizationContext'])
+            ->middleware(['authorize:multi-organization.view'])
             ->name('switchContext');
         
         Route::get('/dashboard-v2', [HoldingDashboardController::class, 'index'])
+            ->middleware(['authorize:multi-organization.dashboard'])
             ->name('dashboardV2');
         
         Route::get('/dashboard', [MultiOrganizationController::class, 'getHoldingDashboard'])
+            ->middleware(['authorize:multi-organization.dashboard'])
             ->name('dashboard');
 
         Route::get('/filter-options', [HoldingFilterController::class, 'getFilterOptions'])
+            ->middleware(['authorize:multi-organization.view'])
             ->name('filterOptions');
 
         Route::get('/projects', [HoldingProjectsController::class, 'index'])
+            ->middleware(['authorize:multi-organization.view'])
             ->name('projects.index');
         Route::get('/projects/{projectId}', [HoldingProjectsController::class, 'show'])
+            ->middleware(['authorize:multi-organization.view'])
             ->name('projects.show');
 
         Route::get('/contracts-v2', [HoldingContractsController::class, 'index'])
+            ->middleware(['authorize:multi-organization.view'])
             ->name('contractsV2.index');
         Route::get('/contracts/{contractId}', [HoldingContractsController::class, 'show'])
+            ->middleware(['authorize:multi-organization.view'])
             ->name('contracts.show');
 
         Route::get('/child-organizations', [MultiOrganizationController::class, 'getChildOrganizations'])
+            ->middleware(['authorize:multi-organization.view'])
             ->name('getChildOrganizations');
 
         Route::get('/role-templates', [MultiOrganizationController::class, 'getRoleTemplates'])
+            ->middleware(['authorize:multi-organization.view'])
             ->name('getRoleTemplates');
 
         // Только для владельцев организации
@@ -105,26 +118,36 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context', 'modu
         // Сводные отчёты по холдингу
         Route::prefix('reports')->name('reports.')->group(function () {
             Route::get('/projects-summary', [HoldingReportsController::class, 'projectsSummary'])
+                ->middleware(['authorize:multi-organization.reports.view'])
                 ->name('projects-summary');
             Route::get('/contracts-summary', [HoldingReportsController::class, 'contractsSummary'])
+                ->middleware(['authorize:multi-organization.reports.view'])
                 ->name('contracts-summary');
             Route::get('/intra-group', [HoldingReportsController::class, 'intraGroup'])
+                ->middleware(['authorize:multi-organization.reports.view'])
                 ->name('intra-group');
             Route::get('/consolidated', [HoldingReportsController::class, 'consolidated'])
+                ->middleware(['authorize:multi-organization.reports.view'])
                 ->name('consolidated');
             Route::get('/detailed-contracts', [HoldingReportsController::class, 'detailedContracts'])
+                ->middleware(['authorize:multi-organization.reports.view'])
                 ->name('detailed-contracts');
             
             Route::get('/contracts', [MultiOrganizationController::class, 'getHoldingContracts'])
+                ->middleware(['authorize:multi-organization.reports.financial'])
                 ->name('contracts');
             Route::get('/contracts/summary', [MultiOrganizationController::class, 'getHoldingContractsSummary'])
+                ->middleware(['authorize:multi-organization.reports.financial'])
                 ->name('contractsSummary');
             Route::get('/acts', [MultiOrganizationController::class, 'getHoldingActs'])
+                ->middleware(['authorize:multi-organization.reports.view'])
                 ->name('acts');
             Route::get('/movements', [MultiOrganizationController::class, 'getHoldingMovements'])
+                ->middleware(['authorize:multi-organization.reports.view'])
                 ->name('movements');
         });
 
         Route::get('/summary', [App\Http\Controllers\Api\V1\Landing\HoldingSummaryController::class, 'summary'])
+            ->middleware(['authorize:multi-organization.view'])
             ->name('summary');
-    }); 
+    });
