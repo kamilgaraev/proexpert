@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\Procurement\Services;
 use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalDecisionEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalStatusEnum;
+use App\BusinessModules\Features\Procurement\Http\Resources\SupplierProposalDecisionResource;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
@@ -23,7 +24,7 @@ class SupplierProposalComparisonService
         private readonly ProcurementAuditService $auditService
     ) {}
 
-    public function comparisonForRequest(SupplierRequest $supplierRequest): array
+    public function comparisonForRequest(SupplierRequest $supplierRequest, bool $includeDecision = true): array
     {
         $proposals = $supplierRequest->proposals()
             ->with(['lines', 'supplier', 'externalSupplierContact', 'supplierParty', 'currentVersion', 'supplierRequestVersion'])
@@ -39,12 +40,14 @@ class SupplierProposalComparisonService
             ->orderBy('id')
             ->get();
 
+        $decision = $includeDecision ? $this->decisionForSupplierRequest($supplierRequest) : null;
+
         return $this->comparisonPayload($proposals, [
             'supplier_request_id' => $supplierRequest->id,
-        ], true);
+        ], true, $decision);
     }
 
-    public function comparisonForPurchaseRequest(PurchaseRequest $purchaseRequest): array
+    public function comparisonForPurchaseRequest(PurchaseRequest $purchaseRequest, bool $includeDecision = true): array
     {
         $proposals = SupplierProposal::query()
             ->with(['lines', 'supplier', 'externalSupplierContact', 'supplierParty', 'currentVersion', 'supplierRequestVersion'])
@@ -63,12 +66,19 @@ class SupplierProposalComparisonService
             ->orderBy('id')
             ->get();
 
+        $decision = $includeDecision ? $this->decisionForPurchaseRequest($purchaseRequest) : null;
+
         return $this->comparisonPayload($proposals, [
             'purchase_request_id' => $purchaseRequest->id,
-        ], false);
+        ], false, $decision);
     }
 
-    private function comparisonPayload($proposals, array $scope, bool $requireSameSupplierRequestVersion): array
+    private function comparisonPayload(
+        $proposals,
+        array $scope,
+        bool $requireSameSupplierRequestVersion,
+        ?SupplierProposalDecision $decision
+    ): array
     {
         $rows = $proposals
             ->map(fn (SupplierProposal $proposal): array => $this->proposalComparisonRow($proposal))
@@ -128,8 +138,55 @@ class SupplierProposalComparisonService
                 ->values()
                 ->all(),
             'cheapest_supplier_proposal_id' => $cheapestProposalId,
+            'decision' => $this->decisionPayload($decision),
             'rows' => $rows,
         ]);
+    }
+
+    private function decisionForSupplierRequest(SupplierRequest $supplierRequest): ?SupplierProposalDecision
+    {
+        return SupplierProposalDecision::query()
+            ->with($this->decisionRelations())
+            ->where('organization_id', $supplierRequest->organization_id)
+            ->where('supplier_request_id', $supplierRequest->id)
+            ->latest('id')
+            ->first();
+    }
+
+    private function decisionForPurchaseRequest(PurchaseRequest $purchaseRequest): ?SupplierProposalDecision
+    {
+        return SupplierProposalDecision::query()
+            ->with($this->decisionRelations())
+            ->where('organization_id', $purchaseRequest->organization_id)
+            ->whereIn('supplier_request_id', static function ($query) use ($purchaseRequest): void {
+                $query->select('id')
+                    ->from('supplier_requests')
+                    ->where('purchase_request_id', $purchaseRequest->id)
+                    ->whereNull('deleted_at');
+            })
+            ->latest('id')
+            ->first();
+    }
+
+    private function decisionPayload(?SupplierProposalDecision $decision): ?array
+    {
+        if ($decision === null) {
+            return null;
+        }
+
+        return (new SupplierProposalDecisionResource($decision))->resolve();
+    }
+
+    private function decisionRelations(): array
+    {
+        return [
+            'winningProposal.currentVersion',
+            'cheapestProposal.currentVersion',
+            'winningProposalVersion',
+            'cheapestProposalVersion',
+            'selectedBy',
+            'approvals',
+        ];
     }
 
     public function selectWinner(
@@ -153,7 +210,7 @@ class SupplierProposalComparisonService
             $this->ensureDecisionCanBeChanged($lockedSupplierRequest);
 
             $proposal = $this->findComparableProposal($lockedSupplierRequest, $proposalId);
-            $comparison = $this->comparisonForRequest($lockedSupplierRequest);
+            $comparison = $this->comparisonForRequest($lockedSupplierRequest, false);
             $cheapestProposalId = $comparison['cheapest_supplier_proposal_id'];
             $selectedRow = collect($comparison['rows'])->firstWhere('id', $proposal->id);
 
@@ -275,7 +332,7 @@ class SupplierProposalComparisonService
                 ->lockForUpdate()
                 ->first();
 
-            $comparison = $this->comparisonForPurchaseRequest($lockedPurchaseRequest);
+            $comparison = $this->comparisonForPurchaseRequest($lockedPurchaseRequest, false);
             $cheapestProposalId = $comparison['cheapest_supplier_proposal_id'];
             $selectedRow = collect($comparison['rows'])->firstWhere('id', $proposal->id);
 

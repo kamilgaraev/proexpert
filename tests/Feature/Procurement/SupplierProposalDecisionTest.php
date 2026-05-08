@@ -104,6 +104,31 @@ class SupplierProposalDecisionTest extends TestCase
         ]);
     }
 
+    public function test_comparison_payload_includes_saved_decision(): void
+    {
+        $organization = Organization::factory()->create();
+        $supplierRequest = $this->createSupplierRequest($organization);
+        $purchaseRequest = PurchaseRequest::query()->findOrFail($supplierRequest->purchase_request_id);
+        $winner = $this->createProposal($organization, $supplierRequest, 'KP-DEC-006-A', 100);
+
+        $decision = app(SupplierProposalComparisonService::class)->selectWinnerForPurchaseRequest(
+            $purchaseRequest,
+            $winner->id,
+            null,
+            null
+        );
+
+        $requestComparison = app(SupplierProposalComparisonService::class)->comparisonForRequest($supplierRequest);
+        $purchaseRequestComparison = app(SupplierProposalComparisonService::class)->comparisonForPurchaseRequest($purchaseRequest);
+
+        $this->assertSame($decision->id, $requestComparison['decision']['id']);
+        $this->assertSame($winner->id, $requestComparison['decision']['winning_supplier_proposal_id']);
+        $this->assertSame('selected', $requestComparison['decision']['status']);
+        $this->assertSame($decision->id, $purchaseRequestComparison['decision']['id']);
+        $this->assertSame($winner->id, $purchaseRequestComparison['decision']['winning_supplier_proposal_id']);
+        $this->assertSame('selected', $purchaseRequestComparison['decision']['status']);
+    }
+
     public function test_selecting_non_cheapest_requires_decision_reason(): void
     {
         $organization = Organization::factory()->create();
