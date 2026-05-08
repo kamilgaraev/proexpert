@@ -1,15 +1,15 @@
 {
-  "name": "Системные логи",
+  "name": "Журнал действий",
   "slug": "system-logs",
   "version": "1.0.0",
   "type": "addon",
   "billing_model": "subscription",
   "category": "monitoring",
-  "description": "Система просмотра и анализа логов операций",
-  
+  "description": "Понятная история действий пользователей и системных событий организации",
+
   "class_name": "App\\BusinessModules\\Addons\\SystemLogs\\SystemLogsModule",
   "service_provider": "App\\BusinessModules\\Addons\\SystemLogs\\SystemLogsServiceProvider",
-  
+
   "pricing": {
     "base_price": 1990,
     "currency": "RUB",
@@ -17,51 +17,48 @@
     "duration_days": 30,
     "trial_days": 7
   },
-  
+
   "permissions": [
-    "system-logs.material_usage.view",
-    "system-logs.work_completion.view",
-    "system-logs.system.view",
-    "system-logs.export",
-    "system-logs.filter",
-    "system-logs.search"
+    "logs.material_usage.view",
+    "logs.work_completion.view",
+    "logs.system.view",
+    "logs.export",
+    "logs.filter",
+    "logs.search",
+    "activity-events.view",
+    "activity-events.export",
+    "activity-events.view_security",
+    "activity-events.view_technical_context"
   ],
-  
+
   "features": [
-    "Просмотр логов использования материалов",
-    "Просмотр логов выполнения работ",
-    "Системные логи операций",
-    "Фильтрация логов по критериям",
-    "Поиск по логам",
-    "Экспорт логов в различные форматы",
-    "Автоматическая архивация",
-    "Уведомления о критических событиях",
-    "Статистика по активности",
-    "Интеграция с мониторингом"
+    "Просмотр понятной истории действий пользователей",
+    "Фильтрация по пользователям, модулям, объектам и датам",
+    "Безопасная детализация изменений без чувствительных данных",
+    "Экспорт журнала действий в CSV",
+    "Контроль действий безопасности и прав доступа"
   ],
-  
+
   "dependencies": [
     "organizations",
-    "users",
-    "catalog-management",
-    "workflow-management"
+    "users"
   ],
-  
+
   "conflicts": [],
-  
+
   "limits": {
     "max_log_entries_per_day": 50000,
-    "retention_days": 90,
+    "retention_days": 365,
     "max_export_rows": 10000
   },
-  
+
   "routes": "routes.php",
   "migrations": "migrations/",
-  
+
   "auto_activate": false,
   "is_system_module": false,
   "can_deactivate": true,
-  "development_status": "coming_soon",
+  "development_status": "stable",
   "icon": "list-alt",
   "display_order": 32
 }

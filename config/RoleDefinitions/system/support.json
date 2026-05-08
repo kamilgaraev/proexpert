@@ -36,7 +36,8 @@
       "personal_files.view"
     ],
     "system-logs": [
-      "logs.view"
+      "logs.view",
+      "activity-events.view"
     ],
     "rate-management": [
       "rate_coefficients.view"

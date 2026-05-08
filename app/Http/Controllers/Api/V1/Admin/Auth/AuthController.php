@@ -2,18 +2,19 @@
 
 namespace App\Http\Controllers\Api\V1\Admin\Auth;
 
+use App\DTOs\Activity\ActivityEventData;
 use App\DTOs\Auth\LoginDTO;
+use App\Enums\Activity\ActivityActionEnum;
+use App\Enums\Activity\ActivityResultEnum;
+use App\Enums\Activity\ActivitySeverityEnum;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Admin\Auth\LoginRequest;
 use App\Http\Responses\AdminResponse;
+use App\Models\User;
+use App\Services\Activity\ActivityEventRecorder;
 use App\Services\Auth\JwtAuthService;
-use App\Services\LogService;
 use App\Services\Logging\LoggingService;
 use App\Services\PerformanceMonitor;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
-use App\Models\User;
-use Illuminate\Support\Facades\Gate;
 use Illuminate\Http\Response;
 
 class AuthController extends Controller
@@ -92,7 +93,7 @@ class AuthController extends Controller
                 
                 if (!$canAccess) {
                     // SECURITY: Попытка доступа в админ-панель без разрешений - критическое событие
-                    $this->logging->security('auth.admin.access.denied', [
+                $this->logging->security('auth.admin.access.denied', [
                         'user_id' => $user->id,
                         'email' => $user->email,
                         'organization_id' => $organizationId,
@@ -108,6 +109,18 @@ class AuthController extends Controller
                         'organization_id' => $organizationId,
                         'interface' => 'admin_panel'
                     ]);
+
+                    $this->recordAuthActivity(
+                        'auth.access.denied',
+                        $user,
+                        (int) $organizationId,
+                        ActivityResultEnum::Blocked,
+                        ActivitySeverityEnum::Warning,
+                        [
+                            'reason' => 'Недостаточно прав для входа в админку',
+                            'ip_address' => $request->ip(),
+                        ]
+                    );
                     
                     return AdminResponse::error(trans_message('auth.access_denied'), Response::HTTP_FORBIDDEN);
                 }
@@ -129,6 +142,17 @@ class AuthController extends Controller
                     'interface' => 'admin_panel',
                     'token_generated' => true
                 ]);
+
+                $this->recordAuthActivity(
+                    'auth.login.success',
+                    $user,
+                    (int) $organizationId,
+                    ActivityResultEnum::Success,
+                    ActivitySeverityEnum::Notice,
+                    [
+                        'ip_address' => $request->ip(),
+                    ]
+                );
 
                 /** @var \Tymon\JWTAuth\JWTGuard $guard */
                 $guard = auth($this->guard);
@@ -222,5 +246,32 @@ class AuthController extends Controller
 
             return AdminResponse::success(null, trans_message('auth.logout_success'));
         });
+    }
+
+    private function recordAuthActivity(
+        string $eventType,
+        User $user,
+        int $organizationId,
+        ActivityResultEnum $result,
+        ActivitySeverityEnum $severity,
+        array $context = []
+    ): void {
+        app(ActivityEventRecorder::class)->record(ActivityEventData::make(
+            organizationId: $organizationId,
+            module: 'auth',
+            eventType: $eventType,
+            action: ActivityActionEnum::Login,
+            actorUserId: $user->id,
+            actorName: $user->name,
+            actorEmail: $user->email,
+            interface: 'admin',
+            result: $result,
+            severity: $severity,
+            subjectType: 'user',
+            subjectId: $user->id,
+            subjectLabel: $user->name,
+            targetUserId: $user->id,
+            context: $context
+        ));
     }
 }

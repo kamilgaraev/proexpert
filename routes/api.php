@@ -219,6 +219,7 @@ Route::prefix('v1/admin')->middleware('admin.response')->name('admin.')->group(f
         require __DIR__ . '/api/v1/admin/catalogs.php';
         require __DIR__ . '/api/v1/admin/users.php';
         require __DIR__ . '/api/v1/admin/logs.php';
+        require __DIR__ . '/api/v1/admin/activity.php';
         require __DIR__ . '/api/v1/admin/reports.php';
         require __DIR__ . '/api/v1/admin/report_templates.php';
         // Подключаем маршруты для подотчетных средств

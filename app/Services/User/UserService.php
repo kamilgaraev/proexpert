@@ -2,11 +2,16 @@
 
 namespace App\Services\User;
 
+use App\DTOs\Activity\ActivityEventData;
+use App\Enums\Activity\ActivityActionEnum;
+use App\Enums\Activity\ActivityResultEnum;
+use App\Enums\Activity\ActivitySeverityEnum;
 use App\Models\User;
 use App\Repositories\Interfaces\UserRepositoryInterface;
 // Интеграция с новой системой авторизации
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Helpers\AdminPanelAccessHelper;
+use App\Services\Activity\ActivityEventRecorder;
 use App\Services\Logging\LoggingService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
@@ -285,6 +290,18 @@ class UserService
                 'organization_id' => $intOrganizationId,
                 'assigned_by' => $request->user()?->id
             ]);
+
+            $this->recordUserActivity(
+                'user.admin.role.assigned',
+                $intOrganizationId,
+                $request->user(),
+                $existingUser,
+                ActivityActionEnum::Assigned,
+                [
+                    'role' => $adminRoleSlug,
+                    'target_name' => $data['name'],
+                ]
+            );
             
             return $this->userRepository->find($existingUser->id);
         } else {
@@ -327,6 +344,18 @@ class UserService
                 'created_by' => $request->user()?->id,
                 'user_creation_date' => $newUser->created_at?->toISOString()
             ]);
+
+            $this->recordUserActivity(
+                'user.admin.created',
+                $intOrganizationId,
+                $request->user(),
+                $newUser,
+                ActivityActionEnum::Created,
+                [
+                    'role' => $adminRoleSlug,
+                    'target_name' => $newUser->name,
+                ]
+            );
             
             return $newUser;
         }
@@ -613,7 +642,49 @@ class UserService
             'was_completely_removed' => $wasDetachedFromOrg
         ]);
 
+        $this->recordUserActivity(
+            'user.admin.role.revoked',
+            $intOrganizationId,
+            $requestingUser,
+            $adminUser,
+            ActivityActionEnum::Revoked,
+            [
+                'role' => $adminRoleSlug,
+                'target_name' => $adminUser->name,
+                'was_detached_from_org' => $wasDetachedFromOrg ? 'Да' : 'Нет',
+            ],
+            ActivitySeverityEnum::Warning
+        );
+
         return true;
+    }
+
+    private function recordUserActivity(
+        string $eventType,
+        int $organizationId,
+        ?User $actor,
+        ?User $target,
+        ActivityActionEnum $action,
+        array $context = [],
+        ActivitySeverityEnum $severity = ActivitySeverityEnum::Notice
+    ): void {
+        app(ActivityEventRecorder::class)->record(ActivityEventData::make(
+            organizationId: $organizationId,
+            module: 'users',
+            eventType: $eventType,
+            action: $action,
+            actorUserId: $actor?->id,
+            actorName: $actor?->name,
+            actorEmail: $actor?->email,
+            interface: 'admin',
+            result: ActivityResultEnum::Success,
+            severity: $severity,
+            subjectType: 'user',
+            subjectId: $target?->id,
+            subjectLabel: $target?->name ?: $target?->email,
+            targetUserId: $target?->id,
+            context: $context
+        ));
     }
 
     // --- Foreman User Management (for Admin API) ---
@@ -1039,8 +1110,7 @@ class UserService
                  'target_user_id' => $targetUserId,
                  'organization_id' => $intOrganizationId,
                  'allowed_roles' => $allowedRoles,
-                 'user_roles_check' => $userRoles,
-                 'allowed_roles' => $allowedRoles
+                 'user_roles_check' => $userRoles
              ]);
             return null; // Пользователь найден, но у него нет нужной роли админ-панели
         }

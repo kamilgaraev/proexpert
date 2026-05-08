@@ -245,7 +245,9 @@
       "system-logs.system.view",
       "system-logs.export",
       "system-logs.filter",
-      "system-logs.search"
+      "system-logs.search",
+      "activity-events.view",
+      "activity-events.export"
     ],
     "rate-management": [
       "rate_coefficients.view",

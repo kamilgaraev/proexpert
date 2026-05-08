@@ -73,7 +73,11 @@
       "report_files.*"
     ],
     "system-logs": [
-      "logs.*"
+      "logs.*",
+      "activity-events.view",
+      "activity-events.export",
+      "activity-events.view_security",
+      "activity-events.view_technical_context"
     ],
     "rate-management": [
       "rate_coefficients.*"
