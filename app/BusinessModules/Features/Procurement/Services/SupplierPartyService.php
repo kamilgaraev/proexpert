@@ -21,6 +21,7 @@ class SupplierPartyService
             $contact = ExternalSupplierContact::query()
                 ->where('organization_id', $organizationId)
                 ->findOrFail($contact->id);
+            $normalizedEmail = $this->normalizeEmail($contact->email);
 
             $existingByContact = SupplierParty::query()
                 ->forOrganization($organizationId)
@@ -29,10 +30,8 @@ class SupplierPartyService
                 ->first();
 
             if ($existingByContact instanceof SupplierParty) {
-                return $existingByContact;
+                return $this->refreshExternalPartyFromContact($existingByContact, $contact, $normalizedEmail);
             }
-
-            $normalizedEmail = $this->normalizeEmail($contact->email);
 
             if ($normalizedEmail !== null) {
                 $existingByEmail = SupplierParty::query()
@@ -46,7 +45,7 @@ class SupplierPartyService
                     ->first();
 
                 if ($existingByEmail instanceof SupplierParty) {
-                    return $existingByEmail;
+                    return $this->refreshExternalPartyFromContact($existingByEmail, $contact, $normalizedEmail);
                 }
             }
 
@@ -185,6 +184,46 @@ class SupplierPartyService
             'tax_id' => $supplier->tax_number ?: ($supplier->inn ?? null),
             'linked_at' => $linkedAt,
         ];
+    }
+
+    private function refreshExternalPartyFromContact(
+        SupplierParty $party,
+        ExternalSupplierContact $contact,
+        ?string $normalizedEmail
+    ): SupplierParty {
+        if (in_array($party->status, [
+            SupplierPartyStatusEnum::LINKED,
+            SupplierPartyStatusEnum::REJECTED,
+        ], true)) {
+            return $party;
+        }
+
+        $attributes = [
+            'external_supplier_contact_id' => $contact->id,
+            'display_name' => $this->filledOrCurrent($contact->name, $party->display_name),
+            'contact_name' => $this->filledOrCurrent($contact->contact_person, $party->contact_name),
+            'email' => $this->filledOrCurrent($contact->email, $party->email),
+            'normalized_email' => $normalizedEmail ?? $party->normalized_email,
+            'phone' => $this->filledOrCurrent($contact->phone, $party->phone),
+            'tax_id' => $this->filledOrCurrent($contact->tax_number, $party->tax_id),
+        ];
+
+        $attributes['snapshot'] = $this->snapshotFromAttributes(array_merge([
+            'type' => $party->type,
+            'status' => $party->status,
+            'registered_supplier_id' => $party->registered_supplier_id,
+        ], $attributes));
+
+        $party->update($attributes);
+
+        return $party->refresh();
+    }
+
+    private function filledOrCurrent(?string $value, ?string $current): ?string
+    {
+        $value = trim((string) $value);
+
+        return $value === '' ? $current : $value;
     }
 
     private function snapshotFromAttributes(array $attributes): array

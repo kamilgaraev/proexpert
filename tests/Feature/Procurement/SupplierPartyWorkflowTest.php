@@ -162,6 +162,36 @@ class SupplierPartyWorkflowTest extends TestCase
         $this->assertSame(2, SupplierParty::query()->count());
     }
 
+    public function test_reused_external_party_updates_identity_from_new_contact(): void
+    {
+        $organization = Organization::factory()->create();
+
+        $firstContact = ExternalSupplierContact::query()->create([
+            'organization_id' => $organization->id,
+            'name' => 'Shared Email First',
+            'email' => 'identity@example.test',
+        ]);
+
+        $secondContact = ExternalSupplierContact::query()->create([
+            'organization_id' => $organization->id,
+            'name' => 'Shared Email Updated',
+            'email' => 'IDENTITY@example.test',
+            'tax_number' => '7711998877',
+        ]);
+
+        $service = app(SupplierPartyService::class);
+
+        $firstParty = $service->resolveExternalParty($organization->id, $firstContact);
+        $updatedParty = $service->resolveExternalParty($organization->id, $secondContact);
+        $snapshot = $service->snapshotForDocument($updatedParty);
+
+        $this->assertSame($firstParty->id, $updatedParty->id);
+        $this->assertSame('7711998877', $updatedParty->tax_id);
+        $this->assertSame('7711998877', $snapshot['tax_id']);
+        $this->assertSame($secondContact->id, $updatedParty->external_supplier_contact_id);
+        $this->assertSame($secondContact->id, $snapshot['external_supplier_contact_id']);
+    }
+
     public function test_registered_supplier_creates_and_reuses_registered_party(): void
     {
         $organization = Organization::factory()->create();
