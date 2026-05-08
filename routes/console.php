@@ -218,6 +218,15 @@ Schedule::command('contracts:sync-event-sourcing')
     })
     ->appendOutputTo(storage_path('logs/schedule-contracts-sync.log'));
 
+Schedule::command('estimates:regional-prices:sync-fgiscs --region=RU-TA --latest-only')
+    ->dailyAt('03:30')
+    ->withoutOverlapping(180)
+    ->runInBackground()
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled estimates:regional-prices:sync-fgiscs command failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-regional-prices-sync.log'));
+
 Artisan::command('projects:geocode-help', function () {
     $this->info('Available geocoding command:');
     $this->info('  php artisan projects:geocode [options]');

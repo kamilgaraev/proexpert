@@ -39,6 +39,13 @@ class EstimateResource extends JsonResource
             'overhead_rate' => (float) $estimate->overhead_rate,
             'profit_rate' => (float) $estimate->profit_rate,
             'calculation_method' => $estimate->calculation_method,
+            'regional_price_context' => [
+                'region_id' => $estimate->estimate_region_id,
+                'price_zone_id' => $estimate->estimate_price_zone_id,
+                'period_id' => $estimate->estimate_price_period_id,
+                'version_id' => $estimate->estimate_regional_price_version_id,
+                'snapshot' => $estimate->regional_price_snapshot,
+            ],
             'approved_at' => $estimate->approved_at?->toISOString(),
             'approved_by_user_id' => $estimate->approved_by_user_id,
             'metadata' => $estimate->metadata,

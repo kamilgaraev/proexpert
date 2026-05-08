@@ -1,0 +1,331 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs;
+
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTOs\LaborPriceDTO;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\EstimateImportStatus;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\EstimateResourceType;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\EstimateSourceType;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\RegionalPriceStatus;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\ConstructionResource;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateDatasetVersion;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimatePricePeriod;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegionalPriceVersion;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateResourcePrice;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\LaborPriceSpreadsheetParser;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\EstimateSourceStorageService;
+use Illuminate\Support\Facades\DB;
+use RuntimeException;
+use Throwable;
+
+class FgiscsRegionalPriceUpdateService
+{
+    public function __construct(
+        private readonly FgiscsClient $client,
+        private readonly FgiscsTatarstanCatalogService $catalogService,
+        private readonly LaborPriceSpreadsheetParser $parser,
+        private readonly EstimateSourceStorageService $storageService,
+        private readonly RegionalPriceQualityService $qualityService,
+        private readonly RegionalPriceActivationService $activationService,
+    ) {
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function syncTatarstan(string $bucket, ?int $periodId = null, bool $latestOnly = true, bool $force = false, ?callable $progress = null): array
+    {
+        $catalog = $this->catalogService->syncRegionAndZone();
+        $period = $periodId !== null
+            ? $this->resolveExactPeriod($periodId)
+            : $this->catalogService->latestPeriod();
+
+        $versionKey = $this->versionKey($period);
+        $prefix = $this->prefix($period, $catalog['region']->fgiscs_subject_id, $catalog['price_zone']->fgiscs_price_zone_id);
+        $fileKey = $prefix . 'worker-salary.xlsx';
+
+        $datasetVersion = EstimateDatasetVersion::query()->updateOrCreate(
+            [
+                'source_type' => EstimateSourceType::FGIS_LABOR_PRICES->value,
+                'version_key' => $versionKey,
+            ],
+            [
+                'bucket' => $bucket,
+                'prefix' => $prefix,
+                'status' => EstimateImportStatus::IMPORTING->value,
+                'files_count' => 1,
+                'rows_read' => 0,
+                'rows_imported' => 0,
+                'errors_count' => 0,
+                'started_at' => now(),
+                'finished_at' => null,
+                'meta' => [
+                    'region_code' => FgiscsTatarstanCatalogService::REGION_CODE,
+                    'price_zone_id' => FgiscsTatarstanCatalogService::PRICE_ZONE_ID,
+                    'fgiscs_period_id' => $period->fgiscs_period_id,
+                    'regional' => true,
+                ],
+            ]
+        );
+
+        $regionalVersion = EstimateRegionalPriceVersion::query()->firstOrCreate(
+            [
+                'source' => EstimateSourceType::FGIS_LABOR_PRICES->value,
+                'region_id' => $catalog['region']->id,
+                'price_zone_id' => $catalog['price_zone']->id,
+                'period_id' => $period->id,
+                'version_key' => $versionKey,
+            ],
+            [
+                'status' => RegionalPriceStatus::DISCOVERED->value,
+                'files_count' => 0,
+                'rows_read' => 0,
+                'rows_imported' => 0,
+                'errors_count' => 0,
+                'metadata' => [],
+            ]
+        );
+
+        if (!$force && in_array($regionalVersion->status, [RegionalPriceStatus::ACTIVE, RegionalPriceStatus::CHECKED, RegionalPriceStatus::PARSED], true)) {
+            return [
+                'skipped' => true,
+                'reason' => 'period_already_imported',
+                'version_id' => $regionalVersion->id,
+                'version_key' => $regionalVersion->version_key,
+                'status' => $regionalVersion->status->value,
+            ];
+        }
+
+        try {
+            $this->report($progress, 'download_started', ['file' => $fileKey]);
+            $download = $this->client->downloadWorkerSalary($catalog['price_zone']->fgiscs_price_zone_id, $period->fgiscs_period_id);
+            $this->storageService->disk($bucket)->put($fileKey, $download->content);
+
+            $regionalVersion->update([
+                'status' => RegionalPriceStatus::DOWNLOADED->value,
+                'files_count' => 1,
+                'metadata' => array_merge($regionalVersion->metadata ?? [], [
+                    'bucket' => $bucket,
+                    'file_key' => $fileKey,
+                    'file_name' => $download->fileName,
+                    'content_type' => $download->contentType,
+                    'latest_only' => $latestOnly,
+                ]),
+            ]);
+
+            $this->report($progress, 'parse_started', ['file' => $fileKey]);
+            $stats = $this->importWorkerSalaryContent($download->content, $datasetVersion, $regionalVersion);
+            $quality = $this->qualityService->checkWorkerSalaryVersion($regionalVersion);
+
+            if (!$quality['passed']) {
+                $regionalVersion->update([
+                    'status' => RegionalPriceStatus::FAILED->value,
+                    'metadata' => array_merge($regionalVersion->metadata ?? [], ['quality' => $quality]),
+                ]);
+                $datasetVersion->update([
+                    'status' => EstimateImportStatus::FAILED->value,
+                    'errors_count' => count($quality['errors']),
+                    'finished_at' => now(),
+                ]);
+
+                return array_merge($stats, [
+                    'status' => RegionalPriceStatus::FAILED->value,
+                    'quality' => $quality,
+                ]);
+            }
+
+            $regionalVersion->update([
+                'status' => RegionalPriceStatus::CHECKED->value,
+                'metadata' => array_merge($regionalVersion->metadata ?? [], ['quality' => $quality]),
+            ]);
+
+            $activation = $this->activationService->activate($regionalVersion);
+
+            $datasetVersion->update([
+                'status' => EstimateImportStatus::PARSED->value,
+                'finished_at' => now(),
+            ]);
+
+            return array_merge($stats, [
+                'status' => RegionalPriceStatus::ACTIVE->value,
+                'quality' => $quality,
+                'activation_id' => $activation->id,
+                'version_id' => $regionalVersion->id,
+                'version_key' => $versionKey,
+                'period' => $period->name,
+                'file_key' => $fileKey,
+            ]);
+        } catch (Throwable $exception) {
+            $regionalVersion->update([
+                'status' => RegionalPriceStatus::FAILED->value,
+                'errors_count' => max(1, (int) $regionalVersion->errors_count),
+                'metadata' => array_merge($regionalVersion->metadata ?? [], ['error' => $exception->getMessage()]),
+            ]);
+            $datasetVersion->update([
+                'status' => EstimateImportStatus::FAILED->value,
+                'errors_count' => 1,
+                'finished_at' => now(),
+            ]);
+
+            throw $exception;
+        }
+    }
+
+    /**
+     * @return array{rows_read:int,rows_imported:int,errors_count:int}
+     */
+    private function importWorkerSalaryContent(string $content, EstimateDatasetVersion $datasetVersion, EstimateRegionalPriceVersion $regionalVersion): array
+    {
+        $regionalVersion->update(['status' => RegionalPriceStatus::PARSING->value]);
+
+        $path = tempnam(sys_get_temp_dir(), 'fgiscs-worker-salary-') . '.xlsx';
+        file_put_contents($path, $content);
+
+        $rowsRead = 0;
+        $rowsImported = 0;
+        $errorsCount = 0;
+
+        try {
+            DB::transaction(function () use ($path, $datasetVersion, $regionalVersion, &$rowsRead, &$rowsImported, &$errorsCount): void {
+                EstimateResourcePrice::query()
+                    ->where('regional_price_version_id', $regionalVersion->id)
+                    ->delete();
+
+                foreach ($this->parser->parse($path) as $dto) {
+                    $rowsRead++;
+
+                    if (!$dto instanceof LaborPriceDTO) {
+                        continue;
+                    }
+
+                    foreach ($this->expandLaborAliases($dto) as $price) {
+                        $this->storeRegionalPrice($price, $datasetVersion, $regionalVersion);
+                        $rowsImported++;
+                    }
+                }
+
+                $datasetVersion->update([
+                    'rows_read' => $rowsRead,
+                    'rows_imported' => $rowsImported,
+                    'errors_count' => $errorsCount,
+                ]);
+
+                $regionalVersion->update([
+                    'status' => RegionalPriceStatus::PARSED->value,
+                    'rows_read' => $rowsRead,
+                    'rows_imported' => $rowsImported,
+                    'errors_count' => $errorsCount,
+                ]);
+            });
+        } finally {
+            if (is_file($path)) {
+                @unlink($path);
+            }
+        }
+
+        return [
+            'rows_read' => $rowsRead,
+            'rows_imported' => $rowsImported,
+            'errors_count' => $errorsCount,
+        ];
+    }
+
+    /**
+     * @return array<int, LaborPriceDTO>
+     */
+    private function expandLaborAliases(LaborPriceDTO $dto): array
+    {
+        $items = [$dto];
+        $rank = $dto->rawData['row']['rank'] ?? null;
+
+        if (preg_match('/^1-100-\d+$/', $dto->code) === 1 && is_numeric($rank)) {
+            $integerRank = (int) $rank;
+
+            if ((float) $rank === (float) $integerRank && $integerRank >= 1 && $integerRank <= 8) {
+                $items[] = new LaborPriceDTO(
+                    code: sprintf('2-100-%02d', $integerRank),
+                    name: sprintf('Рабочий %d разряда', $integerRank),
+                    unit: $dto->unit ?? 'чел.-ч',
+                    basePrice: $dto->basePrice,
+                    resourceType: EstimateResourceType::LABOR->value,
+                    rawData: array_merge($dto->rawData ?? [], [
+                        'derived_from_code' => $dto->code,
+                        'derived_for_gesn_worker_code' => true,
+                    ]),
+                );
+            }
+        }
+
+        return $items;
+    }
+
+    private function storeRegionalPrice(LaborPriceDTO $dto, EstimateDatasetVersion $datasetVersion, EstimateRegionalPriceVersion $regionalVersion): void
+    {
+        $resourceCode = trim($dto->code);
+
+        EstimateResourcePrice::query()->updateOrCreate(
+            [
+                'dataset_version_id' => $datasetVersion->id,
+                'regional_price_version_id' => $regionalVersion->id,
+                'resource_code' => $resourceCode,
+                'price_type' => $dto->resourceType,
+            ],
+            [
+                'region_id' => $regionalVersion->region_id,
+                'price_zone_id' => $regionalVersion->price_zone_id,
+                'period_id' => $regionalVersion->period_id,
+                'construction_resource_id' => $this->findConstructionResourceId($resourceCode),
+                'resource_name' => $dto->name,
+                'unit' => $dto->unit ?? 'чел.-ч',
+                'base_price' => $dto->basePrice,
+                'source_price_kind' => 'regional_worker_salary',
+                'raw_payload' => $dto->rawData,
+            ]
+        );
+    }
+
+    private function findConstructionResourceId(string $code): ?int
+    {
+        return ConstructionResource::query()
+            ->where('ksr_code', $code)
+            ->latest('dataset_version_id')
+            ->value('id');
+    }
+
+    private function resolveExactPeriod(int $periodId): EstimatePricePeriod
+    {
+        $this->catalogService->syncPeriods();
+
+        return EstimatePricePeriod::query()
+            ->where('fgiscs_period_id', $periodId)
+            ->first() ?? throw new RuntimeException('Указанный период ФГИС ЦС не найден.');
+    }
+
+    private function versionKey(EstimatePricePeriod $period): string
+    {
+        return sprintf('%d-q%d-ru-ta', $period->year, $period->quarter);
+    }
+
+    private function prefix(EstimatePricePeriod $period, int $subjectId, int $priceZoneId): string
+    {
+        return sprintf(
+            'estimate-sources/fgiscs/worker-salary/%d-q%d/region-%d/price-zone-%d/',
+            $period->year,
+            $period->quarter,
+            $subjectId,
+            $priceZoneId
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function report(?callable $progress, string $event, array $payload): void
+    {
+        if ($progress !== null) {
+            $progress($event, $payload);
+        }
+    }
+}

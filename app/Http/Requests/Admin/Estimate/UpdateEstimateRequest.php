@@ -24,6 +24,7 @@ class UpdateEstimateRequest extends FormRequest
             'overhead_rate' => 'sometimes|numeric|min:0|max:100',
             'profit_rate' => 'sometimes|numeric|min:0|max:100',
             'calculation_method' => 'sometimes|in:base_index,resource,resource_index,analog',
+            'estimate_regional_price_version_id' => 'sometimes|nullable|exists:estimate_regional_price_versions,id',
             'status' => 'sometimes|in:draft,in_review,approved,cancelled',
             'metadata' => 'nullable|array',
         ];

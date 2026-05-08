@@ -51,13 +51,14 @@ class LaborPriceSpreadsheetParser
     {
         $highestColumn = $worksheet->getHighestColumn();
         $highestRow = $worksheet->getHighestRow();
-        $headers = $this->headers($worksheet, $highestColumn);
+        $headerRow = $this->detectHeaderRow($worksheet, $highestColumn);
+        $headers = $headerRow !== null ? $this->headers($worksheet, $highestColumn, $headerRow) : [];
 
         if ($headers === []) {
             return;
         }
 
-        $firstDataRow = max(2, $startRow);
+        $firstDataRow = max($headerRow + 1, $startRow);
 
         for ($row = $firstDataRow; $row <= $highestRow; $row++) {
             $values = $worksheet->rangeToArray("A{$row}:{$highestColumn}{$row}", null, true, false)[0] ?? [];
@@ -65,9 +66,9 @@ class LaborPriceSpreadsheetParser
             $code = $this->first($rowData, ['code', 'kod', 'shifr']);
             $name = $this->first($rowData, ['name', 'naimenovanie', 'resurs']);
             $unit = $this->first($rowData, ['unit', 'edizm', 'edinitsaizmereniya']);
-            $price = $this->toFloat($this->first($rowData, ['price', 'tsena', 'smetnayatsena', 'baseprice', 'stoimost']));
+            $price = $this->toFloat($this->first($rowData, ['price', 'tsena', 'smetnayatsena', 'smetnayatsenazatratytruda', 'baseprice', 'stoimost']));
 
-            if ($code === null || $name === null || $price === null) {
+            if ($code === null || $name === null || $price === null || preg_match('/^\d+-\d+-\d+$/', $code) !== 1) {
                 continue;
             }
 
@@ -86,9 +87,33 @@ class LaborPriceSpreadsheetParser
         }
     }
 
-    private function headers(Worksheet $worksheet, string $highestColumn): array
+    private function detectHeaderRow(Worksheet $worksheet, string $highestColumn): ?int
     {
-        $values = $worksheet->rangeToArray("A1:{$highestColumn}1", null, true, false)[0] ?? [];
+        $limit = min($worksheet->getHighestRow(), 30);
+
+        for ($row = 1; $row <= $limit; $row++) {
+            $values = $worksheet->rangeToArray("A{$row}:{$highestColumn}{$row}", null, true, false)[0] ?? [];
+            $headers = [];
+
+            foreach ($values as $index => $value) {
+                $normalized = $this->normalizeHeader((string) $value);
+
+                if ($normalized !== '') {
+                    $headers[$index] = $normalized;
+                }
+            }
+
+            if (in_array('code', $headers, true) && in_array('name', $headers, true) && in_array('price', $headers, true)) {
+                return $row;
+            }
+        }
+
+        return null;
+    }
+
+    private function headers(Worksheet $worksheet, string $highestColumn, int $headerRow): array
+    {
+        $values = $worksheet->rangeToArray("A{$headerRow}:{$highestColumn}{$headerRow}", null, true, false)[0] ?? [];
         $headers = [];
 
         foreach ($values as $index => $value) {
@@ -159,7 +184,8 @@ class LaborPriceSpreadsheetParser
             'код', 'шифр', 'resourcecode' => 'code',
             'наименование', 'название', 'ресурс' => 'name',
             'едизм', 'единицаизмерения', 'ед', 'unit' => 'unit',
-            'цена', 'сметнаяцена', 'baseprice', 'стоимость' => 'price',
+            'разряд' => 'rank',
+            'цена', 'сметнаяцена', 'сметнаяценаназатратытрударубчелч', 'baseprice', 'стоимость' => 'price',
             default => $value,
         };
     }

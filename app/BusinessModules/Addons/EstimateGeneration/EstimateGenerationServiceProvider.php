@@ -9,6 +9,13 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\Cl
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\ImportEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\InspectEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\QualityEstimateNormativesCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\RollbackRegionalPricePeriodCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\SyncFgiscsRegionalPricesCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsClient;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsRegionalPriceUpdateService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsTatarstanCatalogService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\RegionalPriceActivationService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\RegionalPriceQualityService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateImportStatisticsService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateNormativeQualityService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateResourceClassificationService;
@@ -54,6 +61,11 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(EstimateResourceClassifier::class);
         $this->app->singleton(EstimateResourceClassificationService::class);
         $this->app->singleton(EstimateNormativeMatcher::class);
+        $this->app->singleton(FgiscsClient::class);
+        $this->app->singleton(FgiscsTatarstanCatalogService::class);
+        $this->app->singleton(FgiscsRegionalPriceUpdateService::class);
+        $this->app->singleton(RegionalPriceQualityService::class);
+        $this->app->singleton(RegionalPriceActivationService::class);
     }
 
     public function boot(): void
@@ -71,6 +83,8 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 ImportEstimateNormativesCommand::class,
                 InspectEstimateNormativesCommand::class,
                 QualityEstimateNormativesCommand::class,
+                SyncFgiscsRegionalPricesCommand::class,
+                RollbackRegionalPricePeriodCommand::class,
             ]);
         }
     }

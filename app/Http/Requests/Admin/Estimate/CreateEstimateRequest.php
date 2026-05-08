@@ -25,6 +25,7 @@ class CreateEstimateRequest extends FormRequest
             'overhead_rate' => 'nullable|numeric|min:0|max:100',
             'profit_rate' => 'nullable|numeric|min:0|max:100',
             'calculation_method' => 'nullable|in:base_index,resource,resource_index,analog',
+            'estimate_regional_price_version_id' => 'nullable|exists:estimate_regional_price_versions,id',
             'metadata' => 'nullable|array',
             'template_id' => 'nullable|exists:estimate_templates,id',
         ];

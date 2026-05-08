@@ -14,6 +14,10 @@ class EstimateResourcePrice extends Model
 
     protected $fillable = [
         'dataset_version_id',
+        'regional_price_version_id',
+        'region_id',
+        'price_zone_id',
+        'period_id',
         'construction_resource_id',
         'resource_code',
         'resource_name',
@@ -31,6 +35,10 @@ class EstimateResourcePrice extends Model
 
     protected $casts = [
         'dataset_version_id' => 'integer',
+        'regional_price_version_id' => 'integer',
+        'region_id' => 'integer',
+        'price_zone_id' => 'integer',
+        'period_id' => 'integer',
         'construction_resource_id' => 'integer',
         'base_price' => 'decimal:4',
         'machine_salary_price' => 'decimal:4',
@@ -48,5 +56,10 @@ class EstimateResourcePrice extends Model
     public function constructionResource(): BelongsTo
     {
         return $this->belongsTo(ConstructionResource::class, 'construction_resource_id');
+    }
+
+    public function regionalPriceVersion(): BelongsTo
+    {
+        return $this->belongsTo(EstimateRegionalPriceVersion::class, 'regional_price_version_id');
     }
 }

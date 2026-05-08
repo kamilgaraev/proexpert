@@ -2,6 +2,8 @@
 
 namespace App\BusinessModules\Features\BudgetEstimates\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegionalPriceActivation;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegionalPriceVersion;
 use App\Models\Estimate;
 use App\Repositories\EstimateRepository;
 use App\Repositories\EstimateSectionRepository;
@@ -48,6 +50,8 @@ class EstimateService
         if (!array_key_exists('vat_rate', $data) || is_null($data['vat_rate'])) {
             $data['vat_rate'] = $defaults['default_vat_rate'] ?? 0;
         }
+
+        $data = $this->applyRegionalPriceDefaults($data);
         
         while ($attempt < $maxAttempts) {
             try {
@@ -115,6 +119,10 @@ class EstimateService
         unset($data['contract_id']);
 
         return DB::transaction(function () use ($estimate, $data) {
+            if (array_key_exists('estimate_regional_price_version_id', $data)) {
+                $data = $this->applyRegionalPriceVersion($data, $data['estimate_regional_price_version_id'] !== null ? (int) $data['estimate_regional_price_version_id'] : null);
+            }
+
             $this->repository->update($estimate, $data);
             
             if (isset($data['overhead_rate']) || isset($data['profit_rate']) || isset($data['vat_rate'])) {
@@ -129,6 +137,58 @@ class EstimateService
             
             return $estimate->fresh();
         });
+    }
+
+    private function applyRegionalPriceDefaults(array $data): array
+    {
+        if (array_key_exists('estimate_regional_price_version_id', $data)) {
+            return $this->applyRegionalPriceVersion($data, $data['estimate_regional_price_version_id'] !== null ? (int) $data['estimate_regional_price_version_id'] : null);
+        }
+
+        $activation = EstimateRegionalPriceActivation::query()
+            ->with(['activeVersion.region', 'activeVersion.priceZone', 'activeVersion.period'])
+            ->first();
+
+        if ($activation?->activeVersion === null) {
+            return $data;
+        }
+
+        return $this->fillRegionalPriceContext($data, $activation->activeVersion);
+    }
+
+    private function applyRegionalPriceVersion(array $data, ?int $versionId): array
+    {
+        if ($versionId === null) {
+            $data['estimate_region_id'] = null;
+            $data['estimate_price_zone_id'] = null;
+            $data['estimate_price_period_id'] = null;
+            $data['regional_price_snapshot'] = null;
+
+            return $data;
+        }
+
+        $version = EstimateRegionalPriceVersion::query()
+            ->with(['region', 'priceZone', 'period'])
+            ->find($versionId);
+
+        return $version !== null ? $this->fillRegionalPriceContext($data, $version) : $data;
+    }
+
+    private function fillRegionalPriceContext(array $data, EstimateRegionalPriceVersion $version): array
+    {
+        $data['estimate_region_id'] = $version->region_id;
+        $data['estimate_price_zone_id'] = $version->price_zone_id;
+        $data['estimate_price_period_id'] = $version->period_id;
+        $data['estimate_regional_price_version_id'] = $version->id;
+        $data['regional_price_snapshot'] = [
+            'region_name' => $version->region?->name,
+            'price_zone_name' => $version->priceZone?->name,
+            'period_name' => $version->period?->name,
+            'version_key' => $version->version_key,
+            'source' => $version->source,
+        ];
+
+        return $data;
     }
 
     public function delete(Estimate $estimate): bool

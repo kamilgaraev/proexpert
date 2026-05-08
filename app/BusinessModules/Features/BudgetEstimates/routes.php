@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\V1\Admin\EstimateImportController;
 use App\Http\Controllers\Api\V1\Admin\EstimateVersionController;
 use App\Http\Controllers\Api\V1\Admin\EstimateTemplateController;
 use App\BusinessModules\Features\BudgetEstimates\Http\Controllers\BudgetEstimatesSettingsController;
+use App\BusinessModules\Features\BudgetEstimates\Http\Controllers\EstimateRegionalPriceController;
 
 /*
 |--------------------------------------------------------------------------
@@ -89,6 +90,11 @@ Route::prefix('api/v1/admin')
             Route::delete('/{template}', [EstimateTemplateController::class, 'destroy'])->name('destroy');
             Route::post('/{template}/apply', [EstimateTemplateController::class, 'apply'])->name('apply');
             Route::post('/{template}/share', [EstimateTemplateController::class, 'share'])->name('share');
+        });
+
+        Route::prefix('estimate-regional-prices')->name('estimate_regional_prices.')->group(function () {
+            Route::get('/options', [EstimateRegionalPriceController::class, 'options'])->name('options');
+            Route::post('/rollback', [EstimateRegionalPriceController::class, 'rollback'])->name('rollback');
         });
 
         // ============================================

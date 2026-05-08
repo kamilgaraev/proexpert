@@ -9,6 +9,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\EstimateResou
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\EstimateSourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateDatasetVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegionalPriceActivation;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegionalPriceVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateResourcePrice;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService;
 use App\Enums\EstimatePositionItemType;
@@ -34,6 +36,7 @@ class EstimateNormativeCatalogService
     {
         $version = $this->latestFsnbVersion();
         $priceVersions = $this->latestPriceVersions();
+        $regionalPriceVersion = $this->activeRegionalPriceVersion();
 
         $query = EstimateNorm::query()
             ->with(['collection', 'section'])
@@ -71,7 +74,7 @@ class EstimateNormativeCatalogService
             ->orderBy('code')
             ->paginate((int) ($filters['per_page'] ?? 20));
 
-        $paginator->getCollection()->transform(fn (EstimateNorm $norm): array => $this->normPayload($norm, $priceVersions, false));
+        $paginator->getCollection()->transform(fn (EstimateNorm $norm): array => $this->normPayload($norm, $priceVersions, $regionalPriceVersion, false));
 
         if (($filters['has_prices'] ?? false) === true) {
             $paginator->setCollection($paginator->getCollection()->filter(
@@ -84,7 +87,7 @@ class EstimateNormativeCatalogService
 
     public function detail(EstimateNorm $norm): array
     {
-        return $this->normPayload($norm->load(['collection', 'section', 'resources']), $this->latestPriceVersions(), true);
+        return $this->normPayload($norm->load(['collection', 'section', 'resources']), $this->latestPriceVersions(), $this->activeRegionalPriceVersion(), true);
     }
 
     public function addItemsFromNormatives(Estimate $estimate, array $items): array
@@ -92,6 +95,7 @@ class EstimateNormativeCatalogService
         return DB::transaction(function () use ($estimate, $items): array {
             $created = [];
             $priceVersions = $this->latestPriceVersions();
+            $regionalPriceVersion = $this->regionalPriceVersionForEstimate($estimate);
 
             foreach ($items as $itemData) {
                 $norm = EstimateNorm::query()
@@ -99,7 +103,7 @@ class EstimateNormativeCatalogService
                     ->findOrFail((int) $itemData['estimate_norm_id']);
                 $sectionId = $this->resolveSectionId($estimate, $itemData['estimate_section_id'] ?? null);
                 $quantity = (float) $itemData['quantity'];
-                $resources = $this->resourcesPayload($norm, $priceVersions);
+                $resources = $this->resourcesPayload($norm, $priceVersions, $regionalPriceVersion);
                 $totals = $this->resourceTotals($resources, $quantity);
                 $positionNumber = $itemData['position_number'] ?? $this->itemRepository->getNextPositionNumber($estimate->id);
 
@@ -136,6 +140,11 @@ class EstimateNormativeCatalogService
                             'source_type' => $version->source_type->value,
                             'version_key' => $version->version_key,
                         ])->values()->all(),
+                        'regional_price_version' => $regionalPriceVersion !== null ? [
+                            'source' => $regionalPriceVersion->source,
+                            'version_key' => $regionalPriceVersion->version_key,
+                            'period' => $regionalPriceVersion->period?->name,
+                        ] : null,
                         'price_dataset' => $priceVersions->first() !== null ? [
                             'source_type' => $priceVersions->first()->source_type->value,
                             'version_key' => $priceVersions->first()->version_key,
@@ -159,9 +168,9 @@ class EstimateNormativeCatalogService
         });
     }
 
-    private function normPayload(EstimateNorm $norm, Collection $priceVersions, bool $includeResources): array
+    private function normPayload(EstimateNorm $norm, Collection $priceVersions, ?EstimateRegionalPriceVersion $regionalPriceVersion, bool $includeResources): array
     {
-        $resources = $includeResources ? $this->resourcesPayload($norm, $priceVersions) : collect();
+        $resources = $includeResources ? $this->resourcesPayload($norm, $priceVersions, $regionalPriceVersion) : collect();
 
         return [
             'id' => $norm->id,
@@ -191,16 +200,28 @@ class EstimateNormativeCatalogService
         ];
     }
 
-    private function resourcesPayload(EstimateNorm $norm, Collection $priceVersions): Collection
+    private function resourcesPayload(EstimateNorm $norm, Collection $priceVersions, ?EstimateRegionalPriceVersion $regionalPriceVersion = null): Collection
     {
         $resources = $norm->resources()
             ->where('resource_type', '<>', EstimateResourceType::SUMMARY->value)
             ->orderBy('id')
             ->get();
-        $prices = $priceVersions->isNotEmpty()
+        $resourceCodes = $resources->pluck('resource_code')->filter()->values()->all();
+        $baseDatasetIds = $priceVersions->pluck('id')->values()->all();
+        $prices = ($baseDatasetIds !== [] || $regionalPriceVersion !== null) && $resourceCodes !== []
             ? EstimateResourcePrice::query()
-                ->whereIn('dataset_version_id', $priceVersions->pluck('id')->values()->all())
-                ->whereIn('resource_code', $resources->pluck('resource_code')->filter()->values()->all())
+                ->whereIn('resource_code', $resourceCodes)
+                ->where(function (Builder $query) use ($baseDatasetIds, $regionalPriceVersion): void {
+                    if ($regionalPriceVersion !== null) {
+                        $query->where('regional_price_version_id', $regionalPriceVersion->id);
+                    }
+
+                    if ($baseDatasetIds !== []) {
+                        $method = $regionalPriceVersion !== null ? 'orWhereIn' : 'whereIn';
+                        $query->{$method}('dataset_version_id', $baseDatasetIds);
+                    }
+                })
+                ->orderByRaw('CASE WHEN regional_price_version_id IS NULL THEN 1 ELSE 0 END')
                 ->orderByDesc('dataset_version_id')
                 ->get()
                 ->groupBy('resource_code')
@@ -221,7 +242,7 @@ class EstimateNormativeCatalogService
                 'quantity_per_unit' => $resource->quantity !== null ? (float) $resource->quantity : 0.0,
                 'unit_price' => $this->effectiveUnitPrice($price, $type),
                 'price_id' => $price?->id,
-                'price_source' => $price !== null ? ($priceSourceById[(int) $price->dataset_version_id] ?? null) : null,
+                'price_source' => $price !== null ? ($price->regional_price_version_id !== null ? 'fgiscs_regional' : ($priceSourceById[(int) $price->dataset_version_id] ?? null)) : null,
                 'pricing' => $this->pricePayload($price),
                 'construction_resource_id' => $resource->construction_resource_id,
             ];
@@ -496,13 +517,25 @@ class EstimateNormativeCatalogService
                 ->first();
         }
 
-        $laborVersion = EstimateDatasetVersion::query()
-            ->where('source_type', EstimateSourceType::FGIS_LABOR_PRICES->value)
-            ->where('status', EstimateImportStatus::PARSED->value)
-            ->whereHas('resourcePrices')
-            ->latest('id')
-            ->first();
+        return collect([$fsbcVersion ?? $fallbackFsnbVersion])->filter()->values();
+    }
 
-        return collect([$fsbcVersion ?? $fallbackFsnbVersion, $laborVersion])->filter()->values();
+    private function regionalPriceVersionForEstimate(Estimate $estimate): ?EstimateRegionalPriceVersion
+    {
+        if ($estimate->estimate_regional_price_version_id !== null) {
+            return EstimateRegionalPriceVersion::query()
+                ->with(['period', 'region', 'priceZone'])
+                ->find((int) $estimate->estimate_regional_price_version_id);
+        }
+
+        return $this->activeRegionalPriceVersion();
+    }
+
+    private function activeRegionalPriceVersion(): ?EstimateRegionalPriceVersion
+    {
+        return EstimateRegionalPriceActivation::query()
+            ->with(['activeVersion.period', 'activeVersion.region', 'activeVersion.priceZone'])
+            ->first()
+            ?->activeVersion;
     }
 }
