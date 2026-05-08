@@ -177,19 +177,39 @@ class HoldingSiteBlogService
             }
         }
 
-        return BlogCategory::firstOrCreate(
-            [
-                'organization_group_id' => $group->id,
-                'blog_context' => BlogContextEnum::HOLDING->value,
-                'slug' => 'holding-news',
-            ],
-            [
-                'name' => 'Новости холдинга',
-                'description' => 'Публикации холдинга',
-                'sort_order' => 1,
-                'is_active' => true,
-            ]
-        );
+        $category = BlogCategory::query()
+            ->where('blog_context', BlogContextEnum::HOLDING->value)
+            ->where('organization_group_id', $group->id)
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->first();
+
+        if ($category instanceof BlogCategory) {
+            return $category;
+        }
+
+        return BlogCategory::create([
+            'organization_group_id' => $group->id,
+            'blog_context' => BlogContextEnum::HOLDING->value,
+            'slug' => $this->generateUniqueCategorySlug('holding-news'),
+            'name' => 'Новости холдинга',
+            'description' => 'Публикации холдинга',
+            'sort_order' => 1,
+            'is_active' => true,
+        ]);
+    }
+
+    private function generateUniqueCategorySlug(string $baseSlug): string
+    {
+        $slug = $baseSlug;
+        $counter = 1;
+
+        while (BlogCategory::query()->where('slug', $slug)->exists()) {
+            $counter++;
+            $slug = sprintf('%s-%d', $baseSlug, $counter);
+        }
+
+        return $slug;
     }
 
     private function generateUniqueSlug(string $source, ?int $ignoreId = null): string
