@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Exceptions\FgiscsDownloadUnavailableException;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsClient;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
@@ -69,5 +70,22 @@ class FgiscsClientTest extends TestCase
 
         $this->assertSame("PK\x03\x04", $download->content);
         $this->assertSame('worker-salary.xlsx', $download->fileName);
+    }
+
+    public function test_it_marks_unavailable_worker_salary_export(): void
+    {
+        Http::fake([
+            'https://fgiscs.minstroyrf.ru/api/EstimatedPrice/RimWorkerSalaryRegistry/Export*' => Http::response([
+                'success' => false,
+                'message' => 'Отсутствуют ценовая зона',
+                'data' => null,
+                'errors' => null,
+            ], 422),
+        ]);
+
+        $this->expectException(FgiscsDownloadUnavailableException::class);
+        $this->expectExceptionMessage('Отсутствуют ценовая зона');
+
+        (new FgiscsClient())->downloadWorkerSalary(245, 425);
     }
 }

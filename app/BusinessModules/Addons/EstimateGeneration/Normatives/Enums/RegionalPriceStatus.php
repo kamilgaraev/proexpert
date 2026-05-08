@@ -14,5 +14,6 @@ enum RegionalPriceStatus: string
     case ACTIVE = 'active';
     case SUPERSEDED = 'superseded';
     case ROLLED_BACK = 'rolled_back';
+    case UNAVAILABLE = 'unavailable';
     case FAILED = 'failed';
 }

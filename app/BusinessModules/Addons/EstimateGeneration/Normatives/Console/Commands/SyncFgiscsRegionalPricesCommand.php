@@ -118,6 +118,7 @@ class SyncFgiscsRegionalPricesCommand extends Command
             ['versions', (string) count($results)],
             ['active', (string) count(array_filter($results, static fn (array $result): bool => ($result['status'] ?? null) === 'active'))],
             ['skipped', (string) count(array_filter($results, static fn (array $result): bool => ($result['skipped'] ?? false) === true))],
+            ['unavailable', (string) count(array_filter($results, static fn (array $result): bool => ($result['status'] ?? null) === 'unavailable'))],
             ['failed', (string) count(array_filter($results, static fn (array $result): bool => ($result['status'] ?? null) === 'failed'))],
         ];
 

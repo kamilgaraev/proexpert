@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgis
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTOs\FgiscsDownloadDTO;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTOs\FgiscsPricePeriodDTO;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Exceptions\FgiscsDownloadUnavailableException;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
@@ -86,7 +87,24 @@ class FgiscsClient
         ]);
 
         if (!$response->successful()) {
-            throw new RuntimeException('Не удалось скачать цены труда работников ФГИС ЦС.');
+            $body = $response->body();
+            $message = is_array($response->json()) && is_string($response->json('message'))
+                ? (string) $response->json('message')
+                : 'Не удалось скачать цены труда работников ФГИС ЦС.';
+
+            if ($response->status() === 422) {
+                throw new FgiscsDownloadUnavailableException(
+                    message: $message,
+                    statusCode: $response->status(),
+                    responseBody: $body,
+                );
+            }
+
+            throw new RuntimeException(sprintf(
+                'Не удалось скачать цены труда работников ФГИС ЦС. HTTP %d: %s',
+                $response->status(),
+                mb_substr($body, 0, 300),
+            ));
         }
 
         $content = $response->body();

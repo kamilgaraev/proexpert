@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\EstimateImpor
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\EstimateResourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\EstimateSourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\RegionalPriceStatus;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Exceptions\FgiscsDownloadUnavailableException;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\ConstructionResource;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateDatasetVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimatePricePeriod;
@@ -280,6 +281,38 @@ class FgiscsRegionalPriceUpdateService
                 'period' => $period->name,
                 'file_key' => $fileKey,
             ]);
+        } catch (FgiscsDownloadUnavailableException $exception) {
+            $regionalVersion->update([
+                'status' => RegionalPriceStatus::UNAVAILABLE->value,
+                'errors_count' => 0,
+                'metadata' => array_merge($regionalVersion->metadata ?? [], [
+                    'unavailable_reason' => $exception->getMessage(),
+                    'http_status' => $exception->statusCode,
+                    'response_body' => $exception->responseBody,
+                ]),
+            ]);
+            $datasetVersion->update([
+                'status' => EstimateImportStatus::FAILED->value,
+                'errors_count' => 0,
+                'finished_at' => now(),
+                'meta' => array_merge($datasetVersion->meta ?? [], [
+                    'unavailable_reason' => $exception->getMessage(),
+                    'http_status' => $exception->statusCode,
+                ]),
+            ]);
+
+            return [
+                'skipped' => true,
+                'reason' => 'fgiscs_download_unavailable',
+                'status' => RegionalPriceStatus::UNAVAILABLE->value,
+                'region' => $region->name,
+                'price_zone' => $priceZone->name,
+                'version_id' => $regionalVersion->id,
+                'version_key' => $versionKey,
+                'period' => $period->name,
+                'message' => $exception->getMessage(),
+                'http_status' => $exception->statusCode,
+            ];
         } catch (Throwable $exception) {
             $regionalVersion->update([
                 'status' => RegionalPriceStatus::FAILED->value,
