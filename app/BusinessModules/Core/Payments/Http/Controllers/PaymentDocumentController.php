@@ -132,6 +132,11 @@ class PaymentDocumentController extends Controller
                     'integer',
                     Rule::exists('contracts', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
                 ],
+                'estimate_id' => [
+                    'nullable',
+                    'integer',
+                    Rule::exists('estimates', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                ],
                 'date_from' => ['nullable', 'date'],
                 'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
                 'amount_from' => ['nullable', 'numeric', 'min:0'],
@@ -507,6 +512,8 @@ class PaymentDocumentController extends Controller
      */
     public function generatePurpose(Request $request): JsonResponse
     {
+        $validated = [];
+
         try {
             $validated = $request->validate([
                 'document_type' => 'required|string',

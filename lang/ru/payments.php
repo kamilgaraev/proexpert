@@ -47,6 +47,7 @@ return [
         'document_cancel_forbidden' => 'Документ нельзя отменить в текущем статусе.',
         'document_delete_paid_forbidden' => 'Нельзя удалить оплаченный документ.',
         'document_delete_has_transactions' => 'Нельзя удалить документ с транзакциями.',
+        'estimate_split_source_required' => 'Позиции сметы можно добавлять только к платежному документу, связанному с договором или актом.',
         'estimate_item_not_found' => 'Позиция сметы #%d не найдена или не принадлежит текущему документу.',
         'request_submit_only_payment_requests' => 'Отправлять можно только платежные требования.',
         'request_must_be_approved' => 'Платежное требование должно быть утверждено.',

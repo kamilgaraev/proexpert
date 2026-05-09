@@ -11,11 +11,13 @@ use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\BusinessModules\Core\Payments\Events\PaymentDocumentCreated;
 use App\BusinessModules\Core\Payments\Events\PaymentRequestReceived;
 use App\Models\Contract;
+use App\Models\ContractPerformanceAct;
 use App\Models\Project;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 use function trans_message;
 
@@ -358,16 +360,13 @@ class PaymentDocumentService
                 'document_id' => $document->id,
             ]);
 
-            // Обновляем суммы в документе
-            $newPaidAmount = $document->paid_amount + $amount;
-            $document->paid_amount = $newPaidAmount;
-            $document->remaining_amount = $document->amount - $newPaidAmount;
-            $document->save();
+            $newPaidAmount = (float) $document->paid_amount + $amount;
+            $newRemainingAmount = (float) $document->amount - $newPaidAmount;
 
             Log::info('payment_document.register_payment.amounts_updated', [
                 'document_id' => $document->id,
                 'new_paid_amount' => $newPaidAmount,
-                'remaining_amount' => $document->remaining_amount,
+                'remaining_amount' => $newRemainingAmount,
             ]);
 
             // Загружаем транзакцию как модель для уведомлений
@@ -399,11 +398,11 @@ class PaymentDocumentService
 
             Log::info('payment_document.register_payment.updating_status', [
                 'document_id' => $document->id,
-                'remaining_amount' => $document->remaining_amount,
+                'remaining_amount' => $newRemainingAmount,
             ]);
 
             // Определяем новый статус
-            if ($document->remaining_amount <= 0.01) { // учитываем погрешность
+            if ($newRemainingAmount <= 0.01) { // учитываем погрешность
                 Log::info('payment_document.register_payment.marking_paid', [
                     'document_id' => $document->id,
                 ]);
@@ -414,6 +413,8 @@ class PaymentDocumentService
                 ]);
                 $this->stateMachine->markPartiallyPaid($document, $amount, $transaction);
             }
+
+            $this->synchronizeEstimateItemsPaymentProgress($document);
 
             Log::info('payment_document.payment_registered', [
                 'document_id' => $document->id,
@@ -508,8 +509,11 @@ class PaymentDocumentService
     public function getForOrganization(int $organizationId, array $filters = []): Collection
     {
         $query = PaymentDocument::forOrganization($organizationId)
-            ->with(['project', 'payerOrganization', 'payeeOrganization', 'payerContractor', 'payeeContractor'])
-            ->withCount('siteRequests');
+            ->with(['project', 'payerOrganization', 'payeeOrganization', 'payerContractor', 'payeeContractor']);
+
+        if (Schema::hasTable('site_requests') && Schema::hasTable('payment_document_site_requests')) {
+            $query->withCount('siteRequests');
+        }
 
         // Применяем фильтры
         if (isset($filters['document_type'])) {
@@ -543,6 +547,14 @@ class PaymentDocumentService
                                  ->where('contract_performance_acts.contract_id', $contractId);
                          });
                 });
+            });
+        }
+
+        if (isset($filters['estimate_id'])) {
+            $estimateId = (int) $filters['estimate_id'];
+
+            $query->whereHas('estimateSplits.estimateItem', function ($estimateItemQuery) use ($estimateId): void {
+                $estimateItemQuery->where('estimate_id', $estimateId);
             });
         }
 
@@ -884,6 +896,8 @@ class PaymentDocumentService
 
     public function processEstimateSplits(PaymentDocument $document, array $splits): void
     {
+        $this->ensureEstimateSplitsHavePaymentBasis($document);
+
         $affectedEstimateIds = [];
 
         foreach ($splits as $splitData) {
@@ -914,12 +928,6 @@ class PaymentDocumentService
                 'price_deviation' => $priceDeviation,
             ]);
 
-            $estimateItem->update([
-                'actual_unit_price' => $unitPriceActual,
-                'actual_quantity' => ($estimateItem->actual_quantity ?? 0) + $quantity,
-                'procurement_status' => 'paid',
-            ]);
-
             if ($estimateItem->estimate_id) {
                 $affectedEstimateIds[$estimateItem->estimate_id] = true;
             }
@@ -934,6 +942,30 @@ class PaymentDocumentService
             'splits_count' => count($splits),
             'invalidated_estimates' => array_keys($affectedEstimateIds),
         ]);
+    }
+
+    private function ensureEstimateSplitsHavePaymentBasis(PaymentDocument $document): void
+    {
+        $allowedBasisTypes = [
+            Contract::class,
+            ContractPerformanceAct::class,
+        ];
+
+        if (
+            $document->invoiceable_id
+            && in_array($document->invoiceable_type, $allowedBasisTypes, true)
+        ) {
+            return;
+        }
+
+        if (
+            $document->source_id
+            && in_array($document->source_type, $allowedBasisTypes, true)
+        ) {
+            return;
+        }
+
+        throw new \DomainException(trans_message('payments.validation.estimate_split_source_required'));
     }
 
     private function resolveEstimateItemForDocument(PaymentDocument $document, int $estimateItemId): ?\App\Models\EstimateItem
@@ -956,6 +988,92 @@ class PaymentDocumentService
     public function analyzePriceDeviation(array $splits): array
     {
         return app(PriceDeviationAnalyzer::class)->analyze($splits);
+    }
+
+    private function synchronizeEstimateItemsPaymentProgress(PaymentDocument $document): void
+    {
+        $document->loadMissing('estimateSplits');
+
+        $estimateItemIds = $document->estimateSplits
+            ->pluck('estimate_item_id')
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($estimateItemIds->isEmpty()) {
+            return;
+        }
+
+        $affectedEstimateIds = [];
+
+        foreach ($estimateItemIds as $estimateItemId) {
+            $estimateItem = \App\Models\EstimateItem::query()
+                ->whereKey($estimateItemId)
+                ->first();
+
+            if (!$estimateItem) {
+                continue;
+            }
+
+            $splits = \App\BusinessModules\Core\Payments\Models\PaymentDocumentEstimateSplit::query()
+                ->where('estimate_item_id', $estimateItemId)
+                ->whereHas('document', function ($query): void {
+                    $query->whereIn('status', [
+                        PaymentDocumentStatus::PAID->value,
+                        PaymentDocumentStatus::PARTIALLY_PAID->value,
+                    ]);
+                })
+                ->with('document')
+                ->get();
+
+            $paidQuantity = 0.0;
+            $paidAmount = 0.0;
+
+            foreach ($splits as $split) {
+                $splitDocument = $split->document;
+
+                if (!$splitDocument || (float) $splitDocument->amount <= 0 || (float) $splitDocument->paid_amount <= 0) {
+                    continue;
+                }
+
+                $paymentRatio = min(1.0, (float) $splitDocument->paid_amount / (float) $splitDocument->amount);
+                $splitQuantity = (float) ($split->quantity ?? 0);
+                $splitPaidQuantity = $splitQuantity * $paymentRatio;
+
+                $paidQuantity += $splitPaidQuantity;
+                $paidAmount += (float) ($split->amount ?? 0) * $paymentRatio;
+            }
+
+            $plannedQuantity = (float) ($estimateItem->quantity_total ?? $estimateItem->quantity ?? 0);
+            $actualUnitPrice = $paidQuantity > 0 ? round($paidAmount / $paidQuantity, 4) : null;
+
+            $estimateItem->update([
+                'actual_unit_price' => $actualUnitPrice,
+                'actual_quantity' => $paidQuantity > 0 ? round($paidQuantity, 8) : null,
+                'procurement_status' => $this->resolveEstimateItemPaymentStatus($paidQuantity, $plannedQuantity),
+            ]);
+
+            if ($estimateItem->estimate_id) {
+                $affectedEstimateIds[$estimateItem->estimate_id] = true;
+            }
+        }
+
+        foreach (array_keys($affectedEstimateIds) as $estimateId) {
+            \App\BusinessModules\Features\BudgetEstimates\Jobs\GenerateEstimateSnapshotJob::dispatch($estimateId);
+        }
+    }
+
+    private function resolveEstimateItemPaymentStatus(float $paidQuantity, float $plannedQuantity): string
+    {
+        if ($paidQuantity <= 0.00000001) {
+            return 'pending';
+        }
+
+        if ($plannedQuantity > 0 && $paidQuantity + 0.00000001 >= $plannedQuantity) {
+            return 'paid';
+        }
+
+        return 'ordered';
     }
 }
 
