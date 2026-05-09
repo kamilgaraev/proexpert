@@ -39,6 +39,7 @@ class EstimateValidationService
                     $workItemsCount++;
                     $flags = $workItem['validation_flags'] ?? [];
                     $total = (float) ($workItem['total_cost'] ?? 0);
+                    $isPricedItem = !in_array((string) ($workItem['item_type'] ?? 'priced_work'), ['operation', 'resource_note', 'review_note'], true);
                     $hasResources = ($workItem['materials'] ?? []) !== []
                         || ($workItem['labor'] ?? []) !== []
                         || ($workItem['machinery'] ?? []) !== [];
@@ -47,22 +48,22 @@ class EstimateValidationService
                         $flags[] = 'missing_quantity_basis';
                     }
 
-                    if ($total <= 0) {
+                    if ($isPricedItem && $total <= 0) {
                         $flags[] = 'missing_price';
                         $zeroPriceWorkItemsCount++;
-                    } else {
+                    } elseif ($isPricedItem) {
                         $pricedWorkItemsCount++;
                     }
 
-                    if (!$hasResources) {
+                    if ($isPricedItem && !$hasResources) {
                         $flags[] = 'missing_resources';
                     }
 
-                    if ((float) ($workItem['quantity'] ?? 0) <= 0) {
+                    if ($isPricedItem && (float) ($workItem['quantity'] ?? 0) <= 0) {
                         $flags[] = 'suspicious_quantity';
                     }
 
-                    if ((float) ($workItem['confidence'] ?? 0) < 0.6) {
+                    if ($isPricedItem && (float) ($workItem['confidence'] ?? 0) < 0.6) {
                         $flags[] = 'low_confidence';
                     }
 
@@ -70,7 +71,7 @@ class EstimateValidationService
                         $normativeMatchedWorkItemsCount++;
                     }
 
-                    if (in_array('market_price_used', $flags, true) || ($workItem['price_source'] ?? null) === 'market_estimate') {
+                    if ($isPricedItem && (in_array('market_price_used', $flags, true) || ($workItem['price_source'] ?? null) === 'market_estimate')) {
                         $marketEstimateWorkItemsCount++;
                     }
 

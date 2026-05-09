@@ -20,6 +20,7 @@ class EstimateGenerationPackagePersistenceService
             foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
                 $workItems = $this->workItems($localEstimate);
                 $quality = $this->packageQuality($localEstimate, $workItems);
+                $itemCounters = $this->itemCounters($workItems);
                 $package = EstimateGenerationPackage::query()->updateOrCreate(
                     [
                         'session_id' => $session->id,
@@ -33,10 +34,10 @@ class EstimateGenerationPackagePersistenceService
                         'generation_progress' => 100,
                         'target_items_min' => (int) ($localEstimate['target_items_min'] ?? 0),
                         'target_items_max' => (int) ($localEstimate['target_items_max'] ?? 0),
-                        'actual_items_count' => count($workItems),
+                        'actual_items_count' => $itemCounters['total_items_count'],
                         'totals' => [
                             'total_cost' => (float) ($localEstimate['totals']['total_cost'] ?? 0),
-                            'items_count' => count($workItems),
+                            ...$itemCounters,
                         ],
                         'quality_summary' => $quality,
                         'assumptions' => $localEstimate['assumptions'] ?? [],
@@ -116,6 +117,41 @@ class EstimateGenerationPackagePersistenceService
     }
 
     /**
+     * @param array<int, array<string, mixed>> $workItems
+     * @return array<string, int>
+     */
+    private function itemCounters(array $workItems): array
+    {
+        $priced = 0;
+        $operations = 0;
+        $reviewNotes = 0;
+
+        foreach ($workItems as $workItem) {
+            $type = (string) ($workItem['item_type'] ?? 'priced_work');
+
+            if (in_array($type, ['operation', 'resource_note'], true)) {
+                $operations++;
+                continue;
+            }
+
+            if ($type === 'review_note') {
+                $reviewNotes++;
+                continue;
+            }
+
+            $priced++;
+        }
+
+        return [
+            'items_count' => count($workItems),
+            'total_items_count' => count($workItems),
+            'priced_items_count' => $priced,
+            'operation_items_count' => $operations,
+            'review_notes_count' => $reviewNotes,
+        ];
+    }
+
+    /**
      * @param array<string, mixed> $workItem
      * @return array<string, mixed>
      */
@@ -156,6 +192,7 @@ class EstimateGenerationPackagePersistenceService
                 'normative_candidates' => $workItem['normative_candidates'] ?? [],
                 'source_refs' => $workItem['source_refs'] ?? [],
                 'confidence' => $workItem['confidence'] ?? null,
+                ...($workItem['metadata'] ?? []),
             ],
             'sort_order' => ($index + 1) * 100,
         ];

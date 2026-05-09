@@ -48,6 +48,13 @@ class EstimateGenerationPackageFlowTest extends TestCase
         $this->assertContains($session->status, ['ready_for_review', 'review_required', 'blocked']);
         $this->assertGreaterThanOrEqual(15, $session->packages()->count());
         $this->assertGreaterThanOrEqual(250, $session->packages()->withCount('items')->get()->sum('items_count'));
+        $this->assertGreaterThan(0, $session->packages()->get()->sum(fn ($package): int => (int) ($package->totals['priced_items_count'] ?? 0)));
+        $this->assertGreaterThan(0, $session->packages()->get()->sum(fn ($package): int => (int) ($package->totals['operation_items_count'] ?? 0)));
+        $this->assertDatabaseMissing('estimate_generation_package_items', [
+            'item_type' => 'priced_work',
+            'unit' => 'компл',
+            'quantity' => 0.080000,
+        ]);
         $this->assertNotSame('generated', $session->status);
         $this->assertNotEmpty($session->draft_payload['object_profile'] ?? []);
         $this->assertNotEmpty($session->draft_payload['package_plan'] ?? []);

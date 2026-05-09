@@ -30,9 +30,9 @@ class PackagePlannerService
         $regionalContext = is_array($analysis['regional_context'] ?? null) ? $analysis['regional_context'] : [];
         $type = mb_strtolower((string) ($object['object_type'] ?? $object['building_type'] ?? 'custom'));
 
-        if (str_contains($type, 'склад') || str_contains($type, 'warehouse')) {
+        if (str_contains($type, 'склад') || str_contains($type, 'warehouse') || str_contains($type, 'производ')) {
             $type = 'warehouse';
-        } elseif (str_contains($type, 'жил') || str_contains($type, 'ижс') || str_contains($type, 'house')) {
+        } elseif (str_contains($type, 'жил') || str_contains($type, 'ижс') || str_contains($type, 'дом') || str_contains($type, 'house')) {
             $type = 'house';
         }
 
@@ -59,7 +59,8 @@ class PackagePlannerService
 
         return str_contains($type, 'warehouse')
             || str_contains($type, 'склад')
-            || str_contains($type, 'industrial');
+            || str_contains($type, 'industrial')
+            || str_contains($type, 'производ');
     }
 
     /**
@@ -73,15 +74,15 @@ class PackagePlannerService
             $this->package('foundation', 'Фундамент', 'foundation', 30, 55),
             $this->package('walls', 'Стены и перегородки', 'walls', 28, 52),
             $this->package('slabs', 'Перекрытия', 'slabs', 18, 36),
-            $this->package('stairs', 'Лестницы', 'slabs', 8, 18),
+            $this->package('stairs', 'Лестницы', 'stairs', 8, 18),
             $this->package('roof', 'Кровля', 'roof', 24, 45),
             $this->package('openings', 'Окна и двери', 'openings', 14, 28),
             $this->package('facade', 'Фасад', 'facade', 18, 36),
-            $this->package('electrical', 'Электрика', 'engineering', 24, 50),
-            $this->package('plumbing', 'Водоснабжение', 'engineering', 16, 34),
-            $this->package('sewerage', 'Канализация', 'engineering', 12, 26),
-            $this->package('heating', 'Отопление', 'engineering', 18, 40),
-            $this->package('ventilation', 'Вентиляция', 'engineering', 8, 20),
+            $this->package('electrical', 'Электрика', 'electrical', 24, 50),
+            $this->package('plumbing', 'Водоснабжение', 'plumbing', 16, 34),
+            $this->package('sewerage', 'Канализация', 'sewerage', 12, 26),
+            $this->package('heating', 'Отопление', 'heating', 18, 40),
+            $this->package('ventilation', 'Вентиляция', 'ventilation', 8, 20),
             $this->package('rough_finishing', 'Черновая отделка', 'finishing', 24, 52),
             $this->package('finish_finishing', 'Чистовая отделка', 'finishing', 28, 60),
             $this->package('external_networks', 'Наружные сети', 'site', 14, 32),
@@ -103,13 +104,13 @@ class PackagePlannerService
             $this->package('envelope', 'Ограждающие конструкции', 'facade', 55, 120),
             $this->package('roof', 'Кровля', 'roof', 45, 100),
             $this->package('gates', 'Ворота и погрузочные узлы', 'openings', 25, 60),
-            $this->package('power_supply', 'Электроснабжение', 'engineering', 55, 120),
-            $this->package('lighting', 'Освещение', 'engineering', 35, 80),
-            $this->package('ventilation', 'Вентиляция', 'engineering', 45, 100),
-            $this->package('heating', 'Отопление', 'engineering', 35, 80),
+            $this->package('power_supply', 'Электроснабжение', 'electrical', 55, 120),
+            $this->package('lighting', 'Освещение', 'electrical', 35, 80),
+            $this->package('ventilation', 'Вентиляция', 'ventilation', 45, 100),
+            $this->package('heating', 'Отопление', 'heating', 35, 80),
             $this->package('fire_safety', 'Пожарная безопасность', 'engineering', 50, 110),
-            $this->package('water_sewerage', 'Водоснабжение и канализация', 'engineering', 35, 80),
-            $this->package('low_current', 'Слаботочные системы', 'engineering', 25, 60),
+            $this->package('water_sewerage', 'Водоснабжение и канализация', 'plumbing', 35, 80),
+            $this->package('low_current', 'Слаботочные системы', 'electrical', 25, 60),
             $this->package('external_networks', 'Наружные сети', 'site', 40, 90),
             $this->package('roads', 'Дороги и площадки', 'site', 35, 80),
         ];
@@ -145,6 +146,8 @@ class PackagePlannerService
             'totals' => [
                 'total_cost' => 0,
                 'items_count' => 0,
+                'priced_items_count' => 0,
+                'operation_items_count' => 0,
             ],
             'quality_summary' => [
                 'level' => 'planned',

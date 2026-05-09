@@ -27,6 +27,8 @@ class EstimateGenerationPackagePresenter
      */
     public function summary(EstimateGenerationPackage $package): array
     {
+        $totals = $package->totals ?? ['total_cost' => 0, 'items_count' => 0];
+
         return [
             'id' => $package->id,
             'key' => $package->key,
@@ -38,7 +40,13 @@ class EstimateGenerationPackagePresenter
             'target_items_min' => $package->target_items_min,
             'target_items_max' => $package->target_items_max,
             'actual_items_count' => $package->actual_items_count,
-            'totals' => $package->totals ?? ['total_cost' => 0, 'items_count' => 0],
+            'totals' => $totals,
+            'items_breakdown' => [
+                'total' => (int) ($totals['total_items_count'] ?? $totals['items_count'] ?? $package->actual_items_count),
+                'priced' => (int) ($totals['priced_items_count'] ?? $package->actual_items_count),
+                'operations' => (int) ($totals['operation_items_count'] ?? 0),
+                'review_notes' => (int) ($totals['review_notes_count'] ?? 0),
+            ],
             'quality_summary' => $package->quality_summary ?? [
                 'level' => 'planned',
                 'critical_flags' => [],
@@ -60,6 +68,8 @@ class EstimateGenerationPackagePresenter
             'items' => $items->map(fn (EstimateGenerationPackageItem $item): array => $this->item($item))->values()->all(),
             'meta' => [
                 'items_count' => $items->count(),
+                'priced_items_count' => $items->filter(fn (EstimateGenerationPackageItem $item): bool => $this->isPricedItem($item))->count(),
+                'operation_items_count' => $items->filter(fn (EstimateGenerationPackageItem $item): bool => in_array($item->item_type, ['operation', 'resource_note'], true))->count(),
             ],
         ];
     }
@@ -100,6 +110,15 @@ class EstimateGenerationPackagePresenter
      */
     private function summaryCounters(Collection $packages): array
     {
+        $priced = 0;
+        $operations = 0;
+
+        foreach ($packages as $package) {
+            $totals = $package->totals ?? [];
+            $priced += (int) ($totals['priced_items_count'] ?? 0);
+            $operations += (int) ($totals['operation_items_count'] ?? 0);
+        }
+
         return [
             'total' => $packages->count(),
             'planned' => $packages->where('status', 'planned')->count(),
@@ -108,6 +127,13 @@ class EstimateGenerationPackagePresenter
             'approved' => $packages->where('status', 'approved')->count(),
             'blocked' => $packages->where('status', 'blocked')->count(),
             'failed' => $packages->where('status', 'failed')->count(),
+            'priced_items_count' => $priced,
+            'operation_items_count' => $operations,
         ];
+    }
+
+    private function isPricedItem(EstimateGenerationPackageItem $item): bool
+    {
+        return !in_array($item->item_type, ['operation', 'resource_note', 'review_note'], true);
     }
 }

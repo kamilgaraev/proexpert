@@ -9,6 +9,16 @@ class EstimatePricingService
     public function price(array $workItems): array
     {
         foreach ($workItems as &$workItem) {
+            if (in_array((string) ($workItem['item_type'] ?? 'priced_work'), ['operation', 'resource_note', 'review_note'], true)) {
+                $workItem['work_cost'] = 0;
+                $workItem['materials_cost'] = 0;
+                $workItem['machinery_cost'] = 0;
+                $workItem['labor_cost'] = 0;
+                $workItem['total_cost'] = 0;
+
+                continue;
+            }
+
             $materialsCost = array_sum(array_column($workItem['materials'], 'total_price'));
             $laborCost = array_sum(array_column($workItem['labor'], 'total_price'));
             $machineryCost = array_sum(array_column($workItem['machinery'], 'total_price'));
