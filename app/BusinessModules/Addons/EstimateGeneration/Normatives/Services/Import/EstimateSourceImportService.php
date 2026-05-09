@@ -505,7 +505,7 @@ class EstimateSourceImportService
             'resource_name' => $resource->name,
             'unit' => $resource->unit,
             'quantity' => $resource->quantity,
-            'resource_type' => $this->normalizeResourceType($resource->resourceType, $resourceCode, $resource->name),
+            'resource_type' => $this->normalizeResourceType($resource->resourceType, $resourceCode, $resource->name, $resource->rawData),
             'raw_payload' => $resource->rawData,
         ]);
     }
@@ -563,9 +563,18 @@ class EstimateSourceImportService
         return $targetPath;
     }
 
-    private function normalizeResourceType(?string $resourceType, ?string $code = null, ?string $name = null): string
+    private function normalizeResourceType(?string $resourceType, ?string $code = null, ?string $name = null, ?array $rawData = null): string
     {
+        if ($this->isAbstractResource($rawData)) {
+            return EstimateResourceType::ABSTRACT->value;
+        }
+
         return $this->resourceClassifier->classify($code, $name, $resourceType);
+    }
+
+    private function isAbstractResource(?array $rawData): bool
+    {
+        return mb_strtolower((string) ($rawData['source_tag'] ?? '')) === 'abstractresource';
     }
 
     private function sectionPathPart(int $index, ?string $code, string $name, ?string $type): string

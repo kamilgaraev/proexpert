@@ -11,6 +11,7 @@ enum EstimateResourceType: string
     case MACHINE = 'machine';
     case LABOR = 'labor';
     case MACHINE_LABOR = 'machine_labor';
+    case ABSTRACT = 'abstract';
     case SUMMARY = 'summary';
     case OTHER = 'other';
 }

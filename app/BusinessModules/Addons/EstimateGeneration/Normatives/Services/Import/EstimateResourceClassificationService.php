@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import;
 
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\EstimateResourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\EstimateSourceType;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -135,6 +136,7 @@ class EstimateResourceClassificationService
                     'resources.resource_code',
                     'resources.resource_name',
                     'resources.resource_type',
+                    'resources.raw_payload',
                 ])
                 ->orderBy('resources.id')
                 ->limit($chunkSize)
@@ -142,7 +144,9 @@ class EstimateResourceClassificationService
 
             foreach ($resources as $resource) {
                 $lastId = (int) $resource->id;
-                $type = $this->classifier->classify($resource->resource_code, $resource->resource_name, $resource->resource_type);
+                $type = $this->isAbstractResource($resource->raw_payload ?? null)
+                    ? EstimateResourceType::ABSTRACT->value
+                    : $this->classifier->classify($resource->resource_code, $resource->resource_name, $resource->resource_type);
                 $this->countType($summary, $type);
                 $summary['processed']++;
 
@@ -165,6 +169,19 @@ class EstimateResourceClassificationService
         } while ($resources->isNotEmpty());
 
         return $summary;
+    }
+
+    private function isAbstractResource(mixed $rawPayload): bool
+    {
+        if (is_string($rawPayload)) {
+            $rawPayload = json_decode($rawPayload, true);
+        }
+
+        if (!is_array($rawPayload)) {
+            return false;
+        }
+
+        return mb_strtolower((string) ($rawPayload['source_tag'] ?? '')) === 'abstractresource';
     }
 
     /**

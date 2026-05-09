@@ -6,6 +6,7 @@ namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\Normative\EstimateNormativeCatalogService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm;
 use App\Enums\EstimatePositionItemType;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
@@ -213,6 +214,98 @@ class EstimateNormativeCatalogServiceTest extends TestCase
         $this->assertSame(336.43, (float) $children[1]->unit_price);
         $this->assertSame(3.36, (float) $children[1]->total_amount);
         $this->assertSame(8.14, (float) $work->direct_costs);
+    }
+
+    public function test_detail_marks_fsnb_abstract_resources_as_project_resources(): void
+    {
+        $fsnbVersionId = $this->createVersion('fsnb_2022', '2026-05-07');
+        $collectionId = $this->createCollection($fsnbVersionId);
+        $sectionId = $this->createSection($collectionId);
+        $normId = $this->createNorm($collectionId, $sectionId);
+
+        DB::table('estimate_norm_resources')->insert([
+            'estimate_norm_id' => $normId,
+            'construction_resource_id' => null,
+            'resource_code' => '02.2.02.01',
+            'resource_name' => 'Фильтрующие материалы',
+            'unit' => 'м3',
+            'quantity' => null,
+            'resource_type' => 'material',
+            'raw_payload' => json_encode([
+                'source_tag' => 'AbstractResource',
+                'attributes' => [
+                    'TechnologyGroups' => '08.03.001',
+                ],
+            ], JSON_UNESCAPED_UNICODE),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $payload = app(EstimateNormativeCatalogService::class)->detail(
+            EstimateNorm::query()->findOrFail($normId)
+        );
+
+        $resource = $payload['resources'][0];
+
+        $this->assertSame('abstract', $resource['resource_type']);
+        $this->assertTrue($resource['is_abstract_resource']);
+        $this->assertTrue($resource['requires_project_resource_selection']);
+        $this->assertNull($resource['price_source']);
+        $this->assertSame(0.0, $resource['unit_price']);
+    }
+
+    public function test_add_items_keeps_abstract_resources_out_of_material_children(): void
+    {
+        $fsnbVersionId = $this->createVersion('fsnb_2022', '2026-05-07');
+        $collectionId = $this->createCollection($fsnbVersionId);
+        $sectionId = $this->createSection($collectionId);
+        $normId = $this->createNorm($collectionId, $sectionId);
+
+        DB::table('estimate_norm_resources')->insert([
+            'estimate_norm_id' => $normId,
+            'construction_resource_id' => null,
+            'resource_code' => '24.2.01.01',
+            'resource_name' => 'Трубы керамические дренажные',
+            'unit' => 'м',
+            'quantity' => 1053,
+            'resource_type' => 'material',
+            'raw_payload' => json_encode(['source_tag' => 'AbstractResource'], JSON_UNESCAPED_UNICODE),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $estimate = Estimate::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'number' => 'T-4',
+            'name' => 'Смета',
+            'type' => 'local',
+            'status' => 'draft',
+            'estimate_date' => now()->toDateString(),
+            'calculation_method' => 'resource',
+        ]);
+
+        $calculationService = Mockery::mock(EstimateCalculationService::class);
+        $calculationService->shouldReceive('calculateItemTotal')->andReturn(0.0);
+        $calculationService->shouldReceive('calculateEstimateTotal')->andReturn([]);
+        $service = new EstimateNormativeCatalogService(app(EstimateItemRepository::class), $calculationService);
+
+        $service->addItemsFromNormatives($estimate, [[
+            'estimate_norm_id' => $normId,
+            'quantity' => 1,
+            'position_number' => '1',
+        ]]);
+
+        $work = EstimateItem::query()
+            ->where('estimate_id', $estimate->id)
+            ->where('item_type', EstimatePositionItemType::WORK->value)
+            ->firstOrFail();
+
+        $this->assertSame(0, EstimateItem::query()->where('parent_work_id', $work->id)->count());
+        $this->assertSame('24.2.01.01', $work->metadata['abstract_norm_resources'][0]['resource_code']);
+        $this->assertTrue($work->metadata['abstract_norm_resources'][0]['requires_project_resource_selection']);
     }
 
     private function seedNormative(bool $separatePriceVersion = true): array

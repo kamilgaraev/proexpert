@@ -104,6 +104,9 @@ class EstimateNormativeCatalogService
                 $sectionId = $this->resolveSectionId($estimate, $itemData['estimate_section_id'] ?? null);
                 $quantity = (float) $itemData['quantity'];
                 $resources = $this->resourcesPayload($norm, $priceVersions, $regionalPriceVersion);
+                $abstractResources = $resources
+                    ->where('is_abstract_resource', true)
+                    ->values();
                 $totals = $this->resourceTotals($resources, $quantity);
                 $positionNumber = $itemData['position_number'] ?? $this->itemRepository->getNextPositionNumber($estimate->id);
 
@@ -149,6 +152,7 @@ class EstimateNormativeCatalogService
                             'source_type' => $priceVersions->first()->source_type->value,
                             'version_key' => $priceVersions->first()->version_key,
                         ] : null,
+                        'abstract_norm_resources' => $abstractResources->all(),
                     ],
                 ]);
 
@@ -232,8 +236,13 @@ class EstimateNormativeCatalogService
         );
 
         return $resources->flatMap(function ($resource) use ($prices, $priceSourceById): array {
-            $type = $resource->resource_type?->value ?? EstimateResourceType::OTHER->value;
-            $price = $this->resolvePrice($prices->get($resource->resource_code) ?? collect(), $type, (string) ($resource->unit ?? ''));
+            $isAbstractResource = $this->isAbstractResource($resource->raw_payload);
+            $type = $isAbstractResource
+                ? EstimateResourceType::ABSTRACT->value
+                : ($resource->resource_type?->value ?? EstimateResourceType::OTHER->value);
+            $price = $isAbstractResource
+                ? null
+                : $this->resolvePrice($prices->get($resource->resource_code) ?? collect(), $type, (string) ($resource->unit ?? ''));
             $payload = [
                 'resource_code' => $resource->resource_code,
                 'name' => $resource->resource_name,
@@ -245,6 +254,9 @@ class EstimateNormativeCatalogService
                 'price_source' => $price !== null ? ($price->regional_price_version_id !== null ? 'fgiscs_regional' : ($priceSourceById[(int) $price->dataset_version_id] ?? null)) : null,
                 'pricing' => $this->pricePayload($price),
                 'construction_resource_id' => $resource->construction_resource_id,
+                'is_abstract_resource' => $isAbstractResource,
+                'requires_project_resource_selection' => $isAbstractResource,
+                'raw_source_tag' => $resource->raw_payload['source_tag'] ?? null,
             ];
 
             $machineLabor = $this->machineLaborResource($payload);
@@ -255,7 +267,13 @@ class EstimateNormativeCatalogService
 
     private function persistResources(EstimateItem $work, Collection $resources, float $workQuantity, int $organizationId): void
     {
-        foreach ($resources as $index => $resource) {
+        $positionIndex = 1;
+
+        foreach ($resources as $resource) {
+            if (($resource['is_abstract_resource'] ?? false) === true) {
+                continue;
+            }
+
             $quantity = round((float) $resource['quantity_per_unit'] * $workQuantity, 6);
             $total = round($quantity * (float) $resource['unit_price'], 2);
             $itemType = $this->estimateItemType((string) $resource['resource_type']);
@@ -265,7 +283,7 @@ class EstimateNormativeCatalogService
                 'estimate_section_id' => $work->estimate_section_id,
                 'parent_work_id' => $work->id,
                 'item_type' => $itemType,
-                'position_number' => $work->position_number . '.' . ($index + 1),
+                'position_number' => $work->position_number . '.' . $positionIndex,
                 'name' => $resource['name'] ?? $resource['resource_code'],
                 'description' => 'fsnb_norm_resource',
                 'normative_rate_code' => $resource['resource_code'],
@@ -302,6 +320,8 @@ class EstimateNormativeCatalogService
                 'unit_price' => $resource['unit_price'],
                 'total_amount' => $total,
             ]);
+
+            $positionIndex++;
         }
     }
 
@@ -356,6 +376,11 @@ class EstimateNormativeCatalogService
             EstimateResourceType::LABOR->value, EstimateResourceType::MACHINE_LABOR->value => EstimatePositionItemType::LABOR->value,
             default => EstimatePositionItemType::MATERIAL->value,
         };
+    }
+
+    private function isAbstractResource(?array $rawPayload): bool
+    {
+        return mb_strtolower((string) ($rawPayload['source_tag'] ?? '')) === 'abstractresource';
     }
 
     private function pricePayload(?EstimateResourcePrice $price): array
