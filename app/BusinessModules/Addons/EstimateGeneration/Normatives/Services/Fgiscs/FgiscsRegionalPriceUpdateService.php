@@ -347,6 +347,7 @@ class FgiscsRegionalPriceUpdateService
             DB::transaction(function () use ($path, $datasetVersion, $regionalVersion, &$rowsRead, &$rowsImported, &$errorsCount): void {
                 EstimateResourcePrice::query()
                     ->where('regional_price_version_id', $regionalVersion->id)
+                    ->where('source_price_kind', 'regional_worker_salary')
                     ->delete();
 
                 foreach ($this->parser->parse($path) as $dto) {

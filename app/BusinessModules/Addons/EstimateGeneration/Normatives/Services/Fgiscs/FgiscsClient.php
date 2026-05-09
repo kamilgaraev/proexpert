@@ -121,6 +121,71 @@ class FgiscsClient
         );
     }
 
+    public function downloadBuildingResources(int $priceZoneId, int $periodId): FgiscsDownloadDTO
+    {
+        return $this->downloadSpreadsheet(
+            path: '/EstimatedPrice/BuildingResources/Export',
+            priceZoneId: $priceZoneId,
+            periodId: $periodId,
+            errorMessage: 'Не удалось скачать сметные цены строительных ресурсов ФГИС ЦС.',
+            invalidFileMessage: 'ФГИС ЦС вернул не XLSX-файл со сметными ценами строительных ресурсов.',
+        );
+    }
+
+    public function downloadBuildingResourcesSplitForm(int $priceZoneId, int $periodId): FgiscsDownloadDTO
+    {
+        return $this->downloadSpreadsheet(
+            path: '/EstimatedPrice/BuildingResources/ExportSplitForm',
+            priceZoneId: $priceZoneId,
+            periodId: $periodId,
+            errorMessage: 'Не удалось скачать сплит-форму строительных ресурсов ФГИС ЦС.',
+            invalidFileMessage: 'ФГИС ЦС вернул не XLSX-файл со сплит-формой строительных ресурсов.',
+        );
+    }
+
+    private function downloadSpreadsheet(string $path, int $priceZoneId, int $periodId, string $errorMessage, string $invalidFileMessage): FgiscsDownloadDTO
+    {
+        $response = Http::timeout(180)->get(self::BASE_URL . $path, [
+            'priceZoneId' => $priceZoneId,
+            'periodId' => $periodId,
+        ]);
+
+        if (!$response->successful()) {
+            $body = $response->body();
+            $message = is_array($response->json()) && is_string($response->json('message'))
+                ? (string) $response->json('message')
+                : $errorMessage;
+
+            if ($response->status() === 422) {
+                throw new FgiscsDownloadUnavailableException(
+                    message: $message,
+                    statusCode: $response->status(),
+                    responseBody: $body,
+                );
+            }
+
+            throw new RuntimeException(sprintf(
+                '%s HTTP %d: %s',
+                $errorMessage,
+                $response->status(),
+                mb_substr($body, 0, 300),
+            ));
+        }
+
+        $content = $response->body();
+        $contentType = $response->header('Content-Type');
+
+        if (!str_starts_with($content, 'PK') && !str_contains((string) $contentType, 'spreadsheetml')) {
+            throw new RuntimeException($invalidFileMessage);
+        }
+
+        return new FgiscsDownloadDTO(
+            content: $content,
+            contentType: $contentType,
+            fileName: $this->extractFileName($response->header('Content-Disposition')),
+        );
+    }
+
     /**
      * @return array{year:int,quarter:int}|null
      */

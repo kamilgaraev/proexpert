@@ -10,8 +10,10 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\Im
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\InspectEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\QualityEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\RollbackRegionalPricePeriodCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\SyncFgiscsBuildingResourcePricesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\SyncFgiscsRegionalPricesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsClient;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsBuildingResourcePriceUpdateService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsRegionalCatalogService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsRegionalPriceUpdateService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\RegionalPriceActivationService;
@@ -21,6 +23,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\Est
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateResourceClassificationService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateResourceClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateSourceImportService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\FgiscsBuildingResourcePriceSpreadsheetParser;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\EstimateSourceStorageService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
@@ -64,6 +67,8 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(FgiscsClient::class);
         $this->app->singleton(FgiscsRegionalCatalogService::class);
         $this->app->singleton(FgiscsRegionalPriceUpdateService::class);
+        $this->app->singleton(FgiscsBuildingResourcePriceSpreadsheetParser::class);
+        $this->app->singleton(FgiscsBuildingResourcePriceUpdateService::class);
         $this->app->singleton(RegionalPriceQualityService::class);
         $this->app->singleton(RegionalPriceActivationService::class);
     }
@@ -84,6 +89,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 InspectEstimateNormativesCommand::class,
                 QualityEstimateNormativesCommand::class,
                 SyncFgiscsRegionalPricesCommand::class,
+                SyncFgiscsBuildingResourcePricesCommand::class,
                 RollbackRegionalPricePeriodCommand::class,
             ]);
         }
