@@ -40,6 +40,38 @@ class ConstructionSemanticParserTest extends TestCase
         $this->assertContains('finish_finishing', $constructives);
     }
 
+    public function test_parser_extracts_mixed_office_warehouse_prompt_as_separate_scopes(): void
+    {
+        $parser = new ConstructionSemanticParser();
+
+        $analysis = $parser->parse([
+            'description' => $this->mixedOfficeWarehousePrompt(),
+            'building_type' => 'Производственное',
+            'area' => 780,
+        ], []);
+
+        $structure = $analysis['detected_structure'];
+        $constructives = $structure['constructives'];
+        $titles = array_column($structure['scopes'], 'title');
+
+        $this->assertContains('1 этаж', $structure['floors']);
+        $this->assertContains('2 этаж', $structure['floors']);
+        $this->assertContains('slabs', $constructives);
+        $this->assertContains('openings', $constructives);
+        $this->assertContains('facade', $constructives);
+        $this->assertContains('roof', $constructives);
+        $this->assertContains('heating', $constructives);
+        $this->assertContains('ventilation', $constructives);
+        $this->assertContains('electrical', $constructives);
+        $this->assertContains('plumbing', $constructives);
+        $this->assertContains('site', $constructives);
+        $this->assertGreaterThanOrEqual(10, count($structure['scopes']));
+        $this->assertNotContains(
+            'Нужна входная группа, фасад из сэндвич-панелей, плоская кровля, отопление, вентиляция, электрика, водоснабжение, канализация, наружная площадка и подъезд для грузового транспорта.',
+            $titles
+        );
+    }
+
     private function housePrompt(): string
     {
         return <<<'TEXT'
@@ -57,6 +89,16 @@ class ConstructionSemanticParserTest extends TestCase
 Черновая отделка (стяжка пола, штукатурка стен).
 Чистовая отделка (бюджетная: ламинат, плитка в санузлах, обои под покраску).
 Добавь непредвиденные расходы 10%.
+TEXT;
+    }
+
+    private function mixedOfficeWarehousePrompt(): string
+    {
+        return <<<'TEXT'
+Нужно сделать смету на небольшой двухэтажный офисно-складской корпус 780 м2 в Татарстане.
+На первом этаже склад 420 м2 с промышленным бетонным полом, разгрузочной зоной, воротами, пожарной сигнализацией и освещением.
+На втором этаже офисы 260 м2, переговорная, санузлы, серверная и лестничная клетка.
+Нужна входная группа, фасад из сэндвич-панелей, плоская кровля, отопление, вентиляция, электрика, водоснабжение, канализация, наружная площадка и подъезд для грузового транспорта.
 TEXT;
     }
 }

@@ -66,6 +66,15 @@ class ObjectQuantityModelServiceTest extends TestCase
         $this->assertSame('flat', $model['features']['roof_type']);
         $this->assertSame(420.0, $model['quantities']['warehouse.floor']['value']);
         $this->assertSame(260.0, $model['quantities']['office.floor']['value']);
+        $this->assertArrayHasKey('electrical.main_cable', $model['quantities']);
+        $this->assertArrayHasKey('electrical.trays', $model['quantities']);
+        $this->assertArrayHasKey('electrical.power_lines', $model['quantities']);
+        $this->assertArrayHasKey('lighting.lines', $model['quantities']);
+        $this->assertArrayHasKey('electrical.grounding', $model['quantities']);
+        $this->assertNotSame($model['quantities']['electrical.main_cable']['value'], $model['quantities']['electrical.trays']['value']);
+        $this->assertNotSame($model['quantities']['electrical.power_lines']['value'], $model['quantities']['lighting.lines']['value']);
+        $this->assertSame($model['quantities']['warehouse.wall_panels']['value'], $model['quantities']['warehouse.envelope']['value']);
+        $this->assertLessThan($model['quantities']['warehouse.wall_panels']['value'] + $model['quantities']['roof.flat_area']['value'], $model['quantities']['warehouse.envelope']['value'] + 0.01);
         $this->assertContains('office_partitions', $packageKeys);
         $this->assertContains('office_finishing', $packageKeys);
         $this->assertContains('sanitary_rooms', $packageKeys);

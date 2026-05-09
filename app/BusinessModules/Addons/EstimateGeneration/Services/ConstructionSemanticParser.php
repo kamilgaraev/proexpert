@@ -75,16 +75,18 @@ class ConstructionSemanticParser
             'finish_finishing' => ['чистовая отделка', 'ламинат', 'плитка', 'обои', 'покраска'],
             'foundation' => ['фундамент', 'основание под', 'бетонная подготовка', 'ростверк', 'свая'],
             'walls' => ['кладоч', 'стен', 'перегород', 'несущие стены', 'наружные стены', 'газобетон'],
-            'slabs' => ['перекрыт', 'плита перекрытия', 'монолитная плита'],
-            'roof' => ['кровл', 'стропил', 'крыша', 'металлочерепиц'],
-            'openings' => ['окна', 'двери', 'стеклопакет', 'проем', 'проём'],
+            'slabs' => ['перекрыт', 'плита перекрытия', 'монолитная плита', 'бетонный пол', 'промышленным бетонным полом', 'промышленный пол'],
+            'roof' => ['кровл', 'стропил', 'крыша', 'металлочерепиц', 'плоская кровля'],
+            'openings' => ['окна', 'двери', 'стеклопакет', 'проем', 'проём', 'ворот', 'входная группа'],
             'electrical' => ['электрика', 'электромонтаж', 'щит', 'кабель', 'розет', 'светильник', 'свет'],
             'plumbing' => ['водопровод', 'водоснабжен', 'канализац', 'септик', 'скважин', 'трубы'],
             'heating' => ['отоплен', 'котел', 'котёл', 'радиатор', 'разводка отопления'],
             'ventilation' => ['вентиляц', 'приточн', 'клапан'],
-            'facade' => ['фасад', 'утеплен', 'утеплён', 'облицовк'],
+            'fire_safety' => ['пожарн', 'сигнализац', 'оповещен', 'оповещён'],
+            'stairs' => ['лестниц', 'лестничн'],
+            'facade' => ['фасад', 'утеплен', 'утеплён', 'облицовк', 'сэндвич-панел', 'сендвич-панел'],
             'finishing' => ['отделк', 'штукатур', 'окраск', 'облицовка'],
-            'site' => ['благоустрой', 'наружн', 'землян', 'отмостк'],
+            'site' => ['благоустрой', 'наружн', 'землян', 'отмостк', 'разгруз', 'площадк', 'подъезд', 'проезд'],
         ];
     }
 
@@ -93,13 +95,12 @@ class ConstructionSemanticParser
      */
     protected function extractScopes(string $text, bool $strictMode): array
     {
-        $lines = preg_split('/\r\n|\r|\n/u', $text) ?: [];
         $items = [];
         $zones = [];
         $constructives = [];
         $keywords = $this->scopeKeywords();
 
-        foreach ($lines as $line) {
+        foreach ($this->scopeCandidateLines($text, $keywords) as $line) {
             $normalizedLine = trim(mb_strtolower($this->cleanLine($line)));
             if ($normalizedLine === '') {
                 continue;
@@ -148,11 +149,11 @@ class ConstructionSemanticParser
 
     protected function isScopeCandidateLine(string $normalizedLine, string $scopeType): bool
     {
-        if ($scopeType !== '') {
+        if (mb_strlen($normalizedLine) <= 120) {
             return true;
         }
 
-        if (mb_strlen($normalizedLine) <= 120) {
+        if ($scopeType !== '' && mb_strlen($normalizedLine) <= 220) {
             return true;
         }
 
@@ -177,13 +178,37 @@ class ConstructionSemanticParser
     protected function inferDefaultScopes(string $buildingType, array $sourceRefs, string $description): array
     {
         $normalizedBuildingType = mb_strtolower($buildingType);
+        $normalizedDescription = mb_strtolower($description);
         $isResidentialLike = in_array($normalizedBuildingType, ['ижс', 'жилой', 'residential', 'custom'], true)
-            || str_contains(mb_strtolower($description), 'жил')
-            || str_contains(mb_strtolower($description), 'спальн')
-            || str_contains(mb_strtolower($description), 'гостиная');
+            || str_contains($normalizedDescription, 'жил')
+            || str_contains($normalizedDescription, 'спальн')
+            || str_contains($normalizedDescription, 'гостиная');
+        $isWarehouseLike = str_contains($normalizedBuildingType, 'склад')
+            || str_contains($normalizedBuildingType, 'производ')
+            || str_contains($normalizedDescription, 'склад')
+            || str_contains($normalizedDescription, 'производ')
+            || str_contains($normalizedDescription, 'офисно-склад');
 
-        $defaults = $isResidentialLike
-            ? [
+        if ($isWarehouseLike) {
+            $defaults = [
+                ['title' => 'Подготовка площадки', 'scope_type' => 'site'],
+                ['title' => 'Земляные работы', 'scope_type' => 'foundation'],
+                ['title' => 'Фундаменты', 'scope_type' => 'foundation'],
+                ['title' => 'Промышленный пол', 'scope_type' => 'slabs'],
+                ['title' => 'Металлокаркас', 'scope_type' => 'structural'],
+                ['title' => 'Фасад и ограждающие конструкции', 'scope_type' => 'facade'],
+                ['title' => 'Кровля', 'scope_type' => 'roof'],
+                ['title' => 'Ворота и входная группа', 'scope_type' => 'openings'],
+                ['title' => 'Электроснабжение', 'scope_type' => 'electrical'],
+                ['title' => 'Освещение', 'scope_type' => 'electrical'],
+                ['title' => 'Отопление', 'scope_type' => 'heating'],
+                ['title' => 'Вентиляция', 'scope_type' => 'ventilation'],
+                ['title' => 'Пожарная безопасность', 'scope_type' => 'fire_safety'],
+                ['title' => 'Водоснабжение и канализация', 'scope_type' => 'plumbing'],
+                ['title' => 'Наружные площадки и подъезды', 'scope_type' => 'site'],
+            ];
+        } elseif ($isResidentialLike) {
+            $defaults = [
                 ['title' => 'Фундамент', 'scope_type' => 'foundation'],
                 ['title' => 'Стены и перегородки', 'scope_type' => 'walls'],
                 ['title' => 'Перекрытия', 'scope_type' => 'slabs'],
@@ -195,11 +220,13 @@ class ConstructionSemanticParser
                 ['title' => 'Вентиляция', 'scope_type' => 'ventilation'],
                 ['title' => 'Черновая отделка', 'scope_type' => 'rough_finishing'],
                 ['title' => 'Чистовая отделка', 'scope_type' => 'finish_finishing'],
-            ]
-            : [
+            ];
+        } else {
+            $defaults = [
                 ['title' => 'Основные строительные работы', 'scope_type' => 'custom'],
                 ['title' => 'Инженерные системы', 'scope_type' => 'engineering'],
             ];
+        }
 
         $items = array_map(function (array $scope) use ($sourceRefs): array {
             return [
@@ -304,7 +331,75 @@ class ConstructionSemanticParser
     {
         preg_match_all('/(\d+)\s*этаж/iu', $text, $matches);
 
-        return array_values(array_unique(array_map(static fn (string $value): string => $value . ' этаж', $matches[1] ?? [])));
+        $floors = array_map(static fn (string $value): string => $value . ' этаж', $matches[1] ?? []);
+        $normalized = mb_strtolower($text);
+
+        foreach ([
+            1 => ['первом этаже', 'первый этаж', '1-м этаже', '1 этаже'],
+            2 => ['втором этаже', 'второй этаж', '2-м этаже', '2 этаже'],
+            3 => ['третьем этаже', 'третий этаж', '3-м этаже', '3 этаже'],
+        ] as $number => $patterns) {
+            foreach ($patterns as $pattern) {
+                if (str_contains($normalized, $pattern)) {
+                    $floors[] = $number . ' этаж';
+                    break;
+                }
+            }
+        }
+
+        if (str_contains($normalized, 'двухэтаж') || str_contains($normalized, 'двух этаж')) {
+            $floors[] = '1 этаж';
+            $floors[] = '2 этаж';
+        }
+
+        if (str_contains($normalized, 'трехэтаж') || str_contains($normalized, 'трёхэтаж') || str_contains($normalized, 'три этажа')) {
+            $floors[] = '1 этаж';
+            $floors[] = '2 этаж';
+            $floors[] = '3 этаж';
+        }
+
+        return array_values(array_unique($floors));
+    }
+
+    /**
+     * @param array<string, array<int, string>> $keywords
+     * @return array<int, string>
+     */
+    protected function scopeCandidateLines(string $text, array $keywords): array
+    {
+        $lines = preg_split('/\r\n|\r|\n/u', $text) ?: [];
+        $candidates = [];
+
+        foreach ($lines as $line) {
+            foreach (preg_split('/[.;]\s*/u', $line) ?: [] as $sentence) {
+                $sentence = trim($sentence);
+
+                if ($sentence === '') {
+                    continue;
+                }
+
+                $parts = preg_split('/,\s*/u', $sentence) ?: [];
+
+                if (count($parts) === 1) {
+                    $candidates[] = $sentence;
+                    continue;
+                }
+
+                foreach ($parts as $part) {
+                    $part = trim($part);
+
+                    if ($part === '') {
+                        continue;
+                    }
+
+                    if ($this->detectScopeType(mb_strtolower($this->cleanLine($part)), $keywords) !== null) {
+                        $candidates[] = $part;
+                    }
+                }
+            }
+        }
+
+        return $candidates;
     }
 
     protected function detectBuildingType(string $text): ?string

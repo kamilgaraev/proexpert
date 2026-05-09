@@ -156,17 +156,53 @@ class WorkItemGenerationDensityTest extends TestCase
             'target_items_min' => 20,
         ], $analysis);
 
+        $powerSupply = app(WorkItemGenerationService::class)->build([
+            'key' => 'power_supply',
+            'title' => 'Электроснабжение',
+            'scope_type' => 'electrical',
+            'source_refs' => [],
+            'target_items_min' => 30,
+        ], $analysis);
+        $lighting = app(WorkItemGenerationService::class)->build([
+            'key' => 'lighting',
+            'title' => 'Освещение',
+            'scope_type' => 'electrical',
+            'source_refs' => [],
+            'target_items_min' => 24,
+        ], $analysis);
+        $envelope = app(WorkItemGenerationService::class)->build([
+            'key' => 'envelope',
+            'title' => 'Ограждающие конструкции',
+            'scope_type' => 'facade',
+            'source_refs' => [],
+            'target_items_min' => 24,
+        ], $analysis);
+
         $pricedIndustrialFloor = array_values(array_filter($industrialFloor, fn (array $item): bool => ($item['item_type'] ?? null) === 'priced_work'));
         $pricedRoofNames = array_column(array_filter($roof, fn (array $item): bool => ($item['item_type'] ?? null) === 'priced_work'), 'name');
         $pricedOfficeFinishing = array_values(array_filter($officeFinishing, fn (array $item): bool => ($item['item_type'] ?? null) === 'priced_work'));
         $pricedHeating = array_values(array_filter($heating, fn (array $item): bool => ($item['item_type'] ?? null) === 'priced_work'));
         $pricedVentilation = array_values(array_filter($ventilation, fn (array $item): bool => ($item['item_type'] ?? null) === 'priced_work'));
+        $pricedPowerSupply = array_values(array_filter($powerSupply, fn (array $item): bool => ($item['item_type'] ?? null) === 'priced_work'));
+        $pricedLighting = array_values(array_filter($lighting, fn (array $item): bool => ($item['item_type'] ?? null) === 'priced_work'));
+        $pricedEnvelope = array_values(array_filter($envelope, fn (array $item): bool => ($item['item_type'] ?? null) === 'priced_work'));
+        $powerQuantityFormulas = array_values(array_unique(array_column($pricedPowerSupply, 'quantity_formula')));
+        $powerQuantityKeys = array_map(static fn (array $item): ?string => $item['metadata']['quantity_key'] ?? null, $pricedPowerSupply);
+        $lightingQuantityKeys = array_map(static fn (array $item): ?string => $item['metadata']['quantity_key'] ?? null, $pricedLighting);
 
         $this->assertGreaterThanOrEqual(6, count($pricedIndustrialFloor));
         $this->assertGreaterThanOrEqual(6, count($pricedOfficeFinishing));
+        $this->assertGreaterThanOrEqual(7, count($pricedPowerSupply));
+        $this->assertGreaterThanOrEqual(6, count($pricedLighting));
+        $this->assertGreaterThanOrEqual(6, count($pricedEnvelope));
         $this->assertGreaterThanOrEqual(4, count($pricedHeating));
         $this->assertGreaterThanOrEqual(5, count($pricedVentilation));
         $this->assertSame(420.0, (float) $pricedIndustrialFloor[0]['quantity']);
+        $this->assertContains('electrical.main_cable', $powerQuantityKeys);
+        $this->assertGreaterThanOrEqual(4, count($powerQuantityFormulas));
+        $this->assertNotContains('electrical.cable', $lightingQuantityKeys);
+        $this->assertNotContains('warehouse.envelope', $powerQuantityKeys);
+        $this->assertLessThan(700.0, (float) $pricedEnvelope[0]['quantity']);
         $this->assertNotContains('site.setup', array_column($pricedHeating, 'quantity_formula'));
         $this->assertContains('Устройство плоской кровли по профнастилу', $pricedRoofNames);
         $this->assertNotContains('Монтаж металлочерепицы', $pricedRoofNames);

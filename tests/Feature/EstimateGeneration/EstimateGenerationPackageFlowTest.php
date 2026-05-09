@@ -98,7 +98,12 @@ class EstimateGenerationPackageFlowTest extends TestCase
         $this->assertContains('office_partitions', $packageKeys);
         $this->assertContains('office_finishing', $packageKeys);
         $this->assertContains('sanitary_rooms', $packageKeys);
-        $this->assertGreaterThanOrEqual(75, $pricedItemsCount);
+        $this->assertGreaterThanOrEqual(130, $pricedItemsCount);
+        $this->assertGreaterThanOrEqual(600, $packages->sum(fn ($package): int => $package->items->count()));
+        $this->assertNotContains(
+            'insufficient_detail',
+            array_merge(...$packages->map(fn ($package): array => $package->quality_summary['critical_flags'] ?? [])->all())
+        );
         $this->assertDatabaseMissing('estimate_generation_package_items', [
             'package_id' => $packages->firstWhere('key', 'industrial_floor')?->id,
             'item_type' => 'priced_work',

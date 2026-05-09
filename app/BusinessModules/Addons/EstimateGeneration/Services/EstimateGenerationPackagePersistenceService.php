@@ -91,8 +91,14 @@ class EstimateGenerationPackagePersistenceService
         $critical = [];
         $warnings = [];
 
-        if (count($workItems) < (int) ($localEstimate['target_items_min'] ?? 0)) {
+        $targetItemsMin = (int) ($localEstimate['target_items_min'] ?? 0);
+        $counters = $this->itemCounters($workItems);
+        $pricedTargetMin = min(10, max(3, (int) ceil(max($targetItemsMin, 1) / 7)));
+
+        if (count($workItems) < $targetItemsMin && $counters['priced_items_count'] < $pricedTargetMin) {
             $critical[] = 'insufficient_detail';
+        } elseif (count($workItems) < $targetItemsMin) {
+            $warnings[] = 'detail_can_be_expanded';
         }
 
         foreach ($workItems as $workItem) {

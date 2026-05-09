@@ -71,6 +71,11 @@ class ObjectQuantityModelService
         $foundationPrepVolume = $foundationLength * 0.65 * 0.2;
         $slabArea = $floorArea * max($floors - 1, 1);
         $wetRooms = max((int) ceil($rooms / 4), 1);
+        $mainCableLength = ($effectiveWarehouseArea * 1.15) + ($effectiveOfficeArea * 1.6) + ($perimeter * 1.4);
+        $trayLength = ($effectiveWarehouseArea * 0.72) + ($effectiveOfficeArea * 0.95) + ($perimeter * 0.8);
+        $powerLineLength = ($effectiveWarehouseArea * 1.35) + ($effectiveOfficeArea * 0.65) + ($perimeter * 1.1);
+        $lightingLineLength = ($effectiveWarehouseArea * 1.05) + ($effectiveOfficeArea * 1.25) + ($perimeter * 0.55);
+        $groundingLength = $perimeter + max($effectiveWarehouseArea / 60, 12);
 
         $quantities = [
             'site.setup' => $this->quantity(1, 'компл', 'Один комплект подготовительных работ на объект'),
@@ -104,6 +109,11 @@ class ObjectQuantityModelService
             'facade.area' => $this->quantity(max($externalWallArea - $openingsArea, 1), 'м2', 'Площадь фасада по наружным стенам без проемов'),
             'electrical.points' => $this->quantity(max($rooms * 7 + $area * 0.12, 20), 'точка', 'Розетки, выключатели и световые точки по комнатам и площади'),
             'electrical.cable' => $this->quantity($area * 5.5, 'м', 'Ориентировочная длина кабельных линий по площади дома'),
+            'electrical.main_cable' => $this->quantity($mainCableLength, 'м', 'Магистральные кабельные линии с учетом складской, офисной зоны и периметра'),
+            'electrical.trays' => $this->quantity($trayLength, 'м', 'Кабельные лотки и трассы по складской и офисной зонам'),
+            'electrical.power_lines' => $this->quantity($powerLineLength, 'м', 'Силовые линии к оборудованию, воротам и распределительным щитам'),
+            'lighting.lines' => $this->quantity($lightingLineLength, 'м', 'Групповые линии освещения отдельно от силовых кабелей'),
+            'electrical.grounding' => $this->quantity($groundingLength, 'м', 'Контур заземления по периметру и перемычки к металлоконструкциям'),
             'plumbing.points' => $this->quantity($wetRooms * 5 + 3, 'точка', 'Сантехнические точки по мокрым зонам'),
             'plumbing.pipe' => $this->quantity($area * 0.55, 'м', 'Внутридомовая разводка водоснабжения'),
             'sewerage.points' => $this->quantity($wetRooms * 4 + 2, 'точка', 'Точки канализации по санузлам и кухне'),
@@ -126,7 +136,7 @@ class ObjectQuantityModelService
             'warehouse.frame_weight' => $this->quantity($effectiveWarehouseArea * 0.055, 'т', 'Ориентировочная масса металлокаркаса по площади склада'),
             'warehouse.columns' => $this->quantity(max((int) ceil($effectiveWarehouseArea / 55), 8), 'шт', 'Колонны металлокаркаса по складской сетке'),
             'warehouse.beams' => $this->quantity($effectiveWarehouseArea * 0.035, 'т', 'Балки, фермы и связи металлокаркаса'),
-            'warehouse.envelope' => $this->quantity($externalWallArea + $roofArea, 'м2', 'Ограждающие конструкции по стенам и кровле'),
+            'warehouse.envelope' => $this->quantity(max($externalWallArea - $openingsArea, 1), 'м2', 'Стеновые ограждающие конструкции без повторного учета кровли'),
             'warehouse.wall_panels' => $this->quantity(max($externalWallArea - $openingsArea, 1), 'м2', 'Стеновые сэндвич-панели по наружному контуру'),
             'warehouse.panel_flashings' => $this->quantity($perimeter * 1.6, 'м', 'Доборные элементы и нащельники сэндвич-панелей'),
             'warehouse.gates' => $this->quantity(max((int) ceil($effectiveWarehouseArea / 600), 2), 'шт', 'Ворота и погрузочные узлы по площади склада'),

@@ -23,6 +23,7 @@ class WorkItemGenerationService
         $targetItemsMin = (int) ($localEstimate['target_items_min'] ?? 0);
         $quantityModel = $this->quantityModelService->build($analysis);
         $templates = $this->templateForPackage($packageKey, $scopeType, $quantityModel);
+        $templates = $this->withSupplementalPricedTemplates($templates, $packageKey, $scopeType, $targetItemsMin);
         $workItems = [];
 
         foreach ($templates as $index => $template) {
@@ -216,6 +217,127 @@ class WorkItemGenerationService
     }
 
     /**
+     * @param array<int, array<string, mixed>> $templates
+     * @return array<int, array<string, mixed>>
+     */
+    private function withSupplementalPricedTemplates(array $templates, string $packageKey, string $scopeType, int $targetItemsMin): array
+    {
+        $minPricedItems = min(10, max(count($templates), (int) ceil(max($targetItemsMin, count($templates)) / 7)));
+
+        if (count($templates) >= $minPricedItems) {
+            return $templates;
+        }
+
+        $knownNames = array_fill_keys(array_column($templates, 'name'), true);
+
+        foreach ($this->supplementalTemplatePool($packageKey, $scopeType) as $template) {
+            if (isset($knownNames[$template['name']])) {
+                continue;
+            }
+
+            $templates[] = $template;
+            $knownNames[$template['name']] = true;
+
+            if (count($templates) >= $minPricedItems) {
+                break;
+            }
+        }
+
+        return $templates;
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function supplementalTemplatePool(string $packageKey, string $scopeType): array
+    {
+        return match ($packageKey) {
+            'earthworks' => [
+                $this->template('Уплотнение основания механизированным способом', 'earthworks', 'Послойное уплотнение основания под фундамент и полы', 'earth.plan', 260, ['material' => 0.08, 'labor' => 0.32, 'machinery' => 0.6], 0.6),
+                $this->template('Подсыпка инертными материалами', 'earthworks', 'Выравнивающая подсыпка основания', 'foundation.prep', 1650, ['material' => 0.66, 'labor' => 0.18, 'machinery' => 0.16], 0.58),
+                $this->template('Контроль отметок основания', 'earthworks', 'Исполнительный контроль основания перед бетонированием', 'site.geodesy', 28000, ['material' => 0.04, 'labor' => 0.9, 'machinery' => 0.06], 0.58),
+            ],
+            'foundations', 'foundation' => [
+                $this->template('Анкерные группы под колонны', 'foundation', 'Установка закладных и анкерных групп каркаса', 'warehouse.columns', 18500, ['material' => 0.72, 'labor' => 0.23, 'machinery' => 0.05], 0.58),
+                $this->template('Бетонирование ростверков и балок', 'foundation', 'Бетонные элементы распределения нагрузок', 'foundation.concrete', 12400, ['material' => 0.72, 'labor' => 0.18, 'machinery' => 0.1], 0.58),
+                $this->template('Уход за бетоном фундаментов', 'foundation', 'Укрытие и технологический уход за бетоном', 'foundation.concrete', 460, ['material' => 0.38, 'labor' => 0.55, 'machinery' => 0.07], 0.56),
+                $this->template('Исполнительная съемка фундаментов', 'foundation', 'Контроль положения осей и отметок фундаментов', 'site.geodesy', 32000, ['material' => 0.04, 'labor' => 0.9, 'machinery' => 0.06], 0.56),
+            ],
+            'industrial_floor' => [
+                $this->template('Устройство пароизоляции под промышленный пол', 'industrial_floor', 'Разделительный и пароизоляционный слой плиты пола', 'warehouse.floor', 220, ['material' => 0.64, 'labor' => 0.3, 'machinery' => 0.06], 0.58),
+                $this->template('Контроль ровности промышленного пола', 'industrial_floor', 'Финишный контроль плоскости и швов пола', 'warehouse.floor', 180, ['material' => 0.08, 'labor' => 0.86, 'machinery' => 0.06], 0.56),
+            ],
+            'metal_frame' => [
+                $this->template('Монтаж прогонов и распорок покрытия', 'metal_frame', 'Прогоны кровли и дополнительные связи', 'warehouse.beams', 78000, ['material' => 0.76, 'labor' => 0.16, 'machinery' => 0.08], 0.58),
+                $this->template('Болтовые соединения металлокаркаса', 'metal_frame', 'Комплектующие и монтаж болтовых соединений', 'warehouse.frame_weight', 8200, ['material' => 0.68, 'labor' => 0.26, 'machinery' => 0.06], 0.56),
+                $this->template('Антикоррозионная защита металлокаркаса', 'metal_frame', 'Грунтовка и защитное покрытие металла', 'warehouse.frame_weight', 16500, ['material' => 0.52, 'labor' => 0.42, 'machinery' => 0.06], 0.56),
+                $this->template('Проверка геометрии каркаса', 'metal_frame', 'Контроль вертикальности и положения несущих элементов', 'warehouse.columns', 6200, ['material' => 0.08, 'labor' => 0.84, 'machinery' => 0.08], 0.54),
+                $this->template('Монтаж вторичных несущих элементов', 'metal_frame', 'Фахверк и элементы крепления ограждений', 'warehouse.frame_weight', 34000, ['material' => 0.72, 'labor' => 0.2, 'machinery' => 0.08], 0.56),
+            ],
+            'envelope' => [
+                $this->template('Теплые угловые узлы фасада', 'facade', 'Утепленные угловые решения стеновых панелей', 'warehouse.panel_flashings', 980, ['material' => 0.58, 'labor' => 0.36, 'machinery' => 0.06], 0.56),
+                $this->template('Герметизация примыканий к цоколю', 'facade', 'Нижние узлы защиты стеновых панелей', 'warehouse.panel_flashings', 820, ['material' => 0.52, 'labor' => 0.42, 'machinery' => 0.06], 0.56),
+            ],
+            'roof' => [
+                $this->template('Ограждения и проходки кровли', 'roof', 'Сервисные элементы и проходы инженерных систем через кровлю', 'roof.gutter', 2400, ['material' => 0.62, 'labor' => 0.31, 'machinery' => 0.07], 0.56),
+                $this->template('Проверка герметичности кровли', 'roof', 'Контроль примыканий и водоотвода кровли', 'roof.flat_area', 140, ['material' => 0.08, 'labor' => 0.86, 'machinery' => 0.06], 0.54),
+            ],
+            'power_supply' => [
+                $this->template('Испытания кабельных линий', 'electrical', 'Измерения и протоколы по силовым кабельным линиям', 'electrical.power_lines', 95, ['material' => 0.05, 'labor' => 0.9, 'machinery' => 0.05], 0.56),
+                $this->template('Маркировка и паспортизация электролиний', 'electrical', 'Маркировка кабелей, щитов и трасс', 'electrical.main_cable', 75, ['material' => 0.18, 'labor' => 0.78, 'machinery' => 0.04], 0.54),
+            ],
+            'lighting' => [
+                $this->template('Пусконаладка системы освещения', 'electrical', 'Проверка групп освещения и аварийных линий', 'lighting.lines', 120, ['material' => 0.08, 'labor' => 0.86, 'machinery' => 0.06], 0.54),
+            ],
+            'ventilation' => [
+                $this->template('Автоматика вентиляции', 'ventilation', 'Шкаф управления и датчики вентиляционных установок', 'ventilation.air_exchange', 260, ['material' => 0.58, 'labor' => 0.36, 'machinery' => 0.06], 0.56),
+                $this->template('Пусконаладка вентиляционных установок', 'ventilation', 'Балансировка и проверка расходов воздуха', 'ventilation.air_exchange', 190, ['material' => 0.08, 'labor' => 0.86, 'machinery' => 0.06], 0.54),
+            ],
+            'heating' => [
+                $this->template('Балансировка системы отопления', 'heating', 'Настройка контуров отопления и тепловых завес', 'heating.pipe', 220, ['material' => 0.08, 'labor' => 0.86, 'machinery' => 0.06], 0.54),
+            ],
+            'fire_safety' => [
+                $this->template('Кабельные линии пожарной автоматики', 'fire_safety', 'Линии связи пожарной сигнализации и оповещения', 'warehouse.low_current', 420, ['material' => 0.52, 'labor' => 0.43, 'machinery' => 0.05], 0.56),
+                $this->template('Исполнительная документация пожарной автоматики', 'fire_safety', 'Проверка и оформление исполнительной документации', 'site.setup', 42000, ['material' => 0.05, 'labor' => 0.9, 'machinery' => 0.05], 0.54),
+                $this->template('Проверка зон обнаружения пожара', 'fire_safety', 'Контроль покрытия датчиками складской и офисной зоны', 'warehouse.fire', 130, ['material' => 0.08, 'labor' => 0.86, 'machinery' => 0.06], 0.54),
+            ],
+            'external_networks' => [
+                $this->template('Земляные работы по наружным сетям', 'site', 'Траншеи и обратная засыпка наружных сетей', 'warehouse.roads', 460, ['material' => 0.12, 'labor' => 0.28, 'machinery' => 0.6], 0.54),
+                $this->template('Испытания наружных инженерных сетей', 'plumbing', 'Промывка, опрессовка и проверка вводов', 'networks.external', 68000, ['material' => 0.16, 'labor' => 0.76, 'machinery' => 0.08], 0.54),
+            ],
+            'roads' => [
+                $this->template('Разметка и организация движения на площадке', 'site', 'Разметка подъездных путей и разгрузочных зон', 'warehouse.roads', 260, ['material' => 0.46, 'labor' => 0.48, 'machinery' => 0.06], 0.54),
+            ],
+            default => $this->supplementalTemplatesByScope($scopeType),
+        };
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function supplementalTemplatesByScope(string $scopeType): array
+    {
+        return match ($scopeType) {
+            'site' => [
+                $this->template('Дополнительная механизированная планировка', 'site', 'Выравнивание площадки под рабочие зоны', 'siteworks.area', 360, ['material' => 0.12, 'labor' => 0.32, 'machinery' => 0.56], 0.54),
+                $this->template('Контроль готовности площадки', 'site', 'Проверка фронта работ и исполнительные отметки', 'site.geodesy', 22000, ['material' => 0.04, 'labor' => 0.9, 'machinery' => 0.06], 0.54),
+            ],
+            'plumbing' => [
+                $this->template('Запорная арматура инженерных сетей', 'plumbing', 'Арматура и узлы подключения трубопроводов', 'plumbing.points', 6200, ['material' => 0.62, 'labor' => 0.32, 'machinery' => 0.06], 0.54),
+                $this->template('Испытания внутренних трубопроводов', 'plumbing', 'Опрессовка и промывка внутренних сетей', 'plumbing.pipe', 160, ['material' => 0.12, 'labor' => 0.82, 'machinery' => 0.06], 0.54),
+            ],
+            'electrical' => [
+                $this->template('Пусконаладка электрических систем', 'electrical', 'Проверка линий, щитов и защитной автоматики', 'site.power', 56000, ['material' => 0.08, 'labor' => 0.86, 'machinery' => 0.06], 0.54),
+                $this->template('Исполнительная маркировка электросетей', 'electrical', 'Маркировка и паспортизация электрических линий', 'electrical.main_cable', 70, ['material' => 0.16, 'labor' => 0.8, 'machinery' => 0.04], 0.54),
+            ],
+            default => [
+                $this->template('Исполнительный контроль работ', 'custom', 'Проверка качества и объемов по разделу', 'site.setup', 28000, ['material' => 0.08, 'labor' => 0.86, 'machinery' => 0.06], 0.5),
+                $this->template('Подготовка исполнительной документации', 'custom', 'Фиксация выполненных работ по разделу', 'site.setup', 24000, ['material' => 0.05, 'labor' => 0.9, 'machinery' => 0.05], 0.5),
+            ],
+        };
+    }
+
+    /**
      * @return array<int, array<string, mixed>>
      */
     protected function templateForPackage(string $packageKey, string $scopeType, array $quantityModel = []): array
@@ -339,11 +461,12 @@ class WorkItemGenerationService
                 $this->template('Огнезащита металлоконструкций', 'metal_frame', 'Нанесение огнезащитного покрытия на каркас', 'warehouse.frame_weight', 18500, ['material' => 0.52, 'labor' => 0.42, 'machinery' => 0.06], 0.58),
             ],
             'envelope' => [
-                $this->template('Монтаж ограждающих сэндвич-панелей', 'facade', 'Стеновые и кровельные ограждающие конструкции склада', 'warehouse.envelope', 3900, ['material' => 0.72, 'labor' => 0.22, 'machinery' => 0.06], 0.64),
+                $this->template('Монтаж ограждающих сэндвич-панелей', 'facade', 'Стеновые ограждающие конструкции склада без кровельного покрытия', 'warehouse.envelope', 3900, ['material' => 0.72, 'labor' => 0.22, 'machinery' => 0.06], 0.64),
                 $this->template('Монтаж стеновых сэндвич-панелей', 'facade', 'Стеновые панели по наружному контуру', 'warehouse.wall_panels', 3600, ['material' => 0.74, 'labor' => 0.21, 'machinery' => 0.05], 0.66),
                 $this->template('Монтаж доборных элементов панелей', 'facade', 'Углы, нащельники, примыкания и фасонные элементы', 'warehouse.panel_flashings', 720, ['material' => 0.62, 'labor' => 0.34, 'machinery' => 0.04], 0.62),
                 $this->template('Герметизация стыков сэндвич-панелей', 'facade', 'Уплотнение и герметизация примыканий ограждений', 'warehouse.panel_flashings', 430, ['material' => 0.48, 'labor' => 0.48, 'machinery' => 0.04], 0.6),
                 $this->template('Монтаж цокольных примыканий ограждений', 'facade', 'Нижние примыкания стеновых панелей к основанию', 'warehouse.panel_flashings', 560, ['material' => 0.55, 'labor' => 0.4, 'machinery' => 0.05], 0.6),
+                $this->template('Уплотнение примыканий ворот и фасада', 'facade', 'Теплые узлы примыкания панелей к воротам и входам', 'warehouse.gates', 18500, ['material' => 0.58, 'labor' => 0.36, 'machinery' => 0.06], 0.58),
             ],
             'gates' => [
                 $this->template('Монтаж промышленных ворот', 'openings', 'Ворота и погрузочные проемы склада', 'warehouse.gates', 185000, ['material' => 0.8, 'labor' => 0.16, 'machinery' => 0.04], 0.62),
@@ -352,17 +475,21 @@ class WorkItemGenerationService
                 $this->template('Автоматика промышленных ворот', 'openings', 'Приводы, управление и пусконаладка ворот', 'warehouse.gates', 42000, ['material' => 0.68, 'labor' => 0.3, 'machinery' => 0.02], 0.56),
             ],
             'power_supply' => [
-                $this->template('Электроснабжение склада', 'electrical', 'Вводное распределение и силовые линии', 'electrical.cable', 620, ['material' => 0.62, 'labor' => 0.32, 'machinery' => 0.06], 0.62),
+                $this->template('Электроснабжение склада', 'electrical', 'Вводное распределение и магистральные кабельные линии', 'electrical.main_cable', 620, ['material' => 0.62, 'labor' => 0.32, 'machinery' => 0.06], 0.62),
                 $this->template('Вводно-распределительное устройство', 'electrical', 'Главный вводной щит объекта', 'site.power', 145000, ['material' => 0.76, 'labor' => 0.21, 'machinery' => 0.03], 0.62),
-                $this->template('Кабельные лотки и трассы', 'electrical', 'Лотки, короба и несущие системы кабельных линий', 'electrical.cable', 420, ['material' => 0.62, 'labor' => 0.32, 'machinery' => 0.06], 0.62),
-                $this->template('Силовые кабельные линии', 'electrical', 'Прокладка силовых кабелей к оборудованию', 'electrical.cable', 520, ['material' => 0.58, 'labor' => 0.38, 'machinery' => 0.04], 0.62),
-                $this->template('Заземление и уравнивание потенциалов', 'electrical', 'Контур заземления и подключение металлоконструкций', 'warehouse.envelope', 180, ['material' => 0.52, 'labor' => 0.42, 'machinery' => 0.06], 0.58),
+                $this->template('Кабельные лотки и трассы', 'electrical', 'Лотки, короба и несущие системы кабельных линий', 'electrical.trays', 420, ['material' => 0.62, 'labor' => 0.32, 'machinery' => 0.06], 0.62),
+                $this->template('Силовые кабельные линии', 'electrical', 'Прокладка силовых кабелей к оборудованию', 'electrical.power_lines', 520, ['material' => 0.58, 'labor' => 0.38, 'machinery' => 0.04], 0.62),
+                $this->template('Заземление и уравнивание потенциалов', 'electrical', 'Контур заземления и подключение металлоконструкций', 'electrical.grounding', 180, ['material' => 0.52, 'labor' => 0.42, 'machinery' => 0.06], 0.58),
+                $this->template('Щиты распределения складской зоны', 'electrical', 'Распределительные щиты по складским линиям и воротам', 'site.power', 96000, ['material' => 0.72, 'labor' => 0.25, 'machinery' => 0.03], 0.58),
+                $this->template('Кабельные подключения ворот и оборудования', 'electrical', 'Подключение приводов ворот и инженерного оборудования', 'electrical.power_lines', 480, ['material' => 0.55, 'labor' => 0.4, 'machinery' => 0.05], 0.58),
             ],
             'lighting' => [
                 $this->template('Промышленное освещение склада', 'electrical', 'Светильники и линии освещения', 'warehouse.lighting', 14500, ['material' => 0.68, 'labor' => 0.28, 'machinery' => 0.04], 0.62),
-                $this->template('Монтаж линий освещения склада', 'electrical', 'Кабельные линии групп освещения', 'electrical.cable', 260, ['material' => 0.56, 'labor' => 0.4, 'machinery' => 0.04], 0.6),
+                $this->template('Монтаж линий освещения склада', 'electrical', 'Кабельные линии групп освещения', 'lighting.lines', 260, ['material' => 0.56, 'labor' => 0.4, 'machinery' => 0.04], 0.6),
                 $this->template('Аварийное освещение', 'electrical', 'Светильники аварийного и эвакуационного освещения', 'warehouse.lighting', 3600, ['material' => 0.68, 'labor' => 0.29, 'machinery' => 0.03], 0.58),
                 $this->template('Щиты управления освещением', 'electrical', 'Групповые щиты и коммутация освещения', 'site.power', 54000, ['material' => 0.72, 'labor' => 0.25, 'machinery' => 0.03], 0.58),
+                $this->template('Наружное освещение разгрузочной зоны', 'electrical', 'Светильники и линии наружных площадок', 'warehouse.roads', 740, ['material' => 0.62, 'labor' => 0.32, 'machinery' => 0.06], 0.56),
+                $this->template('Освещение офисной зоны', 'electrical', 'Световые линии офисов и переговорной', 'office.electrical_points', 1850, ['material' => 0.5, 'labor' => 0.47, 'machinery' => 0.03], 0.56),
             ],
             'fire_safety' => [
                 $this->template('Пожарная сигнализация и оповещение', 'fire_safety', 'Система пожарной безопасности склада', 'warehouse.fire', 950, ['material' => 0.55, 'labor' => 0.4, 'machinery' => 0.05], 0.6),
