@@ -53,21 +53,34 @@ class EstimateGenerationOrchestrator
         $packagePlan = $this->packagePlannerService->plan($objectProfile);
         $localEstimates = $this->decompositionService->decomposePackagePlan($analysis, $packagePlan);
         $regionalContext = $session->input_payload['regional_context'] ?? $analysis['regional_context'] ?? [];
+        $localEstimatesCount = max(count($localEstimates), 1);
 
         foreach ($localEstimates as $localIndex => $localEstimate) {
+            $packageProgressStart = 45 + (int) floor(($localIndex / $localEstimatesCount) * 45);
+            $packageProgressEnd = 45 + (int) floor((($localIndex + 1) / $localEstimatesCount) * 45);
+            $this->updateGenerationProgress($session, 'resource_enrichment', $packageProgressStart);
+
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 $workItems = $this->workItemGenerationService->build($localEstimate, $analysis);
+                $progressCallback = function (int $processed, int $total) use ($session, $packageProgressStart, $packageProgressEnd): void {
+                    $range = max($packageProgressEnd - $packageProgressStart, 1);
+                    $progress = $packageProgressStart + (int) floor(($processed / max($total, 1)) * $range);
+                    $this->updateGenerationProgress($session, 'resource_enrichment', min($progress, $packageProgressEnd));
+                };
                 $workItems = $this->resourceAssemblyService->enrich($workItems, [
                     'scope_type' => $localEstimate['scope_type'] ?? null,
                     'local_estimate_title' => $localEstimate['title'] ?? null,
                     'section_title' => $section['title'] ?? null,
                     'source_refs' => $section['source_refs'] ?? $localEstimate['source_refs'] ?? [],
                     'regional_context' => $regionalContext,
+                    'progress_callback' => $progressCallback,
                 ]);
                 $workItems = $this->pricingService->price($workItems);
                 $localEstimates[$localIndex]['sections'][$sectionIndex]['work_items'] = $workItems;
             }
         }
+
+        $this->updateGenerationProgress($session, 'validation_and_normalization', 92);
 
         $draft = [
             'title' => $session->input_payload['description'] ?? 'AI draft estimate',
@@ -112,6 +125,15 @@ class EstimateGenerationOrchestrator
         ])->save();
 
         return $session->fresh(['documents']);
+    }
+
+    private function updateGenerationProgress(EstimateGenerationSession $session, string $stage, int $progress): void
+    {
+        $session->forceFill([
+            'status' => 'processing',
+            'processing_stage' => $stage,
+            'processing_progress' => max(0, min($progress, 99)),
+        ])->save();
     }
 
     private function normativeMatchingSummary(array $localEstimates): array

@@ -24,6 +24,7 @@ class WorkItemGenerationDensityTest extends TestCase
         ]);
 
         $this->assertGreaterThanOrEqual(30, count($items));
+        $this->assertLessThan(count($items), count(array_unique(array_column($items, 'normative_search_key'))));
         $this->assertSame('foundation-work-1', $items[0]['key']);
         $this->assertNotSame($items[0]['name'], $items[10]['name']);
     }

@@ -30,6 +30,8 @@ class WorkItemGenerationService
             $workItem = [
                 'key' => $localEstimate['key'] . '-work-' . ($index + 1),
                 'name' => $item['name'],
+                'normative_search_text' => $item['normative_search_text'] ?? $item['name'],
+                'normative_search_key' => $this->normativeSearchKey($scopeType, $item),
                 'work_category' => $item['category'],
                 'description' => $item['description'],
                 'unit' => $item['unit'],
@@ -90,6 +92,7 @@ class WorkItemGenerationService
                 $expanded[] = [
                     ...$item,
                     'name' => $item['name'] . ': ' . $variant,
+                    'normative_search_text' => $item['normative_search_text'] ?? $item['name'],
                     'description' => trim((string) ($item['description'] ?? '') . '. ' . $variant),
                     'base_quantity' => round((float) ($item['base_quantity'] ?? 0) * $share, 8),
                     'quantity_formula' => trim((string) ($item['quantity_formula'] ?? 'Расчет от площади объекта') . ', детализация ' . ($variantIndex + 1)),
@@ -159,6 +162,27 @@ class WorkItemGenerationService
             'fixed' => round($baseQuantity, 2),
             default => round($baseQuantity * max($area / 100, 1), 2),
         };
+    }
+
+    /**
+     * @param array<string, mixed> $item
+     */
+    private function normativeSearchKey(string $scopeType, array $item): string
+    {
+        return implode('|', [
+            $this->normalizeSearchPart($scopeType),
+            $this->normalizeSearchPart((string) ($item['category'] ?? 'custom')),
+            $this->normalizeSearchPart((string) ($item['normative_search_text'] ?? $item['name'] ?? '')),
+            $this->normalizeSearchPart((string) ($item['unit'] ?? '')),
+        ]);
+    }
+
+    private function normalizeSearchPart(string $value): string
+    {
+        $value = mb_strtolower(trim($value));
+        $value = preg_replace('/\s+/u', ' ', $value) ?? $value;
+
+        return $value;
     }
 
     /**

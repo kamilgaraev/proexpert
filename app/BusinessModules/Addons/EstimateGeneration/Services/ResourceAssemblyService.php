@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeM
 class ResourceAssemblyService
 {
     private const LOW_CONFIDENCE_THRESHOLD = 0.55;
+    private const PROGRESS_STEP = 10;
 
     public function __construct(
         protected EstimateNormativeMatcher $normativeMatcher,
@@ -18,18 +19,78 @@ class ResourceAssemblyService
 
     public function enrich(array $workItems, array $context = []): array
     {
-        foreach ($workItems as &$workItem) {
-            $match = $this->normativeMatcher->matchWorkItem($workItem, $context);
+        $progressCallback = is_callable($context['progress_callback'] ?? null) ? $context['progress_callback'] : null;
+        $total = count($workItems);
+        $matchCache = [];
+
+        foreach ($workItems as $index => &$workItem) {
+            $cacheKey = $this->matchCacheKey($workItem, $context);
+            $match = array_key_exists($cacheKey, $matchCache)
+                ? $matchCache[$cacheKey]
+                : $matchCache[$cacheKey] = $this->normativeMatcher->matchWorkItem($this->workItemForMatching($workItem), $context);
 
             if ($match === null) {
                 $workItem = $this->markUnmatched($workItem);
-                continue;
+            } else {
+                $workItem = $this->applyNormativeMatch($workItem, $match);
             }
 
-            $workItem = $this->applyNormativeMatch($workItem, $match);
+            $processed = $index + 1;
+
+            if ($progressCallback !== null && ($processed % self::PROGRESS_STEP === 0 || $processed === $total)) {
+                $progressCallback($processed, $total);
+            }
         }
+        unset($workItem);
 
         return $workItems;
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     * @param array<string, mixed> $context
+     */
+    private function matchCacheKey(array $workItem, array $context): string
+    {
+        $regionalContext = is_array($context['regional_context'] ?? null) ? $context['regional_context'] : [];
+
+        return implode('|', [
+            (string) ($regionalContext['estimate_regional_price_version_id'] ?? $regionalContext['version_id'] ?? 'base'),
+            (string) ($context['scope_type'] ?? ''),
+            (string) ($workItem['normative_search_key'] ?? $this->fallbackSearchKey($workItem)),
+        ]);
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     * @return array<string, mixed>
+     */
+    private function workItemForMatching(array $workItem): array
+    {
+        if (($workItem['normative_search_text'] ?? null) === null) {
+            return $workItem;
+        }
+
+        return [
+            ...$workItem,
+            'name' => $workItem['normative_search_text'],
+            'description' => $workItem['normative_search_text'],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     */
+    private function fallbackSearchKey(array $workItem): string
+    {
+        $name = (string) ($workItem['name'] ?? '');
+        $name = preg_replace('/:\s*.+$/u', '', $name) ?? $name;
+
+        return implode('|', [
+            (string) ($workItem['work_category'] ?? ''),
+            mb_strtolower(trim($name)),
+            (string) ($workItem['unit'] ?? ''),
+        ]);
     }
 
     /**
