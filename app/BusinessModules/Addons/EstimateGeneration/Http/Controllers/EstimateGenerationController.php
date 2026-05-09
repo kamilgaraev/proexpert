@@ -12,11 +12,13 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\UploadEstimateGe
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationSessionResource;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationFeedback;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationExcelExportService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -37,6 +39,7 @@ class EstimateGenerationController extends Controller
         protected EstimateDraftPersistenceService $draftPersistenceService,
         protected EstimateGenerationExcelExportService $excelExportService,
         protected EstimateGenerationRegionalContextResolver $regionalContextResolver,
+        protected EstimateGenerationPackagePresenter $packagePresenter,
     ) {}
 
     public function index(Request $request, Project $project): JsonResponse
@@ -186,16 +189,45 @@ class EstimateGenerationController extends Controller
     public function status(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
     {
         $this->guardSession($request, $project, $session);
+        $packages = $session->packages()->get();
 
         return AdminResponse::success([
             'id' => $session->id,
             'status' => $session->status,
             'processing_stage' => $session->processing_stage,
             'processing_progress' => $session->processing_progress,
+            'packages_summary' => $this->packagePresenter->collection($packages)['summary'],
             'problem_flags_count' => count($session->problem_flags ?? []),
             'last_error' => $session->last_error,
             'updated_at' => $session->updated_at?->toISOString(),
         ]);
+    }
+
+    public function packages(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
+    {
+        $this->guardSession($request, $project, $session);
+
+        return AdminResponse::success(
+            $this->packagePresenter->collection($session->packages()->get())
+        );
+    }
+
+    public function package(Request $request, Project $project, EstimateGenerationSession $session, EstimateGenerationPackage $package): JsonResponse
+    {
+        $this->guardSession($request, $project, $session);
+
+        if ((int) $package->session_id !== (int) $session->id) {
+            abort(404);
+        }
+
+        $perPage = min(max((int) $request->query('per_page', 100), 1), 500);
+        $items = $package->items()
+            ->limit($perPage)
+            ->get();
+
+        return AdminResponse::success(
+            $this->packagePresenter->detail($package, $items)
+        );
     }
 
     public function draft(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
@@ -269,6 +301,11 @@ class EstimateGenerationController extends Controller
     {
         try {
             $this->guardSession($request, $project, $session);
+
+            if ($session->status === 'blocked') {
+                return AdminResponse::error(trans_message('estimate_generation.apply_blocked'), 422);
+            }
+
             $estimate = $this->draftPersistenceService->apply($session, $request->validated(), $request->user());
 
             return AdminResponse::success([

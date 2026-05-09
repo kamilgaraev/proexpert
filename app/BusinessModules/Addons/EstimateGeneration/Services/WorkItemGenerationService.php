@@ -18,7 +18,10 @@ class WorkItemGenerationService
     public function build(array $localEstimate, array $analysis): array
     {
         $scopeType = (string) ($localEstimate['scope_type'] ?? 'custom');
-        $template = $this->templateForScope($scopeType);
+        $template = $this->expandTemplateForTarget(
+            $this->templateForScope($scopeType),
+            (int) ($localEstimate['target_items_min'] ?? 0)
+        );
         $area = (float) ($analysis['object']['area'] ?? 0);
         $workItems = [];
 
@@ -55,6 +58,88 @@ class WorkItemGenerationService
         }
 
         return $workItems;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $template
+     * @return array<int, array<string, mixed>>
+     */
+    private function expandTemplateForTarget(array $template, int $targetItemsMin): array
+    {
+        if ($targetItemsMin <= 0 || count($template) >= $targetItemsMin) {
+            return $template;
+        }
+
+        $expanded = [];
+        $baseCount = count($template);
+        $perBase = max((int) ceil($targetItemsMin / max($baseCount, 1)), 1);
+
+        foreach ($template as $baseIndex => $item) {
+            $sourceVariants = $this->detailVariants((string) ($item['category'] ?? 'work'));
+            $variants = [];
+
+            for ($variantIndex = 0; $variantIndex < $perBase; $variantIndex++) {
+                $name = $sourceVariants[$variantIndex % count($sourceVariants)];
+                $cycle = intdiv($variantIndex, count($sourceVariants)) + 1;
+                $variants[] = $cycle > 1 ? $name . ' этап ' . $cycle : $name;
+            }
+
+            $share = 1 / max(count($variants), 1);
+
+            foreach ($variants as $variantIndex => $variant) {
+                $expanded[] = [
+                    ...$item,
+                    'name' => $item['name'] . ': ' . $variant,
+                    'description' => trim((string) ($item['description'] ?? '') . '. ' . $variant),
+                    'base_quantity' => round((float) ($item['base_quantity'] ?? 0) * $share, 8),
+                    'quantity_formula' => trim((string) ($item['quantity_formula'] ?? 'Расчет от площади объекта') . ', детализация ' . ($variantIndex + 1)),
+                    'template_parent_index' => $baseIndex,
+                    'template_variant' => $variant,
+                ];
+
+                if (count($expanded) >= $targetItemsMin) {
+                    break 2;
+                }
+            }
+        }
+
+        return $expanded;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function detailVariants(string $category): array
+    {
+        $common = [
+            'подготовка фронта работ',
+            'поставка основных материалов',
+            'подготовка основания',
+            'основной монтаж',
+            'доборные элементы',
+            'крепление и примыкания',
+            'контроль качества',
+            'уборка и сдача участка',
+        ];
+
+        return match ($category) {
+            'earthworks' => ['разметка', 'разработка грунта', 'погрузка грунта', 'вывоз грунта', 'планировка дна', 'обратная засыпка', 'уплотнение', 'контроль отметок'],
+            'base' => ['геотекстиль', 'песчаный слой', 'щебеночный слой', 'послойное уплотнение', 'выравнивание', 'контроль толщины', 'увлажнение', 'приемка основания'],
+            'reinforcement' => ['заготовка арматуры', 'вязка каркасов', 'установка фиксаторов', 'монтаж выпусков', 'усиление углов', 'контроль защитного слоя', 'приемка арматуры', 'доборные стержни'],
+            'concrete' => ['подготовка опалубки', 'приемка бетонной смеси', 'укладка бетона', 'вибрирование', 'уход за бетоном', 'разборка опалубки', 'контроль поверхности', 'заделка дефектов'],
+            'waterproofing' => ['очистка основания', 'грунтовка', 'первый слой изоляции', 'второй слой изоляции', 'примыкания', 'защита изоляции', 'контроль сплошности', 'локальный ремонт'],
+            'masonry' => ['разметка осей', 'первый ряд', 'основная кладка', 'армирование рядов', 'перемычки', 'примыкания', 'подрезка блоков', 'контроль геометрии'],
+            'finishing' => ['подготовка поверхности', 'грунтование', 'маячные работы', 'основной слой', 'выравнивание', 'шлифовка', 'примыкания', 'финишный контроль'],
+            'frame' => ['поставка конструкций', 'разметка', 'монтаж несущих элементов', 'временное крепление', 'постоянное крепление', 'раскосы', 'антисептирование', 'контроль геометрии'],
+            'insulation' => ['подготовка основания', 'пароизоляция', 'укладка утеплителя', 'дополнительный слой утеплителя', 'герметизация стыков', 'крепление', 'контроль мостиков холода', 'защитный слой'],
+            'covering' => ['обрешетка', 'подкладочный слой', 'основное покрытие', 'коньковые элементы', 'ендовы', 'карнизные элементы', 'примыкания', 'водосточная подготовка'],
+            'electrical' => ['проектная разметка', 'штробление и проходки', 'прокладка линий', 'установка коробок', 'подключение', 'маркировка', 'измерения', 'пусконаладка'],
+            'plumbing' => ['разметка трасс', 'проходки', 'прокладка труб', 'запорная арматура', 'теплоизоляция', 'крепление', 'опрессовка', 'промывка'],
+            'heating' => ['разметка трасс', 'монтаж труб', 'монтаж приборов', 'обвязка оборудования', 'арматура', 'опрессовка', 'балансировка', 'пусконаладка'],
+            'ventilation' => ['разметка трасс', 'монтаж каналов', 'крепления', 'проходки', 'решетки и клапаны', 'изоляция', 'проверка тяги', 'регулировка'],
+            'openings' => ['подготовка проема', 'установка блока', 'крепление', 'заполнение швов', 'отливы и подоконники', 'фурнитура', 'регулировка', 'герметизация'],
+            default => $common,
+        };
     }
 
     /**

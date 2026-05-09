@@ -64,6 +64,18 @@ class EstimateGenerationSession extends Model
         return $this->hasMany(EstimateGenerationFeedback::class, 'session_id');
     }
 
+    public function packages(): HasMany
+    {
+        return $this->hasMany(EstimateGenerationPackage::class, 'session_id')
+            ->orderBy('sort_order')
+            ->orderBy('id');
+    }
+
+    public function auditEvents(): HasMany
+    {
+        return $this->hasMany(EstimateGenerationAuditEvent::class, 'session_id');
+    }
+
     public function appliedEstimate(): BelongsTo
     {
         return $this->belongsTo(Estimate::class, 'applied_estimate_id');

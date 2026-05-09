@@ -24,6 +24,8 @@ Route::middleware([
         Route::post('/{session}/analyze', [EstimateGenerationController::class, 'analyze'])->name('analyze');
         Route::post('/{session}/generate', [EstimateGenerationController::class, 'generate'])->name('generate');
         Route::get('/{session}/status', [EstimateGenerationController::class, 'status'])->name('status');
+        Route::get('/{session}/packages', [EstimateGenerationController::class, 'packages'])->name('packages.index');
+        Route::get('/{session}/packages/{package}', [EstimateGenerationController::class, 'package'])->name('packages.show');
         Route::get('/{session}', [EstimateGenerationController::class, 'show'])->name('show');
         Route::get('/{session}/draft', [EstimateGenerationController::class, 'draft'])->name('draft');
         Route::get('/{session}/export', [EstimateGenerationController::class, 'export'])->name('export');

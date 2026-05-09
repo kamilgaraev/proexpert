@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\DTOs\PackagePlanData;
+
 class EstimateDecompositionService
 {
     /**
@@ -35,6 +37,35 @@ class EstimateDecompositionService
         }
 
         return $localEstimates;
+    }
+
+    /**
+     * @param array<string, mixed> $analysis
+     * @return array<int, array<string, mixed>>
+     */
+    public function decomposePackagePlan(array $analysis, PackagePlanData $plan): array
+    {
+        return array_map(function (array $package) use ($analysis): array {
+            return [
+                'key' => $package['key'],
+                'title' => $package['title'],
+                'scope_type' => $package['scope_type'],
+                'target_items_min' => $package['target_items_min'],
+                'target_items_max' => $package['target_items_max'],
+                'source_refs' => $package['source_refs'] ?? [],
+                'assumptions' => $this->buildAssumptions($analysis, [
+                    'source_refs' => $package['source_refs'] ?? [],
+                ]),
+                'sections' => [
+                    [
+                        'key' => $package['key'] . '-section-1',
+                        'title' => $package['title'],
+                        'construction_part' => $package['scope_type'],
+                        'source_refs' => $package['source_refs'] ?? [],
+                    ],
+                ],
+            ];
+        }, $plan->packages);
     }
 
     /**

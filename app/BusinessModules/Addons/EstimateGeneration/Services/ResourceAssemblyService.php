@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeMatchDecisionService;
 
 class ResourceAssemblyService
 {
@@ -12,6 +13,7 @@ class ResourceAssemblyService
 
     public function __construct(
         protected EstimateNormativeMatcher $normativeMatcher,
+        protected NormativeMatchDecisionService $matchDecisionService,
     ) {}
 
     public function enrich(array $workItems, array $context = []): array
@@ -38,6 +40,12 @@ class ResourceAssemblyService
     private function applyNormativeMatch(array $workItem, array $match): array
     {
         $selected = $match['selected'];
+        $decision = $this->matchDecisionService->decide($selected, $workItem);
+
+        if (!$decision->canUseForPricing) {
+            return $this->applyCandidateOnlyMatch($workItem, $match, $decision->toArray());
+        }
+
         $version = $match['version'];
         $priceVersion = $match['price_version'] ?? null;
         $workQuantity = max((float) ($workItem['quantity'] ?? 0), 0.0);
@@ -88,6 +96,57 @@ class ResourceAssemblyService
             $flags[] = 'normative_prices_missing';
         }
 
+        $workItem['validation_flags'] = array_values(array_unique($flags));
+
+        return $workItem;
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     * @param array<string, mixed> $match
+     * @param array<string, mixed> $decision
+     * @return array<string, mixed>
+     */
+    private function applyCandidateOnlyMatch(array $workItem, array $match, array $decision): array
+    {
+        $selected = $match['selected'];
+        $flags = $workItem['validation_flags'] ?? [];
+        $flags[] = 'normative_candidate_only';
+
+        if (in_array('low_confidence', $decision['warnings'] ?? [], true)) {
+            $flags[] = 'normative_match_low_confidence';
+        }
+
+        if (($workItem['materials'] ?? []) !== [] || ($workItem['labor'] ?? []) !== [] || ($workItem['machinery'] ?? []) !== []) {
+            $flags[] = 'market_price_used';
+        }
+
+        $workItem['normative_match'] = [
+            'status' => $decision['status'],
+            'selected_candidate_key' => $selected['key'],
+            'norm_id' => $selected['norm_id'],
+            'code' => $selected['code'],
+            'name' => $selected['name'],
+            'unit' => $selected['unit'],
+            'collection' => $selected['collection'],
+            'section' => $selected['section'],
+            'dataset_version' => $match['version'],
+            'price_version' => $match['price_version'] ?? null,
+            'score' => $selected['score'],
+            'confidence' => $selected['confidence'],
+            'match_reasons' => $selected['match_reasons'],
+            'warnings' => array_values(array_unique([
+                ...($selected['warnings'] ?? []),
+                ...($decision['warnings'] ?? []),
+            ])),
+            'decision' => $decision,
+            'resources_count' => $this->resourcesCount($selected['resources']),
+            'priced_resources_count' => $this->pricedResourcesCount($selected['resources']),
+        ];
+        $workItem['normative_candidates'] = array_map(
+            fn (array $candidate): array => $this->candidateSummary($candidate),
+            $match['candidates']
+        );
         $workItem['validation_flags'] = array_values(array_unique($flags));
 
         return $workItem;

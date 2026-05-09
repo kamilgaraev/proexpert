@@ -1,0 +1,57 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Unit\EstimateGeneration;
+
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateGenerationQualityGateService;
+use Tests\TestCase;
+
+class EstimateGenerationQualityGateServiceTest extends TestCase
+{
+    public function test_house_with_too_few_items_requires_review(): void
+    {
+        $report = app(EstimateGenerationQualityGateService::class)->evaluate([
+            'object_profile' => [
+                'object_type' => 'house',
+                'area' => 150,
+            ],
+            'totals' => [
+                'total_cost' => 15000000,
+                'work_items_count' => 31,
+            ],
+            'local_estimates' => array_fill(0, 8, [
+                'totals' => ['items_count' => 4, 'total_cost' => 1000000],
+                'validation_flags' => [],
+            ]),
+        ]);
+
+        $this->assertSame('review_required', $report->level);
+        $this->assertContains('insufficient_detail', $report->criticalFlags);
+    }
+
+    public function test_absurd_total_blocks_generation(): void
+    {
+        $report = app(EstimateGenerationQualityGateService::class)->evaluate([
+            'object_profile' => [
+                'object_type' => 'house',
+                'area' => 150,
+            ],
+            'totals' => [
+                'total_cost' => 680000000,
+                'work_items_count' => 320,
+            ],
+            'local_estimates' => [
+                [
+                    'scope_type' => 'roof',
+                    'totals' => ['items_count' => 40, 'total_cost' => 390000000],
+                    'validation_flags' => [],
+                ],
+            ],
+        ]);
+
+        $this->assertSame('blocked', $report->level);
+        $this->assertContains('total_out_of_range', $report->criticalFlags);
+        $this->assertContains('section_total_anomaly', $report->criticalFlags);
+    }
+}

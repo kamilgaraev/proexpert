@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateGenerationQualityGateService;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use Illuminate\Support\Arr;
 
@@ -16,6 +17,9 @@ class EstimateGenerationOrchestrator
         protected ResourceAssemblyService $resourceAssemblyService,
         protected EstimatePricingService $pricingService,
         protected EstimateValidationService $validationService,
+        protected PackagePlannerService $packagePlannerService,
+        protected EstimateGenerationPackagePersistenceService $packagePersistenceService,
+        protected EstimateGenerationQualityGateService $qualityGateService,
     ) {}
 
     public function analyze(EstimateGenerationSession $session): EstimateGenerationSession
@@ -45,7 +49,9 @@ class EstimateGenerationOrchestrator
         }
 
         $analysis = $session->analysis_payload ?? [];
-        $localEstimates = $this->decompositionService->decompose($analysis);
+        $objectProfile = $this->packagePlannerService->profileFromAnalysis($analysis);
+        $packagePlan = $this->packagePlannerService->plan($objectProfile);
+        $localEstimates = $this->decompositionService->decomposePackagePlan($analysis, $packagePlan);
         $regionalContext = $session->input_payload['regional_context'] ?? $analysis['regional_context'] ?? [];
 
         foreach ($localEstimates as $localIndex => $localEstimate) {
@@ -65,6 +71,8 @@ class EstimateGenerationOrchestrator
 
         $draft = [
             'title' => $session->input_payload['description'] ?? 'AI draft estimate',
+            'object_profile' => $objectProfile->toArray(),
+            'package_plan' => $packagePlan->toArray(),
             'source_documents' => Arr::get($analysis, 'source_documents', []),
             'local_estimates' => $localEstimates,
             'traceability' => [
@@ -76,9 +84,26 @@ class EstimateGenerationOrchestrator
         $draft['normative_matching'] = $this->normativeMatchingSummary($localEstimates);
 
         $draft = $this->validationService->validate($draft);
+        $qualityReport = $this->qualityGateService->evaluate($draft);
+        $draft['quality_summary'] = [
+            ...($draft['quality_summary'] ?? []),
+            ...$qualityReport->toArray(),
+        ];
+        $draft['problem_flags'] = array_values(array_unique([
+            ...($draft['problem_flags'] ?? []),
+            ...$qualityReport->criticalFlags,
+            ...$qualityReport->warningFlags,
+        ]));
+        $this->packagePersistenceService->syncFromDraft($session, $draft);
+
+        $status = match ($qualityReport->level) {
+            'passed' => 'ready_for_review',
+            'blocked' => 'blocked',
+            default => 'review_required',
+        };
 
         $session->forceFill([
-            'status' => 'generated',
+            'status' => $status,
             'processing_stage' => 'validation_and_normalization',
             'processing_progress' => 100,
             'draft_payload' => $draft,
