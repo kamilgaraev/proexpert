@@ -42,6 +42,34 @@ class EstimateGenerationNormativeOutputTest extends TestCase
         $this->assertSame(1.5, (float) $work->resources()->firstOrFail()->quantity_per_unit);
     }
 
+    public function test_apply_uses_generated_short_name_when_payload_name_is_too_long(): void
+    {
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        $session = $this->createSession($organization, $project, $user);
+        $session->forceFill([
+            'input_payload' => [
+                'description' => 'Хочу построить дом для семьи',
+                'building_type' => 'Жилой дом',
+                'area' => 180,
+                'region' => 'Республика Татарстан',
+            ],
+            'draft_payload' => array_replace($session->draft_payload, [
+                'title' => str_repeat('Длинное описание объекта ', 30),
+            ]),
+        ])->save();
+
+        $estimate = app(EstimateDraftPersistenceService::class)->apply(
+            $session->fresh(),
+            ['name' => str_repeat('Хочу построить дом для семьи в Татарстане. ', 30)],
+            $user
+        );
+
+        $this->assertLessThanOrEqual(255, mb_strlen($estimate->name));
+        $this->assertSame('AI-смета • Жилой дом • 180 м² • Республика Татарстан', $estimate->name);
+    }
+
     public function test_export_data_contains_normative_codes_and_metadata(): void
     {
         $organization = Organization::factory()->create();

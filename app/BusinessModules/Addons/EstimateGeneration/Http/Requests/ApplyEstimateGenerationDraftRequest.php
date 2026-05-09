@@ -16,7 +16,7 @@ class ApplyEstimateGenerationDraftRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'name' => ['nullable', 'string', 'max:255'],
+            'name' => ['nullable', 'string'],
             'type' => ['nullable', 'in:local,object,summary,contractual'],
             'estimate_date' => ['nullable', 'date'],
         ];

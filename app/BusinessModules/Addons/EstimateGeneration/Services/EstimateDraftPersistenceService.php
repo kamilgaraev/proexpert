@@ -16,6 +16,8 @@ use Illuminate\Support\Facades\DB;
 
 class EstimateDraftPersistenceService
 {
+    private const ESTIMATE_NAME_MAX_LENGTH = 255;
+
     public function apply(EstimateGenerationSession $session, array $payload, User $user): Estimate
     {
         $draft = $session->draft_payload ?? [];
@@ -32,7 +34,7 @@ class EstimateDraftPersistenceService
                 'organization_id' => $session->organization_id,
                 'project_id' => $session->project_id,
                 'number' => $this->generateEstimateNumber($session->project_id),
-                'name' => $payload['name'] ?? mb_substr((string) ($draft['title'] ?? 'AI смета'), 0, 255),
+                'name' => $this->resolveEstimateName($session, $payload, $draft),
                 'description' => $session->input_payload['description'] ?? null,
                 'type' => $payload['type'] ?? 'local',
                 'status' => 'draft',
@@ -184,5 +186,43 @@ class EstimateDraftPersistenceService
     protected function generateEstimateNumber(int $projectId): string
     {
         return sprintf('AI-%d-%s', $projectId, now()->format('YmdHis'));
+    }
+
+    private function resolveEstimateName(EstimateGenerationSession $session, array $payload, array $draft): string
+    {
+        $payloadName = trim((string) ($payload['name'] ?? ''));
+        if ($payloadName !== '' && mb_strlen($payloadName) <= self::ESTIMATE_NAME_MAX_LENGTH) {
+            return $payloadName;
+        }
+
+        $draftTitle = trim((string) ($draft['title'] ?? ''));
+        if ($draftTitle !== '' && mb_strlen($draftTitle) <= self::ESTIMATE_NAME_MAX_LENGTH) {
+            return $draftTitle;
+        }
+
+        return mb_substr($this->buildGeneratedEstimateName($session), 0, self::ESTIMATE_NAME_MAX_LENGTH);
+    }
+
+    private function buildGeneratedEstimateName(EstimateGenerationSession $session): string
+    {
+        $input = $session->input_payload ?? [];
+        $parts = ['AI-смета'];
+
+        $buildingType = trim((string) ($input['building_type'] ?? ''));
+        if ($buildingType !== '') {
+            $parts[] = $buildingType;
+        }
+
+        $area = $input['area'] ?? null;
+        if ($area !== null && $area !== '') {
+            $parts[] = ((float) $area) . ' м²';
+        }
+
+        $region = trim((string) ($input['region'] ?? ($input['regional_context']['region_name'] ?? '')));
+        if ($region !== '') {
+            $parts[] = $region;
+        }
+
+        return implode(' • ', $parts);
     }
 }
