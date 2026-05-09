@@ -59,4 +59,50 @@ class EstimateGenerationPackageFlowTest extends TestCase
         $this->assertNotEmpty($session->draft_payload['object_profile'] ?? []);
         $this->assertNotEmpty($session->draft_payload['package_plan'] ?? []);
     }
+
+    public function test_mixed_office_warehouse_generation_persists_enough_priced_work_items(): void
+    {
+        $organization = Organization::factory()->create();
+        $user = User::factory()->create([
+            'current_organization_id' => $organization->id,
+        ]);
+        $project = Project::factory()->create([
+            'organization_id' => $organization->id,
+        ]);
+        $session = EstimateGenerationSession::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'user_id' => $user->id,
+            'status' => 'created',
+            'processing_stage' => 'created',
+            'processing_progress' => 0,
+            'input_payload' => [
+                'description' => 'Нужно сделать смету на небольшой двухэтажный офисно-складской корпус 780 м2 в Татарстане. На первом этаже склад 420 м2 с промышленным бетонным полом, разгрузочной зоной, воротами, пожарной сигнализацией и освещением. На втором этаже офисы 260 м2, переговорная, санузлы, серверная и лестничная клетка. Нужна входная группа, фасад из сэндвич-панелей, плоская кровля, отопление, вентиляция, электрика, водоснабжение, канализация, наружная площадка и подъезд для грузового транспорта.',
+                'building_type' => 'Производственное',
+                'area' => 780,
+                'regional_context' => [
+                    'region_name' => 'Республика Татарстан',
+                    'year' => 2026,
+                    'quarter' => 1,
+                    'version_key' => '2026-q1-ru-ta',
+                ],
+            ],
+            'problem_flags' => [],
+        ]);
+
+        $session = app(EstimateGenerationOrchestrator::class)->generate($session);
+        $packages = $session->packages()->with('items')->get();
+        $packageKeys = $packages->pluck('key')->all();
+        $pricedItemsCount = $packages->sum(fn ($package): int => $package->items->where('item_type', 'priced_work')->count());
+
+        $this->assertContains('office_partitions', $packageKeys);
+        $this->assertContains('office_finishing', $packageKeys);
+        $this->assertContains('sanitary_rooms', $packageKeys);
+        $this->assertGreaterThanOrEqual(75, $pricedItemsCount);
+        $this->assertDatabaseMissing('estimate_generation_package_items', [
+            'package_id' => $packages->firstWhere('key', 'industrial_floor')?->id,
+            'item_type' => 'priced_work',
+            'quantity' => 780.000000,
+        ]);
+    }
 }

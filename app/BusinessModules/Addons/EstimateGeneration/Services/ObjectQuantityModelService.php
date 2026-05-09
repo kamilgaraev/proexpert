@@ -13,9 +13,48 @@ class ObjectQuantityModelService
     public function build(array $analysis): array
     {
         $object = is_array($analysis['object'] ?? null) ? $analysis['object'] : [];
+        $description = (string) ($object['description'] ?? '');
+        $normalizedDescription = mb_strtolower($description);
         $area = max((float) ($object['area'] ?? 100), 30.0);
-        $floors = max((int) ($object['floors'] ?? $this->detectFloors((string) ($object['description'] ?? ''))), 1);
-        $rooms = max((int) ($object['rooms'] ?? $this->detectRooms((string) ($object['description'] ?? ''))), 1);
+        $floors = max((int) ($object['floors'] ?? $this->detectFloors($description)), 1);
+        $rooms = max((int) ($object['rooms'] ?? $this->detectRooms($description)), 1);
+        $warehouseArea = $this->detectZoneArea($normalizedDescription, ['склад']);
+        $officeArea = $this->detectZoneArea($normalizedDescription, ['офис']);
+        $isWarehouseLike = str_contains($normalizedDescription, 'склад') || str_contains(mb_strtolower((string) ($object['building_type'] ?? '')), 'склад');
+        $isMixedUse = $warehouseArea !== null && ($officeArea !== null || str_contains($normalizedDescription, 'офис'));
+
+        if (
+            $isMixedUse
+            && $warehouseArea !== null
+            && $officeArea !== null
+            && $warehouseArea >= $area * 0.95
+            && $officeArea >= $area * 0.95
+        ) {
+            $warehouseArea = $area * 0.6;
+            $officeArea = $area * 0.3;
+        }
+
+        if ($warehouseArea === null && $isWarehouseLike) {
+            $warehouseArea = $officeArea !== null ? max($area - $officeArea, 0.0) : $area;
+        }
+
+        if ($officeArea === null && $isMixedUse) {
+            $remainingArea = max($area - (float) $warehouseArea, 0.0);
+
+            if ($remainingArea <= 0 && (float) $warehouseArea >= $area * 0.95) {
+                $officeArea = $area * 0.3;
+                $warehouseArea = $area * 0.6;
+            } else {
+                $officeArea = $remainingArea;
+            }
+        }
+
+        $warehouseArea = min(max((float) ($warehouseArea ?? 0), 0.0), $area);
+        $officeArea = min(max((float) ($officeArea ?? 0), 0.0), $area);
+        $effectiveWarehouseArea = $warehouseArea > 0 ? $warehouseArea : $area;
+        $effectiveOfficeArea = $officeArea > 0 ? $officeArea : max($area * 0.3, 30);
+        $commonArea = max($area - $warehouseArea - $officeArea, 0.0);
+        $roofType = str_contains($normalizedDescription, 'плоск') ? 'flat' : 'pitched';
         $floorArea = $area / $floors;
         $dimensions = is_array($object['dimensions'] ?? null) ? $object['dimensions'] : [];
         $length = isset($dimensions['length']) ? (float) $dimensions['length'] : sqrt($floorArea * 1.35);
@@ -25,7 +64,7 @@ class ObjectQuantityModelService
         $externalWallArea = $perimeter * $wallHeight * $floors;
         $openingsArea = max($area * 0.16, $rooms * 2.4);
         $internalWallArea = $area * 1.15;
-        $roofArea = $floorArea * 1.28;
+        $roofArea = $roofType === 'flat' ? $floorArea * 1.05 : $floorArea * 1.28;
         $foundationLength = $perimeter + ($length * 0.35) + ($width * 0.25);
         $foundationConcreteVolume = $foundationLength * 0.4 * 0.6;
         $foundationEarthVolume = $foundationLength * 0.65 * 0.9;
@@ -58,6 +97,7 @@ class ObjectQuantityModelService
             'stairs.flight' => $this->quantity(max($floors - 1, 1), 'компл', 'Один комплект лестницы на каждый переход между этажами'),
             'stairs.railing' => $this->quantity(max($floors - 1, 1) * 8, 'м', 'Ориентировочная длина ограждений лестницы'),
             'roof.area' => $this->quantity($roofArea, 'м2', 'Площадь этажа × коэффициент двухскатной кровли'),
+            'roof.flat_area' => $this->quantity($roofArea, 'м2', 'Площадь этажа × коэффициент плоской кровли'),
             'roof.gutter' => $this->quantity($perimeter, 'м', 'Водосточная система по периметру кровли'),
             'openings.windows' => $this->quantity($openingsArea * 0.72, 'м2', 'Ориентировочная площадь оконных блоков'),
             'openings.doors' => $this->quantity(max($rooms + 3, 4), 'шт', 'Внутренние и входные двери по комнатности'),
@@ -78,15 +118,41 @@ class ObjectQuantityModelService
             'finish.paint' => $this->quantity(($internalWallArea + $externalWallArea) * 0.75, 'м2', 'Финишная отделка стен по расчетной площади поверхностей'),
             'networks.external' => $this->quantity(1, 'компл', 'Наружные сети как отдельный проверяемый комплект'),
             'siteworks.area' => $this->quantity(max($floorArea * 1.5, 80), 'м2', 'Минимальное благоустройство вокруг пятна застройки'),
-            'warehouse.floor' => $this->quantity($area, 'м2', 'Промышленный пол по общей площади склада'),
-            'warehouse.floor_concrete' => $this->quantity($area * 0.18, 'м3', 'Промышленная плита пола толщиной 180 мм'),
-            'warehouse.frame_weight' => $this->quantity($area * 0.055, 'т', 'Ориентировочная масса металлокаркаса по площади склада'),
+            'warehouse.floor' => $this->quantity($effectiveWarehouseArea, 'м2', 'Промышленный пол по складской зоне'),
+            'warehouse.floor_concrete' => $this->quantity($effectiveWarehouseArea * 0.18, 'м3', 'Промышленная плита пола толщиной 180 мм'),
+            'warehouse.floor_rebar' => $this->quantity($effectiveWarehouseArea * 0.014, 'т', 'Ориентировочная арматура промышленной плиты пола'),
+            'warehouse.floor_hardener' => $this->quantity($effectiveWarehouseArea, 'м2', 'Упрочненный верхний слой промышленного пола'),
+            'warehouse.floor_joints' => $this->quantity(max($effectiveWarehouseArea / 18, 20), 'м', 'Нарезка и герметизация деформационных швов пола'),
+            'warehouse.frame_weight' => $this->quantity($effectiveWarehouseArea * 0.055, 'т', 'Ориентировочная масса металлокаркаса по площади склада'),
+            'warehouse.columns' => $this->quantity(max((int) ceil($effectiveWarehouseArea / 55), 8), 'шт', 'Колонны металлокаркаса по складской сетке'),
+            'warehouse.beams' => $this->quantity($effectiveWarehouseArea * 0.035, 'т', 'Балки, фермы и связи металлокаркаса'),
             'warehouse.envelope' => $this->quantity($externalWallArea + $roofArea, 'м2', 'Ограждающие конструкции по стенам и кровле'),
-            'warehouse.gates' => $this->quantity(max((int) ceil($area / 600), 2), 'шт', 'Ворота и погрузочные узлы по площади склада'),
-            'warehouse.lighting' => $this->quantity(max((int) ceil($area / 45), 20), 'шт', 'Светильники промышленного освещения по площади'),
+            'warehouse.wall_panels' => $this->quantity(max($externalWallArea - $openingsArea, 1), 'м2', 'Стеновые сэндвич-панели по наружному контуру'),
+            'warehouse.panel_flashings' => $this->quantity($perimeter * 1.6, 'м', 'Доборные элементы и нащельники сэндвич-панелей'),
+            'warehouse.gates' => $this->quantity(max((int) ceil($effectiveWarehouseArea / 600), 2), 'шт', 'Ворота и погрузочные узлы по площади склада'),
+            'warehouse.loading_nodes' => $this->quantity(max((int) ceil($effectiveWarehouseArea / 700), 1), 'компл', 'Погрузочные узлы и обрамления ворот'),
+            'warehouse.lighting' => $this->quantity(max((int) ceil($effectiveWarehouseArea / 45), 20), 'шт', 'Светильники промышленного освещения по площади'),
             'warehouse.fire' => $this->quantity($area, 'м2', 'Пожарная сигнализация и оповещение по площади склада'),
             'warehouse.low_current' => $this->quantity($area * 0.35, 'м', 'Слаботочные трассы по площади склада'),
-            'warehouse.roads' => $this->quantity(max($area * 0.35, 300), 'м2', 'Площадки и подъездные зоны вокруг склада'),
+            'warehouse.roads' => $this->quantity(max($effectiveWarehouseArea * 0.55, 300), 'м2', 'Площадки и подъездные зоны вокруг склада'),
+            'office.floor' => $this->quantity($effectiveOfficeArea, 'м2', 'Площадь офисной зоны'),
+            'office.partitions' => $this->quantity($effectiveOfficeArea * 0.85, 'м2', 'Офисные перегородки по площади кабинетов'),
+            'office.ceiling' => $this->quantity($effectiveOfficeArea, 'м2', 'Подвесной потолок офисной зоны'),
+            'office.paint' => $this->quantity($effectiveOfficeArea * 2.4, 'м2', 'Окраска стен офисной зоны'),
+            'office.floor_finish' => $this->quantity($effectiveOfficeArea * 0.78, 'м2', 'Чистовое покрытие пола офисной зоны'),
+            'office.doors' => $this->quantity(max((int) ceil($effectiveOfficeArea / 42), 4), 'шт', 'Дверные блоки офисных помещений'),
+            'office.electrical_points' => $this->quantity(max((int) ceil($effectiveOfficeArea / 8), 20), 'точка', 'Розетки, выключатели и рабочие места офиса'),
+            'office.network_points' => $this->quantity(max((int) ceil($effectiveOfficeArea / 12), 12), 'точка', 'СКС и слаботочные точки офисной зоны'),
+            'sanitary.rooms' => $this->quantity(max((int) ceil($effectiveOfficeArea / 180), 2), 'помещение', 'Санузлы офисно-складского корпуса'),
+            'sanitary.points' => $this->quantity(max((int) ceil($effectiveOfficeArea / 45), 8), 'точка', 'Сантехнические приборы и точки подключения'),
+            'sanitary.tile' => $this->quantity(max($effectiveOfficeArea * 0.16, 35), 'м2', 'Плиточная отделка санузлов'),
+            'heating.unit' => $this->quantity(1, 'компл', 'Тепловой узел или котельная объекта'),
+            'heating.air_curtains' => $this->quantity(max((int) ceil($effectiveWarehouseArea / 500), 1), 'шт', 'Воздушно-тепловые завесы ворот и входов'),
+            'ventilation.air_exchange' => $this->quantity($area, 'м2', 'Приточно-вытяжная вентиляция по площади корпуса'),
+            'ventilation.office_points' => $this->quantity(max((int) ceil($effectiveOfficeArea / 45), 6), 'точка', 'Воздухораспределители офисной зоны'),
+            'ventilation.warehouse_points' => $this->quantity(max((int) ceil($effectiveWarehouseArea / 120), 4), 'точка', 'Вентиляционные точки складской зоны'),
+            'server.room' => $this->quantity(str_contains($normalizedDescription, 'сервер') ? 1 : 0.01, 'компл', 'Серверная или телекоммуникационный шкаф'),
+            'entrance.group' => $this->quantity(str_contains($normalizedDescription, 'вход') ? 1 : 0.01, 'компл', 'Входная группа здания'),
         ];
 
         return [
@@ -97,6 +163,15 @@ class ObjectQuantityModelService
             'length' => round($length, 2),
             'width' => round($width, 2),
             'perimeter' => round($perimeter, 2),
+            'zones' => [
+                'warehouse_area' => round($warehouseArea, 2),
+                'office_area' => round($officeArea, 2),
+                'common_area' => round($commonArea, 2),
+            ],
+            'features' => [
+                'roof_type' => $roofType,
+                'mixed_use' => $isMixedUse,
+            ],
             'assumptions' => [
                 'Если точные размеры не указаны, габариты рассчитаны из площади этажа с прямоугольной формой здания.',
                 'Высота этажа принята 3,0 м для предварительной сметы.',
@@ -124,7 +199,26 @@ class ObjectQuantityModelService
             return max((int) $matches[1], 1);
         }
 
-        return str_contains(mb_strtolower($description), 'мансард') ? 2 : 1;
+        $normalized = mb_strtolower($description);
+
+        if (
+            str_contains($normalized, 'двухэтаж')
+            || str_contains($normalized, '2-этаж')
+            || str_contains($normalized, 'втором этаже')
+        ) {
+            return 2;
+        }
+
+        if (
+            str_contains($normalized, 'трехэтаж')
+            || str_contains($normalized, 'трёхэтаж')
+            || str_contains($normalized, '3-этаж')
+            || str_contains($normalized, 'третьем этаже')
+        ) {
+            return 3;
+        }
+
+        return str_contains($normalized, 'мансард') ? 2 : 1;
     }
 
     private function detectRooms(string $description): int
@@ -134,5 +228,29 @@ class ObjectQuantityModelService
         }
 
         return 4;
+    }
+
+    /**
+     * @param array<int, string> $keywords
+     */
+    private function detectZoneArea(string $description, array $keywords): ?float
+    {
+        $detected = [];
+
+        foreach ($keywords as $keyword) {
+            $pattern = '/' . preg_quote($keyword, '/') . '[^0-9]{0,80}(\d+(?:[,.]\d+)?)\s*(?:м2|м²|кв\.?\s*м|кв\s*м)/ui';
+
+            if (preg_match_all($pattern, $description, $matches) > 0) {
+                foreach ($matches[1] as $match) {
+                    $detected[] = (float) str_replace(',', '.', $match);
+                }
+            }
+        }
+
+        if ($detected === []) {
+            return null;
+        }
+
+        return $detected[array_key_last($detected)];
     }
 }

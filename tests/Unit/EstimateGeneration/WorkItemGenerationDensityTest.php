@@ -107,4 +107,69 @@ class WorkItemGenerationDensityTest extends TestCase
         $this->assertContains('industrial_floor', array_column($industrialFloor, 'work_category'));
         $this->assertContains('metal_frame', array_column($metalFrame, 'work_category'));
     }
+
+    public function test_mixed_office_warehouse_generates_dense_priced_items_and_flat_roof(): void
+    {
+        $analysis = [
+            'object' => [
+                'building_type' => 'Производственное',
+                'description' => 'Офисно-складской корпус 780 м2. На первом этаже склад 420 м2 с промышленным бетонным полом, воротами и пожарной сигнализацией. На втором этаже офисы 260 м2, санузлы, серверная и переговорная. Плоская кровля.',
+                'area' => 780,
+            ],
+        ];
+
+        $industrialFloor = app(WorkItemGenerationService::class)->build([
+            'key' => 'industrial_floor',
+            'title' => 'Промышленный пол',
+            'scope_type' => 'slabs',
+            'source_refs' => [],
+            'target_items_min' => 20,
+        ], $analysis);
+
+        $roof = app(WorkItemGenerationService::class)->build([
+            'key' => 'roof',
+            'title' => 'Кровля',
+            'scope_type' => 'roof',
+            'source_refs' => [],
+            'target_items_min' => 20,
+        ], $analysis);
+
+        $officeFinishing = app(WorkItemGenerationService::class)->build([
+            'key' => 'office_finishing',
+            'title' => 'Офисная отделка',
+            'scope_type' => 'finishing',
+            'source_refs' => [],
+            'target_items_min' => 20,
+        ], $analysis);
+        $heating = app(WorkItemGenerationService::class)->build([
+            'key' => 'heating',
+            'title' => 'Отопление',
+            'scope_type' => 'heating',
+            'source_refs' => [],
+            'target_items_min' => 20,
+        ], $analysis);
+        $ventilation = app(WorkItemGenerationService::class)->build([
+            'key' => 'ventilation',
+            'title' => 'Вентиляция',
+            'scope_type' => 'ventilation',
+            'source_refs' => [],
+            'target_items_min' => 20,
+        ], $analysis);
+
+        $pricedIndustrialFloor = array_values(array_filter($industrialFloor, fn (array $item): bool => ($item['item_type'] ?? null) === 'priced_work'));
+        $pricedRoofNames = array_column(array_filter($roof, fn (array $item): bool => ($item['item_type'] ?? null) === 'priced_work'), 'name');
+        $pricedOfficeFinishing = array_values(array_filter($officeFinishing, fn (array $item): bool => ($item['item_type'] ?? null) === 'priced_work'));
+        $pricedHeating = array_values(array_filter($heating, fn (array $item): bool => ($item['item_type'] ?? null) === 'priced_work'));
+        $pricedVentilation = array_values(array_filter($ventilation, fn (array $item): bool => ($item['item_type'] ?? null) === 'priced_work'));
+
+        $this->assertGreaterThanOrEqual(6, count($pricedIndustrialFloor));
+        $this->assertGreaterThanOrEqual(6, count($pricedOfficeFinishing));
+        $this->assertGreaterThanOrEqual(4, count($pricedHeating));
+        $this->assertGreaterThanOrEqual(5, count($pricedVentilation));
+        $this->assertSame(420.0, (float) $pricedIndustrialFloor[0]['quantity']);
+        $this->assertNotContains('site.setup', array_column($pricedHeating, 'quantity_formula'));
+        $this->assertContains('Устройство плоской кровли по профнастилу', $pricedRoofNames);
+        $this->assertNotContains('Монтаж металлочерепицы', $pricedRoofNames);
+        $this->assertNotContains('Монтаж стропильной системы', $pricedRoofNames);
+    }
 }

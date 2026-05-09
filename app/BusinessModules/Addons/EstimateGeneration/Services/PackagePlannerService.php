@@ -11,9 +11,13 @@ class PackagePlannerService
 {
     public function plan(ObjectProfileData $profile): PackagePlanData
     {
-        $packages = $this->isWarehouse($profile)
-            ? $this->warehousePackages()
-            : $this->housePackages();
+        if ($this->isMixedWarehouseOffice($profile)) {
+            $packages = $this->mixedWarehouseOfficePackages();
+        } elseif ($this->isWarehouse($profile)) {
+            $packages = $this->warehousePackages();
+        } else {
+            $packages = $this->housePackages();
+        }
 
         return new PackagePlanData(
             packages: array_map(fn (array $package, int $index): array => $this->packagePayload($package, $index), $packages, array_keys($packages)),
@@ -29,8 +33,13 @@ class PackagePlannerService
         $object = is_array($analysis['object'] ?? null) ? $analysis['object'] : [];
         $regionalContext = is_array($analysis['regional_context'] ?? null) ? $analysis['regional_context'] : [];
         $type = mb_strtolower((string) ($object['object_type'] ?? $object['building_type'] ?? 'custom'));
+        $description = mb_strtolower((string) ($object['description'] ?? ''));
+        $hasWarehouse = str_contains($type, 'склад') || str_contains($description, 'склад');
+        $hasOffice = str_contains($type, 'офис') || str_contains($description, 'офис');
 
-        if (str_contains($type, 'склад') || str_contains($type, 'warehouse') || str_contains($type, 'производ')) {
+        if (($hasWarehouse || str_contains($type, 'производ')) && $hasOffice) {
+            $type = 'mixed_warehouse_office';
+        } elseif (str_contains($type, 'склад') || str_contains($type, 'warehouse') || str_contains($type, 'производ')) {
             $type = 'warehouse';
         } elseif (str_contains($type, 'жил') || str_contains($type, 'ижс') || str_contains($type, 'дом') || str_contains($type, 'house')) {
             $type = 'house';
@@ -61,6 +70,11 @@ class PackagePlannerService
             || str_contains($type, 'склад')
             || str_contains($type, 'industrial')
             || str_contains($type, 'производ');
+    }
+
+    private function isMixedWarehouseOffice(ObjectProfileData $profile): bool
+    {
+        return mb_strtolower($profile->objectType) === 'mixed_warehouse_office';
     }
 
     /**
@@ -104,6 +118,37 @@ class PackagePlannerService
             $this->package('envelope', 'Ограждающие конструкции', 'facade', 55, 120),
             $this->package('roof', 'Кровля', 'roof', 45, 100),
             $this->package('gates', 'Ворота и погрузочные узлы', 'openings', 25, 60),
+            $this->package('power_supply', 'Электроснабжение', 'electrical', 55, 120),
+            $this->package('lighting', 'Освещение', 'electrical', 35, 80),
+            $this->package('ventilation', 'Вентиляция', 'ventilation', 45, 100),
+            $this->package('heating', 'Отопление', 'heating', 35, 80),
+            $this->package('fire_safety', 'Пожарная безопасность', 'engineering', 50, 110),
+            $this->package('water_sewerage', 'Водоснабжение и канализация', 'plumbing', 35, 80),
+            $this->package('low_current', 'Слаботочные системы', 'electrical', 25, 60),
+            $this->package('external_networks', 'Наружные сети', 'site', 40, 90),
+            $this->package('roads', 'Дороги и площадки', 'site', 35, 80),
+        ];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function mixedWarehouseOfficePackages(): array
+    {
+        return [
+            $this->package('site_preparation', 'Подготовка площадки', 'site', 30, 60),
+            $this->package('earthworks', 'Земляные работы', 'foundation', 45, 90),
+            $this->package('foundations', 'Фундаменты', 'foundation', 60, 120),
+            $this->package('industrial_floor', 'Промышленный пол склада', 'slabs', 60, 130),
+            $this->package('metal_frame', 'Металлокаркас', 'structural', 70, 150),
+            $this->package('envelope', 'Ограждающие конструкции', 'facade', 55, 120),
+            $this->package('roof', 'Плоская кровля', 'roof', 45, 100),
+            $this->package('gates', 'Ворота и погрузочные узлы', 'openings', 25, 60),
+            $this->package('entrance_group', 'Входная группа', 'openings', 16, 36),
+            $this->package('office_partitions', 'Офисные перегородки', 'walls', 28, 60),
+            $this->package('office_finishing', 'Офисная отделка', 'finishing', 40, 90),
+            $this->package('sanitary_rooms', 'Санузлы', 'plumbing', 30, 70),
+            $this->package('server_room', 'Серверная и связь', 'electrical', 25, 60),
             $this->package('power_supply', 'Электроснабжение', 'electrical', 55, 120),
             $this->package('lighting', 'Освещение', 'electrical', 35, 80),
             $this->package('ventilation', 'Вентиляция', 'ventilation', 45, 100),

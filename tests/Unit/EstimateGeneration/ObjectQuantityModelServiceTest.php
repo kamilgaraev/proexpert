@@ -45,6 +45,54 @@ class ObjectQuantityModelServiceTest extends TestCase
         $this->assertContains('electrical', $packageKeys);
     }
 
+    public function test_mixed_office_warehouse_object_uses_zone_areas_and_flat_roof(): void
+    {
+        $analysis = [
+            'object' => [
+                'building_type' => 'Производственное',
+                'description' => 'Двухэтажный офисно-складской корпус 780 м2. На первом этаже склад 420 м2 с промышленным бетонным полом. На втором этаже офисы 260 м2, санузлы, серверная. Нужна плоская кровля.',
+                'area' => 780,
+            ],
+        ];
+
+        $model = app(ObjectQuantityModelService::class)->build($analysis);
+        $profile = app(PackagePlannerService::class)->profileFromAnalysis($analysis);
+        $packageKeys = array_column(app(PackagePlannerService::class)->plan($profile)->packages, 'key');
+
+        $this->assertSame('mixed_warehouse_office', $profile->objectType);
+        $this->assertSame(2, $model['floors']);
+        $this->assertSame(420.0, $model['zones']['warehouse_area']);
+        $this->assertSame(260.0, $model['zones']['office_area']);
+        $this->assertSame('flat', $model['features']['roof_type']);
+        $this->assertSame(420.0, $model['quantities']['warehouse.floor']['value']);
+        $this->assertSame(260.0, $model['quantities']['office.floor']['value']);
+        $this->assertContains('office_partitions', $packageKeys);
+        $this->assertContains('office_finishing', $packageKeys);
+        $this->assertContains('sanitary_rooms', $packageKeys);
+        $this->assertContains('server_room', $packageKeys);
+    }
+
+    public function test_mixed_office_warehouse_without_zone_split_does_not_double_count_total_area(): void
+    {
+        $analysis = [
+            'object' => [
+                'building_type' => 'Производственное',
+                'description' => 'Офисно-складской корпус 780 м2 с плоской кровлей, воротами, офисами и санузлами.',
+                'area' => 780,
+            ],
+        ];
+
+        $model = app(ObjectQuantityModelService::class)->build($analysis);
+        $warehouseArea = (float) $model['zones']['warehouse_area'];
+        $officeArea = (float) $model['zones']['office_area'];
+        $commonArea = (float) $model['zones']['common_area'];
+
+        $this->assertSame(468.0, $warehouseArea);
+        $this->assertSame(234.0, $officeArea);
+        $this->assertSame(78.0, $commonArea);
+        $this->assertSame((float) $model['area'], round($warehouseArea + $officeArea + $commonArea, 2));
+    }
+
     /**
      * @return array<string, array{0: array<string, mixed>, 1: string, 2: array<int, string>}>
      */

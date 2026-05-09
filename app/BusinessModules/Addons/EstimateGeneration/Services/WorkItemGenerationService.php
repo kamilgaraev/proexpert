@@ -22,7 +22,7 @@ class WorkItemGenerationService
         $scopeType = (string) ($localEstimate['scope_type'] ?? 'custom');
         $targetItemsMin = (int) ($localEstimate['target_items_min'] ?? 0);
         $quantityModel = $this->quantityModelService->build($analysis);
-        $templates = $this->templateForPackage($packageKey, $scopeType);
+        $templates = $this->templateForPackage($packageKey, $scopeType, $quantityModel);
         $workItems = [];
 
         foreach ($templates as $index => $template) {
@@ -218,7 +218,7 @@ class WorkItemGenerationService
     /**
      * @return array<int, array<string, mixed>>
      */
-    protected function templateForPackage(string $packageKey, string $scopeType): array
+    protected function templateForPackage(string $packageKey, string $scopeType, array $quantityModel = []): array
     {
         return match ($packageKey) {
             'preconstruction' => [
@@ -254,10 +254,7 @@ class WorkItemGenerationService
                 $this->template('Ограждения лестницы', 'stairs', 'Перила и ограждения лестничного марша', 'stairs.railing', 5200, ['material' => 0.58, 'labor' => 0.38, 'machinery' => 0.04], 0.6),
             ],
             'roof' => [
-                $this->template('Монтаж стропильной системы', 'roof', 'Несущая деревянная конструкция кровли', 'roof.area', 1450, ['material' => 0.58, 'labor' => 0.36, 'machinery' => 0.06], 0.7),
-                $this->template('Утепление кровли 200 мм', 'roof', 'Теплоизоляция кровельного пирога', 'roof.area', 1350, ['material' => 0.7, 'labor' => 0.28, 'machinery' => 0.02], 0.7),
-                $this->template('Монтаж металлочерепицы', 'roof', 'Финишное кровельное покрытие', 'roof.area', 1850, ['material' => 0.68, 'labor' => 0.28, 'machinery' => 0.04], 0.72),
-                $this->template('Водосточная система кровли', 'roof', 'Желоба, трубы и крепления', 'roof.gutter', 1250, ['material' => 0.65, 'labor' => 0.32, 'machinery' => 0.03], 0.66),
+                ...$this->roofTemplates($quantityModel),
             ],
             'openings' => [
                 $this->template('Установка окон ПВХ', 'openings', 'Оконные блоки с двухкамерным стеклопакетом', 'openings.windows', 14500, ['material' => 0.78, 'labor' => 0.2, 'machinery' => 0.02], 0.64),
@@ -280,12 +277,17 @@ class WorkItemGenerationService
                 $this->template('Подключение точек канализации', 'sewerage', 'Подключение приборов к канализационной сети', 'sewerage.points', 7600, ['material' => 0.5, 'labor' => 0.45, 'machinery' => 0.05], 0.6),
             ],
             'heating' => [
-                $this->template('Монтаж газового котла и обвязки', 'heating', 'Котельное оборудование и подключение', 'site.setup', 185000, ['material' => 0.72, 'labor' => 0.25, 'machinery' => 0.03], 0.58),
+                $this->template('Монтаж теплового узла', 'heating', 'Котельное оборудование, коллекторы и обвязка', 'heating.unit', 185000, ['material' => 0.72, 'labor' => 0.25, 'machinery' => 0.03], 0.58),
                 $this->template('Монтаж радиаторов отопления', 'heating', 'Радиаторы и арматура', 'heating.radiators', 13500, ['material' => 0.7, 'labor' => 0.28, 'machinery' => 0.02], 0.62),
                 $this->template('Разводка труб отопления', 'heating', 'Трубная разводка системы отопления', 'heating.pipe', 980, ['material' => 0.56, 'labor' => 0.42, 'machinery' => 0.02], 0.62),
+                $this->template('Воздушно-тепловые завесы ворот', 'heating', 'Завесы для ворот и входных групп склада', 'heating.air_curtains', 76000, ['material' => 0.72, 'labor' => 0.24, 'machinery' => 0.04], 0.56),
             ],
             'ventilation' => [
-                $this->template('Устройство естественной вентиляции', 'ventilation', 'Вентиляционные каналы и выводы', 'ventilation.points', 12500, ['material' => 0.55, 'labor' => 0.4, 'machinery' => 0.05], 0.6),
+                $this->template('Приточно-вытяжная вентиляция корпуса', 'ventilation', 'Основная система вентиляции складской и офисной зоны', 'ventilation.air_exchange', 1450, ['material' => 0.62, 'labor' => 0.3, 'machinery' => 0.08], 0.62),
+                $this->template('Воздуховоды вентиляции', 'ventilation', 'Магистральные и распределительные воздуховоды', 'ventilation.air_exchange', 820, ['material' => 0.58, 'labor' => 0.36, 'machinery' => 0.06], 0.6),
+                $this->template('Воздухораспределители офисной зоны', 'ventilation', 'Решетки, диффузоры и клапаны офисной части', 'ventilation.office_points', 6800, ['material' => 0.58, 'labor' => 0.38, 'machinery' => 0.04], 0.58),
+                $this->template('Вентиляционные точки склада', 'ventilation', 'Вытяжные и приточные точки складской зоны', 'ventilation.warehouse_points', 12500, ['material' => 0.6, 'labor' => 0.34, 'machinery' => 0.06], 0.58),
+                $this->template('Пусконаладка вентиляции', 'ventilation', 'Балансировка и проверка расходов воздуха', 'ventilation.air_exchange', 160, ['material' => 0.08, 'labor' => 0.86, 'machinery' => 0.06], 0.56),
             ],
             'rough_finishing' => [
                 $this->template('Устройство стяжки пола', 'finishing', 'Черновое выравнивание пола', 'rough.floor', 1050, ['material' => 0.48, 'labor' => 0.45, 'machinery' => 0.07], 0.66),
@@ -298,6 +300,9 @@ class WorkItemGenerationService
             ],
             'external_networks' => [
                 $this->template('Наружные сети водоснабжения и канализации', 'plumbing', 'Подключение наружных инженерных сетей', 'networks.external', 280000, ['material' => 0.62, 'labor' => 0.2, 'machinery' => 0.18], 0.52),
+                $this->template('Наружное электроснабжение', 'electrical', 'Кабельный ввод и подключение объекта', 'networks.external', 220000, ['material' => 0.64, 'labor' => 0.18, 'machinery' => 0.18], 0.52),
+                $this->template('Ливневая канализация площадки', 'sewerage', 'Водоотвод кровли и твердых покрытий', 'warehouse.roads', 1350, ['material' => 0.56, 'labor' => 0.24, 'machinery' => 0.2], 0.52),
+                $this->template('Подключение наружных сетей к зданию', 'plumbing', 'Вводы сетей, футляры и узлы подключения', 'networks.external', 125000, ['material' => 0.55, 'labor' => 0.28, 'machinery' => 0.17], 0.5),
             ],
             'siteworks' => [
                 $this->template('Благоустройство территории', 'site', 'Отмостка, дорожки и минимальная планировка', 'siteworks.area', 2300, ['material' => 0.56, 'labor' => 0.32, 'machinery' => 0.12], 0.54),
@@ -305,46 +310,149 @@ class WorkItemGenerationService
             'site_preparation' => [
                 $this->template('Подготовка площадки склада', 'site', 'Планировка и подготовка строительной площадки', 'siteworks.area', 1600, ['material' => 0.18, 'labor' => 0.32, 'machinery' => 0.5], 0.64),
                 $this->template('Временные проезды и складирование', 'site', 'Организация временной логистики на площадке', 'warehouse.roads', 1450, ['material' => 0.42, 'labor' => 0.2, 'machinery' => 0.38], 0.6),
+                $this->template('Геодезическая разбивка склада', 'site', 'Разбивка осей и контроль отметок', 'site.geodesy', 42000, ['material' => 0.05, 'labor' => 0.88, 'machinery' => 0.07], 0.7),
+                $this->template('Временное электроснабжение площадки', 'electrical', 'Подключение временного питания на период строительства', 'site.power', 52000, ['material' => 0.58, 'labor' => 0.34, 'machinery' => 0.08], 0.62),
+                $this->template('Уборка и подготовка пятна работ', 'site', 'Очистка территории, снятие мусора и подготовка фронта работ', 'site.cleaning', 320, ['material' => 0.12, 'labor' => 0.5, 'machinery' => 0.38], 0.62),
             ],
             'foundations', 'foundations_warehouse' => [
                 $this->template('Фундаменты под колонны склада', 'foundation', 'Железобетонные основания под металлокаркас', 'foundation.concrete', 11200, ['material' => 0.7, 'labor' => 0.2, 'machinery' => 0.1], 0.68),
                 $this->template('Армирование фундаментов склада', 'foundation', 'Арматурные каркасы фундаментов под колонны', 'foundation.rebar', 96000, ['material' => 0.8, 'labor' => 0.18, 'machinery' => 0.02], 0.68),
+                $this->template('Песчано-щебеночная подготовка фундаментов', 'foundation', 'Подготовка основания под фундаментные элементы', 'foundation.prep', 2400, ['material' => 0.68, 'labor' => 0.18, 'machinery' => 0.14], 0.66),
+                $this->template('Опалубка фундаментов под колонны', 'foundation', 'Устройство и демонтаж опалубки фундаментных стаканов и ростверков', 'foundation.formwork', 1250, ['material' => 0.42, 'labor' => 0.48, 'machinery' => 0.1], 0.66),
+                $this->template('Гидроизоляция фундаментных элементов', 'foundation', 'Защита бетонных поверхностей фундаментов', 'foundation.waterproofing', 780, ['material' => 0.56, 'labor' => 0.39, 'machinery' => 0.05], 0.62),
+                $this->template('Бетонная подготовка под фундаментные балки', 'foundation', 'Выравнивающая бетонная подготовка под несущие элементы', 'foundation.prep', 3600, ['material' => 0.74, 'labor' => 0.16, 'machinery' => 0.1], 0.62),
             ],
             'industrial_floor' => [
                 $this->template('Устройство промышленного бетонного пола', 'industrial_floor', 'Бетонная плита пола склада с упрочнением', 'warehouse.floor', 4100, ['material' => 0.68, 'labor' => 0.22, 'machinery' => 0.1], 0.7),
                 $this->template('Бетон промышленной плиты пола', 'industrial_floor', 'Бетонная смесь для промышленного пола', 'warehouse.floor_concrete', 9800, ['material' => 0.76, 'labor' => 0.12, 'machinery' => 0.12], 0.7),
+                $this->template('Армирование промышленного пола', 'industrial_floor', 'Арматурные сетки промышленной плиты', 'warehouse.floor_rebar', 92000, ['material' => 0.82, 'labor' => 0.16, 'machinery' => 0.02], 0.68),
+                $this->template('Песчано-щебеночное основание пола', 'industrial_floor', 'Подстилающие слои под промышленный пол', 'warehouse.floor', 1250, ['material' => 0.62, 'labor' => 0.18, 'machinery' => 0.2], 0.66),
+                $this->template('Упрочненный верхний слой пола', 'industrial_floor', 'Топпинг и затирка промышленного пола', 'warehouse.floor_hardener', 880, ['material' => 0.58, 'labor' => 0.36, 'machinery' => 0.06], 0.66),
+                $this->template('Нарезка деформационных швов пола', 'industrial_floor', 'Швы промышленного пола с герметизацией', 'warehouse.floor_joints', 640, ['material' => 0.42, 'labor' => 0.5, 'machinery' => 0.08], 0.64),
+                $this->template('Обеспыливание промышленного пола', 'industrial_floor', 'Финишная пропитка и обеспыливание бетонного пола', 'warehouse.floor', 520, ['material' => 0.5, 'labor' => 0.45, 'machinery' => 0.05], 0.62),
             ],
             'metal_frame' => [
                 $this->template('Монтаж металлокаркаса склада', 'metal_frame', 'Колонны, балки и связи каркаса', 'warehouse.frame_weight', 155000, ['material' => 0.78, 'labor' => 0.14, 'machinery' => 0.08], 0.66),
+                $this->template('Монтаж металлических колонн', 'metal_frame', 'Установка колонн каркаса склада', 'warehouse.columns', 24500, ['material' => 0.72, 'labor' => 0.18, 'machinery' => 0.1], 0.64),
+                $this->template('Монтаж балок и ферм покрытия', 'metal_frame', 'Несущие балки, фермы и прогоны', 'warehouse.beams', 132000, ['material' => 0.78, 'labor' => 0.14, 'machinery' => 0.08], 0.64),
+                $this->template('Монтаж связей и распорок каркаса', 'metal_frame', 'Вертикальные и горизонтальные связи металлокаркаса', 'warehouse.frame_weight', 26000, ['material' => 0.7, 'labor' => 0.22, 'machinery' => 0.08], 0.62),
+                $this->template('Огнезащита металлоконструкций', 'metal_frame', 'Нанесение огнезащитного покрытия на каркас', 'warehouse.frame_weight', 18500, ['material' => 0.52, 'labor' => 0.42, 'machinery' => 0.06], 0.58),
             ],
             'envelope' => [
                 $this->template('Монтаж ограждающих сэндвич-панелей', 'facade', 'Стеновые и кровельные ограждающие конструкции склада', 'warehouse.envelope', 3900, ['material' => 0.72, 'labor' => 0.22, 'machinery' => 0.06], 0.64),
+                $this->template('Монтаж стеновых сэндвич-панелей', 'facade', 'Стеновые панели по наружному контуру', 'warehouse.wall_panels', 3600, ['material' => 0.74, 'labor' => 0.21, 'machinery' => 0.05], 0.66),
+                $this->template('Монтаж доборных элементов панелей', 'facade', 'Углы, нащельники, примыкания и фасонные элементы', 'warehouse.panel_flashings', 720, ['material' => 0.62, 'labor' => 0.34, 'machinery' => 0.04], 0.62),
+                $this->template('Герметизация стыков сэндвич-панелей', 'facade', 'Уплотнение и герметизация примыканий ограждений', 'warehouse.panel_flashings', 430, ['material' => 0.48, 'labor' => 0.48, 'machinery' => 0.04], 0.6),
+                $this->template('Монтаж цокольных примыканий ограждений', 'facade', 'Нижние примыкания стеновых панелей к основанию', 'warehouse.panel_flashings', 560, ['material' => 0.55, 'labor' => 0.4, 'machinery' => 0.05], 0.6),
             ],
             'gates' => [
                 $this->template('Монтаж промышленных ворот', 'openings', 'Ворота и погрузочные проемы склада', 'warehouse.gates', 185000, ['material' => 0.8, 'labor' => 0.16, 'machinery' => 0.04], 0.62),
+                $this->template('Обрамление проемов ворот', 'openings', 'Металлическое обрамление проемов под ворота', 'warehouse.gates', 36000, ['material' => 0.7, 'labor' => 0.24, 'machinery' => 0.06], 0.6),
+                $this->template('Монтаж погрузочных узлов', 'openings', 'Доковые элементы и узлы погрузки', 'warehouse.loading_nodes', 125000, ['material' => 0.76, 'labor' => 0.18, 'machinery' => 0.06], 0.58),
+                $this->template('Автоматика промышленных ворот', 'openings', 'Приводы, управление и пусконаладка ворот', 'warehouse.gates', 42000, ['material' => 0.68, 'labor' => 0.3, 'machinery' => 0.02], 0.56),
             ],
             'power_supply' => [
                 $this->template('Электроснабжение склада', 'electrical', 'Вводное распределение и силовые линии', 'electrical.cable', 620, ['material' => 0.62, 'labor' => 0.32, 'machinery' => 0.06], 0.62),
+                $this->template('Вводно-распределительное устройство', 'electrical', 'Главный вводной щит объекта', 'site.power', 145000, ['material' => 0.76, 'labor' => 0.21, 'machinery' => 0.03], 0.62),
+                $this->template('Кабельные лотки и трассы', 'electrical', 'Лотки, короба и несущие системы кабельных линий', 'electrical.cable', 420, ['material' => 0.62, 'labor' => 0.32, 'machinery' => 0.06], 0.62),
+                $this->template('Силовые кабельные линии', 'electrical', 'Прокладка силовых кабелей к оборудованию', 'electrical.cable', 520, ['material' => 0.58, 'labor' => 0.38, 'machinery' => 0.04], 0.62),
+                $this->template('Заземление и уравнивание потенциалов', 'electrical', 'Контур заземления и подключение металлоконструкций', 'warehouse.envelope', 180, ['material' => 0.52, 'labor' => 0.42, 'machinery' => 0.06], 0.58),
             ],
             'lighting' => [
                 $this->template('Промышленное освещение склада', 'electrical', 'Светильники и линии освещения', 'warehouse.lighting', 14500, ['material' => 0.68, 'labor' => 0.28, 'machinery' => 0.04], 0.62),
+                $this->template('Монтаж линий освещения склада', 'electrical', 'Кабельные линии групп освещения', 'electrical.cable', 260, ['material' => 0.56, 'labor' => 0.4, 'machinery' => 0.04], 0.6),
+                $this->template('Аварийное освещение', 'electrical', 'Светильники аварийного и эвакуационного освещения', 'warehouse.lighting', 3600, ['material' => 0.68, 'labor' => 0.29, 'machinery' => 0.03], 0.58),
+                $this->template('Щиты управления освещением', 'electrical', 'Групповые щиты и коммутация освещения', 'site.power', 54000, ['material' => 0.72, 'labor' => 0.25, 'machinery' => 0.03], 0.58),
             ],
             'fire_safety' => [
                 $this->template('Пожарная сигнализация и оповещение', 'fire_safety', 'Система пожарной безопасности склада', 'warehouse.fire', 950, ['material' => 0.55, 'labor' => 0.4, 'machinery' => 0.05], 0.6),
+                $this->template('Датчики пожарной сигнализации', 'fire_safety', 'Адресные датчики и извещатели', 'warehouse.fire', 320, ['material' => 0.68, 'labor' => 0.3, 'machinery' => 0.02], 0.58),
+                $this->template('Система оповещения о пожаре', 'fire_safety', 'Оповещатели, табло и линии управления', 'warehouse.fire', 280, ['material' => 0.64, 'labor' => 0.33, 'machinery' => 0.03], 0.58),
+                $this->template('Пожарные кабельные линии', 'fire_safety', 'Огнестойкие кабели пожарных систем', 'warehouse.low_current', 520, ['material' => 0.58, 'labor' => 0.38, 'machinery' => 0.04], 0.56),
+                $this->template('Пусконаладка пожарной автоматики', 'fire_safety', 'Проверка сценариев и исполнительных устройств', 'site.setup', 68000, ['material' => 0.1, 'labor' => 0.86, 'machinery' => 0.04], 0.56),
             ],
             'water_sewerage' => [
                 $this->template('Водоснабжение и канализация склада', 'plumbing', 'Внутренние инженерные сети склада', 'plumbing.pipe', 1150, ['material' => 0.58, 'labor' => 0.36, 'machinery' => 0.06], 0.6),
+                $this->template('Магистрали хозяйственно-питьевого водоснабжения', 'plumbing', 'Трубопроводы водоснабжения объекта', 'plumbing.pipe', 980, ['material' => 0.58, 'labor' => 0.36, 'machinery' => 0.06], 0.6),
+                $this->template('Внутренняя канализация корпуса', 'sewerage', 'Трубопроводы внутренней канализации', 'sewerage.pipe', 870, ['material' => 0.56, 'labor' => 0.39, 'machinery' => 0.05], 0.6),
+                $this->template('Подключение сантехнических точек', 'plumbing', 'Подключение приборов и арматуры', 'sanitary.points', 9200, ['material' => 0.58, 'labor' => 0.38, 'machinery' => 0.04], 0.58),
+                $this->template('Гидравлические испытания сетей', 'plumbing', 'Промывка и испытание внутренних трубопроводов', 'plumbing.pipe', 180, ['material' => 0.2, 'labor' => 0.74, 'machinery' => 0.06], 0.56),
             ],
             'low_current' => [
                 $this->template('Слаботочные системы склада', 'electrical', 'СКС, видеонаблюдение и автоматика', 'warehouse.low_current', 780, ['material' => 0.55, 'labor' => 0.42, 'machinery' => 0.03], 0.58),
+                $this->template('Структурированная кабельная сеть', 'electrical', 'СКС офисной и складской зоны', 'office.network_points', 6200, ['material' => 0.62, 'labor' => 0.35, 'machinery' => 0.03], 0.58),
+                $this->template('Видеонаблюдение склада и офиса', 'electrical', 'Камеры, линии и коммутация видеонаблюдения', 'warehouse.low_current', 680, ['material' => 0.64, 'labor' => 0.33, 'machinery' => 0.03], 0.56),
+                $this->template('Контроль доступа', 'electrical', 'Точки доступа входной группы и служебных помещений', 'entrance.group', 72000, ['material' => 0.68, 'labor' => 0.29, 'machinery' => 0.03], 0.54),
+            ],
+            'entrance_group' => [
+                $this->template('Устройство входной группы', 'openings', 'Тамбур, входные двери и примыкания', 'entrance.group', 185000, ['material' => 0.74, 'labor' => 0.22, 'machinery' => 0.04], 0.58),
+                $this->template('Монтаж наружных дверей входной группы', 'openings', 'Входные металлические и алюминиевые двери', 'entrance.group', 96000, ['material' => 0.78, 'labor' => 0.2, 'machinery' => 0.02], 0.58),
+                $this->template('Отделка тамбура входной группы', 'finishing', 'Плитка, окраска и потолок тамбура', 'entrance.group', 74000, ['material' => 0.56, 'labor' => 0.4, 'machinery' => 0.04], 0.56),
+            ],
+            'office_partitions' => [
+                $this->template('Монтаж офисных перегородок', 'masonry', 'Перегородки кабинетов и переговорных', 'office.partitions', 1850, ['material' => 0.58, 'labor' => 0.38, 'machinery' => 0.04], 0.62),
+                $this->template('Устройство дверных проемов в перегородках', 'masonry', 'Проемы и усиления офисных перегородок', 'office.doors', 8400, ['material' => 0.54, 'labor' => 0.42, 'machinery' => 0.04], 0.58),
+                $this->template('Звукоизоляция офисных перегородок', 'masonry', 'Минераловатное заполнение перегородок', 'office.partitions', 620, ['material' => 0.68, 'labor' => 0.29, 'machinery' => 0.03], 0.56),
+                $this->template('Шпаклевка офисных перегородок', 'finishing', 'Подготовка перегородок под окраску', 'office.partitions', 420, ['material' => 0.36, 'labor' => 0.6, 'machinery' => 0.04], 0.58),
+            ],
+            'office_finishing' => [
+                $this->template('Стяжка пола офисной зоны', 'finishing', 'Выравнивающая стяжка офисных помещений', 'office.floor', 980, ['material' => 0.48, 'labor' => 0.45, 'machinery' => 0.07], 0.62),
+                $this->template('Чистовое покрытие пола офиса', 'finishing', 'Коммерческий ламинат или ПВХ-плитка', 'office.floor_finish', 1750, ['material' => 0.64, 'labor' => 0.34, 'machinery' => 0.02], 0.6),
+                $this->template('Подвесной потолок офисной зоны', 'finishing', 'Потолочная система офисных помещений', 'office.ceiling', 1450, ['material' => 0.58, 'labor' => 0.38, 'machinery' => 0.04], 0.6),
+                $this->template('Окраска стен офисной зоны', 'finishing', 'Финишная окраска стен и перегородок', 'office.paint', 520, ['material' => 0.42, 'labor' => 0.55, 'machinery' => 0.03], 0.58),
+                $this->template('Установка офисных дверей', 'openings', 'Дверные блоки кабинетов и переговорных', 'office.doors', 24000, ['material' => 0.76, 'labor' => 0.22, 'machinery' => 0.02], 0.58),
+                $this->template('Электроточки офисной зоны', 'electrical', 'Розетки, выключатели и рабочие места офиса', 'office.electrical_points', 2100, ['material' => 0.5, 'labor' => 0.47, 'machinery' => 0.03], 0.58),
+            ],
+            'sanitary_rooms' => [
+                $this->template('Устройство перегородок санузлов', 'masonry', 'Перегородки мокрых зон', 'sanitary.rooms', 42000, ['material' => 0.56, 'labor' => 0.4, 'machinery' => 0.04], 0.58),
+                $this->template('Гидроизоляция санузлов', 'finishing', 'Обмазочная гидроизоляция мокрых зон', 'sanitary.tile', 680, ['material' => 0.52, 'labor' => 0.44, 'machinery' => 0.04], 0.58),
+                $this->template('Плиточная отделка санузлов', 'finishing', 'Плитка пола и стен мокрых зон', 'sanitary.tile', 3600, ['material' => 0.55, 'labor' => 0.43, 'machinery' => 0.02], 0.6),
+                $this->template('Монтаж сантехнических приборов', 'plumbing', 'Унитазы, раковины, смесители и арматура', 'sanitary.points', 14500, ['material' => 0.64, 'labor' => 0.34, 'machinery' => 0.02], 0.58),
+                $this->template('Вентиляция санузлов', 'ventilation', 'Вытяжные точки мокрых зон', 'sanitary.rooms', 18500, ['material' => 0.55, 'labor' => 0.4, 'machinery' => 0.05], 0.56),
+            ],
+            'server_room' => [
+                $this->template('Подготовка серверной', 'electrical', 'Отдельное помещение серверной или телекоммуникационного узла', 'server.room', 98000, ['material' => 0.56, 'labor' => 0.38, 'machinery' => 0.06], 0.56),
+                $this->template('Электропитание серверной', 'electrical', 'Выделенные линии и щит серверной', 'server.room', 125000, ['material' => 0.66, 'labor' => 0.31, 'machinery' => 0.03], 0.56),
+                $this->template('Слаботочный шкаф и коммутация', 'electrical', 'Шкаф, патч-панели и коммутационное оборудование', 'server.room', 145000, ['material' => 0.72, 'labor' => 0.25, 'machinery' => 0.03], 0.54),
+                $this->template('Кондиционирование серверной', 'ventilation', 'Охлаждение серверной зоны', 'server.room', 115000, ['material' => 0.7, 'labor' => 0.25, 'machinery' => 0.05], 0.52),
             ],
             'roads' => [
                 $this->template('Дороги и площадки склада', 'site', 'Подъездные пути и разгрузочные площадки', 'warehouse.roads', 3200, ['material' => 0.58, 'labor' => 0.18, 'machinery' => 0.24], 0.58),
+                $this->template('Щебеночное основание проездов', 'site', 'Подготовка основания для грузового транспорта', 'warehouse.roads', 1450, ['material' => 0.62, 'labor' => 0.16, 'machinery' => 0.22], 0.58),
+                $this->template('Асфальтобетонное покрытие площадок', 'site', 'Покрытие подъездов и разгрузочных зон', 'warehouse.roads', 2850, ['material' => 0.68, 'labor' => 0.12, 'machinery' => 0.2], 0.58),
+                $this->template('Бортовой камень и водоотвод площадок', 'site', 'Обрамление покрытий и поверхностный водоотвод', 'warehouse.roads', 740, ['material' => 0.58, 'labor' => 0.28, 'machinery' => 0.14], 0.54),
             ],
             default => [
                 $this->template('Ориентировочный строительный комплекс', 'custom', 'Работы, которые нужно уточнить по проекту', 'site.setup', 45000, ['material' => 0.35, 'labor' => 0.5, 'machinery' => 0.15], 0.48),
             ],
         };
+    }
+
+    /**
+     * @param array<string, mixed> $quantityModel
+     * @return array<int, array<string, mixed>>
+     */
+    private function roofTemplates(array $quantityModel): array
+    {
+        $features = is_array($quantityModel['features'] ?? null) ? $quantityModel['features'] : [];
+
+        if (($features['roof_type'] ?? null) === 'flat') {
+            return [
+                $this->template('Устройство плоской кровли по профнастилу', 'roof', 'Основание и кровельный пирог плоской кровли', 'roof.flat_area', 2450, ['material' => 0.68, 'labor' => 0.24, 'machinery' => 0.08], 0.68),
+                $this->template('Пароизоляция плоской кровли', 'roof', 'Пароизоляционный слой кровельного пирога', 'roof.flat_area', 420, ['material' => 0.62, 'labor' => 0.34, 'machinery' => 0.04], 0.66),
+                $this->template('Утепление плоской кровли', 'roof', 'Теплоизоляция кровли промышленного корпуса', 'roof.flat_area', 1650, ['material' => 0.72, 'labor' => 0.24, 'machinery' => 0.04], 0.66),
+                $this->template('Гидроизоляционный ковер плоской кровли', 'roof', 'Рулонная или мембранная гидроизоляция кровли', 'roof.flat_area', 1850, ['material' => 0.66, 'labor' => 0.3, 'machinery' => 0.04], 0.66),
+                $this->template('Парапеты и примыкания плоской кровли', 'roof', 'Узлы примыканий, парапеты и проходки', 'roof.gutter', 2200, ['material' => 0.62, 'labor' => 0.34, 'machinery' => 0.04], 0.62),
+                $this->template('Внутренний водосток плоской кровли', 'roof', 'Воронки, стояки и водоотвод с плоской кровли', 'roof.gutter', 1750, ['material' => 0.64, 'labor' => 0.31, 'machinery' => 0.05], 0.6),
+            ];
+        }
+
+        return [
+            $this->template('Монтаж стропильной системы', 'roof', 'Несущая деревянная конструкция кровли', 'roof.area', 1450, ['material' => 0.58, 'labor' => 0.36, 'machinery' => 0.06], 0.7),
+            $this->template('Утепление кровли 200 мм', 'roof', 'Теплоизоляция кровельного пирога', 'roof.area', 1350, ['material' => 0.7, 'labor' => 0.28, 'machinery' => 0.02], 0.7),
+            $this->template('Монтаж металлочерепицы', 'roof', 'Финишное кровельное покрытие', 'roof.area', 1850, ['material' => 0.68, 'labor' => 0.28, 'machinery' => 0.04], 0.72),
+            $this->template('Водосточная система кровли', 'roof', 'Желоба, трубы и крепления', 'roof.gutter', 1250, ['material' => 0.65, 'labor' => 0.32, 'machinery' => 0.03], 0.66),
+        ];
     }
 
     /**
