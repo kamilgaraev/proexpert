@@ -47,9 +47,9 @@ class EstimateGenerationPackageFlowTest extends TestCase
 
         $this->assertContains($session->status, ['ready_for_review', 'review_required', 'blocked']);
         $this->assertGreaterThanOrEqual(15, $session->packages()->count());
-        $this->assertGreaterThanOrEqual(250, $session->packages()->withCount('items')->get()->sum('items_count'));
+        $this->assertGreaterThanOrEqual(60, $session->packages()->withCount('items')->get()->sum('items_count'));
         $this->assertGreaterThan(0, $session->packages()->get()->sum(fn ($package): int => (int) ($package->totals['priced_items_count'] ?? 0)));
-        $this->assertGreaterThan(0, $session->packages()->get()->sum(fn ($package): int => (int) ($package->totals['operation_items_count'] ?? 0)));
+        $this->assertSame(0, $session->packages()->get()->sum(fn ($package): int => (int) ($package->totals['operation_items_count'] ?? 0)));
         $this->assertDatabaseMissing('estimate_generation_package_items', [
             'item_type' => 'priced_work',
             'unit' => 'компл',
@@ -58,6 +58,9 @@ class EstimateGenerationPackageFlowTest extends TestCase
         $this->assertNotSame('generated', $session->status);
         $this->assertNotEmpty($session->draft_payload['object_profile'] ?? []);
         $this->assertNotEmpty($session->draft_payload['package_plan'] ?? []);
+        $this->assertDatabaseMissing('estimate_generation_package_items', [
+            'item_type' => 'operation',
+        ]);
     }
 
     public function test_mixed_office_warehouse_generation_persists_enough_priced_work_items(): void
@@ -99,7 +102,11 @@ class EstimateGenerationPackageFlowTest extends TestCase
         $this->assertContains('office_finishing', $packageKeys);
         $this->assertContains('sanitary_rooms', $packageKeys);
         $this->assertGreaterThanOrEqual(130, $pricedItemsCount);
-        $this->assertGreaterThanOrEqual(600, $packages->sum(fn ($package): int => $package->items->count()));
+        $this->assertGreaterThanOrEqual(130, $packages->sum(fn ($package): int => $package->items->count()));
+        $this->assertSame(0, $packages->sum(fn ($package): int => $package->items->where('item_type', 'operation')->count()));
+        $this->assertTrue($packages->flatMap->items->contains(
+            fn ($item): bool => count($item->metadata['work_composition'] ?? []) >= 3
+        ));
         $this->assertNotContains(
             'insufficient_detail',
             array_merge(...$packages->map(fn ($package): array => $package->quality_summary['critical_flags'] ?? [])->all())

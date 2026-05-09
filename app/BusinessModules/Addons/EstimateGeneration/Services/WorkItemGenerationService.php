@@ -35,7 +35,7 @@ class WorkItemGenerationService
             $workItems[] = $workItem;
         }
 
-        return $this->withOperationDetails($workItems, $localEstimate, $targetItemsMin);
+        return $this->withWorkComposition($workItems, $localEstimate);
     }
 
     /**
@@ -74,6 +74,7 @@ class WorkItemGenerationService
             'labor' => [],
             'machinery' => [],
             'other_resources' => [],
+            'work_composition' => [],
             'source_refs' => $localEstimate['source_refs'] ?? [],
             'confidence' => $template['confidence'],
             'validation_flags' => ['market_price_used'],
@@ -91,61 +92,23 @@ class WorkItemGenerationService
      * @param array<string, mixed> $localEstimate
      * @return array<int, array<string, mixed>>
      */
-    private function withOperationDetails(array $workItems, array $localEstimate, int $targetItemsMin): array
+    private function withWorkComposition(array $workItems, array $localEstimate): array
     {
-        if ($targetItemsMin <= count($workItems)) {
-            return $workItems;
-        }
-
-        $expanded = $workItems;
         $packageKey = (string) ($localEstimate['key'] ?? 'package');
-        $operationIndex = 1;
 
-        foreach ($workItems as $workItem) {
-            foreach ($this->detailVariants((string) $workItem['work_category']) as $variant) {
-                $expanded[] = [
-                    'key' => $packageKey . '-operation-' . $operationIndex,
-                    'parent_key' => $workItem['key'],
-                    'level' => 1,
-                    'item_type' => 'operation',
-                    'name' => $variant,
-                    'normative_search_text' => null,
-                    'normative_search_key' => $this->normalizeSearchPart($packageKey . '|operation|' . $workItem['key'] . '|' . $variant),
-                    'work_category' => $workItem['work_category'],
-                    'description' => 'Операция входит в состав позиции "' . $workItem['name'] . '"',
-                    'unit' => 'операция',
-                    'quantity' => 1,
-                    'quantity_formula' => 'Состав основной позиции',
-                    'quantity_basis' => 'Не является отдельной платной строкой. Используется для проверки состава работ.',
-                    'work_cost' => 0,
-                    'materials_cost' => 0,
-                    'machinery_cost' => 0,
-                    'labor_cost' => 0,
-                    'total_cost' => 0,
-                    'materials' => [],
-                    'labor' => [],
-                    'machinery' => [],
-                    'other_resources' => [],
-                    'source_refs' => $localEstimate['source_refs'] ?? [],
-                    'confidence' => $workItem['confidence'],
-                    'validation_flags' => [],
-                    'price_source' => 'not_priced',
-                    'skip_normative_matching' => true,
-                    'normative_match' => ['status' => 'not_applicable'],
-                    'metadata' => [
-                        'package_key' => $packageKey,
-                        'display_role' => 'operation',
-                    ],
-                ];
-                $operationIndex++;
+        foreach ($workItems as $index => $workItem) {
+            $composition = $this->detailVariants((string) $workItem['work_category']);
 
-                if (count($expanded) >= $targetItemsMin) {
-                    return $expanded;
-                }
-            }
+            $workItems[$index]['work_composition'] = $composition;
+            $workItems[$index]['metadata'] = [
+                ...($workItem['metadata'] ?? []),
+                'package_key' => $packageKey,
+                'work_composition' => $composition,
+                'composition_source' => 'generation_template',
+            ];
         }
 
-        return $expanded;
+        return $workItems;
     }
 
     /**

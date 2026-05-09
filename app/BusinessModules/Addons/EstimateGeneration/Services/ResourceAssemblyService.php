@@ -154,7 +154,9 @@ class ResourceAssemblyService
             'warnings' => $selected['warnings'],
             'resources_count' => $this->resourcesCount($resources),
             'priced_resources_count' => $this->pricedResourcesCount($resources),
+            'work_composition' => $this->normalizeComposition($selected['work_composition'] ?? []),
         ];
+        $workItem = $this->applyNormativeComposition($workItem, $selected);
         $workItem['normative_candidates'] = array_map(
             fn (array $candidate): array => $this->candidateSummary($candidate),
             $match['candidates']
@@ -221,7 +223,9 @@ class ResourceAssemblyService
             'decision' => $decision,
             'resources_count' => $this->resourcesCount($selected['resources']),
             'priced_resources_count' => $this->pricedResourcesCount($selected['resources']),
+            'work_composition' => $this->normalizeComposition($selected['work_composition'] ?? []),
         ];
+        $workItem = $this->applyNormativeComposition($workItem, $selected);
         $workItem['normative_candidates'] = array_map(
             fn (array $candidate): array => $this->candidateSummary($candidate),
             $match['candidates']
@@ -317,7 +321,47 @@ class ResourceAssemblyService
             'warnings' => $candidate['warnings'],
             'resources_count' => $this->resourcesCount($candidate['resources']),
             'priced_resources_count' => $this->pricedResourcesCount($candidate['resources']),
+            'work_composition' => $this->normalizeComposition($candidate['work_composition'] ?? []),
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     * @param array<string, mixed> $selected
+     * @return array<string, mixed>
+     */
+    private function applyNormativeComposition(array $workItem, array $selected): array
+    {
+        $composition = $this->normalizeComposition($selected['work_composition'] ?? []);
+
+        if ($composition === []) {
+            return $workItem;
+        }
+
+        $workItem['work_composition'] = $composition;
+        $workItem['metadata'] = [
+            ...($workItem['metadata'] ?? []),
+            'work_composition' => $composition,
+            'composition_source' => 'fsnb_norm',
+        ];
+
+        return $workItem;
+    }
+
+    /**
+     * @param mixed $composition
+     * @return array<int, string>
+     */
+    private function normalizeComposition(mixed $composition): array
+    {
+        if (!is_array($composition)) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            array_map(static fn (mixed $item): string => trim((string) $item), $composition),
+            static fn (string $item): bool => $item !== ''
+        ));
     }
 
     /**

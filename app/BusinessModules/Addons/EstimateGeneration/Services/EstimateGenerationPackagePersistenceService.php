@@ -95,10 +95,8 @@ class EstimateGenerationPackagePersistenceService
         $counters = $this->itemCounters($workItems);
         $pricedTargetMin = min(10, max(3, (int) ceil(max($targetItemsMin, 1) / 7)));
 
-        if (count($workItems) < $targetItemsMin && $counters['priced_items_count'] < $pricedTargetMin) {
+        if ($counters['priced_items_count'] < $pricedTargetMin) {
             $critical[] = 'insufficient_detail';
-        } elseif (count($workItems) < $targetItemsMin) {
-            $warnings[] = 'detail_can_be_expanded';
         }
 
         foreach ($workItems as $workItem) {
@@ -163,6 +161,8 @@ class EstimateGenerationPackagePersistenceService
      */
     private function itemPayload(EstimateGenerationPackage $package, array $workItem, int $index): array
     {
+        $workComposition = $this->workComposition($workItem);
+
         return [
             'package_id' => $package->id,
             'key' => (string) ($workItem['key'] ?? $package->key . '.item.' . ($index + 1)),
@@ -199,9 +199,32 @@ class EstimateGenerationPackagePersistenceService
                 'source_refs' => $workItem['source_refs'] ?? [],
                 'confidence' => $workItem['confidence'] ?? null,
                 ...($workItem['metadata'] ?? []),
+                'work_composition' => $workComposition,
+                'composition_items_count' => count($workComposition),
             ],
             'sort_order' => ($index + 1) * 100,
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     * @return array<int, string>
+     */
+    private function workComposition(array $workItem): array
+    {
+        $composition = $workItem['work_composition']
+            ?? $workItem['metadata']['work_composition']
+            ?? $workItem['normative_match']['work_composition']
+            ?? [];
+
+        if (!is_array($composition)) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            array_map(static fn (mixed $item): string => trim((string) $item), $composition),
+            static fn (string $item): bool => $item !== ''
+        ));
     }
 
     /**

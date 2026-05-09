@@ -79,6 +79,11 @@ class EstimateGenerationPackagePresenter
      */
     public function item(EstimateGenerationPackageItem $item): array
     {
+        $metadata = $item->metadata ?? [];
+        $workComposition = is_array($metadata['work_composition'] ?? null)
+            ? array_values($metadata['work_composition'])
+            : [];
+
         return [
             'id' => $item->id,
             'key' => $item->key,
@@ -98,8 +103,9 @@ class EstimateGenerationPackagePresenter
             'profit_cost' => $item->profit_cost,
             'total_cost' => $item->total_cost,
             'resources' => $item->resources ?? [],
+            'work_composition' => $workComposition,
             'flags' => $item->flags ?? [],
-            'metadata' => $item->metadata ?? [],
+            'metadata' => $metadata,
             'sort_order' => $item->sort_order,
         ];
     }

@@ -25,7 +25,8 @@ class WorkItemGenerationDensityTest extends TestCase
             ],
         ]);
 
-        $this->assertGreaterThanOrEqual(12, count($items));
+        $this->assertGreaterThanOrEqual(3, count($items));
+        $this->assertNotContains('operation', array_column($items, 'item_type'));
         $this->assertSame(count($items), count(array_unique(array_column($items, 'normative_search_key'))));
 
         foreach ($items as $item) {
@@ -34,6 +35,7 @@ class WorkItemGenerationDensityTest extends TestCase
                 (float) $item['quantity'],
                 'Подготовительные платные позиции не должны превращаться в дробные комплекты.'
             );
+            $this->assertGreaterThanOrEqual(3, count($item['work_composition'] ?? []));
         }
     }
 
@@ -204,6 +206,8 @@ class WorkItemGenerationDensityTest extends TestCase
         $this->assertNotContains('warehouse.envelope', $powerQuantityKeys);
         $this->assertLessThan(700.0, (float) $pricedEnvelope[0]['quantity']);
         $this->assertNotContains('site.setup', array_column($pricedHeating, 'quantity_formula'));
+        $this->assertNotContains('operation', array_column($industrialFloor, 'item_type'));
+        $this->assertGreaterThanOrEqual(3, count($pricedIndustrialFloor[0]['work_composition'] ?? []));
         $this->assertContains('Устройство плоской кровли по профнастилу', $pricedRoofNames);
         $this->assertNotContains('Монтаж металлочерепицы', $pricedRoofNames);
         $this->assertNotContains('Монтаж стропильной системы', $pricedRoofNames);

@@ -36,7 +36,7 @@ class EstimateGenerationPackageApiTest extends TestCase
                 'items_count' => 42,
                 'total_items_count' => 42,
                 'priced_items_count' => 14,
-                'operation_items_count' => 28,
+                'operation_items_count' => 0,
             ],
             'quality_summary' => ['level' => 'passed', 'critical_flags' => [], 'warning_flags' => []],
             'sort_order' => 100,
@@ -53,11 +53,11 @@ class EstimateGenerationPackageApiTest extends TestCase
         $this->assertSame('foundation', $payload['data']['packages'][0]['key']);
         $this->assertArrayNotHasKey('input', $payload['data']['packages'][0]);
         $this->assertSame(14, $payload['data']['packages'][0]['items_breakdown']['priced']);
-        $this->assertSame(28, $payload['data']['packages'][0]['items_breakdown']['operations']);
+        $this->assertSame(0, $payload['data']['packages'][0]['items_breakdown']['operations']);
         $this->assertSame(1, $payload['data']['summary']['total']);
         $this->assertSame(1, $payload['data']['summary']['ready']);
         $this->assertSame(14, $payload['data']['summary']['priced_items_count']);
-        $this->assertSame(28, $payload['data']['summary']['operation_items_count']);
+        $this->assertSame(0, $payload['data']['summary']['operation_items_count']);
     }
 
     public function test_package_detail_endpoint_returns_items_for_selected_package_only(): void
@@ -93,6 +93,9 @@ class EstimateGenerationPackageApiTest extends TestCase
             'quantity' => 18,
             'unit_price' => 9800,
             'total_cost' => 176400,
+            'metadata' => [
+                'work_composition' => ['Подготовка основания', 'Монтаж опалубки', 'Укладка бетона'],
+            ],
             'sort_order' => 100,
         ]);
         EstimateGenerationPackageItem::query()->create([
@@ -131,6 +134,7 @@ class EstimateGenerationPackageApiTest extends TestCase
         $this->assertCount(2, $payload['data']['items']);
         $this->assertSame('foundation.concrete', $payload['data']['items'][0]['key']);
         $this->assertSame('priced_work', $payload['data']['items'][0]['item_type']);
+        $this->assertCount(3, $payload['data']['items'][0]['work_composition']);
         $this->assertSame('operation', $payload['data']['items'][1]['item_type']);
         $this->assertSame(1, $payload['data']['meta']['priced_items_count']);
         $this->assertSame(1, $payload['data']['meta']['operation_items_count']);
