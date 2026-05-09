@@ -7,11 +7,13 @@ namespace Tests\Feature\EstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationController;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Queue;
+use Mockery;
 use RuntimeException;
 use Tests\TestCase;
 
@@ -36,6 +38,7 @@ class EstimateGenerationQueueTest extends TestCase
         Queue::assertPushed(
             GenerateEstimateDraftJob::class,
             static fn (GenerateEstimateDraftJob $job): bool => $job->queue === GenerateEstimateDraftJob::QUEUE
+                && $job->connection === GenerateEstimateDraftJob::CONNECTION
         );
 
         $this->assertDatabaseHas('estimate_generation_sessions', [
@@ -44,6 +47,17 @@ class EstimateGenerationQueueTest extends TestCase
             'processing_stage' => 'queued',
             'processing_progress' => 40,
         ]);
+    }
+
+    public function test_generation_job_uses_long_running_queue_settings(): void
+    {
+        $job = new GenerateEstimateDraftJob(123);
+
+        $this->assertSame(GenerateEstimateDraftJob::CONNECTION, $job->connection);
+        $this->assertSame(GenerateEstimateDraftJob::QUEUE, $job->queue);
+        $this->assertSame(3, $job->tries);
+        $this->assertSame(1800, $job->timeout);
+        $this->assertGreaterThan($job->timeout, config('queue.connections.redis_estimate_generation.retry_after'));
     }
 
     public function test_generation_job_marks_session_failed_when_generation_fails(): void
@@ -60,6 +74,40 @@ class EstimateGenerationQueueTest extends TestCase
         $this->assertSame(0, $session->processing_progress);
         $this->assertNotNull($session->last_error);
         $this->assertLessThanOrEqual(500, mb_strlen($session->last_error));
+    }
+
+    public function test_generation_job_does_not_override_finished_session_when_stale_attempt_fails(): void
+    {
+        [, , $session] = $this->makeGenerationSession('ready_for_review');
+        $session->forceFill([
+            'processing_stage' => 'validation_and_normalization',
+            'processing_progress' => 100,
+            'last_error' => null,
+        ])->save();
+
+        $job = new GenerateEstimateDraftJob($session->id);
+        $job->failed(new RuntimeException('stale queue attempt'));
+
+        $session->refresh();
+
+        $this->assertSame('ready_for_review', $session->status);
+        $this->assertSame('validation_and_normalization', $session->processing_stage);
+        $this->assertSame(100, $session->processing_progress);
+        $this->assertNull($session->last_error);
+    }
+
+    public function test_generation_job_skips_finished_session_instead_of_regenerating(): void
+    {
+        [, , $session] = $this->makeGenerationSession('ready_for_review');
+        $orchestrator = Mockery::mock(EstimateGenerationOrchestrator::class);
+        $orchestrator->shouldNotReceive('generate');
+
+        $job = new GenerateEstimateDraftJob($session->id);
+        $job->handle($orchestrator);
+
+        $session->refresh();
+
+        $this->assertSame('ready_for_review', $session->status);
     }
 
     public function test_status_returns_lightweight_generation_state(): void

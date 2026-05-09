@@ -11,6 +11,7 @@ return [
     'middleware' => ['web', 'auth:api', 'authorize:notifications.view_analytics'],
     
     'waits' => [
+        'redis_estimate_generation:estimate-generation' => 120,
         'redis:estimate-generation' => 120,
         'redis:notifications-critical' => 30,
         'redis:notifications-high' => 60,
@@ -103,7 +104,7 @@ return [
                 'timeout' => 1200,
             ],
             'supervisor-estimate-generation' => [
-                'connection' => 'redis',
+                'connection' => 'redis_estimate_generation',
                 'queue' => ['estimate-generation'],
                 'balance' => 'auto',
                 'autoScalingStrategy' => 'time',
@@ -117,7 +118,7 @@ return [
 
         'local' => [
             'supervisor-estimate-generation' => [
-                'connection' => 'redis',
+                'connection' => 'redis_estimate_generation',
                 'queue' => ['estimate-generation'],
                 'balance' => 'simple',
                 'processes' => 1,

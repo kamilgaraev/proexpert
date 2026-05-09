@@ -20,17 +20,30 @@ class GenerateEstimateDraftJob implements ShouldQueue
     use Queueable;
     use SerializesModels;
 
+    public const CONNECTION = 'redis_estimate_generation';
+
     public const QUEUE = 'estimate-generation';
 
-    public int $tries = 1;
+    private const TERMINAL_STATUSES = [
+        'generated',
+        'ready_for_review',
+        'review_required',
+        'blocked',
+        'applied',
+    ];
 
-    public int $timeout = 1200;
+    public int $tries = 3;
+
+    public int $timeout = 1800;
+
+    public array $backoff = [60, 180];
 
     public bool $failOnTimeout = true;
 
     public function __construct(
         private readonly int $sessionId,
     ) {
+        $this->onConnection(self::CONNECTION);
         $this->onQueue(self::QUEUE);
     }
 
@@ -42,7 +55,7 @@ class GenerateEstimateDraftJob implements ShouldQueue
             return;
         }
 
-        if (in_array($session->status, ['generated', 'applied'], true)) {
+        if (in_array($session->status, self::TERMINAL_STATUSES, true)) {
             return;
         }
 
@@ -60,6 +73,7 @@ class GenerateEstimateDraftJob implements ShouldQueue
     {
         EstimateGenerationSession::query()
             ->where('id', $this->sessionId)
+            ->whereNotIn('status', self::TERMINAL_STATUSES)
             ->update([
                 'status' => 'failed',
                 'processing_stage' => 'failed',
