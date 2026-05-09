@@ -58,7 +58,7 @@ class ConstructionSemanticParser
                 'floors' => array_values(array_unique($sourceRefs['floors'])),
                 'elevations' => array_values(array_unique($sourceRefs['elevations'])),
                 'sheets' => array_values(array_unique($sourceRefs['sheets'])),
-                'zones' => array_values(array_unique($scopes['zones'])),
+                'zones' => $this->normalizeDetectedZones($scopes['zones']),
                 'constructives' => array_values(array_unique($scopes['constructives'])),
                 'scopes' => $scopes['items'],
             ],
@@ -78,7 +78,7 @@ class ConstructionSemanticParser
             'slabs' => ['перекрыт', 'плита перекрытия', 'монолитная плита', 'бетонный пол', 'промышленным бетонным полом', 'промышленный пол'],
             'roof' => ['кровл', 'стропил', 'крыша', 'металлочерепиц', 'плоская кровля'],
             'openings' => ['окна', 'двери', 'стеклопакет', 'проем', 'проём', 'ворот', 'входная группа'],
-            'electrical' => ['электрика', 'электромонтаж', 'щит', 'кабель', 'розет', 'светильник', 'свет'],
+            'electrical' => ['электрика', 'электромонтаж', 'щит', 'кабель', 'розет', 'светильник', 'свет', 'освещ'],
             'plumbing' => ['водопровод', 'водоснабжен', 'канализац', 'септик', 'скважин', 'трубы'],
             'heating' => ['отоплен', 'котел', 'котёл', 'радиатор', 'разводка отопления'],
             'ventilation' => ['вентиляц', 'приточн', 'клапан'],
@@ -288,7 +288,7 @@ class ConstructionSemanticParser
 
     protected function normalizeScopeTitle(string $line, string $scopeType): string
     {
-        $title = trim($this->cleanLine($line));
+        $title = $this->extractZoneTitle($line);
 
         return match ($scopeType) {
             'foundation' => $title !== '' ? $title : 'Фундамент',
@@ -393,7 +393,9 @@ class ConstructionSemanticParser
                     }
 
                     if ($this->detectScopeType(mb_strtolower($this->cleanLine($part)), $keywords) !== null) {
-                        $candidates[] = $part;
+                        foreach ($this->expandCompoundScopePart($part, $keywords) as $candidate) {
+                            $candidates[] = $candidate;
+                        }
                     }
                 }
             }
@@ -469,8 +471,85 @@ class ConstructionSemanticParser
     protected function extractZoneTitle(string $line): string
     {
         $clean = preg_replace('/\s*\(.+\)\s*$/u', '', trim($this->cleanLine($line)));
+        $clean = (string) preg_replace('/^(?:еще|ещё)\s+/iu', '', $clean);
+        $clean = (string) preg_replace('/^(?:нужна|нужно|нужны|требуется|предусмотреть|сделать)\s+/iu', '', $clean);
+        $clean = trim($clean);
+        $normalized = mb_strtolower($clean);
+
+        $canonical = match (true) {
+            str_contains($normalized, 'входная группа') => 'Входная группа',
+            str_contains($normalized, 'пожар') && str_contains($normalized, 'сигнализац') => 'Пожарная сигнализация',
+            str_contains($normalized, 'освещ') => 'Освещение',
+            str_contains($normalized, 'водоснабжен') || str_contains($normalized, 'водопровод') || str_contains($normalized, 'канализац') => 'Водоснабжение и канализация',
+            default => null,
+        };
+
+        if ($canonical !== null) {
+            return $canonical;
+        }
 
         return $clean ?: trim($this->cleanLine($line));
+    }
+
+    /**
+     * @param array<int, string> $zones
+     * @return array<int, string>
+     */
+    protected function normalizeDetectedZones(array $zones): array
+    {
+        $normalized = [];
+        $hasPlumbing = false;
+
+        foreach ($zones as $zone) {
+            $zone = trim($zone);
+
+            if ($zone === '') {
+                continue;
+            }
+
+            if ($zone === 'Водоснабжение и канализация') {
+                $hasPlumbing = true;
+                continue;
+            }
+
+            $normalized[] = $zone;
+        }
+
+        if ($hasPlumbing) {
+            $normalized[] = 'Водоснабжение и канализация';
+        }
+
+        return array_values(array_unique($normalized));
+    }
+
+    /**
+     * @param array<string, array<int, string>> $keywords
+     * @return array<int, string>
+     */
+    protected function expandCompoundScopePart(string $part, array $keywords): array
+    {
+        $segments = array_values(array_filter(array_map(
+            static fn (string $segment): string => trim($segment),
+            preg_split('/\s+и\s+/u', $part) ?: []
+        )));
+
+        if (count($segments) < 2) {
+            return [$part];
+        }
+
+        $segmentTypes = [];
+
+        foreach ($segments as $segment) {
+            $type = $this->detectScopeType(mb_strtolower($this->cleanLine($segment)), $keywords);
+
+            if ($type === null) {
+                return [$part];
+            }
+
+            $segmentTypes[] = $type;
+        }
+
+        return count(array_unique($segmentTypes)) > 1 ? $segments : [$part];
     }
 
     protected function cleanLine(string $line): string

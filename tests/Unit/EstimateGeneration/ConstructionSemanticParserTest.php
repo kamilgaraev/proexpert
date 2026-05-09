@@ -65,7 +65,16 @@ class ConstructionSemanticParserTest extends TestCase
         $this->assertContains('electrical', $constructives);
         $this->assertContains('plumbing', $constructives);
         $this->assertContains('site', $constructives);
+        $this->assertContains('fire_safety', $constructives);
+        $this->assertContains('stairs', $constructives);
         $this->assertGreaterThanOrEqual(10, count($structure['scopes']));
+        $this->assertContains('Входная группа', $structure['zones']);
+        $this->assertContains('Пожарная сигнализация', $structure['zones']);
+        $this->assertContains('Освещение', $structure['zones']);
+        $this->assertContains('Водоснабжение и канализация', $structure['zones']);
+        $this->assertNotContains('Еще нужна входная группа', $structure['zones']);
+        $this->assertNotContains('водоснабжение', $structure['zones']);
+        $this->assertNotContains('канализация', $structure['zones']);
         $this->assertNotContains(
             'Нужна входная группа, фасад из сэндвич-панелей, плоская кровля, отопление, вентиляция, электрика, водоснабжение, канализация, наружная площадка и подъезд для грузового транспорта.',
             $titles
