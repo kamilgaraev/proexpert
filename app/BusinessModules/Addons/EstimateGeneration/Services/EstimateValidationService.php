@@ -20,6 +20,9 @@ class EstimateValidationService
         $pricedWorkItemsCount = 0;
         $zeroPriceWorkItemsCount = 0;
         $normativeMatchedWorkItemsCount = 0;
+        $normativeCandidateWorkItemsCount = 0;
+        $normativeRejectedWorkItemsCount = 0;
+        $normativeNotFoundWorkItemsCount = 0;
         $marketEstimateWorkItemsCount = 0;
 
         foreach ($draft['local_estimates'] as $localIndex => $localEstimate) {
@@ -67,8 +70,15 @@ class EstimateValidationService
                         $flags[] = 'low_confidence';
                     }
 
-                    if (($workItem['normative_match']['status'] ?? null) === 'matched') {
+                    $normativeStatus = $workItem['normative_match']['status'] ?? null;
+                    if ($normativeStatus === 'matched') {
                         $normativeMatchedWorkItemsCount++;
+                    } elseif ($normativeStatus === 'candidate') {
+                        $normativeCandidateWorkItemsCount++;
+                    } elseif ($normativeStatus === 'rejected') {
+                        $normativeRejectedWorkItemsCount++;
+                    } elseif ($normativeStatus === 'not_found') {
+                        $normativeNotFoundWorkItemsCount++;
                     }
 
                     if ($isPricedItem && (in_array('market_price_used', $flags, true) || ($workItem['price_source'] ?? null) === 'market_estimate')) {
@@ -122,6 +132,9 @@ class EstimateValidationService
             $pricedWorkItemsCount,
             $zeroPriceWorkItemsCount,
             $normativeMatchedWorkItemsCount,
+            $normativeCandidateWorkItemsCount,
+            $normativeRejectedWorkItemsCount,
+            $normativeNotFoundWorkItemsCount,
             $marketEstimateWorkItemsCount,
             $projectFlags
         );
@@ -155,16 +168,20 @@ class EstimateValidationService
         int $pricedWorkItems,
         int $zeroPriceWorkItems,
         int $normativeMatchedWorkItems,
+        int $normativeCandidateWorkItems,
+        int $normativeRejectedWorkItems,
+        int $normativeNotFoundWorkItems,
         int $marketEstimateWorkItems,
         array $projectFlags
     ): array {
+        $requiresNormativeReview = $normativeCandidateWorkItems + $normativeRejectedWorkItems + $normativeNotFoundWorkItems;
         $criticalFlags = array_values(array_intersect($projectFlags, ['missing_price', 'missing_resources', 'regional_context_missing']));
         $warningFlags = array_values(array_diff($projectFlags, $criticalFlags));
         $status = 'ready';
 
         if ($totalWorkItems === 0 || $zeroPriceWorkItems === $totalWorkItems || $pricedWorkItems === 0) {
             $status = 'critical';
-        } elseif ($zeroPriceWorkItems > 0 || $marketEstimateWorkItems > 0 || $criticalFlags !== []) {
+        } elseif ($zeroPriceWorkItems > 0 || $marketEstimateWorkItems > 0 || $criticalFlags !== [] || $requiresNormativeReview > 0) {
             $status = 'review_required';
         }
 
@@ -175,6 +192,13 @@ class EstimateValidationService
             'zero_price_work_items' => $zeroPriceWorkItems,
             'normative_matched_work_items' => $normativeMatchedWorkItems,
             'market_estimate_work_items' => $marketEstimateWorkItems,
+            'normative_items' => [
+                'accepted' => $normativeMatchedWorkItems,
+                'candidate' => $normativeCandidateWorkItems,
+                'rejected' => $normativeRejectedWorkItems,
+                'not_found' => $normativeNotFoundWorkItems,
+                'requires_review' => $requiresNormativeReview,
+            ],
             'critical_flags' => $criticalFlags,
             'warning_flags' => $warningFlags,
         ];

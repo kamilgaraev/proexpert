@@ -7,7 +7,6 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 class WorkItemGenerationService
 {
     public function __construct(
-        protected MarketFallbackPricingService $fallbackPricingService,
         protected ObjectQuantityModelService $quantityModelService,
     ) {}
 
@@ -27,12 +26,7 @@ class WorkItemGenerationService
         $workItems = [];
 
         foreach ($templates as $index => $template) {
-            $workItem = $this->pricedWorkItem($localEstimate, $template, $quantityModel, $index);
-            $resources = $this->fallbackPricingService->resourcesForTemplate($template, $workItem);
-            $workItem['materials'] = $resources['materials'];
-            $workItem['labor'] = $resources['labor'];
-            $workItem['machinery'] = $resources['machinery'];
-            $workItems[] = $workItem;
+            $workItems[] = $this->pricedWorkItem($localEstimate, $template, $quantityModel, $index);
         }
 
         return $this->withWorkComposition($workItems, $localEstimate);
@@ -77,8 +71,8 @@ class WorkItemGenerationService
             'work_composition' => [],
             'source_refs' => $localEstimate['source_refs'] ?? [],
             'confidence' => $template['confidence'],
-            'validation_flags' => ['market_price_used'],
-            'price_source' => 'market_estimate',
+            'validation_flags' => ['normative_required'],
+            'price_source' => null,
             'metadata' => [
                 'package_key' => $packageKey,
                 'quantity_key' => $template['quantity_key'],

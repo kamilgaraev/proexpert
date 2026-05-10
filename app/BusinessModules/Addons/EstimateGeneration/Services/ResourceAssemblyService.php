@@ -6,6 +6,9 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeMatchDecisionService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidatePresenter;
+
+use function trans_message;
 
 class ResourceAssemblyService
 {
@@ -15,6 +18,7 @@ class ResourceAssemblyService
     public function __construct(
         protected EstimateNormativeMatcher $normativeMatcher,
         protected NormativeMatchDecisionService $matchDecisionService,
+        protected NormativeCandidatePresenter $candidatePresenter,
     ) {}
 
     public function enrich(array $workItems, array $context = []): array
@@ -54,6 +58,16 @@ class ResourceAssemblyService
         unset($workItem);
 
         return $workItems;
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     * @param array<string, mixed> $match
+     * @return array<string, mixed>
+     */
+    public function applySelectedNormativeMatch(array $workItem, array $match): array
+    {
+        return $this->applyNormativeResources($workItem, $match, true);
     }
 
     /**
@@ -125,10 +139,39 @@ class ResourceAssemblyService
             return $this->applyCandidateOnlyMatch($workItem, $match, $decision->toArray());
         }
 
+        $workItem = $this->applyNormativeResources($workItem, $match);
+        $flags = $this->acceptedFlags($workItem['validation_flags'] ?? []);
+
+        if ((float) $selected['confidence'] < self::LOW_CONFIDENCE_THRESHOLD) {
+            $flags[] = 'normative_match_low_confidence';
+        }
+
+        if ($workItem['materials'] === [] && $workItem['labor'] === [] && $workItem['machinery'] === []) {
+            $flags[] = 'normative_resources_empty';
+        }
+
+        if ($this->pricedResourcesCount($selected['resources'] ?? []) === 0) {
+            $flags[] = 'normative_prices_missing';
+        }
+
+        $workItem['validation_flags'] = array_values(array_unique($flags));
+
+        return $workItem;
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     * @param array<string, mixed> $match
+     * @return array<string, mixed>
+     */
+    private function applyNormativeResources(array $workItem, array $match, bool $selectedByUser = false): array
+    {
+        $selected = $match['selected'];
         $version = $match['version'];
         $priceVersion = $match['price_version'] ?? null;
         $workQuantity = max((float) ($workItem['quantity'] ?? 0), 0.0);
         $resources = $selected['resources'];
+        $workItem = $this->clearNonNormativeResources($workItem);
 
         $workItem['materials'] = $this->mapResources($resources['materials'] ?? [], 'material', $workQuantity, $selected, $version, $workItem);
         $workItem['labor'] = $this->mapResources($resources['labor'] ?? [], 'labor', $workQuantity, $selected, $version, $workItem);
@@ -139,6 +182,7 @@ class ResourceAssemblyService
         $workItem['price_dataset'] = $priceVersion;
         $workItem['normative_match'] = [
             'status' => 'matched',
+            'selected_by_user' => $selectedByUser,
             'selected_candidate_key' => $selected['key'],
             'norm_id' => $selected['norm_id'],
             'code' => $selected['code'],
@@ -149,9 +193,9 @@ class ResourceAssemblyService
             'dataset_version' => $version,
             'price_version' => $priceVersion,
             'score' => $selected['score'],
-            'confidence' => $selected['confidence'],
+            'confidence' => $selectedByUser ? 1.0 : $selected['confidence'],
             'match_reasons' => $selected['match_reasons'],
-            'warnings' => $selected['warnings'],
+            'warnings' => $selectedByUser ? [] : $selected['warnings'],
             'resources_count' => $this->resourcesCount($resources),
             'priced_resources_count' => $this->pricedResourcesCount($resources),
             'work_composition' => $this->normalizeComposition($selected['work_composition'] ?? []),
@@ -161,23 +205,10 @@ class ResourceAssemblyService
             fn (array $candidate): array => $this->candidateSummary($candidate),
             $match['candidates']
         );
-        $workItem['confidence'] = round(((float) ($workItem['confidence'] ?? 0.5) + (float) $selected['confidence']) / 2, 4);
-
-        $flags = $workItem['validation_flags'] ?? [];
-
-        if ((float) $selected['confidence'] < self::LOW_CONFIDENCE_THRESHOLD) {
-            $flags[] = 'normative_match_low_confidence';
-        }
-
-        if ($workItem['materials'] === [] && $workItem['labor'] === [] && $workItem['machinery'] === []) {
-            $flags[] = 'normative_resources_empty';
-        }
-
-        if ($this->pricedResourcesCount($resources) === 0) {
-            $flags[] = 'normative_prices_missing';
-        }
-
-        $workItem['validation_flags'] = array_values(array_unique($flags));
+        $workItem['confidence'] = $selectedByUser
+            ? max((float) ($workItem['confidence'] ?? 0.5), 0.8)
+            : round(((float) ($workItem['confidence'] ?? 0.5) + (float) $selected['confidence']) / 2, 4);
+        $workItem['validation_flags'] = $this->acceptedFlags($workItem['validation_flags'] ?? []);
 
         return $workItem;
     }
@@ -193,13 +224,11 @@ class ResourceAssemblyService
         $selected = $match['selected'];
         $flags = $workItem['validation_flags'] ?? [];
         $flags[] = 'normative_candidate_only';
+        $flags[] = 'requires_normative_review';
+        $workItem = $this->clearNonNormativeResources($workItem);
 
         if (in_array('low_confidence', $decision['warnings'] ?? [], true)) {
             $flags[] = 'normative_match_low_confidence';
-        }
-
-        if (($workItem['materials'] ?? []) !== [] || ($workItem['labor'] ?? []) !== [] || ($workItem['machinery'] ?? []) !== []) {
-            $flags[] = 'market_price_used';
         }
 
         $workItem['normative_match'] = [
@@ -284,16 +313,11 @@ class ResourceAssemblyService
     {
         $flags = $workItem['validation_flags'] ?? [];
         $flags[] = 'normative_not_found';
-        if (($workItem['materials'] ?? []) !== [] || ($workItem['labor'] ?? []) !== [] || ($workItem['machinery'] ?? []) !== []) {
-            $flags[] = 'market_price_used';
-        }
-
-        $workItem['materials'] = $workItem['materials'] ?? [];
-        $workItem['labor'] = $workItem['labor'] ?? [];
-        $workItem['machinery'] = $workItem['machinery'] ?? [];
-        $workItem['other_resources'] = $workItem['other_resources'] ?? [];
+        $flags[] = 'requires_normative_review';
+        $workItem = $this->clearNonNormativeResources($workItem);
         $workItem['normative_match'] = [
             'status' => 'not_found',
+            'message' => trans_message('estimate_generation.normative_manual_selection_required'),
         ];
         $workItem['normative_candidates'] = [];
         $workItem['validation_flags'] = array_values(array_unique($flags));
@@ -307,22 +331,44 @@ class ResourceAssemblyService
      */
     private function candidateSummary(array $candidate): array
     {
-        return [
-            'key' => $candidate['key'],
-            'norm_id' => $candidate['norm_id'],
-            'code' => $candidate['code'],
-            'name' => $candidate['name'],
-            'unit' => $candidate['unit'],
-            'collection' => $candidate['collection'],
-            'section' => $candidate['section'],
-            'score' => $candidate['score'],
-            'confidence' => $candidate['confidence'],
-            'match_reasons' => $candidate['match_reasons'],
-            'warnings' => $candidate['warnings'],
-            'resources_count' => $this->resourcesCount($candidate['resources']),
-            'priced_resources_count' => $this->pricedResourcesCount($candidate['resources']),
-            'work_composition' => $this->normalizeComposition($candidate['work_composition'] ?? []),
-        ];
+        return $this->candidatePresenter->present($candidate);
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     * @return array<string, mixed>
+     */
+    private function clearNonNormativeResources(array $workItem): array
+    {
+        $workItem['materials'] = [];
+        $workItem['labor'] = [];
+        $workItem['machinery'] = [];
+        $workItem['other_resources'] = [];
+        $workItem['work_cost'] = 0;
+        $workItem['materials_cost'] = 0;
+        $workItem['machinery_cost'] = 0;
+        $workItem['labor_cost'] = 0;
+        $workItem['total_cost'] = 0;
+        $workItem['price_source'] = null;
+
+        return $workItem;
+    }
+
+    /**
+     * @param array<int, string> $flags
+     * @return array<int, string>
+     */
+    private function acceptedFlags(array $flags): array
+    {
+        return array_values(array_diff(array_values(array_unique($flags)), [
+            'normative_required',
+            'normative_candidate_only',
+            'normative_not_found',
+            'normative_match_low_confidence',
+            'requires_normative_review',
+            'missing_price',
+            'missing_resources',
+        ]));
     }
 
     /**

@@ -71,6 +71,51 @@ class EstimateNormativeMatcher
         ];
     }
 
+    /**
+     * @return array<string, mixed>|null
+     */
+    public function matchSelectedNorm(int $normId, array $workItem, array $context = []): ?array
+    {
+        $version = $this->latestFsnbVersion();
+        $priceVersions = $this->latestPriceVersions($context);
+
+        if ($version === null) {
+            return null;
+        }
+
+        $norm = EstimateNorm::query()
+            ->with(['collection', 'section'])
+            ->whereKey($normId)
+            ->whereHas('collection', static function (Builder $query) use ($version): void {
+                $query->where('dataset_version_id', $version->id);
+            })
+            ->first();
+
+        if (!$norm instanceof EstimateNorm) {
+            return null;
+        }
+
+        $tokens = $this->tokensForWorkItem($workItem, $context);
+        $candidate = $this->scoreNorm($norm, $workItem, $context, $tokens, $priceVersions);
+
+        return [
+            'version' => [
+                'source_type' => $version->source_type->value,
+                'version_key' => $version->version_key,
+            ],
+            'price_version' => $priceVersions->first() !== null ? [
+                'source_type' => $priceVersions->first()->source_type->value,
+                'version_key' => $priceVersions->first()->version_key,
+            ] : null,
+            'price_versions' => $priceVersions->map(static fn (EstimateDatasetVersion $version): array => [
+                'source_type' => $version->source_type->value,
+                'version_key' => $version->version_key,
+            ])->values()->all(),
+            'selected' => $candidate,
+            'candidates' => [$candidate],
+        ];
+    }
+
     public function latestFsnbVersion(): ?EstimateDatasetVersion
     {
         return EstimateDatasetVersion::query()

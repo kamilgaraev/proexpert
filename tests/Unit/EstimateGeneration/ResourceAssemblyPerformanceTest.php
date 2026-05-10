@@ -6,6 +6,7 @@ namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeMatchDecisionService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidatePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 use Tests\TestCase;
 
@@ -24,7 +25,11 @@ class ResourceAssemblyPerformanceTest extends TestCase
             }
         };
 
-        $service = new ResourceAssemblyService($matcher, app(NormativeMatchDecisionService::class));
+        $service = new ResourceAssemblyService(
+            $matcher,
+            app(NormativeMatchDecisionService::class),
+            app(NormativeCandidatePresenter::class)
+        );
         $items = [];
 
         for ($index = 1; $index <= 24; $index++) {
@@ -56,7 +61,11 @@ class ResourceAssemblyPerformanceTest extends TestCase
             }
         };
 
-        $service = new ResourceAssemblyService($matcher, app(NormativeMatchDecisionService::class));
+        $service = new ResourceAssemblyService(
+            $matcher,
+            app(NormativeMatchDecisionService::class),
+            app(NormativeCandidatePresenter::class)
+        );
         $ticks = [];
         $items = [];
 

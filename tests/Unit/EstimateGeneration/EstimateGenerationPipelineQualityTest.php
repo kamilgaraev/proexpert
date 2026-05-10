@@ -12,11 +12,11 @@ use Tests\TestCase;
 
 class EstimateGenerationPipelineQualityTest extends TestCase
 {
-    public function test_generated_house_estimate_has_price_sources_or_requires_review(): void
+    public function test_generated_house_estimate_requires_normative_review_instead_of_market_prices(): void
     {
         $analysis = [
             'object' => [
-                'description' => 'Жилой дом 150 м², Московская область, 1 квартал 2026 года',
+                'description' => 'Жилой дом 150 м2, Московская область, 1 квартал 2026 года',
                 'building_type' => 'Жилой',
                 'region' => 'Московская область',
                 'area' => 150,
@@ -35,7 +35,8 @@ class EstimateGenerationPipelineQualityTest extends TestCase
         $items = app(EstimatePricingService::class)->price($items);
 
         $this->assertNotEmpty($items);
-        $this->assertGreaterThan(0, array_sum(array_column($items, 'total_cost')));
-        $this->assertContains('market_price_used', $items[0]['validation_flags']);
+        $this->assertEquals(0, array_sum(array_column($items, 'total_cost')));
+        $this->assertNotContains('market_price_used', $items[0]['validation_flags']);
+        $this->assertContains('requires_normative_review', $items[0]['validation_flags']);
     }
 }

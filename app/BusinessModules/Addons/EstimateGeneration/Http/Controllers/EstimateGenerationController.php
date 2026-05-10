@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ApplyEstimateGen
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\CreateEstimateGenerationSessionRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\EstimateGenerationFeedbackRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\RebuildEstimateGenerationSectionRequest;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\SelectEstimateGenerationNormativeCandidateRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\UploadEstimateGenerationDocumentsRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationSessionResource;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
@@ -20,12 +21,14 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationExc
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSelectionService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Illuminate\Support\Facades\Log;
 
@@ -40,6 +43,7 @@ class EstimateGenerationController extends Controller
         protected EstimateGenerationExcelExportService $excelExportService,
         protected EstimateGenerationRegionalContextResolver $regionalContextResolver,
         protected EstimateGenerationPackagePresenter $packagePresenter,
+        protected NormativeCandidateSelectionService $candidateSelectionService,
     ) {}
 
     public function index(Request $request, Project $project): JsonResponse
@@ -311,6 +315,8 @@ class EstimateGenerationController extends Controller
             return AdminResponse::success([
                 'estimate_id' => $estimate->id,
             ], trans_message('estimate_generation.draft_applied'));
+        } catch (ValidationException $e) {
+            return AdminResponse::error($e->getMessage(), 422, $e->errors());
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Apply failed', [
                 'error' => $e->getMessage(),
@@ -318,6 +324,36 @@ class EstimateGenerationController extends Controller
             ]);
 
             return AdminResponse::error(trans_message('estimate_generation.apply_error'), 500);
+        }
+    }
+
+    public function selectNormativeCandidate(
+        SelectEstimateGenerationNormativeCandidateRequest $request,
+        Project $project,
+        EstimateGenerationSession $session
+    ): JsonResponse {
+        try {
+            $this->guardSession($request, $project, $session);
+
+            $this->candidateSelectionService->select(
+                $session,
+                (string) $request->validated('work_item_key'),
+                (int) $request->validated('norm_id')
+            );
+
+            return AdminResponse::success(
+                (new EstimateGenerationSessionResource($session->fresh(['documents'])))->resolve(),
+                trans_message('estimate_generation.normative_candidate_selected')
+            );
+        } catch (ValidationException $e) {
+            return AdminResponse::error($e->getMessage(), 422, $e->errors());
+        } catch (\Throwable $e) {
+            Log::error('[EstimateGeneration] Normative candidate selection failed', [
+                'error' => $e->getMessage(),
+                'session_id' => $session->id,
+            ]);
+
+            return AdminResponse::error(trans_message('estimate_generation.normative_candidate_select_error'), 500);
         }
     }
 
