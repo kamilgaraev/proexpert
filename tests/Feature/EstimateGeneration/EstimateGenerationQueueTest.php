@@ -52,12 +52,18 @@ class EstimateGenerationQueueTest extends TestCase
     public function test_generation_job_uses_long_running_queue_settings(): void
     {
         $job = new GenerateEstimateDraftJob(123);
+        $productionSupervisor = config('horizon.environments.production.supervisor-estimate-generation');
+        $localSupervisor = config('horizon.environments.local.supervisor-estimate-generation');
 
         $this->assertSame(GenerateEstimateDraftJob::CONNECTION, $job->connection);
         $this->assertSame(GenerateEstimateDraftJob::QUEUE, $job->queue);
         $this->assertSame(3, $job->tries);
         $this->assertSame(1800, $job->timeout);
         $this->assertGreaterThan($job->timeout, config('queue.connections.redis_estimate_generation.retry_after'));
+        $this->assertGreaterThanOrEqual($job->tries, $productionSupervisor['tries']);
+        $this->assertGreaterThanOrEqual($job->timeout, $productionSupervisor['timeout']);
+        $this->assertGreaterThanOrEqual($job->tries, $localSupervisor['tries']);
+        $this->assertGreaterThanOrEqual($job->timeout, $localSupervisor['timeout']);
     }
 
     public function test_generation_job_marks_session_failed_when_generation_fails(): void
