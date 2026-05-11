@@ -215,7 +215,17 @@ class AuthorizationService
                 throw new \InvalidArgumentException("РЎРёСЃС‚РµРјРЅР°СЏ СЂРѕР»СЊ '$roleSlug' РЅРµ СЃСѓС‰РµСЃС‚РІСѓРµС‚");
             }
         } else {
-            if (!OrganizationCustomRole::where('slug', $roleSlug)->exists()) {
+            $organizationId = $context->type === AuthorizationContext::TYPE_ORGANIZATION
+                ? $context->resource_id
+                : null;
+
+            if (
+                !$organizationId
+                || !OrganizationCustomRole::where('slug', $roleSlug)
+                    ->where('organization_id', $organizationId)
+                    ->active()
+                    ->exists()
+            ) {
                 $this->logging->security('auth.role.assign.failed', [
                     'target_user_id' => $user->id,
                     'target_email' => $user->email,

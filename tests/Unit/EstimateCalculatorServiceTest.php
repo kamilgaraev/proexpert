@@ -5,6 +5,8 @@ namespace Tests\Unit\BusinessModules\Features\BudgetEstimates\Services\Calculati
 use App\BusinessModules\Features\BudgetEstimates\Services\Calculation\EstimateCalculatorService;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
+use App\Models\Organization;
+use App\Models\Project;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -15,8 +17,20 @@ class EstimateCalculatorServiceTest extends TestCase
     public function test_recalculate_updates_totals_correctly()
     {
         // 1. Arrange
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create([
+            'organization_id' => $organization->id,
+        ]);
+
         /** @var Estimate $estimate */
-        $estimate = Estimate::factory()->create([
+        $estimate = Estimate::create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'number' => 'EST-TEST-001',
+            'name' => 'Test estimate',
+            'type' => 'local',
+            'status' => 'draft',
+            'estimate_date' => now()->toDateString(),
             'vat_rate' => 0,
             'overhead_rate' => 0,
             'profit_rate' => 0,
@@ -24,8 +38,10 @@ class EstimateCalculatorServiceTest extends TestCase
 
         // Item 1: Base Price with Index
         // Base: 100, Qty: 10, Index: 5 -> Current: 5000
-        EstimateItem::factory()->create([
+        EstimateItem::create([
             'estimate_id' => $estimate->id,
+            'position_number' => '1',
+            'name' => 'Indexed work',
             'quantity' => 10,
             'base_unit_price' => 100,
             'price_index' => 5,
@@ -40,8 +56,10 @@ class EstimateCalculatorServiceTest extends TestCase
 
         // Item 2: Pure Current Price (No Base)
         // Price: 200, Qty: 5 -> Current: 1000
-        EstimateItem::factory()->create([
+        EstimateItem::create([
             'estimate_id' => $estimate->id,
+            'position_number' => '2',
+            'name' => 'Current work',
             'quantity' => 5,
             'base_unit_price' => 0,
             'price_index' => 0,

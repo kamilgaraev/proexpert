@@ -5,26 +5,18 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Admin\ProjectPulse;
 
 use App\BusinessModules\Features\AIAssistant\Models\ProjectPulseReport;
-use App\Models\Organization;
 use App\Models\Project;
-use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
 class ProjectPulseReportTest extends TestCase
 {
     public function test_owner_can_load_current_project_pulse_report(): void
     {
-        $this->withoutMiddleware();
-
-        $organization = Organization::factory()->create();
-        $user = User::factory()->create([
-            'current_organization_id' => $organization->id,
-        ]);
-        $organization->users()->attach($user->id, [
-            'is_owner' => true,
-            'is_active' => true,
-        ]);
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $organization = $context->organization;
+        $user = $context->user;
         $project = Project::factory()->create([
             'organization_id' => $organization->id,
             'name' => 'ЖК Северный',
@@ -59,10 +51,8 @@ class ProjectPulseReportTest extends TestCase
             'generated_at' => now(),
         ]);
 
-        $response = $this->actingAs($user, 'api_admin')
-            ->withHeaders([
-                'X-Organization-Id' => (string) $organization->id,
-            ])
+        $response = $this
+            ->withHeaders($context->authHeaders())
             ->getJson('/api/v1/admin/ai-assistant/project-pulse/current?project_id=' . $project->id);
 
         $response->assertOk();
@@ -89,16 +79,9 @@ class ProjectPulseReportTest extends TestCase
 
     public function test_owner_can_open_project_pulse_report_from_history(): void
     {
-        $this->withoutMiddleware();
-
-        $organization = Organization::factory()->create();
-        $user = User::factory()->create([
-            'current_organization_id' => $organization->id,
-        ]);
-        $organization->users()->attach($user->id, [
-            'is_owner' => true,
-            'is_active' => true,
-        ]);
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $organization = $context->organization;
+        $user = $context->user;
         $project = Project::factory()->create([
             'organization_id' => $organization->id,
             'name' => 'ЖК Северный',
@@ -133,10 +116,8 @@ class ProjectPulseReportTest extends TestCase
             'generated_at' => now(),
         ]);
 
-        $response = $this->actingAs($user, 'api_admin')
-            ->withHeaders([
-                'X-Organization-Id' => (string) $organization->id,
-            ])
+        $response = $this
+            ->withHeaders($context->authHeaders())
             ->getJson('/api/v1/admin/ai-assistant/project-pulse/reports/' . $report->id);
 
         $response->assertOk();
@@ -147,21 +128,11 @@ class ProjectPulseReportTest extends TestCase
 
     public function test_generate_stores_project_pulse_report(): void
     {
-        $this->withoutMiddleware();
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $organization = $context->organization;
 
-        $organization = Organization::factory()->create();
-        $user = User::factory()->create([
-            'current_organization_id' => $organization->id,
-        ]);
-        $organization->users()->attach($user->id, [
-            'is_owner' => true,
-            'is_active' => true,
-        ]);
-
-        $response = $this->actingAs($user, 'api_admin')
-            ->withHeaders([
-                'X-Organization-Id' => (string) $organization->id,
-            ])
+        $response = $this
+            ->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/ai-assistant/project-pulse/generate', [
                 'period' => 'today',
                 'use_ai' => false,
@@ -177,37 +148,11 @@ class ProjectPulseReportTest extends TestCase
 
     public function test_project_pulse_contains_approved_purchase_request_without_order(): void
     {
-        $this->withoutMiddleware();
-
-        $organization = Organization::factory()->create();
-        $user = User::factory()->create([
-            'current_organization_id' => $organization->id,
-        ]);
-        $organization->users()->attach($user->id, [
-            'is_owner' => true,
-            'is_active' => true,
-        ]);
-        $project = Project::factory()->create([
-            'organization_id' => $organization->id,
-            'name' => 'Строительство склада Литер А',
-            'status' => 'active',
-        ]);
-
-        $siteRequestId = DB::table('site_requests')->insertGetId([
-            'organization_id' => $organization->id,
-            'project_id' => $project->id,
-            'user_id' => $user->id,
-            'title' => 'Материалы для склада',
-            'status' => 'submitted',
-            'priority' => 'high',
-            'request_type' => 'material',
-            'created_at' => now()->subDays(2),
-            'updated_at' => now()->subDays(2),
-        ]);
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $organization = $context->organization;
 
         $purchaseRequestId = DB::table('purchase_requests')->insertGetId([
             'organization_id' => $organization->id,
-            'site_request_id' => $siteRequestId,
             'request_number' => '33-202604-0001',
             'status' => 'approved',
             'budget_amount' => 35000,
@@ -215,15 +160,12 @@ class ProjectPulseReportTest extends TestCase
             'updated_at' => now()->subDays(2),
         ]);
 
-        $response = $this->actingAs($user, 'api_admin')
-            ->withHeaders([
-                'X-Organization-Id' => (string) $organization->id,
-            ])
+        $response = $this
+            ->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/ai-assistant/project-pulse/generate', [
-                'project_id' => $project->id,
                 'period' => 'today',
                 'use_ai' => false,
-        ]);
+            ]);
 
         $response->assertOk();
         $fact = collect($response->json('data.facts'))
@@ -234,5 +176,39 @@ class ProjectPulseReportTest extends TestCase
         self::assertSame('/procurement/purchase-requests/' . $purchaseRequestId, $fact['related_entity']['route']);
         self::assertSame('/procurement/purchase-requests/' . $purchaseRequestId, $fact['primary_action']['route']);
         self::assertStringContainsString('33-202604-0001', $fact['text']);
+    }
+
+    public function test_project_pulse_does_not_mix_unlinked_purchase_requests_into_project_scope(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $organization = $context->organization;
+        $project = Project::factory()->create([
+            'organization_id' => $organization->id,
+            'name' => 'Строительство склада Литер А',
+            'status' => 'active',
+        ]);
+
+        $purchaseRequestId = DB::table('purchase_requests')->insertGetId([
+            'organization_id' => $organization->id,
+            'request_number' => '33-202604-0002',
+            'status' => 'approved',
+            'budget_amount' => 35000,
+            'created_at' => now()->subDays(2),
+            'updated_at' => now()->subDays(2),
+        ]);
+
+        $response = $this
+            ->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/ai-assistant/project-pulse/generate', [
+                'project_id' => $project->id,
+                'period' => 'today',
+                'use_ai' => false,
+            ]);
+
+        $response->assertOk();
+        $fact = collect($response->json('data.facts'))
+            ->firstWhere('id', 'purchase_request:' . $purchaseRequestId . ':no_order');
+
+        self::assertNull($fact);
     }
 }

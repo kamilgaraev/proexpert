@@ -38,14 +38,23 @@ class ProjectPulseProcurementFactSource implements ProjectPulseFactSourceInterfa
 
     private function approvedRequestsWithoutOrders(ProjectPulseContext $context): Collection
     {
+        $hasDirectProject = $this->hasColumn('purchase_requests', 'project_id');
+        $hasSiteRequestProject = $this->hasTable('site_requests')
+            && $this->hasColumn('purchase_requests', 'site_request_id')
+            && $this->hasColumn('site_requests', 'project_id');
+
+        if ($context->projectId !== null && !$hasDirectProject && !$hasSiteRequestProject) {
+            return $this->empty();
+        }
+
         $query = $this->table($context, 'purchase_requests')
             ->whereIn('purchase_requests.status', ['approved', 'agreed', 'confirmed'])
             ->limit($this->limit());
 
-        if ($this->hasTable('site_requests') && $this->hasColumn('purchase_requests', 'site_request_id')) {
+        if ($hasSiteRequestProject) {
             $query->leftJoin('site_requests', 'site_requests.id', '=', 'purchase_requests.site_request_id')
                 ->leftJoin('projects', 'projects.id', '=', 'site_requests.project_id')
-                ->when($context->projectId !== null && $this->hasColumn('site_requests', 'project_id'), fn (Builder $query) => $query->where('site_requests.project_id', $context->projectId));
+                ->when($context->projectId !== null, fn (Builder $query) => $query->where('site_requests.project_id', $context->projectId));
         }
 
         if ($this->hasTable('purchase_orders') && $this->hasColumn('purchase_orders', 'purchase_request_id')) {
@@ -68,7 +77,7 @@ class ProjectPulseProcurementFactSource implements ProjectPulseFactSourceInterfa
             $columns[] = 'purchase_requests.budget_amount';
         }
 
-        if ($this->hasTable('site_requests') && $this->hasColumn('site_requests', 'project_id')) {
+        if ($hasSiteRequestProject) {
             $columns[] = 'site_requests.project_id';
             $columns[] = 'projects.name as project_name';
         }

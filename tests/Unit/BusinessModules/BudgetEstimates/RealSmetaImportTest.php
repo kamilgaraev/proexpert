@@ -8,13 +8,17 @@ use App\Models\EstimateSection;
 use App\Models\EstimateItem;
 use App\Models\Organization;
 use App\Models\User;
+use App\Jobs\ProcessEstimateImportJob;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportPipelineService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class RealSmetaImportTest extends TestCase
 {
+    use RefreshDatabase;
+
     /**
      * Этот тест предназначен для ручного запуска пользователем на реальных данных.
      * Он проверяет, что файл импортируется с сохранением иерархии разделов.
@@ -32,6 +36,8 @@ class RealSmetaImportTest extends TestCase
         }
 
         // 1. Подготовка контекста (используем существующие или создаем новые)
+        Storage::fake('s3');
+
         $user = User::first() ?: User::factory()->create();
         $organization = Organization::first() ?: Organization::factory()->create();
         
@@ -64,8 +70,15 @@ class RealSmetaImportTest extends TestCase
         
         $result = $importService->execute($fileId, $mapping, $settings);
 
-        $this->assertEquals('completed', $result['status']);
-        $estimateId = $result['estimate_id'];
+        $this->assertEquals('queued', $result['status']);
+
+        (new ProcessEstimateImportJob($fileId, []))->handle(app(ImportPipelineService::class));
+
+        $session = \App\Models\ImportSession::query()->findOrFail($fileId);
+        $this->assertEquals('completed', $session->status, $session->error_message ?? '');
+
+        $estimateId = $session->stats['estimate_id'] ?? null;
+        $this->assertNotNull($estimateId);
         
         $estimate = Estimate::with(['sections', 'items'])->find($estimateId);
         

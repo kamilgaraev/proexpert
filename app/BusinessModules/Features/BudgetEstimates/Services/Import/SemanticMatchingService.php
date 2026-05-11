@@ -29,6 +29,10 @@ class SemanticMatchingService
             return $cached;
         }
 
+        if (DB::connection()->getDriverName() === 'sqlite') {
+            return [];
+        }
+
         $query = DB::table('normative_rates')
             ->selectRaw('id, code, name, measurement_unit, base_price, similarity(name, ?) AS sim', [$name])
             ->whereRaw('similarity(name, ?) > ?', [$name, self::MIN_SIMILARITY])
@@ -71,6 +75,10 @@ class SemanticMatchingService
 
         if ($cached = Cache::get($cacheKey)) {
             return $cached;
+        }
+
+        if (DB::connection()->getDriverName() === 'sqlite') {
+            return [];
         }
 
         $query = DB::table('materials')

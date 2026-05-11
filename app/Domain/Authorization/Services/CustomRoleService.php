@@ -156,6 +156,13 @@ class CustomRoleService
             throw new \InvalidArgumentException('Нельзя назначить неактивную роль');
         }
 
+        if (
+            $context->type !== AuthorizationContext::TYPE_ORGANIZATION
+            || (int) $context->resource_id !== (int) $role->organization_id
+        ) {
+            throw new \InvalidArgumentException(trans_message('permissions.invalid_organization_context'));
+        }
+
         return $this->authService->assignRole(
             $user,
             $role->slug,

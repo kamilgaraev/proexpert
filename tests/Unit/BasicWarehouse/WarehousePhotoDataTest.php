@@ -11,6 +11,7 @@ use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\Models\File;
 use App\Models\Material;
 use App\Models\Organization;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
@@ -24,6 +25,9 @@ class WarehousePhotoDataTest extends TestCase
         Storage::fake('s3');
 
         $organization = Organization::factory()->create();
+        $user = User::factory()->create([
+            'current_organization_id' => $organization->id,
+        ]);
 
         $warehouse = OrganizationWarehouse::create([
             'organization_id' => $organization->id,
@@ -61,6 +65,7 @@ class WarehousePhotoDataTest extends TestCase
             'organization_id' => $organization->id,
             'fileable_id' => $gallery->id,
             'fileable_type' => WarehouseItemGallery::class,
+            'user_id' => $user->id,
             'name' => 'balance-photo.jpg',
             'original_name' => 'balance-photo.jpg',
             'path' => 'org-' . $organization->id . '/warehouse/balance-photo.jpg',
@@ -75,6 +80,7 @@ class WarehousePhotoDataTest extends TestCase
             'organization_id' => $organization->id,
             'fileable_id' => $material->id,
             'fileable_type' => Material::class,
+            'user_id' => $user->id,
             'name' => 'asset-photo.jpg',
             'original_name' => 'asset-photo.jpg',
             'path' => 'org-' . $organization->id . '/warehouse/asset-photo.jpg',

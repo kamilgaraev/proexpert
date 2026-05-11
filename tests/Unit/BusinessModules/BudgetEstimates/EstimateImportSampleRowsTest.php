@@ -3,14 +3,19 @@
 namespace Tests\Unit\BusinessModules\BudgetEstimates;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateImportService;
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Log;
-use Tests\TestCase;
+use App\Models\ImportSession;
+use App\Models\Organization;
+use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Storage;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use Tests\TestCase;
 
 class EstimateImportSampleRowsTest extends TestCase
 {
+    use RefreshDatabase;
+
     public function test_sample_rows_are_indexed_arrays_and_handle_columns_beyond_z()
     {
         // 1. Create a temporary Excel file with data spanning beyond column Z
@@ -47,20 +52,24 @@ class EstimateImportSampleRowsTest extends TestCase
         $writer = new Xlsx($spreadsheet);
         $writer->save($filePath);
 
-        // 2. Mock Cache to return file data
-        $fileId = 'test-file-id';
-        Cache::shouldReceive('get')
-            ->with("estimate_import_file:{$fileId}")
-            ->andReturn([
-                'file_path' => $filePath,
-                'file_name' => $fileName,
-                'file_size' => filesize($filePath),
-                'user_id' => 1, // Dummy
-                'organization_id' => 1, // Dummy
-            ]);
+        Storage::fake('s3');
+        $storedPath = 'org-1/estimate-imports/' . $fileName;
+        Storage::disk('s3')->put($storedPath, file_get_contents($filePath));
 
-        // Mock other cache calls that detectFormat might make
-        Cache::shouldReceive('put')->andReturn(true);
+        $organization = Organization::factory()->create();
+        $user = User::factory()->create();
+
+        $session = ImportSession::create([
+            'user_id' => $user->id,
+            'organization_id' => $organization->id,
+            'status' => 'uploading',
+            'file_path' => $storedPath,
+            'file_name' => $fileName,
+            'file_size' => filesize($filePath),
+            'file_format' => 'xlsx',
+            'options' => [],
+            'stats' => ['progress' => 0],
+        ]);
 
         // 3. Resolve Service
         /** @var EstimateImportService $service */
@@ -68,7 +77,7 @@ class EstimateImportSampleRowsTest extends TestCase
 
         // 4. Call detectFormat
         try {
-            $result = $service->detectFormat($fileId);
+            $result = $service->detectFormat($session->id);
             
             // 5. Assertions
             $this->assertArrayHasKey('sample_rows', $result);

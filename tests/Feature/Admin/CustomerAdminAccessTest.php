@@ -108,9 +108,10 @@ class CustomerAdminAccessTest extends TestCase
             ->getJson("/api/v1/admin/dashboard/evm/forecast?project_id={$project->id}");
 
         $forecastResponse->assertOk()
-            ->assertJsonPath('success', true)
-            ->assertJsonPath('data.eac', 1050000.0)
-            ->assertJsonPath('data.vac', -50000.0);
+            ->assertJsonPath('success', true);
+
+        $this->assertEquals(1050000.0, $forecastResponse->json('data.eac'));
+        $this->assertEquals(-50000.0, $forecastResponse->json('data.vac'));
     }
 
     public function test_project_owner_keeps_admin_evm_access(): void
@@ -181,7 +182,10 @@ class CustomerAdminAccessTest extends TestCase
 
     private function createOrganizationUser(string $email): array
     {
-        $organization = Organization::factory()->create();
+        $organization = Organization::factory()->create([
+            'capabilities' => ['general_contracting'],
+            'primary_business_type' => 'general_contracting',
+        ]);
         $user = User::factory()->create([
             'email' => $email,
             'current_organization_id' => $organization->id,

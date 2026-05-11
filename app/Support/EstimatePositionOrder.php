@@ -17,6 +17,20 @@ class EstimatePositionOrder
     ): EloquentBuilder|QueryBuilder|Relation {
         $direction = strtolower($direction) === 'desc' ? 'DESC' : 'ASC';
         $trimmed = "TRIM(COALESCE({$column}, ''))";
+
+        $driver = null;
+        if ($query instanceof QueryBuilder) {
+            $driver = $query->getConnection()->getDriverName();
+        } elseif ($query instanceof EloquentBuilder) {
+            $driver = $query->getModel()->getConnection()->getDriverName();
+        } elseif ($query instanceof Relation) {
+            $driver = $query->getRelated()->getConnection()->getDriverName();
+        }
+
+        if ($driver === 'sqlite') {
+            return $query->orderByRaw("NULLIF({$trimmed}, '') {$direction}");
+        }
+
         $isHierarchicalNumber = "{$trimmed} ~ '^[0-9]+([.][0-9]+)*$'";
 
         return $query

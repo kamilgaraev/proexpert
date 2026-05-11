@@ -4,14 +4,14 @@ namespace Tests\Unit\BusinessModules\Core\Payments;
 
 use App\BusinessModules\Core\MultiOrganization\Contracts\OrganizationScopeInterface;
 use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
-use App\BusinessModules\Core\Payments\Enums\InvoiceStatus;
 use App\BusinessModules\Core\Payments\Enums\InvoiceType;
-use App\BusinessModules\Core\Payments\Models\Invoice;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\PaymentAccessControl;
 use App\Models\Organization;
 use App\Models\Project;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
 class PaymentAccessControlTest extends TestCase
@@ -43,10 +43,10 @@ class PaymentAccessControlTest extends TestCase
         ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_allows_access_to_own_invoice(): void
     {
-        $invoice = Invoice::factory()->create([
+        $invoice = $this->createPaymentDocument([
             'organization_id' => $this->org1->id,
         ]);
 
@@ -55,10 +55,10 @@ class PaymentAccessControlTest extends TestCase
         $this->assertTrue($hasAccess);
     }
 
-    /** @test */
+    #[Test]
     public function it_denies_access_to_other_organization_invoice(): void
     {
-        $invoice = Invoice::factory()->create([
+        $invoice = $this->createPaymentDocument([
             'organization_id' => $this->org1->id,
         ]);
 
@@ -67,7 +67,7 @@ class PaymentAccessControlTest extends TestCase
         $this->assertFalse($hasAccess);
     }
 
-    /** @test */
+    #[Test]
     public function it_allows_access_to_project_participant(): void
     {
         // Добавить org2 как участника проекта
@@ -79,7 +79,7 @@ class PaymentAccessControlTest extends TestCase
             'updated_at' => now(),
         ]);
 
-        $invoice = Invoice::factory()->create([
+        $invoice = $this->createPaymentDocument([
             'organization_id' => $this->org1->id,
             'project_id' => $this->project->id,
         ]);
@@ -89,10 +89,10 @@ class PaymentAccessControlTest extends TestCase
         $this->assertTrue($hasAccess, 'Участник проекта должен иметь доступ к счетам проекта');
     }
 
-    /** @test */
+    #[Test]
     public function it_denies_access_to_non_project_participant(): void
     {
-        $invoice = Invoice::factory()->create([
+        $invoice = $this->createPaymentDocument([
             'organization_id' => $this->org1->id,
             'project_id' => $this->project->id,
         ]);
@@ -102,10 +102,10 @@ class PaymentAccessControlTest extends TestCase
         $this->assertFalse($hasAccess, 'Не участник проекта не должен иметь доступ');
     }
 
-    /** @test */
+    #[Test]
     public function it_allows_access_to_counterparty(): void
     {
-        $invoice = Invoice::factory()->create([
+        $invoice = $this->createPaymentDocument([
             'organization_id' => $this->org1->id,
             'counterparty_organization_id' => $this->org2->id,
         ]);
@@ -115,16 +115,20 @@ class PaymentAccessControlTest extends TestCase
         $this->assertTrue($hasAccess, 'Контрагент должен видеть счета, где он указан');
     }
 
-    /** @test */
+    #[Test]
     public function apply_access_scope_filters_correctly(): void
     {
         // Счета org1
-        Invoice::factory()->count(3)->create(['organization_id' => $this->org1->id]);
+        for ($i = 0; $i < 3; $i++) {
+            $this->createPaymentDocument(['organization_id' => $this->org1->id]);
+        }
         
         // Счета org2 (не должны быть доступны)
-        Invoice::factory()->count(2)->create(['organization_id' => $this->org2->id]);
+        for ($i = 0; $i < 2; $i++) {
+            $this->createPaymentDocument(['organization_id' => $this->org2->id]);
+        }
 
-        $query = Invoice::query();
+        $query = PaymentDocument::query();
         $query = $this->accessControl->applyAccessScope($query, $this->org1->id);
         
         $accessibleInvoices = $query->get();
@@ -133,7 +137,7 @@ class PaymentAccessControlTest extends TestCase
         $this->assertTrue($accessibleInvoices->every(fn($inv) => $inv->organization_id === $this->org1->id));
     }
 
-    /** @test */
+    #[Test]
     public function it_can_create_invoice_for_own_organization(): void
     {
         $data = [
@@ -146,7 +150,7 @@ class PaymentAccessControlTest extends TestCase
         $this->assertTrue($canCreate);
     }
 
-    /** @test */
+    #[Test]
     public function it_cannot_create_invoice_for_other_organization(): void
     {
         $data = [
@@ -157,6 +161,21 @@ class PaymentAccessControlTest extends TestCase
         $canCreate = $this->accessControl->canCreateInvoice($this->org1->id, $data);
 
         $this->assertFalse($canCreate);
+    }
+
+    private function createPaymentDocument(array $attributes = []): PaymentDocument
+    {
+        return PaymentDocument::create(array_merge([
+            'organization_id' => $this->org1->id,
+            'document_type' => 'invoice',
+            'document_number' => 'PAY-' . uniqid('', true),
+            'document_date' => now()->toDateString(),
+            'direction' => InvoiceDirection::OUTGOING->value,
+            'invoice_type' => InvoiceType::OTHER->value,
+            'amount' => 10000,
+            'currency' => 'RUB',
+            'status' => 'draft',
+        ], $attributes));
     }
 }
 

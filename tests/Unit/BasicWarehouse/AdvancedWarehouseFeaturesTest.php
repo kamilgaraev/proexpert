@@ -12,6 +12,7 @@ use App\Models\Material;
 use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
 /**
@@ -63,7 +64,7 @@ class AdvancedWarehouseFeaturesTest extends TestCase
         ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_reserve_assets()
     {
         $result = $this->service->reserveAssets(
@@ -96,7 +97,7 @@ class AdvancedWarehouseFeaturesTest extends TestCase
         $this->assertEquals(30, $balance->reserved_quantity);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_unreserve_assets()
     {
         // Резервируем
@@ -127,7 +128,7 @@ class AdvancedWarehouseFeaturesTest extends TestCase
         $this->assertEquals(0, $balance->reserved_quantity);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_create_auto_reorder_rule()
     {
         $result = $this->service->createAutoReorderRule(
@@ -154,7 +155,7 @@ class AdvancedWarehouseFeaturesTest extends TestCase
         ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_check_auto_reorder()
     {
         // Создаем правило
@@ -184,7 +185,7 @@ class AdvancedWarehouseFeaturesTest extends TestCase
         $this->assertNotEmpty($result['orders']);
     }
 
-    /** @test */
+    #[Test]
     public function it_calculates_turnover_analytics()
     {
         // Создаем движения
@@ -210,7 +211,7 @@ class AdvancedWarehouseFeaturesTest extends TestCase
         $this->assertNotEmpty($result['assets']);
     }
 
-    /** @test */
+    #[Test]
     public function it_generates_forecast()
     {
         // Создаем исторические данные
@@ -235,7 +236,7 @@ class AdvancedWarehouseFeaturesTest extends TestCase
         $this->assertNotEmpty($result['forecasts']);
     }
 
-    /** @test */
+    #[Test]
     public function it_performs_abc_xyz_analysis()
     {
         // Создаем движения с разной стоимостью

@@ -9,6 +9,7 @@ use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\Models\Material;
 use App\Models\Organization;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
 /**
@@ -49,7 +50,7 @@ class WarehouseOperationsTest extends TestCase
         ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_receive_assets()
     {
         $result = $this->warehouseService->receiveAsset(
@@ -76,7 +77,7 @@ class WarehouseOperationsTest extends TestCase
         ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_write_off_assets()
     {
         // Сначала оприходуем
@@ -108,7 +109,7 @@ class WarehouseOperationsTest extends TestCase
         ]);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_transfer_assets_between_warehouses()
     {
         $warehouse2 = OrganizationWarehouse::create([
@@ -154,7 +155,7 @@ class WarehouseOperationsTest extends TestCase
         $this->assertEquals(40, $toBalance->available_quantity);
     }
 
-    /** @test */
+    #[Test]
     public function it_throws_exception_when_insufficient_quantity()
     {
         $this->expectException(\InvalidArgumentException::class);

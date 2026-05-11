@@ -55,12 +55,17 @@ class ProjectParticipantsControllerTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('success', true)
-            ->assertJsonPath('data.can_manage', true)
-            ->assertJsonPath('data.participants.0.capabilities.0', 'design');
+            ->assertJsonPath('data.can_manage', true);
+
+        $designerParticipant = collect($response->json('data.participants'))
+            ->firstWhere('id', $designerOrganization->id);
+
+        $this->assertNotNull($designerParticipant);
+        $this->assertSame(['design'], $designerParticipant['capabilities']);
 
         $this->assertSame(
             ['customer', 'designer', 'observer'],
-            $response->json('data.participants.0.allowed_project_roles')
+            $designerParticipant['allowed_project_roles']
         );
     }
 
@@ -77,7 +82,7 @@ class ProjectParticipantsControllerTest extends TestCase
                 'role' => 'general_contractor',
             ]);
 
-        $response->assertStatus(400)
+        $response->assertStatus(422)
             ->assertJsonPath('success', false);
 
         $this->assertStringContainsString(

@@ -9,7 +9,7 @@ use App\Models\Estimate;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
 use Mockery;
-use PHPUnit\Framework\TestCase;
+use Tests\TestCase;
 
 class EstimateCacheServiceTest extends TestCase
 {

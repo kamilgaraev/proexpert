@@ -117,6 +117,17 @@ $app = Application::configure(basePath: dirname(__DIR__))
         });
 
         // Ошибки авторизации -> logs/auth/auth.log
+        $exceptions->render(function (\Illuminate\Auth\AuthenticationException $e, Request $request) {
+            if (str_starts_with($request->path(), 'api/v1/admin/')) {
+                return \App\Http\Responses\AdminResponse::error(
+                    trans_message('errors.unauthenticated'),
+                    401
+                );
+            }
+
+            return null;
+        });
+
         $exceptions->report(function (\Illuminate\Auth\Access\AuthorizationException $e): void {
             Log::channel('auth')->warning('Authorization failed', [
                 'message' => $e->getMessage(),

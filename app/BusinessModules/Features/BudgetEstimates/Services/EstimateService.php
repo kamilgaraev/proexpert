@@ -345,6 +345,37 @@ class EstimateService
         // Используем атомарный инкремент в отдельной таблице
         // Это работает корректно даже с Laravel Octane и connection pooling
         $newNumber = DB::transaction(function () use ($organizationId, $year) {
+            if (DB::connection()->getDriverName() === 'sqlite') {
+                $counter = DB::table('estimate_number_counters')
+                    ->where('organization_id', $organizationId)
+                    ->where('year', $year)
+                    ->first();
+
+                if ($counter) {
+                    $nextNumber = (int) $counter->last_number + 1;
+
+                    DB::table('estimate_number_counters')
+                        ->where('organization_id', $organizationId)
+                        ->where('year', $year)
+                        ->update([
+                            'last_number' => $nextNumber,
+                            'updated_at' => now(),
+                        ]);
+
+                    return $nextNumber;
+                }
+
+                DB::table('estimate_number_counters')->insert([
+                    'organization_id' => $organizationId,
+                    'year' => $year,
+                    'last_number' => 1,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
+                return 1;
+            }
+
             // Используем raw SQL для атомарного increment с INSERT ON CONFLICT
             $result = DB::selectOne("
                 INSERT INTO estimate_number_counters (organization_id, year, last_number, created_at, updated_at)

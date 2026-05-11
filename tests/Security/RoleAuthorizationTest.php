@@ -16,14 +16,11 @@ beforeEach(function () {
     Cache::flush();
 });
 
-it('organization_owner role grants view estimates permission', function () {
+it('organization_owner role grants organization view permission', function () {
     $org = Organization::factory()->create();
     $user = User::factory()->create(['current_organization_id' => $org->id]);
 
-    $context = AuthorizationContext::firstOrCreate(
-        ['type' => AuthorizationContext::TYPE_ORGANIZATION, 'resource_id' => $org->id],
-        ['parent_context_id' => null]
-    );
+    $context = AuthorizationContext::getOrganizationContext($org->id);
 
     UserRoleAssignment::create([
         'user_id' => $user->id,
@@ -35,7 +32,7 @@ it('organization_owner role grants view estimates permission', function () {
 
     $authService = app(AuthorizationService::class);
 
-    $canView = $authService->can($user, 'estimates.view', [
+    $canView = $authService->can($user, 'organization.view', [
         'organization_id' => $org->id,
     ]);
 
@@ -57,10 +54,7 @@ it('user with organization_owner role can access lk interface', function () {
     $org = Organization::factory()->create();
     $user = User::factory()->create(['current_organization_id' => $org->id]);
 
-    $context = AuthorizationContext::firstOrCreate(
-        ['type' => AuthorizationContext::TYPE_ORGANIZATION, 'resource_id' => $org->id],
-        ['parent_context_id' => null]
-    );
+    $context = AuthorizationContext::getOrganizationContext($org->id);
 
     UserRoleAssignment::create([
         'user_id' => $user->id,
@@ -81,10 +75,7 @@ it('revoked role no longer grants permissions', function () {
     $org = Organization::factory()->create();
     $user = User::factory()->create(['current_organization_id' => $org->id]);
 
-    $context = AuthorizationContext::firstOrCreate(
-        ['type' => AuthorizationContext::TYPE_ORGANIZATION, 'resource_id' => $org->id],
-        ['parent_context_id' => null]
-    );
+    $context = AuthorizationContext::getOrganizationContext($org->id);
 
     $assignment = UserRoleAssignment::create([
         'user_id' => $user->id,
@@ -96,14 +87,14 @@ it('revoked role no longer grants permissions', function () {
 
     $authService = app(AuthorizationService::class);
 
-    $canBefore = $authService->can($user, 'estimates.view', [
+    $canBefore = $authService->can($user, 'organization.view', [
         'organization_id' => $org->id,
     ]);
 
     $assignment->update(['is_active' => false]);
     Cache::flush();
 
-    $canAfter = $authService->can($user, 'estimates.view', [
+    $canAfter = $authService->can($user, 'organization.view', [
         'organization_id' => $org->id,
     ]);
 
@@ -117,10 +108,7 @@ it('custom role in organization A does not grant access in organization B', func
 
     $user = User::factory()->create(['current_organization_id' => $orgA->id]);
 
-    $contextA = AuthorizationContext::firstOrCreate(
-        ['type' => AuthorizationContext::TYPE_ORGANIZATION, 'resource_id' => $orgA->id],
-        ['parent_context_id' => null]
-    );
+    $contextA = AuthorizationContext::getOrganizationContext($orgA->id);
 
     UserRoleAssignment::create([
         'user_id' => $user->id,
@@ -133,7 +121,7 @@ it('custom role in organization A does not grant access in organization B', func
     $authService = app(AuthorizationService::class);
 
     $canInOrgA = $authService->hasRole($user, 'organization_owner', $contextA->id);
-    $canInOrgB = $authService->can($user, 'estimates.view', ['organization_id' => $orgB->id]);
+    $canInOrgB = $authService->can($user, 'organization.view', ['organization_id' => $orgB->id]);
 
     expect($canInOrgA)->toBeTrue()
         ->and($canInOrgB)->toBeFalse();

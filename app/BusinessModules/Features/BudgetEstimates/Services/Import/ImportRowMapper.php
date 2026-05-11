@@ -404,6 +404,8 @@ class ImportRowMapper
         $matCandidate = $this->parseFloat($lines[4] ?? null);
         if ($matCandidate !== null && $matCandidate > 0) {
             $result['materials'] = $matCandidate;
+        } elseif ($result['total'] > 0) {
+            $result['materials'] = max(0.0, $result['total'] - $result['labor'] - $result['machinery']);
         }
 
         return $result;
@@ -428,24 +430,24 @@ class ImportRowMapper
         // STRICTER REGEX: Use boundaries to avoid matching inside other words
         // Match "НР" or "Накладные" only if not surrounded by letters.
         // Amount: "НР ... ( 1 234,45 руб )" -> support spaces in numbers
-        if (preg_match('/(?:^|[^а-яёa-z])(?:нр|накладные)(?![а-яёa-z]).*?\(\s*([\d\s]+[.,]?\d*)\s*(?:руб|р)/ui', $text, $matches)) {
+        if (preg_match('/(?:^|[^\p{L}])(?:нр|накладные)(?!\p{L}).*?\(\s*([\d\s]+[.,]?\d*)\s*(?:руб|р)/ui', $text, $matches)) {
              $attributes['overhead_amount'] = (float)str_replace([' ', ','], ['', '.'], $matches[1]);
         }
         
         // Rate: "НР ... 130%"
-        if (preg_match('/(?:^|[^а-яёa-z])(?:нр|накладные)(?![а-яёa-z]).*?(\d+[.,]?\d*)\s*%/ui', $text, $matches)) {
+        if (preg_match('/(?:^|[^\p{L}])(?:нр|накладные)(?!\p{L}).*?(\d+[.,]?\d*)\s*%/ui', $text, $matches)) {
              $attributes['overhead_rate'] = (float)str_replace(',', '.', $matches[1]);
         }
 
         // 3. Parse Profit (СП)
         // Fix for "справочно" matching "сп": Ensure SP is a whole word.
         // Amount: "СП ... ( 1 234,45 руб )"
-        if (preg_match('/(?:^|[^а-яёa-z])(?:сп|сметная)(?![а-яёa-z]).*?\(\s*([\d\s]+[.,]?\d*)\s*(?:руб|р)/ui', $text, $matches)) {
+        if (preg_match('/(?:^|[^\p{L}])(?:сп|сметная\s+прибыль)(?!\p{L}).*?\(\s*([\d\s]+[.,]?\d*)\s*(?:руб|р)/ui', $text, $matches)) {
              $attributes['profit_amount'] = (float)str_replace([' ', ','], ['', '.'], $matches[1]);
         }
         
         // Rate: "СП ... 89%"
-        if (preg_match('/(?:^|[^а-яёa-z])(?:сп|сметная)(?![а-яёa-z]).*?(\d+[.,]?\d*)\s*%/ui', $text, $matches)) {
+        if (preg_match('/(?:^|[^\p{L}])(?:сп|сметная\s+прибыль)(?!\p{L}).*?(\d+[.,]?\d*)\s*%/ui', $text, $matches)) {
              $attributes['profit_rate'] = (float)str_replace(',', '.', $matches[1]);
         }
 

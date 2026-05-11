@@ -40,8 +40,8 @@ class ImportRowMapperTest extends TestCase
         
         $attributes = $method->invoke($mapper, $text);
         
-        $this->assertArrayNotHasKey('profit_rate', $attributes, 'Should not detect profit rate from supravochno');
-        $this->assertArrayNotHasKey('profit_amount', $attributes, 'Should not detect profit amount from supravochno');
+        $this->assertNull($attributes['profit_rate'], 'Should not detect profit rate from supravochno');
+        $this->assertNull($attributes['profit_amount'], 'Should not detect profit amount from supravochno');
     }
 
     public function testParseMultiLineValue()

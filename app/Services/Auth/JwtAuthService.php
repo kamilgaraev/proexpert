@@ -135,15 +135,19 @@ class JwtAuthService
                         ]);
                         
                         // РџСЂРѕРІРµСЂСЏРµРј, РµСЃС‚СЊ Р»Рё Сѓ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ РѕСЂРіР°РЅРёР·Р°С†РёРё
-                        $userOrganizations = $user->organizations()->get();
-                        if ($userOrganizations->isNotEmpty()) {
+                        $ownerOrganization = $user->organizations()
+                            ->wherePivot('is_owner', true)
+                            ->wherePivot('is_active', true)
+                            ->first();
+
+                        if ($ownerOrganization) {
                             Log::info('[JwtAuthService] User has organizations but no roles. Fixing role for first organization.', [
                                 'user_id' => $user->id,
-                                'organizations_count' => $userOrganizations->count()
+                                'organizations_count' => 1
                             ]);
                             
                             // Р‘РµСЂРµРј РїРµСЂРІСѓСЋ РѕСЂРіР°РЅРёР·Р°С†РёСЋ Рё РЅР°Р·РЅР°С‡Р°РµРј СЂРѕР»СЊ РІР»Р°РґРµР»СЊС†Р°
-                            $firstOrg = $userOrganizations->first();
+                            $firstOrg = $ownerOrganization;
                             
                             // РќР°Р·РЅР°С‡Р°РµРј СЂРѕР»СЊ РІР»Р°РґРµР»СЊС†Р° С‡РµСЂРµР· РЅРѕРІСѓСЋ СЃРёСЃС‚РµРјСѓ Р°РІС‚РѕСЂРёР·Р°С†РёРё
                             try {
@@ -161,6 +165,10 @@ class JwtAuthService
                                 ]);
                                 // РќРµ РєСЂРёС‚РёС‡РЅР°СЏ РѕС€РёР±РєР° - СЂРѕР»Рё Р±СѓРґСѓС‚ РЅР°Р·РЅР°С‡РµРЅС‹ РїРѕСЃР»Рµ СЃРѕР·РґР°РЅРёСЏ С‚Р°Р±Р»РёС†
                             }
+                        } else {
+                            Log::warning('[JwtAuthService] User has no roles and no owner organization. Role repair skipped.', [
+                                'user_id' => $user->id,
+                            ]);
                         }
                     }
 

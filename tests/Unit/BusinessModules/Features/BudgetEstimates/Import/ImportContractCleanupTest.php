@@ -14,42 +14,13 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\ExcelSi
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\GrandSmetaXMLParser;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\UniversalXmlParser;
 use Generator;
-use Illuminate\Config\Repository;
-use Illuminate\Container\Container;
-use Illuminate\Support\Facades\Facade;
-use PHPUnit\Framework\TestCase;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use Tests\TestCase;
 
 class ImportContractCleanupTest extends TestCase
 {
-    protected function setUp(): void
-    {
-        parent::setUp();
-
-        $container = new Container();
-        $container->instance('config', new Repository());
-        $container->instance('log', new class {
-            public function debug(string $message, array $context = []): void {}
-            public function info(string $message, array $context = []): void {}
-            public function warning(string $message, array $context = []): void {}
-            public function error(string $message, array $context = []): void {}
-        });
-
-        Container::setInstance($container);
-        Facade::setFacadeApplication($container);
-    }
-
-    protected function tearDown(): void
-    {
-        Facade::clearResolvedInstances();
-        Facade::setFacadeApplication(null);
-        Container::setInstance(null);
-
-        parent::tearDown();
-    }
-
     public function test_prohelper_adapter_implements_estimate_adapter_contract(): void
     {
         $adapter = new ProhelperAdapter();

@@ -282,6 +282,13 @@ class ProjectWorkTypesTest extends TestCase
 
     private function createSchema(): void
     {
+        Schema::disableForeignKeyConstraints();
+
+        Schema::dropIfExists('schedule_task_intervals');
+        Schema::dropIfExists('task_milestones');
+        Schema::dropIfExists('task_resources');
+        Schema::dropIfExists('task_dependencies');
+        Schema::dropIfExists('time_entries');
         Schema::dropIfExists('completed_works');
         Schema::dropIfExists('schedule_tasks');
         Schema::dropIfExists('project_schedules');
@@ -292,6 +299,8 @@ class ProjectWorkTypesTest extends TestCase
         Schema::dropIfExists('projects');
         Schema::dropIfExists('users');
         Schema::dropIfExists('organizations');
+
+        Schema::enableForeignKeyConstraints();
 
         Schema::create('organizations', function (Blueprint $table): void {
             $table->id();

@@ -6,46 +6,40 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     * 
-     * Создание таблицы заявок на закупку
-     * Связь с SiteRequest (заявка с объекта)
-     */
     public function up(): void
     {
-        Schema::create('purchase_requests', function (Blueprint $table) {
+        Schema::create('purchase_requests', function (Blueprint $table): void {
             $table->id();
 
-            // Связи
             $table->foreignId('organization_id')
                 ->constrained('organizations')
-                ->onDelete('cascade');
+                ->cascadeOnDelete();
 
-            $table->foreignId('site_request_id')
+            $table->unsignedBigInteger('site_request_id')
                 ->nullable()
-                ->constrained('site_requests')
-                ->onDelete('set null')
                 ->comment('Связь с заявкой с объекта');
+
+            if (Schema::hasTable('site_requests')) {
+                $table->foreign('site_request_id')
+                    ->references('id')
+                    ->on('site_requests')
+                    ->nullOnDelete();
+            }
 
             $table->foreignId('assigned_to')
                 ->nullable()
                 ->constrained('users')
-                ->onDelete('set null')
+                ->nullOnDelete()
                 ->comment('Исполнитель заявки на закупку');
 
-            // Основные поля
             $table->string('request_number')->unique()->comment('Номер заявки на закупку');
             $table->string('status', 50)->default('draft')->comment('Статус заявки');
             $table->text('notes')->nullable()->comment('Примечания');
-
-            // Метаданные
             $table->json('metadata')->nullable()->comment('Дополнительные данные');
 
             $table->timestamps();
             $table->softDeletes();
 
-            // Индексы
             $table->index(['organization_id', 'status']);
             $table->index('site_request_id');
             $table->index('assigned_to');
@@ -53,9 +47,6 @@ return new class extends Migration
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
         Schema::dropIfExists('purchase_requests');

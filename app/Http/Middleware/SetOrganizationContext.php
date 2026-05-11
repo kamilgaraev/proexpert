@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Http\Responses\AdminResponse;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -114,6 +115,13 @@ class SetOrganizationContext
                         'token_org_id' => $organizationIdFromToken,
                         'user_has_access' => false
                     ], 'warning');
+
+                    if ($request->is('api/v1/admin/*')) {
+                        return AdminResponse::error(
+                            trans_message('organization.access_denied'),
+                            Response::HTTP_FORBIDDEN
+                        );
+                    }
                 }
             }
 
