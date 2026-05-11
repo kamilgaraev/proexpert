@@ -83,6 +83,20 @@ class CompletedWorkFactService
                 $task = $this->scheduleTaskResolver->resolveForVolume($entry, $volume);
                 $payload = $this->buildPayloadFromJournalVolume($entry, $volume, $task);
 
+                if (!$payload['work_type_id']) {
+                    $completedWork = $worksByVolumeId->get($volume->id);
+
+                    if ($completedWork) {
+                        if ($completedWork->schedule_task_id) {
+                            $syncedTaskIds->push((int) $completedWork->schedule_task_id);
+                        }
+
+                        $completedWork->delete();
+                    }
+
+                    continue;
+                }
+
                 if ($payload['work_type_id'] && (int) ($volume->work_type_id ?? 0) !== (int) $payload['work_type_id']) {
                     $volume->forceFill(['work_type_id' => $payload['work_type_id']])->saveQuietly();
                     $volume->setAttribute('work_type_id', $payload['work_type_id']);
