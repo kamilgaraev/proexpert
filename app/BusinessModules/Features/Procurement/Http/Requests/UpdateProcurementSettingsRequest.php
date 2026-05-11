@@ -1,50 +1,49 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\Procurement\Http\Requests;
 
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\User;
 use Illuminate\Foundation\Http\FormRequest;
 
 class UpdateProcurementSettingsRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     */
     public function authorize(): bool
     {
-        return true;
+        $user = $this->user();
+        $organizationId = $this->attributes->get('current_organization_id');
+
+        if (!$user instanceof User || !$organizationId) {
+            return false;
+        }
+
+        return app(AuthorizationService::class)->can(
+            $user,
+            'procurement.settings.manage',
+            ['organization_id' => (int) $organizationId]
+        );
     }
 
-    /**
-     * Get the validation rules that apply to the request.
-     */
     public function rules(): array
     {
         return [
-            // Общие настройки
             'enable_notifications' => ['sometimes', 'boolean'],
             'auto_create_purchase_request' => ['sometimes', 'boolean'],
             'auto_create_invoice' => ['sometimes', 'boolean'],
             'auto_receive_to_warehouse' => ['sometimes', 'boolean'],
-
-            // Workflow
             'require_approval' => ['sometimes', 'boolean'],
             'require_supplier_selection' => ['sometimes', 'boolean'],
             'default_currency' => ['sometimes', 'string', 'in:RUB,USD,EUR'],
-
-            // Уведомления
             'notify_on_request_created' => ['sometimes', 'boolean'],
             'notify_on_order_sent' => ['sometimes', 'boolean'],
             'notify_on_proposal_received' => ['sometimes', 'boolean'],
             'notify_on_material_received' => ['sometimes', 'boolean'],
-
-            // Интеграции
             'enable_site_requests_integration' => ['sometimes', 'boolean'],
             'enable_payments_integration' => ['sometimes', 'boolean'],
             'enable_warehouse_integration' => ['sometimes', 'boolean'],
-
-            // Кеширование
             'cache_ttl' => ['sometimes', 'integer', 'min:60'],
-
             'approval_policy' => ['sometimes', 'array'],
             'approval_policy.non_lowest_delta_amount' => ['sometimes', 'numeric', 'min:0'],
             'approval_policy.non_lowest_delta_percent' => ['sometimes', 'numeric', 'min:0', 'max:100'],
@@ -58,9 +57,6 @@ class UpdateProcurementSettingsRequest extends FormRequest
         ];
     }
 
-    /**
-     * Get custom attributes for validator errors.
-     */
     public function attributes(): array
     {
         return [
