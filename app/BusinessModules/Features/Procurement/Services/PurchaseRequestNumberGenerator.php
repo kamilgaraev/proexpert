@@ -5,14 +5,10 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Procurement\Services;
 
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
-/**
- * Генератор уникальных номеров для заявок на закупку.
- * Гарантирует последовательную нумерацию (1, 2, 3...) в рамках месяца и организации.
- * Использует атомарный upsert для защиты от гонок (race conditions).
- */
 class PurchaseRequestNumberGenerator
 {
     private const DEFAULT_PREFIX = 'ЗЗ';
@@ -20,87 +16,71 @@ class PurchaseRequestNumberGenerator
     private const EQUIPMENT_PREFIX = 'ЗТ';
     private const PERSONNEL_PREFIX = 'ЗК';
 
-    /**
-     * Генерирует следующий номер заявки в формате: <префикс>-YYYYMM-XXXX
-     * Например: ЗМ-202604-0001
-     *
-     * @param int $organizationId ID организации
-     * @return string Сгенерированный номер
-     */
     public function generate(int $organizationId, ?SiteRequestTypeEnum $siteRequestType = null): string
     {
         $year = (int) date('Y');
         $month = (int) date('m');
-        
         $prefix = sprintf('%s-%d%02d-', $this->prefixForSiteRequestType($siteRequestType), $year, $month);
-
-        // Используем атомарный запрос для получения следующего номера.
-        // 1. Пытаемся вставить новую запись счетчика для текущего месяца.
-        //    Если записи нет, инициализируем её значением (MAX существующих номеров + 1) или 1.
-        // 2. Если запись уже есть (конфликт), обновляем её, увеличивая счетчик.
-        //    При этом используем GREATEST, чтобы убедиться, что счетчик не отстает от реальных данных в таблице заявок.
-        
-        // $prefixPattern для поиска в БД: 'ЗЗ-202602-%'
         $prefixPattern = $prefix . '%';
 
-        $sql = "
-            INSERT INTO purchase_request_number_counters (organization_id, year, month, last_number, created_at, updated_at)
-            
-            -- Вычисляем начальное значение
-            SELECT ?, ?, ?,
-                COALESCE(
-                    (SELECT MAX(CAST(SUBSTRING(request_number FROM '([0-9]+)$') AS INTEGER))
-                     FROM purchase_requests
-                     WHERE organization_id = ?
-                       AND request_number LIKE ?),
-                    0
-                ) + 1,
-                NOW(), NOW()
-                
-            ON CONFLICT (organization_id, year, month)
-            DO UPDATE SET
-                last_number = GREATEST(
-                    purchase_request_number_counters.last_number + 1,
-                    COALESCE(
-                        (SELECT MAX(CAST(SUBSTRING(request_number FROM '([0-9]+)$') AS INTEGER))
-                         FROM purchase_requests
-                         WHERE organization_id = EXCLUDED.organization_id
-                           AND request_number LIKE '{$prefix}%'), -- Используем то же условие
-                        0
-                    ) + 1
-                ),
-                updated_at = NOW()
-            RETURNING last_number
-        ";
+        for ($attempt = 1; $attempt <= 3; $attempt++) {
+            try {
+                $newNumber = DB::transaction(function () use ($organizationId, $year, $month, $prefix, $prefixPattern): int {
+                    $counter = DB::table('purchase_request_number_counters')
+                        ->where('organization_id', $organizationId)
+                        ->where('year', $year)
+                        ->where('month', $month)
+                        ->lockForUpdate()
+                        ->first();
 
-        try {
-            $result = DB::selectOne($sql, [
-                $organizationId,
-                $year,
-                $month,
-                $organizationId,
-                $prefixPattern
-            ]);
+                    $existingMax = $this->maxExistingNumber($organizationId, $prefix, $prefixPattern);
+                    $newNumber = max(((int) ($counter->last_number ?? 0)) + 1, $existingMax + 1);
+                    $now = now();
 
-            $newNumber = $result->last_number;
-            $requestNumber = sprintf('%s%04d', $prefix, $newNumber);
+                    if ($counter) {
+                        DB::table('purchase_request_number_counters')
+                            ->where('id', $counter->id)
+                            ->update([
+                                'last_number' => $newNumber,
+                                'updated_at' => $now,
+                            ]);
+                    } else {
+                        DB::table('purchase_request_number_counters')->insert([
+                            'organization_id' => $organizationId,
+                            'year' => $year,
+                            'month' => $month,
+                            'last_number' => $newNumber,
+                            'created_at' => $now,
+                            'updated_at' => $now,
+                        ]);
+                    }
 
-            Log::debug('procurement.purchase_request.number_generated', [
-                'organization_id' => $organizationId,
-                'year' => $year,
-                'month' => $month,
-                'generated_number' => $requestNumber,
-                'counter_value' => $newNumber,
-            ]);
+                    return $newNumber;
+                });
 
-            return $requestNumber;
-        } catch (\Exception $e) {
-            Log::error('procurement.purchase_request.number_generation_failed', [
-                'organization_id' => $organizationId,
-                'error' => $e->getMessage(),
-            ]);
-            throw $e;
+                $requestNumber = sprintf('%s%04d', $prefix, $newNumber);
+
+                Log::debug('procurement.purchase_request.number_generated', [
+                    'organization_id' => $organizationId,
+                    'year' => $year,
+                    'month' => $month,
+                    'generated_number' => $requestNumber,
+                    'counter_value' => $newNumber,
+                ]);
+
+                return $requestNumber;
+            } catch (QueryException $exception) {
+                if ($attempt === 3) {
+                    $this->logGenerationFailure($organizationId, $exception);
+                    throw $exception;
+                }
+            } catch (\Exception $exception) {
+                $this->logGenerationFailure($organizationId, $exception);
+                throw $exception;
+            }
         }
+
+        throw new \RuntimeException('Unable to generate purchase request number');
     }
 
     public function prefixForSiteRequestType(?SiteRequestTypeEnum $siteRequestType): string
@@ -111,5 +91,27 @@ class PurchaseRequestNumberGenerator
             SiteRequestTypeEnum::PERSONNEL_REQUEST => self::PERSONNEL_PREFIX,
             default => self::DEFAULT_PREFIX,
         };
+    }
+
+    private function maxExistingNumber(int $organizationId, string $prefix, string $prefixPattern): int
+    {
+        return DB::table('purchase_requests')
+            ->where('organization_id', $organizationId)
+            ->where('request_number', 'like', $prefixPattern)
+            ->pluck('request_number')
+            ->map(static function (string $requestNumber) use ($prefix): int {
+                $suffix = substr($requestNumber, strlen($prefix));
+
+                return ctype_digit($suffix) ? (int) $suffix : 0;
+            })
+            ->max() ?? 0;
+    }
+
+    private function logGenerationFailure(int $organizationId, \Throwable $exception): void
+    {
+        Log::error('procurement.purchase_request.number_generation_failed', [
+            'organization_id' => $organizationId,
+            'error' => $exception->getMessage(),
+        ]);
     }
 }
