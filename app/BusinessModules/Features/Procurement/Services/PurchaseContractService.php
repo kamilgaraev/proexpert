@@ -132,10 +132,24 @@ class PurchaseContractService
         }
 
         if (!empty($data['supplier_id'])) {
-            $supplier = \App\Models\Supplier::find($data['supplier_id']);
+            $supplier = \App\Models\Supplier::query()
+                ->where('organization_id', $organizationId)
+                ->where('is_active', true)
+                ->find($data['supplier_id']);
 
-            if (!$supplier || $supplier->organization_id !== $organizationId) {
+            if (!$supplier) {
                 throw new \InvalidArgumentException(trans_message('procurement.contracts.supplier_not_found'));
+            }
+        }
+
+        if (!empty($data['project_id'])) {
+            $projectExists = \App\Models\Project::query()
+                ->where('organization_id', $organizationId)
+                ->whereKey($data['project_id'])
+                ->exists();
+
+            if (!$projectExists) {
+                throw new \InvalidArgumentException(trans_message('procurement.contracts.project_not_found'));
             }
         }
     }
