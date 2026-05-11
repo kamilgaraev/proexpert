@@ -450,6 +450,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
         Notification::fake();
 
         $this->mock(LoggingService::class, function ($mock): void {
+            $mock->shouldReceive('audit')->zeroOrMoreTimes()->byDefault();
             $mock->shouldReceive('audit')
                 ->once()
                 ->with('workflow.override.used', \Mockery::on(
