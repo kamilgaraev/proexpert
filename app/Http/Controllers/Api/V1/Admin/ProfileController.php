@@ -37,23 +37,20 @@ class ProfileController extends Controller
             $user = Auth::user();
             
             $profileData = $request->safe()->except(['avatar', 'remove_avatar', 'password']);
+            $emailChanged = $request->has('email') && $user->email !== $request->email;
             
-            // Обновляем основные поля
             foreach ($profileData as $field => $value) {
                 $user->{$field} = $value;
             }
 
-            // Сброс верификации email при его смене
-            if ($request->has('email') && $user->email !== $request->email) {
+            if ($emailChanged) {
                 $user->email_verified_at = null;
             }
 
-            // Обновление пароля если передан
             if ($request->filled('password')) {
                 $user->password = bcrypt($request->password);
             }
 
-            // Обработка аватара
             if ($request->boolean('remove_avatar')) {
                 $user->deleteImage('avatar_path');
             } elseif ($request->hasFile('avatar')) {
@@ -77,13 +74,10 @@ class ProfileController extends Controller
                 'trace' => $e->getTraceAsString()
             ]);
             
-            return AdminResponse::error(__('auth.profile_update_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
+            return AdminResponse::error(trans_message('auth.profile_update_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
-    /**
-     * Обновление статуса прохождения обучения (onboarding)
-     */
     public function updateOnboarding(Request $request): JsonResponse
     {
         try {
@@ -116,4 +110,4 @@ class ProfileController extends Controller
             return AdminResponse::error(trans_message('auth.profile_update_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
-} 
+}

@@ -6,8 +6,7 @@ use App\Models\UserDashboardSetting;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Gate;
-use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\Response;
 
 class UserDashboardSettingsService
 {
@@ -18,9 +17,8 @@ class UserDashboardSettingsService
     public function getMergedForCurrentUser(?int $organizationId = null): ?array
     {
         /** @var User $user */
-        /** @var User $user */
         $user = Auth::user();
-        $orgId = $organizationId ?? (int)($user->current_organization_id ?? 0);
+        $orgId = $this->resolveAuthorizedOrganizationId($user, $organizationId);
 
         // Получаем роли через новую систему авторизации
         $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
@@ -52,7 +50,7 @@ class UserDashboardSettingsService
     {
         /** @var User $user */
         $user = Auth::user();
-        $orgId = $organizationId ?? (int)($user->current_organization_id ?? 0);
+        $orgId = $this->resolveAuthorizedOrganizationId($user, $organizationId);
 
         // Получаем роли через новую систему авторизации
         $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
@@ -80,7 +78,7 @@ class UserDashboardSettingsService
     {
         /** @var User $user */
         $user = Auth::user();
-        $orgId = $organizationId ?? (int)($user->current_organization_id ?? 0);
+        $orgId = $this->resolveAuthorizedOrganizationId($user, $organizationId);
 
         UserDashboardSetting::query()
             ->where('user_id', $user->id)
@@ -92,7 +90,7 @@ class UserDashboardSettingsService
     {
         /** @var User $user */
         $user = Auth::user();
-        $orgId = $organizationId ?? (int)($user->current_organization_id ?? 0);
+        $orgId = $this->resolveAuthorizedOrganizationId($user, $organizationId);
         // Получаем роли через новую систему авторизации
         $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
         $roles = $authService->getUserRoleSlugs($user, ['organization_id' => $orgId]);
@@ -205,6 +203,17 @@ class UserDashboardSettingsService
         if ((int)$payload['version'] !== (int)$registry['version']) {
             abort(409, 'invalid_version');
         }
+    }
+
+    private function resolveAuthorizedOrganizationId(User $user, ?int $organizationId = null): int
+    {
+        $orgId = $organizationId ?? (int)($user->current_organization_id ?? 0);
+
+        if ($orgId <= 0 || !$user->organizations()->whereKey($orgId)->exists()) {
+            abort(Response::HTTP_FORBIDDEN, trans_message('auth.access_denied'));
+        }
+
+        return $orgId;
     }
 }
 

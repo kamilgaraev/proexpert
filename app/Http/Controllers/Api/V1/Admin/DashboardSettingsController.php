@@ -33,6 +33,11 @@ class DashboardSettingsController extends Controller
             $organizationId = $request->query('org_id')
                 ? (int) $request->query('org_id')
                 : ($user->current_organization_id ?? null);
+
+            if ($organizationId === null || !$user->organizations()->whereKey($organizationId)->exists()) {
+                return AdminResponse::error(trans_message('auth.access_denied'), Response::HTTP_FORBIDDEN);
+            }
+
             $roles = method_exists($user, 'rolesInOrganization')
                 ? $user->rolesInOrganization($organizationId)->pluck('slug')->all()
                 : [];
