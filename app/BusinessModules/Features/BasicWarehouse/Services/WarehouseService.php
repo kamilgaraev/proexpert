@@ -1442,8 +1442,8 @@ class WarehouseService implements WarehouseReportDataProvider
                 'released' => true,
                 'quantity' => $quantity,
                 'released_reservation_ids' => $releasedReservationIds,
-                'remaining_reserved' => $balance ? (float) $balance->reserved_quantity : 0,
-                'remaining_available' => $balance ? (float) $balance->available_quantity : 0,
+                'remaining_reserved' => $balance ? (float) $balance->reservedQuantity : 0,
+                'remaining_available' => $balance ? (float) $balance->availableQuantity : 0,
             ];
         } catch (\Exception $e) {
             DB::rollBack();

@@ -307,6 +307,8 @@ class WarehouseOperationsController extends Controller
                 'remaining_total_quantity' => $result['remaining_total_quantity'],
             ], __('warehouse_basic.write_off_success'));
 
+        } catch (\InvalidArgumentException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
             return AdminResponse::error(__('warehouse_basic.write_off_error') . ': ' . $e->getMessage(), 500);
         }
@@ -341,6 +343,8 @@ class WarehouseOperationsController extends Controller
                 'avg_price' => $result['avg_price'],
             ], __('warehouse_basic.transfer_success'));
             
+        } catch (\InvalidArgumentException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
             return AdminResponse::error(__('warehouse_basic.transfer_error') . ': ' . $e->getMessage(), 500);
         }
@@ -370,6 +374,8 @@ class WarehouseOperationsController extends Controller
 
             return AdminResponse::success(null, __('warehouse_basic.reserve_success'));
             
+        } catch (\InvalidArgumentException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
             return AdminResponse::error(__('warehouse_basic.reserve_error') . ': ' . $e->getMessage(), 500);
         }
@@ -399,6 +405,8 @@ class WarehouseOperationsController extends Controller
 
             return AdminResponse::success($result, __('warehouse_basic.unreserve_success'));
             
+        } catch (\InvalidArgumentException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
             return AdminResponse::error(__('warehouse_basic.unreserve_error') . ': ' . $e->getMessage(), 500);
         }
