@@ -11,6 +11,14 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('site_requests')) {
+            if (!Schema::hasColumn('site_requests', 'material_id')) {
+                Schema::dropIfExists('site_requests');
+            } else {
+                return;
+            }
+        }
+
         Schema::create('site_requests', function (Blueprint $table) {
             // PRIMARY KEY
             $table->id();

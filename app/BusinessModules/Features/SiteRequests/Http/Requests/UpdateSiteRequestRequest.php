@@ -7,6 +7,8 @@ use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\PersonnelTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
 use Illuminate\Validation\Rules\Enum;
+use Illuminate\Validation\Rules\Exists;
+use Illuminate\Validation\Rule;
 
 /**
  * Валидация обновления заявки
@@ -36,7 +38,7 @@ class UpdateSiteRequestRequest extends FormRequest
             'estimate_item_id' => ['nullable', 'integer', 'exists:estimate_items,id'],
 
             // Материалы
-            'material_id' => ['nullable', 'integer'],
+            'material_id' => ['nullable', 'integer', $this->materialExistsRule()],
             'material_name' => ['nullable', 'string', 'max:255'],
             'material_quantity' => ['nullable', 'numeric', 'min:0.001'],
             'material_unit' => ['nullable', 'string', 'max:50'],
@@ -70,6 +72,17 @@ class UpdateSiteRequestRequest extends FormRequest
             // Метаданные
             'metadata' => ['nullable', 'array'],
         ];
+    }
+
+    private function materialExistsRule(): Exists
+    {
+        $organizationId = (int) $this->attributes->get('current_organization_id');
+
+        return Rule::exists('materials', 'id')->where(function ($query) use ($organizationId): void {
+            $query->where('organization_id', $organizationId)
+                ->where('is_active', true)
+                ->whereNull('deleted_at');
+        });
     }
 
     /**

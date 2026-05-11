@@ -8,6 +8,8 @@ use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\PersonnelTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
 use Illuminate\Validation\Rules\Enum;
+use Illuminate\Validation\Rules\Exists;
+use Illuminate\Validation\Rule;
 
 /**
  * Валидация создания заявки
@@ -29,7 +31,7 @@ class StoreSiteRequestRequest extends FormRequest
     {
         $rules = [
             // Основные поля
-            'project_id' => ['required', 'integer', 'exists:projects,id'],
+            'project_id' => ['required', 'integer', $this->projectExistsRule()],
             'title' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
             'request_type' => ['required', new Enum(SiteRequestTypeEnum::class)],
@@ -45,7 +47,7 @@ class StoreSiteRequestRequest extends FormRequest
             // Если передан массив materials
             if ($this->has('materials') && is_array($this->input('materials'))) {
                 $rules = array_merge($rules, [
-                    'materials.*.material_id' => ['nullable', 'integer'],
+                    'materials.*.material_id' => ['nullable', 'integer', $this->materialExistsRule()],
                     'materials.*.estimate_item_id' => ['nullable', 'integer', 'exists:estimate_items,id'],
                     'materials.*.name' => ['required_without:materials.*.material_id', 'nullable', 'string', 'max:255'],
                     'materials.*.quantity' => ['required', 'numeric', 'min:0.001'],
@@ -62,7 +64,7 @@ class StoreSiteRequestRequest extends FormRequest
             } else {
                 // Старая логика для одиночного материала
                 $rules = array_merge($rules, [
-                    'material_id' => ['nullable', 'integer'],
+                    'material_id' => ['nullable', 'integer', $this->materialExistsRule()],
                     'material_name' => ['required_without:material_id', 'nullable', 'string', 'max:255'],
                     'material_quantity' => ['required', 'numeric', 'min:0.001'],
                     'material_unit' => ['required', 'string', 'max:50'],
@@ -108,6 +110,34 @@ class StoreSiteRequestRequest extends FormRequest
         $rules['metadata'] = ['nullable', 'array'];
 
         return $rules;
+    }
+
+    private function projectExistsRule(): Exists
+    {
+        $organizationId = (int) $this->attributes->get('current_organization_id');
+
+        return Rule::exists('projects', 'id')->where(function ($query) use ($organizationId): void {
+            $query->where(function ($scope) use ($organizationId): void {
+                $scope->where('organization_id', $organizationId)
+                    ->orWhereIn('id', function ($subQuery) use ($organizationId): void {
+                        $subQuery->select('project_id')
+                            ->from('project_organization')
+                            ->where('organization_id', $organizationId)
+                            ->where('is_active', true);
+                    });
+            });
+        });
+    }
+
+    private function materialExistsRule(): Exists
+    {
+        $organizationId = (int) $this->attributes->get('current_organization_id');
+
+        return Rule::exists('materials', 'id')->where(function ($query) use ($organizationId): void {
+            $query->where('organization_id', $organizationId)
+                ->where('is_active', true)
+                ->whereNull('deleted_at');
+        });
     }
 
     /**

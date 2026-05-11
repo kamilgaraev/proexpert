@@ -16,6 +16,7 @@ use App\BusinessModules\Features\SiteRequests\Events\SiteRequestApproved;
 use App\BusinessModules\Features\SiteRequests\Events\SiteRequestAssigned;
 use App\BusinessModules\Features\SiteRequests\SiteRequestsModule;
 use App\Models\EstimateItem;
+use App\Models\Material;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -102,6 +103,7 @@ class SiteRequestService
         // Проверяем лимиты
         $this->checkLimits($organizationId);
         $data = $this->prepareEstimateResourceData($organizationId, $data);
+        $data = $this->prepareMaterialCatalogData($organizationId, $data);
 
         $request = DB::transaction(function () use ($organizationId, $userId, $data, $groupId) {
             // Создаем заявку
@@ -234,7 +236,7 @@ class SiteRequestService
                             'request_type' => SiteRequestTypeEnum::MATERIAL_REQUEST->value, // Предполагаем что в группе только материалы
                             'priority' => $baseRequest ? $baseRequest->priority->value : SiteRequestStatusEnum::DRAFT->value,
                             'required_date' => $baseRequest ? $baseRequest->required_date : null,
-                            'title' => ($group->title ?? 'Заявка') . ($itemData['name'] ? ' - ' . $itemData['name'] : ''),
+                            'title' => ($group->title ?? 'Заявка') . (!empty($itemData['name']) ? ' - ' . $itemData['name'] : ''),
                             'material_name' => $itemData['name'] ?? null,
                             'material_quantity' => $itemData['quantity'] ?? null,
                             'material_unit' => $itemData['unit'] ?? null,
@@ -279,6 +281,7 @@ class SiteRequestService
         }
 
         $data = $this->prepareEstimateResourceData($request->organization_id, $data, $request);
+        $data = $this->prepareMaterialCatalogData($request->organization_id, $data);
         $oldValues = $request->only(array_keys($data));
 
         DB::transaction(function () use ($request, $userId, $data, $oldValues) {
@@ -665,6 +668,32 @@ class SiteRequestService
             SiteRequestTypeEnum::PERSONNEL_REQUEST->value => ['labor'],
             default => [],
         };
+    }
+
+    private function prepareMaterialCatalogData(int $organizationId, array $data): array
+    {
+        $materialId = isset($data['material_id']) ? (int) $data['material_id'] : null;
+
+        if (!$materialId) {
+            return $data;
+        }
+
+        $material = Material::query()
+            ->with('measurementUnit')
+            ->where('organization_id', $organizationId)
+            ->where('is_active', true)
+            ->find($materialId);
+
+        if (!$material) {
+            throw new DomainException(trans_message('site_requests.material_not_found'));
+        }
+
+        $data['material_name'] = $data['material_name'] ?? $material->name;
+        $data['material_unit'] = $data['material_unit']
+            ?? $material->measurementUnit?->short_name
+            ?? $material->measurementUnit?->name;
+
+        return $data;
     }
 
     private function checkLimits(int $organizationId): void

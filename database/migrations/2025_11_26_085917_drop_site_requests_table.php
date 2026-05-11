@@ -14,6 +14,14 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (
+            Schema::hasTable('site_request_statuses')
+            || Schema::hasTable('site_request_templates')
+            || Schema::hasTable('site_request_history')
+        ) {
+            return;
+        }
+
         Schema::dropIfExists('site_requests');
     }
 
