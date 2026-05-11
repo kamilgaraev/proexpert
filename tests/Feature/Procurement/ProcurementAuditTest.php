@@ -17,6 +17,7 @@ use App\BusinessModules\Features\Procurement\Services\ProcurementAuditService;
 use App\BusinessModules\Features\Procurement\Services\ProcurementApprovalService;
 use App\BusinessModules\Features\Procurement\Services\SupplierProposalComparisonService;
 use App\BusinessModules\Features\Procurement\Services\SupplierProposalService;
+use App\BusinessModules\Features\Procurement\Services\SupplierProposalVersionService;
 use App\Domain\Authorization\Http\Middleware\AuthorizeMiddleware;
 use App\Http\Middleware\JwtMiddleware;
 use App\Models\Organization;
@@ -32,6 +33,7 @@ class ProcurementAuditTest extends TestCase
     {
         $organization = Organization::factory()->create();
         $actor = User::factory()->create();
+        $approver = User::factory()->create();
         $supplierRequest = $this->createSupplierRequest($organization, '001', budgetAmount: 1000);
         $proposal = $this->createProposal($organization, $supplierRequest, 'KP-AUD-001', 1200, true);
 
@@ -47,13 +49,14 @@ class ProcurementAuditTest extends TestCase
             ->where('approvable_id', $decision->id)
             ->firstOrFail();
 
-        app(ProcurementApprovalService::class)->approve($approval, $actor->id, 'Approved for urgent delivery.');
+        app(ProcurementApprovalService::class)->approve($approval, $approver->id, 'Approved for urgent delivery.');
         app(SupplierProposalService::class)->accept($proposal, $actor->id);
 
         $eventTypes = ProcurementAuditEvent::query()
             ->where('organization_id', $organization->id)
             ->orderBy('id')
             ->pluck('event_type')
+            ->map(static fn ($eventType) => $eventType instanceof ProcurementAuditEventTypeEnum ? $eventType->value : $eventType)
             ->all();
 
         $this->assertContains('supplier_proposal_selected', $eventTypes);
@@ -76,7 +79,7 @@ class ProcurementAuditTest extends TestCase
 
         $this->assertSame('KP-AUD-001', $orderEvent->payload['accepted_supplier_proposal_number']);
         $this->assertSame('KP-AUD-001 supplier', $orderEvent->payload['supplier_name']);
-        $this->assertSame(1200.0, $orderEvent->payload['total_amount']);
+        $this->assertEquals(1200.0, $orderEvent->payload['total_amount']);
     }
 
     public function test_required_procurement_audit_event_types_are_supported(): void
@@ -115,6 +118,7 @@ class ProcurementAuditTest extends TestCase
         $eventTypes = ProcurementAuditEvent::query()
             ->where('organization_id', $organization->id)
             ->pluck('event_type')
+            ->map(static fn ($eventType) => $eventType instanceof ProcurementAuditEventTypeEnum ? $eventType->value : $eventType)
             ->all();
 
         foreach (array_keys($subjectsByEventType) as $eventType) {
@@ -255,7 +259,9 @@ class ProcurementAuditTest extends TestCase
             ]);
         }
 
-        return $proposal;
+        app(SupplierProposalVersionService::class)->createInitialVersion($proposal);
+
+        return $proposal->refresh();
     }
 
     private function createDecision(

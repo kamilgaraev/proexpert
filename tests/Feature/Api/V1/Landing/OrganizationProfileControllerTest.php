@@ -46,7 +46,7 @@ class OrganizationProfileControllerTest extends TestCase
             ->assertJsonCount(2, 'data.workspace_profile.workspace_options');
 
         $this->assertSame(
-            ['create_project', 'open_projects', 'open_modules', 'open_invitations'],
+            ['open_projects', 'open_invitations', 'open_modules', 'open_settings'],
             array_column($response->json('data.workspace_profile.recommended_actions'), 'key')
         );
     }

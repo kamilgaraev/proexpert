@@ -10,6 +10,7 @@ use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Services\SupplierProposalComparisonService;
 use App\BusinessModules\Features\Procurement\Services\SupplierProposalService;
+use App\BusinessModules\Features\Procurement\Services\SupplierProposalVersionService;
 use App\Models\Organization;
 use App\Models\Supplier;
 use DomainException;
@@ -250,7 +251,7 @@ class SupplierProposalDecisionTest extends TestCase
             'is_active' => true,
         ]);
 
-        return SupplierProposal::query()->create([
+        $proposal = SupplierProposal::query()->create([
             'organization_id' => $organization->id,
             'supplier_request_id' => $supplierRequest->id,
             'supplier_id' => $supplier->id,
@@ -263,5 +264,9 @@ class SupplierProposalDecisionTest extends TestCase
             'total_amount' => $totalAmount,
             'currency' => 'RUB',
         ]);
+
+        app(SupplierProposalVersionService::class)->createInitialVersion($proposal);
+
+        return $proposal->refresh();
     }
 }

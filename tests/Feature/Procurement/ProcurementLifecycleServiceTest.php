@@ -158,9 +158,9 @@ class ProcurementLifecycleServiceTest extends TestCase
 
         $receipt->lines()->create([
             'purchase_order_item_id' => $item->id,
-            'quantity_received' => 6,
+            'quantity_received' => 10,
             'price' => 100,
-            'total_amount' => 600,
+            'total_amount' => 1000,
         ]);
 
         $this->assertSame('delivered', $service->resolveOrderReceiptStatus($order->fresh())->value);

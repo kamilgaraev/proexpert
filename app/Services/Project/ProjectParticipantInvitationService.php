@@ -163,11 +163,15 @@ class ProjectParticipantInvitationService
             $this->projectParticipantService->enforceUniqueCustomer($project, $invitation->roleEnum());
         }
 
+        $expiresAt = ($invitation->expires_at !== null && $invitation->expires_at->isFuture())
+            ? $invitation->expires_at->copy()->addDays(self::DEFAULT_TTL_DAYS)
+            : now()->addDays(self::DEFAULT_TTL_DAYS);
+
         $invitation->update([
             'token' => Str::random(64),
             'status' => ProjectParticipantInvitation::STATUS_PENDING,
             'status_reason' => null,
-            'expires_at' => now()->addDays(self::DEFAULT_TTL_DAYS),
+            'expires_at' => $expiresAt,
             'resent_at' => now(),
             'cancelled_at' => null,
             'cancelled_by_user_id' => null,

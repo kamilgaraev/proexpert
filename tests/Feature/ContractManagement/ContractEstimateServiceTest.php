@@ -7,14 +7,13 @@ namespace Tests\Feature\ContractManagement;
 use App\BusinessModules\Features\ContractManagement\Services\ContractEstimateService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService;
 use App\Models\Contract;
-use App\Models\ContractEstimateItem;
+use App\Models\Contractor;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class ContractEstimateServiceTest extends TestCase
@@ -35,20 +34,24 @@ class ContractEstimateServiceTest extends TestCase
 
         $org = Organization::factory()->create();
         $project = Project::factory()->create(['organization_id' => $org->id]);
-        
-        $user = User::factory()->create();
-        $user->organizations()->attach($org->id, ['role' => 'owner']);
-        // Имитируем активную сессию
-        $user->current_organization_id = $org->id;
+
+        $user = User::factory()->create([
+            'current_organization_id' => $org->id,
+        ]);
+        $user->organizations()->attach($org->id, [
+            'is_owner' => true,
+            'is_active' => true,
+            'settings' => null,
+        ]);
         $this->actingAs($user);
 
-        $this->contract = Contract::factory()->create([
+        $this->contract = $this->createContract([
             'organization_id' => $org->id,
             'project_id'      => $project->id,
             'total_amount'    => 1000000,
         ]);
 
-        $this->estimate = Estimate::factory()->create([
+        $this->estimate = $this->createEstimate([
             'organization_id' => $org->id,
             'project_id'      => $project->id,
         ]);
@@ -56,13 +59,13 @@ class ContractEstimateServiceTest extends TestCase
 
     public function test_attach_parent_item_also_attaches_children(): void
     {
-        $parent = EstimateItem::factory()->create([
+        $parent = $this->createEstimateItem([
             'estimate_id'    => $this->estimate->id,
             'quantity_total' => 10,
             'unit_price'     => 1000, // amount = 10000
         ]);
 
-        $child1 = EstimateItem::factory()->create([
+        $child1 = $this->createEstimateItem([
             'estimate_id'    => $this->estimate->id,
             'parent_work_id' => $parent->id,
             'quantity_total' => 5,
@@ -86,13 +89,13 @@ class ContractEstimateServiceTest extends TestCase
 
     public function test_same_item_can_belong_to_multiple_contracts(): void
     {
-        $item = EstimateItem::factory()->create([
+        $item = $this->createEstimateItem([
             'estimate_id'    => $this->estimate->id,
             'quantity_total' => 10,
             'unit_price'     => 100,
         ]);
 
-        $contract2 = Contract::factory()->create([
+        $contract2 = $this->createContract([
             'organization_id' => $this->contract->organization_id,
             'project_id'      => $this->contract->project_id,
         ]);
@@ -106,8 +109,8 @@ class ContractEstimateServiceTest extends TestCase
 
     public function test_detach_parent_removes_children(): void
     {
-        $parent = EstimateItem::factory()->create(['estimate_id' => $this->estimate->id]);
-        $child = EstimateItem::factory()->create([
+        $parent = $this->createEstimateItem(['estimate_id' => $this->estimate->id]);
+        $child = $this->createEstimateItem([
             'estimate_id'    => $this->estimate->id,
             'parent_work_id' => $parent->id,
         ]);
@@ -121,19 +124,18 @@ class ContractEstimateServiceTest extends TestCase
 
     public function test_calculate_contract_total_only_counts_linked_items(): void
     {
-        $item1 = EstimateItem::factory()->create([
+        $item1 = $this->createEstimateItem([
             'estimate_id' => $this->estimate->id,
             'quantity_total' => 1,
-            'unit_price' => 500
+            'unit_price' => 500,
         ]);
 
-        $item2 = EstimateItem::factory()->create([
+        $item2 = $this->createEstimateItem([
             'estimate_id' => $this->estimate->id,
             'quantity_total' => 1,
-            'unit_price' => 700
+            'unit_price' => 700,
         ]);
 
-        // Привязываем только item1
         $this->service->attachItems($this->contract, $this->estimate, [$item1->id]);
 
         $total = $this->service->calculateContractEstimateTotal($this->contract);
@@ -142,7 +144,7 @@ class ContractEstimateServiceTest extends TestCase
 
     public function test_full_coverage_attaches_all_root_billable_items(): void
     {
-        EstimateItem::factory()->create([
+        $this->createEstimateItem([
             'estimate_id' => $this->estimate->id,
             'item_type' => 'work',
             'quantity' => 3,
@@ -151,7 +153,7 @@ class ContractEstimateServiceTest extends TestCase
             'total_amount' => 300,
         ]);
 
-        EstimateItem::factory()->create([
+        $this->createEstimateItem([
             'estimate_id' => $this->estimate->id,
             'item_type' => 'material',
             'quantity' => 100,
@@ -160,7 +162,7 @@ class ContractEstimateServiceTest extends TestCase
             'total_amount' => 7000,
         ]);
 
-        EstimateItem::factory()->create([
+        $this->createEstimateItem([
             'estimate_id' => $this->estimate->id,
             'item_type' => 'material',
             'quantity' => 7,
@@ -169,7 +171,7 @@ class ContractEstimateServiceTest extends TestCase
             'total_amount' => 42000,
         ]);
 
-        EstimateItem::factory()->create([
+        $this->createEstimateItem([
             'estimate_id' => $this->estimate->id,
             'item_type' => 'machinery',
             'quantity' => 5,
@@ -194,7 +196,7 @@ class ContractEstimateServiceTest extends TestCase
 
     public function test_partial_coverage_keeps_explicit_item_selection(): void
     {
-        $item1 = EstimateItem::factory()->create([
+        $item1 = $this->createEstimateItem([
             'estimate_id' => $this->estimate->id,
             'item_type' => 'work',
             'quantity_total' => 1,
@@ -202,7 +204,7 @@ class ContractEstimateServiceTest extends TestCase
             'total_amount' => 500,
         ]);
 
-        EstimateItem::factory()->create([
+        $this->createEstimateItem([
             'estimate_id' => $this->estimate->id,
             'item_type' => 'material',
             'quantity_total' => 1,
@@ -224,7 +226,7 @@ class ContractEstimateServiceTest extends TestCase
     {
         $this->estimate->update(['vat_rate' => 20]);
 
-        EstimateItem::factory()->create([
+        $this->createEstimateItem([
             'estimate_id' => $this->estimate->id,
             'item_type' => 'work',
             'quantity_total' => 1,
@@ -232,7 +234,7 @@ class ContractEstimateServiceTest extends TestCase
             'total_amount' => 1000,
         ]);
 
-        EstimateItem::factory()->create([
+        $this->createEstimateItem([
             'estimate_id' => $this->estimate->id,
             'item_type' => 'material',
             'quantity_total' => 1,
@@ -251,7 +253,7 @@ class ContractEstimateServiceTest extends TestCase
     {
         $this->estimate->update(['vat_rate' => 20]);
 
-        $item = EstimateItem::factory()->create([
+        $item = $this->createEstimateItem([
             'estimate_id' => $this->estimate->id,
             'item_type' => 'work',
             'quantity_total' => 1,
@@ -264,5 +266,54 @@ class ContractEstimateServiceTest extends TestCase
         $coverage = $this->coverageService->getCoverageForEstimate($this->estimate);
 
         $this->assertEquals(1200.0, $coverage['primary_contract']['linked_amount']);
+    }
+
+    private function createContract(array $attributes = []): Contract
+    {
+        $attributes = array_merge([
+            'organization_id' => Organization::factory()->create()->id,
+            'project_id' => null,
+            'number' => 'CON-' . fake()->unique()->numerify('######'),
+            'date' => now()->toDateString(),
+            'subject' => 'Test contract',
+            'total_amount' => 100000,
+            'status' => 'active',
+        ], $attributes);
+
+        $attributes['contractor_id'] ??= Contractor::query()->create([
+            'organization_id' => $attributes['organization_id'],
+            'name' => 'Test contractor',
+        ])->id;
+
+        return Contract::query()->create($attributes);
+    }
+
+    private function createEstimate(array $attributes = []): Estimate
+    {
+        return Estimate::query()->create(array_merge([
+            'organization_id' => Organization::factory()->create()->id,
+            'project_id' => null,
+            'number' => 'EST-' . fake()->unique()->numerify('######'),
+            'name' => 'Test estimate',
+            'estimate_date' => now()->toDateString(),
+        ], $attributes));
+    }
+
+    private function createEstimateItem(array $attributes = []): EstimateItem
+    {
+        $quantity = (float) ($attributes['quantity_total'] ?? $attributes['quantity'] ?? 1);
+        $unitPrice = (float) ($attributes['unit_price'] ?? 100);
+
+        return EstimateItem::query()->create(array_merge([
+            'estimate_id' => $this->estimate->id,
+            'position_number' => (string) fake()->unique()->numberBetween(1, 999999),
+            'name' => 'Test estimate item',
+            'item_type' => 'work',
+            'quantity' => $quantity,
+            'quantity_total' => $quantity,
+            'unit_price' => $unitPrice,
+            'total_amount' => round($quantity * $unitPrice, 2),
+            'is_manual' => true,
+        ], $attributes));
     }
 }

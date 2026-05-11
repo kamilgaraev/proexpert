@@ -186,13 +186,6 @@ class ProjectParticipantLifecycleTest extends TestCase
         ]);
         $newCustomerUser = $this->createOrganizationUser($newCustomer, 'new-customer@example.com');
 
-        $this->participantService->attach(
-            $conflictedProject,
-            $existingCustomer->id,
-            ProjectOrganizationRole::CUSTOMER,
-            $this->ownerUser
-        );
-
         $acceptedInvite = $this->invitationService->create(
             $acceptedProject,
             $this->ownerOrganization->id,
@@ -213,6 +206,13 @@ class ProjectParticipantLifecycleTest extends TestCase
                 'organization_name' => 'Новый заказчик',
                 'email' => $newCustomerUser->email,
             ]
+        );
+
+        $this->participantService->attach(
+            $conflictedProject,
+            $existingCustomer->id,
+            ProjectOrganizationRole::CUSTOMER,
+            $this->ownerUser
         );
 
         $stats = $this->invitationService->acceptMatchingForOrganization($newCustomerUser, $newCustomer);

@@ -12,6 +12,7 @@ use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Services\ProcurementApprovalService;
 use App\BusinessModules\Features\Procurement\Services\SupplierProposalComparisonService;
 use App\BusinessModules\Features\Procurement\Services\SupplierProposalService;
+use App\BusinessModules\Features\Procurement\Services\SupplierProposalVersionService;
 use App\Models\Organization;
 use App\Models\Supplier;
 use App\Models\User;
@@ -137,6 +138,7 @@ class ProcurementApprovalTest extends TestCase
     {
         $organization = Organization::factory()->create();
         $actor = User::factory()->create();
+        $approver = User::factory()->create();
         $supplierRequest = $this->createSupplierRequest($organization, budgetAmount: 1000);
         $proposal = $this->createProposal($organization, $supplierRequest, 'KP-APR-006', 1200);
 
@@ -152,7 +154,7 @@ class ProcurementApprovalTest extends TestCase
             ->where('approvable_id', $decision->id)
             ->firstOrFail();
 
-        app(ProcurementApprovalService::class)->approve($approval, $actor->id, 'Budget exception approved.');
+        app(ProcurementApprovalService::class)->approve($approval, $approver->id, 'Budget exception approved.');
 
         $accepted = app(SupplierProposalService::class)->accept($proposal);
 
@@ -167,6 +169,7 @@ class ProcurementApprovalTest extends TestCase
     {
         $organization = Organization::factory()->create();
         $actor = User::factory()->create();
+        $approver = User::factory()->create();
         $supplierRequest = $this->createSupplierRequest($organization, budgetAmount: 1000);
         $proposal = $this->createProposal($organization, $supplierRequest, 'KP-APR-007', 1200);
 
@@ -182,7 +185,7 @@ class ProcurementApprovalTest extends TestCase
             ->where('approvable_id', $decision->id)
             ->firstOrFail();
 
-        app(ProcurementApprovalService::class)->reject($approval, $actor->id, 'Budget exception rejected.');
+        app(ProcurementApprovalService::class)->reject($approval, $approver->id, 'Budget exception rejected.');
 
         $this->expectException(DomainException::class);
 
@@ -227,7 +230,7 @@ class ProcurementApprovalTest extends TestCase
             'is_active' => true,
         ]);
 
-        return SupplierProposal::query()->create([
+        $proposal = SupplierProposal::query()->create([
             'organization_id' => $organization->id,
             'supplier_request_id' => $supplierRequest->id,
             'supplier_id' => $supplier->id,
@@ -245,5 +248,9 @@ class ProcurementApprovalTest extends TestCase
             'total_amount' => $totalAmount,
             'currency' => 'RUB',
         ]);
+
+        app(SupplierProposalVersionService::class)->createInitialVersion($proposal);
+
+        return $proposal->refresh();
     }
 }

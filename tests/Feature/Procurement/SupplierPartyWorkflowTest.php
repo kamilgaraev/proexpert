@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Procurement;
 
 use App\BusinessModules\Features\Procurement\Enums\SupplierPartyStatusEnum;
+use App\BusinessModules\Features\Procurement\Enums\SupplierProposalIntakeSourceEnum;
 use App\BusinessModules\Features\Procurement\Models\ExternalSupplierContact;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequestLine;
@@ -47,12 +48,18 @@ class SupplierPartyWorkflowTest extends TestCase
                 'tax_number' => '7711223344',
             ],
         ]);
+        $supplierRequest = app(SupplierRequestService::class)->send($supplierRequest);
 
         $proposal = app(SupplierProposalService::class)->createFromSupplierRequest($supplierRequest, [
             'proposal_date' => now()->toDateString(),
             'subtotal_amount' => 12000,
             'total_amount' => 12000,
             'currency' => 'RUB',
+            'intake' => [
+                'source' => SupplierProposalIntakeSourceEnum::OTHER->value,
+                'received_at' => now()->toIso8601String(),
+                'comment' => 'Submitted through public supplier flow.',
+            ],
             'items' => [
                 [
                     'supplier_request_line_id' => $purchaseRequestLine->id,
