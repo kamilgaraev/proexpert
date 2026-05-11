@@ -99,11 +99,24 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
                              ->with('measurementUnit');
 
         // Применяем фильтры
+        $likeOperator = $this->caseInsensitiveLikeOperator();
+
+        if (!empty($filters['search'])) {
+            $searchTerm = '%' . $filters['search'] . '%';
+            $query->where(function ($query) use ($likeOperator, $searchTerm): void {
+                $query->where('name', $likeOperator, $searchTerm)
+                    ->orWhere('code', $likeOperator, $searchTerm)
+                    ->orWhere('external_code', $likeOperator, $searchTerm);
+            });
+        }
         if (!empty($filters['name'])) {
-            $query->where('name', 'ilike', '%' . $filters['name'] . '%');
+            $query->where('name', $likeOperator, '%' . $filters['name'] . '%');
         }
         if (!empty($filters['category'])) {
-            $query->where('category', 'ilike', '%' . $filters['category'] . '%');
+            $query->where('category', $likeOperator, '%' . $filters['category'] . '%');
+        }
+        if (!empty($filters['measurement_unit_id'])) {
+            $query->where('measurement_unit_id', (int)$filters['measurement_unit_id']);
         }
         if (isset($filters['is_active'])) {
             $query->where('is_active', (bool)$filters['is_active']);
@@ -114,6 +127,11 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
 
         // Пагинация
         return $query->paginate($perPage);
+    }
+
+    private function caseInsensitiveLikeOperator(): string
+    {
+        return DB::connection()->getDriverName() === 'pgsql' ? 'ilike' : 'like';
     }
 
     // Implementations for methods from the old RepositoryInterface
@@ -614,4 +632,4 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
             'filters_applied' => $filters
         ]);
     }
-} 
+}

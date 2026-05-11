@@ -27,7 +27,15 @@ class StoreAssetRequest extends FormRequest
                 'max:50',
                 Rule::unique('materials', 'code')->where('organization_id', $organizationId),
             ],
-            'measurement_unit_id' => 'required|exists:measurement_units,id',
+            'measurement_unit_id' => [
+                'required',
+                Rule::exists('measurement_units', 'id')
+                    ->whereNull('deleted_at')
+                    ->where(static function ($query) use ($organizationId): void {
+                        $query->where('organization_id', $organizationId)
+                            ->orWhere('is_system', true);
+                    }),
+            ],
             'asset_type'          => ['required', 'string', Rule::in(array_keys(Asset::getAssetTypes()))],
             'asset_category'      => 'nullable|string|max:100',
             'asset_subcategory'   => 'nullable|string|max:100',

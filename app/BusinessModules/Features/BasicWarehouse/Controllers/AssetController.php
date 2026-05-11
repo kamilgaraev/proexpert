@@ -13,6 +13,7 @@ use App\BusinessModules\Features\BasicWarehouse\Services\AssetService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
@@ -32,7 +33,7 @@ class AssetController extends Controller
             $filters = array_filter([
                 'asset_type' => $request->input('asset_type'),
                 'asset_category' => $request->input('asset_category'),
-                'search' => $request->input('search'),
+                'search' => $request->input('search', $request->input('q')),
                 'sort_by' => $request->input('sort_by', 'name'),
                 'sort_order' => $request->input('sort_order', 'asc'),
             ], fn ($value) => $value !== null);
@@ -40,7 +41,7 @@ class AssetController extends Controller
             $perPage = (int) $request->input('per_page', 15);
             $assets = $this->assetService->getAssets($organizationId, $filters, $perPage);
 
-            return AdminResponse::success($assets);
+            return $this->paginatedResponse($assets);
         } catch (\Exception $exception) {
             Log::error('AssetController::index error', [
                 'organization_id' => $request->user()->current_organization_id ?? null,
@@ -59,7 +60,7 @@ class AssetController extends Controller
             $asset = $this->assetService->createAsset($organizationId, $request->validated());
 
             return AdminResponse::success(
-                $this->assetService->getAssetById($asset->id),
+                $this->assetService->getAssetById($organizationId, $asset->id),
                 'Актив успешно создан',
                 201
             );
@@ -78,7 +79,8 @@ class AssetController extends Controller
     public function show(Request $request, int $id): JsonResponse
     {
         try {
-            $asset = $this->assetService->getAssetById($id);
+            $organizationId = $request->user()->current_organization_id;
+            $asset = $this->assetService->getAssetById($organizationId, $id);
 
             return AdminResponse::success($asset);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
@@ -97,10 +99,11 @@ class AssetController extends Controller
     public function update(UpdateAssetRequest $request, int $id): JsonResponse
     {
         try {
-            $asset = $this->assetService->updateAsset($id, $request->validated());
+            $organizationId = $request->user()->current_organization_id;
+            $asset = $this->assetService->updateAsset($organizationId, $id, $request->validated());
 
             return AdminResponse::success(
-                $this->assetService->getAssetById($asset->id),
+                $this->assetService->getAssetById($organizationId, $asset->id),
                 'Актив успешно обновлён'
             );
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
@@ -120,7 +123,8 @@ class AssetController extends Controller
     public function destroy(Request $request, int $id): JsonResponse
     {
         try {
-            $this->assetService->deactivateAsset($id);
+            $organizationId = $request->user()->current_organization_id;
+            $this->assetService->deactivateAsset($organizationId, $id);
 
             return AdminResponse::success(null, 'Актив деактивирован');
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
@@ -185,5 +189,21 @@ class AssetController extends Controller
 
             return AdminResponse::error(trans_message('basic_warehouse.asset.labels_export_error'), 500);
         }
+    }
+
+    private function paginatedResponse(LengthAwarePaginator $paginator): JsonResponse
+    {
+        return AdminResponse::paginated(
+            $paginator->items(),
+            [
+                'current_page' => $paginator->currentPage(),
+                'from' => $paginator->firstItem(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'to' => $paginator->lastItem(),
+                'total' => $paginator->total(),
+            ],
+            null
+        );
     }
 }

@@ -31,7 +31,15 @@ class UpdateAssetRequest extends FormRequest
                     ->where('organization_id', $organizationId)
                     ->ignore($assetId),
             ],
-            'measurement_unit_id' => 'sometimes|exists:measurement_units,id',
+            'measurement_unit_id' => [
+                'sometimes',
+                Rule::exists('measurement_units', 'id')
+                    ->whereNull('deleted_at')
+                    ->where(static function ($query) use ($organizationId): void {
+                        $query->where('organization_id', $organizationId)
+                            ->orWhere('is_system', true);
+                    }),
+            ],
             'asset_type'          => ['sometimes', 'string', Rule::in(array_keys(Asset::getAssetTypes()))],
             'asset_category'      => 'sometimes|nullable|string|max:100',
             'asset_subcategory'   => 'sometimes|nullable|string|max:100',

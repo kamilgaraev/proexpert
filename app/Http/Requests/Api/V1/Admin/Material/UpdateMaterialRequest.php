@@ -22,7 +22,7 @@ class UpdateMaterialRequest extends FormRequest
 
     public function rules(): array
     {
-        $organizationId = $this->get('current_organization_id');
+        $organizationId = $this->getOrganizationId();
 
         /** @var Material|string|null $material */
         $material = $this->route('material'); // Может быть моделью или ID
@@ -47,7 +47,12 @@ class UpdateMaterialRequest extends FormRequest
                     ->ignore($materialId), // Игнорируем текущий материал
             ],
             'code' => 'sometimes|nullable|string|max:50',
-            'measurement_unit_id' => 'sometimes|required|integer|exists:measurement_units,id',
+            'measurement_unit_id' => [
+                'sometimes',
+                'required',
+                'integer',
+                $this->measurementUnitExistsRule($organizationId),
+            ],
             'description' => 'sometimes|nullable|string|max:1000',
             'category' => 'sometimes|nullable|string|max:100',
             'default_price' => 'sometimes|nullable|numeric|min:0',
@@ -75,6 +80,29 @@ class UpdateMaterialRequest extends FormRequest
             'use_in_accounting_reports' => 'sometimes|nullable|boolean',
             'accounting_account' => 'sometimes|nullable|string|max:50',
         ];
+    }
+
+    private function getOrganizationId(): ?int
+    {
+        $organizationId = $this->attributes->get('current_organization_id')
+            ?? $this->user()?->current_organization_id;
+
+        return $organizationId ? (int) $organizationId : null;
+    }
+
+    private function measurementUnitExistsRule(?int $organizationId)
+    {
+        return Rule::exists('measurement_units', 'id')
+            ->where(function ($query) use ($organizationId): void {
+                $query->whereNull('deleted_at')
+                    ->where(function ($scope) use ($organizationId): void {
+                        $scope->where('is_system', true);
+
+                        if ($organizationId !== null) {
+                            $scope->orWhere('organization_id', $organizationId);
+                        }
+                    });
+            });
     }
 
     /**

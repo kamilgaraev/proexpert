@@ -13,6 +13,7 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Log;
 use App\Http\Resources\Api\V1\Admin\MeasurementUnitResource;
 use App\Models\Material;
+use App\Models\MeasurementUnit;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use Illuminate\Support\Facades\DB;
@@ -82,7 +83,7 @@ class MaterialService
 
         // РџСЂРѕРІРµСЂСЏРµРј measurement_unit_id, РµСЃР»Рё СЂРµРїРѕР·РёС‚РѕСЂРёР№ РґРѕСЃС‚СѓРїРµРЅ
         if (isset($data['measurement_unit_id'])) {
-            if (!$this->measurementUnitRepository->find($data['measurement_unit_id'])) {
+            if (!$this->measurementUnitBelongsToOrganization((int) $data['measurement_unit_id'], $organizationId)) {
                 // TECHNICAL: РћС€РёР±РєР° РІР°Р»РёРґР°С†РёРё РµРґРёРЅРёС†С‹ РёР·РјРµСЂРµРЅРёСЏ
                 $this->logging->technical('material.creation.validation.failed', [
                     'material_name' => $data['name'] ?? null,
@@ -141,7 +142,7 @@ class MaterialService
         
         // РџСЂРѕРІРµСЂСЏРµРј measurement_unit_id, РµСЃР»Рё РѕРЅ РїРµСЂРµРґР°РЅ Рё СЂРµРїРѕР·РёС‚РѕСЂРёР№ РґРѕСЃС‚СѓРїРµРЅ
         if (isset($data['measurement_unit_id'])) {
-            if (!$this->measurementUnitRepository->find($data['measurement_unit_id'])) {
+            if (!$this->measurementUnitBelongsToOrganization((int) $data['measurement_unit_id'], $this->getCurrentOrgId($request))) {
                 throw new BusinessLogicException('РЈРєР°Р·Р°РЅРЅР°СЏ РµРґРёРЅРёС†Р° РёР·РјРµСЂРµРЅРёСЏ РЅРµ РЅР°Р№РґРµРЅР°', 400);
             }
         }
@@ -150,6 +151,18 @@ class MaterialService
         unset($data['organization_id']);
         
         return $this->materialRepository->update($id, $data);
+    }
+
+    private function measurementUnitBelongsToOrganization(int $measurementUnitId, int $organizationId): bool
+    {
+        return MeasurementUnit::query()
+            ->where('id', $measurementUnitId)
+            ->whereNull('deleted_at')
+            ->where(function ($query) use ($organizationId): void {
+                $query->where('organization_id', $organizationId)
+                    ->orWhere('is_system', true);
+            })
+            ->exists();
     }
 
     public function deleteMaterial(int $id, Request $request): bool
@@ -179,10 +192,13 @@ class MaterialService
     public function getMaterialsPaginated(Request $request, int $perPage = 15): \Illuminate\Contracts\Pagination\LengthAwarePaginator
     {
         $organizationId = $this->getCurrentOrgId($request);
+        $search = $request->query('search', $request->query('q'));
         
         $filters = [
+            'search' => $search,
             'name' => $request->query('name'),
             'category' => $request->query('category'),
+            'measurement_unit_id' => $request->query('measurement_unit_id'),
             'is_active' => $request->query('is_active'), // РџСЂРёРЅРёРјР°РµРј 'true', 'false', '1', '0' РёР»Рё null
         ];
         if (isset($filters['is_active'])) {

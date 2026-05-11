@@ -74,7 +74,11 @@ class MaterialController extends Controller
     {
         try {
             $material = $this->materialService->createMaterial($request->validated(), $request);
-            return new MaterialResource($material->load('measurementUnit'));
+            return AdminResponse::success(
+                (new MaterialResource($material->load('measurementUnit')))->resolve($request),
+                null,
+                201
+            );
         } catch (BusinessLogicException $e) {
             Log::error('MaterialController@store BusinessLogicException', [
                 'message' => $e->getMessage(),
@@ -105,7 +109,7 @@ class MaterialController extends Controller
                 $material->setAttribute('include_consumption_rates', true);
             }
             
-            return new MaterialResource($material->load('measurementUnit'));
+            return AdminResponse::success((new MaterialResource($material->load('measurementUnit')))->resolve($request));
         } catch (BusinessLogicException $e) {
             Log::error('MaterialController@show BusinessLogicException', [
                 'id' => $id,
@@ -140,7 +144,7 @@ class MaterialController extends Controller
                 return AdminResponse::error(trans_message('materials.not_found_after_update'), 404);
             }
             
-            return new MaterialResource($material->load('measurementUnit'));
+            return AdminResponse::success((new MaterialResource($material->load('measurementUnit')))->resolve($request));
         } catch (BusinessLogicException $e) {
             Log::error('MaterialController@update BusinessLogicException', [
                 'id' => $id,
@@ -536,4 +540,4 @@ class MaterialController extends Controller
         $response->headers->set('Content-Disposition', 'attachment; filename="materials_import_template.xlsx"');
         return $response;
     }
-} 
+}

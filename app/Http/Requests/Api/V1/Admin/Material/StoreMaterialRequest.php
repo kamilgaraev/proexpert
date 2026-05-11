@@ -21,7 +21,7 @@ class StoreMaterialRequest extends FormRequest
 
     public function rules(): array
     {
-        $organizationId = $this->get('current_organization_id');
+        $organizationId = $this->getOrganizationId();
 
         return [
             'name' => [
@@ -35,7 +35,11 @@ class StoreMaterialRequest extends FormRequest
                     }),
             ],
             'code' => 'nullable|string|max:50',
-            'measurement_unit_id' => 'required|integer|exists:measurement_units,id', 
+            'measurement_unit_id' => [
+                'required',
+                'integer',
+                $this->measurementUnitExistsRule($organizationId),
+            ],
             'description' => 'nullable|string|max:1000',
             'category' => 'nullable|string|max:100',
             'default_price' => 'nullable|numeric|min:0',
@@ -61,6 +65,29 @@ class StoreMaterialRequest extends FormRequest
             'use_in_accounting_reports' => 'nullable|boolean',
             'accounting_account' => 'nullable|string|max:50',
         ];
+    }
+
+    private function getOrganizationId(): ?int
+    {
+        $organizationId = $this->attributes->get('current_organization_id')
+            ?? $this->user()?->current_organization_id;
+
+        return $organizationId ? (int) $organizationId : null;
+    }
+
+    private function measurementUnitExistsRule(?int $organizationId)
+    {
+        return Rule::exists('measurement_units', 'id')
+            ->where(function ($query) use ($organizationId): void {
+                $query->whereNull('deleted_at')
+                    ->where(function ($scope) use ($organizationId): void {
+                        $scope->where('is_system', true);
+
+                        if ($organizationId !== null) {
+                            $scope->orWhere('organization_id', $organizationId);
+                        }
+                    });
+            });
     }
 
     /**

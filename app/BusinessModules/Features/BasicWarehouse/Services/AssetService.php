@@ -4,9 +4,12 @@ namespace App\BusinessModules\Features\BasicWarehouse\Services;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
 use App\Models\Material;
+use App\Models\MeasurementUnit;
 use App\Services\Logging\LoggingService;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Сервис управления активами
@@ -26,6 +29,8 @@ class AssetService
      */
     public function createAsset(int $organizationId, array $data): Asset
     {
+        $this->assertMeasurementUnitBelongsToOrganization((int) $data['measurement_unit_id'], $organizationId);
+
         // Подготовка additional_properties с типом актива
         $additionalProperties = $data['additional_properties'] ?? [];
         $additionalProperties['asset_type'] = $data['asset_type'] ?? Asset::TYPE_MATERIAL;
@@ -64,9 +69,13 @@ class AssetService
     /**
      * Обновить актив
      */
-    public function updateAsset(int $assetId, array $data): Asset
+    public function updateAsset(int $organizationId, int $assetId, array $data): Asset
     {
-        $asset = Asset::findOrFail($assetId);
+        $asset = $this->findAssetForOrganization($organizationId, $assetId);
+
+        if (array_key_exists('measurement_unit_id', $data) && $data['measurement_unit_id'] !== null) {
+            $this->assertMeasurementUnitBelongsToOrganization((int) $data['measurement_unit_id'], $organizationId);
+        }
 
         // Обновляем additional_properties
         if (isset($data['asset_type']) || isset($data['asset_category']) || 
@@ -98,7 +107,7 @@ class AssetService
             'asset_type' => $asset->asset_type,
         ]);
 
-        $this->clearAssetCache($asset->organization_id);
+        $this->clearAssetCache($organizationId);
 
         return $asset->fresh();
     }
@@ -132,10 +141,12 @@ class AssetService
 
         // Поиск по имени или коду
         if (isset($filters['search'])) {
-            $search = $filters['search'];
+            $search = trim((string) $filters['search']);
             $query->where(function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                    ->orWhere('code', 'like', "%{$search}%");
+                $likeOperator = DB::connection()->getDriverName() === 'pgsql' ? 'ilike' : 'like';
+
+                $q->where('name', $likeOperator, "%{$search}%")
+                    ->orWhere('code', $likeOperator, "%{$search}%");
             });
         }
 
@@ -150,7 +161,7 @@ class AssetService
     /**
      * Получить актив по ID
      */
-    public function getAssetById(int $assetId): Asset
+    public function getAssetById(int $organizationId, int $assetId): Asset
     {
         return Asset::with([
             'measurementUnit',
@@ -158,7 +169,9 @@ class AssetService
             'receipts',
             'writeOffs',
             'photos',
-        ])->findOrFail($assetId);
+        ])
+            ->where('organization_id', $organizationId)
+            ->findOrFail($assetId);
     }
 
     /**
@@ -239,9 +252,9 @@ class AssetService
     /**
      * Деактивировать актив
      */
-    public function deactivateAsset(int $assetId): Asset
+    public function deactivateAsset(int $organizationId, int $assetId): Asset
     {
-        $asset = Asset::findOrFail($assetId);
+        $asset = $this->findAssetForOrganization($organizationId, $assetId);
         $asset->update(['is_active' => false]);
 
         $this->logging->business('asset.deactivated', [
@@ -250,7 +263,7 @@ class AssetService
             'asset_type' => $asset->asset_type,
         ]);
 
-        $this->clearAssetCache($asset->organization_id);
+        $this->clearAssetCache($organizationId);
 
         return $asset;
     }
@@ -294,7 +307,7 @@ class AssetService
                 }
 
                 if ($asset) {
-                    $this->updateAsset($asset->id, $data);
+                    $this->updateAsset($organizationId, $asset->id, $data);
                     $updated++;
                 } else {
                     $this->createAsset($organizationId, $data);
@@ -330,6 +343,29 @@ class AssetService
     {
         Cache::forget("assets_by_type_{$organizationId}_*");
         Cache::forget("asset_type_stats_{$organizationId}");
+    }
+
+    private function findAssetForOrganization(int $organizationId, int $assetId): Asset
+    {
+        return Asset::query()
+            ->where('organization_id', $organizationId)
+            ->findOrFail($assetId);
+    }
+
+    private function assertMeasurementUnitBelongsToOrganization(int $measurementUnitId, int $organizationId): void
+    {
+        $exists = MeasurementUnit::query()
+            ->whereKey($measurementUnitId)
+            ->whereNull('deleted_at')
+            ->where(static function ($query) use ($organizationId): void {
+                $query->where('organization_id', $organizationId)
+                    ->orWhere('is_system', true);
+            })
+            ->exists();
+
+        if (!$exists) {
+            throw (new ModelNotFoundException())->setModel(MeasurementUnit::class, [$measurementUnitId]);
+        }
     }
 }
 
