@@ -93,7 +93,10 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
             });
 
             // Зоны хранения
-            Route::prefix('{warehouseId}/zones')->name('zones.')->group(function () {
+            Route::prefix('{warehouseId}/zones')
+                ->name('zones.')
+                ->middleware('authorize:warehouse.advanced.zones')
+                ->group(function () {
                 Route::get('/', [WarehouseZoneController::class, 'index']);
                 Route::post('/', [WarehouseZoneController::class, 'store']);
                 Route::get('/{id}', [WarehouseZoneController::class, 'show']);
@@ -101,7 +104,10 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
                 Route::delete('/{id}', [WarehouseZoneController::class, 'destroy']);
             });
 
-            Route::prefix('{warehouseId}/cells')->name('cells.')->group(function () {
+            Route::prefix('{warehouseId}/cells')
+                ->name('cells.')
+                ->middleware('authorize:warehouse.advanced.zones')
+                ->group(function () {
                 Route::get('/', [WarehouseStorageCellController::class, 'index']);
                 Route::post('/', [WarehouseStorageCellController::class, 'store']);
                 Route::get('/{id}', [WarehouseStorageCellController::class, 'show']);
@@ -109,7 +115,10 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
                 Route::delete('/{id}', [WarehouseStorageCellController::class, 'destroy']);
             });
 
-            Route::prefix('{warehouseId}/logistic-units')->name('logistic-units.')->group(function () {
+            Route::prefix('{warehouseId}/logistic-units')
+                ->name('logistic-units.')
+                ->middleware('authorize:warehouse.advanced.zones')
+                ->group(function () {
                 Route::get('/', [WarehouseLogisticUnitController::class, 'index']);
                 Route::post('/', [WarehouseLogisticUnitController::class, 'store']);
                 Route::get('/{id}', [WarehouseLogisticUnitController::class, 'show']);
@@ -117,7 +126,10 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
                 Route::delete('/{id}', [WarehouseLogisticUnitController::class, 'destroy']);
             });
 
-            Route::prefix('{warehouseId}/tasks')->name('tasks.')->group(function () {
+            Route::prefix('{warehouseId}/tasks')
+                ->name('tasks.')
+                ->middleware('authorize:warehouse.manage_stock')
+                ->group(function () {
                 Route::get('/', [WarehouseTaskController::class, 'index']);
                 Route::post('/', [WarehouseTaskController::class, 'store']);
                 Route::get('/{id}', [WarehouseTaskController::class, 'show']);
