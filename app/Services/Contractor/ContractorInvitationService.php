@@ -59,6 +59,7 @@ class ContractorInvitationService
                 'organization_id' => $organizationId,
                 'invited_organization_id' => $invitedOrganizationId,
                 'invited_by_user_id' => $invitedBy->id,
+                'status' => ContractorInvitation::STATUS_PENDING,
                 'invitation_message' => $message,
                 'metadata' => $metadata,
             ]);
