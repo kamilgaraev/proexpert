@@ -54,7 +54,7 @@ class UserService
 
         $organizationId = $request->attributes->get('current_organization_id');
         if(!$organizationId) {
-            throw new BusinessLogicException('РљРѕРЅС‚РµРєСЃС‚ РѕСЂРіР°РЅРёР·Р°С†РёРё РЅРµ РѕРїСЂРµРґРµР»РµРЅ.', 500);
+            throw new BusinessLogicException('Контекст организации не определен.', 500);
         }
 
         $filters = [
@@ -408,7 +408,7 @@ class UserService
         $this->ensureUserIsAdmin($request);
         $organizationId = $request->attributes->get('current_organization_id');
         if(!$organizationId) {
-            throw new BusinessLogicException('РљРѕРЅС‚РµРєСЃС‚ РѕСЂРіР°РЅРёР·Р°С†РёРё РЅРµ РѕРїСЂРµРґРµР»РµРЅ.', 500);
+            throw new BusinessLogicException('Контекст организации не определен.', 500);
         }
 
         $contextId = $this->getOrganizationContextId((int) $organizationId);
@@ -435,7 +435,7 @@ class UserService
         $organizationUser = $this->findOrganizationUserById($userId, $request);
 
         if (!$organizationUser) {
-            throw new BusinessLogicException('РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РЅР°Р№РґРµРЅ РІ СЌС‚РѕР№ РѕСЂРіР°РЅРёР·Р°С†РёРё.', 404);
+            throw new BusinessLogicException('Пользователь не найден в этой организации.', 404);
         }
 
         if (!empty($data['password'])) {
@@ -456,11 +456,11 @@ class UserService
         $organizationUser = $this->findOrganizationUserById($userId, $request);
 
         if (!$organizationUser) {
-            throw new BusinessLogicException('РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РЅР°Р№РґРµРЅ РІ СЌС‚РѕР№ РѕСЂРіР°РЅРёР·Р°С†РёРё.', 404);
+            throw new BusinessLogicException('Пользователь не найден в этой организации.', 404);
         }
 
         if ($request->user()?->id === $organizationUser->id) {
-            throw new BusinessLogicException('Р’С‹ РЅРµ РјРѕР¶РµС‚Рµ Р·Р°Р±Р»РѕРєРёСЂРѕРІР°С‚СЊ СЃР°РјРѕРіРѕ СЃРµР±СЏ.', 403);
+            throw new BusinessLogicException('Вы не можете заблокировать самого себя.', 403);
         }
 
         return $this->userRepository->update($userId, ['is_active' => false]);
@@ -471,7 +471,7 @@ class UserService
         $organizationUser = $this->findOrganizationUserById($userId, $request);
 
         if (!$organizationUser) {
-            throw new BusinessLogicException('РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РЅР°Р№РґРµРЅ РІ СЌС‚РѕР№ РѕСЂРіР°РЅРёР·Р°С†РёРё.', 404);
+            throw new BusinessLogicException('Пользователь не найден в этой организации.', 404);
         }
 
         return $this->userRepository->update($userId, ['is_active' => true]);
