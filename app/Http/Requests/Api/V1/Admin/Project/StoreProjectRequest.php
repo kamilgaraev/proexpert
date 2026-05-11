@@ -91,18 +91,18 @@ class StoreProjectRequest extends FormRequest
             description: $validated['description'] ?? null,
             customer: $validated['customer'] ?? null,
             designer: $validated['designer'] ?? null,
+            budget_amount: isset($validated['budget_amount']) ? (float) $validated['budget_amount'] : null,
+            site_area_m2: isset($validated['site_area_m2']) ? (float) $validated['site_area_m2'] : null,
+            contract_number: $validated['contract_number'] ?? null,
             start_date: $validated['start_date'] ?? null,
             end_date: $validated['end_date'] ?? null,
             status: $validated['status'],
             is_archived: $validated['is_archived'] ?? false,
             additional_info: $validated['additional_info'] ?? null,
             external_code: $validated['external_code'] ?? null,
-            cost_category_id: isset($validated['cost_category_id']) ? (int)$validated['cost_category_id'] : null,
+            cost_category_id: isset($validated['cost_category_id']) ? (int) $validated['cost_category_id'] : null,
             accounting_data: $validated['accounting_data'] ?? null,
-            use_in_accounting_reports: $validated['use_in_accounting_reports'] ?? false,
-            budget_amount: $validated['budget_amount'] ?? null,
-            site_area_m2: $validated['site_area_m2'] ?? null,
-            contract_number: $validated['contract_number'] ?? null
+            use_in_accounting_reports: $validated['use_in_accounting_reports'] ?? false
         );
     }
-} 
+}

@@ -101,20 +101,28 @@ class UpdateProjectRequest extends FormRequest
             description: $validated['description'] ?? $currentProject->description,
             customer: $validated['customer'] ?? $currentProject->customer,
             designer: $validated['designer'] ?? $currentProject->designer,
-            start_date: $validated['start_date'] ?? $currentProject->start_date,
-            end_date: $validated['end_date'] ?? $currentProject->end_date,
+            budget_amount: array_key_exists('budget_amount', $validated)
+                ? ($validated['budget_amount'] !== null ? (float) $validated['budget_amount'] : null)
+                : ($currentProject->budget_amount !== null ? (float) $currentProject->budget_amount : null),
+            site_area_m2: array_key_exists('site_area_m2', $validated)
+                ? ($validated['site_area_m2'] !== null ? (float) $validated['site_area_m2'] : null)
+                : ($currentProject->site_area_m2 !== null ? (float) $currentProject->site_area_m2 : null),
+            contract_number: $validated['contract_number'] ?? $currentProject->contract_number,
+            start_date: array_key_exists('start_date', $validated)
+                ? $validated['start_date']
+                : $currentProject->start_date?->toDateString(),
+            end_date: array_key_exists('end_date', $validated)
+                ? $validated['end_date']
+                : $currentProject->end_date?->toDateString(),
             status: $validated['status'] ?? $currentProject->status,
             is_archived: $validated['is_archived'] ?? $currentProject->is_archived,
             additional_info: $validated['additional_info'] ?? $currentProject->additional_info,
             external_code: $validated['external_code'] ?? $currentProject->external_code,
-            cost_category_id: isset($validated['cost_category_id']) 
-                                ? (int)$validated['cost_category_id'] 
+            cost_category_id: array_key_exists('cost_category_id', $validated)
+                                ? ($validated['cost_category_id'] !== null ? (int) $validated['cost_category_id'] : null)
                                 : $currentProject->cost_category_id,
             accounting_data: $validated['accounting_data'] ?? $currentProject->accounting_data,
-            use_in_accounting_reports: $validated['use_in_accounting_reports'] ?? $currentProject->use_in_accounting_reports,
-            budget_amount: $validated['budget_amount'] ?? $currentProject->budget_amount,
-            site_area_m2: $validated['site_area_m2'] ?? $currentProject->site_area_m2,
-            contract_number: $validated['contract_number'] ?? $currentProject->contract_number
+            use_in_accounting_reports: $validated['use_in_accounting_reports'] ?? $currentProject->use_in_accounting_reports
         );
     }
-} 
+}
