@@ -1,40 +1,44 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Requests\Api\V1\Schedule;
 
-use Illuminate\Foundation\Http\FormRequest;
-use App\Enums\Schedule\ScheduleStatusEnum;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\ProjectSchedule;
+use Illuminate\Foundation\Http\FormRequest;
+
+use function trans_message;
 
 class UpdateProjectScheduleRequest extends FormRequest
 {
     public function authorize(): bool
     {
         $user = $this->user();
-        
+
         if (!$user) {
             return false;
         }
-        
+
         $organizationId = $this->getOrganizationId();
-        
+
         if (!$organizationId) {
             return false;
         }
-        
+
         $authorizationService = app(AuthorizationService::class);
-        
+
         return $authorizationService->can($user, 'schedule.edit', [
             'organization_id' => $organizationId,
-            'context_type' => 'organization'
+            'context_type' => 'organization',
         ]);
     }
-    
+
     protected function getOrganizationId(): ?int
     {
         $user = $this->user();
         $organizationId = $user->current_organization_id ?? $user->organization_id;
-        
+
         return $organizationId ? (int) $organizationId : null;
     }
 
@@ -76,16 +80,40 @@ class UpdateProjectScheduleRequest extends FormRequest
         ];
     }
 
-    public function withValidator($validator)
+    public function withValidator($validator): void
     {
-        $validator->after(function ($validator) {
-            // Проверяем, что при изменении статуса на "завершен" прогресс должен быть 100%
-            if ($this->has('status') && $this->status === 'completed') {
-                $schedule = $this->route('schedule'); // Предполагается, что график передается в route
-                if ($schedule && $schedule->overall_progress_percent < 100) {
-                    $validator->errors()->add('status', 'Нельзя завершить график с неполным прогрессом');
-                }
+        $validator->after(function ($validator): void {
+            if (!$this->has('status') || $this->status !== 'completed') {
+                return;
+            }
+
+            $schedule = $this->resolveRouteSchedule();
+
+            if (!$schedule instanceof ProjectSchedule) {
+                return;
+            }
+
+            if ($schedule->calculateOverallProgressPercent() < 100.0) {
+                $validator->errors()->add(
+                    'status',
+                    trans_message('schedule_management.schedule_completion_requires_full_progress')
+                );
             }
         });
     }
-} 
+
+    private function resolveRouteSchedule(): ?ProjectSchedule
+    {
+        $schedule = $this->route('schedule');
+
+        if ($schedule instanceof ProjectSchedule) {
+            return $schedule;
+        }
+
+        if (is_numeric($schedule)) {
+            return ProjectSchedule::query()->find((int) $schedule);
+        }
+
+        return null;
+    }
+}

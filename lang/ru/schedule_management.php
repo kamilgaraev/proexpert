@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 return [
+    'schedule_completion_requires_full_progress' => 'Нельзя завершить график с неполным прогрессом.',
     'organization_required' => 'Не определен контекст организации.',
     'validation_error' => 'Данные графика не прошли валидацию.',
     'schedule_not_found' => 'График не найден.',
