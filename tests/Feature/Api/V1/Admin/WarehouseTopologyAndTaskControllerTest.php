@@ -11,6 +11,8 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseTask;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseZone;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\Module;
+use App\Models\OrganizationModuleActivation;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery\MockInterface;
@@ -214,6 +216,26 @@ class WarehouseTopologyAndTaskControllerTest extends TestCase
         ]);
     }
 
+    public function test_web_admin_system_role_has_warehouse_topology_permissions_from_role_definition(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN');
+        $this->activateBasicWarehouseModule($context->organization->id);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/warehouses/{$warehouse->id}/zones", [
+                'name' => 'System role zone',
+                'code' => 'SYS-ZONE',
+                'zone_type' => WarehouseZone::TYPE_STORAGE,
+            ]);
+
+        $response->assertCreated();
+        $this->assertDatabaseHas('warehouse_zones', [
+            'warehouse_id' => $warehouse->id,
+            'code' => 'SYS-ZONE',
+        ]);
+    }
+
     private function createWarehouse(int $organizationId, string $name, string $code): OrganizationWarehouse
     {
         return OrganizationWarehouse::query()->create([
@@ -314,5 +336,29 @@ class WarehouseTopologyAndTaskControllerTest extends TestCase
                 }
             );
         });
+    }
+
+    private function activateBasicWarehouseModule(int $organizationId): void
+    {
+        $module = Module::query()->create([
+            'name' => 'Basic warehouse',
+            'slug' => 'basic-warehouse',
+            'version' => '1.0.0',
+            'type' => 'feature',
+            'billing_model' => 'free',
+            'category' => 'operations',
+            'is_active' => true,
+            'is_system_module' => false,
+            'can_deactivate' => true,
+        ]);
+
+        OrganizationModuleActivation::query()->create([
+            'organization_id' => $organizationId,
+            'module_id' => $module->id,
+            'status' => 'active',
+            'activated_at' => now(),
+            'is_bundled_with_plan' => false,
+            'is_auto_renew_enabled' => false,
+        ]);
     }
 }
