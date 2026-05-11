@@ -162,7 +162,7 @@ class RouteServiceProvider extends ServiceProvider
 
             $user = request()->user();
             if ($user && $user->current_organization_id) {
-                if ($completedWork->organization_id !== $user->current_organization_id) {
+                if ($completedWork->organization_id !== $user->current_organization_id && !$this->completedWorkIsAccessibleThroughProjectRoute($completedWork)) {
                     abort(403, 'У вас нет доступа к этой выполненной работе');
                 }
             }
@@ -314,5 +314,31 @@ class RouteServiceProvider extends ServiceProvider
                 Limit::perMinute(5)->by('identity:'.$request->ip().'|'.$identity),
             ];
         });
+    }
+
+    private function completedWorkIsAccessibleThroughProjectRoute(\App\Models\CompletedWork $completedWork): bool
+    {
+        $user = request()->user();
+        $projectId = request()->route('project');
+
+        if (!$user || !$user->current_organization_id || !$projectId) {
+            return false;
+        }
+
+        if ((int) $completedWork->project_id !== (int) $projectId) {
+            return false;
+        }
+
+        return \App\Models\Project::query()
+            ->where('id', $projectId)
+            ->where(function ($query) use ($user) {
+                $query->where('organization_id', $user->current_organization_id)
+                    ->orWhereHas('organizations', function ($participantQuery) use ($user) {
+                        $participantQuery
+                            ->where('organizations.id', $user->current_organization_id)
+                            ->where('project_organization.is_active', true);
+                    });
+            })
+            ->exists();
     }
 }

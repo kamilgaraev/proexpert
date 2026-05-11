@@ -8,6 +8,7 @@ use App\DTOs\CompletedWork\CompletedWorkDTO;
 use App\DTOs\CompletedWork\CompletedWorkMaterialDTO;
 use App\Models\CompletedWork;
 use App\Models\Contract;
+use App\Models\Project;
 use App\Rules\ProjectAccessibleRule;
 use Carbon\Carbon;
 use Illuminate\Foundation\Http\FormRequest;
@@ -23,7 +24,7 @@ class StoreCompletedWorkRequest extends FormRequest
 
     public function rules(): array
     {
-        $organizationId = $this->route('organization')?->id ?? Auth::user()->current_organization_id;
+        $organizationId = $this->resolveDataOrganizationId();
 
         return [
             'project_id' => ['required', 'integer', new ProjectAccessibleRule()],
@@ -86,7 +87,7 @@ class StoreCompletedWorkRequest extends FormRequest
 
         return new CompletedWorkDTO(
             id: null,
-            organization_id: $this->route('organization')?->id ?? Auth::user()->current_organization_id,
+            organization_id: $this->resolveDataOrganizationId(),
             project_id: $validatedData['project_id'],
             schedule_task_id: $validatedData['schedule_task_id'] ?? null,
             estimate_item_id: $validatedData['estimate_item_id'] ?? null,
@@ -98,7 +99,7 @@ class StoreCompletedWorkRequest extends FormRequest
             contract_id: $validatedData['contract_id'] ?? null,
             contractor_id: $validatedData['contractor_id'] ?? null,
             work_type_id: $validatedData['work_type_id'] ?? null,
-            user_id: $validatedData['user_id'] ?? null,
+            user_id: $validatedData['user_id'] ?? Auth::id(),
             quantity: (float) $validatedData['quantity'],
             completed_quantity: isset($validatedData['completed_quantity']) ? (float) $validatedData['completed_quantity'] : null,
             price: isset($validatedData['price']) ? (float) $validatedData['price'] : null,
@@ -109,5 +110,17 @@ class StoreCompletedWorkRequest extends FormRequest
             additional_info: $validatedData['additional_info'] ?? null,
             materials: $materials
         );
+    }
+
+    private function resolveDataOrganizationId(): int
+    {
+        $project = $this->attributes->get('project');
+
+        if (!$project instanceof Project) {
+            $projectId = $this->route('project') ?? $this->input('project_id');
+            $project = $projectId ? Project::query()->find($projectId) : null;
+        }
+
+        return (int) ($project?->organization_id ?? $this->route('organization')?->id ?? Auth::user()->current_organization_id);
     }
 }

@@ -15,7 +15,9 @@ use App\Http\Requests\Api\V1\Admin\CompletedWork\UpdateCompletedWorkRequest;
 use App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkCollection;
 use App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkResource;
 use App\Http\Responses\AdminResponse;
+use App\Enums\ProjectOrganizationRole;
 use App\Models\CompletedWork;
+use App\Models\Contractor;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
 use App\Services\CompletedWork\CompletedWorkFactService;
@@ -45,8 +47,10 @@ class CompletedWorkController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $organizationId = Auth::user()->current_organization_id;
             $projectId = $request->route('project');
+            $projectContext = ProjectContextMiddleware::getProjectContext($request);
+            $project = ProjectContextMiddleware::getProject($request);
+            $organizationId = $project?->organization_id ?? Auth::user()->current_organization_id;
 
             $filters = $request->only([
                 'contract_id',
@@ -68,6 +72,13 @@ class CompletedWorkController extends Controller
 
             $filters['organization_id'] = $organizationId;
             $filters['project_id'] = $projectId;
+
+            if ($projectContext && $this->projectContextRequiresOwnWorkScope($projectContext->role)) {
+                $filters['contractor_id'] = $this->resolveProjectContractorId(
+                    (int) $organizationId,
+                    (int) $projectContext->organizationId
+                ) ?? -1;
+            }
 
             $sortBy = $request->query('sortBy', 'completion_date');
             $sortDirection = $request->query('sortDirection', 'desc');
@@ -164,7 +175,11 @@ class CompletedWorkController extends Controller
             return AdminResponse::error(trans_message('completed_work.not_found'), 404);
         }
 
-        return $this->show($completed_work);
+        if (!$this->canAccessProjectWork($completed_work, request())) {
+            return AdminResponse::error(trans_message('completed_work.not_found'), 404);
+        }
+
+        return AdminResponse::success(new CompletedWorkResource($this->loadWorkRelations($completed_work)));
     }
 
     public function update(UpdateCompletedWorkRequest $request, CompletedWork $completed_work): JsonResponse
@@ -208,7 +223,40 @@ class CompletedWorkController extends Controller
             return AdminResponse::error(trans_message('completed_work.not_found'), 404);
         }
 
-        return $this->update($request, $completed_work);
+        if (!$this->canAccessProjectWork($completed_work, $request)) {
+            return AdminResponse::error(trans_message('completed_work.not_found'), 404);
+        }
+
+        $projectContext = ProjectContextMiddleware::getProjectContext($request);
+        if ($projectContext && !$projectContext->roleConfig->canManageWorks) {
+            return AdminResponse::error(trans_message('completed_work.forbidden'), 403);
+        }
+
+        try {
+            $dto = $request->toDto();
+            $updatedWork = $this->completedWorkService->update($completed_work->id, $dto);
+
+            return AdminResponse::success(
+                new CompletedWorkResource($this->loadWorkRelations($updatedWork)),
+                trans_message('completed_work.updated')
+            );
+        } catch (BusinessLogicException $e) {
+            Log::error('completed_work.update.error', [
+                'error' => $e->getMessage(),
+                'completed_work_id' => $completed_work->id,
+                'user_id' => Auth::id(),
+            ]);
+
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: Response::HTTP_BAD_REQUEST);
+        } catch (\Throwable $e) {
+            Log::error('completed_work.update.error', [
+                'error' => $e->getMessage(),
+                'completed_work_id' => $completed_work->id,
+                'user_id' => Auth::id(),
+            ]);
+
+            return AdminResponse::error(trans_message('completed_work.update_error'), 500);
+        }
     }
 
     public function destroy(CompletedWork $completed_work): JsonResponse
@@ -248,7 +296,36 @@ class CompletedWorkController extends Controller
             return AdminResponse::error(trans_message('completed_work.not_found'), 404);
         }
 
-        return $this->destroy($completed_work);
+        if (!$this->canAccessProjectWork($completed_work, request())) {
+            return AdminResponse::error(trans_message('completed_work.not_found'), 404);
+        }
+
+        $projectContext = ProjectContextMiddleware::getProjectContext(request());
+        if ($projectContext && !$projectContext->roleConfig->canManageWorks) {
+            return AdminResponse::error(trans_message('completed_work.forbidden'), 403);
+        }
+
+        try {
+            $this->completedWorkService->delete($completed_work->id, $completed_work->organization_id);
+
+            return AdminResponse::success(null, trans_message('completed_work.deleted'), Response::HTTP_NO_CONTENT);
+        } catch (BusinessLogicException $e) {
+            Log::error('completed_work.destroy.error', [
+                'error' => $e->getMessage(),
+                'completed_work_id' => $completed_work->id,
+                'user_id' => Auth::id(),
+            ]);
+
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: Response::HTTP_BAD_REQUEST);
+        } catch (\Throwable $e) {
+            Log::error('completed_work.destroy.error', [
+                'error' => $e->getMessage(),
+                'completed_work_id' => $completed_work->id,
+                'user_id' => Auth::id(),
+            ]);
+
+            return AdminResponse::error(trans_message('completed_work.delete_error'), 500);
+        }
     }
 
     public function syncMaterials(SyncCompletedWorkMaterialsRequest $request, CompletedWork $completed_work): JsonResponse
@@ -704,5 +781,46 @@ class CompletedWorkController extends Controller
             'estimateItem.measurementUnit',
             'journalEntry',
         ]);
+    }
+
+    private function canAccessProjectWork(CompletedWork $completedWork, Request $request): bool
+    {
+        $projectContext = ProjectContextMiddleware::getProjectContext($request);
+        $currentOrganizationId = Auth::user()?->current_organization_id;
+
+        if ($currentOrganizationId && (int) $completedWork->organization_id === (int) $currentOrganizationId) {
+            return true;
+        }
+
+        if (!$projectContext) {
+            return false;
+        }
+
+        if (!$this->projectContextRequiresOwnWorkScope($projectContext->role)) {
+            return true;
+        }
+
+        $contractorId = $this->resolveProjectContractorId(
+            (int) $completedWork->organization_id,
+            (int) $projectContext->organizationId
+        );
+
+        return $contractorId !== null && (int) $completedWork->contractor_id === $contractorId;
+    }
+
+    private function resolveProjectContractorId(int $ownerOrganizationId, int $sourceOrganizationId): ?int
+    {
+        return Contractor::query()
+            ->where('organization_id', $ownerOrganizationId)
+            ->where('source_organization_id', $sourceOrganizationId)
+            ->value('id');
+    }
+
+    private function projectContextRequiresOwnWorkScope(ProjectOrganizationRole $role): bool
+    {
+        return in_array($role, [
+            ProjectOrganizationRole::CONTRACTOR,
+            ProjectOrganizationRole::SUBCONTRACTOR,
+        ], true);
     }
 }

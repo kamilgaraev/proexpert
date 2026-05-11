@@ -93,6 +93,14 @@ class UpdateCompletedWorkRequest extends FormRequest
                 : [];
         }
 
+        $totalAmount = array_key_exists('total_amount', $validatedData)
+            ? (isset($validatedData['total_amount']) ? (float) $validatedData['total_amount'] : null)
+            : (
+                array_key_exists('price', $validatedData) || array_key_exists('quantity', $validatedData)
+                    ? null
+                    : (isset($completedWork->total_amount) ? (float) $completedWork->total_amount : null)
+            );
+
         return new CompletedWorkDTO(
             id: $completedWork->id,
             organization_id: $completedWork->organization_id,
@@ -111,7 +119,7 @@ class UpdateCompletedWorkRequest extends FormRequest
                 ? (isset($validatedData['completed_quantity']) ? (float) $validatedData['completed_quantity'] : null)
                 : (isset($completedWork->completed_quantity) ? (float) $completedWork->completed_quantity : null),
             price: isset($validatedData['price']) ? (float) $validatedData['price'] : (isset($completedWork->price) ? (float) $completedWork->price : null),
-            total_amount: isset($validatedData['total_amount']) ? (float) $validatedData['total_amount'] : (isset($completedWork->total_amount) ? (float) $completedWork->total_amount : null),
+            total_amount: $totalAmount,
             completion_date: isset($validatedData['completion_date']) ? Carbon::parse($validatedData['completion_date']) : $completedWork->completion_date,
             notes: $validatedData['notes'] ?? $completedWork->notes,
             status: $validatedData['status'] ?? $completedWork->status,

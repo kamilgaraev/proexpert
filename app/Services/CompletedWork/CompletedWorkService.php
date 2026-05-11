@@ -15,6 +15,8 @@ use App\Repositories\Interfaces\CompletedWorkRepositoryInterface;
 use App\Exceptions\BusinessLogicException;
 use App\Exceptions\ContractException;
 use App\Models\Contract;
+use App\Models\Contractor;
+use App\Enums\ProjectOrganizationRole;
 use App\Enums\Contract\ContractStatusEnum;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -73,14 +75,21 @@ class CompletedWorkService
             // Auto-fill contractor_id для contractor/subcontractor ролей
             $contractorId = $dto->contractor_id;
             
-            if (in_array($projectContext->roleConfig->role->value, ['contractor', 'subcontractor'])) {
-                // Проверяем: если пытаются указать другого подрядчика - ошибка
-                if ($contractorId && $contractorId !== $projectContext->organizationId) {
-                    throw new BusinessLogicException('Подрядчик может создавать работы только для себя', 403);
+            if (in_array($projectContext->roleConfig->role, [ProjectOrganizationRole::CONTRACTOR, ProjectOrganizationRole::SUBCONTRACTOR], true)) {
+                $resolvedContractorId = Contractor::query()
+                    ->where('organization_id', $dto->organization_id)
+                    ->where('source_organization_id', $projectContext->organizationId)
+                    ->value('id');
+
+                if (!$resolvedContractorId) {
+                    throw new BusinessLogicException(trans_message('completed_work.not_found'), 404);
                 }
-                
-                // Auto-fill
-                $contractorId = $projectContext->organizationId;
+
+                if ($contractorId && (int) $contractorId !== (int) $resolvedContractorId) {
+                    throw new BusinessLogicException(trans_message('completed_work.not_found'), 404);
+                }
+
+                $contractorId = (int) $resolvedContractorId;
                 
                 // Создаем новый DTO с исправленным contractor_id
                 $dto = new CompletedWorkDTO(
@@ -153,7 +162,13 @@ class CompletedWorkService
 
             // Валидация контракта перед созданием работы
             if ($dto->contract_id) {
-                $this->validateContract($dto->contract_id, $dto->total_amount);
+                $this->validateContract(
+                    $dto->contract_id,
+                    $dto->total_amount,
+                    $dto->organization_id,
+                    $dto->project_id,
+                    $dto->contractor_id
+                );
             }
 
             $data = $dto->toArray();
@@ -263,7 +278,13 @@ class CompletedWorkService
                 $amountDifference = ($dto->total_amount ?? 0) - ($existingWork->total_amount ?? 0);
                 
                 if ($amountDifference > 0) {
-                    $this->validateContract($dto->contract_id, $amountDifference);
+                    $this->validateContract(
+                        $dto->contract_id,
+                        $amountDifference,
+                        $dto->organization_id,
+                        $dto->project_id,
+                        $dto->contractor_id
+                    );
                 }
             }
 
@@ -388,12 +409,30 @@ class CompletedWorkService
     /**
      * Валидация контракта перед добавлением работы
      */
-    protected function validateContract(int $contractId, ?float $workAmount): void
+    protected function validateContract(
+        int $contractId,
+        ?float $workAmount,
+        ?int $organizationId = null,
+        ?int $projectId = null,
+        ?int $contractorId = null
+    ): void
     {
         $contract = Contract::find($contractId);
         
         if (!$contract) {
             throw new BusinessLogicException('Контракт не найден.', 404);
+        }
+
+        if ($organizationId !== null && (int) $contract->organization_id !== (int) $organizationId) {
+            throw new BusinessLogicException(trans_message('completed_work.not_found'), 404);
+        }
+
+        if ($projectId !== null && (int) $contract->project_id !== (int) $projectId) {
+            throw new BusinessLogicException(trans_message('completed_work.not_found'), 404);
+        }
+
+        if ($contractorId !== null && (int) $contract->contractor_id !== (int) $contractorId) {
+            throw new BusinessLogicException(trans_message('completed_work.not_found'), 404);
         }
 
         // Проверка статуса контракта
