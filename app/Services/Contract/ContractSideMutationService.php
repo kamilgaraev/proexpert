@@ -172,6 +172,7 @@ class ContractSideMutationService
             'user_id' => Auth::id(),
         ]);
 
+        $previousTotalAmount = (float) ($contract->total_amount ?? 0);
         $updateData = $contractDTO->toArray();
         $updateData['organization_id'] = $targetOrganizationId;
         $projectIds = $updateData['project_ids'] ?? null;
@@ -188,6 +189,33 @@ class ContractSideMutationService
             $this->syncProjects($contract, $contractDTO, $projectIds, $targetOrganizationId);
 
             DB::commit();
+
+            $newTotalAmount = $contractDTO->total_amount !== null ? (float) $contractDTO->total_amount : null;
+            if ($contractDTO->is_fixed_amount && $newTotalAmount !== null) {
+                $amountDelta = round($newTotalAmount - $previousTotalAmount, 2);
+
+                if (abs($amountDelta) > 0.01) {
+                    try {
+                        $this->stateEventService->createAmendedEvent(
+                            $contract,
+                            null,
+                            $amountDelta,
+                            $contract,
+                            now(),
+                            [
+                                'reason' => 'contract_amount_updated',
+                                'previous_total_amount' => $previousTotalAmount,
+                                'new_total_amount' => $newTotalAmount,
+                            ]
+                        );
+                    } catch (Exception $exception) {
+                        Log::warning('Failed to create contract amount update event', [
+                            'contract_id' => $contract->id,
+                            'error' => $exception->getMessage(),
+                        ]);
+                    }
+                }
+            }
 
             $contract->refresh();
 

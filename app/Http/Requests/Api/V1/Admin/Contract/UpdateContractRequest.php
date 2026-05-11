@@ -216,7 +216,9 @@ class UpdateContractRequest extends FormRequest
                 ? ($validatedData['gp_percentage'] !== null ? (float) $validatedData['gp_percentage'] : null)
                 : $contract->gp_percentage,
             gp_calculation_type: array_key_exists('gp_calculation_type', $validatedData)
-                ? ($validatedData['gp_calculation_type'] ? GpCalculationTypeEnum::from($validatedData['gp_calculation_type']) : null)
+                ? ($validatedData['gp_calculation_type']
+                    ? GpCalculationTypeEnum::from($validatedData['gp_calculation_type'])
+                    : GpCalculationTypeEnum::PERCENTAGE)
                 : $contract->gp_calculation_type,
             gp_coefficient: array_key_exists('gp_coefficient', $validatedData)
                 ? ($validatedData['gp_coefficient'] !== null ? (float) $validatedData['gp_coefficient'] : null)

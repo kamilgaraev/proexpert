@@ -169,7 +169,9 @@ class StoreContractRequest extends FormRequest
             base_amount: $baseAmount,
             total_amount: $totalAmount,
             gp_percentage: $this->validated('gp_percentage') !== null ? (float) $this->validated('gp_percentage') : null,
-            gp_calculation_type: $this->validated('gp_calculation_type') ? GpCalculationTypeEnum::from($this->validated('gp_calculation_type')) : null,
+            gp_calculation_type: $this->validated('gp_calculation_type')
+                ? GpCalculationTypeEnum::from($this->validated('gp_calculation_type'))
+                : GpCalculationTypeEnum::PERCENTAGE,
             gp_coefficient: $this->validated('gp_coefficient') !== null ? (float) $this->validated('gp_coefficient') : null,
             warranty_retention_calculation_type: $this->validated('warranty_retention_calculation_type') ? GpCalculationTypeEnum::from($this->validated('warranty_retention_calculation_type')) : null,
             warranty_retention_percentage: $this->validated('warranty_retention_percentage') !== null ? (float) $this->validated('warranty_retention_percentage') : null,

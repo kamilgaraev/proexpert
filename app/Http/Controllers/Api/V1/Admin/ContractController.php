@@ -292,6 +292,13 @@ class ContractController extends Controller
     {
         $projectId = $request->route('project');
         $contractId = $request->route('contract');
+        $user = $request->user();
+        $organization = $request->attributes->get('current_organization');
+        $currentOrganizationId = $organization?->id ?? ($request->attributes->get('current_organization_id') ?? $user->current_organization_id);
+
+        if (!$currentOrganizationId) {
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), Response::HTTP_BAD_REQUEST);
+        }
         
         Log::info('ContractController::update - START', [
             'contract_param' => $contract,
@@ -329,6 +336,16 @@ class ContractController extends Controller
                 if (!$belongsToProject) {
                     return AdminResponse::error('Контракт не найден', Response::HTTP_NOT_FOUND);
                 }
+            }
+
+            $accessibleContract = $this->contractService->getContractById(
+                (int) $contractId,
+                (int) $currentOrganizationId,
+                $projectId ? (int) $projectId : null
+            );
+
+            if (!$accessibleContract) {
+                return AdminResponse::error(trans_message('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             $organizationId = $existingContract->organization_id;
