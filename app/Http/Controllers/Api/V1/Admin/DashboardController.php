@@ -36,7 +36,7 @@ class DashboardController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
+        $organizationId = Auth::user()->current_organization_id ?? null;
 
         if (!$organizationId) {
             return AdminResponse::error(trans_message('dashboard.organization_required'), Response::HTTP_BAD_REQUEST);
@@ -60,7 +60,7 @@ class DashboardController extends Controller
      */
     public function summary(Request $request): JsonResponse
     {
-        $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
+        $organizationId = Auth::user()->current_organization_id ?? null;
 
         if (!$organizationId) {
             return AdminResponse::error(trans_message('dashboard.organization_required'), Response::HTTP_BAD_REQUEST);
@@ -84,7 +84,7 @@ class DashboardController extends Controller
     {
         $metric = $request->input('metric', 'users');
         $period = $request->input('period', 'month');
-        $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
+        $organizationId = Auth::user()->current_organization_id ?? null;
         $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
         
         $data = $this->dashboardService->getTimeseries($metric, $period, $organizationId, $projectId);
@@ -99,7 +99,7 @@ class DashboardController extends Controller
     {
         $entity = $request->input('entity', 'projects');
         $period = $request->input('period', 'month');
-        $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
+        $organizationId = Auth::user()->current_organization_id ?? null;
         $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
         $limit = (int)$request->input('limit', 5);
         $sortBy = $request->input('sort_by', 'amount');
@@ -116,7 +116,7 @@ class DashboardController extends Controller
     {
         $type = $request->input('type', 'materials');
         $limit = (int)$request->input('limit', 10);
-        $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
+        $organizationId = Auth::user()->current_organization_id ?? null;
         $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
         $status = $request->input('status');
         
@@ -130,7 +130,7 @@ class DashboardController extends Controller
      */
     public function limits(Request $request): JsonResponse
     {
-        $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
+        $organizationId = Auth::user()->current_organization_id ?? null;
         $data = $this->dashboardService->getLimits($organizationId);
 
         return AdminResponse::success($data);
@@ -348,7 +348,7 @@ class DashboardController extends Controller
      */
     public function financialMetrics(Request $request): JsonResponse
     {
-        $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
+        $organizationId = Auth::user()->current_organization_id ?? null;
 
         if (!$organizationId) {
             return AdminResponse::error(trans_message('dashboard.organization_required'), Response::HTTP_BAD_REQUEST);
@@ -380,7 +380,7 @@ class DashboardController extends Controller
      */
     public function projectsAnalytics(Request $request): JsonResponse
     {
-        $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
+        $organizationId = Auth::user()->current_organization_id ?? null;
 
         if (!$organizationId) {
             return AdminResponse::error(trans_message('dashboard.organization_required'), Response::HTTP_BAD_REQUEST);
@@ -397,7 +397,7 @@ class DashboardController extends Controller
      */
     public function materialsAnalytics(Request $request): JsonResponse
     {
-        $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
+        $organizationId = Auth::user()->current_organization_id ?? null;
 
         if (!$organizationId) {
             return AdminResponse::error(trans_message('dashboard.organization_required'), Response::HTTP_BAD_REQUEST);
@@ -414,7 +414,7 @@ class DashboardController extends Controller
      */
     public function comparison(Request $request): JsonResponse
     {
-        $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
+        $organizationId = Auth::user()->current_organization_id ?? null;
 
         if (!$organizationId) {
             return AdminResponse::error(trans_message('dashboard.organization_required'), Response::HTTP_BAD_REQUEST);
