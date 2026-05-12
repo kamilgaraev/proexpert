@@ -218,6 +218,7 @@ class WarehouseIdentifierController extends Controller
             $identifier = WarehouseIdentifier::query()
                 ->where('organization_id', $organizationId)
                 ->where('code', (string) $request->input('code'))
+                ->where('status', WarehouseIdentifier::STATUS_ACTIVE)
                 ->when(
                     $request->filled('warehouse_id'),
                     fn ($query) => $query->where(function ($nestedQuery) use ($request): void {

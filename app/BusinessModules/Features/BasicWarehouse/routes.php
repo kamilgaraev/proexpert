@@ -139,7 +139,7 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
             });
         });
 
-        Route::prefix('warehouse-identifiers')->name('warehouse-identifiers.')->group(function () {
+        Route::prefix('warehouse-identifiers')->name('warehouse-identifiers.')->middleware('authorize:warehouse.manage_stock')->group(function () {
             Route::post('/resolve', [WarehouseIdentifierController::class, 'resolve'])
                 ->name('resolve');
             Route::get('/', [WarehouseIdentifierController::class, 'index'])
@@ -154,7 +154,7 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
                 ->name('destroy');
         });
 
-        Route::prefix('warehouse-scan-events')->name('warehouse-scan-events.')->group(function () {
+        Route::prefix('warehouse-scan-events')->name('warehouse-scan-events.')->middleware('authorize:warehouse.manage_stock')->group(function () {
             Route::get('/', [WarehouseScanEventController::class, 'index'])
                 ->name('index');
             Route::post('/', [WarehouseScanEventController::class, 'store'])

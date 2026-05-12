@@ -79,6 +79,7 @@ class WarehouseScanEventController extends Controller
             $identifier = WarehouseIdentifier::query()
                 ->where('organization_id', $organizationId)
                 ->where('code', trim((string) $validated['code']))
+                ->where('status', WarehouseIdentifier::STATUS_ACTIVE)
                 ->when(
                     $warehouseId !== null,
                     fn (Builder $query) => $query->where(function (Builder $nestedQuery) use ($warehouseId): void {
