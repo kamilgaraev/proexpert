@@ -30,6 +30,9 @@ return [
     'server_error' => 'Произошла ошибка сервера. Попробуйте позже.',
     'token_error' => 'Сессия истекла. Войдите снова.',
     'token_refreshed' => 'Сессия успешно обновлена.',
+    'security_unknown_device' => 'Неизвестное устройство',
+    'security_unknown_platform' => 'Неизвестная система',
+    'security_unknown_browser' => 'Неизвестный браузер',
     'validation_error' => 'Проверьте корректность заполнения полей.',
     'validation' => [
         'email_required' => 'Укажите email.',
