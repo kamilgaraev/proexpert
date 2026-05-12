@@ -23,13 +23,26 @@ class ContractorReportRequest extends FormRequest
      */
     public function rules(): array
     {
+        $organizationId = Auth::user()?->current_organization_id;
+
         $rules = [
-            'project_id' => ['required', 'integer', 'exists:projects,id'],
-            'contractor_id' => ['nullable', 'integer', 'exists:contractors,id'],
+            'project_id' => [
+                'required',
+                'integer',
+                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+            ],
+            'contractor_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('contractors', 'id')->where('organization_id', $organizationId),
+            ],
             'date_from' => ['nullable', 'date'],
             'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
             'contractor_ids' => ['nullable', 'array'],
-            'contractor_ids.*' => ['integer', 'exists:contractors,id'],
+            'contractor_ids.*' => [
+                'integer',
+                Rule::exists('contractors', 'id')->where('organization_id', $organizationId),
+            ],
             'contract_status' => ['nullable', 'string', Rule::in(['active', 'completed', 'cancelled', 'draft'])],
             'include_completed_works' => ['nullable', 'boolean'],
             'include_payments' => ['nullable', 'boolean'],
@@ -47,7 +60,11 @@ class ContractorReportRequest extends FormRequest
 
         // Добавляем валидацию template_id только если модуль активен
         if ($this->isTemplateModuleActive()) {
-            $rules['template_id'] = ['nullable', 'integer', 'exists:report_templates,id'];
+            $rules['template_id'] = [
+                'nullable',
+                'integer',
+                Rule::exists('report_templates', 'id')->where('organization_id', $organizationId),
+            ];
         }
 
         return $rules;

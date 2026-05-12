@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Admin;
 
 use App\Models\PersonalFile;
+use App\Models\Contractor;
 use App\Models\Project;
 use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
+use App\Models\Organization;
 use App\Models\ReportFile;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
@@ -23,24 +25,7 @@ class ContractorSummaryReportStorageTest extends TestCase
         Storage::fake('s3');
 
         $context = AdminApiTestContext::create();
-        $reportsModule = Module::query()->firstOrCreate(
-            ['slug' => 'reports'],
-            [
-                'name' => 'Reports',
-                'version' => '1.0.0',
-                'type' => 'core',
-                'billing_model' => 'free',
-                'category' => 'core',
-                'is_active' => true,
-                'can_deactivate' => true,
-            ]
-        );
-        OrganizationModuleActivation::query()->create([
-            'organization_id' => $context->organization->id,
-            'module_id' => $reportsModule->id,
-            'status' => 'active',
-            'activated_at' => now(),
-        ]);
+        $this->activateReportsModule($context->organization->id);
         $project = Project::factory()->create([
             'organization_id' => $context->organization->id,
         ]);
@@ -90,5 +75,74 @@ class ContractorSummaryReportStorageTest extends TestCase
         $indexResponse->assertJsonPath('success', true);
         $indexResponse->assertJsonPath('meta.total', 1);
         $indexResponse->assertJsonPath('data.0.id', $reportFile->id);
+    }
+
+    public function test_contractor_summary_rejects_foreign_project_before_generation(): void
+    {
+        Storage::fake('s3');
+
+        $context = AdminApiTestContext::create();
+        $this->activateReportsModule($context->organization->id);
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $foreignProject = Project::factory()->create([
+            'organization_id' => $foreignOrganization->id,
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/reports/contractor-summary?' . http_build_query([
+                'project_id' => $foreignProject->id,
+                'contract_status' => 'active',
+            ]));
+
+        $response->assertStatus(422);
+        $this->assertSame(0, ReportFile::query()->where('organization_id', $context->organization->id)->count());
+    }
+
+    public function test_contractor_summary_rejects_foreign_contractor_filters(): void
+    {
+        Storage::fake('s3');
+
+        $context = AdminApiTestContext::create();
+        $this->activateReportsModule($context->organization->id);
+        $project = Project::factory()->create([
+            'organization_id' => $context->organization->id,
+        ]);
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $foreignContractor = Contractor::query()->create([
+            'organization_id' => $foreignOrganization->id,
+            'name' => 'Foreign contractor',
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/reports/contractor-summary?' . http_build_query([
+                'project_id' => $project->id,
+                'contractor_ids' => [$foreignContractor->id],
+                'contract_status' => 'active',
+            ]));
+
+        $response->assertStatus(422);
+    }
+
+    private function activateReportsModule(int $organizationId): void
+    {
+        $reportsModule = Module::query()->firstOrCreate(
+            ['slug' => 'reports'],
+            [
+                'name' => 'Reports',
+                'version' => '1.0.0',
+                'type' => 'core',
+                'billing_model' => 'free',
+                'category' => 'core',
+                'is_active' => true,
+                'can_deactivate' => true,
+            ]
+        );
+
+        OrganizationModuleActivation::query()->create([
+            'organization_id' => $organizationId,
+            'module_id' => $reportsModule->id,
+            'status' => 'active',
+            'activated_at' => now(),
+        ]);
     }
 }
