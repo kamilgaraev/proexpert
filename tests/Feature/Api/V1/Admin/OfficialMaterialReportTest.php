@@ -178,6 +178,47 @@ class OfficialMaterialReportTest extends TestCase
         $this->assertSame(30.0, (float) $data['data']['data']['materials'][0]['usage']['fact_used']);
     }
 
+    public function test_official_material_report_filters_by_document_number()
+    {
+        $matchedMaterial = $this->createMaterial('Matched material', 'M-004');
+        $otherMaterial = $this->createMaterial('Other material', 'M-005');
+
+        $this->createMovement($matchedMaterial, 'receipt', 40, '2024-01-10', 'M-15-001');
+        $this->createMovement($matchedMaterial, 'write_off', 15, '2024-01-15', 'M-15-002');
+        $this->createMovement($otherMaterial, 'write_off', 20, '2024-01-15', 'M-11-003');
+
+        $response = $this
+            ->getJson('/api/v1/admin/reports/official-material-usage?' . http_build_query([
+                'project_id' => $this->project->id,
+                'date_from' => '2024-01-01',
+                'date_to' => '2024-01-31',
+                'document_number' => 'M-15',
+            ]));
+
+        $response->assertStatus(200);
+
+        $data = $response->json();
+        $this->assertSame('M-15', $data['data']['filters']['document_number']);
+        $this->assertCount(1, $data['data']['data']['materials']);
+        $this->assertSame('Matched material', $data['data']['data']['materials'][0]['material_name']);
+        $this->assertSame(40.0, (float) $data['data']['data']['materials'][0]['received_from_customer']['volume']);
+        $this->assertSame(15.0, (float) $data['data']['data']['materials'][0]['usage']['fact_used']);
+    }
+
+    public function test_official_material_report_rejects_unknown_operation_type()
+    {
+        $response = $this
+            ->getJson('/api/v1/admin/reports/official-material-usage?' . http_build_query([
+                'project_id' => $this->project->id,
+                'date_from' => '2024-01-01',
+                'date_to' => '2024-01-31',
+                'operation_type' => 'transfer_out',
+            ]));
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['operation_type']);
+    }
+
     public function test_official_material_report_validates_quantity_range()
     {
         $response = $this

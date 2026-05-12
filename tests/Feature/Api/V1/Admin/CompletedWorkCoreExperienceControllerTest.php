@@ -225,6 +225,54 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
         ]);
     }
 
+    public function test_observer_project_role_cannot_mutate_completed_works(): void
+    {
+        $observerContext = AdminApiTestContext::create();
+        $ownerOrganization = Organization::factory()->verified()->create();
+        $project = Project::factory()->create([
+            'organization_id' => $ownerOrganization->id,
+            'name' => 'Observer Works Project',
+        ]);
+        $this->attachProjectParticipant($project, $observerContext->organization, ProjectOrganizationRole::OBSERVER);
+
+        $contractor = $this->createContractor($ownerOrganization, 'Observer Work Contractor');
+        $contract = $this->createContract($ownerOrganization, $project, $contractor, ['number' => 'OBS-WORK-CON']);
+        $workType = $this->createWorkType($ownerOrganization, 'Observer blocked work');
+        $work = $this->createCompletedWork($ownerOrganization, $project, $contractor, [
+            'contract_id' => $contract->id,
+            'work_type_id' => $workType->id,
+            'notes' => 'Observer cannot mutate this',
+        ]);
+        $this->allowAdminAccess();
+
+        $createResponse = $this->withHeaders($observerContext->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/works", [
+                'project_id' => $project->id,
+                'contract_id' => $contract->id,
+                'work_type_id' => $workType->id,
+                'quantity' => 1,
+                'price' => 100,
+                'completion_date' => '2026-06-20',
+                'status' => 'pending',
+            ]);
+
+        $createResponse->assertForbidden();
+
+        $updateResponse = $this->withHeaders($observerContext->authHeaders())
+            ->putJson("/api/v1/admin/projects/{$project->id}/works/{$work->id}", [
+                'notes' => 'OBSERVER-UPDATE',
+            ]);
+
+        $updateResponse->assertForbidden();
+        $this->assertSame('Observer cannot mutate this', $work->fresh()->notes);
+
+        $deleteResponse = $this->withHeaders($observerContext->authHeaders())
+            ->deleteJson("/api/v1/admin/projects/{$project->id}/works/{$work->id}");
+
+        $deleteResponse->assertForbidden();
+        $this->assertNotSoftDeleted('completed_works', ['id' => $work->id]);
+    }
+
     private function createContractor(
         Organization $organization,
         string $name,
