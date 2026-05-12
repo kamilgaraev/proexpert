@@ -10,6 +10,7 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
+use App\Models\TaskDependency;
 use App\Models\TaskResource;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -246,6 +247,76 @@ class ProjectScheduleCoreExperienceControllerTest extends TestCase
             'task_id' => $task->id,
             'material_id' => $foreignMaterialId,
         ]);
+    }
+
+    public function test_owner_can_manage_schedule_dependencies_with_admin_contract_fields(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $schedule = $this->createSchedule($context->organization, $project, $context->user, [
+            'critical_path_calculated' => true,
+        ]);
+        $predecessor = $this->createTask($context->organization, $schedule, $context->user, [
+            'name' => 'Foundation',
+            'planned_start_date' => '2026-06-01',
+            'planned_end_date' => '2026-06-05',
+        ]);
+        $successor = $this->createTask($context->organization, $schedule, $context->user, [
+            'name' => 'Walls',
+            'planned_start_date' => '2026-06-06',
+            'planned_end_date' => '2026-06-12',
+        ]);
+        $this->allowAdminAccess();
+
+        $createResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/dependencies", [
+                'predecessor_task_id' => $predecessor->id,
+                'successor_task_id' => $successor->id,
+                'dependency_type' => 'FS',
+                'lag_days' => 1,
+                'lag_type' => 'days',
+                'is_hard_constraint' => true,
+            ]);
+
+        $createResponse->assertCreated();
+        $createResponse->assertJsonPath('data.schedule_id', $schedule->id);
+        $createResponse->assertJsonPath('data.predecessor_task_id', $predecessor->id);
+        $createResponse->assertJsonPath('data.successor_task_id', $successor->id);
+        $createResponse->assertJsonPath('data.dependency_type', 'FS');
+        $createResponse->assertJsonPath('data.predecessor_task.name', 'Foundation');
+        $createResponse->assertJsonPath('data.successor_task.name', 'Walls');
+
+        $dependency = TaskDependency::query()->findOrFail($createResponse->json('data.id'));
+        $this->assertSame($schedule->id, $dependency->schedule_id);
+        $this->assertSame($context->organization->id, $dependency->organization_id);
+        $this->assertSame($context->user->id, $dependency->created_by_user_id);
+
+        $indexResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/dependencies");
+
+        $indexResponse->assertOk();
+        $indexResponse->assertJsonPath('data.0.predecessor_task_id', $predecessor->id);
+        $indexResponse->assertJsonPath('data.0.successor_task_id', $successor->id);
+
+        $updateResponse = $this->withHeaders($context->authHeaders())
+            ->patchJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/dependencies/{$dependency->id}", [
+                'dependency_type' => 'SS',
+                'lag_days' => 2,
+                'description' => 'Start walls after layout',
+            ]);
+
+        $updateResponse->assertOk();
+        $updateResponse->assertJsonPath('data.predecessor_task_id', $predecessor->id);
+        $updateResponse->assertJsonPath('data.successor_task_id', $successor->id);
+        $updateResponse->assertJsonPath('data.dependency_type', 'SS');
+        $updateResponse->assertJsonPath('data.lag_days', 2);
+        $this->assertFalse((bool) $schedule->fresh()->critical_path_calculated);
+
+        $deleteResponse = $this->withHeaders($context->authHeaders())
+            ->deleteJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/dependencies/{$dependency->id}");
+
+        $deleteResponse->assertOk();
+        $this->assertDatabaseMissing('task_dependencies', ['id' => $dependency->id]);
     }
 
     private function createSchedule(

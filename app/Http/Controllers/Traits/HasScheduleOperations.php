@@ -325,37 +325,11 @@ trait HasScheduleOperations
                 'performed_by' => $request->user()?->id,
             ]);
 
-            return AdminResponse::success([
-                'id' => $dependency->id,
-                'dependency_type' => $dependency->dependency_type->value,
-                'dependency_type_label' => $dependency->dependency_type->label(),
-                'lag_days' => $dependency->lag_days,
-                'lag_hours' => $dependency->lag_hours,
-                'lag_type' => $dependency->lag_type,
-                'description' => $dependency->description,
-                'is_hard_constraint' => $dependency->is_hard_constraint,
-                'priority' => $dependency->priority,
-                'is_active' => $dependency->is_active,
-                'validation_status' => $dependency->validation_status,
-                'created_at' => $dependency->created_at,
-                'predecessor_task' => [
-                    'id' => $dependency->predecessorTask->id,
-                    'name' => $dependency->predecessorTask->name,
-                    'planned_start_date' => $dependency->predecessorTask->planned_start_date,
-                    'planned_end_date' => $dependency->predecessorTask->planned_end_date,
-                ],
-                'successor_task' => [
-                    'id' => $dependency->successorTask->id,
-                    'name' => $dependency->successorTask->name,
-                    'planned_start_date' => $dependency->successorTask->planned_start_date,
-                    'planned_end_date' => $dependency->successorTask->planned_end_date,
-                ],
-                'created_by' => [
-                    'id' => $dependency->createdBy->id,
-                    'name' => $dependency->createdBy->name,
-                    'email' => $dependency->createdBy->email,
-                ],
-            ], trans_message('schedule_management.dependency_created'), 201);
+            return AdminResponse::success(
+                $this->serializeScheduleDependency($dependency),
+                trans_message('schedule_management.dependency_created'),
+                201
+            );
         } catch (CircularDependencyException $e) {
             Log::warning('[HasScheduleOperations.createScheduleDependency] Circular dependency detected', [
                 'schedule_id' => $scheduleId,
@@ -417,37 +391,10 @@ trait HasScheduleOperations
                 'performed_by' => $request->user()?->id,
             ]);
 
-            return AdminResponse::success([
-                'id' => $dependency->id,
-                'dependency_type' => $dependency->dependency_type->value,
-                'dependency_type_label' => $dependency->dependency_type->label(),
-                'lag_days' => $dependency->lag_days,
-                'lag_hours' => $dependency->lag_hours,
-                'lag_type' => $dependency->lag_type,
-                'description' => $dependency->description,
-                'is_hard_constraint' => $dependency->is_hard_constraint,
-                'priority' => $dependency->priority,
-                'is_active' => $dependency->is_active,
-                'validation_status' => $dependency->validation_status,
-                'created_at' => $dependency->created_at,
-                'predecessor_task' => [
-                    'id' => $dependency->predecessorTask->id ?? null,
-                    'name' => $dependency->predecessorTask->name ?? null,
-                    'planned_start_date' => $dependency->predecessorTask->planned_start_date ?? null,
-                    'planned_end_date' => $dependency->predecessorTask->planned_end_date ?? null,
-                ],
-                'successor_task' => [
-                    'id' => $dependency->successorTask->id ?? null,
-                    'name' => $dependency->successorTask->name ?? null,
-                    'planned_start_date' => $dependency->successorTask->planned_start_date ?? null,
-                    'planned_end_date' => $dependency->successorTask->planned_end_date ?? null,
-                ],
-                'created_by' => [
-                    'id' => $dependency->createdBy->id ?? null,
-                    'name' => $dependency->createdBy->name ?? null,
-                    'email' => $dependency->createdBy->email ?? null,
-                ],
-            ], trans_message('schedule_management.dependency_updated'));
+            return AdminResponse::success(
+                $this->serializeScheduleDependency($dependency),
+                trans_message('schedule_management.dependency_updated')
+            );
         } catch (CircularDependencyException $e) {
             Log::warning('[HasScheduleOperations.updateScheduleDependency] Circular dependency detected', [
                 'schedule_id' => $scheduleId,
@@ -507,6 +454,45 @@ trait HasScheduleOperations
 
             return AdminResponse::error(trans_message('schedule_management.dependency_delete_error'), 500);
         }
+    }
+
+    protected function serializeScheduleDependency(TaskDependency $dependency): array
+    {
+        return [
+            'id' => $dependency->id,
+            'schedule_id' => $dependency->schedule_id,
+            'organization_id' => $dependency->organization_id,
+            'predecessor_task_id' => $dependency->predecessor_task_id,
+            'successor_task_id' => $dependency->successor_task_id,
+            'dependency_type' => $dependency->dependency_type->value,
+            'dependency_type_label' => $dependency->dependency_type->label(),
+            'lag_days' => $dependency->lag_days,
+            'lag_hours' => $dependency->lag_hours,
+            'lag_type' => $dependency->lag_type,
+            'description' => $dependency->description,
+            'is_hard_constraint' => $dependency->is_hard_constraint,
+            'priority' => $dependency->priority,
+            'is_active' => $dependency->is_active,
+            'validation_status' => $dependency->validation_status,
+            'created_at' => $dependency->created_at,
+            'predecessor_task' => [
+                'id' => $dependency->predecessorTask->id ?? null,
+                'name' => $dependency->predecessorTask->name ?? null,
+                'planned_start_date' => $dependency->predecessorTask->planned_start_date ?? null,
+                'planned_end_date' => $dependency->predecessorTask->planned_end_date ?? null,
+            ],
+            'successor_task' => [
+                'id' => $dependency->successorTask->id ?? null,
+                'name' => $dependency->successorTask->name ?? null,
+                'planned_start_date' => $dependency->successorTask->planned_start_date ?? null,
+                'planned_end_date' => $dependency->successorTask->planned_end_date ?? null,
+            ],
+            'created_by' => [
+                'id' => $dependency->createdBy->id ?? null,
+                'name' => $dependency->createdBy->name ?? null,
+                'email' => $dependency->createdBy->email ?? null,
+            ],
+        ];
     }
 
     protected function getResourceConflicts(int $scheduleId, int $organizationId, callable $finder): JsonResponse
