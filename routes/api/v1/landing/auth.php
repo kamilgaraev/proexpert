@@ -16,11 +16,11 @@ Route::prefix('auth')->name('auth.')->group(function () {
         Route::post('password/reset', [AuthController::class, 'resetPassword'])->name('password.reset');
     });
 
-    Route::middleware(['auth.jwt:api_landing', 'throttle:dashboard'])
+    Route::middleware(['auth.jwt:api_landing', 'auth.session', 'throttle:dashboard'])
         ->post('refresh', [AuthController::class, 'refresh'])
         ->name('refresh');
 
-    Route::middleware(['auth:api_landing', 'auth.jwt:api_landing'])->group(function () {
+    Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'auth.session'])->group(function () {
         Route::get('me', [AuthController::class, 'me'])->name('me');
         Route::patch('me', [ProfileController::class, 'update'])->name('me.update');
         Route::post('logout', [AuthController::class, 'logout'])->name('logout');

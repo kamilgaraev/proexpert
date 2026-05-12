@@ -42,6 +42,7 @@ $app = Application::configure(basePath: dirname(__DIR__))
             // === ОСТАЛЬНЫЕ MIDDLEWARE ===
             'auth.jwt' => JwtMiddleware::class,
             'jwt.auth' => JwtMiddleware::class,
+            'auth.session' => \App\Http\Middleware\EnsureAuthSessionIsActive::class,
             'organization.context' => SetOrganizationContext::class,
             'organization_context' => SetOrganizationContext::class,
             'project.context' => \App\Http\Middleware\ProjectContextMiddleware::class,

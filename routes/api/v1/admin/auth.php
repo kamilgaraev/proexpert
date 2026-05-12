@@ -17,12 +17,12 @@ Route::prefix('auth')->name('auth.')->group(function () {
     // Строгий лимит для login (защита от брутфорса)
     Route::middleware('throttle:auth')->post('login', [AuthController::class, 'login'])->name('admin.login');
     
-    Route::middleware(['auth.jwt:api_admin', 'throttle:dashboard'])
+    Route::middleware(['auth.jwt:api_admin', 'auth.session', 'throttle:dashboard'])
         ->post('refresh', [AuthController::class, 'refresh'])
         ->name('refresh');
 
     // Защищенные маршруты с более щадящим лимитом
-    Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'throttle:dashboard'])->group(function () {
+    Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'auth.session', 'throttle:dashboard'])->group(function () {
         Route::get('me', [AuthController::class, 'me'])->name('me');
         Route::post('logout', [AuthController::class, 'logout'])->name('logout');
     });

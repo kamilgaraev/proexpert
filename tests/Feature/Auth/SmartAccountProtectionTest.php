@@ -234,4 +234,53 @@ class SmartAccountProtectionTest extends TestCase
             'status' => AuthSessionStatus::Active->value,
         ]);
     }
+
+    public function test_auth_session_middleware_allows_missing_claim_when_not_enforced(): void
+    {
+        config(['auth_tokens.sessions.enforce' => false]);
+        $user = User::factory()->create();
+        $request = Request::create('/api/v1/landing/auth/me', 'GET');
+        $request->setUserResolver(fn () => $user);
+
+        $response = app(\App\Http\Middleware\EnsureAuthSessionIsActive::class)
+            ->handle($request, fn () => response()->json(['ok' => true]));
+
+        $this->assertSame(200, $response->getStatusCode());
+    }
+
+    public function test_auth_session_middleware_rejects_revoked_session_when_enforced(): void
+    {
+        config(['auth_tokens.sessions.enforce' => true]);
+        $user = User::factory()->create();
+        $session = UserAuthSession::query()->create([
+            'user_id' => $user->id,
+            'session_uuid' => (string) Str::uuid(),
+            'device_fingerprint' => hash('sha256', 'revoked'),
+            'risk_score' => 0,
+            'risk_flags' => [],
+            'status' => AuthSessionStatus::Revoked,
+            'first_seen_at' => now(),
+            'last_seen_at' => now(),
+            'revoked_at' => now(),
+            'revoked_reason' => 'test',
+        ]);
+
+        $request = Request::create('/api/v1/landing/auth/me', 'GET');
+        $request->setUserResolver(fn () => $user);
+        $request->attributes->set('token_payload', new class ($session->session_uuid) {
+            public function __construct(private readonly string $sessionUuid)
+            {
+            }
+
+            public function get(string $key): ?string
+            {
+                return $key === 'session_uuid' ? $this->sessionUuid : null;
+            }
+        });
+
+        $response = app(\App\Http\Middleware\EnsureAuthSessionIsActive::class)
+            ->handle($request, fn () => response()->json(['ok' => true]));
+
+        $this->assertSame(401, $response->getStatusCode());
+    }
 }
