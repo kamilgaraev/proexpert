@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
+use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
 use App\Http\Controllers\Controller;
@@ -104,7 +105,7 @@ class TransactionController extends Controller
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $transaction = PaymentTransaction::query()
                 ->where('organization_id', $organizationId)
-                ->with(['paymentDocument', 'createdByUser', 'approvedByUser'])
+                ->with(['paymentDocument', 'createdBy', 'approvedBy'])
                 ->findOrFail((int) $id);
 
             return AdminResponse::success($this->formatTransaction($transaction, true), trans_message('payments.transactions.loaded'));
@@ -132,22 +133,23 @@ class TransactionController extends Controller
                 ->where('organization_id', $organizationId)
                 ->findOrFail((int) $id);
 
-            if ($transaction->status !== 'pending') {
+            if ($transaction->status !== PaymentTransactionStatus::PENDING) {
                 return AdminResponse::error(trans_message('payments.transactions.pending_only'), 422);
             }
 
-            $transaction->update([
-                'status' => 'completed',
-                'approved_by_user_id' => $request->user()->id,
-            ]);
-
+            $notes = trim((string) $transaction->notes);
             if (!empty($validated['notes'])) {
-                $transaction->notes = trim((string) $transaction->notes . PHP_EOL . $validated['notes']);
-                $transaction->save();
+                $notes = trim($notes . PHP_EOL . $validated['notes']);
             }
 
+            PaymentTransaction::query()->whereKey($transaction->id)->update([
+                'status' => PaymentTransactionStatus::COMPLETED->value,
+                'approved_by_user_id' => $request->user()->id,
+                'notes' => $notes !== '' ? $notes : null,
+            ]);
+
             return AdminResponse::success(
-                $this->formatTransaction($transaction->fresh(['paymentDocument', 'createdByUser', 'approvedByUser']), true),
+                $this->formatTransaction($this->findTransactionForResponse($transaction->id), true),
                 trans_message('payments.transactions.approved')
             );
         } catch (\Illuminate\Validation\ValidationException $e) {
@@ -176,16 +178,20 @@ class TransactionController extends Controller
                 ->where('organization_id', $organizationId)
                 ->findOrFail((int) $id);
 
-            if ($transaction->status !== 'pending') {
+            if ($transaction->status !== PaymentTransactionStatus::PENDING) {
                 return AdminResponse::error(trans_message('payments.transactions.pending_only'), 422);
             }
 
-            $transaction->update(['status' => 'failed']);
-            $transaction->notes = trim((string) $transaction->notes . PHP_EOL . 'Причина отклонения: ' . $validated['reason']);
-            $transaction->save();
+            PaymentTransaction::query()->whereKey($transaction->id)->update([
+                'status' => PaymentTransactionStatus::FAILED->value,
+                'notes' => $this->appendNote(
+                    $transaction->notes,
+                    trans_message('payments.transactions.reject_note', ['reason' => $validated['reason']])
+                ),
+            ]);
 
             return AdminResponse::success(
-                $this->formatTransaction($transaction->fresh(['paymentDocument', 'createdByUser', 'approvedByUser']), true),
+                $this->formatTransaction($this->findTransactionForResponse($transaction->id), true),
                 trans_message('payments.transactions.rejected')
             );
         } catch (\Illuminate\Validation\ValidationException $e) {
@@ -221,7 +227,7 @@ class TransactionController extends Controller
                     ->lockForUpdate()
                     ->findOrFail((int) $id);
 
-                if ($originalTransaction->status !== 'completed') {
+                if ($originalTransaction->status !== PaymentTransactionStatus::COMPLETED) {
                     throw new \DomainException(trans_message('payments.transactions.completed_only'));
                 }
 
@@ -238,8 +244,8 @@ class TransactionController extends Controller
                     'currency' => $originalTransaction->currency,
                     'payment_method' => $originalTransaction->payment_method,
                     'transaction_date' => $validated['refund_date'] ?? now()->toDateString(),
-                    'status' => 'completed',
-                    'notes' => 'Возврат платежа. ' . $validated['reason'],
+                    'status' => PaymentTransactionStatus::COMPLETED->value,
+                    'notes' => trans_message('payments.transactions.refund_note', ['reason' => $validated['reason']]),
                     'created_by_user_id' => $userId,
                     'approved_by_user_id' => $userId,
                     'metadata' => [
@@ -248,7 +254,9 @@ class TransactionController extends Controller
                     ],
                 ]);
 
-                $originalTransaction->update(['status' => 'refunded']);
+                PaymentTransaction::query()->whereKey($originalTransaction->id)->update([
+                    'status' => PaymentTransactionStatus::REFUNDED->value,
+                ]);
 
                 if ($originalTransaction->paymentDocument !== null) {
                     $document = $originalTransaction->paymentDocument;
@@ -260,8 +268,8 @@ class TransactionController extends Controller
                 }
 
                 return [
-                    'original_transaction' => $originalTransaction->fresh(['paymentDocument', 'createdByUser', 'approvedByUser']),
-                    'refund_transaction' => $refundTransaction->fresh(['paymentDocument', 'createdByUser', 'approvedByUser']),
+                    'original_transaction' => $this->findTransactionForResponse($originalTransaction->id),
+                    'refund_transaction' => $refundTransaction->fresh(['paymentDocument', 'createdBy', 'approvedBy']),
                 ];
             });
 
@@ -285,16 +293,63 @@ class TransactionController extends Controller
         }
     }
 
+    public function cancel(Request $request, int|string $id): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'reason' => ['nullable', 'string', 'max:500'],
+            ]);
+
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $transaction = PaymentTransaction::query()
+                ->where('organization_id', $organizationId)
+                ->findOrFail((int) $id);
+
+            if (!in_array($transaction->status, [PaymentTransactionStatus::PENDING, PaymentTransactionStatus::PROCESSING], true)) {
+                return AdminResponse::error(trans_message('payments.transactions.cancel_forbidden'), 422);
+            }
+
+            $reason = $validated['reason'] ?? null;
+            $notes = $this->appendNote(
+                $transaction->notes,
+                $reason
+                    ? trans_message('payments.transactions.cancel_note', ['reason' => $reason])
+                    : trans_message('payments.transactions.cancel_note_without_reason')
+            );
+
+            PaymentTransaction::query()->whereKey($transaction->id)->update([
+                'status' => PaymentTransactionStatus::CANCELLED->value,
+                'notes' => $notes,
+            ]);
+
+            return AdminResponse::success(
+                $this->formatTransaction($this->findTransactionForResponse($transaction->id), true),
+                trans_message('payments.transactions.cancelled')
+            );
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
+        } catch (\Exception $e) {
+            Log::error('payments.transaction.cancel.error', [
+                'transaction_id' => $id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('payments.transactions.cancel_error'), 500);
+        }
+    }
+
     private function formatTransaction(PaymentTransaction $transaction, bool $detailed = false): array
     {
         $data = [
             'id' => $transaction->id,
             'payment_document_id' => $transaction->payment_document_id,
             'project_id' => $transaction->project_id,
-            'amount' => $transaction->amount,
+            'amount' => (float) $transaction->amount,
             'currency' => $transaction->currency,
-            'status' => $transaction->status,
-            'payment_method' => $transaction->payment_method,
+            'status' => $transaction->status instanceof PaymentTransactionStatus ? $transaction->status->value : $transaction->status,
+            'payment_method' => is_object($transaction->payment_method) ? $transaction->payment_method->value : $transaction->payment_method,
             'transaction_date' => $transaction->transaction_date?->toDateString(),
             'notes' => $transaction->notes,
             'metadata' => $transaction->metadata,
@@ -308,16 +363,28 @@ class TransactionController extends Controller
                 'status' => $transaction->paymentDocument->status->value,
                 'amount' => $transaction->paymentDocument->amount,
             ] : null;
-            $data['created_by_user'] = $transaction->createdByUser ? [
-                'id' => $transaction->createdByUser->id,
-                'name' => $transaction->createdByUser->name,
+            $data['created_by_user'] = $transaction->createdBy ? [
+                'id' => $transaction->createdBy->id,
+                'name' => $transaction->createdBy->name,
             ] : null;
-            $data['approved_by_user'] = $transaction->approvedByUser ? [
-                'id' => $transaction->approvedByUser->id,
-                'name' => $transaction->approvedByUser->name,
+            $data['approved_by_user'] = $transaction->approvedBy ? [
+                'id' => $transaction->approvedBy->id,
+                'name' => $transaction->approvedBy->name,
             ] : null;
         }
 
         return $data;
+    }
+
+    private function findTransactionForResponse(int $transactionId): PaymentTransaction
+    {
+        return PaymentTransaction::query()
+            ->with(['paymentDocument', 'createdBy', 'approvedBy'])
+            ->findOrFail($transactionId);
+    }
+
+    private function appendNote(?string $currentNote, string $newNote): string
+    {
+        return trim(trim((string) $currentNote) . PHP_EOL . $newNote);
     }
 }

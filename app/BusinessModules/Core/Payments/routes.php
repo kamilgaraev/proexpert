@@ -51,6 +51,9 @@ Route::prefix('api/v1/admin/payments')
             Route::post('/{id}/refund', [TransactionController::class, 'refund'])
                 ->middleware('authorize:payments.transaction.refund')
                 ->name('refund');
+            Route::post('/{id}/cancel', [TransactionController::class, 'cancel'])
+                ->middleware('authorize:payments.transaction.edit')
+                ->name('cancel');
         });
 
         Route::prefix('schedules')->name('schedules.')->group(function () {
