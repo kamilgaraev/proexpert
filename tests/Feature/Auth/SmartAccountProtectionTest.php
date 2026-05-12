@@ -11,6 +11,7 @@ use App\Models\UserAuthSession;
 use App\Models\UserSecurityEvent;
 use App\Services\Auth\AuthRiskService;
 use App\Services\Auth\DeviceFingerprintService;
+use App\Services\Auth\UserAuthSessionService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -127,5 +128,61 @@ class SmartAccountProtectionTest extends TestCase
         $this->assertGreaterThanOrEqual(55, $result['score']);
         $this->assertContains('new_device', $result['flags']);
         $this->assertContains('many_recent_ips', $result['flags']);
+    }
+
+    public function test_auth_session_service_creates_event_and_session(): void
+    {
+        config(['auth_tokens.sessions.notify_new_device' => false]);
+
+        $user = User::factory()->create();
+        $request = Request::create('/api/v1/landing/auth/login', 'POST', [], [], [], [
+            'REMOTE_ADDR' => '127.0.0.1',
+            'HTTP_USER_AGENT' => 'Mozilla/5.0 Chrome',
+        ]);
+
+        $session = app(UserAuthSessionService::class)->createForLogin($user, null, $request);
+
+        $this->assertDatabaseHas('user_auth_sessions', [
+            'id' => $session->id,
+            'user_id' => $user->id,
+            'status' => AuthSessionStatus::Active->value,
+        ]);
+
+        $this->assertDatabaseHas('user_security_events', [
+            'user_id' => $user->id,
+            'auth_session_id' => $session->id,
+            'type' => AuthSecurityEventType::NewDeviceLogin->value,
+        ]);
+    }
+
+    public function test_revoke_others_keeps_current_session_active(): void
+    {
+        $user = User::factory()->create();
+        $current = UserAuthSession::query()->create([
+            'user_id' => $user->id,
+            'session_uuid' => (string) Str::uuid(),
+            'device_fingerprint' => hash('sha256', 'current'),
+            'risk_score' => 0,
+            'risk_flags' => [],
+            'status' => AuthSessionStatus::Active,
+            'first_seen_at' => now(),
+            'last_seen_at' => now(),
+        ]);
+        $other = UserAuthSession::query()->create([
+            'user_id' => $user->id,
+            'session_uuid' => (string) Str::uuid(),
+            'device_fingerprint' => hash('sha256', 'other'),
+            'risk_score' => 0,
+            'risk_flags' => [],
+            'status' => AuthSessionStatus::Active,
+            'first_seen_at' => now(),
+            'last_seen_at' => now(),
+        ]);
+
+        app(UserAuthSessionService::class)
+            ->revokeOtherSessions($user, $current->session_uuid, 'manual_revoke_others');
+
+        $this->assertTrue($current->fresh()->isActive());
+        $this->assertFalse($other->fresh()->isActive());
     }
 }
