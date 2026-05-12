@@ -12,6 +12,7 @@ use App\Exceptions\BusinessLogicException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 
 class ActReportService
@@ -26,31 +27,54 @@ class ActReportService
      */
     public function getActsList(int $organizationId, array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
-        $query = ContractPerformanceAct::with([
-                'contract.project',
-                'contract.contractor',
-                'completedWorks',
-                'lines',
-                'files',
-            ])->whereHas('contract', function ($q) use ($organizationId) {
-            $q->where('organization_id', $organizationId);
-        });
+        $query = $this->buildActsQuery($organizationId, $filters);
 
         // Применяем фильтры
-        $this->applyFilters($query, $filters);
 
         // Сортировка
         $sortBy = $filters['sort_by'] ?? 'act_date';
-        $sortDirection = $filters['sort_direction'] ?? 'desc';
+        $sortDirection = strtolower((string) ($filters['sort_direction'] ?? 'desc'));
         
         $allowedSortFields = ['act_date', 'act_document_number', 'amount', 'created_at'];
         if (!in_array($sortBy, $allowedSortFields)) {
             $sortBy = 'act_date';
         }
 
+        if (!in_array($sortDirection, ['asc', 'desc'], true)) {
+            $sortDirection = 'desc';
+        }
+
         $query->orderBy($sortBy, $sortDirection);
 
         return $query->paginate($perPage);
+    }
+
+    public function getActsSummary(int $organizationId, array $filters = []): array
+    {
+        $query = $this->buildActsQuery($organizationId, $filters);
+
+        return [
+            'total_acts' => (clone $query)->count(),
+            'approved_acts' => (clone $query)->where('is_approved', true)->count(),
+            'total_amount' => (float) (clone $query)->sum('amount'),
+        ];
+    }
+
+    private function buildActsQuery(int $organizationId, array $filters = []): Builder
+    {
+        $query = ContractPerformanceAct::with([
+            'contract.project',
+            'contract.contractor',
+            'completedWorks',
+            'lines',
+            'files',
+        ])->whereHas('contract', function ($q) use ($organizationId) {
+            $q->where('organization_id', $organizationId);
+        });
+
+        $this->applyFilters($query, $filters);
+
+        return $query;
     }
 
     /**
@@ -167,8 +191,12 @@ class ActReportService
             });
         }
 
-        if (isset($filters['is_approved'])) {
-            $query->where('is_approved', (bool)$filters['is_approved']);
+        if (array_key_exists('is_approved', $filters)) {
+            $isApproved = $this->normalizeBooleanFilter($filters['is_approved']);
+
+            if ($isApproved !== null) {
+                $query->where('is_approved', $isApproved);
+            }
         }
 
         if (!empty($filters['status'])) {
@@ -209,5 +237,22 @@ class ActReportService
         }
 
         return $contract;
+    }
+
+    private function normalizeBooleanFilter(mixed $value): ?bool
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        if (is_int($value)) {
+            return $value === 1 ? true : ($value === 0 ? false : null);
+        }
+
+        if (is_string($value)) {
+            return filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+        }
+
+        return null;
     }
 }

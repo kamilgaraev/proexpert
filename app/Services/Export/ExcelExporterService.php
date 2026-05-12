@@ -224,7 +224,7 @@ class ExcelExporterService
         }
     }
 
-    private function storeReportInPersonalFiles(string $filename, string $binaryContent): void
+    public function storeReportInPersonalFiles(string $filename, string $binaryContent): void
     {
         $user = Auth::user();
 

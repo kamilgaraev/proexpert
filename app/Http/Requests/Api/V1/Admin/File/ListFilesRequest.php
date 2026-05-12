@@ -16,13 +16,24 @@ class ListFilesRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'folder' => ['sometimes', 'string'],
-            'filename' => ['sometimes', 'string'],
-            'date_from' => ['sometimes', 'date'],
-            'date_to' => ['sometimes', 'date'],
+            'folder' => ['sometimes', 'nullable', 'string'],
+            'filename' => ['sometimes', 'nullable', 'string'],
+            'date_from' => ['sometimes', 'nullable', 'date'],
+            'date_to' => ['sometimes', 'nullable', 'date'],
             'sort_by' => ['sometimes', 'in:created_at,size,filename'],
             'sort_dir' => ['sometimes', 'in:asc,desc'],
             'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
         ];
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $clean = [];
+
+        foreach ($this->all() as $key => $value) {
+            $clean[$key] = $value === '' ? null : $value;
+        }
+
+        $this->merge($clean);
     }
 }

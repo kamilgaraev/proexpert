@@ -9,6 +9,7 @@ use App\Traits\HasOnboardingDemo;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class CompletedWork extends Model
@@ -136,7 +137,7 @@ class CompletedWork extends Model
         return $this->morphMany(File::class, 'fileable');
     }
 
-    public function materials()
+    public function materials(): BelongsToMany
     {
         return $this->belongsToMany(Material::class, 'completed_work_materials')
             ->using(CompletedWorkMaterial::class)

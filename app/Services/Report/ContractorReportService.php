@@ -241,7 +241,30 @@ class ContractorReportService
             }
         }
 
+        $this->storeJsonReportSnapshot($result, 'contractor_summary_report');
+
         return $result;
+    }
+
+    private function storeJsonReportSnapshot(array $reportData, string $baseFilename): void
+    {
+        try {
+            $content = json_encode($reportData, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+
+            if ($content === false) {
+                return;
+            }
+
+            $this->excelExporter->storeReportInPersonalFiles(
+                $baseFilename . '_' . now()->format('d-m-Y_H-i') . '.json',
+                $content
+            );
+        } catch (\Throwable $e) {
+            Log::warning('[ContractorReport] Failed to store JSON report snapshot', [
+                'report' => $baseFilename,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     /**

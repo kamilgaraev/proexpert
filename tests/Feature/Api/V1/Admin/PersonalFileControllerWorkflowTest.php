@@ -88,4 +88,25 @@ class PersonalFileControllerWorkflowTest extends TestCase
         $response->assertJsonPath('success', false);
         $this->assertDatabaseCount('personal_files', 0);
     }
+
+    public function test_empty_file_filter_query_values_are_ignored(): void
+    {
+        Storage::fake('s3');
+
+        $context = AdminApiTestContext::create();
+
+        $personalResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/personal-files?folder=&date_from=&date_to=&filename=&sort_by=created_at&sort_dir=desc&per_page=15&page=1');
+
+        $personalResponse->assertOk();
+        $personalResponse->assertJsonPath('success', true);
+        $personalResponse->assertJsonPath('meta.total', 0);
+
+        $actResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/act-files?filename=&date_from=&date_to=&sort_by=created_at&sort_dir=desc&per_page=15&page=1');
+
+        $actResponse->assertOk();
+        $actResponse->assertJsonPath('success', true);
+        $actResponse->assertJsonPath('meta.total', 0);
+    }
 }

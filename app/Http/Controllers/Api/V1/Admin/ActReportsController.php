@@ -10,7 +10,6 @@ use App\Models\ContractPerformanceAct;
 use App\Models\File;
 use App\Models\PersonalFile;
 use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceActResource;
-use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceActCollection;
 use App\Http\Requests\Api\V1\Admin\ActReport\PreviewActRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\StoreActReportRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\StoreActFromWizardRequest;
@@ -154,10 +153,27 @@ class ActReportsController extends Controller
             $perPage = (int)$request->input('per_page', 15);
 
             $acts = $this->actReportService->getActsList($organizationId, $filters, $perPage);
+            $summary = $this->actReportService->getActsSummary($organizationId, $filters);
 
-            return AdminResponse::success(
-                new ContractPerformanceActCollection($acts),
-                null
+            return AdminResponse::paginated(
+                ContractPerformanceActResource::collection($acts->getCollection())->resolve(),
+                [
+                    'current_page' => $acts->currentPage(),
+                    'last_page' => $acts->lastPage(),
+                    'per_page' => $acts->perPage(),
+                    'total' => $acts->total(),
+                    'from' => $acts->firstItem(),
+                    'to' => $acts->lastItem(),
+                ],
+                null,
+                200,
+                $summary,
+                [
+                    'first' => $acts->url(1),
+                    'last' => $acts->url($acts->lastPage()),
+                    'prev' => $acts->previousPageUrl(),
+                    'next' => $acts->nextPageUrl(),
+                ]
             );
         } catch (BusinessLogicException $e) {
             return AdminResponse::error($e->getMessage(), $e->getCode());
