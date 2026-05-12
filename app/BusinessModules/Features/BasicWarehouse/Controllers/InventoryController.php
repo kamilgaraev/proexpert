@@ -17,6 +17,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class InventoryController extends Controller
 {
@@ -202,6 +203,8 @@ class InventoryController extends Controller
                 DB::rollBack();
                 throw $exception;
             }
+        } catch (ValidationException $exception) {
+            return AdminResponse::error(trans_message('errors.validation_failed'), 422, $exception->errors());
         } catch (ModelNotFoundException) {
             return AdminResponse::error(trans_message('basic_warehouse.inventory.warehouse_not_found'), 404);
         } catch (\Throwable $exception) {
@@ -405,47 +408,7 @@ class InventoryController extends Controller
 
                     $actualQuantity = (float) ($item->actual_quantity ?? 0);
 
-                    $query = WarehouseBalance::query()
-                        ->where('organization_id', $act->organization_id)
-                        ->where('warehouse_id', $act->warehouse_id)
-                        ->where('material_id', $item->material_id)
-                        ->where('unit_price', $item->unit_price);
-
-                    $item->batch_number
-                        ? $query->where('batch_number', $item->batch_number)
-                        : $query->whereNull('batch_number');
-
-                    $item->location_code
-                        ? $query->where('location_code', $item->location_code)
-                        : $query->whereNull('location_code');
-
-                    $balance = $query->first();
-
-                    if ($balance) {
-                        $balance->available_quantity = $actualQuantity;
-                        $balance->last_movement_at = now();
-                        $balance->save();
-                        continue;
-                    }
-
-                    if ($actualQuantity <= 0) {
-                        continue;
-                    }
-
-                    WarehouseBalance::create([
-                        'organization_id' => $act->organization_id,
-                        'warehouse_id' => $act->warehouse_id,
-                        'material_id' => $item->material_id,
-                        'available_quantity' => $actualQuantity,
-                        'reserved_quantity' => 0,
-                        'unit_price' => $item->unit_price,
-                        'min_stock_level' => 0,
-                        'max_stock_level' => 0,
-                        'location_code' => $item->location_code,
-                        'batch_number' => $item->batch_number,
-                        'last_movement_at' => now(),
-                        'created_at' => now(),
-                    ]);
+                    $this->applyApprovedItemQuantity($act, $item, $actualQuantity);
                 }
 
                 $act->update([
@@ -505,6 +468,63 @@ class InventoryController extends Controller
         return InventoryActItem::query()
             ->where('inventory_act_id', $act->id)
             ->findOrFail($itemId);
+    }
+
+    private function applyApprovedItemQuantity(InventoryAct $act, InventoryActItem $item, float $actualQuantity): void
+    {
+        $query = WarehouseBalance::query()
+            ->where('organization_id', $act->organization_id)
+            ->where('warehouse_id', $act->warehouse_id)
+            ->where('material_id', $item->material_id)
+            ->where('unit_price', $item->unit_price);
+
+        $item->batch_number
+            ? $query->where('batch_number', $item->batch_number)
+            : $query->whereNull('batch_number');
+
+        if ($item->location_code) {
+            $query->where('location_code', $item->location_code);
+        }
+
+        $balances = $query->orderBy('id')->lockForUpdate()->get();
+
+        if ($balances->isEmpty()) {
+            if ($actualQuantity <= 0) {
+                return;
+            }
+
+            WarehouseBalance::create([
+                'organization_id' => $act->organization_id,
+                'warehouse_id' => $act->warehouse_id,
+                'material_id' => $item->material_id,
+                'available_quantity' => $actualQuantity,
+                'reserved_quantity' => 0,
+                'unit_price' => $item->unit_price,
+                'min_stock_level' => 0,
+                'max_stock_level' => 0,
+                'location_code' => $item->location_code,
+                'batch_number' => $item->batch_number,
+                'last_movement_at' => now(),
+                'created_at' => now(),
+            ]);
+
+            return;
+        }
+
+        $remainingQuantity = $actualQuantity;
+        $lastIndex = $balances->count() - 1;
+
+        foreach ($balances->values() as $index => $balance) {
+            $newQuantity = $index === $lastIndex
+                ? max(0, $remainingQuantity)
+                : min((float) $balance->available_quantity, max(0, $remainingQuantity));
+
+            $balance->available_quantity = $newQuantity;
+            $balance->last_movement_at = now();
+            $balance->save();
+
+            $remainingQuantity -= $newQuantity;
+        }
     }
 
     private function makeInventoryActPayload(InventoryAct $act, bool $includeItems = false): array

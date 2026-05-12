@@ -4,10 +4,12 @@ namespace App\Domain\Authorization\Http\Middleware;
 
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Http\Responses\AdminResponse;
 use Closure;
 use Illuminate\Http\Request;
-use Illuminate\Http\Response;
 use Symfony\Component\HttpFoundation\Response as ResponseAlias;
+
+use function trans_message;
 
 /**
  * Middleware для проверки прав доступа
@@ -46,7 +48,7 @@ class AuthorizeMiddleware
         $user = $request->user();
         
         if (!$user) {
-            return response()->json(['error' => 'Unauthorized'], 401);
+            return AdminResponse::error(trans_message('auth.unauthorized'), 401);
         }
 
         // Определяем контекст авторизации
@@ -54,11 +56,7 @@ class AuthorizeMiddleware
         
         // Проверяем право доступа
         if (!$this->authService->can($user, $permission, $context)) {
-            return response()->json([
-                'error' => 'Недостаточно прав для выполнения операции',
-                'required_permission' => $permission,
-                'context' => $context
-            ], 403);
+            return AdminResponse::error(trans_message('errors.unauthorized'), 403);
         }
 
         return $next($request);

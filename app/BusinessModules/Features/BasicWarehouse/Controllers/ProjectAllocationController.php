@@ -11,6 +11,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 use function trans_message;
@@ -23,19 +24,37 @@ class ProjectAllocationController extends Controller
 
     public function allocate(Request $request): JsonResponse
     {
+        $organizationId = (int) $request->user()->current_organization_id;
+
         try {
             $validated = $request->validate([
-                'warehouse_id' => 'required|exists:organization_warehouses,id',
-                'material_id' => 'required|exists:materials,id',
-                'project_id' => 'required|exists:projects,id',
+                'warehouse_id' => [
+                    'required',
+                    'integer',
+                    Rule::exists('organization_warehouses', 'id')->where(
+                        fn ($query) => $query->where('organization_id', $organizationId)
+                    ),
+                ],
+                'material_id' => [
+                    'required',
+                    'integer',
+                    Rule::exists('materials', 'id')->where(
+                        fn ($query) => $query->where('organization_id', $organizationId)
+                    ),
+                ],
+                'project_id' => [
+                    'required',
+                    'integer',
+                    Rule::exists('projects', 'id')->where(
+                        fn ($query) => $query->where('organization_id', $organizationId)
+                    ),
+                ],
                 'quantity' => 'required|numeric|min:0.001',
                 'notes' => 'nullable|string',
             ]);
         } catch (ValidationException $e) {
             return AdminResponse::error(trans_message('errors.validation_failed'), 422, $e->errors());
         }
-
-        $organizationId = $request->user()->current_organization_id;
 
         DB::beginTransaction();
 

@@ -80,7 +80,7 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
                 ->name('operations.transfer-to-contractor');
             
             // Инвентаризация
-            Route::prefix('inventory')->name('inventory.')->group(function () {
+            Route::prefix('inventory')->name('inventory.')->middleware('authorize:warehouse.inventory')->group(function () {
                 Route::get('/', [InventoryController::class, 'index']);
                 Route::post('/', [InventoryController::class, 'store']);
                 Route::get('/{id}', [InventoryController::class, 'show']);
@@ -211,7 +211,7 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
         });
         
         // Распределение материалов по проектам
-        Route::prefix('project-allocations')->name('project-allocations.')->group(function () {
+        Route::prefix('project-allocations')->name('project-allocations.')->middleware('authorize:warehouse.manage_stock')->group(function () {
             Route::post('/', [ProjectAllocationController::class, 'allocate'])
                 ->name('allocate');
             Route::delete('/{id}', [ProjectAllocationController::class, 'deallocate'])
