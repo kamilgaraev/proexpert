@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Api\V1\Admin\Report;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class TimeTrackingReportRequest extends FormRequest
 {
@@ -13,11 +14,17 @@ class TimeTrackingReportRequest extends FormRequest
 
     public function rules(): array
     {
+        $organizationId = $this->attributes->get('current_organization_id') ?? $this->user()->current_organization_id;
+
         return [
             'user_id' => 'nullable|integer|exists:users,id',
             'worker_type' => 'nullable|string|in:user,virtual,brigade,equipment',
             'worker_name' => 'nullable|string|max:255',
-            'project_id' => 'nullable|integer|exists:projects,id',
+            'project_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+            ],
             'work_type_id' => 'nullable|integer|exists:work_types,id',
             'date_from' => 'required|date',
             'date_to' => 'required|date|after_or_equal:date_from',

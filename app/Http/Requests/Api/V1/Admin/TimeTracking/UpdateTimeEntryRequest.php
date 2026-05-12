@@ -23,6 +23,8 @@ class UpdateTimeEntryRequest extends FormRequest
      */
     public function rules(): array
     {
+        $organizationId = (int) Auth::user()->current_organization_id;
+
         return [
             'worker_type' => [
                 'sometimes',
@@ -63,7 +65,7 @@ class UpdateTimeEntryRequest extends FormRequest
             'project_id' => [
                 'sometimes',
                 'integer',
-                Rule::exists('projects', 'id')
+                Rule::exists('projects', 'id')->where('organization_id', $organizationId)
             ],
             'work_type_id' => [
                 'nullable',

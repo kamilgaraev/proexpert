@@ -16,6 +16,7 @@ use App\Models\TimeEntry;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 use function trans_message;
@@ -30,6 +31,9 @@ class TimeTrackingController extends Controller
 
     public function export(Request $request): StreamedResponse | JsonResponse
     {
+        $organizationId = $this->getCurrentOrganizationId($request);
+        $this->validatedProjectId($request, $organizationId);
+
         try {
             $result = $this->reportService->getTimeTrackingReport($request);
 
@@ -62,16 +66,14 @@ class TimeTrackingController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        $organizationId = $this->getCurrentOrganizationId($request);
+        $projectId = $this->validatedProjectId($request, $organizationId);
+
         try {
-            $organizationId = $request->user()?->current_organization_id;
-            if (!$organizationId) {
-                return AdminResponse::error('Организация не найдена', 400);
-            }
-            
             $timeEntries = $this->timeTrackingService->getTimeEntries(
                 organizationId: $organizationId,
                 userId: $request->query('user_id') ? (int)$request->query('user_id') : null,
-                projectId: $request->query('project_id') ? (int)$request->query('project_id') : null,
+                projectId: $projectId,
                 status: $request->query('status'),
                 startDate: $request->query('start_date'),
                 endDate: $request->query('end_date'),
@@ -322,13 +324,14 @@ class TimeTrackingController extends Controller
 
     public function statistics(Request $request): JsonResponse
     {
+        $organizationId = $this->getCurrentOrganizationId($request);
+        $projectId = $this->validatedProjectId($request, $organizationId);
+
         try {
-            $organizationId = $this->getCurrentOrganizationId($request);
-            
             $stats = $this->timeTrackingService->getTimeStatistics(
                 organizationId: $organizationId,
                 userId: $request->query('user_id') ? (int)$request->query('user_id') : null,
-                projectId: $request->query('project_id') ? (int)$request->query('project_id') : null,
+                projectId: $projectId,
                 startDate: $request->query('start_date'),
                 endDate: $request->query('end_date')
             );
@@ -344,9 +347,10 @@ class TimeTrackingController extends Controller
 
     public function calendar(Request $request): JsonResponse
     {
+        $organizationId = $this->getCurrentOrganizationId($request);
+        $projectId = $this->validatedProjectId($request, $organizationId);
+
         try {
-            $organizationId = $this->getCurrentOrganizationId($request);
-            
             $startDate = $request->query('start_date') ?? now()->startOfMonth()->format('Y-m-d');
             $endDate = $request->query('end_date') ?? now()->endOfMonth()->format('Y-m-d');
             
@@ -355,7 +359,7 @@ class TimeTrackingController extends Controller
                 startDate: $startDate,
                 endDate: $endDate,
                 userId: $request->query('user_id') ? (int)$request->query('user_id') : null,
-                projectId: $request->query('project_id') ? (int)$request->query('project_id') : null
+                projectId: $projectId
             );
 
             return AdminResponse::success($calendarData);
@@ -370,9 +374,10 @@ class TimeTrackingController extends Controller
 
     public function report(Request $request): JsonResponse
     {
+        $organizationId = $this->getCurrentOrganizationId($request);
+        $projectId = $this->validatedProjectId($request, $organizationId);
+
         try {
-            $organizationId = $this->getCurrentOrganizationId($request);
-            
             $startDate = $request->query('start_date');
             $endDate = $request->query('end_date');
             
@@ -385,7 +390,7 @@ class TimeTrackingController extends Controller
                 startDate: $startDate,
                 endDate: $endDate,
                 userId: $request->query('user_id') ? (int)$request->query('user_id') : null,
-                projectId: $request->query('project_id') ? (int)$request->query('project_id') : null,
+                projectId: $projectId,
                 groupBy: $request->query('group_by', 'user')
             );
 
@@ -408,5 +413,18 @@ class TimeTrackingController extends Controller
         }
 
         return $organizationId;
+    }
+
+    private function validatedProjectId(Request $request, int $organizationId): ?int
+    {
+        $validated = $request->validate([
+            'project_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+            ],
+        ]);
+
+        return isset($validated['project_id']) ? (int) $validated['project_id'] : null;
     }
 }

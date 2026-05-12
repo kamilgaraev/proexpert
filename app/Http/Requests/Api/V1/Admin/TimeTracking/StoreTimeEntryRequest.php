@@ -23,11 +23,13 @@ class StoreTimeEntryRequest extends FormRequest
      */
     public function rules(): array
     {
+        $organizationId = (int) Auth::user()->current_organization_id;
+
         $rules = [
             'organization_id' => [
                 'required',
                 'integer',
-                Rule::exists('organizations', 'id')
+                Rule::exists('organizations', 'id')->where('id', $organizationId)
             ],
             'worker_type' => [
                 'nullable',
@@ -81,7 +83,7 @@ class StoreTimeEntryRequest extends FormRequest
             'project_id' => [
                 'required',
                 'integer',
-                Rule::exists('projects', 'id')
+                Rule::exists('projects', 'id')->where('organization_id', $organizationId)
             ],
             'work_type_id' => [
                 'nullable',
@@ -248,7 +250,7 @@ class StoreTimeEntryRequest extends FormRequest
             $this->merge(['is_billable' => true]);
         }
         
-        if (!$this->has('organization_id') && auth()->user()) {
+        if (auth()->user()) {
             $this->merge(['organization_id' => auth()->user()->current_organization_id]);
         }
     }
