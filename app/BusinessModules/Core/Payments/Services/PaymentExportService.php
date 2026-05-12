@@ -226,7 +226,7 @@ class PaymentExportService
             mkdir(dirname($filename), 0755, true);
         }
         
-        file_put_contents($filename, $content);
+        file_put_contents($filename, mb_convert_encoding($content, 'Windows-1251', 'UTF-8'));
 
         return $filename;
     }
@@ -246,19 +246,151 @@ class PaymentExportService
         $lines[] = "";
 
         foreach ($documents as $document) {
+            $payer = $this->resolveParty($document, 'payer');
+            $payee = $this->resolveParty($document, 'payee');
+            $payerBank = $this->resolveBankDetails($document, $payer, false);
+            $payeeBank = $this->resolveBankDetails($document, $payee, true);
+
             $lines[] = "СекцияДокумент=Платежное поручение";
             $lines[] = "Номер=" . $document->document_number;
             $lines[] = "Дата=" . $document->document_date->format('d.m.Y');
-            $lines[] = "Сумма=" . number_format($document->amount, 2, '.', '');
-            $lines[] = "ПлательщикСчет=" . ($document->bank_account ?? '');
-            $lines[] = "ПлательщикБИК=" . ($document->bank_bik ?? '');
-            $lines[] = "Получатель=" . $document->getPayeeName();
-            $lines[] = "НазначениеПлатежа=" . $document->payment_purpose;
+            $lines[] = "Сумма=" . number_format((float) $document->amount, 2, '.', '');
+            $lines[] = "Плательщик=" . $this->clean1CValue($document->getPayerName());
+            $lines[] = "Плательщик1=" . $this->clean1CValue($document->getPayerName());
+            $lines[] = "ПлательщикИНН=" . $this->clean1CValue($this->partyField($payer, ['tax_number', 'inn']));
+            $lines[] = "ПлательщикКПП=" . $this->clean1CValue($this->partyField($payer, ['registration_number', 'kpp']));
+            $lines[] = "ПлательщикСчет=" . $this->clean1CValue($payerBank['account']);
+            $lines[] = "ПлательщикБанк1=" . $this->clean1CValue($payerBank['bank_name']);
+            $lines[] = "ПлательщикБИК=" . $this->clean1CValue($payerBank['bik']);
+            $lines[] = "ПлательщикКорсчет=" . $this->clean1CValue($payerBank['correspondent_account']);
+            $lines[] = "Получатель=" . $this->clean1CValue($document->getPayeeName());
+            $lines[] = "Получатель1=" . $this->clean1CValue($document->getPayeeName());
+            $lines[] = "ПолучательИНН=" . $this->clean1CValue($this->partyField($payee, ['tax_number', 'inn']));
+            $lines[] = "ПолучательКПП=" . $this->clean1CValue($this->partyField($payee, ['registration_number', 'kpp']));
+            $lines[] = "ПолучательСчет=" . $this->clean1CValue($payeeBank['account']);
+            $lines[] = "ПолучательБанк1=" . $this->clean1CValue($payeeBank['bank_name']);
+            $lines[] = "ПолучательБИК=" . $this->clean1CValue($payeeBank['bik']);
+            $lines[] = "ПолучательКорсчет=" . $this->clean1CValue($payeeBank['correspondent_account']);
+            $lines[] = "ВидПлатежа=Электронно";
+            $lines[] = "Очередность=5";
+            $lines[] = "НазначениеПлатежа=" . $this->clean1CValue($this->resolvePaymentPurpose($document));
             $lines[] = "КонецДокумента";
             $lines[] = "";
         }
 
+        $lines[] = "КонецФайла";
+
         return implode("\r\n", $lines);
+    }
+
+    private function resolveParty(PaymentDocument $document, string $side): ?object
+    {
+        if ($side === 'payer') {
+            return $document->payerOrganization ?: $document->payerContractor;
+        }
+
+        return $document->payeeOrganization ?: $document->payeeContractor;
+    }
+
+    /**
+     * @return array{account: string, bik: string, correspondent_account: string, bank_name: string}
+     */
+    private function resolveBankDetails(PaymentDocument $document, ?object $party, bool $preferDocumentFields): array
+    {
+        $partyDetails = $this->extractBankDetails($party?->bank_details ?? null);
+        $documentDetails = [
+            'account' => (string) ($document->bank_account ?? ''),
+            'bik' => (string) ($document->bank_bik ?? ''),
+            'correspondent_account' => (string) ($document->bank_correspondent_account ?? ''),
+            'bank_name' => (string) ($document->bank_name ?? ''),
+        ];
+
+        $primary = $preferDocumentFields ? $documentDetails : $partyDetails;
+        $fallback = $preferDocumentFields ? $partyDetails : $documentDetails;
+
+        return [
+            'account' => $primary['account'] ?: $fallback['account'],
+            'bik' => $primary['bik'] ?: $fallback['bik'],
+            'correspondent_account' => $primary['correspondent_account'] ?: $fallback['correspondent_account'],
+            'bank_name' => $primary['bank_name'] ?: $fallback['bank_name'],
+        ];
+    }
+
+    /**
+     * @return array{account: string, bik: string, correspondent_account: string, bank_name: string}
+     */
+    private function extractBankDetails(mixed $bankDetails): array
+    {
+        if (is_array($bankDetails)) {
+            return [
+                'account' => (string) ($bankDetails['account'] ?? $bankDetails['bank_account'] ?? ''),
+                'bik' => (string) ($bankDetails['bik'] ?? $bankDetails['bank_bik'] ?? ''),
+                'correspondent_account' => (string) (
+                    $bankDetails['correspondent_account']
+                    ?? $bankDetails['bank_correspondent_account']
+                    ?? ''
+                ),
+                'bank_name' => (string) ($bankDetails['bank_name'] ?? $bankDetails['name'] ?? ''),
+            ];
+        }
+
+        $text = trim((string) $bankDetails);
+
+        if ($text === '') {
+            return [
+                'account' => '',
+                'bik' => '',
+                'correspondent_account' => '',
+                'bank_name' => '',
+            ];
+        }
+
+        return [
+            'account' => $this->matchBankDetail($text, '/(?:р\/с|расч[её]тн(?:ый|ого)\s+сч[её]т|сч[её]т)\D*(\d{20})/iu')
+                ?: $this->matchBankDetail($text, '/\b(\d{20})\b/u'),
+            'bik' => $this->matchBankDetail($text, '/(?:бик)\D*(\d{9})/iu'),
+            'correspondent_account' => $this->matchBankDetail($text, '/(?:к\/с|корр(?:еспондентский)?\s+сч[её]т)\D*(\d{20})/iu'),
+            'bank_name' => $this->matchBankDetail($text, '/(?:банк)\s*[:\-]?\s*([^,;\r\n]+)/iu'),
+        ];
+    }
+
+    private function matchBankDetail(string $text, string $pattern): string
+    {
+        if (preg_match($pattern, $text, $matches) !== 1) {
+            return '';
+        }
+
+        return trim((string) $matches[1]);
+    }
+
+    /**
+     * @param array<int, string> $fields
+     */
+    private function partyField(?object $party, array $fields): string
+    {
+        foreach ($fields as $field) {
+            if (!empty($party?->{$field})) {
+                return (string) $party->{$field};
+            }
+        }
+
+        return '';
+    }
+
+    private function resolvePaymentPurpose(PaymentDocument $document): string
+    {
+        $purpose = trim((string) ($document->payment_purpose ?: $document->description));
+
+        if ($purpose !== '') {
+            return $purpose;
+        }
+
+        return 'Оплата по платежному документу ' . $document->document_number;
+    }
+
+    private function clean1CValue(?string $value): string
+    {
+        return str_replace(["\r", "\n"], ' ', trim((string) $value));
     }
 }
 

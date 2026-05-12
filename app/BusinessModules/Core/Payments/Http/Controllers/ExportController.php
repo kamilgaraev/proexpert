@@ -149,7 +149,7 @@ class ExportController extends Controller
             $filePath = $this->exportService->exportPaymentRegistry1C($documents);
 
             return response()->download($filePath, basename($filePath), [
-                'Content-Type' => 'text/plain',
+                'Content-Type' => 'text/plain; charset=windows-1251',
             ])->deleteFileAfterSend(true);
         } catch (ValidationException $e) {
             return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
