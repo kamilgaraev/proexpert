@@ -69,10 +69,8 @@ class OffsetService
                 $this->updateDocuments($receivable, $payable, $amount);
 
                 // 5. Обновляем счета контрагентов
-                $this->accountService->recalculateBalance(
-                    $receivable->organization_id,
-                    $receivable->payer_contractor_id ?? $receivable->payee_contractor_id
-                );
+                $this->accountService->updateBalanceFromDocument($receivable->fresh());
+                $this->accountService->updateBalanceFromDocument($payable->fresh());
 
                 // 6. Логируем (Аудит)
                 $this->auditService->log(

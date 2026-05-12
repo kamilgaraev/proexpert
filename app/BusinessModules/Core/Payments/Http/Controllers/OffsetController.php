@@ -73,13 +73,15 @@ class OffsetController extends Controller
             $receivable = PaymentDocument::query()->forOrganization($organizationId)->findOrFail((int) $validated['receivable_id']);
             $payable = PaymentDocument::query()->forOrganization($organizationId)->findOrFail((int) $validated['payable_id']);
             $result = $this->offsetService->performOffset(
-                $receivable,
-                $payable,
+                $receivable->id,
+                $payable->id,
                 (float) $validated['amount'],
                 (string) ($validated['notes'] ?? '')
             );
 
             return AdminResponse::success($result, trans_message('payments.offsets.performed'));
+        } catch (\InvalidArgumentException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
         } catch (\DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Illuminate\Validation\ValidationException $e) {
