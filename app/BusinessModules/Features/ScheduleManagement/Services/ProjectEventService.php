@@ -270,7 +270,7 @@ class ProjectEventService
             'by_type' => $events->groupBy('event_type')->map->count(),
             'by_status' => $events->groupBy('status')->map->count(),
             'by_priority' => $events->groupBy('priority')->map->count(),
-            'blocking_count' => $events->where('is_blocking', true)->count(),
+            'blocking_events' => $events->where('is_blocking', true)->count(),
             'upcoming_count' => $events->where('event_date', '>=', now()->toDateString())->count(),
         ];
     }
@@ -308,19 +308,21 @@ class ProjectEventService
     private function validateEventData(array $data, ?ProjectEvent $event = null): void
     {
         // Проверка обязательных полей
-        if (!isset($data['title']) || empty($data['title'])) {
+        if ($event === null && (!isset($data['title']) || empty($data['title']))) {
             throw new \InvalidArgumentException('Название события обязательно');
         }
 
-        if (!isset($data['event_date'])) {
+        if ($event === null && !isset($data['event_date'])) {
             throw new \InvalidArgumentException('Дата события обязательна');
         }
 
         // Проверка дат
-        $eventDate = Carbon::parse($data['event_date']);
+        $eventDate = isset($data['event_date'])
+            ? Carbon::parse($data['event_date'])
+            : $event?->event_date;
         if (isset($data['end_date'])) {
             $endDate = Carbon::parse($data['end_date']);
-            if ($endDate->lt($eventDate)) {
+            if ($eventDate !== null && $endDate->lt($eventDate)) {
                 throw new \InvalidArgumentException('Дата окончания не может быть раньше даты начала');
             }
         }

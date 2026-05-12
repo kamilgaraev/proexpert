@@ -388,7 +388,7 @@ class ProjectEventController extends Controller
         }
     }
 
-    public function checkConflicts(Request $request, int $projectId, int $eventId): JsonResponse
+    public function conflicts(Request $request, int $projectId, int $eventId): JsonResponse
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
