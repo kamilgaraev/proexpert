@@ -85,6 +85,7 @@ Route::prefix('v1')->name('api.v1.')->group(function () {
 Route::prefix('landing')->name('landing.')->group(function () {
     // Явно включаем маршруты для Landing API
     require __DIR__ . '/api/v1/landing/auth.php';
+    require __DIR__ . '/api/v1/landing/security.php';
     require __DIR__ . '/api/v1/landing/users.php';
     
     require __DIR__ . '/api/v1/landing/organization.php';
@@ -242,6 +243,7 @@ Route::prefix('v1/admin')->middleware('admin.response')->name('admin.')->group(f
         // Сюда можно будет добавлять require для новых файлов маршрутов админки
         require __DIR__ . '/api/v1/admin/dashboard.php';
         require __DIR__ . '/api/v1/admin/profile.php';
+        require __DIR__ . '/api/v1/admin/security.php';
         require __DIR__ . '/api/v1/admin/onboarding.php';
         require __DIR__ . '/api/v1/admin/material_analytics.php';
         require __DIR__ . '/api/v1/admin/specifications.php';
@@ -273,6 +275,7 @@ Route::prefix('mobile')->name('mobile.')->group(function () {
     if (file_exists(__DIR__ . '/api/v1/mobile/auth.php')) {
         require __DIR__ . '/api/v1/mobile/auth.php';
     }
+    require __DIR__ . '/api/v1/mobile/security.php';
 
     // Защищенные маршруты Mobile App (требуют токен mobile + контекст организации)
     Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.context', 'can:access-mobile-app'])->group(function() {

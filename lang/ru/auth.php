@@ -35,6 +35,11 @@ return [
     'security_unknown_browser' => 'Неизвестный браузер',
     'security_new_device_subject' => 'Вход в ProHelper с нового устройства',
     'security_session_expired' => 'Сеанс завершен. Войдите в аккаунт повторно.',
+    'security_sessions_load_error' => 'Не удалось загрузить список устройств.',
+    'security_events_load_error' => 'Не удалось загрузить историю входов.',
+    'security_session_not_found' => 'Сеанс не найден.',
+    'security_session_revoked' => 'Сеанс завершен.',
+    'security_other_sessions_revoked' => 'Другие сеансы завершены.',
     'validation_error' => 'Проверьте корректность заполнения полей.',
     'validation' => [
         'email_required' => 'Укажите email.',
