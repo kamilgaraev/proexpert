@@ -7,6 +7,7 @@ use App\BusinessModules\Features\SiteRequests\Models\SiteRequestGroup;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequestHistory;
 use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\PersonnelTypeEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Events\SiteRequestCreated;
@@ -234,7 +235,7 @@ class SiteRequestService
                         $createData = [
                             'project_id' => $group->project_id,
                             'request_type' => SiteRequestTypeEnum::MATERIAL_REQUEST->value, // Предполагаем что в группе только материалы
-                            'priority' => $baseRequest ? $baseRequest->priority->value : SiteRequestStatusEnum::DRAFT->value,
+                            'priority' => $baseRequest ? $baseRequest->priority->value : SiteRequestPriorityEnum::MEDIUM->value,
                             'required_date' => $baseRequest ? $baseRequest->required_date : null,
                             'title' => ($group->title ?? 'Заявка') . (!empty($itemData['name']) ? ' - ' . $itemData['name'] : ''),
                             'material_name' => $itemData['name'] ?? null,

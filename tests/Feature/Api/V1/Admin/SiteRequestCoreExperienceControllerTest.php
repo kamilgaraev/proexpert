@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Admin;
 
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequestGroup;
@@ -213,6 +214,50 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
             ->where('organization_id', $context->organization->id)
             ->where('site_request_group_id', $ownGroup->id)
             ->count());
+    }
+
+    public function test_group_update_can_add_catalog_material_to_empty_group_with_default_priority(): void
+    {
+        Event::fake();
+
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $unit = $this->createUnit($context->organization->id, 'Piece', 'pcs');
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Dry mix', 'DRY-MIX');
+        $emptyGroup = SiteRequestGroup::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'user_id' => $context->user->id,
+            'title' => 'Additional materials',
+            'status' => SiteRequestStatusEnum::DRAFT->value,
+        ]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/site-requests/groups/{$emptyGroup->id}", [
+                'materials' => [
+                    [
+                        'material_id' => $material->id,
+                        'quantity' => 12,
+                        'unit' => 'pcs',
+                        'note' => 'Add from catalog',
+                    ],
+                ],
+            ]);
+
+        $response->assertOk();
+
+        $createdRequest = SiteRequest::query()
+            ->where('organization_id', $context->organization->id)
+            ->where('site_request_group_id', $emptyGroup->id)
+            ->firstOrFail();
+
+        $this->assertSame(SiteRequestPriorityEnum::MEDIUM, $createdRequest->priority);
+        $this->assertSame($material->id, $createdRequest->material_id);
+        $this->assertSame('Dry mix', $createdRequest->material_name);
+        $this->assertSame('12.000', (string) $createdRequest->material_quantity);
+        $this->assertSame('pcs', $createdRequest->material_unit);
     }
 
     private function createSiteRequest(AdminApiTestContext $context, Project $project): SiteRequest
