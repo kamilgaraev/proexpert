@@ -1371,6 +1371,10 @@ class WarehouseService implements WarehouseReportDataProvider
                 ->where('warehouse_id', $warehouseId)
                 ->where('material_id', $materialId)
                 ->where('status', 'active')
+                ->when(
+                    array_key_exists('project_id', $metadata) && $metadata['project_id'] !== null,
+                    static fn ($query) => $query->where('project_id', $metadata['project_id'])
+                )
                 ->orderBy('reserved_at')
                 ->lockForUpdate()
                 ->get();

@@ -13,6 +13,7 @@ use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Material;
 use App\Models\MeasurementUnit;
+use App\Models\Project;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery\MockInterface;
@@ -30,6 +31,8 @@ class WarehouseOperationsControllerTest extends TestCase
         $material = $this->createMaterial($context->organization->id, $unit->id, 'Cement', 'CEM-OPS');
         $sourceWarehouse = $this->createWarehouse($context->organization->id, 'Source warehouse', 'SRC');
         $targetWarehouse = $this->createWarehouse($context->organization->id, 'Target warehouse', 'DST');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $anotherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
         $this->allowAdminAccess();
 
         $this->withHeaders($context->authHeaders())
@@ -95,11 +98,22 @@ class WarehouseOperationsControllerTest extends TestCase
             'movement_type' => WarehouseMovement::TYPE_TRANSFER_IN,
         ]);
 
+        $anotherReserveResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/reserve', [
+                'warehouse_id' => $targetWarehouse->id,
+                'material_id' => $material->id,
+                'quantity' => 0.75,
+                'project_id' => $anotherProject->id,
+                'reason' => 'Hold for another project',
+            ]);
+
+        $anotherReserveResponse->assertOk();
         $reserveResponse = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/warehouses/operations/reserve', [
                 'warehouse_id' => $targetWarehouse->id,
                 'material_id' => $material->id,
                 'quantity' => 1,
+                'project_id' => $project->id,
                 'reason' => 'Hold for project',
             ]);
 
@@ -108,25 +122,39 @@ class WarehouseOperationsControllerTest extends TestCase
             ->where('organization_id', $context->organization->id)
             ->where('warehouse_id', $targetWarehouse->id)
             ->where('material_id', $material->id)
+            ->where('project_id', $project->id)
+            ->firstOrFail();
+        $anotherReservation = AssetReservation::query()
+            ->where('organization_id', $context->organization->id)
+            ->where('warehouse_id', $targetWarehouse->id)
+            ->where('material_id', $material->id)
+            ->where('project_id', $anotherProject->id)
             ->firstOrFail();
         $this->assertSame($context->organization->id, $reservation->organization_id);
+        $this->assertSame($project->id, $reservation->project_id);
         $this->assertSame(1.0, (float) $reservation->quantity);
-        $this->assertSame(1.0, $this->availableQuantity($context->organization->id, $targetWarehouse->id, $material->id));
-        $this->assertSame(1.0, $this->reservedQuantity($context->organization->id, $targetWarehouse->id, $material->id));
+        $this->assertSame($anotherProject->id, $anotherReservation->project_id);
+        $this->assertSame(0.75, (float) $anotherReservation->quantity);
+        $this->assertSame(0.25, $this->availableQuantity($context->organization->id, $targetWarehouse->id, $material->id));
+        $this->assertSame(1.75, $this->reservedQuantity($context->organization->id, $targetWarehouse->id, $material->id));
 
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/warehouses/operations/unreserve', [
                 'warehouse_id' => $targetWarehouse->id,
                 'material_id' => $material->id,
                 'quantity' => 0.5,
+                'project_id' => $project->id,
                 'reason' => 'Partially release',
             ])
             ->assertOk();
 
-        $this->assertSame(1.5, $this->availableQuantity($context->organization->id, $targetWarehouse->id, $material->id));
-        $this->assertSame(0.5, $this->reservedQuantity($context->organization->id, $targetWarehouse->id, $material->id));
+        $this->assertSame(0.75, $this->availableQuantity($context->organization->id, $targetWarehouse->id, $material->id));
+        $this->assertSame(1.25, $this->reservedQuantity($context->organization->id, $targetWarehouse->id, $material->id));
         $this->assertSame(0.5, (float) $reservation->fresh()->quantity);
         $this->assertSame(AssetReservation::STATUS_ACTIVE, $reservation->fresh()->status);
+        $this->assertSame($project->id, $reservation->fresh()->project_id);
+        $this->assertSame(0.75, (float) $anotherReservation->fresh()->quantity);
+        $this->assertSame(AssetReservation::STATUS_ACTIVE, $anotherReservation->fresh()->status);
     }
 
     public function test_operations_reject_foreign_warehouse_and_material_ids_before_mutation(): void
