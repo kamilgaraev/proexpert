@@ -387,7 +387,7 @@ class CompletedWorkFactService
         $quantity = (float) ($completedWork->quantity ?? $completedWork->completed_quantity ?? 0);
         $completedQuantity = (float) ($completedWork->completed_quantity ?? $quantity);
         $progressPercent = $quantity > 0 ? min(100, round(($completedQuantity / $quantity) * 100, 2)) : 0;
-        $sortOrder = $this->scheduleTaskService->getNextSortOrder($schedule->id);
+        $sortOrder = $this->scheduleTaskService->getNextSortOrder($schedule->id, null);
 
         $task = ScheduleTask::create([
             'schedule_id' => $schedule->id,

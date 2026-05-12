@@ -521,7 +521,7 @@ class CompletedWorkController extends Controller
                     'progress_percent' => $task->progress_percent !== null ? (float) $task->progress_percent : null,
                     'completed_quantity' => $task->completed_quantity !== null ? (float) $task->completed_quantity : null,
                 ],
-            ], trans_message('completed_work.schedule_task_created'));
+            ], trans_message('completed_work.schedule_task_created'), Response::HTTP_CREATED);
         } catch (\Throwable $e) {
             Log::error('completed_work.create_schedule_task.error', [
                 'completed_work_id' => $completedWork->id,
