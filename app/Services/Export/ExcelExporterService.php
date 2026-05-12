@@ -4,6 +4,7 @@ namespace App\Services\Export;
 
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use App\Models\PersonalFile;
+use App\Models\ReportFile;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use App\Services\Logging\LoggingService;
@@ -224,7 +225,7 @@ class ExcelExporterService
         }
     }
 
-    public function storeReportInPersonalFiles(string $filename, string $binaryContent): void
+    public function storeReportInPersonalFiles(string $filename, string $binaryContent, bool $registerReportFile = true): void
     {
         $user = Auth::user();
 
@@ -233,12 +234,17 @@ class ExcelExporterService
         }
 
         try {
+            $organization = $user->currentOrganization;
             $extension = pathinfo($filename, PATHINFO_EXTENSION);
             $storedName = (string) Str::uuid() . ($extension ? '.' . $extension : '');
-            $path = $user->id . '/reports/' . $storedName;
+            $personalPath = $user->id . '/reports/' . $storedName;
+            $reportPath = $organization
+                ? OrganizationStoragePath::forOrganization($organization->id, 'reports/' . $storedName)
+                : $personalPath;
+            $path = $registerReportFile ? $reportPath : $personalPath;
 
             app(\App\Services\Storage\FileService::class)
-                ->disk($user->currentOrganization)
+                ->disk($organization)
                 ->put($path, $binaryContent);
 
             PersonalFile::query()->create([
@@ -248,6 +254,21 @@ class ExcelExporterService
                 'size' => strlen($binaryContent),
                 'is_folder' => false,
             ]);
+
+            if ($registerReportFile && $organization) {
+                ReportFile::query()->updateOrCreate(
+                    ['path' => $path],
+                    [
+                        'organization_id' => $organization->id,
+                        'type' => $extension ?: 'reports',
+                        'filename' => $filename,
+                        'name' => $filename,
+                        'size' => strlen($binaryContent),
+                        'expires_at' => now()->addYear(),
+                        'user_id' => $user->id,
+                    ]
+                );
+            }
         } catch (\Throwable $e) {
             Log::warning('[ExcelExporterService] Failed to store report in personal files', [
                 'filename' => $filename,
@@ -853,7 +874,7 @@ class ExcelExporterService
                 'user_id'    => Auth::id(),
                 'organization_id' => $org?->id,
             ]);
-            $this->storeReportInPersonalFiles($filename, $binaryContent);
+            $this->storeReportInPersonalFiles($filename, $binaryContent, false);
 
             return $storage->temporaryUrl($path, now()->addHours($expiresHours));
         } catch (\Throwable $e) {

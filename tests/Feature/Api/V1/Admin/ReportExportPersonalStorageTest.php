@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Admin;
 
 use App\Models\PersonalFile;
+use App\Models\ReportFile;
 use App\Services\Export\ExcelExporterService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
@@ -39,7 +40,7 @@ class ReportExportPersonalStorageTest extends TestCase
 
         $file = PersonalFile::query()
             ->where('user_id', $context->user->id)
-            ->where('path', 'like', $context->user->id . '/reports/%')
+            ->where('path', 'like', 'org-' . $context->organization->id . '/reports/%')
             ->where('filename', 'cash_flow_report.xlsx')
             ->first();
 
@@ -47,5 +48,14 @@ class ReportExportPersonalStorageTest extends TestCase
         $this->assertFalse($file->is_folder);
         $this->assertGreaterThan(0, $file->size);
         Storage::disk('s3')->assertExists($file->path);
+
+        $reportFile = ReportFile::query()
+            ->where('organization_id', $context->organization->id)
+            ->where('user_id', $context->user->id)
+            ->where('path', $file->path)
+            ->where('filename', 'cash_flow_report.xlsx')
+            ->first();
+
+        $this->assertInstanceOf(ReportFile::class, $reportFile);
     }
 }

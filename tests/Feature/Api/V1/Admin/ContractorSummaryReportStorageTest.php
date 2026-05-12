@@ -8,6 +8,7 @@ use App\Models\PersonalFile;
 use App\Models\Project;
 use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
+use App\Models\ReportFile;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
 use Tests\Support\AdminApiTestContext;
@@ -65,7 +66,7 @@ class ContractorSummaryReportStorageTest extends TestCase
 
         $file = PersonalFile::query()
             ->where('user_id', $context->user->id)
-            ->where('path', 'like', $context->user->id . '/reports/%')
+            ->where('path', 'like', 'org-' . $context->organization->id . '/reports/%')
             ->where('filename', 'like', 'contractor_summary_report_%.json')
             ->first();
 
@@ -73,12 +74,21 @@ class ContractorSummaryReportStorageTest extends TestCase
         $this->assertGreaterThan(0, $file->size);
         Storage::disk('s3')->assertExists($file->path);
 
+        $reportFile = ReportFile::query()
+            ->where('organization_id', $context->organization->id)
+            ->where('user_id', $context->user->id)
+            ->where('path', $file->path)
+            ->where('filename', $file->filename)
+            ->first();
+
+        $this->assertInstanceOf(ReportFile::class, $reportFile);
+
         $indexResponse = $this->withHeaders($context->authHeaders())
             ->getJson('/api/v1/admin/report-files?sort_by=created_at&sort_dir=desc&per_page=100');
 
         $indexResponse->assertOk();
         $indexResponse->assertJsonPath('success', true);
         $indexResponse->assertJsonPath('meta.total', 1);
-        $indexResponse->assertJsonPath('data.0.id', $file->id);
+        $indexResponse->assertJsonPath('data.0.id', $reportFile->id);
     }
 }

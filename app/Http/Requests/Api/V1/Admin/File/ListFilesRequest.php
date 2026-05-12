@@ -17,6 +17,7 @@ class ListFilesRequest extends FormRequest
     {
         return [
             'folder' => ['sometimes', 'nullable', 'string'],
+            'type' => ['sometimes', 'nullable', 'string'],
             'filename' => ['sometimes', 'nullable', 'string'],
             'date_from' => ['sometimes', 'nullable', 'date'],
             'date_to' => ['sometimes', 'nullable', 'date'],

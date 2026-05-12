@@ -7,7 +7,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Admin\File\ListFilesRequest;
 use App\Http\Responses\AdminResponse;
-use App\Models\PersonalFile;
+use App\Models\ReportFile;
 use App\Services\Organization\OrganizationContext;
 use App\Services\Storage\FileService;
 use Illuminate\Http\JsonResponse;
@@ -18,8 +18,6 @@ use function trans_message;
 
 class ReportFileController extends Controller
 {
-    private const REPORT_FILES_FOLDER = 'reports';
-
     public function __construct(
         protected FileService $fileService
     ) {}
@@ -35,15 +33,23 @@ class ReportFileController extends Controller
                 : 'created_at';
             $sortDir = ($params['sort_dir'] ?? 'desc') === 'asc' ? 'asc' : 'desc';
             $perPage = (int) ($params['per_page'] ?? 15);
-            $reportFilesPath = $this->reportFilesPathForUser((int) $user->id);
+            $organizationId = (int) $user->current_organization_id;
 
-            $query = PersonalFile::query()
-                ->where('user_id', $user->id)
-                ->where('path', 'like', $reportFilesPath . '%')
-                ->where('is_folder', false);
+            $query = ReportFile::query()
+                ->where(function ($query) use ($organizationId, $user) {
+                    $query->where('organization_id', $organizationId)
+                        ->orWhere(function ($query) use ($user) {
+                            $query->whereNull('organization_id')
+                                ->where('user_id', $user->id);
+                        });
+                });
 
             if (!empty($params['filename'])) {
                 $query->where('filename', 'like', '%' . $params['filename'] . '%');
+            }
+
+            if (!empty($params['type'])) {
+                $query->where('type', $params['type']);
             }
 
             if (!empty($params['date_from'])) {
@@ -57,7 +63,7 @@ class ReportFileController extends Controller
             $paginator = $query->orderBy($sortBy, $sortDir)->paginate($perPage);
             $storage = $this->fileService->disk(OrganizationContext::getOrganization() ?? $user->currentOrganization);
 
-            $items = collect($paginator->items())->map(function (PersonalFile $file) use ($storage) {
+            $items = collect($paginator->items())->map(function (ReportFile $file) use ($storage) {
                 $payload = $file->toArray();
                 $payload['download_url'] = null;
 
@@ -103,8 +109,9 @@ class ReportFileController extends Controller
             ]);
 
             $user = $request->user();
-            $file = $this->findReportFile($id, (int) $user->id);
+            $file = $this->findReportFile($id, (int) $user->current_organization_id, (int) $user->id);
             $file->filename = $validated['filename'];
+            $file->name = $validated['filename'];
             $file->save();
 
             return AdminResponse::success($file->fresh(), trans_message('files.updated'));
@@ -127,7 +134,7 @@ class ReportFileController extends Controller
     {
         try {
             $user = $request->user();
-            $file = $this->findReportFile($id, (int) $user->id);
+            $file = $this->findReportFile($id, (int) $user->current_organization_id, (int) $user->id);
             $storage = $this->fileService->disk(OrganizationContext::getOrganization() ?? $user->currentOrganization);
 
             if ($storage->exists($file->path)) {
@@ -150,18 +157,17 @@ class ReportFileController extends Controller
         }
     }
 
-    private function findReportFile(string $id, int $userId): PersonalFile
+    private function findReportFile(string $id, int $organizationId, int $userId): ReportFile
     {
-        return PersonalFile::query()
+        return ReportFile::query()
             ->where('id', $id)
-            ->where('user_id', $userId)
-            ->where('path', 'like', $this->reportFilesPathForUser($userId) . '%')
-            ->where('is_folder', false)
+            ->where(function ($query) use ($organizationId, $userId) {
+                $query->where('organization_id', $organizationId)
+                    ->orWhere(function ($query) use ($userId) {
+                        $query->whereNull('organization_id')
+                            ->where('user_id', $userId);
+                    });
+            })
             ->firstOrFail();
-    }
-
-    private function reportFilesPathForUser(int $userId): string
-    {
-        return $userId . '/' . self::REPORT_FILES_FOLDER . '/';
     }
 }
