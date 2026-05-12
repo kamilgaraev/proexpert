@@ -11,8 +11,10 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseTask;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseZone;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\Material;
 use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
+use App\Models\Project;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery\MockInterface;
@@ -213,6 +215,42 @@ class WarehouseTopologyAndTaskControllerTest extends TestCase
         $this->assertDatabaseMissing('warehouse_zones', [
             'warehouse_id' => $warehouse->id,
             'code' => 'REST',
+        ]);
+    }
+
+    public function test_task_relations_must_belong_to_current_organization(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreignContext = AdminApiTestContext::create();
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN');
+        $foreignMaterial = Material::query()->create([
+            'organization_id' => $foreignContext->organization->id,
+            'name' => 'Foreign material',
+            'code' => 'FOREIGN-MAT',
+            'is_active' => true,
+        ]);
+        $foreignProject = Project::factory()->create([
+            'organization_id' => $foreignContext->organization->id,
+        ]);
+        $foreignAssignee = User::factory()->create([
+            'current_organization_id' => $foreignContext->organization->id,
+        ]);
+        $this->allowAdminAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/warehouses/{$warehouse->id}/tasks", [
+                'title' => 'Foreign relation task',
+                'task_type' => WarehouseTask::TYPE_PICKING,
+                'material_id' => $foreignMaterial->id,
+                'project_id' => $foreignProject->id,
+                'assigned_to_id' => $foreignAssignee->id,
+            ]);
+
+        $response->assertUnprocessable();
+        $response->assertJsonValidationErrors(['material_id', 'project_id', 'assigned_to_id']);
+        $this->assertDatabaseMissing('warehouse_tasks', [
+            'organization_id' => $context->organization->id,
+            'title' => 'Foreign relation task',
         ]);
     }
 

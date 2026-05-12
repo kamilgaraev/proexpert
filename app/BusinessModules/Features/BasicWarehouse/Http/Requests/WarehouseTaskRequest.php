@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BasicWarehouse\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class WarehouseTaskRequest extends FormRequest
 {
@@ -15,15 +16,58 @@ class WarehouseTaskRequest extends FormRequest
 
     public function rules(): array
     {
+        $organizationId = (int) $this->user()?->current_organization_id;
+        $warehouseId = (int) $this->route('warehouseId');
+
         $rules = [
-            'zone_id' => 'nullable|integer|exists:warehouse_zones,id',
-            'cell_id' => 'nullable|integer|exists:warehouse_storage_cells,id',
-            'logistic_unit_id' => 'nullable|integer|exists:warehouse_logistic_units,id',
-            'material_id' => 'nullable|integer|exists:materials,id',
-            'project_id' => 'nullable|integer|exists:projects,id',
-            'inventory_act_id' => 'nullable|integer|exists:inventory_acts,id',
-            'movement_id' => 'nullable|integer|exists:warehouse_movements,id',
-            'assigned_to_id' => 'nullable|integer|exists:users,id',
+            'zone_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('warehouse_zones', 'id')->where('warehouse_id', $warehouseId),
+            ],
+            'cell_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('warehouse_storage_cells', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->where('warehouse_id', $warehouseId),
+            ],
+            'logistic_unit_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('warehouse_logistic_units', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->where('warehouse_id', $warehouseId),
+            ],
+            'material_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('materials', 'id')->where('organization_id', $organizationId),
+            ],
+            'project_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+            ],
+            'inventory_act_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('inventory_acts', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->where('warehouse_id', $warehouseId),
+            ],
+            'movement_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('warehouse_movements', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->where('warehouse_id', $warehouseId),
+            ],
+            'assigned_to_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('users', 'id')->where('current_organization_id', $organizationId),
+            ],
             'title' => 'required|string|max:255',
             'task_type' => 'required|in:receipt,placement,transfer,picking,cycle_count,issue,return,relabel,inspection',
             'status' => 'sometimes|in:draft,queued,in_progress,blocked,completed,cancelled',
