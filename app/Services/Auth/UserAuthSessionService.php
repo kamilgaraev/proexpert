@@ -4,11 +4,17 @@ declare(strict_types=1);
 
 namespace App\Services\Auth;
 
+use App\BusinessModules\Features\Notifications\Services\NotificationService;
+use App\DTOs\Activity\ActivityEventData;
+use App\Enums\Activity\ActivityActionEnum;
+use App\Enums\Activity\ActivityResultEnum;
+use App\Enums\Activity\ActivitySeverityEnum;
 use App\Enums\AuthSecurityEventType;
 use App\Enums\AuthSessionStatus;
 use App\Models\User;
 use App\Models\UserAuthSession;
 use App\Models\UserSecurityEvent;
+use App\Services\Activity\ActivityEventRecorder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -20,6 +26,8 @@ class UserAuthSessionService
     public function __construct(
         private readonly DeviceFingerprintService $fingerprints,
         private readonly AuthRiskService $riskService,
+        private readonly ActivityEventRecorder $activityRecorder,
+        private readonly NotificationService $notificationService,
     ) {
     }
 
@@ -60,7 +68,7 @@ class UserAuthSessionService
             );
 
             $this->enforceDeviceLimit($user, $session, $request);
-            $this->notifyNewDevice($user, $session, $isNewDevice);
+            $this->notifyNewDevice($user, $session, $isNewDevice, $request);
 
             return $session;
         });
@@ -187,7 +195,7 @@ class UserAuthSessionService
         );
     }
 
-    private function notifyNewDevice(User $user, UserAuthSession $session, bool $isNewDevice): void
+    private function notifyNewDevice(User $user, UserAuthSession $session, bool $isNewDevice, Request $request): void
     {
         if (!$isNewDevice || !(bool) config('auth_tokens.sessions.notify_new_device', true)) {
             return;
@@ -206,5 +214,89 @@ class UserAuthSessionService
                 'error' => $e->getMessage(),
             ]);
         }
+
+        $this->sendNewDeviceInAppNotification($user, $session);
+        $this->recordNewDeviceActivity($user, $session, $request);
+    }
+
+    private function sendNewDeviceInAppNotification(User $user, UserAuthSession $session): void
+    {
+        try {
+            $this->notificationService->send(
+                $user,
+                'auth.new_device_login',
+                [
+                    'title' => trans_message('auth.security_new_device_title'),
+                    'message' => trans_message('auth.security_new_device_message', [
+                        'device' => $session->device_name ?: trans_message('auth.security_unknown_device'),
+                        'ip' => $session->ip_address ?: trans_message('auth.security_unknown_ip'),
+                    ]),
+                    'category' => 'security',
+                    'notification_type' => 'security',
+                    'priority' => 'high',
+                    'interface' => 'admin',
+                    'entity_type' => 'auth_session',
+                    'entity_id' => $session->id,
+                    'target_route' => '/profile-settings',
+                    'organization_id' => $session->organization_id,
+                    'context' => [
+                        'device_name' => $session->device_name,
+                        'ip_address' => $session->ip_address,
+                        'risk_score' => $session->risk_score,
+                        'risk_flags' => $session->risk_flags ?? [],
+                    ],
+                    'force_send' => true,
+                ],
+                'security',
+                'high',
+                ['in_app', 'websocket'],
+                $session->organization_id
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Failed to create new device in-app notification', [
+                'user_id' => $user->id,
+                'auth_session_id' => $session->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function recordNewDeviceActivity(User $user, UserAuthSession $session, Request $request): void
+    {
+        $organizationId = $session->organization_id ?? $user->current_organization_id;
+
+        if (!$organizationId) {
+            return;
+        }
+
+        $this->activityRecorder->record(ActivityEventData::make(
+            organizationId: (int) $organizationId,
+            module: 'security',
+            eventType: 'auth.new_device_login',
+            action: ActivityActionEnum::Login,
+            actorUserId: $user->id,
+            actorName: $user->name,
+            actorEmail: $user->email,
+            interface: 'admin',
+            result: ActivityResultEnum::Warning,
+            severity: ActivitySeverityEnum::Warning,
+            subjectType: UserAuthSession::class,
+            subjectId: $session->id,
+            subjectLabel: $session->device_name,
+            targetUserId: $user->id,
+            title: trans_message('auth.security_new_device_activity_title'),
+            description: trans_message('auth.security_new_device_activity_description', [
+                'device' => $session->device_name ?: trans_message('auth.security_unknown_device'),
+                'ip' => $session->ip_address ?: trans_message('auth.security_unknown_ip'),
+            ]),
+            context: [
+                'device_name' => $session->device_name,
+                'ip_address' => $session->ip_address,
+                'risk_score' => $session->risk_score,
+                'risk_flags' => $session->risk_flags ?? [],
+            ],
+            ipAddress: $request->ip(),
+            userAgent: $request->userAgent(),
+        ));
     }
 }
