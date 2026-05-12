@@ -283,4 +283,23 @@ class SmartAccountProtectionTest extends TestCase
 
         $this->assertSame(401, $response->getStatusCode());
     }
+
+    public function test_missing_session_uuid_is_rejected_when_enforcement_enabled(): void
+    {
+        config(['auth_tokens.sessions.enforce' => true]);
+        $user = User::factory()->create();
+        $request = Request::create('/api/v1/landing/auth/me', 'GET');
+        $request->setUserResolver(fn () => $user);
+        $request->attributes->set('token_payload', new class {
+            public function get(string $key): ?string
+            {
+                return null;
+            }
+        });
+
+        $response = app(\App\Http\Middleware\EnsureAuthSessionIsActive::class)
+            ->handle($request, fn () => response()->json(['ok' => true]));
+
+        $this->assertSame(401, $response->getStatusCode());
+    }
 }
