@@ -71,7 +71,8 @@
                 "site-requests",
                 "catalog-management",
                 "basic-warehouse",
-                "procurement"
+                "procurement",
+                "one-c-basic-exchange"
             ],
             "highlights": [
                 "Каталог материалов",
@@ -91,7 +92,8 @@
                 "catalog-management",
                 "basic-warehouse",
                 "procurement",
-                "material-analytics"
+                "material-analytics",
+                "one-c-basic-exchange"
             ],
             "highlights": [
                 "Склад и остатки",
@@ -112,7 +114,8 @@
                 "basic-warehouse",
                 "procurement",
                 "material-analytics",
-                "data-export"
+                "data-export",
+                "one-c-basic-exchange"
             ],
             "highlights": [
                 "Материальная аналитика",

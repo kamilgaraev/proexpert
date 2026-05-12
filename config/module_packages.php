@@ -43,6 +43,7 @@ return [
         'ai-assistant' => 'addon',
         'ai-estimates' => 'addon',
         'integrations' => 'integration',
+        'one-c-basic-exchange' => 'addon',
         'video-monitoring' => 'addon',
         'contractor-portal' => 'addon',
         'system-logs' => 'internal',

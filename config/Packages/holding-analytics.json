@@ -68,7 +68,8 @@
             "duration_days": 30,
             "modules": [
                 "dashboard-widgets",
-                "data-filters"
+                "data-filters",
+                "one-c-basic-exchange"
             ],
             "highlights": [
                 "Управленческий обзор",
@@ -85,7 +86,8 @@
             "modules": [
                 "data-filters",
                 "dashboard-widgets",
-                "data-export"
+                "data-export",
+                "one-c-basic-exchange"
             ],
             "highlights": [
                 "Расширенные отчеты",
@@ -104,7 +106,8 @@
                 "data-filters",
                 "data-export",
                 "multi-organization",
-                "integrations"
+                "integrations",
+                "one-c-basic-exchange"
             ],
             "highlights": [
                 "Группа компаний",

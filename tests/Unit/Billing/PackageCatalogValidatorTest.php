@@ -47,6 +47,19 @@ class PackageCatalogValidatorTest extends TestCase
         $this->assertSame([], $result['errors']);
     }
 
+    public function test_one_c_basic_exchange_is_included_in_every_package_tier(): void
+    {
+        foreach ($this->catalog()->allPackages() as $package) {
+            foreach ($package['tiers'] as $tierKey => $tier) {
+                $this->assertContains(
+                    'one-c-basic-exchange',
+                    $tier['included_modules'],
+                    "{$package['slug']}/{$tierKey} must include 1C basic exchange"
+                );
+            }
+        }
+    }
+
     public function test_validator_rejects_unknown_module_slug(): void
     {
         $result = $this->validator()->validate(

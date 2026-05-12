@@ -72,7 +72,8 @@
                 "workflow-management",
                 "contract-management",
                 "payments",
-                "act-reporting"
+                "act-reporting",
+                "one-c-basic-exchange"
             ],
             "highlights": [
                 "Платежи по объектам",
@@ -93,7 +94,8 @@
                 "contract-management",
                 "payments",
                 "act-reporting",
-                "advance-accounting"
+                "advance-accounting",
+                "one-c-basic-exchange"
             ],
             "highlights": [
                 "Авансы и подотчет",
@@ -115,7 +117,8 @@
                 "payments",
                 "act-reporting",
                 "advance-accounting",
-                "budget-estimates"
+                "budget-estimates",
+                "one-c-basic-exchange"
             ],
             "highlights": [
                 "Сметный блок",

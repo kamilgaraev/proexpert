@@ -89,7 +89,8 @@
             "duration_days": 30,
             "modules": [
                 "project-management",
-                "ai-assistant"
+                "ai-assistant",
+                "one-c-basic-exchange"
             ],
             "highlights": [
                 "Вопросы по данным",
@@ -108,7 +109,8 @@
                 "contract-management",
                 "budget-estimates",
                 "ai-assistant",
-                "ai-estimates"
+                "ai-estimates",
+                "one-c-basic-exchange"
             ],
             "highlights": [
                 "AI-помощник",
@@ -130,7 +132,8 @@
                 "ai-estimates",
                 "dashboard-widgets",
                 "data-filters",
-                "data-export"
+                "data-export",
+                "one-c-basic-exchange"
             ],
             "highlights": [
                 "AI по данным компании",

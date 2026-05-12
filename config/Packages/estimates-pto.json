@@ -74,7 +74,8 @@
                 "project-management",
                 "contract-management",
                 "budget-estimates",
-                "file-management"
+                "file-management",
+                "one-c-basic-exchange"
             ],
             "highlights": [
                 "Сметы по объекту",
@@ -95,7 +96,8 @@
                 "budget-estimates",
                 "rate-management",
                 "reports",
-                "report-templates"
+                "report-templates",
+                "one-c-basic-exchange"
             ],
             "highlights": [
                 "Расценки",
@@ -118,7 +120,8 @@
                 "file-management",
                 "rate-management",
                 "reports",
-                "report-templates"
+                "report-templates",
+                "one-c-basic-exchange"
             ],
             "highlights": [
                 "AI-старт сметы",
