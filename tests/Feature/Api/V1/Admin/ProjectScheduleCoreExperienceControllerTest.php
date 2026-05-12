@@ -10,6 +10,7 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
+use App\Models\TaskResource;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery\MockInterface;
@@ -159,6 +160,92 @@ class ProjectScheduleCoreExperienceControllerTest extends TestCase
 
         $response->assertStatus(422);
         $this->assertSame('active', $schedule->fresh()->status->value);
+    }
+
+    public function test_owner_can_assign_and_remove_task_resource_with_schedule_scope(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $schedule = $this->createSchedule($context->organization, $project, $context->user);
+        $task = $this->createTask($context->organization, $schedule, $context->user, [
+            'planned_start_date' => '2026-06-01',
+            'planned_end_date' => '2026-06-05',
+        ]);
+        $assignee = User::factory()->create(['current_organization_id' => $context->organization->id]);
+        $context->organization->users()->attach($assignee->id, [
+            'is_owner' => false,
+            'is_active' => true,
+            'settings' => null,
+        ]);
+        $this->allowAdminAccess();
+
+        $assignResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/tasks/{$task->id}/resources", [
+                'resource_type' => 'user',
+                'user_id' => $assignee->id,
+                'allocation_percent' => 60,
+                'assignment_start_date' => '2026-06-01',
+                'assignment_end_date' => '2026-06-05',
+                'estimated_cost' => 1200,
+            ]);
+
+        $assignResponse->assertCreated();
+        $assignResponse->assertJsonPath('success', true);
+        $assignResponse->assertJsonPath('data.resource_type', 'user');
+        $assignResponse->assertJsonPath('data.user.id', $assignee->id);
+        $assignResponse->assertJsonPath('data.estimated_cost', 1200);
+
+        $resource = TaskResource::query()->findOrFail($assignResponse->json('data.id'));
+        $this->assertSame($task->id, $resource->task_id);
+        $this->assertSame($schedule->id, $resource->schedule_id);
+        $this->assertSame($context->organization->id, $resource->organization_id);
+        $this->assertSame($assignee->id, $resource->resource_id);
+        $this->assertSame($assignee->id, $resource->user_id);
+        $this->assertSame(User::class, $resource->resource_model);
+        $this->assertSame(60.0, (float) $resource->allocation_percent);
+        $this->assertSame(1200.0, (float) $resource->total_planned_cost);
+        $this->assertSame('2026-06-01', $resource->assignment_start_date?->toDateString());
+        $this->assertSame('2026-06-05', $resource->assignment_end_date?->toDateString());
+
+        $removeResponse = $this->withHeaders($context->authHeaders())
+            ->deleteJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/tasks/{$task->id}/resources/{$resource->id}");
+
+        $removeResponse->assertOk();
+        $removeResponse->assertJsonPath('success', true);
+        $this->assertSoftDeleted('task_resources', ['id' => $resource->id]);
+    }
+
+    public function test_task_resource_assignment_rejects_material_from_another_organization(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $schedule = $this->createSchedule($context->organization, $project, $context->user);
+        $task = $this->createTask($context->organization, $schedule, $context->user);
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $foreignMaterialId = \DB::table('materials')->insertGetId([
+            'organization_id' => $foreignOrganization->id,
+            'name' => 'Foreign material',
+            'code' => 'foreign-resource-material',
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $this->allowAdminAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/tasks/{$task->id}/resources", [
+                'resource_type' => 'material',
+                'material_id' => $foreignMaterialId,
+                'allocation_percent' => 50,
+                'assignment_start_date' => '2026-06-01',
+                'assignment_end_date' => '2026-06-05',
+            ]);
+
+        $response->assertStatus(422);
+        $this->assertDatabaseMissing('task_resources', [
+            'task_id' => $task->id,
+            'material_id' => $foreignMaterialId,
+        ]);
     }
 
     private function createSchedule(

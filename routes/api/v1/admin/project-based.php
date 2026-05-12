@@ -154,6 +154,8 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         Route::put('/{schedule}/tasks/{task}', [ScheduleTaskController::class, 'update']);
         Route::patch('/{schedule}/tasks/{task}', [ScheduleTaskController::class, 'update']);
         Route::delete('/{schedule}/tasks/{task}', [ScheduleTaskController::class, 'destroy']);
+        Route::post('/{schedule}/tasks/{task}/resources', [ScheduleTaskController::class, 'storeResource']);
+        Route::delete('/{schedule}/tasks/{task}/resources/{resource}', [ScheduleTaskController::class, 'destroyResource']);
         
         // Зависимости и ресурсы
         Route::get('/{schedule}/dependencies', [ProjectScheduleController::class, 'dependencies']);
