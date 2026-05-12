@@ -168,4 +168,13 @@ jobs:
               sleep 5
             done
 
+            echo "Starting Docker cleanup service..."
+            docker compose up -d docker-cleanup
+
+            echo "Pruning unused Docker images older than 7 days..."
+            docker image prune -a -f --filter "until=168h"
+            docker builder prune -a -f --filter "until=168h"
+            docker system df
+            df -h /
+
             echo "Backend deployment successful!"
