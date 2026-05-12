@@ -658,6 +658,17 @@ class PaymentDocumentService
         $docType = $type->value;
 
         // Используем PostgreSQL функцию для генерации уникального номера (thread-safe)
+        if (DB::connection()->getDriverName() !== 'pgsql') {
+            $sequence = PaymentDocument::query()
+                ->where('organization_id', $organizationId)
+                ->where('document_type', $docType)
+                ->whereYear('document_date', $year)
+                ->whereMonth('document_date', $month)
+                ->count() + 1;
+
+            return sprintf('%s-%s%s-%04d', strtoupper(str_replace('_', '-', $docType)), $year, $month, $sequence);
+        }
+
         $documentNumber = DB::selectOne(
             'SELECT get_next_payment_document_number(?, ?, ?, ?) as number',
             [$organizationId, $docType, $year, $month]
