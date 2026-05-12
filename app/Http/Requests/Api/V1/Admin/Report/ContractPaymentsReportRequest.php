@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Api\V1\Admin\Report;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class ContractPaymentsReportRequest extends FormRequest
 {
@@ -13,9 +14,19 @@ class ContractPaymentsReportRequest extends FormRequest
 
     public function rules(): array
     {
+        $organizationId = $this->attributes->get('current_organization_id') ?? $this->user()->current_organization_id;
+
         return [
-            'project_id' => 'nullable|integer|exists:projects,id',
-            'contractor_id' => 'nullable|integer|exists:contractors,id',
+            'project_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+            ],
+            'contractor_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('contractors', 'id')->where('organization_id', $organizationId),
+            ],
             'status' => 'nullable|string|in:draft,active,completed,terminated,suspended',
             'work_type_category' => 'nullable|string|in:construction,design,supply,consulting,other',
             'date_from' => 'nullable|date',
