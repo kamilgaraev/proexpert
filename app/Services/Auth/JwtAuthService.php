@@ -515,7 +515,7 @@ class JwtAuthService
             if ($token) {
                 $authSession = null;
                 try {
-                    $payload = JWTAuth::getPayload($token);
+                    $payload = JWTAuth::setToken($token)->getPayload();
                     $authSession = $this->authSessionService->findActiveByUuid($payload->get('session_uuid'));
                 } catch (\Throwable $e) {
                     Log::warning('[JwtAuthService] Failed to resolve auth session during logout', [
