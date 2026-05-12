@@ -385,6 +385,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 'quantity' => $quantity,
                 'price' => $transferPrice,
                 'to_warehouse_id' => $toWarehouseId,
+                'project_id' => $metadata['project_id'] ?? null,
                 'user_id' => $metadata['user_id'] ?? null,
                 'document_number' => $metadata['document_number'] ?? null,
                 'reason' => $metadata['reason'] ?? null,

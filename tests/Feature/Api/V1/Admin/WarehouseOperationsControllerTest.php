@@ -11,6 +11,8 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Enums\ContractorType;
+use App\Models\Contractor;
 use App\Models\Material;
 use App\Models\MeasurementUnit;
 use App\Models\Project;
@@ -228,6 +230,89 @@ class WarehouseOperationsControllerTest extends TestCase
         ]);
     }
 
+    public function test_transfer_to_contractor_uses_scoped_ids_and_preserves_project_on_movements(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreignContext = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $foreignUnit = $this->createUnit($foreignContext->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Cement', 'CEM-CON');
+        $foreignMaterial = $this->createMaterial($foreignContext->organization->id, $foreignUnit->id, 'Foreign cement', 'CEM-FCON');
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN');
+        $foreignWarehouse = $this->createWarehouse($foreignContext->organization->id, 'Foreign warehouse', 'FOR');
+        $contractor = $this->createContractor($context->organization->id, 'Site Contractor');
+        $foreignContractor = $this->createContractor($foreignContext->organization->id, 'Foreign Contractor');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignContext->organization->id]);
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/receipt', [
+                'warehouse_id' => $warehouse->id,
+                'material_id' => $material->id,
+                'quantity' => 5,
+                'price' => 100,
+                'reason' => 'Initial contractor stock',
+            ])
+            ->assertCreated();
+
+        $foreignPayload = [
+            'from_warehouse_id' => $foreignWarehouse->id,
+            'contractor_id' => $foreignContractor->id,
+            'material_id' => $foreignMaterial->id,
+            'quantity' => 1,
+            'project_id' => $foreignProject->id,
+            'document_number' => 'M-15-F',
+            'reason' => 'Foreign transfer attempt',
+        ];
+
+        $foreignResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/transfer-to-contractor', $foreignPayload);
+
+        $foreignResponse->assertStatus(422);
+        $this->assertSame(5.0, $this->availableQuantity($context->organization->id, $warehouse->id, $material->id));
+        $this->assertDatabaseMissing('warehouse_movements', [
+            'organization_id' => $context->organization->id,
+            'movement_type' => WarehouseMovement::TYPE_TRANSFER_OUT,
+        ]);
+
+        $transferResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/transfer-to-contractor', [
+                'from_warehouse_id' => $warehouse->id,
+                'contractor_id' => $contractor->id,
+                'material_id' => $material->id,
+                'quantity' => 2,
+                'project_id' => $project->id,
+                'document_number' => 'M-15-001',
+                'reason' => 'Issue to contractor',
+            ]);
+
+        $transferResponse->assertOk();
+        $transferResponse->assertJsonPath('data.transfer_type', 'internal_external_warehouse');
+        $this->assertSame(3.0, $this->availableQuantity($context->organization->id, $warehouse->id, $material->id));
+        $contractorWarehouseId = (int) $transferResponse->json('data.contractor_warehouse_id');
+        $this->assertSame(2.0, $this->availableQuantity($context->organization->id, $contractorWarehouseId, $material->id));
+
+        $this->assertDatabaseHas('warehouse_movements', [
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'to_warehouse_id' => $contractorWarehouseId,
+            'material_id' => $material->id,
+            'movement_type' => WarehouseMovement::TYPE_TRANSFER_OUT,
+            'project_id' => $project->id,
+            'document_number' => 'M-15-001',
+        ]);
+        $this->assertDatabaseHas('warehouse_movements', [
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $contractorWarehouseId,
+            'from_warehouse_id' => $warehouse->id,
+            'material_id' => $material->id,
+            'movement_type' => WarehouseMovement::TYPE_TRANSFER_IN,
+            'project_id' => $project->id,
+            'document_number' => 'M-15-001',
+        ]);
+    }
+
     public function test_operations_reject_insufficient_available_stock_without_mutating_balances(): void
     {
         $context = AdminApiTestContext::create();
@@ -331,6 +416,15 @@ class WarehouseOperationsControllerTest extends TestCase
             'measurement_unit_id' => $measurementUnitId,
             'additional_properties' => ['asset_type' => Asset::TYPE_MATERIAL],
             'is_active' => true,
+        ]);
+    }
+
+    private function createContractor(int $organizationId, string $name): Contractor
+    {
+        return Contractor::query()->create([
+            'organization_id' => $organizationId,
+            'name' => $name,
+            'contractor_type' => ContractorType::MANUAL->value,
         ]);
     }
 
