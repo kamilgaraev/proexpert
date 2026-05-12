@@ -78,6 +78,42 @@ class AdvanceTransactionWorkflowTest extends TestCase
         ]);
     }
 
+    public function test_user_account_routes_are_paginated_and_reject_foreign_projects(): void
+    {
+        $context = AdminApiTestContext::create();
+        $user = $this->createOrganizationUser($context->organization);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->createTransaction($context->organization->id, $user->id, $project->id, [
+            'reporting_status' => AdvanceAccountTransaction::STATUS_PENDING,
+            'amount' => 700,
+        ]);
+
+        $historyResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/users/{$user->id}/advance-transactions?per_page=1");
+
+        $historyResponse->assertOk();
+        $historyResponse->assertJsonPath('success', true);
+        $historyResponse->assertJsonPath('data.0.user_id', $user->id);
+        $historyResponse->assertJsonPath('meta.total', 1);
+
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignOrganization->id]);
+
+        $issueResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/users/{$user->id}/issue-funds", [
+                'amount' => 1000,
+                'project_id' => $foreignProject->id,
+                'description' => 'Foreign project advance',
+                'document_date' => '2026-05-01',
+            ]);
+
+        $issueResponse->assertStatus(422);
+        $this->assertDatabaseMissing('advance_account_transactions', [
+            'organization_id' => $context->organization->id,
+            'project_id' => $foreignProject->id,
+        ]);
+    }
+
     private function createOrganizationUser(Organization $organization): User
     {
         $user = User::factory()->create([

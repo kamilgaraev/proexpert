@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Http\Response;
+use Illuminate\Validation\Rule;
 
 class UserController extends Controller
 {
@@ -65,14 +66,40 @@ class UserController extends Controller
             return AdminResponse::error(trans_message('user.advance_transactions_error'), Response::HTTP_NOT_FOUND);
         }
 
-        $filters = $request->only(['date_from', 'date_to', 'type', 'reporting_status']);
+        $filters = $request->only(['date_from', 'date_to', 'type', 'reporting_status', 'status']);
+        if (isset($filters['status']) && !isset($filters['reporting_status'])) {
+            $filters['reporting_status'] = $filters['status'];
+        }
+        unset($filters['status']);
+
         $filters['user_id'] = $user->id;
         $filters['organization_id'] = Auth::user()->current_organization_id;
 
         $perPage = $request->input('per_page', 15);
         $transactions = $this->advanceService->getTransactions($filters, $perPage);
 
-        return AdminResponse::success($transactions);
+        return AdminResponse::paginated(
+            \App\Http\Resources\Api\V1\Admin\AdvanceTransaction\AdvanceTransactionResource::collection(
+                $transactions->getCollection()
+            )->resolve(),
+            [
+                'current_page' => $transactions->currentPage(),
+                'last_page' => $transactions->lastPage(),
+                'per_page' => $transactions->perPage(),
+                'total' => $transactions->total(),
+                'from' => $transactions->firstItem(),
+                'to' => $transactions->lastItem(),
+            ],
+            null,
+            200,
+            null,
+            [
+                'first' => $transactions->url(1),
+                'last' => $transactions->url($transactions->lastPage()),
+                'prev' => $transactions->previousPageUrl(),
+                'next' => $transactions->nextPageUrl(),
+            ]
+        );
     }
 
     /**
@@ -92,7 +119,10 @@ class UserController extends Controller
         // Валидация запроса
         $request->validate([
             'amount' => 'required|numeric|min:0.01',
-            'project_id' => 'nullable|exists:projects,id',
+            'project_id' => [
+                'nullable',
+                Rule::exists('projects', 'id')->where('organization_id', Auth::user()->current_organization_id),
+            ],
             'description' => 'nullable|string|max:255',
             'document_number' => 'nullable|string|max:100',
             'document_date' => 'nullable|date',
@@ -129,7 +159,10 @@ class UserController extends Controller
         // Валидация запроса
         $request->validate([
             'amount' => 'required|numeric|min:0.01',
-            'project_id' => 'nullable|exists:projects,id',
+            'project_id' => [
+                'nullable',
+                Rule::exists('projects', 'id')->where('organization_id', Auth::user()->current_organization_id),
+            ],
             'description' => 'nullable|string|max:255',
             'document_number' => 'nullable|string|max:100',
             'document_date' => 'nullable|date',
