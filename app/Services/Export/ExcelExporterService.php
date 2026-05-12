@@ -3,6 +3,7 @@
 namespace App\Services\Export;
 
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use App\Models\PersonalFile;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use App\Services\Logging\LoggingService;
@@ -11,6 +12,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection as SupportCollection;
+use Illuminate\Support\Str;
 use Exception;
 use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
@@ -148,7 +150,21 @@ class ExcelExporterService
                     ]);
                     
                     $writer = new Xlsx($spreadsheet);
-                    $writer->save('php://output');
+                    $stream = fopen('php://temp', 'w+b');
+
+                    if ($stream === false) {
+                        $writer->save('php://output');
+                    } else {
+                        $writer->save($stream);
+                        rewind($stream);
+                        $binaryContent = stream_get_contents($stream);
+                        fclose($stream);
+
+                        if ($binaryContent !== false) {
+                            echo $binaryContent;
+                            $this->storeReportInPersonalFiles($filename, $binaryContent);
+                        }
+                    }
                     
                     // BUSINESS: Excel экспорт успешно завершён
                     $this->logging->business('excel.export.completed', [
@@ -205,6 +221,39 @@ class ExcelExporterService
                 'error' => 'Ошибка при экспорте в Excel',
                 'message' => $e->getMessage(),
             ], 500);
+        }
+    }
+
+    private function storeReportInPersonalFiles(string $filename, string $binaryContent): void
+    {
+        $user = Auth::user();
+
+        if (!$user instanceof \App\Models\User) {
+            return;
+        }
+
+        try {
+            $extension = pathinfo($filename, PATHINFO_EXTENSION);
+            $storedName = (string) Str::uuid() . ($extension ? '.' . $extension : '');
+            $path = $user->id . '/reports/' . $storedName;
+
+            app(\App\Services\Storage\FileService::class)
+                ->disk($user->currentOrganization)
+                ->put($path, $binaryContent);
+
+            PersonalFile::query()->create([
+                'user_id' => $user->id,
+                'path' => $path,
+                'filename' => $filename,
+                'size' => strlen($binaryContent),
+                'is_folder' => false,
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('[ExcelExporterService] Failed to store report in personal files', [
+                'filename' => $filename,
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+            ]);
         }
     }
 
@@ -804,6 +853,7 @@ class ExcelExporterService
                 'user_id'    => Auth::id(),
                 'organization_id' => $org?->id,
             ]);
+            $this->storeReportInPersonalFiles($filename, $binaryContent);
 
             return $storage->temporaryUrl($path, now()->addHours($expiresHours));
         } catch (\Throwable $e) {

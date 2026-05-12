@@ -29,8 +29,9 @@ class ReportFileController extends Controller
         try {
             $user = $request->user();
             $params = $request->validated();
-            $sortBy = in_array($params['sort_by'] ?? 'created_at', ['created_at', 'size', 'filename'], true)
-                ? $params['sort_by']
+            $requestedSortBy = $params['sort_by'] ?? 'created_at';
+            $sortBy = in_array($requestedSortBy, ['created_at', 'size', 'filename'], true)
+                ? $requestedSortBy
                 : 'created_at';
             $sortDir = ($params['sort_dir'] ?? 'desc') === 'asc' ? 'asc' : 'desc';
             $perPage = (int) ($params['per_page'] ?? 15);
