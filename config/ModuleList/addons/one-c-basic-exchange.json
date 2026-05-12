@@ -45,7 +45,7 @@
   "auto_activate": true,
   "is_system_module": false,
   "can_deactivate": true,
-  "development_status": "active",
+  "development_status": "stable",
   "icon": "sync",
   "display_order": 22
 }

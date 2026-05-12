@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Billing;
 
+use App\Enums\ModuleDevelopmentStatus;
 use App\Services\Modules\PackageCatalogService;
 use App\Services\Modules\PackageCatalogValidator;
 use PHPUnit\Framework\TestCase;
@@ -57,6 +58,22 @@ class PackageCatalogValidatorTest extends TestCase
                     "{$package['slug']}/{$tierKey} must include 1C basic exchange"
                 );
             }
+        }
+    }
+
+    public function test_all_module_development_statuses_are_valid_enum_values(): void
+    {
+        $validStatuses = array_map(
+            static fn (ModuleDevelopmentStatus $status): string => $status->value,
+            ModuleDevelopmentStatus::cases()
+        );
+
+        foreach ($this->catalog()->moduleDefinitions() as $moduleSlug => $module) {
+            $this->assertContains(
+                $module['development_status'] ?? 'stable',
+                $validStatuses,
+                "{$moduleSlug} has invalid development_status"
+            );
         }
     }
 
