@@ -190,6 +190,37 @@ class ProcurementContractCoreExperienceControllerTest extends TestCase
             ->count());
     }
 
+    public function test_procurement_contract_creation_requires_basic_warehouse_module_without_mutation(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $supplier = $this->createSupplier($context->organization->id, 'Warehouse Required Supplier');
+        $purchaseOrder = $this->createPurchaseOrder($context->organization->id, $supplier->id);
+        $this->allowAdminAccess();
+        $this->allowModuleAccessWithoutWarehouse();
+
+        $manualCreateResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/procurement/contracts', [
+                'supplier_id' => $supplier->id,
+                'project_id' => $project->id,
+                'date' => now()->toDateString(),
+                'subject' => 'Supply contract without warehouse module',
+                'total_amount' => 1000,
+            ]);
+
+        $manualCreateResponse->assertForbidden();
+
+        $fromOrderResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/create-contract");
+
+        $fromOrderResponse->assertForbidden();
+        $this->assertNull($purchaseOrder->fresh()->contract_id);
+        $this->assertSame(0, Contract::query()
+            ->where('organization_id', $context->organization->id)
+            ->where('contract_category', 'procurement')
+            ->count());
+    }
+
     private function createPurchaseOrder(int $organizationId, int $supplierId): PurchaseOrder
     {
         $purchaseRequest = PurchaseRequest::query()->create([
@@ -245,6 +276,14 @@ class ProcurementContractCoreExperienceControllerTest extends TestCase
                     'procurement',
                     'basic-warehouse',
                 ], true));
+        });
+    }
+
+    private function allowModuleAccessWithoutWarehouse(): void
+    {
+        $this->mock(AccessController::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('hasModuleAccess')
+                ->andReturnUsing(static fn (int $organizationId, string $moduleSlug): bool => $moduleSlug === 'procurement');
         });
     }
 
