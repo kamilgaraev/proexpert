@@ -661,23 +661,49 @@ class ActReportsController extends Controller
             $this->authorizeActAccess($request, $act);
 
             return AdminResponse::success(
-                $act->files()->latest()->get()->map(fn (File $file): array => $this->formatActFile($file))->values()
+                $act->files()
+                    ->with('user')
+                    ->latest()
+                    ->get()
+                    ->map(fn (File $file): array => $this->formatActFile($file))
+                    ->values()
             );
         } catch (\Throwable $e) {
             return AdminResponse::error(trans_message('act_reports.load_failed'), 500);
         }
     }
 
-    public function downloadFile(Request $request, mixed $act, mixed $file): JsonResponse
+    public function downloadFile(Request $request, mixed $act, mixed $file): JsonResponse|StreamedResponse
     {
         try {
             $act = $this->resolveAct($act);
             $this->authorizeActAccess($request, $act);
             $file = $act->files()->findOrFail((int) $file);
+            $storage = $this->fileService->disk($act->contract->organization);
 
-            return AdminResponse::success([
-                'url' => $this->fileService->temporaryUrl($file->path, 60),
-            ]);
+            if (!$storage->exists($file->path)) {
+                return AdminResponse::error(trans_message('act_reports.file_not_found'), 404);
+            }
+
+            $stream = $storage->readStream($file->path);
+
+            if ($stream === false) {
+                return AdminResponse::error(trans_message('act_reports.file_not_found'), 404);
+            }
+
+            return response()->streamDownload(
+                static function () use ($stream): void {
+                    fpassthru($stream);
+
+                    if (is_resource($stream)) {
+                        fclose($stream);
+                    }
+                },
+                (string) ($file->original_name ?: $file->name ?: 'act-file'),
+                [
+                    'Content-Type' => $file->mime_type ?: 'application/octet-stream',
+                ]
+            );
         } catch (\Throwable $e) {
             return AdminResponse::error(trans_message('act_reports.file_not_found'), 404);
         }
@@ -700,7 +726,7 @@ class ActReportsController extends Controller
         }
     }
 
-    public function downloadPdf(Request $request, mixed $act, mixed $file): JsonResponse
+    public function downloadPdf(Request $request, mixed $act, mixed $file): JsonResponse|StreamedResponse
     {
         return $this->downloadFile($request, $act, $file);
     }
@@ -793,6 +819,7 @@ class ActReportsController extends Controller
             'size' => $file->size,
             'mime_type' => $file->mime_type,
             'category' => $file->category,
+            'uploaded_by' => $file->user?->name ?? '',
             'uploaded_at' => $file->created_at?->toIso8601String(),
             'description' => $file->additional_info['description'] ?? null,
         ];

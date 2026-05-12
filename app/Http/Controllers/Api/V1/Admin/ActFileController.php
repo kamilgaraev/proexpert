@@ -12,6 +12,7 @@ use App\Models\PersonalFile;
 use App\Services\Storage\FileService;
 use App\Services\Organization\OrganizationContext;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 use function trans_message;
 
@@ -80,16 +81,15 @@ class ActFileController extends Controller
                 return $file;
             });
 
-            return AdminResponse::success(
+            return AdminResponse::paginated(
                 $paginator->items(),
-                trans_message('files.files_loaded'),
-                200,
                 [
                     'current_page' => $paginator->currentPage(),
                     'last_page' => $paginator->lastPage(),
                     'per_page' => $paginator->perPage(),
                     'total' => $paginator->total(),
-                ]
+                ],
+                trans_message('files.files_loaded')
             );
         } catch (\Throwable $e) {
             Log::error('[ActFileController] Error loading act files', [
@@ -104,7 +104,7 @@ class ActFileController extends Controller
      * 
      * GET /api/v1/admin/act-files/{id}
      */
-    public function show(int $id): JsonResponse
+    public function show(string $id): JsonResponse
     {
         try {
             $user = request()->user();
@@ -131,12 +131,62 @@ class ActFileController extends Controller
         }
     }
 
+    public function download(string $id): JsonResponse|StreamedResponse
+    {
+        try {
+            $user = request()->user();
+            $actFilesPath = $user->id . '/' . self::ACT_FILES_FOLDER . '/';
+
+            $file = PersonalFile::where('user_id', $user->id)
+                ->where('path', 'like', $actFilesPath . '%')
+                ->where('id', $id)
+                ->where('is_folder', false)
+                ->firstOrFail();
+
+            $org = OrganizationContext::getOrganization() ?? $user->currentOrganization;
+            $storage = $this->fileService->disk($org);
+
+            if (!$storage->exists($file->path)) {
+                return AdminResponse::error(trans_message('files.not_found'), 404);
+            }
+
+            $stream = $storage->readStream($file->path);
+
+            if ($stream === false) {
+                return AdminResponse::error(trans_message('files.not_found'), 404);
+            }
+
+            return response()->streamDownload(
+                static function () use ($stream): void {
+                    fpassthru($stream);
+
+                    if (is_resource($stream)) {
+                        fclose($stream);
+                    }
+                },
+                $file->filename ?: 'act-file',
+                [
+                    'Content-Type' => 'application/octet-stream',
+                ]
+            );
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return AdminResponse::error(trans_message('files.not_found'), 404);
+        } catch (\Throwable $e) {
+            Log::error('[ActFileController] Error downloading act file', [
+                'error' => $e->getMessage(),
+                'file_id' => $id,
+            ]);
+
+            return AdminResponse::error(trans_message('files.operation_failed'), 500);
+        }
+    }
+
     /**
      * Удалить файл акта
      * 
      * DELETE /api/v1/admin/act-files/{id}
      */
-    public function destroy(int $id): JsonResponse
+    public function destroy(string $id): JsonResponse
     {
         try {
             $user = request()->user();
