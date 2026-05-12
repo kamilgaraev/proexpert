@@ -219,6 +219,7 @@
     ],
     "payments": [
       "payments.dashboard.view",
+      "payments.invoice.view",
       "payments.invoice.view_all",
       "payments.invoice.create",
       "payments.invoice.edit",
