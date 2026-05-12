@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Api\V1\Admin\Contract;
 
 use App\DTOs\Contract\ContractDTO;
+use App\BusinessModules\Core\MultiOrganization\Contracts\ContractorSharingInterface;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
@@ -10,6 +11,7 @@ use App\Enums\Contract\GpCalculationTypeEnum;
 use App\Rules\ParentContractValid;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rules\Enum;
+use Illuminate\Validation\Rule;
 
 class StoreContractRequest extends FormRequest
 {
@@ -105,11 +107,27 @@ class StoreContractRequest extends FormRequest
 
     public function rules(): array
     {
+        $organizationId = $this->currentOrganizationId();
+
         return [
-            'project_id' => ['nullable', 'integer', 'exists:projects,id', 'required_without:project_ids'],
+            'project_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+                'required_without:project_ids',
+            ],
             'contract_side_type' => ['required', new Enum(ContractSideTypeEnum::class)],
-            'contractor_id' => ['nullable', 'integer', 'exists:contractors,id'],
-            'supplier_id' => ['nullable', 'integer', 'exists:suppliers,id'],
+            'contractor_id' => [
+                'nullable',
+                'integer',
+                'exists:contractors,id',
+                $this->availableContractorRule($organizationId),
+            ],
+            'supplier_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('suppliers', 'id')->where('organization_id', $organizationId),
+            ],
             'is_self_execution' => ['nullable', 'boolean'],
             'contract_category' => ['nullable', 'string', 'in:work,procurement,service'],
             'parent_contract_id' => ['nullable', 'integer', new ParentContractValid],
@@ -140,9 +158,34 @@ class StoreContractRequest extends FormRequest
             'notes' => ['nullable', 'string'],
             'is_multi_project' => ['nullable', 'boolean'],
             'project_ids' => ['nullable', 'required_if:is_multi_project,true,1', 'array', 'min:1'],
-            'project_ids.*' => ['integer', 'exists:projects,id'],
+            'project_ids.*' => [
+                'integer',
+                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+            ],
             'organization_id_for_creation' => ['sometimes', 'integer'],
         ];
+    }
+
+    private function currentOrganizationId(): int
+    {
+        return (int) (
+            $this->attributes->get('current_organization_id')
+            ?? $this->user()?->current_organization_id
+            ?? $this->input('organization_id_for_creation')
+        );
+    }
+
+    private function availableContractorRule(int $organizationId): \Closure
+    {
+        return static function (string $attribute, mixed $value, \Closure $fail) use ($organizationId): void {
+            if (!$value) {
+                return;
+            }
+
+            if (!app(ContractorSharingInterface::class)->canUseContractor((int) $value, $organizationId)) {
+                $fail(trans_message('contract.contractor_not_available'));
+            }
+        };
     }
 
     public function toDto(): ContractDTO

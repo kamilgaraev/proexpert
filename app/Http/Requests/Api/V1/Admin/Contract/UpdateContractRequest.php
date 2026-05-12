@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Api\V1\Admin\Contract;
 
 use App\DTOs\Contract\ContractDTO;
+use App\BusinessModules\Core\MultiOrganization\Contracts\ContractorSharingInterface;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
@@ -12,6 +13,7 @@ use App\Rules\ParentContractValid;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rules\Enum;
+use Illuminate\Validation\Rule;
 
 class UpdateContractRequest extends FormRequest
 {
@@ -104,11 +106,29 @@ class UpdateContractRequest extends FormRequest
 
     public function rules(): array
     {
+        $organizationId = $this->currentOrganizationId();
+
         return [
-            'project_id' => ['sometimes', 'nullable', 'integer', 'exists:projects,id'],
+            'project_id' => [
+                'sometimes',
+                'nullable',
+                'integer',
+                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+            ],
             'contract_side_type' => ['sometimes', new Enum(ContractSideTypeEnum::class)],
-            'contractor_id' => ['sometimes', 'nullable', 'integer', 'exists:contractors,id'],
-            'supplier_id' => ['sometimes', 'nullable', 'integer', 'exists:suppliers,id'],
+            'contractor_id' => [
+                'sometimes',
+                'nullable',
+                'integer',
+                'exists:contractors,id',
+                $this->availableContractorRule($organizationId),
+            ],
+            'supplier_id' => [
+                'sometimes',
+                'nullable',
+                'integer',
+                Rule::exists('suppliers', 'id')->where('organization_id', $organizationId),
+            ],
             'is_self_execution' => ['sometimes', 'nullable', 'boolean'],
             'contract_category' => ['sometimes', 'nullable', 'string', 'in:work,procurement,service'],
             'parent_contract_id' => ['sometimes', 'nullable', 'integer', new ParentContractValid],
@@ -135,8 +155,35 @@ class UpdateContractRequest extends FormRequest
             'notes' => ['sometimes', 'nullable', 'string'],
             'is_multi_project' => ['sometimes', 'nullable', 'boolean'],
             'project_ids' => ['sometimes', 'nullable', 'array', 'min:1'],
-            'project_ids.*' => ['integer', 'exists:projects,id'],
+            'project_ids.*' => [
+                'integer',
+                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+            ],
         ];
+    }
+
+    private function currentOrganizationId(): int
+    {
+        $contract = $this->resolveContract();
+
+        return (int) (
+            $this->attributes->get('current_organization_id')
+            ?? $this->user()?->current_organization_id
+            ?? $contract->organization_id
+        );
+    }
+
+    private function availableContractorRule(int $organizationId): \Closure
+    {
+        return static function (string $attribute, mixed $value, \Closure $fail) use ($organizationId): void {
+            if (!$value) {
+                return;
+            }
+
+            if (!app(ContractorSharingInterface::class)->canUseContractor((int) $value, $organizationId)) {
+                $fail(trans_message('contract.contractor_not_available'));
+            }
+        };
     }
 
     protected function prepareForValidation()

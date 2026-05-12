@@ -140,6 +140,97 @@ class ContractCoreExperienceControllerTest extends TestCase
         $this->assertNotSoftDeleted('contracts', ['id' => $contract->id]);
     }
 
+    public function test_contract_create_rejects_foreign_project_and_contractor_ids(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignOrganization->id]);
+        $foreignContractor = $this->createContractor($foreignOrganization, 'Foreign Contract Contractor');
+        $this->allowAdminAccess();
+
+        $foreignProjectResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/contracts", [
+                'project_id' => $foreignProject->id,
+                'contract_side_type' => ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR->value,
+                'contractor_id' => null,
+                'is_self_execution' => true,
+                'number' => 'FOREIGN-PROJECT',
+                'date' => '2026-06-01',
+                'status' => ContractStatusEnum::ACTIVE->value,
+            ]);
+
+        $foreignProjectResponse->assertStatus(422);
+        $foreignProjectResponse->assertJsonValidationErrors('project_id');
+
+        $foreignContractorResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/contracts", [
+                'project_id' => $project->id,
+                'contract_side_type' => ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR->value,
+                'contractor_id' => $foreignContractor->id,
+                'number' => 'FOREIGN-CONTRACTOR',
+                'date' => '2026-06-01',
+                'status' => ContractStatusEnum::ACTIVE->value,
+            ]);
+
+        $foreignContractorResponse->assertStatus(422);
+        $foreignContractorResponse->assertJsonValidationErrors('contractor_id');
+    }
+
+    public function test_multi_project_contract_create_rejects_foreign_project_ids(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignOrganization->id]);
+        $contractor = $this->createContractor($context->organization, 'Multi Project Contractor');
+        $this->allowAdminAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/contracts", [
+                'contract_side_type' => ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR->value,
+                'contractor_id' => $contractor->id,
+                'number' => 'FOREIGN-MULTI-PROJECT',
+                'date' => '2026-06-01',
+                'status' => ContractStatusEnum::ACTIVE->value,
+                'is_multi_project' => true,
+                'project_ids' => [$project->id, $foreignProject->id],
+            ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors('project_ids.1');
+    }
+
+    public function test_contract_update_rejects_foreign_project_and_contractor_ids(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $contractor = $this->createContractor($context->organization, 'Update Contract Contractor');
+        $contract = $this->createContract($context->organization, $project, $contractor, [
+            'number' => 'UPD-FOREIGN-GUARD',
+        ]);
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignOrganization->id]);
+        $foreignContractor = $this->createContractor($foreignOrganization, 'Foreign Update Contractor');
+        $this->allowAdminAccess();
+
+        $foreignProjectResponse = $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/projects/{$project->id}/contracts/{$contract->id}", [
+                'project_id' => $foreignProject->id,
+            ]);
+
+        $foreignProjectResponse->assertStatus(422);
+        $foreignProjectResponse->assertJsonValidationErrors('project_id');
+
+        $foreignContractorResponse = $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/projects/{$project->id}/contracts/{$contract->id}", [
+                'contractor_id' => $foreignContractor->id,
+            ]);
+
+        $foreignContractorResponse->assertStatus(422);
+        $foreignContractorResponse->assertJsonValidationErrors('contractor_id');
+    }
+
     public function test_contractor_participant_sees_only_own_contracts_and_cannot_mutate_other_contracts(): void
     {
         $participantContext = AdminApiTestContext::create();
