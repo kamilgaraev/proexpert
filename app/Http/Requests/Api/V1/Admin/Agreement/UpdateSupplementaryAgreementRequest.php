@@ -49,7 +49,11 @@ class UpdateSupplementaryAgreementRequest extends FormRequest
             'supersede_agreement_ids.*' => [
                 'required',
                 'integer',
-                'exists:supplementary_agreements,id',
+                $contractId
+                    ? Rule::exists('supplementary_agreements', 'id')
+                        ->where('contract_id', $contractId)
+                        ->whereNull('deleted_at')
+                    : 'exists:supplementary_agreements,id',
                 function (string $attribute, mixed $value, callable $fail): void {
                     $currentAgreement = $this->route('agreement');
                     $contractId = $currentAgreement
