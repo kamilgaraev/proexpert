@@ -29,6 +29,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Symfony\Component\HttpFoundation\Response;
@@ -550,12 +551,12 @@ class CompletedWorkController extends Controller
 
             foreach ($worksPayload as $index => $workPayload) {
                 $validator = Validator::make($workPayload, [
-                    'work_type_id' => ['nullable', 'integer', 'exists:work_types,id'],
+                    'work_type_id' => ['nullable', 'integer', Rule::exists('work_types', 'id')->where('organization_id', $organizationId)],
                     'user_id' => ['nullable', 'integer', 'exists:users,id'],
                     'schedule_task_id' => ['nullable', 'integer', 'exists:schedule_tasks,id'],
                     'estimate_item_id' => ['nullable', 'integer', 'exists:estimate_items,id'],
-                    'contract_id' => ['nullable', 'integer', 'exists:contracts,id'],
-                    'contractor_id' => ['nullable', 'integer', 'exists:contractors,id'],
+                    'contract_id' => ['nullable', 'integer', Rule::exists('contracts', 'id')->where('organization_id', $organizationId)],
+                    'contractor_id' => ['nullable', 'integer', Rule::exists('contractors', 'id')->where('organization_id', $organizationId)],
                     'quantity' => ['required', 'numeric', 'min:0.001'],
                     'completed_quantity' => ['nullable', 'numeric', 'min:0'],
                     'price' => ['nullable', 'numeric', 'min:0'],
@@ -567,7 +568,7 @@ class CompletedWorkController extends Controller
                     'planning_status' => ['nullable', 'string', 'in:planned,requires_schedule'],
                     'additional_info' => ['nullable', 'array'],
                     'materials' => ['nullable', 'array'],
-                    'materials.*.material_id' => ['required_with:materials', 'integer', 'exists:materials,id'],
+                    'materials.*.material_id' => ['required_with:materials', 'integer', Rule::exists('materials', 'id')->where('organization_id', $organizationId)],
                     'materials.*.quantity' => ['required_with:materials', 'numeric', 'min:0.0001'],
                     'materials.*.unit_price' => ['nullable', 'numeric', 'min:0'],
                     'materials.*.total_amount' => ['nullable', 'numeric', 'min:0'],

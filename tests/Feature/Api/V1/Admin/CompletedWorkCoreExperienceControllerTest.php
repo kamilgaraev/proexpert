@@ -275,6 +275,47 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
         $this->assertNotSoftDeleted('completed_works', ['id' => $work->id]);
     }
 
+    public function test_bulk_completed_work_create_rejects_foreign_contract_and_contractor_ids(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignOrganization->id]);
+        $foreignContractor = $this->createContractor($foreignOrganization, 'Foreign Bulk Contractor');
+        $foreignContract = $this->createContract($foreignOrganization, $foreignProject, $foreignContractor, [
+            'number' => 'FOREIGN-BULK-CON',
+        ]);
+        $this->allowAdminAccess();
+
+        $contractResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/works/bulk", [
+                'works' => [[
+                    'contract_id' => $foreignContract->id,
+                    'quantity' => 1,
+                    'completion_date' => '2026-06-20',
+                    'status' => 'pending',
+                ]],
+        ]);
+
+        $contractResponse->assertStatus(422);
+        $contractResponse->assertJsonPath('errors.index', 0);
+        $this->assertArrayHasKey('contract_id', $contractResponse->json('errors.errors'));
+
+        $contractorResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/works/bulk", [
+                'works' => [[
+                    'contractor_id' => $foreignContractor->id,
+                    'quantity' => 1,
+                    'completion_date' => '2026-06-20',
+                    'status' => 'pending',
+                ]],
+            ]);
+
+        $contractorResponse->assertStatus(422);
+        $contractorResponse->assertJsonPath('errors.index', 0);
+        $this->assertArrayHasKey('contractor_id', $contractorResponse->json('errors.errors'));
+    }
+
     public function test_owner_can_attach_completed_work_to_existing_schedule_task(): void
     {
         $context = AdminApiTestContext::create();
