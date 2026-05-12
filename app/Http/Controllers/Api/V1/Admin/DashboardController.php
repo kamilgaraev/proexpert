@@ -15,6 +15,7 @@ use App\Enums\Contract\ContractStatusEnum;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 use Carbon\Carbon;
 use App\Http\Responses\AdminResponse;
 
@@ -43,11 +44,7 @@ class DashboardController extends Controller
         }
 
         // Валидация обязательного параметра project_id
-        $request->validate([
-            'project_id' => 'required|integer|min:1',
-        ]);
-        
-        $projectId = (int)$request->input('project_id');
+        $projectId = $this->validatedProjectId($request, (int) $organizationId, true);
 
         // Используем упрощенный подход - возвращаем всю структуру дашборда
         $dashboard = $this->dashboardService->getFullDashboard($organizationId, $projectId);
@@ -66,11 +63,7 @@ class DashboardController extends Controller
             return AdminResponse::error(trans_message('dashboard.organization_required'), Response::HTTP_BAD_REQUEST);
         }
 
-        $request->validate([
-            'project_id' => 'required|integer|min:1',
-        ]);
-        
-        $projectId = (int)$request->input('project_id');
+        $projectId = $this->validatedProjectId($request, (int) $organizationId, true);
 
         $summary = $this->dashboardService->getSummary($organizationId, $projectId);
 
@@ -85,7 +78,7 @@ class DashboardController extends Controller
         $metric = $request->input('metric', 'users');
         $period = $request->input('period', 'month');
         $organizationId = Auth::user()->current_organization_id ?? null;
-        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $projectId = $this->validatedProjectId($request, (int) $organizationId);
         
         $data = $this->dashboardService->getTimeseries($metric, $period, $organizationId, $projectId);
 
@@ -100,7 +93,7 @@ class DashboardController extends Controller
         $entity = $request->input('entity', 'projects');
         $period = $request->input('period', 'month');
         $organizationId = Auth::user()->current_organization_id ?? null;
-        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $projectId = $this->validatedProjectId($request, (int) $organizationId);
         $limit = (int)$request->input('limit', 5);
         $sortBy = $request->input('sort_by', 'amount');
         
@@ -117,7 +110,7 @@ class DashboardController extends Controller
         $type = $request->input('type', 'materials');
         $limit = (int)$request->input('limit', 10);
         $organizationId = Auth::user()->current_organization_id ?? null;
-        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $projectId = $this->validatedProjectId($request, (int) $organizationId);
         $status = $request->input('status');
         
         $data = $this->dashboardService->getHistory($type, $limit, $organizationId, $projectId, $status);
@@ -144,8 +137,7 @@ class DashboardController extends Controller
         $organizationId = Auth::user()->current_organization_id;
         
         // Валидация project_id
-        $request->validate(['project_id' => 'required|integer|min:1']);
-        $projectId = (int)$request->input('project_id');
+        $projectId = $this->validatedProjectId($request, (int) $organizationId, true);
         
         $contracts = Contract::where('organization_id', $organizationId)
             ->where('project_id', $projectId)
@@ -222,8 +214,7 @@ class DashboardController extends Controller
         $organizationId = Auth::user()->current_organization_id;
         
         // Валидация project_id
-        $request->validate(['project_id' => 'required|integer|min:1']);
-        $projectId = (int)$request->input('project_id');
+        $projectId = $this->validatedProjectId($request, (int) $organizationId, true);
         
         // Получаем контракты с учетом мультипроектных
         $contracts = Contract::where('organization_id', $organizationId)
@@ -297,7 +288,7 @@ class DashboardController extends Controller
     public function topContracts(Request $request): JsonResponse
     {
         $organizationId = Auth::user()->current_organization_id;
-        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $projectId = $this->validatedProjectId($request, (int) $organizationId);
         $limit = (int)$request->input('limit', 5);
 
         $data = $this->dashboardService->getTopContractsByAmount($organizationId, $projectId, $limit);
@@ -313,8 +304,7 @@ class DashboardController extends Controller
         $organizationId = Auth::user()->current_organization_id;
         
         // Валидация project_id
-        $request->validate(['project_id' => 'required|integer|min:1']);
-        $projectId = (int)$request->input('project_id');
+        $projectId = $this->validatedProjectId($request, (int) $organizationId, true);
         
         $days = $request->query('days', 30);
 
@@ -354,7 +344,7 @@ class DashboardController extends Controller
             return AdminResponse::error(trans_message('dashboard.organization_required'), Response::HTTP_BAD_REQUEST);
         }
 
-        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $projectId = $this->validatedProjectId($request, (int) $organizationId);
 
         $data = $this->dashboardService->getFinancialMetrics($organizationId, $projectId);
         
@@ -367,7 +357,7 @@ class DashboardController extends Controller
     public function contractsAnalytics(Request $request): JsonResponse
     {
         $organizationId = Auth::user()->current_organization_id;
-        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $projectId = $this->validatedProjectId($request, (int) $organizationId);
         $filters = $request->only(['status', 'contractor_id', 'date_from', 'date_to']);
 
         $data = $this->dashboardService->getContractsAnalytics($organizationId, $projectId, $filters);
@@ -420,7 +410,7 @@ class DashboardController extends Controller
             return AdminResponse::error(trans_message('dashboard.organization_required'), Response::HTTP_BAD_REQUEST);
         }
 
-        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $projectId = $this->validatedProjectId($request, (int) $organizationId);
         $period = $request->input('period', 'month');
 
         $data = $this->dashboardService->getComparisonData($organizationId, $projectId, $period);
@@ -434,7 +424,7 @@ class DashboardController extends Controller
     public function contractsByStatus(Request $request): JsonResponse
     {
         $organizationId = Auth::user()->current_organization_id;
-        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $projectId = $this->validatedProjectId($request, (int) $organizationId);
 
         $data = $this->dashboardService->getContractsByStatus($organizationId, $projectId);
         
@@ -459,7 +449,7 @@ class DashboardController extends Controller
     public function contractsByContractor(Request $request): JsonResponse
     {
         $organizationId = Auth::user()->current_organization_id;
-        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $projectId = $this->validatedProjectId($request, (int) $organizationId);
         $limit = (int)$request->input('limit', 10);
 
         $data = $this->dashboardService->getContractsByContractor($organizationId, $projectId, $limit);
@@ -526,7 +516,7 @@ class DashboardController extends Controller
     public function completedWorksAnalytics(Request $request): JsonResponse
     {
         $organizationId = Auth::user()->current_organization_id;
-        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $projectId = $this->validatedProjectId($request, (int) $organizationId);
 
         $data = $this->dashboardService->getCompletedWorksAnalytics($organizationId, $projectId);
         
@@ -539,7 +529,7 @@ class DashboardController extends Controller
     public function monthlyTrends(Request $request): JsonResponse
     {
         $organizationId = Auth::user()->current_organization_id;
-        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $projectId = $this->validatedProjectId($request, (int) $organizationId);
 
         $data = $this->dashboardService->getMonthlyTrends($organizationId, $projectId);
         
@@ -552,7 +542,7 @@ class DashboardController extends Controller
     public function financialFlow(Request $request): JsonResponse
     {
         $organizationId = Auth::user()->current_organization_id;
-        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $projectId = $this->validatedProjectId($request, (int) $organizationId);
         $period = $request->input('period', 'month');
 
         $data = $this->dashboardService->getFinancialFlow($organizationId, $projectId, $period);
@@ -566,7 +556,7 @@ class DashboardController extends Controller
     public function contractPerformance(Request $request): JsonResponse
     {
         $organizationId = Auth::user()->current_organization_id;
-        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $projectId = $this->validatedProjectId($request, (int) $organizationId);
 
         $data = $this->dashboardService->getContractPerformance($organizationId, $projectId);
         
@@ -579,7 +569,7 @@ class DashboardController extends Controller
     public function projectProgress(Request $request): JsonResponse
     {
         $organizationId = Auth::user()->current_organization_id;
-        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $projectId = $this->validatedProjectId($request, (int) $organizationId);
 
         $data = $this->dashboardService->getProjectProgress($organizationId, $projectId);
         
@@ -592,7 +582,7 @@ class DashboardController extends Controller
     public function materialConsumption(Request $request): JsonResponse
     {
         $organizationId = Auth::user()->current_organization_id;
-        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $projectId = $this->validatedProjectId($request, (int) $organizationId);
         $period = $request->input('period', 'month');
 
         $data = $this->dashboardService->getMaterialConsumption($organizationId, $projectId, $period);
@@ -606,7 +596,7 @@ class DashboardController extends Controller
     public function worksEfficiency(Request $request): JsonResponse
     {
         $organizationId = Auth::user()->current_organization_id;
-        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $projectId = $this->validatedProjectId($request, (int) $organizationId);
 
         $data = $this->dashboardService->getWorksEfficiency($organizationId, $projectId);
         
@@ -631,7 +621,7 @@ class DashboardController extends Controller
     public function worksByType(Request $request): JsonResponse
     {
         $organizationId = Auth::user()->current_organization_id;
-        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $projectId = $this->validatedProjectId($request, (int) $organizationId);
 
         $data = $this->dashboardService->getWorksByType($organizationId, $projectId);
         
@@ -644,7 +634,7 @@ class DashboardController extends Controller
     public function exportSummary(Request $request): Response
     {
         $organizationId = Auth::user()->current_organization_id;
-        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $projectId = $this->validatedProjectId($request, (int) $organizationId);
         $format = $request->input('format', 'excel'); // excel или csv
 
         if ($format === 'excel') {
@@ -687,7 +677,7 @@ class DashboardController extends Controller
     public function exportContracts(Request $request): Response
     {
         $organizationId = Auth::user()->current_organization_id;
-        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $projectId = $this->validatedProjectId($request, (int) $organizationId);
         $filters = $request->only(['status']);
 
         $filePath = $this->exportService->exportContracts($organizationId, $projectId, $filters);
@@ -728,6 +718,19 @@ class DashboardController extends Controller
         return response()->download($filePath, $fileName, [
             'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         ])->deleteFileAfterSend(true);
+    }
+
+    private function validatedProjectId(Request $request, int $organizationId, bool $required = false): ?int
+    {
+        $validated = $request->validate([
+            'project_id' => [
+                $required ? 'required' : 'nullable',
+                'integer',
+                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+            ],
+        ]);
+
+        return isset($validated['project_id']) ? (int) $validated['project_id'] : null;
     }
 
     /**

@@ -38,4 +38,38 @@ class DashboardTenantIsolationTest extends TestCase
         $response->assertJsonPath('data.total', 1);
         $response->assertJsonPath('data.total_budget', 1000);
     }
+
+    public function test_dashboard_summary_rejects_foreign_project_id(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $foreignProject = Project::factory()->create([
+            'organization_id' => $foreignOrganization->id,
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/dashboard/summary?' . http_build_query([
+                'project_id' => $foreignProject->id,
+            ]));
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors('project_id');
+    }
+
+    public function test_dashboard_optional_project_filters_reject_foreign_project_id(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $foreignProject = Project::factory()->create([
+            'organization_id' => $foreignOrganization->id,
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/dashboard/financial-metrics?' . http_build_query([
+                'project_id' => $foreignProject->id,
+            ]));
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors('project_id');
+    }
 }
