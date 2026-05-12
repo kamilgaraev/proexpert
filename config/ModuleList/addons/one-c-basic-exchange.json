@@ -1,0 +1,51 @@
+{
+  "name": "1C: базовый обмен",
+  "slug": "one-c-basic-exchange",
+  "version": "1.0.0",
+  "type": "addon",
+  "billing_model": "free",
+  "category": "integrations",
+  "description": "Бесплатный ручной обмен справочниками и документами между ProHelper и 1C.",
+  "class_name": "App\\BusinessModules\\Addons\\OneCBasicExchange\\OneCBasicExchangeModule",
+  "service_provider": "App\\BusinessModules\\Addons\\OneCBasicExchange\\OneCBasicExchangeServiceProvider",
+  "pricing": {
+    "base_price": 0,
+    "currency": "RUB",
+    "included_in_plans": ["free", "trial", "business", "profi", "enterprise"],
+    "duration_days": 0,
+    "trial_days": 0
+  },
+  "permissions": [
+    "one_c_exchange.view",
+    "one_c_exchange.manage_tokens",
+    "one_c_exchange.manage_mappings",
+    "one_c_exchange.import",
+    "one_c_exchange.export",
+    "one_c_exchange.history.view"
+  ],
+  "features": [
+    "API-токен для 1C",
+    "Импорт справочников",
+    "Экспорт документов",
+    "Сопоставление справочников",
+    "Журнал обмена"
+  ],
+  "dependencies": [
+    "organizations",
+    "users"
+  ],
+  "conflicts": [],
+  "limits": {
+    "manual_runs_per_month": 1000,
+    "tokens_per_organization": 5,
+    "mappings_per_scope": 5000
+  },
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  "auto_activate": true,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "development_status": "active",
+  "icon": "sync",
+  "display_order": 22
+}

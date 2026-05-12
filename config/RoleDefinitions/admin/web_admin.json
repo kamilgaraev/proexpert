@@ -209,6 +209,14 @@
       "reports.advance_accounts.view",
       "reports.advance_accounts.export"
     ],
+    "one-c-basic-exchange": [
+      "one_c_exchange.view",
+      "one_c_exchange.manage_tokens",
+      "one_c_exchange.manage_mappings",
+      "one_c_exchange.import",
+      "one_c_exchange.export",
+      "one_c_exchange.history.view"
+    ],
     "payments": [
       "payments.dashboard.view",
       "payments.invoice.view_all",

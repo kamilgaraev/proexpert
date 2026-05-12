@@ -224,6 +224,7 @@ Route::prefix('v1/admin')->middleware('admin.response')->name('admin.')->group(f
         require __DIR__ . '/api/v1/admin/report_templates.php';
         // Подключаем маршруты для подотчетных средств
         require __DIR__ . '/api/v1/admin/advance_transactions.php';
+        require __DIR__ . '/api/v1/admin/one_c_exchange.php';
         // Подключаем маршруты для коэффициентов норм расхода
         require __DIR__ . '/api/v1/admin/rate_coefficients.php';
         
