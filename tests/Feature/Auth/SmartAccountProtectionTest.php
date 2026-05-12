@@ -6,6 +6,7 @@ namespace Tests\Feature\Auth;
 
 use App\Enums\AuthSecurityEventType;
 use App\Enums\AuthSessionStatus;
+use App\DTOs\Auth\LoginDTO;
 use App\Models\User;
 use App\Models\UserAuthSession;
 use App\Models\UserSecurityEvent;
@@ -204,5 +205,33 @@ class SmartAccountProtectionTest extends TestCase
             $user,
             \App\Notifications\NewDeviceLoginNotification::class
         );
+    }
+
+    public function test_authenticate_adds_session_uuid_to_jwt(): void
+    {
+        Notification::fake();
+        config(['auth_tokens.sessions.enabled' => true]);
+
+        $user = User::factory()->create([
+            'password' => bcrypt('password'),
+            'email_verified_at' => now(),
+        ]);
+
+        $result = app(\App\Services\Auth\JwtAuthService::class)->authenticate(
+            new LoginDTO($user->email, 'password'),
+            'api_landing'
+        );
+
+        $this->assertTrue($result['success']);
+
+        $payload = \Tymon\JWTAuth\Facades\JWTAuth::setToken($result['token'])->getPayload();
+        $sessionUuid = $payload->get('session_uuid');
+
+        $this->assertNotEmpty($sessionUuid);
+        $this->assertDatabaseHas('user_auth_sessions', [
+            'user_id' => $user->id,
+            'session_uuid' => $sessionUuid,
+            'status' => AuthSessionStatus::Active->value,
+        ]);
     }
 }

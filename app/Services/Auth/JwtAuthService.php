@@ -11,6 +11,7 @@ use App\Repositories\Interfaces\OrganizationRepositoryInterface;
 use App\Repositories\Interfaces\UserRepositoryInterface;
 use App\Services\LogService;
 use App\Services\PerformanceMonitor;
+use App\Services\Auth\UserAuthSessionService;
 use App\Interfaces\Billing\BalanceServiceInterface;
 use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Support\Facades\Auth;
@@ -32,6 +33,7 @@ class JwtAuthService
     protected UserRepositoryInterface $userRepository;
     protected OrganizationRepositoryInterface $organizationRepository;
     protected BalanceServiceInterface $balanceService;
+    protected UserAuthSessionService $authSessionService;
 
     /**
      * РљРѕРЅСЃС‚СЂСѓРєС‚РѕСЂ СЃРµСЂРІРёСЃР° Р°СѓС‚РµРЅС‚РёС„РёРєР°С†РёРё.
@@ -43,11 +45,13 @@ class JwtAuthService
     public function __construct(
         UserRepositoryInterface $userRepository,
         OrganizationRepositoryInterface $organizationRepository,
-        BalanceServiceInterface $balanceService
+        BalanceServiceInterface $balanceService,
+        UserAuthSessionService $authSessionService
     ) {
         $this->userRepository = $userRepository;
         $this->organizationRepository = $organizationRepository;
         $this->balanceService = $balanceService;
+        $this->authSessionService = $authSessionService;
     }
 
     /**
@@ -196,6 +200,14 @@ class JwtAuthService
 
                     // Р“РµРЅРµСЂРёСЂСѓРµРј С‚РѕРєРµРЅ
                     $customClaims = ['organization_id' => $organizationId];
+                    if ((bool) config('auth_tokens.sessions.enabled', true)) {
+                        $authSession = $this->authSessionService->createForLogin(
+                            $user,
+                            $organizationId ? (int) $organizationId : null,
+                            request()
+                        );
+                        $customClaims['session_uuid'] = $authSession->session_uuid;
+                    }
                     $token = JWTAuth::claims($customClaims)->fromUser($user);
                     Log::info('[JwtAuthService] JWT token generated.');
 
@@ -436,7 +448,12 @@ class JwtAuthService
     {
         try {
             Auth::shouldUse($guard);
-            $token = JWTAuth::refresh(JWTAuth::getToken());
+            $payload = JWTAuth::parseToken()->getPayload();
+            $claims = array_filter([
+                'organization_id' => $payload->get('organization_id'),
+                'session_uuid' => $payload->get('session_uuid'),
+            ], static fn ($value) => $value !== null);
+            $token = auth($guard)->claims($claims)->refresh();
             
             // РџРѕР»СѓС‡Р°РµРј РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ РїРѕСЃР»Рµ РѕР±РЅРѕРІР»РµРЅРёСЏ С‚РѕРєРµРЅР°
             $user = Auth::user();
@@ -496,6 +513,22 @@ class JwtAuthService
             $token = JWTAuth::getToken();
             
             if ($token) {
+                $authSession = null;
+                try {
+                    $payload = JWTAuth::getPayload($token);
+                    $authSession = $this->authSessionService->findActiveByUuid($payload->get('session_uuid'));
+                } catch (\Throwable $e) {
+                    Log::warning('[JwtAuthService] Failed to resolve auth session during logout', [
+                        'user_id' => $userId,
+                        'guard' => $guard,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+
+                if ($authSession) {
+                    $this->authSessionService->revoke($authSession, 'logout');
+                }
+
                 JWTAuth::invalidate($token);
                 Auth::logout(); // true - РѕС‡РёСЃС‚РёС‚СЊ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊСЃРєРёРµ РґР°РЅРЅС‹Рµ
                 
@@ -700,9 +733,24 @@ class JwtAuthService
             try {
                 if ($organization) {
                     $customClaims = ['organization_id' => $organization->id];
+                    if ((bool) config('auth_tokens.sessions.enabled', true)) {
+                        $authSession = $this->authSessionService->createForLogin(
+                            $user,
+                            (int) $organization->id,
+                            request()
+                        );
+                        $customClaims['session_uuid'] = $authSession->session_uuid;
+                    }
                     $token = JWTAuth::claims($customClaims)->fromUser($user);
                 } else {
-                    $token = JWTAuth::fromUser($user);
+                    $customClaims = [];
+                    if ((bool) config('auth_tokens.sessions.enabled', true)) {
+                        $authSession = $this->authSessionService->createForLogin($user, null, request());
+                        $customClaims['session_uuid'] = $authSession->session_uuid;
+                    }
+                    $token = $customClaims
+                        ? JWTAuth::claims($customClaims)->fromUser($user)
+                        : JWTAuth::fromUser($user);
                 }
                 Log::info('[JwtAuthService] JWT token generated');
             } catch (\Exception $e) {
