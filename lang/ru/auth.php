@@ -33,6 +33,7 @@ return [
     'security_unknown_device' => 'Неизвестное устройство',
     'security_unknown_platform' => 'Неизвестная система',
     'security_unknown_browser' => 'Неизвестный браузер',
+    'security_new_device_subject' => 'Вход в ProHelper с нового устройства',
     'validation_error' => 'Проверьте корректность заполнения полей.',
     'validation' => [
         'email_required' => 'Укажите email.',

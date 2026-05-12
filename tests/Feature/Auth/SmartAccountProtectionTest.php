@@ -14,6 +14,7 @@ use App\Services\Auth\DeviceFingerprintService;
 use App\Services\Auth\UserAuthSessionService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
 use Tests\TestCase;
 
@@ -184,5 +185,24 @@ class SmartAccountProtectionTest extends TestCase
 
         $this->assertTrue($current->fresh()->isActive());
         $this->assertFalse($other->fresh()->isActive());
+    }
+
+    public function test_new_device_login_sends_notification(): void
+    {
+        Notification::fake();
+        config(['auth_tokens.sessions.notify_new_device' => true]);
+
+        $user = User::factory()->create();
+        $request = Request::create('/api/v1/landing/auth/login', 'POST', [], [], [], [
+            'REMOTE_ADDR' => '127.0.0.1',
+            'HTTP_USER_AGENT' => 'Mozilla/5.0 Chrome',
+        ]);
+
+        app(UserAuthSessionService::class)->createForLogin($user, null, $request);
+
+        Notification::assertSentTo(
+            $user,
+            \App\Notifications\NewDeviceLoginNotification::class
+        );
     }
 }
