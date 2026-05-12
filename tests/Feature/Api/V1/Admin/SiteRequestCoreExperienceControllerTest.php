@@ -260,6 +260,128 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
         $this->assertSame('pcs', $createdRequest->material_unit);
     }
 
+    public function test_group_detail_and_submit_are_scoped_and_transition_all_draft_requests(): void
+    {
+        Event::fake();
+
+        $context = AdminApiTestContext::create();
+        $foreignContext = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignContext->organization->id]);
+        $group = SiteRequestGroup::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'user_id' => $context->user->id,
+            'title' => 'Concrete delivery',
+            'status' => SiteRequestStatusEnum::DRAFT->value,
+        ]);
+        $requestA = SiteRequest::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'user_id' => $context->user->id,
+            'site_request_group_id' => $group->id,
+            'title' => 'Concrete delivery - mix',
+            'request_type' => SiteRequestTypeEnum::MATERIAL_REQUEST->value,
+            'status' => SiteRequestStatusEnum::DRAFT->value,
+            'priority' => 'medium',
+            'material_name' => 'Concrete mix',
+            'material_quantity' => 5,
+            'material_unit' => 'm3',
+        ]);
+        $requestB = SiteRequest::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'user_id' => $context->user->id,
+            'site_request_group_id' => $group->id,
+            'title' => 'Concrete delivery - additive',
+            'request_type' => SiteRequestTypeEnum::MATERIAL_REQUEST->value,
+            'status' => SiteRequestStatusEnum::DRAFT->value,
+            'priority' => 'high',
+            'material_name' => 'Additive',
+            'material_quantity' => 2,
+            'material_unit' => 'kg',
+        ]);
+        $foreignGroup = SiteRequestGroup::query()->create([
+            'organization_id' => $foreignContext->organization->id,
+            'project_id' => $foreignProject->id,
+            'user_id' => $foreignContext->user->id,
+            'title' => 'Foreign group',
+            'status' => SiteRequestStatusEnum::DRAFT->value,
+        ]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $detailResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/site-requests/groups/{$group->id}");
+
+        $detailResponse->assertOk();
+        $detailResponse->assertJsonPath('success', true);
+        $detailResponse->assertJsonPath('data.id', $group->id);
+        $detailResponse->assertJsonPath('data.requests.0.id', $requestA->id);
+        $detailResponse->assertJsonPath('data.requests.1.id', $requestB->id);
+
+        $foreignDetailResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/site-requests/groups/{$foreignGroup->id}");
+
+        $foreignDetailResponse->assertNotFound();
+
+        $submitResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/site-requests/groups/{$group->id}/submit");
+
+        $submitResponse->assertOk();
+        $submitResponse->assertJsonPath('success', true);
+        $submitResponse->assertJsonPath('data.status', SiteRequestStatusEnum::PENDING->value);
+        $submitResponse->assertJsonPath('data.requests.0.status', SiteRequestStatusEnum::PENDING->value);
+        $submitResponse->assertJsonPath('data.requests.1.status', SiteRequestStatusEnum::PENDING->value);
+
+        $this->assertDatabaseHas('site_request_groups', [
+            'id' => $group->id,
+            'organization_id' => $context->organization->id,
+            'status' => SiteRequestStatusEnum::PENDING->value,
+        ]);
+        $this->assertDatabaseHas('site_requests', [
+            'id' => $requestA->id,
+            'organization_id' => $context->organization->id,
+            'status' => SiteRequestStatusEnum::PENDING->value,
+        ]);
+        $this->assertDatabaseHas('site_requests', [
+            'id' => $requestB->id,
+            'organization_id' => $context->organization->id,
+            'status' => SiteRequestStatusEnum::PENDING->value,
+        ]);
+
+        $resubmitResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/site-requests/groups/{$group->id}/submit");
+
+        $resubmitResponse->assertStatus(422);
+    }
+
+    public function test_empty_group_cannot_be_submitted(): void
+    {
+        Event::fake();
+
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $emptyGroup = SiteRequestGroup::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'user_id' => $context->user->id,
+            'title' => 'Empty group',
+            'status' => SiteRequestStatusEnum::DRAFT->value,
+        ]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/site-requests/groups/{$emptyGroup->id}/submit");
+
+        $response->assertStatus(422);
+        $this->assertDatabaseHas('site_request_groups', [
+            'id' => $emptyGroup->id,
+            'status' => SiteRequestStatusEnum::DRAFT->value,
+        ]);
+    }
+
     private function createSiteRequest(AdminApiTestContext $context, Project $project): SiteRequest
     {
         return SiteRequest::query()->create([

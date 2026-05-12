@@ -70,7 +70,12 @@ class SiteRequestService
     {
         return SiteRequestGroup::where('id', $id)
             ->where('organization_id', $organizationId)
-            ->with(['requests.project', 'requests.user', 'requests.estimateItem.measurementUnit'])
+            ->with([
+                'requests' => static fn ($query) => $query->orderBy('id'),
+                'requests.project',
+                'requests.user',
+                'requests.estimateItem.measurementUnit',
+            ])
             ->first();
     }
 
@@ -396,23 +401,28 @@ class SiteRequestService
      */
     public function submitGroup(SiteRequestGroup $group, int $userId): SiteRequestGroup
     {
+        $group->loadMissing('requests');
+
+        if ($group->status !== SiteRequestStatusEnum::DRAFT) {
+            throw new DomainException(trans_message('site_requests.group_not_submittable'));
+        }
+
+        if ($group->requests->isEmpty()) {
+            throw new DomainException(trans_message('site_requests.group_empty'));
+        }
+
         return DB::transaction(function () use ($group, $userId) {
-            // Обновляем статус группы
             $group->update(['status' => SiteRequestStatusEnum::PENDING->value]);
 
-            // Обновляем статус всех черновиков в группе
             foreach ($group->requests as $request) {
-                if ($request->status === SiteRequestStatusEnum::DRAFT) {
-                    try {
-                        $this->changeStatus($request, $userId, SiteRequestStatusEnum::PENDING->value);
-                    } catch (\Exception $e) {
-                        // Логируем, но не прерываем весь процесс, если одна заявка не прошла
-                        \Log::warning("Could not submit request {$request->id} in group {$group->id}: " . $e->getMessage());
-                    }
+                if ($request->status !== SiteRequestStatusEnum::DRAFT) {
+                    throw new DomainException(trans_message('site_requests.group_not_submittable'));
                 }
+
+                $this->changeStatus($request, $userId, SiteRequestStatusEnum::PENDING->value);
             }
 
-            return $group->fresh(['requests']);
+            return $group->fresh(['requests.estimateItem.measurementUnit']);
         });
     }
 
