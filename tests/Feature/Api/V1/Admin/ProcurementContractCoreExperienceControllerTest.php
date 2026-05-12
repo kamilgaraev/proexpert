@@ -159,6 +159,37 @@ class ProcurementContractCoreExperienceControllerTest extends TestCase
             ->count());
     }
 
+    public function test_procurement_contract_creation_requires_contract_create_permission(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $supplier = $this->createSupplier($context->organization->id, 'Restricted Supplier');
+        $purchaseOrder = $this->createPurchaseOrder($context->organization->id, $supplier->id);
+        $this->allowAdminAccessWithoutContractCreation();
+        $this->allowModuleAccess();
+
+        $manualCreateResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/procurement/contracts', [
+                'supplier_id' => $supplier->id,
+                'project_id' => $project->id,
+                'date' => now()->toDateString(),
+                'subject' => 'Restricted manual procurement contract',
+                'total_amount' => 1000,
+            ]);
+
+        $manualCreateResponse->assertForbidden();
+
+        $fromOrderResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/create-contract");
+
+        $fromOrderResponse->assertForbidden();
+        $this->assertNull($purchaseOrder->fresh()->contract_id);
+        $this->assertSame(0, Contract::query()
+            ->where('organization_id', $context->organization->id)
+            ->where('contract_category', 'procurement')
+            ->count());
+    }
+
     private function createPurchaseOrder(int $organizationId, int $supplierId): PurchaseOrder
     {
         $purchaseRequest = PurchaseRequest::query()->create([
@@ -222,6 +253,26 @@ class ProcurementContractCoreExperienceControllerTest extends TestCase
         $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
             $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('hasRole')->andReturn(true);
+            $mock->shouldReceive('getUserRoleSlugs')->andReturn(['web_admin']);
+            $mock->shouldReceive('getUserRoles')->andReturnUsing(
+                static function (User $user, ?AuthorizationContext $context = null) {
+                    return $user->roleAssignments()
+                        ->where('is_active', true)
+                        ->when($context !== null, static fn ($query) => $query->where('context_id', $context->id))
+                        ->get();
+                }
+            );
+        });
+    }
+
+    private function allowAdminAccessWithoutContractCreation(): void
+    {
+        $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('canAccessInterface')->andReturn(true);
+            $mock->shouldReceive('can')->andReturnUsing(
+                static fn (User $user, string $permission): bool => $permission !== 'procurement.contracts.create'
+            );
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn(['web_admin']);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(
