@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Admin;
 
 use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
+use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequestLine;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
@@ -225,6 +226,26 @@ class PurchaseRequestCoreExperienceControllerTest extends TestCase
 
         $foreignApproveResponse->assertNotFound();
         $this->assertSame(PurchaseRequestStatusEnum::PENDING, $foreignPurchaseRequest->fresh()->status);
+    }
+
+    public function test_direct_purchase_order_creation_from_request_is_blocked_until_proposal_selection(): void
+    {
+        Event::fake();
+
+        $context = AdminApiTestContext::create();
+        $purchaseRequest = $this->createPurchaseRequest($context, PurchaseRequestStatusEnum::APPROVED);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-requests/{$purchaseRequest->id}/create-order", [
+                'supplier_id' => 1,
+            ]);
+
+        $response->assertStatus(410);
+        $this->assertSame(0, PurchaseOrder::query()
+            ->where('purchase_request_id', $purchaseRequest->id)
+            ->count());
     }
 
     private function createSiteRequest(AdminApiTestContext $context, Project $project): SiteRequest
