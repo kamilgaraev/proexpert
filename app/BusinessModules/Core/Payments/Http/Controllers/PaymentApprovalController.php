@@ -77,6 +77,7 @@ class PaymentApprovalController extends Controller
         try {
             $validated = $request->validate([
                 'comment' => ['nullable', 'string'],
+                'notes' => ['nullable', 'string'],
             ]);
 
             $organizationId = (int) $request->attributes->get('current_organization_id');
@@ -85,7 +86,7 @@ class PaymentApprovalController extends Controller
                 ->forOrganization($organizationId)
                 ->findOrFail($resolvedDocumentId);
 
-            $this->approvalService->approveByUser($document, $userId, $validated['comment'] ?? null);
+            $this->approvalService->approveByUser($document, $userId, $validated['comment'] ?? $validated['notes'] ?? null);
 
             return AdminResponse::success([
                 'approval_status' => $this->approvalService->getApprovalStatus($document),
