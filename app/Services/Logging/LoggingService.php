@@ -21,6 +21,7 @@ class LoggingService
     protected SecurityLogger $securityLogger;
     protected TechnicalLogger $technicalLogger;
     protected AccessLogger $accessLogger;
+    protected SafeLogWriter $writer;
 
     public function __construct(
         RequestContext $requestContext,
@@ -30,7 +31,8 @@ class LoggingService
         BusinessLogger $businessLogger,
         SecurityLogger $securityLogger,
         TechnicalLogger $technicalLogger,
-        AccessLogger $accessLogger
+        AccessLogger $accessLogger,
+        ?SafeLogWriter $writer = null
     ) {
         $this->requestContext = $requestContext;
         $this->userContext = $userContext;
@@ -40,6 +42,7 @@ class LoggingService
         $this->securityLogger = $securityLogger;
         $this->technicalLogger = $technicalLogger;
         $this->accessLogger = $accessLogger;
+        $this->writer = $writer ?? new SafeLogWriter();
     }
 
     /**
@@ -124,7 +127,7 @@ class LoggingService
             ];
         }
 
-        Log::channel('single')->critical($message, $logEntry);
+        $this->writer->write('single', 'critical', $message, $logEntry);
         
         // Отправить уведомление в мониторинг
         if (app()->bound(\App\Services\Monitoring\PrometheusService::class)) {

@@ -14,15 +14,18 @@ class AccessLogger
     protected RequestContext $requestContext;
     protected UserContext $userContext;
     protected PerformanceContext $performanceContext;
+    protected SafeLogWriter $writer;
 
     public function __construct(
         RequestContext $requestContext,
         UserContext $userContext,
-        PerformanceContext $performanceContext
+        PerformanceContext $performanceContext,
+        ?SafeLogWriter $writer = null
     ) {
         $this->requestContext = $requestContext;
         $this->userContext = $userContext;
         $this->performanceContext = $performanceContext;
+        $this->writer = $writer ?? new SafeLogWriter();
     }
 
     /**
@@ -36,8 +39,8 @@ class AccessLogger
         $accessEntry = $this->createAccessEntry($requestData, $responseData, $level);
         
         match($level) {
-            'error' => Log::error("[ACCESS]", $accessEntry),
-            'warning' => Log::warning("[ACCESS]", $accessEntry),
+            'error' => $this->writer->write('access', 'error', '[ACCESS]', $accessEntry),
+            'warning' => $this->writer->write('access', 'warning', '[ACCESS]', $accessEntry),
             // default => Log::info("[ACCESS]", $accessEntry)
             default => null // Disable info level access logs to reduce noise
         };
@@ -202,7 +205,7 @@ class AccessLogger
                 ]
             ];
 
-            Log::info("[API_DETAILS]", $apiEntry);
+            $this->writer->write('access', 'info', '[API_DETAILS]', $apiEntry);
         }
     }
 
@@ -229,7 +232,7 @@ class AccessLogger
             ]
         ];
 
-        Log::warning("[SLOW_REQUEST]", $slowRequestEntry);
+        $this->writer->write('access', 'warning', '[SLOW_REQUEST]', $slowRequestEntry);
     }
 
     /**
@@ -253,7 +256,7 @@ class AccessLogger
             ]
         ];
 
-        Log::warning("[SUSPICIOUS_REQUEST]", $suspiciousEntry);
+        $this->writer->write('access', 'warning', '[SUSPICIOUS_REQUEST]', $suspiciousEntry);
     }
 
     /**

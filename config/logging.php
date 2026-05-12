@@ -5,8 +5,11 @@ use Monolog\Handler\StreamHandler;
 use Monolog\Handler\SyslogUdpHandler;
 use Monolog\Processor\PsrLogMessageProcessor;
 use Monolog\Formatter\JsonFormatter;
+use App\Services\Logging\EnsureLogFailuresAreNonFatal;
 
 return [
+
+    'log_api_bodies' => env('LOG_API_BODIES', false),
 
     /*
     |--------------------------------------------------------------------------
@@ -56,14 +59,15 @@ return [
         'stack' => [
             'driver' => 'stack',
             'channels' => ['single', 'sentry'],
-            'ignore_exceptions' => false,
+            'ignore_exceptions' => true,
         ],
 
         'single' => [
             'driver' => 'single',
             'path' => storage_path('logs/laravel.log'),
-            'level' => 'debug', // Hardcode to debug to ensure logs are written
+            'level' => env('LOG_LEVEL', 'info'),
             'replace_placeholders' => true,
+            'tap' => [EnsureLogFailuresAreNonFatal::class],
         ],
 
         'daily' => [
@@ -72,6 +76,7 @@ return [
             'level' => env('LOG_LEVEL', 'debug'),
             'days' => env('LOG_DAILY_DAYS', 14),
             'replace_placeholders' => true,
+            'tap' => [EnsureLogFailuresAreNonFatal::class],
         ],
 
         'slack' => [
@@ -104,6 +109,7 @@ return [
                 'stream' => 'php://stderr',
             ],
             'processors' => [PsrLogMessageProcessor::class],
+            'tap' => [EnsureLogFailuresAreNonFatal::class],
         ],
 
         'syslog' => [
@@ -131,12 +137,13 @@ return [
         'api' => [
             'driver' => 'daily',
             'path' => storage_path('logs/api/api.log'),
-            'level' => 'debug',
-            'days' => 14,
+            'level' => env('LOG_API_LEVEL', 'warning'),
+            'days' => env('LOG_API_DAYS', 14),
             'formatter' => JsonFormatter::class,
             'formatter_with' => [
                 'dateFormat' => 'Y-m-d H:i:s',
             ],
+            'tap' => [EnsureLogFailuresAreNonFatal::class],
         ],
         
         'telemetry' => [
@@ -148,6 +155,7 @@ return [
             'formatter_with' => [
                 'dateFormat' => 'Y-m-d H:i:s',
             ],
+            'tap' => [EnsureLogFailuresAreNonFatal::class],
         ],
 
         // ProHelper Structured Logging Channels
@@ -155,88 +163,98 @@ return [
             'driver' => 'daily',
             'path' => storage_path('logs/audit/audit.log'),
             'level' => 'info',
-            'days' => 365, // Keep for 1 year for compliance
+            'days' => env('LOG_AUDIT_DAYS', 365),
             'formatter' => JsonFormatter::class,
             'formatter_with' => [
                 'dateFormat' => 'Y-m-d H:i:s.u',
                 'includeStacktraces' => false,
             ],
             'permission' => 0644,
+            'tap' => [EnsureLogFailuresAreNonFatal::class],
         ],
 
         'business' => [
             'driver' => 'daily',
             'path' => storage_path('logs/business/business.log'),
             'level' => 'info',
-            'days' => 90, // Keep for 3 months
+            'days' => env('LOG_BUSINESS_DAYS', 90),
             'formatter' => JsonFormatter::class,
             'formatter_with' => [
                 'dateFormat' => 'Y-m-d H:i:s.u',
             ],
             'permission' => 0644,
+            'tap' => [EnsureLogFailuresAreNonFatal::class],
         ],
 
         'security' => [
             'driver' => 'daily',
             'path' => storage_path('logs/security/security.log'),
             'level' => 'warning',
-            'days' => 180, // Keep for 6 months
+            'days' => env('LOG_SECURITY_DAYS', 180),
             'formatter' => JsonFormatter::class,
             'formatter_with' => [
                 'dateFormat' => 'Y-m-d H:i:s.u',
             ],
             'permission' => 0640, // More restrictive permissions
+            'tap' => [EnsureLogFailuresAreNonFatal::class],
         ],
 
         'technical' => [
             'driver' => 'daily', 
             'path' => storage_path('logs/technical/technical.log'),
             'level' => env('LOG_LEVEL', 'info'),
-            'days' => 30,
+            'days' => env('LOG_TECHNICAL_DAYS', 30),
             'formatter' => JsonFormatter::class,
             'formatter_with' => [
                 'dateFormat' => 'Y-m-d H:i:s.u',
             ],
             'permission' => 0644,
+            'tap' => [EnsureLogFailuresAreNonFatal::class],
         ],
 
         'access' => [
             'driver' => 'daily',
             'path' => storage_path('logs/access/access.log'), 
             'level' => 'info',
-            'days' => 30,
+            'days' => env('LOG_ACCESS_DAYS', 30),
             'formatter' => JsonFormatter::class,
             'formatter_with' => [
                 'dateFormat' => 'Y-m-d H:i:s.u',
             ],
             'permission' => 0644,
+            'tap' => [EnsureLogFailuresAreNonFatal::class],
         ],
 
         'deprecations' => [
-            'driver' => 'single',
+            'driver' => 'daily',
             'path' => storage_path('logs/deprecations.log'),
             'level' => 'warning',
+            'days' => env('LOG_DEPRECATIONS_DAYS', 14),
+            'tap' => [EnsureLogFailuresAreNonFatal::class],
         ],
 
         'redis' => [
             'driver' => 'daily',
             'path' => storage_path('logs/redis/redis.log'),
-            'level' => 'debug',
-            'days' => 14,
+            'level' => env('LOG_REDIS_LEVEL', 'warning'),
+            'days' => env('LOG_REDIS_DAYS', 14),
+            'tap' => [EnsureLogFailuresAreNonFatal::class],
         ],
 
         'database' => [
             'driver' => 'daily',
             'path' => storage_path('logs/database/database.log'),
-            'level' => 'warning', // Usually only errors matter
-            'days' => 14,
+            'level' => env('LOG_DATABASE_LEVEL', 'warning'),
+            'days' => env('LOG_DATABASE_DAYS', 14),
+            'tap' => [EnsureLogFailuresAreNonFatal::class],
         ],
 
         'auth' => [
             'driver' => 'daily',
             'path' => storage_path('logs/auth/auth.log'),
-            'level' => 'info',
-            'days' => 14,
+            'level' => env('LOG_AUTH_LEVEL', 'warning'),
+            'days' => env('LOG_AUTH_DAYS', 30),
+            'tap' => [EnsureLogFailuresAreNonFatal::class],
         ],
 
         'sentry' => [

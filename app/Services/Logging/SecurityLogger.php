@@ -13,15 +13,18 @@ class SecurityLogger
     protected RequestContext $requestContext;
     protected UserContext $userContext;
     protected PerformanceContext $performanceContext;
+    protected SafeLogWriter $writer;
 
     public function __construct(
         RequestContext $requestContext,
         UserContext $userContext,
-        PerformanceContext $performanceContext
+        PerformanceContext $performanceContext,
+        ?SafeLogWriter $writer = null
     ) {
         $this->requestContext = $requestContext;
         $this->userContext = $userContext;
         $this->performanceContext = $performanceContext;
+        $this->writer = $writer ?? new SafeLogWriter();
     }
 
     /**
@@ -33,9 +36,9 @@ class SecurityLogger
         
         // Логировать с соответствующим уровнем
         match(strtolower($level)) {
-            'critical' => Log::channel('security')->critical("[SECURITY] {$event}", $securityEntry),
-            'error' => Log::channel('security')->error("[SECURITY] {$event}", $securityEntry),
-            'warning' => Log::channel('security')->warning("[SECURITY] {$event}", $securityEntry),
+            'critical' => $this->writer->write('security', 'critical', "[SECURITY] {$event}", $securityEntry),
+            'error' => $this->writer->write('security', 'error', "[SECURITY] {$event}", $securityEntry),
+            'warning' => $this->writer->write('security', 'warning', "[SECURITY] {$event}", $securityEntry),
             // default => Log::channel('security')->info("[SECURITY] {$event}", $securityEntry)
             default => null // Disable info level logs
         };

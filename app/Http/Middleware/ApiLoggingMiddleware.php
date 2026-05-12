@@ -3,8 +3,8 @@
 namespace App\Http\Middleware;
 
 use Closure;
+use App\Services\Logging\SafeLogWriter;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 
 class ApiLoggingMiddleware
@@ -36,6 +36,10 @@ class ApiLoggingMiddleware
      */
     public function handle(Request $request, Closure $next)
     {
+        if (!$this->shouldLogBodies()) {
+            return $next($request);
+        }
+
         // Генерируем уникальный ID запроса
         $requestId = uniqid('req_', true);
         
@@ -95,7 +99,7 @@ class ApiLoggingMiddleware
             ];
         }
         
-        Log::channel('api')->info('API запрос', $data);
+        app(SafeLogWriter::class)->write('api', 'info', 'API request', $data);
     }
     
     /**
@@ -130,7 +134,7 @@ class ApiLoggingMiddleware
             'memory' => round(memory_get_peak_usage(true) / 1024 / 1024, 2).' MB',
         ];
         
-        Log::channel('api')->info('API ответ', $data);
+        app(SafeLogWriter::class)->write('api', 'info', 'API response', $data);
     }
     
     /**
@@ -200,4 +204,9 @@ class ApiLoggingMiddleware
         
         return $content;
     }
-} 
+
+    private function shouldLogBodies(): bool
+    {
+        return (bool) config('logging.log_api_bodies', false);
+    }
+}

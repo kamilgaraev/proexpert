@@ -2,8 +2,8 @@
 
 namespace App\Services;
 
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Request;
+use App\Services\Logging\SafeLogWriter;
 use Throwable;
 
 class LogService
@@ -67,7 +67,7 @@ class LogService
      */
     public static function info(string $message, array $context = []): void
     {
-        Log::channel('api')->info($message, self::prepareLogData($context));
+        self::writer()->write('api', 'info', $message, self::prepareLogData($context));
     }
     
     /**
@@ -79,7 +79,7 @@ class LogService
      */
     public static function warning(string $message, array $context = []): void
     {
-        Log::channel('api')->warning($message, self::prepareLogData($context));
+        self::writer()->write('api', 'warning', $message, self::prepareLogData($context));
     }
     
     /**
@@ -107,7 +107,7 @@ class LogService
     public static function businessEvent(string $event, array $data): void
     {
         $context = array_merge(['event' => $event], $data);
-        Log::channel('api')->info("BUSINESS_EVENT", self::prepareLogData($context));
+        self::writer()->write('api', 'info', 'BUSINESS_EVENT', self::prepareLogData($context));
     }
 
     /**
@@ -119,7 +119,7 @@ class LogService
      */
     public static function error(string $message, array $context = []): void
     {
-        Log::channel('api')->error($message, self::prepareLogData($context));
+        self::writer()->write('api', 'error', $message, self::prepareLogData($context));
     }
 
     /**
@@ -131,7 +131,7 @@ class LogService
      */
     public static function critical(string $message, array $context = []): void
     {
-        Log::channel('api')->critical($message, self::prepareLogData($context));
+        self::writer()->write('api', 'critical', $message, self::prepareLogData($context));
     }
 
     /**
@@ -149,10 +149,10 @@ class LogService
             'code' => $exception->getCode(),
             'file' => $exception->getFile(),
             'line' => $exception->getLine(),
-            'trace' => $exception->getTraceAsString(),
+            'trace_hash' => hash('sha256', $exception->getTraceAsString()),
         ], $additionalContext);
 
-        Log::channel('api')->error("EXCEPTION", self::prepareLogData($context));
+        self::writer()->write('api', 'error', 'EXCEPTION', self::prepareLogData($context));
     }
     
     /**
@@ -171,6 +171,13 @@ class LogService
             'memory' => round(memory_get_peak_usage(true) / 1024 / 1024, 2),
         ], $context);
         
-        Log::channel('telemetry')->info("TELEMETRY", self::prepareLogData($telemetryData));
+        self::writer()->write('telemetry', 'info', 'TELEMETRY', self::prepareLogData($telemetryData));
     }
-} 
+
+    private static function writer(): SafeLogWriter
+    {
+        return app()->bound(SafeLogWriter::class)
+            ? app(SafeLogWriter::class)
+            : new SafeLogWriter();
+    }
+}

@@ -12,15 +12,18 @@ class AuditLogger
     protected RequestContext $requestContext;
     protected UserContext $userContext;
     protected PerformanceContext $performanceContext;
+    protected SafeLogWriter $writer;
 
     public function __construct(
         RequestContext $requestContext,
         UserContext $userContext,
-        PerformanceContext $performanceContext
+        PerformanceContext $performanceContext,
+        ?SafeLogWriter $writer = null
     ) {
         $this->requestContext = $requestContext;
         $this->userContext = $userContext;
         $this->performanceContext = $performanceContext;
+        $this->writer = $writer ?? new SafeLogWriter();
     }
 
     /**
@@ -31,11 +34,11 @@ class AuditLogger
         $auditEntry = $this->createAuditEntry($event, $context);
         
         // Логировать в специальный канал для аудита
-        Log::channel('audit')->info($event, $auditEntry);
+        $this->writer->write('audit', 'info', $event, $auditEntry);
         
         // В production также дублировать в основной лог
         if (config('app.env') === 'production') {
-            Log::info("[AUDIT] {$event}", $auditEntry);
+            $this->writer->default('info', "[AUDIT] {$event}", $auditEntry);
         }
     }
 

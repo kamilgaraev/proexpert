@@ -119,6 +119,14 @@ Schedule::command('custom-reports:cleanup-executions --days=90')
     })
     ->appendOutputTo(storage_path('logs/schedule-custom-reports-cleanup.log'));
 
+Schedule::command('temp-files:cleanup --hours=48')
+    ->dailyAt('04:10')
+    ->withoutOverlapping(30)
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled temp-files:cleanup command failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-temp-files-cleanup.log'));
+
 // Автоматическое геокодирование проектов без координат (раз в день)
 Schedule::command('projects:geocode --limit=50 --delay=2')
     ->dailyAt('04:30')

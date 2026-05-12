@@ -11,7 +11,7 @@ use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Throwable;
 use Symfony\Component\Routing\Exception\RouteNotFoundException;
-use Illuminate\Support\Facades\Log;
+use App\Services\Logging\SafeLogWriter;
 use App\Services\Monitoring\PrometheusService;
 use App\Services\Monitoring\GlitchTipReportPolicy;
 use App\Services\Monitoring\SentryScopeService;
@@ -99,7 +99,7 @@ class Handler extends ExceptionHandler
                 return null; // Пусть обработает стандартный механизм
             }
             
-            Log::info('[Handler] Processing API exception', [
+            app(SafeLogWriter::class)->default('info', '[Handler] Processing API exception', [
                 'exception_class' => get_class($e),
                 'exception_message' => $e->getMessage(),
                 'exception_code' => $e->getCode(),
@@ -201,7 +201,7 @@ class Handler extends ExceptionHandler
                     default => 'error',
                 };
                 
-                Log::log($logLevel, '[Handler] AI Service Exception', [
+                app(SafeLogWriter::class)->default($logLevel, '[Handler] AI Service Exception', [
                     'exception_class' => get_class($e),
                     'message' => $message,
                     'status_code' => $statusCode,
@@ -215,7 +215,7 @@ class Handler extends ExceptionHandler
 
             // InvalidArgumentException - ошибки конфигурации (например, guard не определён)
             if ($e instanceof \InvalidArgumentException) {
-                Log::error('[Handler] Configuration error', [
+                app(SafeLogWriter::class)->default('error', '[Handler] Configuration error', [
                     'message' => $e->getMessage(),
                     'file' => $e->getFile(),
                     'line' => $e->getLine(),
@@ -266,10 +266,11 @@ class Handler extends ExceptionHandler
             
             // Ошибки базы данных
             if ($e instanceof \Illuminate\Database\QueryException) {
-                Log::error('[Handler] Database query error', [
+                app(SafeLogWriter::class)->default('error', '[Handler] Database query error', [
                     'message' => $e->getMessage(),
-                    'sql' => $e->getSql() ?? 'N/A',
-                    'bindings' => $e->getBindings() ?? [],
+                    'exception_class' => $e::class,
+                    'sql_type' => strtoupper(strtok(ltrim($e->getSql()), ' ') ?: 'UNKNOWN'),
+                    'bindings_count' => count($e->getBindings()),
                 ]);
                 
                 if (config('app.debug')) {
@@ -353,7 +354,7 @@ class Handler extends ExceptionHandler
                 }
             } catch (\Exception $e) {
                 // Не ломаем приложение если error tracking упал
-                Log::error('error_tracking.integration_failed', [
+                app(SafeLogWriter::class)->default('error', 'error_tracking.integration_failed', [
                     'error' => $e->getMessage(),
                 ]);
             }
@@ -393,16 +394,13 @@ class Handler extends ExceptionHandler
         ];
         
         if ($statusCode >= 500) {
-            $exceptionContext['stack_trace'] = $exception->getTraceAsString();
-            $exceptionContext['trace_array'] = array_slice($exception->getTrace(), 0, 10);
-            
             if ($exception->getPrevious()) {
                 $exceptionContext['previous_exception'] = [
                     'class' => get_class($exception->getPrevious()),
                     'message' => $exception->getPrevious()->getMessage(),
                     'file' => $exception->getPrevious()->getFile(),
                     'line' => $exception->getPrevious()->getLine(),
-                    'trace' => array_slice($exception->getPrevious()->getTrace(), 0, 5),
+                    'trace_hash' => md5($exception->getPrevious()->getTraceAsString()),
                 ];
             }
         }
@@ -551,7 +549,7 @@ class Handler extends ExceptionHandler
         $postMaxSizeBytes = convert_ini_size_to_bytes($postMaxSize);
         $uploadMaxFilesizeBytes = convert_ini_size_to_bytes($uploadMaxFilesize);
 
-        Log::error('[Handler] PostTooLargeException - Request payload too large', [
+        app(SafeLogWriter::class)->default('error', '[Handler] PostTooLargeException - Request payload too large', [
             'uri' => $request->getRequestUri(),
             'method' => $request->method(),
             'content_length_header' => $contentLength,

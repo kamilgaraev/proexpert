@@ -12,15 +12,18 @@ class TechnicalLogger
     protected RequestContext $requestContext;
     protected UserContext $userContext;
     protected PerformanceContext $performanceContext;
+    protected SafeLogWriter $writer;
 
     public function __construct(
         RequestContext $requestContext,
         UserContext $userContext,
-        PerformanceContext $performanceContext
+        PerformanceContext $performanceContext,
+        ?SafeLogWriter $writer = null
     ) {
         $this->requestContext = $requestContext;
         $this->userContext = $userContext;
         $this->performanceContext = $performanceContext;
+        $this->writer = $writer ?? new SafeLogWriter();
     }
 
     /**
@@ -31,10 +34,10 @@ class TechnicalLogger
         $technicalEntry = $this->createTechnicalEntry($event, $context, $level);
         
         match(strtolower($level)) {
-            'critical' => Log::channel('technical')->critical("[TECHNICAL] {$event}", $technicalEntry),
-            'error' => Log::channel('technical')->error("[TECHNICAL] {$event}", $technicalEntry),
-            'warning' => Log::channel('technical')->warning("[TECHNICAL] {$event}", $technicalEntry),
-            'debug' => Log::channel('technical')->debug("[TECHNICAL] {$event}", $technicalEntry),
+            'critical' => $this->writer->write('technical', 'critical', "[TECHNICAL] {$event}", $technicalEntry),
+            'error' => $this->writer->write('technical', 'error', "[TECHNICAL] {$event}", $technicalEntry),
+            'warning' => $this->writer->write('technical', 'warning', "[TECHNICAL] {$event}", $technicalEntry),
+            'debug' => $this->writer->write('technical', 'debug', "[TECHNICAL] {$event}", $technicalEntry),
             // default => Log::channel('technical')->info("[TECHNICAL] {$event}", $technicalEntry)
             default => null // Disable info level logs
         };

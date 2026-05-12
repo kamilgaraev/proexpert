@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Http\Request;
 use App\Http\Middleware\JwtMiddleware;
 use App\Http\Middleware\SetOrganizationContext;
+use App\Services\Logging\SafeLogWriter;
 use App\Services\Monitoring\GlitchTipReportPolicy;
 use App\Services\Monitoring\SentryScopeService;
 
@@ -88,30 +89,32 @@ $app = Application::configure(basePath: dirname(__DIR__))
         
         // Redis ошибки -> logs/redis/redis.log
         $exceptions->report(function (\Predis\Connection\ConnectionException $e): void {
-            Log::channel('redis')->error('Redis connection error', [
+            app(SafeLogWriter::class)->write('redis', 'error', 'Redis connection error', [
                 'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
+                'exception_class' => $e::class,
             ]);
         });
 
         // Ошибки базы данных -> logs/database/database.log
         $exceptions->report(function (\Illuminate\Database\QueryException $e): void {
-            Log::channel('database')->error('Database query error', [
+            app(SafeLogWriter::class)->write('database', 'error', 'Database query error', [
                 'message' => $e->getMessage(),
-                'sql' => $e->getSql(),
-                'bindings' => $e->getBindings(),
+                'exception_class' => $e::class,
+                'sql_type' => strtoupper(strtok(ltrim($e->getSql()), ' ') ?: 'UNKNOWN'),
+                'bindings_count' => count($e->getBindings()),
             ]);
         });
 
         $exceptions->report(function (\PDOException $e): void {
-            Log::channel('database')->error('PDO error', [
+            app(SafeLogWriter::class)->write('database', 'error', 'PDO error', [
                 'message' => $e->getMessage(),
+                'exception_class' => $e::class,
             ]);
         });
 
         // Ошибки аутентификации -> logs/auth/auth.log
         $exceptions->report(function (\Illuminate\Auth\AuthenticationException $e): void {
-            Log::channel('auth')->info('Authentication failed', [
+            app(SafeLogWriter::class)->write('auth', 'info', 'Authentication failed', [
                 'message' => $e->getMessage(),
             ]);
         });
@@ -129,7 +132,7 @@ $app = Application::configure(basePath: dirname(__DIR__))
         });
 
         $exceptions->report(function (\Illuminate\Auth\Access\AuthorizationException $e): void {
-            Log::channel('auth')->warning('Authorization failed', [
+            app(SafeLogWriter::class)->write('auth', 'warning', 'Authorization failed', [
                 'message' => $e->getMessage(),
             ]);
         });
