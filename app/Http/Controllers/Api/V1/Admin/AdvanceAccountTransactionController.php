@@ -16,7 +16,6 @@ use App\Http\Requests\Api\V1\Admin\AdvanceTransaction\UpdateAdvanceTransactionRe
 use App\Http\Requests\Api\V1\Admin\AdvanceTransaction\TransactionReportRequest;
 use App\Http\Requests\Api\V1\Admin\AdvanceTransaction\TransactionApprovalRequest;
 use App\Http\Resources\Api\V1\Admin\AdvanceTransaction\AdvanceTransactionResource;
-use App\Http\Resources\Api\V1\Admin\AdvanceTransaction\AdvanceTransactionCollection;
 use App\Http\Responses\AdminResponse;
 use function trans_message;
 
@@ -121,8 +120,14 @@ class AdvanceAccountTransactionController extends Controller
     {
         $filters = $request->only([
             'user_id', 'organization_id', 'project_id', 'type', 
-            'reporting_status', 'date_from', 'date_to'
+            'reporting_status', 'status', 'date_from', 'date_to'
         ]);
+
+        if (isset($filters['status']) && !isset($filters['reporting_status'])) {
+            $filters['reporting_status'] = $filters['status'];
+        }
+
+        unset($filters['status']);
 
         // Всегда используем текущую организацию из контекста
         $filters['organization_id'] = Auth::user()->current_organization_id;
@@ -130,7 +135,26 @@ class AdvanceAccountTransactionController extends Controller
         $perPage = $request->input('per_page', 15);
         $transactions = $this->advanceService->getTransactions($filters, $perPage);
 
-        return AdminResponse::success(new AdvanceTransactionCollection($transactions));
+        return AdminResponse::paginated(
+            AdvanceTransactionResource::collection($transactions->getCollection())->resolve(),
+            [
+                'current_page' => $transactions->currentPage(),
+                'last_page' => $transactions->lastPage(),
+                'per_page' => $transactions->perPage(),
+                'total' => $transactions->total(),
+                'from' => $transactions->firstItem(),
+                'to' => $transactions->lastItem(),
+            ],
+            null,
+            200,
+            null,
+            [
+                'first' => $transactions->url(1),
+                'last' => $transactions->url($transactions->lastPage()),
+                'prev' => $transactions->previousPageUrl(),
+                'next' => $transactions->nextPageUrl(),
+            ]
+        );
     }
 
     /**
