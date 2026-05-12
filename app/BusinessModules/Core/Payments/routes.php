@@ -74,9 +74,14 @@ Route::prefix('api/v1/admin/payments')
                 ->name('documents.show');
         });
 
-        Route::get('/counterparty-accounts/{organizationId}', [CounterpartyAccountController::class, 'show'])
-            ->middleware('authorize:payments.counterparty_account.view')
-            ->name('counterparty_accounts.show');
+        Route::prefix('counterparty-accounts')->name('counterparty_accounts.')->group(function () {
+            Route::get('/', [CounterpartyAccountController::class, 'index'])
+                ->middleware('authorize:payments.counterparty_account.view')
+                ->name('index');
+            Route::get('/{organizationId}', [CounterpartyAccountController::class, 'show'])
+                ->middleware('authorize:payments.counterparty_account.view')
+                ->name('show');
+        });
 
         Route::post('/reconciliation', [ReconciliationController::class, 'store'])
             ->middleware('authorize:payments.reconciliation.perform')
