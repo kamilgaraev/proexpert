@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\BusinessModules\Core\Payments\Http\Controllers\CounterpartyAccountController;
+use App\BusinessModules\Core\Payments\Http\Controllers\BankStatementImportController;
 use App\BusinessModules\Core\Payments\Http\Controllers\DashboardController;
 use App\BusinessModules\Core\Payments\Http\Controllers\ExportController;
 use App\BusinessModules\Core\Payments\Http\Controllers\OffsetController;
@@ -89,6 +90,10 @@ Route::prefix('api/v1/admin/payments')
         Route::post('/reconciliation', [ReconciliationController::class, 'store'])
             ->middleware('authorize:payments.reconciliation.perform')
             ->name('reconciliation.store');
+
+        Route::post('/import/bank-statement', [BankStatementImportController::class, 'store'])
+            ->middleware('authorize:payments.transaction.register')
+            ->name('import.bank_statement');
 
         Route::prefix('reports')->name('reports.')->group(function () {
             Route::get('/financial', [ReportController::class, 'financial'])
