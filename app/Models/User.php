@@ -139,6 +139,16 @@ class User extends Authenticatable implements JWTSubject, MustVerifyEmail
         return $this->organizations()->where('organization_user.is_active', true);
     }
 
+    public function authSessions(): HasMany
+    {
+        return $this->hasMany(UserAuthSession::class);
+    }
+
+    public function securityEvents(): HasMany
+    {
+        return $this->hasMany(UserSecurityEvent::class);
+    }
+
     // Связи для новой системы авторизации добавлены ниже в разделе авторизации
 
 
