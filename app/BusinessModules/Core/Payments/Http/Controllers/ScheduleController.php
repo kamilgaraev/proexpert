@@ -92,7 +92,21 @@ class ScheduleController extends Controller
                 return AdminResponse::error(trans_message('payments.schedule.sum_mismatch'), 422);
             }
 
+            $hasLockedInstallments = PaymentSchedule::query()
+                ->where('payment_document_id', $document->id)
+                ->where('status', '!=', 'pending')
+                ->exists();
+
+            if ($hasLockedInstallments) {
+                return AdminResponse::error(trans_message('payments.schedule.update_locked'), 422);
+            }
+
             $schedules = DB::transaction(function () use ($validated): array {
+                PaymentSchedule::query()
+                    ->where('payment_document_id', $validated['payment_document_id'])
+                    ->where('status', 'pending')
+                    ->delete();
+
                 $created = [];
 
                 foreach ($validated['installments'] as $installment) {
