@@ -12,6 +12,7 @@ use App\Models\PersonalFile;
 use App\Services\Storage\FileService;
 use App\Services\Organization\OrganizationContext;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 use function trans_message;
 
@@ -76,16 +77,15 @@ class PersonalFileController extends Controller
                 return $file;
             });
 
-            return AdminResponse::success(
+            return AdminResponse::paginated(
                 $paginator->items(),
-                trans_message('files.files_loaded'),
-                200,
                 [
                     'current_page' => $paginator->currentPage(),
                     'last_page' => $paginator->lastPage(),
                     'per_page' => $paginator->perPage(),
                     'total' => $paginator->total(),
-                ]
+                ],
+                trans_message('files.files_loaded')
             );
         } catch (\Throwable $e) {
             Log::error('[PersonalFileController] Error loading personal files', [
@@ -98,7 +98,89 @@ class PersonalFileController extends Controller
     /**
      * Удалить личный файл
      */
-    public function destroy(int $id): JsonResponse
+    public function createFolder(\Illuminate\Http\Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'name' => ['required', 'string', 'max:120', 'not_regex:/[\\\\\\/]/'],
+                'parent_path' => ['nullable', 'string', 'max:500'],
+            ]);
+
+            $user = $request->user();
+            $parentPath = $this->normalizeRelativePath($validated['parent_path'] ?? '');
+            $folderPath = $this->userPath((int) $user->id, trim($parentPath . '/' . $validated['name'], '/')) . '/';
+
+            $folder = PersonalFile::query()->firstOrCreate(
+                [
+                    'user_id' => $user->id,
+                    'path' => $folderPath,
+                ],
+                [
+                    'filename' => $validated['name'],
+                    'size' => 0,
+                    'is_folder' => true,
+                ]
+            );
+
+            return AdminResponse::success($folder, trans_message('files.folder_created'), 201);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('files.operation_failed'), 422, $e->errors());
+        } catch (\Throwable $e) {
+            Log::error('[PersonalFileController] Error creating personal folder', [
+                'error' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
+            ]);
+
+            return AdminResponse::error(trans_message('files.operation_failed'), 500);
+        }
+    }
+
+    public function upload(\Illuminate\Http\Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'file' => ['required', 'file', 'max:51200'],
+                'parent_path' => ['nullable', 'string', 'max:500'],
+            ]);
+
+            $user = $request->user();
+            $uploadedFile = $validated['file'];
+            $parentPath = $this->normalizeRelativePath($validated['parent_path'] ?? $request->query('parent_path', ''));
+            $extension = $uploadedFile->getClientOriginalExtension();
+            $storedName = (string) Str::uuid() . ($extension ? '.' . $extension : '');
+            $storagePath = $this->userPath((int) $user->id, trim($parentPath . '/' . $storedName, '/'));
+            $org = OrganizationContext::getOrganization() ?? $user->currentOrganization;
+            $storage = $this->fileService->disk($org);
+            $content = file_get_contents($uploadedFile->getRealPath());
+
+            if ($content === false) {
+                return AdminResponse::error(trans_message('files.upload_failed'), 500);
+            }
+
+            $storage->put($storagePath, $content);
+
+            $file = PersonalFile::query()->create([
+                'user_id' => $user->id,
+                'path' => $storagePath,
+                'filename' => $uploadedFile->getClientOriginalName(),
+                'size' => $uploadedFile->getSize() ?: 0,
+                'is_folder' => false,
+            ]);
+
+            return AdminResponse::success($file, trans_message('files.uploaded'), 201);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('files.operation_failed'), 422, $e->errors());
+        } catch (\Throwable $e) {
+            Log::error('[PersonalFileController] Error uploading personal file', [
+                'error' => $e->getMessage(),
+                'user_id' => $request->user()?->id,
+            ]);
+
+            return AdminResponse::error(trans_message('files.upload_failed'), 500);
+        }
+    }
+
+    public function destroy(string $id): JsonResponse
     {
         try {
             $user = request()->user();
@@ -126,5 +208,23 @@ class PersonalFileController extends Controller
             ]);
             return AdminResponse::error(trans_message('files.delete_failed'), 500);
         }
+    }
+
+    private function normalizeRelativePath(string $path): string
+    {
+        $segments = collect(explode('/', str_replace('\\', '/', $path)))
+            ->map(static fn (string $segment): string => trim($segment))
+            ->filter(static fn (string $segment): bool => $segment !== '' && $segment !== '.' && $segment !== '..')
+            ->values()
+            ->all();
+
+        return implode('/', $segments);
+    }
+
+    private function userPath(int $userId, string $relativePath): string
+    {
+        $relativePath = $this->normalizeRelativePath($relativePath);
+
+        return $relativePath === '' ? (string) $userId : $userId . '/' . $relativePath;
     }
 }
