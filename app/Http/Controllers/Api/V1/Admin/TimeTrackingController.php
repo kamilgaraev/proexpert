@@ -46,7 +46,7 @@ class TimeTrackingController extends Controller
             Log::error('[TimeTrackingController] Ошибка экспорта: ' . $e->getMessage(), [
                 'trace' => $e->getTraceAsString()
             ]);
-            return AdminResponse::error('Ошибка при экспорте данных', 500);
+            return AdminResponse::error(trans_message('time_tracking.export_failed'), 500);
         }
     }
 
@@ -60,7 +60,7 @@ class TimeTrackingController extends Controller
             Log::error('[TimeTrackingController] Ошибка получения списка работников: ' . $e->getMessage(), [
                 'trace' => $e->getTraceAsString()
             ]);
-            return AdminResponse::error('Ошибка при получении списка работников', 500);
+            return AdminResponse::error(trans_message('time_tracking.workers_failed'), 500);
         }
     }
 
@@ -260,7 +260,7 @@ class TimeTrackingController extends Controller
             $reason = $request->input('notes') ?? $request->input('reason') ?? '';
 
             if (empty($reason)) {
-                return AdminResponse::error('Необходимо указать причину отклонения', 400);
+                return AdminResponse::error(trans_message('time_tracking.rejection_reason_required'), 400);
             }
 
             $rejected = $this->timeTrackingService->rejectTimeEntry($id, $request->user(), $reason);
@@ -382,7 +382,7 @@ class TimeTrackingController extends Controller
             $endDate = $request->query('end_date');
             
             if (!$startDate || !$endDate) {
-                return AdminResponse::error('Необходимо указать период для отчета', 400);
+                return AdminResponse::error(trans_message('time_tracking.report_period_required'), 400);
             }
             
             $report = $this->timeTrackingService->getTimeReport(
@@ -400,19 +400,20 @@ class TimeTrackingController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
-            return AdminResponse::error('Ошибка при генерации отчета', 500);
+            return AdminResponse::error(trans_message('time_tracking.report_failed'), 500);
         }
     }
 
     protected function getCurrentOrganizationId(Request $request): int
     {
-        $organizationId = $request->user()->current_organization_id;
+        $organizationId = $request->attributes->get('current_organization_id')
+            ?? $request->user()?->current_organization_id;
 
         if (!$organizationId) {
-            throw new \Exception('Организация не найдена');
+            throw new \Exception(trans_message('time_tracking.organization_not_found'));
         }
 
-        return $organizationId;
+        return (int) $organizationId;
     }
 
     private function validatedProjectId(Request $request, int $organizationId): ?int
