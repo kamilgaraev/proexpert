@@ -38,7 +38,7 @@ class WorkTypeService
                 'request_attributes' => $request->attributes->all(),
             ]);
 
-            throw new BusinessLogicException(trans_message('catalog.errors.organization_context_missing'), 500);
+            throw new BusinessLogicException(trans_message('work_type.organization_context_missing'), 400);
         }
 
         return (int) $organizationId;
@@ -120,7 +120,7 @@ class WorkTypeService
                 'line' => $e->getLine(),
             ]);
 
-            throw new BusinessLogicException(trans_message('catalog.errors.work_type_load_failed'), 500, $e);
+            throw new BusinessLogicException(trans_message('work_type.internal_error_list'), 500, $e);
         }
     }
 
@@ -149,7 +149,7 @@ class WorkTypeService
         $workType = $this->findWorkTypeById($id, $request);
 
         if (!$workType) {
-            throw new BusinessLogicException(trans_message('catalog.errors.work_type_not_found'), 404);
+            throw new BusinessLogicException(trans_message('work_type.not_found'), 404);
         }
 
         unset($data['organization_id']);
@@ -162,11 +162,11 @@ class WorkTypeService
         $workType = $this->findWorkTypeById($id, $request);
 
         if (!$workType) {
-            throw new BusinessLogicException(trans_message('catalog.errors.work_type_not_found'), 404);
+            throw new BusinessLogicException(trans_message('work_type.not_found'), 404);
         }
 
         if ($this->hasWorkTypeUsage($workType)) {
-            throw new BusinessLogicException(trans_message('catalog.errors.work_type_in_use'), 422);
+            throw new BusinessLogicException(trans_message('work_type.in_use'), 422);
         }
 
         return $this->workTypeRepository->delete($id);
