@@ -27,6 +27,7 @@ class AdvanceAccountReportController extends Controller
     {
         try {
             $report = $this->reportService->getSummaryReport($this->filters($request, ['date_from', 'date_to']));
+            $this->storeReportSnapshot($report, 'advance_account_summary_report');
 
             return AdminResponse::success($report, trans_message('advance_account.summary_loaded'));
         } catch (\Throwable $exception) {
@@ -42,6 +43,7 @@ class AdvanceAccountReportController extends Controller
             $filters = $this->filters($request, ['date_from', 'date_to']);
             $filters['user_id'] = $userId;
             $report = $this->reportService->getUserReport($filters);
+            $this->storeReportSnapshot($report, 'advance_account_user_report');
 
             return AdminResponse::success($report, trans_message('advance_account.user_report_loaded'));
         } catch (ModelNotFoundException) {
@@ -59,6 +61,7 @@ class AdvanceAccountReportController extends Controller
             $filters = $this->filters($request, ['date_from', 'date_to']);
             $filters['project_id'] = $projectId;
             $report = $this->reportService->getProjectReport($filters);
+            $this->storeReportSnapshot($report, 'advance_account_project_report');
 
             return AdminResponse::success($report, trans_message('advance_account.project_report_loaded'));
         } catch (ModelNotFoundException) {
@@ -74,6 +77,7 @@ class AdvanceAccountReportController extends Controller
     {
         try {
             $report = $this->reportService->getOverdueReport($this->filters($request, ['overdue_days']));
+            $this->storeReportSnapshot($report, 'advance_account_overdue_report');
 
             return AdminResponse::success($report, trans_message('advance_account.overdue_report_loaded'));
         } catch (\Throwable $exception) {
@@ -119,6 +123,13 @@ class AdvanceAccountReportController extends Controller
         $filters['organization_id'] = $request->user()->current_organization_id;
 
         return $filters;
+    }
+
+    private function storeReportSnapshot(array $report, string $baseFilename): void
+    {
+        if (!$this->reportService->storeJsonReportSnapshot($report, $baseFilename)) {
+            throw new \RuntimeException(trans_message('reports.storage_failed'));
+        }
     }
 
     private function logReportError(

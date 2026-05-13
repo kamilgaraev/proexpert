@@ -11,6 +11,7 @@ use App\Services\Export\ExcelExporterService;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -263,6 +264,29 @@ class AdvanceAccountReportService
         }, $fileName.'.csv', [
             'Content-Type' => 'text/csv; charset=UTF-8',
         ]);
+    }
+
+    public function storeJsonReportSnapshot(array $reportData, string $baseFilename): bool
+    {
+        try {
+            $content = json_encode($reportData, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+
+            if ($content === false) {
+                return false;
+            }
+
+            return $this->excelExporter->storeReportInPersonalFiles(
+                $baseFilename.'_'.Carbon::now()->format('d-m-Y_H-i').'.json',
+                $content
+            );
+        } catch (\Throwable $exception) {
+            Log::warning('advance_account_report.snapshot_failed', [
+                'report' => $baseFilename,
+                'message' => $exception->getMessage(),
+            ]);
+
+            return false;
+        }
     }
 
     private function resolveReportData(array $filters, string $reportType): array

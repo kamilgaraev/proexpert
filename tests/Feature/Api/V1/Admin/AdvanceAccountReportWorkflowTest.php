@@ -6,10 +6,13 @@ namespace Tests\Feature\Api\V1\Admin;
 
 use App\Models\AdvanceAccountTransaction;
 use App\Models\Organization;
+use App\Models\PersonalFile;
 use App\Models\Project;
+use App\Models\ReportFile;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Storage;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
@@ -19,6 +22,7 @@ class AdvanceAccountReportWorkflowTest extends TestCase
 
     public function test_summary_uses_document_period_and_current_organization_only(): void
     {
+        Storage::fake('s3');
         Carbon::setTestNow('2026-05-13 12:00:00');
 
         $context = AdminApiTestContext::create();
@@ -67,6 +71,24 @@ class AdvanceAccountReportWorkflowTest extends TestCase
         $this->assertTrue($topUserIds->contains($user->id));
         $this->assertFalse($topUserIds->contains($foreignUser->id));
 
+        $file = PersonalFile::query()
+            ->where('user_id', $context->user->id)
+            ->where('path', 'like', 'org-' . $context->organization->id . '/reports/%')
+            ->where('filename', 'like', 'advance_account_summary_report_%.json')
+            ->first();
+
+        $this->assertInstanceOf(PersonalFile::class, $file);
+        Storage::disk('s3')->assertExists($file->path);
+
+        $reportFile = ReportFile::query()
+            ->where('organization_id', $context->organization->id)
+            ->where('user_id', $context->user->id)
+            ->where('path', $file->path)
+            ->where('filename', $file->filename)
+            ->first();
+
+        $this->assertInstanceOf(ReportFile::class, $reportFile);
+
         Carbon::setTestNow();
     }
 
@@ -91,6 +113,7 @@ class AdvanceAccountReportWorkflowTest extends TestCase
 
     public function test_overdue_report_scopes_users_and_transactions_to_current_organization(): void
     {
+        Storage::fake('s3');
         Carbon::setTestNow('2026-05-13 12:00:00');
 
         $context = AdminApiTestContext::create();
