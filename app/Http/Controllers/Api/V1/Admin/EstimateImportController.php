@@ -313,22 +313,20 @@ class EstimateImportController extends Controller
 
     public function status(Request $request, $project, ?string $jobId = null): JsonResponse
     {
-        // 1. Resolve Job ID
         if (!$jobId) {
             $jobId = $request->input('jobId');
         }
 
         if (!$jobId) {
             return AdminResponse::error(
-                'Job ID is required',
+                trans_message('estimate.import_status_job_required'),
                 Response::HTTP_BAD_REQUEST
             );
         }
         
-        // 2. Validate Job ID format (UUID)
         if (!Uuid::isValid($jobId)) {
              return AdminResponse::error(
-                'Invalid Job ID format',
+                trans_message('estimate.import_status_job_invalid'),
                 Response::HTTP_BAD_REQUEST
             );
         }
@@ -371,7 +369,7 @@ class EstimateImportController extends Controller
     public function history(Request $request): JsonResponse
     {
         $organization = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
-        $limit = $request->input('limit', 50);
+        $limit = max(1, min(100, (int) $request->input('limit', 50)));
         
         $history = $this->importService->getImportHistory($organization->id, $limit);
         
@@ -402,7 +400,10 @@ class EstimateImportController extends Controller
                 'trace'      => $e->getTraceAsString(),
             ]);
 
-            return AdminResponse::error('Ошибка получения превью', Response::HTTP_INTERNAL_SERVER_ERROR);
+            return AdminResponse::error(
+                trans_message('estimate.import_staging_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -420,7 +421,10 @@ class EstimateImportController extends Controller
             $parsed = $this->voiceCommandService->parseCommand($voiceText, $rows);
 
             if (!$parsed['success']) {
-                return AdminResponse::error($parsed['message'] ?? 'Команда не распознана', Response::HTTP_UNPROCESSABLE_ENTITY);
+                return AdminResponse::error(
+                    $parsed['message'] ?? trans_message('estimate.import_voice_command_unrecognized'),
+                    Response::HTTP_UNPROCESSABLE_ENTITY
+                );
             }
 
             $updatedRows = $this->voiceCommandService->executeCommand(
@@ -443,7 +447,10 @@ class EstimateImportController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return AdminResponse::error('Ошибка обработки голосовой команды', Response::HTTP_INTERNAL_SERVER_ERROR);
+            return AdminResponse::error(
+                trans_message('estimate.import_voice_command_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -457,7 +464,10 @@ class EstimateImportController extends Controller
                 'trace' => $e->getTraceAsString(),
             ]);
             
-            return AdminResponse::error('Ошибка при генерации шаблона', 500);
+            return AdminResponse::error(
+                trans_message('estimate.import_template_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 }

@@ -140,7 +140,10 @@ class EstimateVersionController extends Controller
             return AdminResponse::success($result);
         } catch (\Throwable $e) {
             Log::error('[EstimateVersion] WhatIf failed', ['error' => $e->getMessage()]);
-            return AdminResponse::error('Ошибка симуляции', Response::HTTP_INTERNAL_SERVER_ERROR);
+            return AdminResponse::error(
+                trans_message('estimate.what_if_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -160,7 +163,10 @@ class EstimateVersionController extends Controller
             return AdminResponse::success($schedule);
         } catch (\Throwable $e) {
             Log::error('[EstimateVersion] Schedule generation failed', ['error' => $e->getMessage()]);
-            return AdminResponse::error('Ошибка генерации расписания', Response::HTTP_INTERNAL_SERVER_ERROR);
+            return AdminResponse::error(
+                trans_message('estimate.schedule_generation_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -169,7 +175,10 @@ class EstimateVersionController extends Controller
         $organizationId = Auth::user()?->currentOrganization?->id;
 
         if (!$organizationId) {
-            return AdminResponse::error('Организация не найдена', Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(
+                trans_message('estimate.organization_not_found'),
+                Response::HTTP_BAD_REQUEST
+            );
         }
 
         $list = $this->memoryLayer->listForOrganization($organizationId);
@@ -188,7 +197,9 @@ class EstimateVersionController extends Controller
             (bool)$request->input('was_correct')
         );
 
-        return AdminResponse::success(['message' => 'Обратная связь принята']);
+        return AdminResponse::success([
+            'message' => trans_message('estimate.memory_feedback_received'),
+        ]);
     }
 
     /**

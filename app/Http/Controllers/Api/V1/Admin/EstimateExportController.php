@@ -87,7 +87,7 @@ class EstimateExportController extends Controller
                 'trace' => $e->getTraceAsString(),
             ]);
             return AdminResponse::error(
-                trans_message('estimate.export_error') . ' [' . $e->getMessage() . ']',
+                trans_message('estimate.export_error'),
                 Response::HTTP_INTERNAL_SERVER_ERROR
             );
         }
@@ -154,7 +154,7 @@ class EstimateExportController extends Controller
                 'trace' => $e->getTraceAsString(),
             ]);
             return AdminResponse::error(
-                trans_message('estimate.export_error') . ' [' . $e->getMessage() . ']',
+                trans_message('estimate.export_error'),
                 Response::HTTP_INTERNAL_SERVER_ERROR
             );
         }
@@ -183,7 +183,10 @@ class EstimateExportController extends Controller
             $act = ContractPerformanceAct::where('contract_id', $estimate->contract_id)->first();
             
             if (!$act) {
-                return AdminResponse::error('Для экспорта КС-2 необходимо наличие хотя бы одного акта по контракту', 400);
+                return AdminResponse::error(
+                    trans_message('estimate.export_ks2_act_required'),
+                    Response::HTTP_BAD_REQUEST
+                );
             }
 
             $path = $this->exportService->exportKS2ToExcel($act, $estimate->contract);
@@ -195,7 +198,10 @@ class EstimateExportController extends Controller
                 'estimate_id' => $estimateId,
                 'error' => $e->getMessage()
             ]);
-            return AdminResponse::error('Ошибка при экспорте КС-2: ' . $e->getMessage(), 500);
+            return AdminResponse::error(
+                trans_message('estimate.export_ks2_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -216,7 +222,10 @@ class EstimateExportController extends Controller
             $act = ContractPerformanceAct::where('contract_id', $estimate->contract_id)->first();
             
             if (!$act) {
-                return AdminResponse::error('Для экспорта КС-3 необходимо наличие хотя бы одного акта по контракту', 400);
+                return AdminResponse::error(
+                    trans_message('estimate.export_ks3_act_required'),
+                    Response::HTTP_BAD_REQUEST
+                );
             }
 
             $path = $this->exportService->exportKS3ToExcel($act, $estimate->contract);
@@ -228,7 +237,10 @@ class EstimateExportController extends Controller
                 'estimate_id' => $estimateId,
                 'error' => $e->getMessage()
             ]);
-            return AdminResponse::error('Ошибка при экспорте КС-3: ' . $e->getMessage(), 500);
+            return AdminResponse::error(
+                trans_message('estimate.export_ks3_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -249,7 +261,10 @@ class EstimateExportController extends Controller
             $act = ContractPerformanceAct::where('contract_id', $estimate->contract_id)->first();
             
             if (!$act) {
-                return AdminResponse::error('Для экспорта сводки необходимо наличие хотя бы одного акта по контракту', 400);
+                return AdminResponse::error(
+                    trans_message('estimate.export_summary_act_required'),
+                    Response::HTTP_BAD_REQUEST
+                );
             }
 
             // Используем KS-2 как наиболее детальную сводку
@@ -262,7 +277,10 @@ class EstimateExportController extends Controller
                 'estimate_id' => $estimateId,
                 'error' => $e->getMessage()
             ]);
-            return AdminResponse::error('Ошибка при экспорте сводки: ' . $e->getMessage(), 500);
+            return AdminResponse::error(
+                trans_message('estimate.export_summary_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
