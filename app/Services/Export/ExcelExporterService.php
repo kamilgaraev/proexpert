@@ -878,16 +878,18 @@ class ExcelExporterService
             $storage->put($path, $binaryContent);
 
             // Сохраняем запись в БД
-            $reportFile = \App\Models\ReportFile::create([
-                'path'       => $path,
-                'type'       => 'official-material-usage',
-                'filename'   => $filename,
-                'name'       => $filename, // по умолчанию
-                'size'       => strlen($binaryContent),
-                'expires_at' => now()->addYear(),
-                'user_id'    => Auth::id(),
-                'organization_id' => $org?->id,
-            ]);
+            \App\Models\ReportFile::query()->updateOrCreate(
+                ['path' => $path],
+                [
+                    'type' => 'official-material-usage',
+                    'filename' => $filename,
+                    'name' => $filename,
+                    'size' => strlen($binaryContent),
+                    'expires_at' => now()->addYear(),
+                    'user_id' => Auth::id(),
+                    'organization_id' => $org?->id,
+                ]
+            );
             $this->storeReportInPersonalFiles($filename, $binaryContent, false);
 
             return $storage->temporaryUrl($path, now()->addHours($expiresHours));

@@ -13,7 +13,12 @@ use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
+use App\Models\PersonalFile;
+use App\Models\ReportFile;
+use App\Services\Export\ExcelExporterService;
+use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Storage;
 use Tests\Support\AdminApiTestContext;
 
 class OfficialMaterialReportTest extends TestCase
@@ -130,6 +135,49 @@ class OfficialMaterialReportTest extends TestCase
         $this->assertSame(150.0, (float) $response->json('data.data.materials.0.received_from_customer.volume'));
         $this->assertSame(100.0, (float) $response->json('data.data.materials.0.usage.fact_used'));
         $this->assertSame(50.0, (float) $response->json('data.data.materials.0.usage.balance'));
+    }
+
+    public function test_official_material_report_export_updates_existing_report_file_for_same_path(): void
+    {
+        Storage::fake('s3');
+        Carbon::setTestNow(Carbon::parse('2026-05-13 23:15:00'));
+
+        try {
+            $this->actingAs($this->user, 'api_admin');
+
+            $reportData = [
+                'header' => [
+                    'report_number' => '1',
+                    'report_date' => '13.05.2026',
+                    'project_name' => $this->project->name,
+                    'project_address' => $this->project->address,
+                ],
+                'organizations' => [
+                    'contractor' => 'ПроХелпер',
+                    'customer' => 'Заказчик',
+                    'contractor_director' => 'Директор',
+                    'contract_number' => 'Д-1',
+                    'contract_date' => '01.05.2026',
+                ],
+                'materials' => [],
+            ];
+
+            $firstUrl = app(ExcelExporterService::class)->uploadOfficialMaterialReport($reportData);
+            $secondUrl = app(ExcelExporterService::class)->uploadOfficialMaterialReport($reportData);
+
+            $this->assertNotNull($firstUrl);
+            $this->assertNotNull($secondUrl);
+
+            $reportPath = 'org-' . $this->organization->id
+                . '/reports/official-material-usage/' . date('Y/m/d/')
+                . 'official_material_report_13-05-2026_23-15.xlsx';
+
+            $this->assertSame(1, ReportFile::query()->where('path', $reportPath)->count());
+            $this->assertSame(2, PersonalFile::query()->where('user_id', $this->user->id)->count());
+            Storage::disk('s3')->assertExists($reportPath);
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 
     public function test_official_material_report_with_material_filter()
