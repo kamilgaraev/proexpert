@@ -1,31 +1,26 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Requests\Api\V1\Admin\Supplier;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
-use App\Models\Supplier; // Импортируем модель
 
 class UpdateSupplierRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        /** @var Supplier|null $supplier */
-        $supplier = $this->route('supplier');
-        
-        // Проверяем права и принадлежность
-        return $supplier && Gate::allows('admin.catalogs.manage') && $supplier->organization_id === (int)$this->get('current_organization_id');
+        return Gate::allows('admin.catalogs.manage');
     }
 
     public function rules(): array
     {
-        /** @var Supplier|null $supplier */
-        $supplier = $this->route('supplier');
-        $supplierId = $supplier?->id;
-        $organizationId = $this->get('current_organization_id');
-        
-        if (!$organizationId || !$supplierId) {
+        $organizationId = $this->attributes->get('current_organization_id');
+        $supplierId = (int) $this->route('supplier');
+
+        if (!$organizationId || $supplierId <= 0) {
             return [];
         }
 
@@ -35,18 +30,18 @@ class UpdateSupplierRequest extends FormRequest
                 'required',
                 'string',
                 'max:255',
-                 Rule::unique('suppliers', 'name')
-                    ->where(function ($query) use ($organizationId) {
-                        return $query->where('organization_id', $organizationId)
-                                    ->whereNull('deleted_at');
-                    })
-                    ->ignore($supplierId), // Игнорируем текущий ID
+                Rule::unique('suppliers', 'name')
+                    ->where(fn ($query) => $query
+                        ->where('organization_id', $organizationId)
+                        ->whereNull('deleted_at'))
+                    ->ignore($supplierId),
             ],
-            'contact_person' => 'nullable|string|max:255',
-            'phone' => 'nullable|string|max:50',
-            'email' => 'nullable|email|max:255',
-            'address' => 'nullable|string|max:1000',
-            'is_active' => 'sometimes|boolean',
+            'contact_person' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'phone' => ['sometimes', 'nullable', 'string', 'max:50'],
+            'email' => ['sometimes', 'nullable', 'email', 'max:255'],
+            'address' => ['sometimes', 'nullable', 'string', 'max:1000'],
+            'is_active' => ['sometimes', 'boolean'],
+            'organization_id' => ['sometimes', 'integer'],
         ];
     }
 }

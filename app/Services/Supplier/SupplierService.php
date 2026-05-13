@@ -40,7 +40,7 @@ class SupplierService
                 'request_attributes' => $request->attributes->all(),
             ]);
 
-            throw new BusinessLogicException(trans_message('catalog.errors.organization_context_missing'), 500);
+            throw new BusinessLogicException(trans_message('supplier.organization_context_missing'), 400);
         }
 
         return (int) $organizationId;
@@ -65,7 +65,7 @@ class SupplierService
         $user = Auth::user();
 
         if (!$user || !$user->current_organization_id) {
-            throw new BusinessLogicException(trans_message('catalog.errors.organization_context_missing'));
+            throw new BusinessLogicException(trans_message('supplier.organization_context_missing'), 400);
         }
 
         return $this->supplierRepository->getActiveSuppliers($user->current_organization_id);
@@ -134,7 +134,7 @@ class SupplierService
         $supplier = $this->findSupplierById($id, $request);
 
         if (!$supplier) {
-            throw new BusinessLogicException(trans_message('catalog.errors.supplier_not_found'), 404);
+            throw new BusinessLogicException(trans_message('supplier.not_found'), 404);
         }
 
         unset($data['organization_id']);
@@ -147,11 +147,11 @@ class SupplierService
         $supplier = $this->findSupplierById($id, $request);
 
         if (!$supplier) {
-            throw new BusinessLogicException(trans_message('catalog.errors.supplier_not_found'), 404);
+            throw new BusinessLogicException(trans_message('supplier.not_found'), 404);
         }
 
         if ($this->hasSupplierUsage($supplier)) {
-            throw new BusinessLogicException(trans_message('catalog.errors.supplier_in_use'), 422);
+            throw new BusinessLogicException(trans_message('supplier.in_use'), 422);
         }
 
         return $this->supplierRepository->delete($id);
