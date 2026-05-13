@@ -67,6 +67,18 @@ class MaterialAnalyticsControllerWorkflowTest extends TestCase
             ->getJson('/api/v1/admin/materials/analytics/usage-by-projects');
         $lowStockResponse = $this->withHeaders($context->authHeaders())
             ->getJson('/api/v1/admin/materials/analytics/low-stock?threshold=10');
+        $suppliersResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/materials/analytics/usage-by-suppliers');
+        $mostUsedResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/materials/analytics/most-used?limit=5&period=30');
+        $costHistoryResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/materials/analytics/cost-history?material_id={$materialId}");
+        $movementReportResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/materials/analytics/movement-report');
+        $inventoryReportResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/materials/analytics/inventory-report');
+        $costDynamicsResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/materials/analytics/cost-dynamics-report');
 
         $summaryResponse->assertOk();
         $summaryResponse->assertJsonPath('success', true);
@@ -87,6 +99,21 @@ class MaterialAnalyticsControllerWorkflowTest extends TestCase
         $lowStockResponse->assertJsonPath('data.0.sku', 'CBL-1');
         $lowStockResponse->assertJsonPath('data.0.current_stock', 8);
         $lowStockResponse->assertJsonPath('data.0.minimum_stock', 10);
+
+        $suppliersResponse->assertOk();
+        $suppliersResponse->assertJsonPath('data.0.total_received', 15);
+        $mostUsedResponse->assertOk();
+        $mostUsedResponse->assertJsonPath('data.0.material_id', $materialId);
+        $mostUsedResponse->assertJsonPath('data.0.total_used', 5);
+        $costHistoryResponse->assertOk();
+        $costHistoryResponse->assertJsonPath('data.0.unit_price', 120);
+        $movementReportResponse->assertOk();
+        $movementReportResponse->assertJsonPath('data.movements.0.total_received', 15);
+        $movementReportResponse->assertJsonPath('data.movements.0.total_used', 5);
+        $inventoryReportResponse->assertOk();
+        $inventoryReportResponse->assertJsonPath('data.inventory.0.current_stock', 8);
+        $costDynamicsResponse->assertOk();
+        $costDynamicsResponse->assertJsonPath('data.dynamics.0.material_id', $materialId);
     }
 
     private function createWarehouse(int $organizationId): int

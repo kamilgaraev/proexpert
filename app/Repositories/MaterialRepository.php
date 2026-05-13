@@ -211,34 +211,34 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
 
     public function getMaterialUsageBySuppliers(int $organizationId, array $supplierIds, ?string $dateFrom, ?string $dateTo): Collection
     {
-        $query = DB::table('material_usage_logs as mul')
-            ->join('materials as m', 'mul.material_id', '=', 'm.id')
-            ->leftJoin('suppliers as s', 'mul.supplier_id', '=', 's.id')
+        $query = DB::table('warehouse_movements as wm')
+            ->join('materials as m', 'wm.material_id', '=', 'm.id')
             ->leftJoin('measurement_units as mu', 'm.measurement_unit_id', '=', 'mu.id')
-            ->where('mul.organization_id', $organizationId)
+            ->where('wm.organization_id', $organizationId)
+            ->whereIn('wm.movement_type', ['receipt', 'return'])
             ->select([
-                's.id as supplier_id',
-                's.name as supplier_name',
+                DB::raw('0 as supplier_id'),
+                DB::raw("'Без поставщика' as supplier_name"),
                 'm.id as material_id',
                 'm.name as material_name',
                 'mu.short_name as unit',
-                DB::raw('SUM(CASE WHEN mul.operation_type = \'receipt\' THEN mul.quantity ELSE 0 END) as total_received'),
-                DB::raw('SUM(CASE WHEN mul.operation_type = \'write_off\' THEN mul.quantity ELSE 0 END) as total_used'),
-                DB::raw('AVG(mul.unit_price) as average_price'),
+                DB::raw('SUM(wm.quantity) as total_received'),
+                DB::raw('0 as total_used'),
+                DB::raw('AVG(wm.price) as average_price'),
                 DB::raw('COUNT(*) as operations_count')
             ])
-            ->groupBy(['s.id', 's.name', 'm.id', 'm.name', 'mu.short_name']);
+            ->groupBy(['m.id', 'm.name', 'mu.short_name']);
 
         if (!empty($supplierIds)) {
-            $query->whereIn('s.id', $supplierIds);
+            return collect();
         }
 
         if ($dateFrom) {
-            $query->where('mul.usage_date', '>=', $dateFrom);
+            $query->whereDate('wm.movement_date', '>=', $dateFrom);
         }
 
         if ($dateTo) {
-            $query->where('mul.usage_date', '<=', $dateTo);
+            $query->whereDate('wm.movement_date', '<=', $dateTo);
         }
 
         return collect($query->get());
@@ -355,18 +355,18 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
 
     public function getMostUsedMaterials(int $organizationId, int $limit = 10, ?string $dateFrom = null, ?string $dateTo = null): Collection
     {
-        $query = DB::table('material_usage_logs as mul')
-            ->join('materials as m', 'mul.material_id', '=', 'm.id')
+        $query = DB::table('warehouse_movements as wm')
+            ->join('materials as m', 'wm.material_id', '=', 'm.id')
             ->leftJoin('measurement_units as mu', 'm.measurement_unit_id', '=', 'mu.id')
-            ->where('mul.organization_id', $organizationId)
-            ->where('mul.operation_type', 'write_off');
+            ->where('wm.organization_id', $organizationId)
+            ->where('wm.movement_type', 'write_off');
 
         if ($dateFrom) {
-            $query->where('mul.usage_date', '>=', $dateFrom);
+            $query->whereDate('wm.movement_date', '>=', $dateFrom);
         }
 
         if ($dateTo) {
-            $query->where('mul.usage_date', '<=', $dateTo);
+            $query->whereDate('wm.movement_date', '<=', $dateTo);
         }
 
         return collect($query
@@ -377,31 +377,30 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
                 'm.id as material_id',
                 'm.name as material_name',
                 'mu.short_name as unit',
-                DB::raw('SUM(mul.quantity) as total_used'),
+                DB::raw('SUM(wm.quantity) as total_used'),
                 DB::raw('COUNT(*) as usage_count'),
-                DB::raw('AVG(mul.unit_price) as average_price')
+                DB::raw('AVG(wm.price) as average_price')
             ])
             ->get());
     }
 
     public function getMaterialReceiptsHistory(int $materialId, int $perPage = 15): LengthAwarePaginator
     {
-        $query = DB::table('material_usage_logs as mul')
-            ->leftJoin('suppliers as s', 'mul.supplier_id', '=', 's.id')
-            ->leftJoin('projects as p', 'mul.project_id', '=', 'p.id')
-            ->leftJoin('users as u', 'mul.user_id', '=', 'u.id')
-            ->where('mul.material_id', $materialId)
-            ->where('mul.operation_type', 'receipt')
-            ->orderBy('mul.usage_date', 'desc')
+        $query = DB::table('warehouse_movements as wm')
+            ->leftJoin('projects as p', 'wm.project_id', '=', 'p.id')
+            ->leftJoin('users as u', 'wm.user_id', '=', 'u.id')
+            ->where('wm.material_id', $materialId)
+            ->whereIn('wm.movement_type', ['receipt', 'return'])
+            ->orderBy('wm.movement_date', 'desc')
             ->select([
-                'mul.id',
-                'mul.quantity',
-                'mul.unit_price as price',
-                'mul.total_price as total_amount',
-                'mul.document_number',
-                'mul.usage_date as receipt_date',
-                'mul.notes',
-                's.name as supplier_name',
+                'wm.id',
+                'wm.quantity',
+                'wm.price',
+                DB::raw('wm.quantity * COALESCE(wm.price, 0) as total_amount'),
+                'wm.document_number',
+                'wm.movement_date as receipt_date',
+                'wm.reason as notes',
+                DB::raw('NULL as supplier_name'),
                 'p.name as project_name',
                 'u.name as user_name'
             ]);
@@ -411,24 +410,23 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
 
     public function getMaterialWriteOffsHistory(int $materialId, int $perPage = 15): LengthAwarePaginator
     {
-        $query = DB::table('material_usage_logs as mul')
-            ->leftJoin('projects as p', 'mul.project_id', '=', 'p.id')
-            ->leftJoin('users as u', 'mul.user_id', '=', 'u.id')
-            ->leftJoin('work_types as wt', 'mul.work_type_id', '=', 'wt.id')
-            ->where('mul.material_id', $materialId)
-            ->where('mul.operation_type', 'write_off')
-            ->orderBy('mul.usage_date', 'desc')
+        $query = DB::table('warehouse_movements as wm')
+            ->leftJoin('projects as p', 'wm.project_id', '=', 'p.id')
+            ->leftJoin('users as u', 'wm.user_id', '=', 'u.id')
+            ->where('wm.material_id', $materialId)
+            ->where('wm.movement_type', 'write_off')
+            ->orderBy('wm.movement_date', 'desc')
             ->select([
-                'mul.id',
-                'mul.quantity',
-                'mul.unit_price',
-                'mul.total_price',
-                'mul.usage_date',
-                'mul.work_description',
-                'mul.notes',
+                'wm.id',
+                'wm.quantity',
+                'wm.price as unit_price',
+                DB::raw('wm.quantity * COALESCE(wm.price, 0) as total_price'),
+                'wm.movement_date as usage_date',
+                'wm.reason as work_description',
+                'wm.reason as notes',
                 'p.name as project_name',
                 'u.name as user_name',
-                'wt.name as work_type_name'
+                DB::raw('NULL as work_type_name')
             ]);
 
         return $query->paginate($perPage);
@@ -493,37 +491,37 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
 
     public function getMaterialCostHistory(int $organizationId, int $materialId, ?string $dateFrom = null, ?string $dateTo = null): Collection
     {
-        $query = DB::table('material_usage_logs as mul')
-            ->where('mul.organization_id', $organizationId)
-            ->where('mul.material_id', $materialId)
-            ->whereNotNull('mul.unit_price');
+        $query = DB::table('warehouse_movements as wm')
+            ->where('wm.organization_id', $organizationId)
+            ->where('wm.material_id', $materialId)
+            ->whereNotNull('wm.price');
 
         if ($dateFrom) {
-            $query->where('mul.usage_date', '>=', $dateFrom);
+            $query->whereDate('wm.movement_date', '>=', $dateFrom);
         }
 
         if ($dateTo) {
-            $query->where('mul.usage_date', '<=', $dateTo);
+            $query->whereDate('wm.movement_date', '<=', $dateTo);
         }
 
         return collect($query
-            ->orderBy('mul.usage_date', 'desc')
+            ->orderBy('wm.movement_date', 'desc')
             ->select([
-                'mul.usage_date',
-                'mul.unit_price',
-                'mul.operation_type',
-                'mul.quantity',
-                'mul.total_price'
+                'wm.movement_date as usage_date',
+                'wm.price as unit_price',
+                'wm.movement_type as operation_type',
+                'wm.quantity',
+                DB::raw('wm.quantity * COALESCE(wm.price, 0) as total_price')
             ])
             ->get());
     }
 
     public function getAverageMaterialCost(int $materialId): ?float
     {
-        $result = DB::table('material_usage_logs')
+        $result = DB::table('warehouse_movements')
             ->where('material_id', $materialId)
-            ->whereNotNull('unit_price')
-            ->selectRaw('AVG(unit_price) as average_cost')
+            ->whereNotNull('price')
+            ->selectRaw('AVG(price) as average_cost')
             ->first();
         
         return $result && $result->average_cost ? (float) $result->average_cost : null;
@@ -532,7 +530,7 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
     public function getMaterialMovementReport(int $organizationId, array $filters): Collection
     {
         $query = DB::table('materials as m')
-            ->leftJoin('material_usage_logs as mul', 'm.id', '=', 'mul.material_id')
+            ->leftJoin('warehouse_movements as wm', 'm.id', '=', 'wm.material_id')
             ->leftJoin('measurement_units as mu', 'm.measurement_unit_id', '=', 'mu.id')
             ->where('m.organization_id', $organizationId);
 
@@ -540,10 +538,10 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
             $query->whereIn('m.id', $filters['material_ids']);
         }
         if (!empty($filters['date_from'])) {
-            $query->where('mul.usage_date', '>=', $filters['date_from']);
+            $query->whereDate('wm.movement_date', '>=', $filters['date_from']);
         }
         if (!empty($filters['date_to'])) {
-            $query->where('mul.usage_date', '<=', $filters['date_to']);
+            $query->whereDate('wm.movement_date', '<=', $filters['date_to']);
         }
 
         $movements = $query
@@ -552,12 +550,12 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
                 'm.id as material_id',
                 'm.name as material_name',
                 'mu.short_name as unit',
-                DB::raw('SUM(CASE WHEN mul.operation_type = \'receipt\' THEN mul.quantity ELSE 0 END) as total_received'),
-                DB::raw('SUM(CASE WHEN mul.operation_type = \'write_off\' THEN mul.quantity ELSE 0 END) as total_used'),
-                DB::raw('COUNT(CASE WHEN mul.operation_type = \'receipt\' THEN 1 END) as receipt_operations'),
-                DB::raw('COUNT(CASE WHEN mul.operation_type = \'write_off\' THEN 1 END) as writeoff_operations'),
-                DB::raw('MIN(mul.usage_date) as first_operation'),
-                DB::raw('MAX(mul.usage_date) as last_operation')
+                DB::raw('SUM(CASE WHEN wm.movement_type IN (\'receipt\', \'return\') THEN wm.quantity ELSE 0 END) as total_received'),
+                DB::raw('SUM(CASE WHEN wm.movement_type = \'write_off\' THEN wm.quantity ELSE 0 END) as total_used'),
+                DB::raw('COUNT(CASE WHEN wm.movement_type IN (\'receipt\', \'return\') THEN 1 END) as receipt_operations'),
+                DB::raw('COUNT(CASE WHEN wm.movement_type = \'write_off\' THEN 1 END) as writeoff_operations'),
+                DB::raw('MIN(wm.movement_date) as first_operation'),
+                DB::raw('MAX(wm.movement_date) as last_operation')
             ])
             ->get();
 
@@ -576,28 +574,27 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
     public function getInventoryReport(int $organizationId, array $filters): Collection
     {
         $query = DB::table('materials as m')
-            ->leftJoin('material_usage_logs as mul', 'm.id', '=', 'mul.material_id')
+            ->leftJoin('warehouse_balances as wb', 'm.id', '=', 'wb.material_id')
             ->leftJoin('measurement_units as mu', 'm.measurement_unit_id', '=', 'mu.id')
-            ->leftJoin('cost_categories as cc', 'm.category_id', '=', 'cc.id')
             ->where('m.organization_id', $organizationId);
 
         if (!empty($filters['category_ids'])) {
-            $query->whereIn('m.category_id', $filters['category_ids']);
+            $query->whereIn('m.category', $filters['category_ids']);
         }
 
         $inventory = $query
-            ->groupBy(['m.id', 'm.name', 'm.code', 'mu.short_name', 'cc.name'])
+            ->groupBy(['m.id', 'm.name', 'm.code', 'm.category', 'mu.short_name'])
             ->select([
                 'm.id as material_id',
                 'm.name as material_name',
                 'm.code as material_code',
                 'mu.short_name as unit',
-                'cc.name as category_name',
-                DB::raw('COALESCE(SUM(CASE WHEN mul.operation_type = \'receipt\' THEN mul.quantity ELSE 0 END), 0) as total_received'),
-                DB::raw('COALESCE(SUM(CASE WHEN mul.operation_type = \'write_off\' THEN mul.quantity ELSE 0 END), 0) as total_used'),
-                DB::raw('COALESCE(SUM(CASE WHEN mul.operation_type = \'receipt\' THEN mul.quantity ELSE 0 END), 0) - COALESCE(SUM(CASE WHEN mul.operation_type = \'write_off\' THEN mul.quantity ELSE 0 END), 0) as current_stock'),
-                DB::raw('AVG(CASE WHEN mul.operation_type = \'receipt\' THEN mul.unit_price END) as average_cost'),
-                DB::raw('MAX(mul.usage_date) as last_movement_date')
+                'm.category as category_name',
+                DB::raw('0 as total_received'),
+                DB::raw('0 as total_used'),
+                DB::raw('COALESCE(SUM(wb.available_quantity), 0) as current_stock'),
+                DB::raw('AVG(wb.unit_price) as average_cost'),
+                DB::raw('MAX(wb.last_movement_at) as last_movement_date')
             ])
             ->get();
 
@@ -617,32 +614,32 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
 
     public function getMaterialCostDynamicsReport(int $organizationId, array $filters): Collection
     { 
-        $query = DB::table('material_usage_logs as mul')
-            ->join('materials as m', 'mul.material_id', '=', 'm.id')
-            ->where('mul.organization_id', $organizationId)
-            ->whereNotNull('mul.unit_price');
+        $query = DB::table('warehouse_movements as wm')
+            ->join('materials as m', 'wm.material_id', '=', 'm.id')
+            ->where('wm.organization_id', $organizationId)
+            ->whereNotNull('wm.price');
 
         if (!empty($filters['material_ids'])) {
             $query->whereIn('m.id', $filters['material_ids']);
         }
         if (!empty($filters['date_from'])) {
-            $query->where('mul.usage_date', '>=', $filters['date_from']);
+            $query->whereDate('wm.movement_date', '>=', $filters['date_from']);
         }
         if (!empty($filters['date_to'])) {
-            $query->where('mul.usage_date', '<=', $filters['date_to']);
+            $query->whereDate('wm.movement_date', '<=', $filters['date_to']);
         }
 
         $dynamics = $query
             ->select([
                 'm.id as material_id',
                 'm.name as material_name',
-                DB::raw('DATE(mul.usage_date) as operation_date'),
-                DB::raw('AVG(mul.unit_price) as avg_price'),
-                DB::raw('MIN(mul.unit_price) as min_price'),
-                DB::raw('MAX(mul.unit_price) as max_price'),
+                DB::raw('DATE(wm.movement_date) as operation_date'),
+                DB::raw('AVG(wm.price) as avg_price'),
+                DB::raw('MIN(wm.price) as min_price'),
+                DB::raw('MAX(wm.price) as max_price'),
                 DB::raw('COUNT(*) as operations_count')
             ])
-            ->groupBy(['m.id', 'm.name', DB::raw('DATE(mul.usage_date)')])
+            ->groupBy(['m.id', 'm.name', DB::raw('DATE(wm.movement_date)')])
             ->orderBy('m.name')
             ->orderBy('operation_date')
             ->get();
