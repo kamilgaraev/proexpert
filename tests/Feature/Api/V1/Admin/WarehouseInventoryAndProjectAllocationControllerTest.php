@@ -280,6 +280,32 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
         ]);
     }
 
+    public function test_advanced_analytics_rejects_foreign_warehouse_and_asset_filters(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreignContext = AdminApiTestContext::create();
+        $foreignUnit = $this->createUnit($foreignContext->organization->id);
+        $foreignWarehouse = $this->createWarehouse($foreignContext->organization->id, 'Foreign analytics warehouse', 'AN-FOR');
+        $foreignMaterial = $this->createMaterial($foreignContext->organization->id, $foreignUnit->id, 'Foreign analytics material', 'AN-MAT-FOR');
+        $this->allowAdminAccess();
+
+        $turnoverResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/advanced-warehouse/analytics/turnover?' . http_build_query([
+                'warehouse_id' => $foreignWarehouse->id,
+            ]));
+
+        $turnoverResponse->assertStatus(422);
+        $turnoverResponse->assertJsonValidationErrors('warehouse_id');
+
+        $forecastResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/advanced-warehouse/analytics/forecast?' . http_build_query([
+                'asset_ids' => [$foreignMaterial->id],
+            ]));
+
+        $forecastResponse->assertStatus(422);
+        $forecastResponse->assertJsonValidationErrors('asset_ids.0');
+    }
+
     public function test_admin_viewer_cannot_manage_inventory_or_project_allocations_without_warehouse_permissions(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'admin_viewer');

@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Features\BasicWarehouse\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class TurnoverAnalyticsRequest extends FormRequest
 {
@@ -13,10 +14,17 @@ class TurnoverAnalyticsRequest extends FormRequest
 
     public function rules(): array
     {
+        $organizationId = $this->user()?->current_organization_id;
+
         return [
             'date_from' => 'nullable|date',
             'date_to' => 'nullable|date|after_or_equal:date_from',
-            'warehouse_id' => 'nullable|exists:organization_warehouses,id',
+            'warehouse_id' => [
+                'nullable',
+                Rule::exists('organization_warehouses', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->where('is_active', true),
+            ],
         ];
     }
 }

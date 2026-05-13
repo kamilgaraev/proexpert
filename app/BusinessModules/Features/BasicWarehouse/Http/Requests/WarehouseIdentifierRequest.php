@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BasicWarehouse\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class WarehouseIdentifierRequest extends FormRequest
 {
@@ -15,26 +16,29 @@ class WarehouseIdentifierRequest extends FormRequest
 
     public function rules(): array
     {
+        $organizationId = $this->user()?->current_organization_id;
+        $presenceRule = $this->isMethod('put') || $this->isMethod('patch') ? 'sometimes' : 'required';
+
         $rules = [
-            'warehouse_id' => 'nullable|integer|exists:organization_warehouses,id',
-            'identifier_type' => 'required|in:qr,barcode,datamatrix,rfid,nfc,internal',
-            'code' => 'required|string|max:190',
-            'entity_type' => 'required|in:warehouse,zone,cell,asset,inventory_act,movement,logistic_unit',
-            'entity_id' => 'required|integer|min:1',
+            'warehouse_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('organization_warehouses', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->where('is_active', true),
+            ],
+            'identifier_type' => [$presenceRule, 'in:qr,barcode,datamatrix,rfid,nfc,internal'],
+            'code' => [$presenceRule, 'string', 'max:190'],
+            'entity_type' => [$presenceRule, 'in:warehouse,zone,cell,asset,inventory_act,movement,logistic_unit'],
+            'entity_id' => [$presenceRule, 'integer', 'min:1'],
             'label' => 'nullable|string|max:255',
-            'status' => 'required|in:active,archived,lost,damaged',
+            'status' => [$presenceRule, 'in:active,archived,lost,damaged'],
             'is_primary' => 'sometimes|boolean',
             'assigned_at' => 'nullable|date',
             'last_scanned_at' => 'nullable|date',
             'metadata' => 'nullable|array',
             'notes' => 'nullable|string',
         ];
-
-        if ($this->isMethod('put') || $this->isMethod('patch')) {
-            foreach ($rules as $key => $rule) {
-                $rules[$key] = str_replace('required', 'sometimes', $rule);
-            }
-        }
 
         return $rules;
     }

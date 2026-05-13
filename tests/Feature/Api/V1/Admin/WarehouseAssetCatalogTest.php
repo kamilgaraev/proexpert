@@ -178,6 +178,24 @@ class WarehouseAssetCatalogTest extends TestCase
         ]);
     }
 
+    public function test_asset_label_export_rejects_foreign_asset_ids_before_export(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreignContext = AdminApiTestContext::create();
+        $foreignUnit = $this->createUnit($foreignContext->organization->id, 'Foreign piece', 'fpcs');
+        $foreignAsset = $this->createAsset($foreignContext->organization->id, $foreignUnit->id, 'Foreign label asset', 'LBL-FOR');
+        $this->allowAdminAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/assets/export-labels-pdf', [
+                'layout' => '4',
+                'asset_ids' => [$foreignAsset->id],
+            ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors('asset_ids.0');
+    }
+
     private function createUnit(int $organizationId, string $name, string $shortName): MeasurementUnit
     {
         return MeasurementUnit::query()->create([

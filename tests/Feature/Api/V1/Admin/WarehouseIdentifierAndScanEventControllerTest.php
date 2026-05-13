@@ -84,7 +84,8 @@ class WarehouseIdentifierAndScanEventControllerTest extends TestCase
                 'status' => WarehouseIdentifier::STATUS_ACTIVE,
             ]);
 
-        $foreignWarehouseResponse->assertStatus(404);
+        $foreignWarehouseResponse->assertStatus(422);
+        $foreignWarehouseResponse->assertJsonValidationErrors('warehouse_id');
 
         $indexResponse = $this->withHeaders($context->authHeaders())
             ->getJson('/api/v1/admin/warehouse-identifiers');
@@ -99,7 +100,9 @@ class WarehouseIdentifierAndScanEventControllerTest extends TestCase
     public function test_scan_events_resolve_only_active_identifiers_and_update_logistic_unit_scan_time(): void
     {
         $context = AdminApiTestContext::create();
+        $foreignContext = AdminApiTestContext::create();
         $warehouse = $this->createWarehouse($context->organization->id, 'Scan warehouse', 'SCAN-WH');
+        $foreignWarehouse = $this->createWarehouse($foreignContext->organization->id, 'Foreign scan warehouse', 'SCAN-FOR');
         $logisticUnit = $this->createLogisticUnit($context->organization->id, $warehouse->id, 'Pallet 1', 'PAL-1');
         $activeIdentifier = $this->createIdentifier(
             $context->organization->id,
@@ -140,6 +143,23 @@ class WarehouseIdentifierAndScanEventControllerTest extends TestCase
             ])
             ->assertOk()
             ->assertJsonPath('data.id', $activeIdentifier->id);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouse-identifiers/resolve', [
+                'warehouse_id' => $foreignWarehouse->id,
+                'code' => 'PALLET-ACTIVE',
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('warehouse_id');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouse-scan-events', [
+                'warehouse_id' => $foreignWarehouse->id,
+                'code' => 'PALLET-ACTIVE',
+                'source' => WarehouseScanEvent::SOURCE_ADMIN,
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('warehouse_id');
 
         $archivedResponse = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/warehouse-scan-events', [
