@@ -60,6 +60,12 @@ class SecuritySessionController extends Controller
             return AdminResponse::error(trans_message('auth.security_session_not_found'), 404);
         }
 
+        $current = $request->attributes->get('auth_session');
+
+        if ($current && (int) $current->id === (int) $session->id) {
+            return AdminResponse::error(trans_message('auth.security_current_session_revoke_forbidden'), 422);
+        }
+
         $this->sessions->revoke($session, 'manual_revoke');
 
         return AdminResponse::success(null, trans_message('auth.security_session_revoked'));
