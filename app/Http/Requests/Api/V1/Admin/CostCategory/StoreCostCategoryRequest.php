@@ -41,7 +41,13 @@ class StoreCostCategoryRequest extends FormRequest
                     ->whereNull('deleted_at')
             ],
             'description' => ['nullable', 'string'],
-            'parent_id' => ['nullable', 'integer', 'exists:cost_categories,id'],
+            'parent_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('cost_categories', 'id')
+                    ->where('organization_id', $this->user()->current_organization_id)
+                    ->whereNull('deleted_at'),
+            ],
             'is_active' => ['nullable', 'boolean'],
             'sort_order' => ['nullable', 'integer'],
             'additional_attributes' => ['nullable', 'array'],

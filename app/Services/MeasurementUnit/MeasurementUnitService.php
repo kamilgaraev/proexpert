@@ -3,6 +3,7 @@
 namespace App\Services\MeasurementUnit;
 
 use App\DTOs\MeasurementUnit\MeasurementUnitDTO;
+use App\Exceptions\BusinessLogicException;
 use App\Repositories\Interfaces\MeasurementUnitRepositoryInterface;
 use App\Models\MeasurementUnit;
 use Illuminate\Support\Facades\Auth;
@@ -67,7 +68,7 @@ class MeasurementUnitService
 
         // Не позволяем изменять системные единицы
         if ($measurementUnit->is_system) {
-            throw new Exception("System measurement units cannot be modified.");
+            throw new BusinessLogicException(trans_message('measurement_unit.system_update_forbidden'), 422);
         }
 
         $data = array_filter($dto->toArray(), fn($value) => $value !== null);
@@ -86,7 +87,7 @@ class MeasurementUnitService
         // Не позволяем менять тип, если есть связанные материалы/работы (или обрабатывать это отдельно)
         if (isset($data['type']) && $data['type'] !== $measurementUnit->type) {
             if ($measurementUnit->materials()->exists() || $measurementUnit->workTypes()->exists()) {
-                throw new Exception("Cannot change type of measurement unit that is already in use.");
+                throw new BusinessLogicException(trans_message('measurement_unit.type_change_forbidden'), 422);
             }
         }
 
@@ -102,12 +103,12 @@ class MeasurementUnitService
         }
 
         if ($measurementUnit->is_system) {
-            throw new Exception("System measurement units cannot be deleted.");
+            throw new BusinessLogicException(trans_message('measurement_unit.system_delete_forbidden'), 422);
         }
 
         // Проверка, используется ли единица измерения
         if ($measurementUnit->materials()->exists() || $measurementUnit->workTypes()->exists()) {
-            throw new Exception("Cannot delete measurement unit that is in use.");
+            throw new BusinessLogicException(trans_message('measurement_unit.delete_in_use'), 422);
         }
 
         return $this->measurementUnitRepository->delete($id);

@@ -5,8 +5,8 @@ namespace App\DTOs\MeasurementUnit;
 class MeasurementUnitDTO
 {
     public function __construct(
-        public readonly string $name,
-        public readonly string $short_name,
+        public readonly ?string $name,
+        public readonly ?string $short_name,
         public readonly ?string $type = 'material',
         public readonly ?string $description = null,
         public readonly ?bool $is_default = false,

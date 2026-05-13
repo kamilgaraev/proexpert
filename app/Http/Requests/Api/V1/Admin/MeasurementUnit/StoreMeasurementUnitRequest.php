@@ -33,12 +33,17 @@ class StoreMeasurementUnitRequest extends FormRequest
 
         return [
             'name' => [
-                'required',
+                'required_without:code',
                 'string',
                 'max:255',
                 Rule::unique('measurement_units')->where(function ($query) use ($organizationId) {
                     return $query->where('organization_id', $organizationId);
                 }),
+            ],
+            'code' => [
+                'required_without:short_name',
+                'string',
+                'max:50',
             ],
             'short_name' => [
                 'required',
@@ -74,7 +79,7 @@ class StoreMeasurementUnitRequest extends FormRequest
         $validatedData = $this->validated();
         return new MeasurementUnitDTO(
             name: $validatedData['name'],
-            short_name: $validatedData['short_name'],
+            short_name: $validatedData['short_name'] ?? $validatedData['code'],
             type: $validatedData['type'] ?? 'material',
             description: $validatedData['description'] ?? null,
             is_default: $validatedData['is_default'] ?? false,

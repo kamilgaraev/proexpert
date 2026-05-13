@@ -1,251 +1,175 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services\CostCategory;
 
-use App\Models\CostCategory;
 use App\Exceptions\BusinessLogicException;
+use App\Models\CostCategory;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class CostCategoryService
 {
-    /**
-     * Получить категории затрат для текущей организации с пагинацией.
-     *
-     * @param Request $request
-     * @param int $perPage
-     * @return LengthAwarePaginator
-     */
     public function getCostCategoriesForCurrentOrg(Request $request, int $perPage = 15): LengthAwarePaginator
     {
-        $organizationId = $request->user()->current_organization_id;
-        
-        // Формируем запрос
-        $query = CostCategory::with('parent')
+        $organizationId = (int) $request->user()->current_organization_id;
+
+        $query = CostCategory::query()
+            ->with('parent')
             ->where('organization_id', $organizationId);
-        
-        // Фильтрация по поисковому запросу
-        if ($request->has('search')) {
-            $search = $request->get('search');
-            $query->where(function ($q) use ($search) {
+
+        $search = $request->query('search');
+        if ($search !== null && $search !== '') {
+            $query->where(function ($q) use ($search): void {
                 $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('code', 'like', "%{$search}%")
-                  ->orWhere('external_code', 'like', "%{$search}%");
+                    ->orWhere('code', 'like', "%{$search}%")
+                    ->orWhere('external_code', 'like', "%{$search}%");
             });
         }
-        
-        // Фильтрация по активности
-        if ($request->has('is_active')) {
-            $isActive = $request->get('is_active') === 'true' || $request->get('is_active') === '1';
-            $query->where('is_active', $isActive);
+
+        if ($request->query('is_active') !== null && $request->query('is_active') !== '') {
+            $query->where('is_active', filter_var($request->query('is_active'), FILTER_VALIDATE_BOOLEAN));
         }
-        
-        // Фильтрация по родительской категории
-        if ($request->has('parent_id')) {
-            $parentId = $request->get('parent_id');
+
+        $parentId = $request->query('parent_id');
+        if ($parentId !== null && $parentId !== '') {
             if ($parentId === 'null' || $parentId === '0') {
                 $query->whereNull('parent_id');
             } else {
-                $query->where('parent_id', $parentId);
+                $query->where('parent_id', (int) $parentId);
             }
         }
-        
-        // Сортировка
-        $sortBy = $request->get('sort_by', 'sort_order');
-        $sortDirection = $request->get('sort_direction', 'asc');
-        $query->orderBy($sortBy, $sortDirection);
-        
-        // Возвращаем пагинированный результат
-        return $query->paginate($perPage);
+
+        $sortBy = $this->normalizeSortBy((string) $request->query('sort_by', 'sort_order'));
+        $sortDirection = $request->query('sort_direction') === 'desc' ? 'desc' : 'asc';
+
+        return $query->orderBy($sortBy, $sortDirection)->paginate($perPage);
     }
-    
-    /**
-     * Создать новую категорию затрат.
-     *
-     * @param array $data
-     * @param Request $request
-     * @return CostCategory
-     */
+
     public function createCostCategory(array $data, Request $request): CostCategory
     {
-        $organizationId = $request->user()->current_organization_id;
-        
-        // Проверяем, что если указан parent_id, то он принадлежит той же организации
-        if (isset($data['parent_id']) && $data['parent_id']) {
-            $parentCategory = CostCategory::where('id', $data['parent_id'])
-                ->where('organization_id', $organizationId)
-                ->first();
-                
-            if (!$parentCategory) {
-                throw new BusinessLogicException('Родительская категория не найдена или принадлежит другой организации.', 400);
-            }
-        }
-        
-        // Устанавливаем организацию
+        $organizationId = (int) $request->user()->current_organization_id;
+        $this->assertParentBelongsToOrganization($data['parent_id'] ?? null, $organizationId);
+
         $data['organization_id'] = $organizationId;
-        
-        // Создаем новую категорию
+
         try {
-            return DB::transaction(function () use ($data) {
-                return CostCategory::create($data);
-            });
-        } catch (\Exception $e) {
+            return DB::transaction(fn (): CostCategory => CostCategory::query()->create($data));
+        } catch (\Throwable $e) {
             Log::error('Error creating cost category', [
                 'error' => $e->getMessage(),
-                'data' => $data
+                'data' => $data,
             ]);
-            throw new BusinessLogicException('Ошибка при создании категории затрат: ' . $e->getMessage(), 500);
+
+            throw new BusinessLogicException(trans_message('cost_category.create_failed'), 500);
         }
     }
-    
-    /**
-     * Найти категорию затрат по ID для текущей организации.
-     *
-     * @param int $id
-     * @param Request $request
-     * @return CostCategory|null
-     */
+
     public function findCostCategoryByIdForCurrentOrg(int $id, Request $request): ?CostCategory
     {
-        $organizationId = $request->user()->current_organization_id;
-        
-        return CostCategory::with(['parent', 'children'])
+        return CostCategory::query()
+            ->with(['parent', 'children'])
+            ->where('id', $id)
+            ->where('organization_id', (int) $request->user()->current_organization_id)
+            ->first();
+    }
+
+    public function updateCostCategory(int $id, array $data, Request $request): ?CostCategory
+    {
+        $organizationId = (int) $request->user()->current_organization_id;
+
+        $costCategory = CostCategory::query()
             ->where('id', $id)
             ->where('organization_id', $organizationId)
             ->first();
-    }
-    
-    /**
-     * Обновить категорию затрат.
-     *
-     * @param int $id
-     * @param array $data
-     * @param Request $request
-     * @return CostCategory|null
-     */
-    public function updateCostCategory(int $id, array $data, Request $request): ?CostCategory
-    {
-        $organizationId = $request->user()->current_organization_id;
-        
-        $costCategory = CostCategory::where('id', $id)
-            ->where('organization_id', $organizationId)
-            ->first();
-            
+
         if (!$costCategory) {
             return null;
         }
-        
-        // Проверяем, что если указан parent_id, то он принадлежит той же организации
-        if (isset($data['parent_id']) && $data['parent_id']) {
-            // Не позволяем категории быть родителем самой себя
-            if ($data['parent_id'] == $id) {
-                throw new BusinessLogicException('Категория не может быть родителем самой себя.', 400);
-            }
-            
-            $parentCategory = CostCategory::where('id', $data['parent_id'])
-                ->where('organization_id', $organizationId)
-                ->first();
-                
-            if (!$parentCategory) {
-                throw new BusinessLogicException('Родительская категория не найдена или принадлежит другой организации.', 400);
-            }
+
+        if (($data['parent_id'] ?? null) !== null && (int) $data['parent_id'] === $id) {
+            throw new BusinessLogicException(trans_message('cost_category.self_parent_forbidden'), 422);
         }
-        
+
+        $this->assertParentBelongsToOrganization($data['parent_id'] ?? null, $organizationId);
+
         try {
-            return DB::transaction(function () use ($costCategory, $data) {
+            return DB::transaction(function () use ($costCategory, $data): CostCategory {
                 $costCategory->update($data);
+
                 return $costCategory->refresh();
             });
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Error updating cost category', [
                 'id' => $id,
                 'error' => $e->getMessage(),
-                'data' => $data
+                'data' => $data,
             ]);
-            throw new BusinessLogicException('Ошибка при обновлении категории затрат: ' . $e->getMessage(), 500);
+
+            throw new BusinessLogicException(trans_message('cost_category.update_failed_business'), 500);
         }
     }
-    
-    /**
-     * Удалить категорию затрат.
-     *
-     * @param int $id
-     * @param Request $request
-     * @return bool
-     */
+
     public function deleteCostCategory(int $id, Request $request): bool
     {
-        $organizationId = $request->user()->current_organization_id;
-        
-        $costCategory = CostCategory::where('id', $id)
+        $organizationId = (int) $request->user()->current_organization_id;
+
+        $costCategory = CostCategory::query()
+            ->where('id', $id)
             ->where('organization_id', $organizationId)
             ->first();
-            
+
         if (!$costCategory) {
             return false;
         }
-        
-        // Проверяем, есть ли дочерние категории
-        $hasChildren = CostCategory::where('parent_id', $id)->exists();
-        if ($hasChildren) {
-            throw new BusinessLogicException('Нельзя удалить категорию, у которой есть дочерние категории.', 400);
+
+        if (CostCategory::query()->where('organization_id', $organizationId)->where('parent_id', $id)->exists()) {
+            throw new BusinessLogicException(trans_message('cost_category.delete_has_children'), 422);
         }
-        
-        // Проверяем, есть ли проекты, связанные с этой категорией
-        $hasProjects = $costCategory->projects()->exists();
-        if ($hasProjects) {
-            throw new BusinessLogicException('Нельзя удалить категорию, к которой привязаны проекты.', 400);
+
+        if ($costCategory->projects()->exists()) {
+            throw new BusinessLogicException(trans_message('cost_category.delete_has_projects'), 422);
         }
-        
+
         try {
-            return DB::transaction(function () use ($costCategory) {
-                return (bool) $costCategory->delete();
-            });
-        } catch (\Exception $e) {
+            return DB::transaction(fn (): bool => (bool) $costCategory->delete());
+        } catch (\Throwable $e) {
             Log::error('Error deleting cost category', [
                 'id' => $id,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ]);
-            throw new BusinessLogicException('Ошибка при удалении категории затрат: ' . $e->getMessage(), 500);
+
+            throw new BusinessLogicException(trans_message('cost_category.delete_failed_business'), 500);
         }
     }
-    
-    /**
-     * Импортировать категории затрат из внешней системы.
-     *
-     * @param array $categories
-     * @param int $organizationId
-     * @return array
-     */
+
     public function importCostCategories(array $categories, int $organizationId): array
     {
         $imported = 0;
         $updated = 0;
         $errors = [];
-        
+
         try {
             DB::beginTransaction();
-            
+
             foreach ($categories as $index => $categoryData) {
                 try {
-                    // Проверяем наличие обязательных полей
                     if (empty($categoryData['name'])) {
-                        $errors[] = "Строка {$index}: отсутствует обязательное поле 'name'";
+                        $errors[] = "Строка {$index}: отсутствует обязательное поле name";
                         continue;
                     }
-                    
-                    // Ищем существующую категорию по external_code
+
                     $existingCategory = null;
                     if (!empty($categoryData['external_code'])) {
-                        $existingCategory = CostCategory::where('organization_id', $organizationId)
+                        $existingCategory = CostCategory::query()
+                            ->where('organization_id', $organizationId)
                             ->where('external_code', $categoryData['external_code'])
                             ->first();
                     }
-                    
-                    // Подготавливаем данные для создания/обновления
+
                     $data = [
                         'name' => $categoryData['name'],
                         'code' => $categoryData['code'] ?? null,
@@ -254,68 +178,89 @@ class CostCategoryService
                         'organization_id' => $organizationId,
                         'is_active' => $categoryData['is_active'] ?? true,
                         'sort_order' => $categoryData['sort_order'] ?? 0,
-                        'additional_attributes' => isset($categoryData['additional_attributes']) 
-                            ? json_decode($categoryData['additional_attributes'], true) 
-                            : null
+                        'additional_attributes' => isset($categoryData['additional_attributes'])
+                            ? json_decode((string) $categoryData['additional_attributes'], true)
+                            : null,
                     ];
-                    
+
                     if ($existingCategory) {
-                        // Обновляем существующую категорию
                         $existingCategory->update($data);
                         $updated++;
                     } else {
-                        // Создаем новую категорию
-                        CostCategory::create($data);
+                        CostCategory::query()->create($data);
                         $imported++;
                     }
-                } catch (\Exception $e) {
-                    $errors[] = "Строка {$index}: " . $e->getMessage();
+                } catch (\Throwable $e) {
+                    $errors[] = "Строка {$index}: {$e->getMessage()}";
                 }
             }
-            
-            // Второй проход для установки родительских категорий
+
             foreach ($categories as $index => $categoryData) {
-                if (!empty($categoryData['external_code']) && !empty($categoryData['parent_external_code'])) {
-                    try {
-                        $category = CostCategory::where('organization_id', $organizationId)
-                            ->where('external_code', $categoryData['external_code'])
-                            ->first();
-                            
-                        $parentCategory = CostCategory::where('organization_id', $organizationId)
-                            ->where('external_code', $categoryData['parent_external_code'])
-                            ->first();
-                            
-                        if ($category && $parentCategory) {
-                            $category->parent_id = $parentCategory->id;
-                            $category->save();
-                        }
-                    } catch (\Exception $e) {
-                        $errors[] = "Строка {$index} (установка родителя): " . $e->getMessage();
+                if (empty($categoryData['external_code']) || empty($categoryData['parent_external_code'])) {
+                    continue;
+                }
+
+                try {
+                    $category = CostCategory::query()
+                        ->where('organization_id', $organizationId)
+                        ->where('external_code', $categoryData['external_code'])
+                        ->first();
+                    $parentCategory = CostCategory::query()
+                        ->where('organization_id', $organizationId)
+                        ->where('external_code', $categoryData['parent_external_code'])
+                        ->first();
+
+                    if ($category && $parentCategory) {
+                        $category->parent_id = $parentCategory->id;
+                        $category->save();
                     }
+                } catch (\Throwable $e) {
+                    $errors[] = "Строка {$index} (родительская категория): {$e->getMessage()}";
                 }
             }
-            
+
             DB::commit();
-            
+
             return [
                 'success' => true,
                 'imported' => $imported,
                 'updated' => $updated,
-                'errors' => $errors
+                'errors' => $errors,
             ];
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             DB::rollBack();
-            Log::error('Error importing cost categories', [
-                'error' => $e->getMessage()
-            ]);
-            
+            Log::error('Error importing cost categories', ['error' => $e->getMessage()]);
+
             return [
                 'success' => false,
-                'message' => 'Ошибка при импорте категорий затрат: ' . $e->getMessage(),
+                'message' => trans_message('cost_category.internal_error_import'),
                 'imported' => $imported,
                 'updated' => $updated,
-                'errors' => $errors
+                'errors' => $errors,
             ];
         }
     }
-} 
+
+    private function assertParentBelongsToOrganization(mixed $parentId, int $organizationId): void
+    {
+        if ($parentId === null || $parentId === '') {
+            return;
+        }
+
+        $exists = CostCategory::query()
+            ->where('id', (int) $parentId)
+            ->where('organization_id', $organizationId)
+            ->exists();
+
+        if (!$exists) {
+            throw new BusinessLogicException(trans_message('cost_category.parent_not_found'), 422);
+        }
+    }
+
+    private function normalizeSortBy(string $sortBy): string
+    {
+        return in_array($sortBy, ['name', 'code', 'external_code', 'is_active', 'sort_order', 'created_at'], true)
+            ? $sortBy
+            : 'sort_order';
+    }
+}

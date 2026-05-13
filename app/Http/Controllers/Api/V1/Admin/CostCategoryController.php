@@ -11,7 +11,7 @@ use App\Services\CostCategory\CostCategoryService;
 use App\Exceptions\BusinessLogicException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
@@ -29,12 +29,20 @@ class CostCategoryController extends Controller
     /**
      * Получить список категорий затрат с пагинацией.
      */
-    public function index(Request $request): AnonymousResourceCollection | JsonResponse
+    public function index(Request $request): JsonResponse
     {
         try {
-            $perPage = $request->query('per_page', 15);
+            $perPage = $this->normalizePerPage($request->query('per_page', 15));
             $costCategories = $this->costCategoryService->getCostCategoriesForCurrentOrg($request, (int)$perPage);
-            return AdminResponse::success(CostCategoryResource::collection($costCategories));
+            return AdminResponse::paginated(
+                CostCategoryResource::collection($costCategories),
+                [
+                    'current_page' => $costCategories->currentPage(),
+                    'last_page' => $costCategories->lastPage(),
+                    'per_page' => $costCategories->perPage(),
+                    'total' => $costCategories->total(),
+                ]
+            );
         } catch (BusinessLogicException $e) {
             Log::error('CostCategoryController@index BusinessLogicException', [
                 'message' => $e->getMessage(),
@@ -55,11 +63,11 @@ class CostCategoryController extends Controller
     /**
      * Создать новую категорию затрат.
      */
-    public function store(StoreCostCategoryRequest $request): CostCategoryResource | JsonResponse
+    public function store(StoreCostCategoryRequest $request): JsonResponse
     {
         try {
             $costCategory = $this->costCategoryService->createCostCategory($request->validated(), $request);
-            return new CostCategoryResource($costCategory->load('parent'));
+            return AdminResponse::success(new CostCategoryResource($costCategory->load('parent')), null, Response::HTTP_CREATED);
         } catch (BusinessLogicException $e) {
             Log::error('CostCategoryController@store BusinessLogicException', [
                 'message' => $e->getMessage(),
@@ -80,7 +88,7 @@ class CostCategoryController extends Controller
     /**
      * Получить информацию о конкретной категории затрат.
      */
-    public function show(Request $request, string $id): CostCategoryResource | JsonResponse
+    public function show(Request $request, string $id): JsonResponse
     {
         try {
             $costCategory = $this->costCategoryService->findCostCategoryByIdForCurrentOrg((int)$id, $request);
@@ -91,7 +99,7 @@ class CostCategoryController extends Controller
             
             $costCategory->load(['parent', 'children']);
             
-            return new CostCategoryResource($costCategory);
+            return AdminResponse::success(new CostCategoryResource($costCategory));
         } catch (BusinessLogicException $e) {
             Log::error('CostCategoryController@show BusinessLogicException', [
                 'id' => $id,
@@ -114,7 +122,7 @@ class CostCategoryController extends Controller
     /**
      * Обновить категорию затрат.
      */
-    public function update(UpdateCostCategoryRequest $request, string $id): CostCategoryResource | JsonResponse
+    public function update(UpdateCostCategoryRequest $request, string $id): JsonResponse
     {
         try {
             $costCategory = $this->costCategoryService->updateCostCategory((int)$id, $request->validated(), $request);
@@ -125,7 +133,7 @@ class CostCategoryController extends Controller
             
             $costCategory->load(['parent', 'children']);
             
-            return new CostCategoryResource($costCategory);
+            return AdminResponse::success(new CostCategoryResource($costCategory));
         } catch (BusinessLogicException $e) {
             Log::error('CostCategoryController@update BusinessLogicException', [
                 'id' => $id,
@@ -301,5 +309,16 @@ class CostCategoryController extends Controller
         return ($maps[$format] ?? $maps['simple'])[$normalized]
             ?? $maps['simple'][$normalized]
             ?? null;
+    }
+
+    private function normalizePerPage(mixed $perPage): int
+    {
+        $value = (int) $perPage;
+
+        if ($value <= 0) {
+            return 1000;
+        }
+
+        return min($value, 1000);
     }
 }

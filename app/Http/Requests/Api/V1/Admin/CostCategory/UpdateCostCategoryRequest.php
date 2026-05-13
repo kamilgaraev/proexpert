@@ -49,7 +49,9 @@ class UpdateCostCategoryRequest extends FormRequest
                 'sometimes', 
                 'nullable', 
                 'integer', 
-                'exists:cost_categories,id',
+                Rule::exists('cost_categories', 'id')
+                    ->where('organization_id', $this->user()->current_organization_id)
+                    ->whereNull('deleted_at'),
                 function ($attribute, $value, $fail) {
                     // Проверка, что категория не устанавливается родителем самой себя
                     if ($value == $this->route('cost_category')) {

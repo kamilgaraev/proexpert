@@ -37,12 +37,18 @@ class UpdateMeasurementUnitRequest extends FormRequest
         return [
             'name' => [
                 'sometimes', // 'sometimes' означает, что поле будет проверяться, только если оно присутствует в запросе
-                'required',
+                'required_without:code',
                 'string',
                 'max:255',
                 Rule::unique('measurement_units')->where(function ($query) use ($organizationId) {
                     return $query->where('organization_id', $organizationId);
                 })->ignore($measurementUnitId),
+            ],
+            'code' => [
+                'sometimes',
+                'required_without:short_name',
+                'string',
+                'max:50',
             ],
             'short_name' => [
                 'sometimes',
@@ -88,7 +94,7 @@ class UpdateMeasurementUnitRequest extends FormRequest
 
         return new MeasurementUnitDTO(
             name: $validatedData['name'] ?? null, // Если поле не передано, оно не будет в $validatedData
-            short_name: $validatedData['short_name'] ?? null,
+            short_name: $validatedData['short_name'] ?? $validatedData['code'] ?? null,
             type: $validatedData['type'] ?? null,
             description: $validatedData['description'] ?? null,
             is_default: $validatedData['is_default'] ?? null,
