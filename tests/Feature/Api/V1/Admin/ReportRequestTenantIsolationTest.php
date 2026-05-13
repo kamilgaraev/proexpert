@@ -11,6 +11,7 @@ use App\Models\Organization;
 use App\Models\OrganizationModuleActivation;
 use App\Models\Project;
 use App\Models\User;
+use App\Models\WorkType;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -102,6 +103,58 @@ class ReportRequestTenantIsolationTest extends TestCase
 
         $response->assertStatus(422);
         $response->assertJsonValidationErrors(['material_id', 'warehouse_id']);
+    }
+
+    public function test_optional_basic_report_filters_ignore_empty_query_values(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->activateReportsModule($context->organization->id);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/reports/contract-payments?' . http_build_query([
+                'project_id' => '',
+                'contractor_id' => '',
+                'status' => '',
+                'work_type_category' => '',
+                'date_from' => '',
+                'date_to' => '',
+                'show_overdue' => '',
+                'show_with_debt' => '',
+                'format' => 'json',
+                'page' => 1,
+                'per_page' => 15,
+            ]));
+
+        $response->assertOk();
+        $response->assertJsonPath('success', true);
+    }
+
+    public function test_time_tracking_report_rejects_foreign_user_and_work_type_filters(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->activateReportsModule($context->organization->id);
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $foreignUser = User::factory()->create([
+            'current_organization_id' => $foreignOrganization->id,
+        ]);
+        $foreignWorkType = WorkType::query()->create([
+            'organization_id' => $foreignOrganization->id,
+            'name' => 'Foreign work type',
+            'code' => 'FOREIGN-WORK-TYPE-' . $foreignOrganization->id,
+            'category' => 'smr',
+            'is_active' => true,
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/reports/time-tracking?' . http_build_query([
+                'date_from' => '2026-01-01',
+                'date_to' => '2026-01-31',
+                'user_id' => $foreignUser->id,
+                'work_type_id' => $foreignWorkType->id,
+            ]));
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['user_id', 'work_type_id']);
     }
 
     private function createForeignProject(): Project

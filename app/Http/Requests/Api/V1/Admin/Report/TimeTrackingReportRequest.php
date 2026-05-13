@@ -17,7 +17,13 @@ class TimeTrackingReportRequest extends FormRequest
         $organizationId = $this->attributes->get('current_organization_id') ?? $this->user()->current_organization_id;
 
         return [
-            'user_id' => 'nullable|integer|exists:users,id',
+            'user_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('organization_user', 'user_id')
+                    ->where('organization_id', $organizationId)
+                    ->where('is_active', true),
+            ],
             'worker_type' => 'nullable|string|in:user,virtual,brigade,equipment',
             'worker_name' => 'nullable|string|max:255',
             'project_id' => [
@@ -25,7 +31,11 @@ class TimeTrackingReportRequest extends FormRequest
                 'integer',
                 Rule::exists('projects', 'id')->where('organization_id', $organizationId),
             ],
-            'work_type_id' => 'nullable|integer|exists:work_types,id',
+            'work_type_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('work_types', 'id')->where('organization_id', $organizationId),
+            ],
             'date_from' => 'required|date',
             'date_to' => 'required|date|after_or_equal:date_from',
             'status' => 'nullable|string|in:draft,submitted,approved,rejected',
