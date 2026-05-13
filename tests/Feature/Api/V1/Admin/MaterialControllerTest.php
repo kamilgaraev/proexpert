@@ -104,6 +104,44 @@ class MaterialControllerTest extends TestCase
         $this->assertSoftDeleted('materials', ['id' => $material->id]);
     }
 
+    public function test_index_tolerates_empty_admin_filters_and_load_all_pagination(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id, 'Meter', 'm-test');
+        $material = Material::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Concrete',
+            'code' => 'CONCRETE-1',
+            'measurement_unit_id' => $unit->id,
+            'category' => 'building',
+            'default_price' => 100,
+            'is_active' => true,
+        ]);
+        $foreignContext = AdminApiTestContext::create();
+        $foreignUnit = $this->createUnit($foreignContext->organization->id, 'Foreign meter', 'fm-test');
+        $foreignMaterial = Material::query()->create([
+            'organization_id' => $foreignContext->organization->id,
+            'name' => 'Foreign concrete',
+            'code' => 'CONCRETE-F',
+            'measurement_unit_id' => $foreignUnit->id,
+            'category' => 'building',
+            'default_price' => 100,
+            'is_active' => true,
+        ]);
+        $this->allowAdminAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/materials?name=&category=&measurement_unit_id=&is_active=&sort_by=unknown_column&sort_direction=sideways&per_page=-1&page=1');
+
+        $response->assertOk();
+        $response->assertJsonPath('success', true);
+        $response->assertJsonPath('data.0.id', $material->id);
+        $response->assertJsonPath('meta.total', 1);
+
+        $ids = collect($response->json('data'))->pluck('id')->all();
+        $this->assertNotContains($foreignMaterial->id, $ids);
+    }
+
     private function createUnit(int $organizationId, string $name, string $shortName): MeasurementUnit
     {
         return MeasurementUnit::query()->create([

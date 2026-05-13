@@ -22,6 +22,10 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class MaterialController extends Controller
 {
+    private const DEFAULT_PER_PAGE = 15;
+    private const LOAD_ALL_PER_PAGE = 1000;
+    private const MAX_PER_PAGE = 1000;
+
     protected MaterialService $materialService;
 
     public function __construct(MaterialService $materialService)
@@ -50,9 +54,29 @@ class MaterialController extends Controller
     public function index(Request $request): AnonymousResourceCollection | JsonResponse
     {
         try {
-            $perPage = $request->query('per_page', 15);
-            $materials = $this->materialService->getMaterialsPaginated($request, (int)$perPage);
-            return MaterialResource::collection($materials);
+            $materials = $this->materialService->getMaterialsPaginated(
+                $request,
+                $this->normalizePerPage($request->query('per_page'))
+            );
+
+            return AdminResponse::paginated(
+                MaterialResource::collection($materials->getCollection()),
+                [
+                    'current_page' => $materials->currentPage(),
+                    'last_page' => $materials->lastPage(),
+                    'per_page' => $materials->perPage(),
+                    'total' => $materials->total(),
+                ],
+                null,
+                200,
+                null,
+                [
+                    'first' => $materials->url(1),
+                    'last' => $materials->url($materials->lastPage()),
+                    'prev' => $materials->previousPageUrl(),
+                    'next' => $materials->nextPageUrl(),
+                ]
+            );
         } catch (BusinessLogicException $e) {
             Log::error('MaterialController@index BusinessLogicException', [
                 'message' => $e->getMessage(),
@@ -68,6 +92,21 @@ class MaterialController extends Controller
             ]);
             return AdminResponse::error(trans_message('materials.internal_error_list'), 500);
         }
+    }
+
+    private function normalizePerPage(mixed $perPage): int
+    {
+        $perPage = filter_var($perPage, FILTER_VALIDATE_INT);
+
+        if ($perPage === false) {
+            return self::DEFAULT_PER_PAGE;
+        }
+
+        if ($perPage <= 0) {
+            return self::LOAD_ALL_PER_PAGE;
+        }
+
+        return min($perPage, self::MAX_PER_PAGE);
     }
 
     public function store(StoreMaterialRequest $request): MaterialResource | JsonResponse
