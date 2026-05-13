@@ -188,25 +188,25 @@ class NotificationController extends Controller
             $byCategoryResults = Notification::forUser($user)
                 ->unread()
                 ->selectRaw(
-                    "COALESCE(NULLIF(CAST(data AS jsonb)->>'category', ''), NULLIF(notification_type, ''), 'general') as category, COUNT(*) as count"
+                    "COALESCE(NULLIF({$this->jsonDataValueExpression('category')}, ''), NULLIF(notification_type, ''), 'general') as category, COUNT(*) as count"
                 )
-                ->groupBy(DB::raw("COALESCE(NULLIF(CAST(data AS jsonb)->>'category', ''), NULLIF(notification_type, ''), 'general')"))
+                ->groupBy(DB::raw("COALESCE(NULLIF({$this->jsonDataValueExpression('category')}, ''), NULLIF(notification_type, ''), 'general')"))
                 ->get();
 
             $byTypeResults = Notification::forUser($user)
                 ->unread()
                 ->selectRaw(
-                    "COALESCE(NULLIF(CAST(data AS jsonb)->>'type', ''), NULLIF(type, ''), NULLIF(notification_type, ''), 'general') as business_type, COUNT(*) as count"
+                    "COALESCE(NULLIF({$this->jsonDataValueExpression('type')}, ''), NULLIF(type, ''), NULLIF(notification_type, ''), 'general') as business_type, COUNT(*) as count"
                 )
-                ->groupBy(DB::raw("COALESCE(NULLIF(CAST(data AS jsonb)->>'type', ''), NULLIF(type, ''), NULLIF(notification_type, ''), 'general')"))
+                ->groupBy(DB::raw("COALESCE(NULLIF({$this->jsonDataValueExpression('type')}, ''), NULLIF(type, ''), NULLIF(notification_type, ''), 'general')"))
                 ->get();
 
             $byNotificationTypeResults = Notification::forUser($user)
                 ->unread()
                 ->selectRaw(
-                    "COALESCE(NULLIF(notification_type, ''), NULLIF(CAST(data AS jsonb)->>'notification_type', ''), NULLIF(CAST(data AS jsonb)->>'category', ''), 'general') as notification_type, COUNT(*) as count"
+                    "COALESCE(NULLIF(notification_type, ''), NULLIF({$this->jsonDataValueExpression('notification_type')}, ''), NULLIF({$this->jsonDataValueExpression('category')}, ''), 'general') as notification_type, COUNT(*) as count"
                 )
-                ->groupBy(DB::raw("COALESCE(NULLIF(notification_type, ''), NULLIF(CAST(data AS jsonb)->>'notification_type', ''), NULLIF(CAST(data AS jsonb)->>'category', ''), 'general')"))
+                ->groupBy(DB::raw("COALESCE(NULLIF(notification_type, ''), NULLIF({$this->jsonDataValueExpression('notification_type')}, ''), NULLIF({$this->jsonDataValueExpression('category')}, ''), 'general')"))
                 ->get();
 
             return AdminResponse::success([
@@ -237,8 +237,8 @@ class NotificationController extends Controller
     {
         $query->where(function (Builder $nested) use ($category): void {
             $nested->where('notification_type', $category)
-                ->orWhereRaw("CAST(data AS jsonb)->>'category' = ?", [$category])
-                ->orWhereRaw("CAST(data AS jsonb)->>'notification_type' = ?", [$category]);
+                ->orWhereRaw($this->jsonDataValueExpression('category') . ' = ?', [$category])
+                ->orWhereRaw($this->jsonDataValueExpression('notification_type') . ' = ?', [$category]);
         });
     }
 
@@ -246,13 +246,22 @@ class NotificationController extends Controller
     {
         $query->where(function (Builder $nested) use ($type): void {
             $nested->where('notification_type', $type)
-                ->orWhereRaw("CAST(data AS jsonb)->>'type' = ?", [$type]);
+                ->orWhereRaw($this->jsonDataValueExpression('type') . ' = ?', [$type]);
         });
     }
 
     private function applyDataValueFilter(Builder $query, string $key, string $value): void
     {
-        $query->whereRaw("CAST(data AS jsonb)->>'{$key}' = ?", [$value]);
+        $query->whereRaw($this->jsonDataValueExpression($key) . ' = ?', [$value]);
+    }
+
+    private function jsonDataValueExpression(string $key): string
+    {
+        if (DB::getDriverName() === 'pgsql') {
+            return "CAST(data AS jsonb)->>'{$key}'";
+        }
+
+        return "json_extract(data, '$.{$key}')";
     }
 
     private function handleUnexpectedError(

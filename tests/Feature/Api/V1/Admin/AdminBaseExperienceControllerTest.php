@@ -153,6 +153,66 @@ class AdminBaseExperienceControllerTest extends TestCase
         $unreadResponse->assertJsonPath('data.by_notification_type.contracts', 1);
     }
 
+    public function test_notifications_can_be_filtered_by_business_context_and_opened_by_owner(): void
+    {
+        $context = AdminApiTestContext::create();
+        $otherUser = $this->createOrganizationMember($context->organization);
+        $this->allowAdminAccess(['web_admin']);
+
+        $paymentNotification = $this->createNotification($context->organization, $context->user, [
+            'type' => 'payment_workflow',
+            'notification_type' => 'workflow',
+            'priority' => 'high',
+            'data' => [
+                'title' => 'Payment approval required',
+                'message' => 'Document needs approval',
+                'category' => 'payments',
+                'type' => 'payment_approval',
+                'project_id' => '56',
+            ],
+        ]);
+        $this->createNotification($context->organization, $context->user, [
+            'type' => 'warehouse_event',
+            'notification_type' => 'warehouse',
+            'priority' => 'low',
+            'data' => [
+                'title' => 'Warehouse movement',
+                'category' => 'warehouse',
+                'type' => 'stock_movement',
+                'project_id' => '56',
+            ],
+        ]);
+        $this->createNotification($context->organization, $otherUser, [
+            'type' => 'payment_workflow',
+            'notification_type' => 'workflow',
+            'priority' => 'high',
+            'data' => [
+                'title' => 'Foreign approval',
+                'category' => 'payments',
+                'type' => 'payment_approval',
+                'project_id' => '56',
+            ],
+        ]);
+
+        $filteredResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/notifications?category=payments&priority=high&project_id=56&type=payment_approval&per_page=5');
+
+        $filteredResponse->assertOk();
+        $filteredResponse->assertJsonPath('success', true);
+        $filteredResponse->assertJsonPath('meta.total', 1);
+        $filteredResponse->assertJsonPath('meta.per_page', 5);
+        $filteredResponse->assertJsonPath('data.0.id', $paymentNotification->id);
+        $filteredResponse->assertJsonPath('data.0.data.title', 'Payment approval required');
+
+        $showResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/notifications/{$paymentNotification->id}");
+
+        $showResponse->assertOk();
+        $showResponse->assertJsonPath('success', true);
+        $showResponse->assertJsonPath('data.id', $paymentNotification->id);
+        $showResponse->assertJsonPath('data.data.category', 'payments');
+    }
+
     public function test_notification_actions_cannot_touch_another_users_notifications(): void
     {
         $context = AdminApiTestContext::create();
