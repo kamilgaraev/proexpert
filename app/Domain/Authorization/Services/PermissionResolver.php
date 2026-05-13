@@ -558,6 +558,8 @@ class PermissionResolver
             'time_tracking' => 'time-tracking',
             'report_templates' => 'report-templates',
             'warehouse' => 'basic-warehouse',
+            'one_c_exchange' => 'one-c-basic-exchange',
+            'one-c-exchange' => 'one-c-basic-exchange',
         ];
 
         $reverseMapping = [
@@ -567,6 +569,7 @@ class PermissionResolver
             'time-tracking' => 'time_tracking',
             'report-templates' => 'report_templates',
             'basic-warehouse' => 'warehouse',
+            'one-c-basic-exchange' => 'one_c_exchange',
         ];
 
         $variants = [

@@ -42,4 +42,21 @@ class PermissionResolverModuleAliasTest extends TestCase
         $this->assertContains('basic-warehouse', $resolver->variants('warehouse'));
         $this->assertContains('warehouse', $resolver->variants('basic-warehouse'));
     }
+
+    public function test_one_c_exchange_permission_uses_basic_exchange_module_alias(): void
+    {
+        $resolver = new class extends PermissionResolver {
+            public function __construct()
+            {
+            }
+
+            public function variants(string $module): array
+            {
+                return $this->expandModuleVariants($module);
+            }
+        };
+
+        $this->assertContains('one-c-basic-exchange', $resolver->variants('one_c_exchange'));
+        $this->assertContains('one_c_exchange', $resolver->variants('one-c-basic-exchange'));
+    }
 }

@@ -8,6 +8,10 @@ use Illuminate\Database\Eloquent\Model;
 
 final class OneCExchangeToken extends Model
 {
+    protected $hidden = [
+        'token_hash',
+    ];
+
     protected $fillable = [
         'organization_id',
         'label',
