@@ -157,7 +157,9 @@ class PersonalFileController extends Controller
                 return AdminResponse::error(trans_message('files.upload_failed'), 500);
             }
 
-            $storage->put($storagePath, $content);
+            if ($storage->put($storagePath, $content) === false) {
+                return AdminResponse::error(trans_message('files.upload_failed'), 500);
+            }
 
             $file = PersonalFile::query()->create([
                 'user_id' => $user->id,

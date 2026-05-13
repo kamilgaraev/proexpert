@@ -5,9 +5,12 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Admin;
 
 use App\Models\PersonalFile;
+use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Mockery;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
@@ -108,5 +111,28 @@ class PersonalFileControllerWorkflowTest extends TestCase
         $actResponse->assertOk();
         $actResponse->assertJsonPath('success', true);
         $actResponse->assertJsonPath('meta.total', 0);
+    }
+
+    public function test_personal_file_upload_does_not_create_record_when_storage_write_fails(): void
+    {
+        $context = AdminApiTestContext::create();
+
+        $storage = Mockery::mock(Filesystem::class);
+        $storage->shouldReceive('put')->once()->andReturn(false);
+
+        $fileService = Mockery::mock(FileService::class);
+        $fileService->shouldReceive('disk')->once()->andReturn($storage);
+
+        $this->app->instance(FileService::class, $fileService);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/personal-files/upload', [
+                'file' => UploadedFile::fake()->create('contract.pdf', 12, 'application/pdf'),
+            ]);
+
+        $response->assertStatus(500);
+        $response->assertJsonPath('success', false);
+
+        $this->assertSame(0, PersonalFile::query()->where('user_id', $context->user->id)->count());
     }
 }

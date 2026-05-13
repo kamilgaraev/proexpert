@@ -765,7 +765,9 @@ class ActReportsController extends Controller
             $storedName = Str::uuid()->toString() . ($extension ? '.' . $extension : '');
             $destination = ((int) $user->id) . '/acts/' . $storedName;
 
-            $storage->copy($file->path, $destination);
+            if ($storage->copy($file->path, $destination) === false) {
+                return AdminResponse::error(trans_message('act_reports.file_upload_failed'), 500);
+            }
 
             $personalFile = PersonalFile::create([
                 'user_id' => $user->id,

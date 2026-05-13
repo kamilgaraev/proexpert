@@ -12,8 +12,11 @@ use App\Models\Organization;
 use App\Models\PersonalFile;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Storage;
+use Mockery;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
@@ -123,6 +126,44 @@ class ActFileControllerWorkflowTest extends TestCase
         $downloadResponse->assertOk();
         $downloadResponse->assertDownload('act-scan.pdf');
         $this->assertSame('act binary content', $downloadResponse->streamedContent());
+    }
+
+    public function test_act_file_copy_to_personal_storage_does_not_create_record_when_storage_copy_fails(): void
+    {
+        $context = AdminApiTestContext::create();
+        [$organization, $user, $act] = $this->createActFixture($context->organization, $context->user);
+        $path = "org-{$organization->id}/acts/{$act->id}/documents/act-scan.pdf";
+        $file = File::query()->create([
+            'organization_id' => $organization->id,
+            'fileable_id' => $act->id,
+            'fileable_type' => ContractPerformanceAct::class,
+            'user_id' => $user->id,
+            'name' => 'act-scan.pdf',
+            'original_name' => 'act-scan.pdf',
+            'path' => $path,
+            'mime_type' => 'application/pdf',
+            'size' => 18,
+            'disk' => 's3',
+            'type' => 'document',
+            'category' => 'act_document',
+        ]);
+
+        $storage = Mockery::mock(Filesystem::class);
+        $storage->shouldReceive('exists')->once()->with($path)->andReturn(true);
+        $storage->shouldReceive('copy')->once()->andReturn(false);
+
+        $fileService = Mockery::mock(FileService::class);
+        $fileService->shouldReceive('disk')->once()->with(Mockery::type(Organization::class))->andReturn($storage);
+
+        $this->app->instance(FileService::class, $fileService);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/act-reports/{$act->id}/files/{$file->id}/copy-to-personal");
+
+        $response->assertStatus(500);
+        $response->assertJsonPath('success', false);
+
+        $this->assertSame(0, PersonalFile::query()->where('user_id', $context->user->id)->count());
     }
 
     private function createActFixture(Organization $organization, User $user): array
