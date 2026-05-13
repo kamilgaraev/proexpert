@@ -50,6 +50,8 @@ class EstimateCoverageService
 
     public function attachFullCoverage(Contract $contract, Estimate $estimate, bool $includeVat = false): Collection
     {
+        $this->assertOwnership($contract, $estimate);
+
         $itemIds = $this->getCoveredItemIds($estimate)->all();
 
         $links = $this->contractEstimateService->syncItems($contract, $estimate, $itemIds, $includeVat);
@@ -72,6 +74,8 @@ class EstimateCoverageService
 
     public function detachCoverage(Contract $contract, Estimate $estimate): void
     {
+        $this->assertOwnership($contract, $estimate);
+
         ContractEstimateItem::query()
             ->where('contract_id', $contract->id)
             ->where('estimate_id', $estimate->id)

@@ -24,6 +24,10 @@ return [
     'act_not_found' => 'Акт выполненных работ не найден.',
     'act_export_error' => 'Не удалось выгрузить акт выполненных работ.',
     'act_files_error' => 'Не удалось загрузить файлы акта.',
+    'estimate_link_error' => 'Не удалось связать смету с договором.',
+    'estimate_created' => 'Смета по договору создана.',
+    'estimate_linked' => 'Смета связана с договором.',
+    'estimate_unlinked' => 'Связь сметы с договором удалена.',
     'work_type_category' => [
         'smr' => 'СМР',
         'general_construction' => 'Общестроительные работы',

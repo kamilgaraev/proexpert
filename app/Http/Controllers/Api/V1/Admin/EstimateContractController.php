@@ -13,6 +13,8 @@ use App\Models\Contract;
 use App\Models\Estimate;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
+use Illuminate\Validation\Rule;
 
 class EstimateContractController extends Controller
 {
@@ -62,7 +64,13 @@ class EstimateContractController extends Controller
             ->firstOrFail();
 
         $validated = $request->validate([
-            'contract_id' => 'required|integer|exists:contracts,id',
+            'contract_id' => [
+                'required',
+                'integer',
+                Rule::exists('contracts', 'id')
+                    ->where('project_id', $projectId)
+                    ->where('organization_id', $organizationId),
+            ],
             'include_vat' => 'sometimes|boolean',
         ]);
 
@@ -78,7 +86,10 @@ class EstimateContractController extends Controller
                 trans_message('contract.estimate_linked')
             );
         } catch (\Throwable $e) {
-            return AdminResponse::error($e->getMessage(), 422);
+            return AdminResponse::error(
+                trans_message('contract.estimate_link_error'),
+                Response::HTTP_UNPROCESSABLE_ENTITY
+            );
         }
     }
 
@@ -93,7 +104,13 @@ class EstimateContractController extends Controller
             ->firstOrFail();
 
         $validated = $request->validate([
-            'contract_id' => 'required|integer|exists:contracts,id',
+            'contract_id' => [
+                'required',
+                'integer',
+                Rule::exists('contracts', 'id')
+                    ->where('project_id', $projectId)
+                    ->where('organization_id', $organizationId),
+            ],
         ]);
 
         $coverage = $this->integrationService->unlinkFromContract($estimate, (int) $validated['contract_id']);
