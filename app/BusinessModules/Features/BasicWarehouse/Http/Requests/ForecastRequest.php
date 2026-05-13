@@ -18,6 +18,11 @@ class ForecastRequest extends FormRequest
 
         return [
             'horizon_days' => 'nullable|integer|min:7|max:365',
+            'warehouse_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('organization_warehouses', 'id')->where('organization_id', $organizationId),
+            ],
             'asset_ids' => 'nullable|array',
             'asset_ids.*' => [
                 'integer',

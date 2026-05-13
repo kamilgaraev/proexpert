@@ -965,7 +965,13 @@ class WarehouseService implements WarehouseReportDataProvider
      */
     public function getForecastData(int $organizationId, array $filters = []): array
     {
-        $horizonDays = $filters['horizon_days'] ?? 90;
+        $horizonDays = (int) ($filters['horizon_days'] ?? 90);
+        $warehouseId = isset($filters['warehouse_id']) ? (int) $filters['warehouse_id'] : null;
+        $assetIds = collect($filters['asset_ids'] ?? [])
+            ->map(static fn ($assetId) => (int) $assetId)
+            ->filter()
+            ->values()
+            ->all();
         $historicalDays = 90; // Анализируем последние 90 дней
         
         $dateFrom = now()->subDays($historicalDays);
@@ -975,6 +981,8 @@ class WarehouseService implements WarehouseReportDataProvider
         $movements = WarehouseMovement::where('organization_id', $organizationId)
             ->whereBetween('movement_date', [$dateFrom, $dateTo])
             ->where('movement_type', 'write_off')
+            ->when($warehouseId !== null, static fn ($query) => $query->where('warehouse_id', $warehouseId))
+            ->when($assetIds !== [], static fn ($query) => $query->whereIn('material_id', $assetIds))
             ->with(['material'])
             ->get();
         
@@ -993,6 +1001,7 @@ class WarehouseService implements WarehouseReportDataProvider
             // Текущий остаток (сумма по всем партиям)
             $currentStock = WarehouseBalance::where('organization_id', $organizationId)
                 ->where('material_id', $materialId)
+                ->when($warehouseId !== null, static fn ($query) => $query->where('warehouse_id', $warehouseId))
                 ->sum('available_quantity');
             
             // Дата исчерпания запасов
@@ -1063,11 +1072,13 @@ class WarehouseService implements WarehouseReportDataProvider
     {
         $dateFrom = $filters['date_from'] ?? now()->subYear();
         $dateTo = $filters['date_to'] ?? now();
+        $warehouseId = isset($filters['warehouse_id']) ? (int) $filters['warehouse_id'] : null;
         
         // Получаем движения за период
         $movements = WarehouseMovement::where('organization_id', $organizationId)
             ->whereBetween('movement_date', [$dateFrom, $dateTo])
             ->where('movement_type', 'write_off')
+            ->when($warehouseId !== null, static fn ($query) => $query->where('warehouse_id', $warehouseId))
             ->with(['material'])
             ->get();
         

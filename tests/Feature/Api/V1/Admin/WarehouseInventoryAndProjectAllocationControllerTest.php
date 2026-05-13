@@ -9,6 +9,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\InventoryAct;
 use App\BusinessModules\Features\BasicWarehouse\Models\InventoryActItem;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseProjectAllocation;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
@@ -304,6 +305,57 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
 
         $forecastResponse->assertStatus(422);
         $forecastResponse->assertJsonValidationErrors('asset_ids.0');
+
+        $forecastWarehouseResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/advanced-warehouse/analytics/forecast?' . http_build_query([
+                'warehouse_id' => $foreignWarehouse->id,
+            ]));
+
+        $forecastWarehouseResponse->assertStatus(422);
+        $forecastWarehouseResponse->assertJsonValidationErrors('warehouse_id');
+
+        $abcXyzResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/advanced-warehouse/analytics/abc-xyz?' . http_build_query([
+                'warehouse_id' => $foreignWarehouse->id,
+            ]));
+
+        $abcXyzResponse->assertStatus(422);
+        $abcXyzResponse->assertJsonValidationErrors('warehouse_id');
+    }
+
+    public function test_advanced_analytics_are_scoped_to_selected_warehouse(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $mainWarehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN-ANL');
+        $reserveWarehouse = $this->createWarehouse($context->organization->id, 'Reserve warehouse', 'RES-ANL');
+        $mainMaterial = $this->createMaterial($context->organization->id, $unit->id, 'Main cement', 'MAIN-CEM-ANL');
+        $reserveMaterial = $this->createMaterial($context->organization->id, $unit->id, 'Reserve cement', 'RES-CEM-ANL');
+        $this->createBalance($context->organization->id, $mainWarehouse->id, $mainMaterial->id, 40, 100);
+        $this->createBalance($context->organization->id, $reserveWarehouse->id, $reserveMaterial->id, 1000, 200);
+        $this->createMovement($context->organization->id, $mainWarehouse->id, $mainMaterial->id, 9, 100);
+        $this->createMovement($context->organization->id, $reserveWarehouse->id, $reserveMaterial->id, 90, 200);
+        $this->allowAdminAccess();
+
+        $forecastResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/advanced-warehouse/analytics/forecast?' . http_build_query([
+                'warehouse_id' => $mainWarehouse->id,
+                'horizon_days' => 30,
+            ]));
+
+        $forecastResponse->assertOk();
+        $forecastIds = collect($forecastResponse->json('data.forecasts'))->pluck('asset_id')->all();
+        $this->assertSame([$mainMaterial->id], $forecastIds);
+        $this->assertSame(40.0, (float) $forecastResponse->json('data.forecasts.0.current_stock'));
+
+        $abcXyzResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/advanced-warehouse/analytics/abc-xyz?' . http_build_query([
+                'warehouse_id' => $mainWarehouse->id,
+            ]));
+
+        $abcXyzResponse->assertOk();
+        $analysisIds = collect($abcXyzResponse->json('data.assets'))->pluck('asset_id')->all();
+        $this->assertSame([$mainMaterial->id], $analysisIds);
     }
 
     public function test_admin_viewer_cannot_manage_inventory_or_project_allocations_without_warehouse_permissions(): void
@@ -402,6 +454,24 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
             'batch_number' => $batchNumber,
             'last_movement_at' => now(),
             'created_at' => now(),
+        ]);
+    }
+
+    private function createMovement(
+        int $organizationId,
+        int $warehouseId,
+        int $materialId,
+        float $quantity,
+        float $price
+    ): WarehouseMovement {
+        return WarehouseMovement::query()->create([
+            'organization_id' => $organizationId,
+            'warehouse_id' => $warehouseId,
+            'material_id' => $materialId,
+            'movement_type' => WarehouseMovement::TYPE_WRITE_OFF,
+            'quantity' => $quantity,
+            'price' => $price,
+            'movement_date' => now()->subDays(5),
         ]);
     }
 
