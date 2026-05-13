@@ -7,14 +7,15 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Services\Report\AdvanceAccountReportService;
-use Illuminate\Http\Request;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 use function trans_message;
 
-/**
- * Контроллер отчётов по подотчётным средствам
- */
 class AdvanceAccountReportController extends Controller
 {
     public function __construct(
@@ -22,81 +23,116 @@ class AdvanceAccountReportController extends Controller
     ) {
     }
 
-    /**
-     * Получить сводный отчёт по подотчётным средствам
-     * 
-     * GET /api/v1/admin/advance-accounts/reports/summary
-     */
     public function summary(Request $request): JsonResponse
     {
         try {
-            $filters = $request->only(['date_from', 'date_to']);
-            $filters['organization_id'] = $request->user()->current_organization_id;
+            $report = $this->reportService->getSummaryReport($this->filters($request, ['date_from', 'date_to']));
 
-            $report = $this->reportService->getSummaryReport($filters);
-            
             return AdminResponse::success($report, trans_message('advance_account.summary_loaded'));
-        } catch (\Throwable $e) {
+        } catch (\Throwable $exception) {
+            $this->logReportError($exception, $request, 'summary');
+
             return AdminResponse::error(trans_message('advance_account.report_failed'), 500);
         }
     }
 
-    /**
-     * Получить отчёт по подотчётным средствам конкретного пользователя
-     * 
-     * GET /api/v1/admin/advance-accounts/reports/user/{userId}
-     */
     public function userReport(Request $request, int $userId): JsonResponse
     {
         try {
-            $filters = $request->only(['date_from', 'date_to']);
-            $filters['organization_id'] = $request->user()->current_organization_id;
+            $filters = $this->filters($request, ['date_from', 'date_to']);
             $filters['user_id'] = $userId;
-
             $report = $this->reportService->getUserReport($filters);
-            
+
             return AdminResponse::success($report, trans_message('advance_account.user_report_loaded'));
-        } catch (\Throwable $e) {
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('advance_account.report_subject_not_found'), 404);
+        } catch (\Throwable $exception) {
+            $this->logReportError($exception, $request, 'user', ['user_id' => $userId]);
+
             return AdminResponse::error(trans_message('advance_account.report_failed'), 500);
         }
     }
 
-    /**
-     * Получить отчёт по подотчётным средствам по проекту
-     * 
-     * GET /api/v1/admin/advance-accounts/reports/project/{projectId}
-     */
     public function projectReport(Request $request, int $projectId): JsonResponse
     {
         try {
-            $filters = $request->only(['date_from', 'date_to']);
-            $filters['organization_id'] = $request->user()->current_organization_id;
+            $filters = $this->filters($request, ['date_from', 'date_to']);
             $filters['project_id'] = $projectId;
-
             $report = $this->reportService->getProjectReport($filters);
-            
+
             return AdminResponse::success($report, trans_message('advance_account.project_report_loaded'));
-        } catch (\Throwable $e) {
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('advance_account.report_subject_not_found'), 404);
+        } catch (\Throwable $exception) {
+            $this->logReportError($exception, $request, 'project', ['project_id' => $projectId]);
+
             return AdminResponse::error(trans_message('advance_account.report_failed'), 500);
         }
     }
 
-    /**
-     * Получить отчёт по просроченным подотчётным средствам
-     * 
-     * GET /api/v1/admin/advance-accounts/reports/overdue
-     */
     public function overdueReport(Request $request): JsonResponse
     {
         try {
-            $filters = $request->only(['overdue_days']);
-            $filters['organization_id'] = $request->user()->current_organization_id;
+            $report = $this->reportService->getOverdueReport($this->filters($request, ['overdue_days']));
 
-            $report = $this->reportService->getOverdueReport($filters);
-            
             return AdminResponse::success($report, trans_message('advance_account.overdue_report_loaded'));
-        } catch (\Throwable $e) {
+        } catch (\Throwable $exception) {
+            $this->logReportError($exception, $request, 'overdue');
+
             return AdminResponse::error(trans_message('advance_account.report_failed'), 500);
         }
+    }
+
+    public function export(Request $request, string $format): Response|StreamedResponse|JsonResponse
+    {
+        if (!in_array($format, ['json', 'csv', 'xlsx'], true)) {
+            return AdminResponse::error(trans_message('reports.unsupported_export_format'), 422);
+        }
+
+        try {
+            $filters = $this->filters($request, [
+                'date_from',
+                'date_to',
+                'overdue_days',
+                'report_type',
+                'user_id',
+                'project_id',
+            ]);
+
+            return $this->reportService->exportReport($filters, $format);
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('advance_account.report_subject_not_found'), 404);
+        } catch (\Throwable $exception) {
+            $this->logReportError($exception, $request, 'export', ['format' => $format]);
+
+            return AdminResponse::error(trans_message('advance_account.report_failed'), 500);
+        }
+    }
+
+    private function filters(Request $request, array $keys): array
+    {
+        $filters = array_filter(
+            $request->only($keys),
+            static fn ($value): bool => $value !== null && $value !== ''
+        );
+
+        $filters['organization_id'] = $request->user()->current_organization_id;
+
+        return $filters;
+    }
+
+    private function logReportError(
+        \Throwable $exception,
+        Request $request,
+        string $reportType,
+        array $context = []
+    ): void {
+        Log::error('Advance account report failed.', array_merge($context, [
+            'report_type' => $reportType,
+            'user_id' => $request->user()?->id,
+            'organization_id' => $request->user()?->current_organization_id,
+            'filters' => $request->query(),
+            'exception' => $exception,
+        ]));
     }
 }

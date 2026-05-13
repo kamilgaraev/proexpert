@@ -1,444 +1,368 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services\Report;
 
 use App\Models\AdvanceAccountTransaction;
-use App\Models\User;
 use App\Models\Project;
-use Illuminate\Support\Facades\DB;
-use Carbon\Carbon;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
-use Exception;
-use Symfony\Component\HttpFoundation\Response;
+use App\Models\User;
 use App\Services\Export\ExcelExporterService;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
+use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class AdvanceAccountReportService
 {
-    protected ExcelExporterService $excelExporter;
-
-    public function __construct(ExcelExporterService $excelExporter)
-    {
-        $this->excelExporter = $excelExporter;
+    public function __construct(
+        private readonly ExcelExporterService $excelExporter
+    ) {
     }
 
-    /**
-     * Получить сводный отчет по подотчетным средствам.
-     *
-     * @param array $filters
-     * @return array
-     */
     public function getSummaryReport(array $filters): array
     {
-        try {
-            $organizationId = $filters['organization_id'] ?? null;
-            if (!$organizationId) {
-                throw new Exception('Organization ID is required for report generation');
-            }
+        [$organizationId, $dateFrom, $dateTo] = $this->resolveBaseFilters($filters);
 
-            $dateFrom = isset($filters['date_from']) ? Carbon::parse($filters['date_from']) : Carbon::now()->subDays(30);
-            $dateTo = isset($filters['date_to']) ? Carbon::parse($filters['date_to']) : Carbon::now();
+        $transactionSummary = AdvanceAccountTransaction::query()
+            ->byOrganization($organizationId)
+            ->whereBetween('document_date', [$dateFrom->toDateString(), $dateTo->toDateString()])
+            ->selectRaw('type, reporting_status, COUNT(*) as count, SUM(amount) as total_amount')
+            ->groupBy('type', 'reporting_status')
+            ->get()
+            ->groupBy('type')
+            ->map(fn (Collection $group): Collection => $group
+                ->keyBy('reporting_status')
+                ->map(fn (AdvanceAccountTransaction $item): array => [
+                    'count' => (int) $item->getAttribute('count'),
+                    'total_amount' => (float) $item->getAttribute('total_amount'),
+                ]));
 
-            // Получаем сводные данные по транзакциям
-            $transactionSummary = AdvanceAccountTransaction::byOrganization($organizationId)
-                ->whereBetween('created_at', [$dateFrom->toDateTimeString(), $dateTo->toDateTimeString()])
-                ->select([
-                    'type',
-                    DB::raw('COUNT(*) as count'),
-                    DB::raw('SUM(amount) as total_amount'),
-                    'reporting_status',
-                ])
-                ->groupBy(['type', 'reporting_status'])
-                ->get()
-                ->groupBy('type')
-                ->map(function ($group) {
-                    return $group->groupBy('reporting_status')->map(function ($items) {
-                        return [
-                            'count' => $items->sum('count'),
-                            'total_amount' => $items->sum('total_amount'),
-                        ];
-                    });
-                });
-
-            // Получаем сводные данные по пользователям
-            $userSummary = User::whereHas('organizations', function ($q) use ($organizationId) {
-                    $q->where('organization_id', $organizationId);
-                })
-                ->select([
-                    'id',
-                    'name',
-                    'current_balance',
-                    'total_issued',
-                    'total_reported',
-                    'has_overdue_balance',
-                ])
-                ->orderByDesc('current_balance')
-                ->limit(10)
-                ->get();
-
-            return [
-                'title' => 'Сводный отчет по подотчетным средствам',
-                'period' => [
-                    'from' => $dateFrom->format('Y-m-d'),
-                    'to' => $dateTo->format('Y-m-d'),
-                ],
-                'transaction_summary' => $transactionSummary,
-                'top_users' => $userSummary,
-                'generated_at' => Carbon::now()->format('Y-m-d H:i:s'),
-            ];
-        } catch (Exception $e) {
-            Log::error('Error generating advance account summary report: ' . $e->getMessage(), [
-                'exception' => $e,
-                'filters' => $filters
+        $topUsers = User::query()
+            ->whereHas('organizations', fn ($query) => $query->where('organization_id', $organizationId))
+            ->select([
+                'id',
+                'name',
+                'current_balance',
+                'total_issued',
+                'total_reported',
+                'has_overdue_balance',
+            ])
+            ->orderByDesc('current_balance')
+            ->limit(10)
+            ->get()
+            ->map(fn (User $user): array => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'current_balance' => (float) $user->current_balance,
+                'total_issued' => (float) $user->total_issued,
+                'total_reported' => (float) $user->total_reported,
+                'has_overdue_balance' => (bool) $user->has_overdue_balance,
             ]);
 
-            return [
-                'error' => 'Failed to generate report',
-                'message' => $e->getMessage(),
-            ];
-        }
+        return [
+            'title' => 'Сводный отчет по подотчетным средствам',
+            'period' => $this->formatPeriod($dateFrom, $dateTo),
+            'transaction_summary' => $transactionSummary,
+            'top_users' => $topUsers,
+            'generated_at' => Carbon::now()->toDateTimeString(),
+        ];
     }
 
-    /**
-     * Получить отчет по подотчетным средствам конкретного пользователя.
-     *
-     * @param array $filters
-     * @return array
-     */
     public function getUserReport(array $filters): array
     {
-        try {
-            $userId = $filters['user_id'] ?? null;
-            $organizationId = $filters['organization_id'] ?? null;
+        [$organizationId, $dateFrom, $dateTo] = $this->resolveBaseFilters($filters);
+        $userId = (int) ($filters['user_id'] ?? 0);
 
-            if (!$userId || !$organizationId) {
-                throw new Exception('User ID and Organization ID are required for report generation');
-            }
+        $user = User::query()
+            ->whereKey($userId)
+            ->whereHas('organizations', fn ($query) => $query->where('organization_id', $organizationId))
+            ->firstOrFail();
 
-            $dateFrom = isset($filters['date_from']) ? Carbon::parse($filters['date_from']) : Carbon::now()->subDays(30);
-            $dateTo = isset($filters['date_to']) ? Carbon::parse($filters['date_to']) : Carbon::now();
+        $transactions = AdvanceAccountTransaction::query()
+            ->byUser($userId)
+            ->byOrganization($organizationId)
+            ->whereBetween('document_date', [$dateFrom->toDateString(), $dateTo->toDateString()])
+            ->with(['project'])
+            ->orderByDesc('document_date')
+            ->orderByDesc('created_at')
+            ->get();
 
-            // Получаем данные о пользователе
-            $user = User::findOrFail($userId);
+        $summary = [
+            'total_issued' => (float) $transactions->where('type', AdvanceAccountTransaction::TYPE_ISSUE)->sum('amount'),
+            'total_expense' => (float) $transactions->where('type', AdvanceAccountTransaction::TYPE_EXPENSE)->sum('amount'),
+            'total_returned' => (float) $transactions->where('type', AdvanceAccountTransaction::TYPE_RETURN)->sum('amount'),
+            'current_balance' => (float) $user->current_balance,
+        ];
 
-            // Получаем все транзакции пользователя
-            $transactions = AdvanceAccountTransaction::byUser($userId)
-                ->byOrganization($organizationId)
-                ->whereBetween('created_at', [$dateFrom->toDateTimeString(), $dateTo->toDateTimeString()])
-                ->with(['project'])
-                ->orderBy('created_at', 'desc')
-                ->get();
-
-            // Группируем транзакции по типу
-            $summary = [
-                'total_issued' => $transactions->where('type', AdvanceAccountTransaction::TYPE_ISSUE)->sum('amount'),
-                'total_expense' => $transactions->where('type', AdvanceAccountTransaction::TYPE_EXPENSE)->sum('amount'),
-                'total_returned' => $transactions->where('type', AdvanceAccountTransaction::TYPE_RETURN)->sum('amount'),
-                'current_balance' => $user->current_balance,
-            ];
-
-            // Группируем транзакции по проектам
-            $projectSummary = $transactions->groupBy('project_id')->map(function ($group) {
+        $projectSummary = $transactions
+            ->groupBy('project_id')
+            ->map(function (EloquentCollection $group): array {
                 $project = $group->first()->project;
+
                 return [
-                    'project_id' => $project ? $project->id : null,
-                    'project_name' => $project ? $project->name : 'Без проекта',
-                    'total_amount' => $group->sum('amount'),
+                    'project_id' => $project?->id,
+                    'project_name' => $project?->name ?? 'Без проекта',
+                    'total_amount' => (float) $group->sum('amount'),
                     'transaction_count' => $group->count(),
                 ];
-            })->values();
+            })
+            ->values();
 
-            return [
-                'title' => 'Отчет по подотчетным средствам пользователя',
-                'user' => [
-                    'id' => $user->id,
-                    'name' => $user->name,
-                    'current_balance' => $user->current_balance,
-                    'total_issued' => $user->total_issued,
-                    'total_reported' => $user->total_reported,
-                ],
-                'period' => [
-                    'from' => $dateFrom->format('Y-m-d'),
-                    'to' => $dateTo->format('Y-m-d'),
-                ],
-                'summary' => $summary,
-                'transactions' => $transactions,
-                'project_summary' => $projectSummary,
-                'generated_at' => Carbon::now()->format('Y-m-d H:i:s'),
-            ];
-        } catch (Exception $e) {
-            Log::error('Error generating user advance account report: ' . $e->getMessage(), [
-                'exception' => $e,
-                'filters' => $filters
-            ]);
-
-            return [
-                'error' => 'Failed to generate report',
-                'message' => $e->getMessage(),
-            ];
-        }
+        return [
+            'title' => 'Отчет по подотчетным средствам пользователя',
+            'user' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'current_balance' => (float) $user->current_balance,
+                'total_issued' => (float) $user->total_issued,
+                'total_reported' => (float) $user->total_reported,
+            ],
+            'period' => $this->formatPeriod($dateFrom, $dateTo),
+            'summary' => $summary,
+            'transactions' => $transactions,
+            'project_summary' => $projectSummary,
+            'generated_at' => Carbon::now()->toDateTimeString(),
+        ];
     }
 
-    /**
-     * Получить отчет по подотчетным средствам по проекту.
-     *
-     * @param array $filters
-     * @return array
-     */
     public function getProjectReport(array $filters): array
     {
-        try {
-            $projectId = $filters['project_id'] ?? null;
-            $organizationId = $filters['organization_id'] ?? null;
+        [$organizationId, $dateFrom, $dateTo] = $this->resolveBaseFilters($filters);
+        $projectId = (int) ($filters['project_id'] ?? 0);
 
-            if (!$projectId || !$organizationId) {
-                throw new Exception('Project ID and Organization ID are required for report generation');
-            }
+        $project = Project::query()
+            ->whereKey($projectId)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
 
-            $dateFrom = isset($filters['date_from']) ? Carbon::parse($filters['date_from']) : Carbon::now()->subDays(30);
-            $dateTo = isset($filters['date_to']) ? Carbon::parse($filters['date_to']) : Carbon::now();
+        $transactions = AdvanceAccountTransaction::query()
+            ->byProject($projectId)
+            ->byOrganization($organizationId)
+            ->whereBetween('document_date', [$dateFrom->toDateString(), $dateTo->toDateString()])
+            ->with(['user'])
+            ->orderByDesc('document_date')
+            ->orderByDesc('created_at')
+            ->get();
 
-            // Получаем данные о проекте
-            $project = Project::findOrFail($projectId);
+        $summary = [
+            'total_issued' => (float) $transactions->where('type', AdvanceAccountTransaction::TYPE_ISSUE)->sum('amount'),
+            'total_expense' => (float) $transactions->where('type', AdvanceAccountTransaction::TYPE_EXPENSE)->sum('amount'),
+            'total_returned' => (float) $transactions->where('type', AdvanceAccountTransaction::TYPE_RETURN)->sum('amount'),
+        ];
 
-            // Получаем все транзакции по проекту
-            $transactions = AdvanceAccountTransaction::byProject($projectId)
-                ->byOrganization($organizationId)
-                ->whereBetween('created_at', [$dateFrom->toDateTimeString(), $dateTo->toDateTimeString()])
-                ->with(['user'])
-                ->orderBy('created_at', 'desc')
-                ->get();
-
-            // Группируем транзакции по типу
-            $summary = [
-                'total_issued' => $transactions->where('type', AdvanceAccountTransaction::TYPE_ISSUE)->sum('amount'),
-                'total_expense' => $transactions->where('type', AdvanceAccountTransaction::TYPE_EXPENSE)->sum('amount'),
-                'total_returned' => $transactions->where('type', AdvanceAccountTransaction::TYPE_RETURN)->sum('amount'),
-            ];
-
-            // Группируем транзакции по пользователям
-            $userSummary = $transactions->groupBy('user_id')->map(function ($group) {
+        $userSummary = $transactions
+            ->groupBy('user_id')
+            ->map(function (EloquentCollection $group): array {
                 $user = $group->first()->user;
+
                 return [
-                    'user_id' => $user->id,
-                    'user_name' => $user->name,
-                    'total_amount' => $group->sum('amount'),
+                    'user_id' => $user?->id,
+                    'user_name' => $user?->name ?? 'Без пользователя',
+                    'total_amount' => (float) $group->sum('amount'),
                     'transaction_count' => $group->count(),
                 ];
-            })->values();
+            })
+            ->values();
 
-            return [
-                'title' => 'Отчет по подотчетным средствам проекта',
-                'project' => [
-                    'id' => $project->id,
-                    'name' => $project->name,
-                    'external_code' => $project->external_code,
-                ],
-                'period' => [
-                    'from' => $dateFrom->format('Y-m-d'),
-                    'to' => $dateTo->format('Y-m-d'),
-                ],
-                'summary' => $summary,
-                'transactions' => $transactions,
-                'user_summary' => $userSummary,
-                'generated_at' => Carbon::now()->format('Y-m-d H:i:s'),
-            ];
-        } catch (Exception $e) {
-            Log::error('Error generating project advance account report: ' . $e->getMessage(), [
-                'exception' => $e,
-                'filters' => $filters
-            ]);
-
-            return [
-                'error' => 'Failed to generate report',
-                'message' => $e->getMessage(),
-            ];
-        }
+        return [
+            'title' => 'Отчет по подотчетным средствам проекта',
+            'project' => [
+                'id' => $project->id,
+                'name' => $project->name,
+                'external_code' => $project->external_code,
+            ],
+            'period' => $this->formatPeriod($dateFrom, $dateTo),
+            'summary' => $summary,
+            'transactions' => $transactions,
+            'user_summary' => $userSummary,
+            'generated_at' => Carbon::now()->toDateTimeString(),
+        ];
     }
 
-    /**
-     * Получить отчет по просроченным подотчетным средствам.
-     *
-     * @param array $filters
-     * @return array
-     */
     public function getOverdueReport(array $filters): array
     {
-        try {
-            $organizationId = $filters['organization_id'] ?? null;
-            if (!$organizationId) {
-                throw new Exception('Organization ID is required for report generation');
-            }
+        $organizationId = $this->resolveOrganizationId($filters);
+        $overdueDays = max(1, (int) ($filters['overdue_days'] ?? 30));
+        $cutoffDate = Carbon::now()->subDays($overdueDays);
 
-            $overdueDays = $filters['overdue_days'] ?? 30; // По умолчанию 30 дней
-            $cutoffDate = Carbon::now()->subDays($overdueDays);
-
-            // Получаем пользователей с просроченными подотчетными средствами
-            $users = User::whereHas('organizations', function ($q) use ($organizationId) {
-                    $q->where('organization_id', $organizationId);
-                })
-                ->where('has_overdue_balance', true)
-                ->where('current_balance', '>', 0)
-                ->where(function ($query) use ($cutoffDate) {
-                    $query->where('last_transaction_at', '<', $cutoffDate)
-                        ->orWhere(function ($q) use ($cutoffDate) {
-                            $q->whereNull('last_transaction_at')
-                                ->where('updated_at', '<', $cutoffDate);
-                        });
-                })
-                ->select([
-                    'id',
-                    'name',
-                    'current_balance',
-                    'last_transaction_at',
-                ])
-                ->get();
-
-            // Получаем детали по просроченным транзакциям
-            $overdueTransactions = AdvanceAccountTransaction::byOrganization($organizationId)
-                ->where('reporting_status', AdvanceAccountTransaction::STATUS_PENDING)
-                ->where('type', AdvanceAccountTransaction::TYPE_ISSUE)
-                ->where('created_at', '<', $cutoffDate)
-                ->with(['user', 'project'])
-                ->orderBy('created_at')
-                ->get();
-
-            return [
-                'title' => 'Отчет по просроченным подотчетным средствам',
-                'cutoff_date' => $cutoffDate->format('Y-m-d'),
-                'overdue_days' => $overdueDays,
-                'users_with_overdue_balance' => $users,
-                'overdue_transactions' => $overdueTransactions,
-                'summary' => [
-                    'user_count' => $users->count(),
-                    'transaction_count' => $overdueTransactions->count(),
-                    'total_overdue_amount' => $users->sum('current_balance'),
-                ],
-                'generated_at' => Carbon::now()->format('Y-m-d H:i:s'),
-            ];
-        } catch (Exception $e) {
-            Log::error('Error generating overdue advance account report: ' . $e->getMessage(), [
-                'exception' => $e,
-                'filters' => $filters
+        $users = User::query()
+            ->whereHas('organizations', fn ($query) => $query->where('organization_id', $organizationId))
+            ->where('has_overdue_balance', true)
+            ->where('current_balance', '>', 0)
+            ->where(function ($query) use ($cutoffDate): void {
+                $query->where('last_transaction_at', '<', $cutoffDate)
+                    ->orWhere(function ($subQuery) use ($cutoffDate): void {
+                        $subQuery->whereNull('last_transaction_at')
+                            ->where('updated_at', '<', $cutoffDate);
+                    });
+            })
+            ->select(['id', 'name', 'current_balance', 'last_transaction_at'])
+            ->get()
+            ->map(fn (User $user): array => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'current_balance' => (float) $user->current_balance,
+                'last_transaction_at' => $user->last_transaction_at?->toDateTimeString(),
             ]);
 
-            return [
-                'error' => 'Failed to generate report',
-                'message' => $e->getMessage(),
-            ];
-        }
+        $overdueTransactions = AdvanceAccountTransaction::query()
+            ->byOrganization($organizationId)
+            ->where('reporting_status', AdvanceAccountTransaction::STATUS_PENDING)
+            ->where('type', AdvanceAccountTransaction::TYPE_ISSUE)
+            ->where('document_date', '<', $cutoffDate->toDateString())
+            ->with(['user', 'project'])
+            ->orderBy('document_date')
+            ->orderBy('created_at')
+            ->get();
+
+        return [
+            'title' => 'Отчет по просроченным подотчетным средствам',
+            'cutoff_date' => $cutoffDate->toDateString(),
+            'overdue_days' => $overdueDays,
+            'users_with_overdue_balance' => $users,
+            'overdue_transactions' => $overdueTransactions,
+            'summary' => [
+                'user_count' => $users->count(),
+                'transaction_count' => $overdueTransactions->count(),
+                'total_overdue_amount' => (float) $users->sum('current_balance'),
+            ],
+            'generated_at' => Carbon::now()->toDateTimeString(),
+        ];
     }
 
-    /**
-     * Экспортировать отчет в указанном формате.
-     *
-     * @param array $filters
-     * @param string $format
-     * @return Response
-     */
-    public function exportReport(array $filters, string $format): Response
+    public function exportReport(array $filters, string $format): Response|StreamedResponse
     {
-        try {
-            $reportType = $filters['report_type'] ?? 'summary';
-            $fileName = 'advance_account_report_' . $reportType . '_' . date('Y-m-d_H-i-s');
+        $reportType = (string) ($filters['report_type'] ?? 'summary');
+        $reportData = $this->resolveReportData($filters, $reportType);
+        $fileName = 'advance_account_report_'.$reportType.'_'.Carbon::now()->format('Y-m-d_H-i-s');
+        [$headers, $rows] = $this->resolveExportRows($reportData, $reportType);
 
-            switch ($reportType) {
-                case 'user':
-                    $reportData = $this->getUserReport($filters);
-                    $headers = ['ID', 'Имя', 'Проект', 'Тип транзакции', 'Сумма', 'Дата'];
-                    $rows = collect($reportData['transactions'])->map(function($t) {
-                        return [
-                            $t['id'] ?? ($t->id ?? ''),
-                            $t['user']['name'] ?? ($t->user->name ?? ''),
-                            $t['project']['name'] ?? ($t->project->name ?? ''),
-                            $t['type'] ?? ($t->type ?? ''),
-                            $t['amount'] ?? ($t->amount ?? ''),
-                            isset($t['created_at']) ? (string)$t['created_at'] : ((string)($t->created_at ?? '')),
-                        ];
-                    });
-                    break;
-                case 'project':
-                    $reportData = $this->getProjectReport($filters);
-                    $headers = ['ID', 'Имя', 'Тип транзакции', 'Сумма', 'Дата', 'Пользователь'];
-                    $rows = collect($reportData['transactions'])->map(function($t) {
-                        return [
-                            $t['id'] ?? ($t->id ?? ''),
-                            $t['project']['name'] ?? ($t->project->name ?? ''),
-                            $t['type'] ?? ($t->type ?? ''),
-                            $t['amount'] ?? ($t->amount ?? ''),
-                            isset($t['created_at']) ? (string)$t['created_at'] : ((string)($t->created_at ?? '')),
-                            $t['user']['name'] ?? ($t->user->name ?? ''),
-                        ];
-                    });
-                    break;
-                case 'overdue':
-                    $reportData = $this->getOverdueReport($filters);
-                    $headers = ['ID', 'Имя', 'Текущий баланс', 'Последняя транзакция'];
-                    $rows = collect($reportData['users_with_overdue_balance'])->map(function($u) {
-                        return [
-                            $u['id'] ?? ($u->id ?? ''),
-                            $u['name'] ?? ($u->name ?? ''),
-                            $u['current_balance'] ?? ($u->current_balance ?? ''),
-                            isset($u['last_transaction_at']) ? (string)$u['last_transaction_at'] : ((string)($u->last_transaction_at ?? '')),
-                        ];
-                    });
-                    break;
-                default:
-                    $reportData = $this->getSummaryReport($filters);
-                    $headers = ['Тип', 'Статус', 'Количество', 'Сумма'];
-                    $rows = collect();
-                    foreach ($reportData['transaction_summary'] as $type => $statuses) {
-                        foreach ($statuses as $status => $vals) {
-                            $rows->push([
-                                $type,
-                                $status,
-                                $vals['count'] ?? '',
-                                $vals['total_amount'] ?? '',
-                            ]);
-                        }
-                    }
-            }
-
-            if ($format === 'json') {
-                $json = json_encode($reportData, JSON_PRETTY_PRINT);
-                return response($json, 200, [
-                    'Content-Type' => 'application/json',
-                    'Content-Disposition' => 'attachment; filename="' . $fileName . '.json"'
-                ]);
-            }
-            if ($format === 'xlsx') {
-                return $this->excelExporter->streamDownload($fileName . '.xlsx', $headers, $rows);
-            }
-            if ($format === 'csv') {
-                return response()->streamDownload(function () use ($headers, $rows): void {
-                    $output = fopen('php://output', 'w');
-                    fputs($output, "\xEF\xBB\xBF");
-                    fputcsv($output, $headers);
-
-                    foreach ($rows as $row) {
-                        fputcsv($output, $row);
-                    }
-
-                    fclose($output);
-                }, $fileName . '.csv', [
-                    'Content-Type' => 'text/csv; charset=UTF-8',
-                ]);
-            }
-
-            return response()->json([
-                'message' => trans_message('reports.unsupported_export_format'),
-                'data' => $reportData
-            ], 422);
-        } catch (Exception $e) {
-            Log::error('Error exporting advance account report: ' . $e->getMessage(), [
-                'exception' => $e,
-                'filters' => $filters,
-                'format' => $format
+        if ($format === 'json') {
+            return response(json_encode($reportData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), 200, [
+                'Content-Type' => 'application/json; charset=UTF-8',
+                'Content-Disposition' => 'attachment; filename="'.$fileName.'.json"',
             ]);
-            return response()->json([
-                'error' => 'Failed to export report',
-                'message' => $e->getMessage(),
-            ], 500);
         }
+
+        if ($format === 'xlsx') {
+            return $this->excelExporter->streamDownload($fileName.'.xlsx', $headers, $rows);
+        }
+
+        return response()->streamDownload(function () use ($headers, $rows): void {
+            $output = fopen('php://output', 'w');
+            fputs($output, "\xEF\xBB\xBF");
+            fputcsv($output, $headers);
+
+            foreach ($rows as $row) {
+                fputcsv($output, $row);
+            }
+
+            fclose($output);
+        }, $fileName.'.csv', [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+        ]);
     }
-} 
+
+    private function resolveReportData(array $filters, string $reportType): array
+    {
+        return match ($reportType) {
+            'user' => $this->getUserReport($filters),
+            'project' => $this->getProjectReport($filters),
+            'overdue' => $this->getOverdueReport($filters),
+            default => $this->getSummaryReport($filters),
+        };
+    }
+
+    private function resolveExportRows(array $reportData, string $reportType): array
+    {
+        return match ($reportType) {
+            'user' => [
+                ['ID', 'Пользователь', 'Проект', 'Тип транзакции', 'Сумма', 'Дата документа'],
+                collect($reportData['transactions'])->map(fn (AdvanceAccountTransaction $transaction): array => [
+                    $transaction->id,
+                    $transaction->user?->name,
+                    $transaction->project?->name,
+                    $transaction->type,
+                    (float) $transaction->amount,
+                    $transaction->document_date?->toDateString(),
+                ]),
+            ],
+            'project' => [
+                ['ID', 'Проект', 'Тип транзакции', 'Сумма', 'Дата документа', 'Пользователь'],
+                collect($reportData['transactions'])->map(fn (AdvanceAccountTransaction $transaction): array => [
+                    $transaction->id,
+                    $transaction->project?->name,
+                    $transaction->type,
+                    (float) $transaction->amount,
+                    $transaction->document_date?->toDateString(),
+                    $transaction->user?->name,
+                ]),
+            ],
+            'overdue' => [
+                ['ID', 'Пользователь', 'Текущий баланс', 'Последняя транзакция'],
+                collect($reportData['users_with_overdue_balance'])->map(fn (array $user): array => [
+                    $user['id'],
+                    $user['name'],
+                    $user['current_balance'],
+                    $user['last_transaction_at'],
+                ]),
+            ],
+            default => $this->resolveSummaryExportRows($reportData),
+        };
+    }
+
+    private function resolveSummaryExportRows(array $reportData): array
+    {
+        $rows = collect();
+
+        foreach ($reportData['transaction_summary'] as $type => $statuses) {
+            foreach ($statuses as $status => $values) {
+                $rows->push([
+                    $type,
+                    $status,
+                    $values['count'] ?? 0,
+                    $values['total_amount'] ?? 0,
+                ]);
+            }
+        }
+
+        return [
+            ['Тип', 'Статус', 'Количество', 'Сумма'],
+            $rows,
+        ];
+    }
+
+    private function resolveBaseFilters(array $filters): array
+    {
+        $organizationId = $this->resolveOrganizationId($filters);
+        $dateFrom = !empty($filters['date_from'])
+            ? Carbon::parse($filters['date_from'])->startOfDay()
+            : Carbon::now()->subDays(30)->startOfDay();
+        $dateTo = !empty($filters['date_to'])
+            ? Carbon::parse($filters['date_to'])->endOfDay()
+            : Carbon::now()->endOfDay();
+
+        return [$organizationId, $dateFrom, $dateTo];
+    }
+
+    private function resolveOrganizationId(array $filters): int
+    {
+        $organizationId = (int) ($filters['organization_id'] ?? 0);
+
+        if ($organizationId <= 0) {
+            throw new \InvalidArgumentException('Organization ID is required for report generation.');
+        }
+
+        return $organizationId;
+    }
+
+    private function formatPeriod(Carbon $dateFrom, Carbon $dateTo): array
+    {
+        return [
+            'from' => $dateFrom->toDateString(),
+            'to' => $dateTo->toDateString(),
+        ];
+    }
+}
