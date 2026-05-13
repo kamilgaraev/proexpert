@@ -1,19 +1,26 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\Estimates;
 
-use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\BudgetEstimates\Services\Normative\NormativeSearchService;
-use App\Models\NormativeRate;
+use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use App\Models\NormativeCollection;
-use Illuminate\Http\Request;
+use App\Models\NormativeRate;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\Response;
 
 class NormativeRateController extends Controller
 {
     public function __construct(
         protected NormativeSearchService $searchService
-    ) {}
+    ) {
+    }
 
     public function index(Request $request): JsonResponse
     {
@@ -27,21 +34,27 @@ class NormativeRateController extends Controller
         ];
 
         if ($request->has('query')) {
-            $rates = $this->searchService->search($request->input('query'), $filters);
+            $rates = $this->searchService->search((string) $request->input('query'), $filters);
         } elseif ($request->has('collection_id')) {
-            $rates = $this->searchService->getByCollection($request->input('collection_id'), $filters);
+            $rates = $this->searchService->getByCollection((int) $request->input('collection_id'), $filters);
         } else {
-            return response()->json(['error' => 'Укажите query или collection_id'], 400);
+            return AdminResponse::error(trans_message('normative_rates.query_or_collection_required'), Response::HTTP_BAD_REQUEST);
         }
 
-        return response()->json($rates);
+        return $this->paginated($rates, trans_message('normative_rates.loaded'));
     }
 
     public function show(int $id): JsonResponse
     {
-        $rate = NormativeRate::with(['collection', 'section', 'resources'])->findOrFail($id);
+        $rate = NormativeRate::query()
+            ->with(['collection', 'section', 'resources'])
+            ->find($id);
 
-        return response()->json($rate);
+        if (!$rate) {
+            return $this->notFound();
+        }
+
+        return AdminResponse::success($rate, trans_message('normative_rates.loaded'));
     }
 
     public function search(Request $request): JsonResponse
@@ -51,7 +64,7 @@ class NormativeRateController extends Controller
             'type' => 'nullable|in:text,fuzzy,code,advanced',
         ]);
 
-        $query = $request->input('query');
+        $query = (string) $request->input('query');
         $type = $request->input('type', 'text');
 
         $filters = [
@@ -67,54 +80,96 @@ class NormativeRateController extends Controller
             default => $this->searchService->search($query, $filters),
         };
 
-        return response()->json($results);
+        return $this->paginated($results, trans_message('normative_rates.search_loaded'));
     }
 
     public function collections(Request $request): JsonResponse
     {
         $filters = [];
-        
+
         if ($request->has('base_type_id')) {
             $filters['base_type_id'] = $request->input('base_type_id');
         }
 
         $collections = $this->searchService->getCollections($filters);
 
-        return response()->json($collections);
+        return AdminResponse::success($collections, trans_message('normative_rates.collections_loaded'));
     }
 
     public function sections(Request $request, int $collectionId): JsonResponse
     {
-        if ($request->input('hierarchy')) {
-            $sections = $this->searchService->getSectionHierarchy($collectionId);
-        } else {
-            $parentId = $request->input('parent_id');
-            $sections = $this->searchService->getSections($collectionId, $parentId);
+        if (!NormativeCollection::query()->where('id', $collectionId)->where('is_active', true)->exists()) {
+            return AdminResponse::error(trans_message('normative_rates.collection_not_found'), Response::HTTP_NOT_FOUND);
         }
 
-        return response()->json($sections);
+        $sections = $request->boolean('hierarchy')
+            ? $this->searchService->getSectionHierarchy($collectionId)
+            : $this->searchService->getSections($collectionId, $request->input('parent_id') !== null ? (int) $request->input('parent_id') : null);
+
+        return AdminResponse::success($sections, trans_message('normative_rates.sections_loaded'));
     }
 
     public function resources(int $id): JsonResponse
     {
-        $rate = NormativeRate::with('resources')->findOrFail($id);
+        $rate = NormativeRate::query()->with('resources')->find($id);
 
-        return response()->json($rate->resources);
+        if (!$rate) {
+            return $this->notFound();
+        }
+
+        return AdminResponse::success($rate->resources, trans_message('normative_rates.resources_loaded'));
     }
 
     public function similar(int $id): JsonResponse
     {
-        $rate = NormativeRate::findOrFail($id);
-        $similar = $this->searchService->searchSimilar($rate, 10);
+        $rate = NormativeRate::query()->find($id);
 
-        return response()->json($similar);
+        if (!$rate) {
+            return $this->notFound();
+        }
+
+        return AdminResponse::success(
+            $this->searchService->searchSimilar($rate, 10),
+            trans_message('normative_rates.similar_loaded')
+        );
     }
 
     public function mostUsed(): JsonResponse
     {
-        $rates = $this->searchService->getMostUsed(50);
+        return AdminResponse::success(
+            $this->searchService->getMostUsed(50),
+            trans_message('normative_rates.loaded')
+        );
+    }
 
-        return response()->json($rates);
+    private function paginated(LengthAwarePaginator $paginator, string $message): JsonResponse
+    {
+        return AdminResponse::paginated(
+            $paginator->items(),
+            [
+                'current_page' => $paginator->currentPage(),
+                'from' => $paginator->firstItem(),
+                'last_page' => $paginator->lastPage(),
+                'links' => [],
+                'path' => $paginator->path(),
+                'per_page' => $paginator->perPage(),
+                'to' => $paginator->lastItem(),
+                'total' => $paginator->total(),
+            ],
+            $message,
+            Response::HTTP_OK,
+            null,
+            [
+                'first' => $paginator->url(1),
+                'last' => $paginator->url($paginator->lastPage()),
+                'prev' => $paginator->previousPageUrl(),
+                'next' => $paginator->nextPageUrl(),
+            ]
+        );
+    }
+
+    private function notFound(): JsonResponse
+    {
+        return AdminResponse::error(trans_message('normative_rates.not_found'), Response::HTTP_NOT_FOUND);
     }
 }
-
