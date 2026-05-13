@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 use function trans_message;
 
@@ -106,18 +107,18 @@ class PaymentTemplatesController extends Controller
 
     public function calculate(Request $request): JsonResponse
     {
-        $organizationId = (int) $request->attributes->get('current_organization_id');
-
-        $validated = $request->validate([
-            'contract_id' => [
-                'required',
-                'integer',
-                Rule::exists('contracts', 'id')->where('organization_id', $organizationId),
-            ],
-            'template_id' => 'required|string|in:advance_30,advance_50,advance_70,advance_100,final_100',
-        ]);
-
         try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+
+            $validated = $request->validate([
+                'contract_id' => [
+                    'required',
+                    'integer',
+                    Rule::exists('contracts', 'id')->where('organization_id', $organizationId),
+                ],
+                'template_id' => 'required|string|in:advance_30,advance_50,advance_70,advance_100,final_100',
+            ]);
+
             $contract = DB::table('contracts')
                 ->where('id', $validated['contract_id'])
                 ->where('organization_id', $organizationId)
@@ -150,6 +151,8 @@ class PaymentTemplatesController extends Controller
                 'percentage' => $percentage,
                 'calculated_amount' => $calculatedAmount,
             ], trans_message('payments.templates.calculated'));
+        } catch (ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Exception $e) {
             Log::error('payments.calculate.error', [
                 'error' => $e->getMessage(),

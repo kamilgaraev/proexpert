@@ -83,13 +83,19 @@ class ReportController extends Controller
             $topDebtors = PaymentDocument::query()
                 ->where('organization_id', $organizationId)
                 ->where('direction', InvoiceDirection::INCOMING)
+                ->whereBetween('document_date', [$periodFrom, $periodTo])
                 ->whereIn('status', [
                     PaymentDocumentStatus::SUBMITTED,
                     PaymentDocumentStatus::APPROVED,
                     PaymentDocumentStatus::PARTIALLY_PAID,
                     PaymentDocumentStatus::SCHEDULED,
-                ])
-                ->with('counterpartyOrganization')
+                ]);
+
+            if (!empty($validated['project_id'])) {
+                $topDebtors->where('project_id', (int) $validated['project_id']);
+            }
+
+            $topDebtors = $topDebtors->with('counterpartyOrganization')
                 ->get()
                 ->groupBy('counterparty_organization_id')
                 ->map(function ($group) {
@@ -102,7 +108,7 @@ class ReportController extends Controller
                         'overdue_documents_count' => $group->filter(fn ($document) => $document->isOverdue())->count(),
                     ];
                 })
-                ->sortByDesc('debt_amount')
+                ->sortByDesc(fn (array $debtor) => (float) $debtor['debt_amount'])
                 ->take(10)
                 ->values()
                 ->toArray();
