@@ -15,6 +15,7 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Material;
 use App\Models\MeasurementUnit;
 use App\Models\Project;
+use App\Models\Supplier;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery\MockInterface;
@@ -215,6 +216,66 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
 
         $response->assertStatus(422);
         $this->assertDatabaseMissing('inventory_acts', [
+            'organization_id' => $context->organization->id,
+        ]);
+    }
+
+    public function test_advanced_reservation_rejects_foreign_warehouse_material_and_project_before_mutation(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreignContext = AdminApiTestContext::create();
+        $foreignUnit = $this->createUnit($foreignContext->organization->id);
+        $foreignWarehouse = $this->createWarehouse($foreignContext->organization->id, 'Foreign reservation warehouse', 'RES-FOR');
+        $foreignMaterial = $this->createMaterial($foreignContext->organization->id, $foreignUnit->id, 'Foreign paint', 'PNT-FOR');
+        $foreignProject = Project::factory()->create([
+            'organization_id' => $foreignContext->organization->id,
+        ]);
+        $this->allowAdminAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/advanced-warehouse/reservations', [
+                'warehouse_id' => $foreignWarehouse->id,
+                'material_id' => $foreignMaterial->id,
+                'project_id' => $foreignProject->id,
+                'quantity' => 1,
+                'reason' => 'Foreign reservation attempt',
+            ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['warehouse_id', 'material_id', 'project_id']);
+        $this->assertDatabaseMissing('asset_reservations', [
+            'organization_id' => $context->organization->id,
+        ]);
+    }
+
+    public function test_auto_reorder_rule_rejects_foreign_warehouse_material_and_supplier_before_mutation(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreignContext = AdminApiTestContext::create();
+        $foreignUnit = $this->createUnit($foreignContext->organization->id);
+        $foreignWarehouse = $this->createWarehouse($foreignContext->organization->id, 'Foreign reorder warehouse', 'REORDER-FOR');
+        $foreignMaterial = $this->createMaterial($foreignContext->organization->id, $foreignUnit->id, 'Foreign adhesive', 'ADH-FOR');
+        $foreignSupplier = Supplier::query()->create([
+            'organization_id' => $foreignContext->organization->id,
+            'name' => 'Foreign supplier',
+            'is_active' => true,
+        ]);
+        $this->allowAdminAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/advanced-warehouse/auto-reorder/rules', [
+                'warehouse_id' => $foreignWarehouse->id,
+                'material_id' => $foreignMaterial->id,
+                'min_stock_level' => 1,
+                'reorder_point' => 2,
+                'reorder_quantity' => 3,
+                'supplier_id' => $foreignSupplier->id,
+                'is_active' => true,
+            ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['warehouse_id', 'material_id', 'default_supplier_id']);
+        $this->assertDatabaseMissing('auto_reorder_rules', [
             'organization_id' => $context->organization->id,
         ]);
     }

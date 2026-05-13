@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\BasicWarehouse\Http\Requests;
 
 use Carbon\Carbon;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class ReserveAssetRequest extends FormRequest
 {
@@ -31,11 +32,26 @@ class ReserveAssetRequest extends FormRequest
 
     public function rules(): array
     {
+        $organizationId = $this->user()?->current_organization_id;
+
         return [
-            'warehouse_id' => 'required|exists:organization_warehouses,id',
-            'material_id' => 'required|exists:materials,id',
+            'warehouse_id' => [
+                'required',
+                Rule::exists('organization_warehouses', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->where('is_active', true),
+            ],
+            'material_id' => [
+                'required',
+                Rule::exists('materials', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->where('is_active', true),
+            ],
             'quantity' => 'required|numeric|min:0.001',
-            'project_id' => 'nullable|exists:projects,id',
+            'project_id' => [
+                'nullable',
+                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+            ],
             'expires_hours' => 'nullable|integer|min:1|max:168',
             'reason' => 'nullable|string',
         ];

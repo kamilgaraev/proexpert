@@ -212,6 +212,19 @@ class WarehouseOperationsControllerTest extends TestCase
 
         $foreignMaterialReserve->assertStatus(422);
 
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignContext->organization->id]);
+        $foreignProjectReceipt = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/receipt', [
+                'warehouse_id' => $warehouse->id,
+                'material_id' => $material->id,
+                'quantity' => 1,
+                'price' => 100,
+                'project_id' => $foreignProject->id,
+                'reason' => 'Bad project',
+            ]);
+
+        $foreignProjectReceipt->assertStatus(422);
+
         $foreignWarehouseUnreserve = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/warehouses/operations/unreserve', [
                 'warehouse_id' => $foreignWarehouse->id,

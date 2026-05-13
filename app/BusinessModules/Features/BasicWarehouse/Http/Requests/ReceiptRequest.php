@@ -58,7 +58,10 @@ class ReceiptRequest extends FormRequest
             'material.description' => 'nullable|string',
             'quantity' => 'required|numeric|min:0.001',
             'price' => 'required|numeric|min:0',
-            'project_id' => 'nullable|exists:projects,id',
+            'project_id' => [
+                'nullable',
+                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+            ],
             'document_number' => 'nullable|string|max:100',
             'reason' => 'nullable|string|max:255',
             'metadata' => 'nullable|array',

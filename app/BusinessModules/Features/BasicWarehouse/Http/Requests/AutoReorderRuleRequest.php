@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BasicWarehouse\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class AutoReorderRuleRequest extends FormRequest
 {
@@ -35,23 +36,36 @@ class AutoReorderRuleRequest extends FormRequest
 
     public function rules(): array
     {
+        $organizationId = $this->user()?->current_organization_id;
+        $presenceRule = $this->isMethod('put') || $this->isMethod('patch') ? 'sometimes' : 'required';
+
         $rules = [
-            'warehouse_id' => 'required|exists:organization_warehouses,id',
-            'material_id' => 'required|exists:materials,id',
-            'min_stock' => 'required|numeric|min:0',
-            'max_stock' => 'required|numeric|gt:min_stock',
-            'reorder_point' => 'required|numeric|gte:min_stock|lte:max_stock',
-            'reorder_quantity' => 'required|numeric|min:0.001',
-            'default_supplier_id' => 'nullable|exists:suppliers,id',
+            'warehouse_id' => [
+                $presenceRule,
+                Rule::exists('organization_warehouses', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->where('is_active', true),
+            ],
+            'material_id' => [
+                $presenceRule,
+                Rule::exists('materials', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->where('is_active', true),
+            ],
+            'min_stock' => [$presenceRule, 'numeric', 'min:0'],
+            'max_stock' => [$presenceRule, 'numeric', 'gt:min_stock'],
+            'reorder_point' => [$presenceRule, 'numeric', 'gte:min_stock', 'lte:max_stock'],
+            'reorder_quantity' => [$presenceRule, 'numeric', 'min:0.001'],
+            'default_supplier_id' => [
+                'nullable',
+                Rule::exists('suppliers', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->where('is_active', true)
+                    ->whereNull('deleted_at'),
+            ],
             'is_active' => 'nullable|boolean',
             'notes' => 'nullable|string',
         ];
-
-        if ($this->isMethod('put') || $this->isMethod('patch')) {
-            foreach ($rules as $field => $rule) {
-                $rules[$field] = str_replace('required', 'sometimes', $rule);
-            }
-        }
 
         return $rules;
     }
