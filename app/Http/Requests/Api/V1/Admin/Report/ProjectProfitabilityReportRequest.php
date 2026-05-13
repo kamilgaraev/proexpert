@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Api\V1\Admin\Report;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class ProjectProfitabilityReportRequest extends FormRequest
 {
@@ -13,8 +14,14 @@ class ProjectProfitabilityReportRequest extends FormRequest
 
     public function rules(): array
     {
+        $organizationId = (int) ($this->attributes->get('current_organization_id') ?? $this->user()?->current_organization_id);
+
         return [
-            'project_id' => 'nullable|integer|exists:projects,id',
+            'project_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+            ],
             'status' => 'nullable|string|in:planning,active,on_hold,completed,cancelled',
             'customer' => 'nullable|string|max:255',
             'date_from' => 'nullable|date',

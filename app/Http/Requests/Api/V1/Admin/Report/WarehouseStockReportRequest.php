@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Api\V1\Admin\Report;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class WarehouseStockReportRequest extends FormRequest
 {
@@ -13,9 +14,19 @@ class WarehouseStockReportRequest extends FormRequest
 
     public function rules(): array
     {
+        $organizationId = (int) ($this->attributes->get('current_organization_id') ?? $this->user()?->current_organization_id);
+
         return [
-            'warehouse_id' => 'nullable|integer|exists:organization_warehouses,id',
-            'material_id' => 'nullable|integer|exists:materials,id',
+            'warehouse_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('organization_warehouses', 'id')->where('organization_id', $organizationId),
+            ],
+            'material_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('materials', 'id')->where('organization_id', $organizationId),
+            ],
             'category' => 'nullable|string|max:255',
             'show_critical_only' => 'nullable|in:0,1,true,false',
             'show_reserved' => 'nullable|in:0,1,true,false',
