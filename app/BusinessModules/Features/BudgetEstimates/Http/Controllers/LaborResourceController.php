@@ -10,6 +10,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 
 use function trans_message;
 
@@ -22,7 +23,7 @@ class LaborResourceController extends Controller
 
             $query = LaborResource::where('organization_id', $organizationId);
 
-            if ($request->has('is_active')) {
+            if ($request->filled('is_active')) {
                 $query->where('is_active', $request->boolean('is_active'));
             }
 
@@ -39,20 +40,20 @@ class LaborResourceController extends Controller
             }
 
             if ($request->filled('search')) {
-                $search = $request->input('search');
+                $search = mb_strtolower((string) $request->input('search'));
                 $query->where(function ($builder) use ($search): void {
-                    $builder->where('name', 'ILIKE', "%{$search}%")
-                        ->orWhere('code', 'ILIKE', "%{$search}%")
-                        ->orWhere('profession', 'ILIKE', "%{$search}%");
+                    $builder->whereRaw('LOWER(name) LIKE ?', ["%{$search}%"])
+                        ->orWhereRaw('LOWER(code) LIKE ?', ["%{$search}%"])
+                        ->orWhereRaw('LOWER(profession) LIKE ?', ["%{$search}%"]);
                 });
             }
 
-            $sortBy = $request->input('sort_by', 'name');
-            $sortOrder = $request->input('sort_order', 'asc');
+            $sortBy = $this->normalizeSortBy((string) $request->input('sort_by', 'name'));
+            $sortOrder = $this->normalizeSortDirection((string) $request->input('sort_direction', $request->input('sort_order', 'asc')));
 
             $query->orderBy($sortBy, $sortOrder);
 
-            $perPage = min((int) $request->input('per_page', 15), 100);
+            $perPage = $this->normalizePerPage($request->input('per_page', 15));
             $resources = $query->with('measurementUnit')->paginate($perPage);
 
             return AdminResponse::paginated(
@@ -108,13 +109,16 @@ class LaborResourceController extends Controller
             $organizationId = $request->attributes->get('current_organization_id');
 
             $validated = $request->validate([
-                'code' => 'required|string|max:100',
+                'code' => 'nullable|string|max:100',
                 'name' => 'required|string|max:255',
                 'description' => 'nullable|string',
                 'category' => 'nullable|string',
                 'profession' => 'nullable|string',
                 'skill_level' => 'nullable|integer|min:1|max:8',
-                'measurement_unit_id' => 'nullable|exists:measurement_units,id',
+                'measurement_unit_id' => [
+                    'nullable',
+                    Rule::exists('measurement_units', 'id')->where('organization_id', $organizationId),
+                ],
                 'hourly_rate' => 'nullable|numeric',
                 'shift_rate' => 'nullable|numeric',
                 'daily_rate' => 'nullable|numeric',
@@ -124,7 +128,7 @@ class LaborResourceController extends Controller
                 'is_active' => 'nullable|boolean',
             ]);
 
-            $exists = LaborResource::where('organization_id', $organizationId)
+            $exists = !empty($validated['code']) && LaborResource::where('organization_id', $organizationId)
                 ->where('code', $validated['code'])
                 ->exists();
 
@@ -164,13 +168,16 @@ class LaborResourceController extends Controller
             $resource = LaborResource::where('organization_id', $organizationId)->findOrFail($id);
 
             $validated = $request->validate([
-                'code' => 'sometimes|string|max:100',
+                'code' => 'sometimes|nullable|string|max:100',
                 'name' => 'sometimes|string|max:255',
                 'description' => 'nullable|string',
                 'category' => 'nullable|string',
                 'profession' => 'nullable|string',
                 'skill_level' => 'nullable|integer|min:1|max:8',
-                'measurement_unit_id' => 'nullable|exists:measurement_units,id',
+                'measurement_unit_id' => [
+                    'nullable',
+                    Rule::exists('measurement_units', 'id')->where('organization_id', $organizationId),
+                ],
                 'hourly_rate' => 'nullable|numeric',
                 'shift_rate' => 'nullable|numeric',
                 'daily_rate' => 'nullable|numeric',
@@ -180,7 +187,7 @@ class LaborResourceController extends Controller
                 'is_active' => 'nullable|boolean',
             ]);
 
-            if (isset($validated['code']) && $validated['code'] !== $resource->code) {
+            if (!empty($validated['code']) && $validated['code'] !== $resource->code) {
                 $exists = LaborResource::where('organization_id', $organizationId)
                     ->where('code', $validated['code'])
                     ->where('id', '!=', $id)
@@ -255,8 +262,10 @@ class LaborResourceController extends Controller
 
             $professions = LaborResource::where('organization_id', $organizationId)
                 ->whereNotNull('profession')
-                ->distinct('profession')
-                ->pluck('profession');
+                ->selectRaw('profession as name, COUNT(*) as count')
+                ->groupBy('profession')
+                ->orderBy('profession')
+                ->get();
 
             return AdminResponse::success($professions);
         } catch (\Exception $e) {
@@ -278,8 +287,10 @@ class LaborResourceController extends Controller
 
             $categories = LaborResource::where('organization_id', $organizationId)
                 ->whereNotNull('category')
-                ->distinct('category')
-                ->pluck('category');
+                ->selectRaw('category as name, COUNT(*) as count')
+                ->groupBy('category')
+                ->orderBy('category')
+                ->get();
 
             return AdminResponse::success($categories);
         } catch (\Exception $e) {
@@ -311,13 +322,31 @@ class LaborResourceController extends Controller
                 ->whereNotNull('skill_level')
                 ->groupBy('skill_level')
                 ->pluck('count', 'skill_level');
+            $professions = LaborResource::where('organization_id', $organizationId)
+                ->whereNotNull('profession')
+                ->selectRaw('profession as name, COUNT(*) as count')
+                ->groupBy('profession')
+                ->orderBy('profession')
+                ->get();
+            $categories = LaborResource::where('organization_id', $organizationId)
+                ->whereNotNull('category')
+                ->selectRaw('category as name, COUNT(*) as count')
+                ->groupBy('category')
+                ->orderBy('category')
+                ->get();
 
             return AdminResponse::success([
                 'total' => $total,
                 'active' => $active,
                 'inactive' => $total - $active,
+                'professions' => $professions,
+                'total_professions' => $professions->count(),
+                'categories' => $categories,
+                'total_categories' => $categories->count(),
                 'by_category' => $byCategory,
                 'by_skill_level' => $bySkillLevel,
+                'average_hourly_rate' => LaborResource::where('organization_id', $organizationId)->avg('hourly_rate'),
+                'average_shift_rate' => LaborResource::where('organization_id', $organizationId)->avg('shift_rate'),
             ]);
         } catch (\Exception $e) {
             Log::error('labor_resources.statistics.error', [
@@ -329,5 +358,59 @@ class LaborResourceController extends Controller
 
             return AdminResponse::error(trans_message('budget_estimates.labor_resources.statistics_error'), 500);
         }
+    }
+
+    public function autocomplete(Request $request): JsonResponse
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            $query = mb_strtolower(trim((string) $request->query('q', '')));
+            $limit = min(max((int) $request->query('limit', 20), 1), 50);
+
+            $resources = LaborResource::where('organization_id', $organizationId)
+                ->when($query !== '', function ($builder) use ($query): void {
+                    $builder->where(function ($nested) use ($query): void {
+                        $nested->whereRaw('LOWER(name) LIKE ?', ["%{$query}%"])
+                            ->orWhereRaw('LOWER(code) LIKE ?', ["%{$query}%"])
+                            ->orWhereRaw('LOWER(profession) LIKE ?', ["%{$query}%"]);
+                    });
+                })
+                ->orderBy('name')
+                ->limit($limit)
+                ->get(['id', 'code', 'name', 'profession', 'skill_level', 'hourly_rate']);
+
+            return AdminResponse::success($resources);
+        } catch (\Exception $e) {
+            Log::error('labor_resources.autocomplete.error', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'user_id' => $request->user()?->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('budget_estimates.labor_resources.list_error'), 500);
+        }
+    }
+
+    private function normalizePerPage(mixed $perPage): int
+    {
+        $value = (int) $perPage;
+
+        if ($value <= 0) {
+            return 1000;
+        }
+
+        return min($value, 1000);
+    }
+
+    private function normalizeSortBy(string $sortBy): string
+    {
+        return in_array($sortBy, ['name', 'code', 'profession', 'category', 'skill_level', 'hourly_rate', 'created_at'], true)
+            ? $sortBy
+            : 'name';
+    }
+
+    private function normalizeSortDirection(string $direction): string
+    {
+        return $direction === 'desc' ? 'desc' : 'asc';
     }
 }
