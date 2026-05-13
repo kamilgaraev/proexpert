@@ -64,17 +64,21 @@ class PersonalFileController extends Controller
             $storage = $this->fileService->disk($org);
 
             $paginator->getCollection()->transform(function (PersonalFile $file) use ($storage) {
-                $file->download_url = null;
+                $payload = $file->toArray();
+                $payload['path'] = $this->displayPersonalPath((int) $file->user_id, $file->path);
+                $payload['download_url'] = null;
+
                 try {
                     if ($storage->exists($file->path)) {
-                        $file->download_url = $storage->temporaryUrl($file->path, now()->addHours(1));
+                        $payload['download_url'] = $storage->temporaryUrl($file->path, now()->addHours(1));
                     }
                 } catch (\Exception $e) {
                     Log::warning('[PersonalFileController] Failed to create temporary URL', [
                         'file_id' => $file->id
                     ]);
                 }
-                return $file;
+
+                return $payload;
             });
 
             return AdminResponse::paginated(
@@ -122,7 +126,7 @@ class PersonalFileController extends Controller
                 ]
             );
 
-            return AdminResponse::success($folder, trans_message('files.folder_created'), 201);
+            return AdminResponse::success($this->personalFilePayload($folder), trans_message('files.folder_created'), 201);
         } catch (\Illuminate\Validation\ValidationException $e) {
             return AdminResponse::error(trans_message('files.operation_failed'), 422, $e->errors());
         } catch (\Throwable $e) {
@@ -169,7 +173,7 @@ class PersonalFileController extends Controller
                 'is_folder' => false,
             ]);
 
-            return AdminResponse::success($file, trans_message('files.uploaded'), 201);
+            return AdminResponse::success($this->personalFilePayload($file), trans_message('files.uploaded'), 201);
         } catch (\Illuminate\Validation\ValidationException $e) {
             return AdminResponse::error(trans_message('files.operation_failed'), 422, $e->errors());
         } catch (\Throwable $e) {
@@ -228,5 +232,29 @@ class PersonalFileController extends Controller
         $relativePath = $this->normalizeRelativePath($relativePath);
 
         return $relativePath === '' ? (string) $userId : $userId . '/' . $relativePath;
+    }
+
+    private function personalFilePayload(PersonalFile $file): array
+    {
+        $payload = $file->toArray();
+        $payload['path'] = $this->displayPersonalPath((int) $file->user_id, $file->path);
+
+        return $payload;
+    }
+
+    private function displayPersonalPath(int $userId, string $path): string
+    {
+        $normalizedPath = trim(str_replace('\\', '/', $path), '/');
+        $quotedUserId = preg_quote((string) $userId, '/');
+
+        if (preg_match("/^{$quotedUserId}\/(.+)$/", $normalizedPath, $matches) === 1) {
+            return $matches[1];
+        }
+
+        if ($normalizedPath === (string) $userId) {
+            return '';
+        }
+
+        return $normalizedPath;
     }
 }

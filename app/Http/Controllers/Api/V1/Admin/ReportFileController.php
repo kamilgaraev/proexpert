@@ -10,6 +10,7 @@ use App\Http\Responses\AdminResponse;
 use App\Models\ReportFile;
 use App\Services\Organization\OrganizationContext;
 use App\Services\Storage\FileService;
+use App\Services\Storage\OrganizationStoragePath;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -63,8 +64,9 @@ class ReportFileController extends Controller
             $paginator = $query->orderBy($sortBy, $sortDir)->paginate($perPage);
             $storage = $this->fileService->disk(OrganizationContext::getOrganization() ?? $user->currentOrganization);
 
-            $items = collect($paginator->items())->map(function (ReportFile $file) use ($storage) {
+            $items = collect($paginator->items())->map(function (ReportFile $file) use ($storage, $organizationId) {
                 $payload = $file->toArray();
+                $payload['path'] = OrganizationStoragePath::displayPath($file->organization_id ?? $organizationId, $file->path);
                 $payload['download_url'] = null;
 
                 try {

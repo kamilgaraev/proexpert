@@ -52,6 +52,29 @@ final class OrganizationStoragePath
         return 'reports/' . (string) $organizationId;
     }
 
+    public static function displayPath(int|string|null $organizationId, string $path): string
+    {
+        $normalizedPath = self::normalizeSeparators($path);
+
+        if (preg_match('/^org-\d+\/(.+)$/', $normalizedPath, $matches) === 1) {
+            return $matches[1];
+        }
+
+        if ($organizationId !== null) {
+            $quotedOrganizationId = preg_quote((string) $organizationId, '/');
+
+            if (preg_match("/^reports\/{$quotedOrganizationId}\/(.+)$/", $normalizedPath, $matches) === 1) {
+                return "reports/{$matches[1]}";
+            }
+
+            if (preg_match("/^estimate-imports\/org-{$quotedOrganizationId}\/(.+)$/", $normalizedPath, $matches) === 1) {
+                return "estimate-imports/{$matches[1]}";
+            }
+        }
+
+        return $normalizedPath;
+    }
+
     private static function organizationPrefix(int|string $organizationId): string
     {
         return 'org-' . (string) $organizationId;

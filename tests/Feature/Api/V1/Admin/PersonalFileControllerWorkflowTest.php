@@ -38,7 +38,7 @@ class PersonalFileControllerWorkflowTest extends TestCase
 
         $createFolderResponse->assertCreated();
         $createFolderResponse->assertJsonPath('success', true);
-        $createFolderResponse->assertJsonPath('data.path', $context->user->id . '/docs/');
+        $createFolderResponse->assertJsonPath('data.path', 'docs');
         $this->assertDatabaseHas('personal_files', [
             'user_id' => $context->user->id,
             'path' => $context->user->id . '/docs/',
@@ -54,9 +54,10 @@ class PersonalFileControllerWorkflowTest extends TestCase
         $uploadResponse->assertCreated();
         $uploadResponse->assertJsonPath('success', true);
         $uploadResponse->assertJsonPath('data.filename', 'contract.pdf');
+        $this->assertStringStartsWith('docs/', $uploadResponse->json('data.path'));
         $uploadedPath = $uploadResponse->json('data.path');
-        $this->assertStringStartsWith($context->user->id . '/docs/', $uploadedPath);
-        Storage::disk('s3')->assertExists($uploadedPath);
+        $storedPath = $context->user->id . '/' . $uploadedPath;
+        Storage::disk('s3')->assertExists($storedPath);
 
         $indexResponse = $this->withHeaders($context->authHeaders())
             ->getJson('/api/v1/admin/personal-files?folder=docs&per_page=10');
@@ -65,6 +66,7 @@ class PersonalFileControllerWorkflowTest extends TestCase
         $indexResponse->assertJsonPath('success', true);
         $indexResponse->assertJsonPath('meta.total', 1);
         $indexResponse->assertJsonPath('data.0.filename', 'contract.pdf');
+        $this->assertStringStartsWith('docs/', $indexResponse->json('data.0.path'));
 
         $ids = collect($indexResponse->json('data'))->pluck('id')->all();
         $this->assertNotContains($foreignFile->id, $ids);
@@ -75,7 +77,7 @@ class PersonalFileControllerWorkflowTest extends TestCase
         $deleteResponse->assertOk();
         $deleteResponse->assertJsonPath('success', true);
         $this->assertDatabaseMissing('personal_files', ['id' => $uploadResponse->json('data.id')]);
-        Storage::disk('s3')->assertMissing($uploadedPath);
+        Storage::disk('s3')->assertMissing($storedPath);
     }
 
     public function test_personal_folder_names_reject_path_traversal(): void

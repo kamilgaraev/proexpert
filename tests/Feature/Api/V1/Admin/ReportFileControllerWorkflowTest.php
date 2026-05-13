@@ -54,6 +54,7 @@ class ReportFileControllerWorkflowTest extends TestCase
         $indexResponse->assertJsonPath('success', true);
         $indexResponse->assertJsonPath('meta.total', 1);
         $indexResponse->assertJsonPath('data.0.id', $reportFile->id);
+        $indexResponse->assertJsonPath('data.0.path', 'reports/cash-flow.xlsx');
         $this->assertStringContainsString('cash-flow.xlsx', (string) $indexResponse->json('data.0.download_url'));
 
         $ids = collect($indexResponse->json('data'))->pluck('id')->all();
@@ -141,6 +142,7 @@ class ReportFileControllerWorkflowTest extends TestCase
 
         $response->assertOk();
         $response->assertJsonPath('meta.total', 1);
+        $response->assertJsonPath('data.0.path', 'reports/official-material-usage/2025/10/13/official.xlsx');
 
         $ids = collect($response->json('data'))->pluck('id')->all();
         $this->assertContains($legacyReport->id, $ids);
