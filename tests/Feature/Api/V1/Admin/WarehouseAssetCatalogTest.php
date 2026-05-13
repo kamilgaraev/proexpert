@@ -6,6 +6,7 @@ namespace Tests\Feature\Api\V1\Admin;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Material;
@@ -178,6 +179,33 @@ class WarehouseAssetCatalogTest extends TestCase
         ]);
     }
 
+    public function test_assets_can_be_filtered_by_selected_warehouse_balance(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id, 'Piece', 'pcs');
+        $mainWarehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN');
+        $reserveWarehouse = $this->createWarehouse($context->organization->id, 'Reserve warehouse', 'RES');
+        $mainAsset = $this->createAsset($context->organization->id, $unit->id, 'Main cement', 'MAIN-CEM');
+        $reserveAsset = $this->createAsset($context->organization->id, $unit->id, 'Reserve cement', 'RES-CEM');
+        $this->createBalance($context->organization->id, $mainWarehouse->id, $mainAsset->id, 10, 100);
+        $this->createBalance($context->organization->id, $reserveWarehouse->id, $reserveAsset->id, 5, 200);
+        $this->allowAdminAccess();
+
+        $listResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/assets?warehouse_id={$mainWarehouse->id}&per_page=20");
+
+        $listResponse->assertOk();
+        $this->assertSame(1, $listResponse->json('meta.total'));
+        $this->assertSame([$mainAsset->id], collect($listResponse->json('data'))->pluck('id')->all());
+
+        $statsResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/assets/statistics?warehouse_id={$mainWarehouse->id}");
+
+        $statsResponse->assertOk();
+        $statsResponse->assertJsonPath('data.material.count', 1);
+        $this->assertSame(1000.0, (float) $statsResponse->json('data.material.total_value'));
+    }
+
     public function test_asset_label_export_rejects_foreign_asset_ids_before_export(): void
     {
         $context = AdminApiTestContext::create();
@@ -217,6 +245,37 @@ class WarehouseAssetCatalogTest extends TestCase
             'measurement_unit_id' => $measurementUnitId,
             'additional_properties' => ['asset_type' => Asset::TYPE_MATERIAL],
             'is_active' => true,
+        ]);
+    }
+
+    private function createWarehouse(int $organizationId, string $name, string $code): OrganizationWarehouse
+    {
+        return OrganizationWarehouse::query()->create([
+            'organization_id' => $organizationId,
+            'name' => $name,
+            'code' => $code,
+            'warehouse_type' => OrganizationWarehouse::TYPE_CENTRAL,
+            'is_main' => false,
+            'is_active' => true,
+        ]);
+    }
+
+    private function createBalance(
+        int $organizationId,
+        int $warehouseId,
+        int $assetId,
+        float $quantity,
+        float $price
+    ): WarehouseBalance {
+        return WarehouseBalance::query()->create([
+            'organization_id' => $organizationId,
+            'warehouse_id' => $warehouseId,
+            'material_id' => $assetId,
+            'available_quantity' => $quantity,
+            'reserved_quantity' => 0,
+            'unit_price' => $price,
+            'min_stock_level' => 0,
+            'max_stock_level' => 0,
         ]);
     }
 

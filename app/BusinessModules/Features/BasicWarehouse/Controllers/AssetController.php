@@ -33,6 +33,7 @@ class AssetController extends Controller
             $filters = array_filter([
                 'asset_type' => $request->input('asset_type'),
                 'asset_category' => $request->input('asset_category'),
+                'warehouse_id' => $request->integer('warehouse_id') ?: null,
                 'search' => $request->input('search', $request->input('q')),
                 'sort_by' => $request->input('sort_by', 'name'),
                 'sort_order' => $request->input('sort_order', 'asc'),
@@ -157,7 +158,8 @@ class AssetController extends Controller
     {
         try {
             $organizationId = $request->user()->current_organization_id;
-            $stats = $this->assetService->getAssetTypeStatistics($organizationId);
+            $warehouseId = $request->integer('warehouse_id') ?: null;
+            $stats = $this->assetService->getAssetTypeStatistics($organizationId, $warehouseId);
 
             return AdminResponse::success($stats);
         } catch (\Exception $exception) {

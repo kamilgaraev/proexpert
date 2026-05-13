@@ -21,6 +21,11 @@ class ExportAssetLabelsRequest extends FormRequest
         return [
             'layout' => 'nullable|in:4,6,8',
             'asset_type' => 'nullable|in:material,equipment,tool,furniture,consumable,structure',
+            'warehouse_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('organization_warehouses', 'id')->where('organization_id', $organizationId),
+            ],
             'search' => 'nullable|string|max:255',
             'asset_ids' => 'nullable|array',
             'asset_ids.*' => [

@@ -139,6 +139,15 @@ class AssetService
             $query->ofCategory($filters['asset_category']);
         }
 
+        if (isset($filters['warehouse_id'])) {
+            $warehouseId = (int) $filters['warehouse_id'];
+            $query->whereHas('warehouseBalances', static function ($balanceQuery) use ($organizationId, $warehouseId): void {
+                $balanceQuery
+                    ->where('organization_id', $organizationId)
+                    ->where('warehouse_id', $warehouseId);
+            });
+        }
+
         // Поиск по имени или коду
         if (isset($filters['search'])) {
             $search = trim((string) $filters['search']);
@@ -193,37 +202,55 @@ class AssetService
     /**
      * Получить статистику по типам активов
      */
-    public function getAssetTypeStatistics(int $organizationId): array
+    public function getAssetTypeStatistics(int $organizationId, ?int $warehouseId = null): array
     {
+        if ($warehouseId !== null) {
+            return $this->buildAssetTypeStatistics($organizationId, $warehouseId);
+        }
+
         return Cache::remember(
             "asset_type_stats_{$organizationId}",
             600,
-            function () use ($organizationId) {
-                $stats = [];
-                
-                foreach (Asset::getAssetTypes() as $type => $label) {
-                    $count = Asset::where('organization_id', $organizationId)
-                        ->where('is_active', true)
-                        ->ofType($type)
-                        ->count();
-                    
-                    $totalValue = Asset::where('materials.organization_id', $organizationId)
-                        ->where('materials.is_active', true)
-                        ->ofType($type)
-                        ->join('warehouse_balances', 'materials.id', '=', 'warehouse_balances.material_id')
-                        ->selectRaw('SUM(warehouse_balances.available_quantity * warehouse_balances.unit_price) as total')
-                        ->value('total') ?? 0;
-                    
-                    $stats[$type] = [
-                        'label' => $label,
-                        'count' => $count,
-                        'total_value' => (float)$totalValue,
-                    ];
-                }
-                
-                return $stats;
-            }
+            fn () => $this->buildAssetTypeStatistics($organizationId)
         );
+    }
+
+    private function buildAssetTypeStatistics(int $organizationId, ?int $warehouseId = null): array
+    {
+        $stats = [];
+
+        foreach (Asset::getAssetTypes() as $type => $label) {
+            $count = Asset::where('organization_id', $organizationId)
+                ->where('is_active', true)
+                ->ofType($type)
+                ->when($warehouseId !== null, static function ($query) use ($organizationId, $warehouseId): void {
+                    $query->whereHas('warehouseBalances', static function ($balanceQuery) use ($organizationId, $warehouseId): void {
+                        $balanceQuery
+                            ->where('organization_id', $organizationId)
+                            ->where('warehouse_id', $warehouseId);
+                    });
+                })
+                ->count();
+
+            $totalValue = Asset::where('materials.organization_id', $organizationId)
+                ->where('materials.is_active', true)
+                ->ofType($type)
+                ->join('warehouse_balances', 'materials.id', '=', 'warehouse_balances.material_id')
+                ->where('warehouse_balances.organization_id', $organizationId)
+                ->when($warehouseId !== null, static function ($query) use ($warehouseId): void {
+                    $query->where('warehouse_balances.warehouse_id', $warehouseId);
+                })
+                ->selectRaw('SUM(warehouse_balances.available_quantity * warehouse_balances.unit_price) as total')
+                ->value('total') ?? 0;
+
+            $stats[$type] = [
+                'label' => $label,
+                'count' => $count,
+                'total_value' => (float) $totalValue,
+            ];
+        }
+
+        return $stats;
     }
 
     /**
