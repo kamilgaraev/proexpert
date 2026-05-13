@@ -67,10 +67,13 @@ class ActFileController extends Controller
             $storage = $this->fileService->disk($org);
 
             $paginator->getCollection()->transform(function (PersonalFile $file) use ($storage) {
-                $file->download_url = null;
+                $payload = $file->toArray();
+                $payload['path'] = $this->displayPersonalPath((int) $file->user_id, $file->path);
+                $payload['download_url'] = null;
+
                 try {
                     if ($storage->exists($file->path)) {
-                        $file->download_url = $storage->temporaryUrl($file->path, now()->addHours(1));
+                        $payload['download_url'] = $storage->temporaryUrl($file->path, now()->addHours(1));
                     }
                 } catch (\Exception $e) {
                     Log::warning('[ActFileController] Failed to create temporary URL', [
@@ -78,7 +81,8 @@ class ActFileController extends Controller
                         'error' => $e->getMessage()
                     ]);
                 }
-                return $file;
+
+                return $payload;
             });
 
             return AdminResponse::paginated(
@@ -118,12 +122,15 @@ class ActFileController extends Controller
             $org = OrganizationContext::getOrganization() ?? $user->currentOrganization;
             $storage = $this->fileService->disk($org);
 
-            $file->download_url = null;
+            $payload = $file->toArray();
+            $payload['path'] = $this->displayPersonalPath((int) $file->user_id, $file->path);
+            $payload['download_url'] = null;
+
             if ($storage->exists($file->path)) {
-                $file->download_url = $storage->temporaryUrl($file->path, now()->addHours(1));
+                $payload['download_url'] = $storage->temporaryUrl($file->path, now()->addHours(1));
             }
 
-            return AdminResponse::success($file, trans_message('files.file_found'));
+            return AdminResponse::success($payload, trans_message('files.file_found'));
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return AdminResponse::error(trans_message('files.not_found'), 404);
         } catch (\Throwable $e) {
@@ -216,5 +223,21 @@ class ActFileController extends Controller
             ]);
             return AdminResponse::error(trans_message('files.delete_failed'), 500);
         }
+    }
+
+    private function displayPersonalPath(int $userId, string $path): string
+    {
+        $normalizedPath = trim(str_replace('\\', '/', $path), '/');
+        $quotedUserId = preg_quote((string) $userId, '/');
+
+        if (preg_match("/^{$quotedUserId}\/(.+)$/", $normalizedPath, $matches) === 1) {
+            return $matches[1];
+        }
+
+        if ($normalizedPath === (string) $userId) {
+            return '';
+        }
+
+        return $normalizedPath;
     }
 }

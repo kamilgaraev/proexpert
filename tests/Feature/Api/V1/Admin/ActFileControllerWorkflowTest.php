@@ -64,6 +64,7 @@ class ActFileControllerWorkflowTest extends TestCase
         $indexResponse->assertJsonPath('success', true);
         $indexResponse->assertJsonPath('meta.total', 1);
         $indexResponse->assertJsonPath('data.0.id', $file->id);
+        $indexResponse->assertJsonPath('data.0.path', 'acts/act-scan.pdf');
 
         $ids = collect($indexResponse->json('data'))->pluck('id')->all();
         $this->assertNotContains($foreignFolderFile->id, $ids);
