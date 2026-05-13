@@ -227,6 +227,7 @@
       "payments.invoice.cancel",
       "payments.invoice.issue",
       "payments.invoice.export",
+      "payments.transaction.view",
       "payments.transaction.view_all",
       "payments.transaction.register",
       "payments.transaction.edit",

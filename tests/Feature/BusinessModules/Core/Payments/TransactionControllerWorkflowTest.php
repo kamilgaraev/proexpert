@@ -120,6 +120,30 @@ class TransactionControllerWorkflowTest extends TestCase
         $this->assertEquals(700.0, (float) $document->remaining_amount);
     }
 
+    public function test_transaction_index_filters_by_current_organization_document_and_preserves_meta(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $document = $this->createDocument($context);
+        $matchingTransaction = $this->createTransaction($document, PaymentTransactionStatus::COMPLETED, 700);
+        $this->createTransaction($this->createDocument($context), PaymentTransactionStatus::COMPLETED, 300);
+
+        $foreignContext = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($foreignContext->organization->id);
+        $this->createTransaction($this->createDocument($foreignContext), PaymentTransactionStatus::COMPLETED, 9900);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/payments/transactions?payment_document_id={$document->id}&status=&date_from=&date_to=&per_page=25&page=1");
+
+        $response->assertOk();
+        $response->assertJsonPath('data.0.id', $matchingTransaction->id);
+        $response->assertJsonPath('data.0.payment_document_id', $document->id);
+        $response->assertJsonPath('data.0.amount', 700);
+        $response->assertJsonCount(1, 'data');
+        $response->assertJsonPath('meta.total', 1);
+        $response->assertJsonPath('meta.per_page', 25);
+    }
+
     private function createDocument(AdminApiTestContext $context, array $overrides = []): PaymentDocument
     {
         return PaymentDocument::query()->create(array_merge([
@@ -163,7 +187,13 @@ class TransactionControllerWorkflowTest extends TestCase
                 'type' => 'core',
                 'billing_model' => 'free',
                 'category' => 'finance',
-                'permissions' => ['payments.transaction.edit', 'payments.transaction.approve', 'payments.transaction.reject', 'payments.transaction.refund'],
+                'permissions' => [
+                    'payments.transaction.view',
+                    'payments.transaction.edit',
+                    'payments.transaction.approve',
+                    'payments.transaction.reject',
+                    'payments.transaction.refund',
+                ],
                 'is_active' => true,
                 'is_system_module' => false,
             ]
