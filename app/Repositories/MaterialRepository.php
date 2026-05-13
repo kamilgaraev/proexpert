@@ -175,37 +175,38 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
 
     public function getMaterialUsageByProjects(int $organizationId, array $projectIds, ?string $dateFrom, ?string $dateTo): Collection
     {
-        $query = DB::table('material_usage_logs as mul')
-            ->join('materials as m', 'mul.material_id', '=', 'm.id')
-            ->join('projects as p', 'mul.project_id', '=', 'p.id')
-            ->leftJoin('measurement_units as mu', 'm.measurement_unit_id', '=', 'mu.id')
-            ->where('mul.organization_id', $organizationId)
+        $query = DB::table('warehouse_movements as wm')
+            ->leftJoin('projects as p', 'wm.project_id', '=', 'p.id')
+            ->where('wm.organization_id', $organizationId)
+            ->where('wm.movement_type', 'write_off')
             ->select([
-                'p.id as project_id',
-                'p.name as project_name',
-                'm.id as material_id',
-                'm.name as material_name',
-                'mu.short_name as unit',
-                DB::raw('SUM(CASE WHEN mul.operation_type = \'receipt\' THEN mul.quantity ELSE 0 END) as total_received'),
-                DB::raw('SUM(CASE WHEN mul.operation_type = \'write_off\' THEN mul.quantity ELSE 0 END) as total_used'),
-                DB::raw('COUNT(*) as operations_count'),
-                DB::raw('MAX(mul.usage_date) as last_operation_date')
+                DB::raw('COALESCE(p.id, 0) as project_id'),
+                DB::raw("COALESCE(p.name, 'Без проекта') as project_name"),
+                DB::raw('SUM(wm.quantity * COALESCE(wm.price, 0)) as total_cost'),
+                DB::raw('SUM(wm.quantity) as total_quantity'),
+                DB::raw('COUNT(DISTINCT wm.material_id) as materials_count'),
             ])
-            ->groupBy(['p.id', 'p.name', 'm.id', 'm.name', 'mu.short_name']);
+            ->groupBy(['p.id', 'p.name']);
 
         if (!empty($projectIds)) {
-            $query->whereIn('p.id', $projectIds);
+            $query->whereIn('wm.project_id', $projectIds);
         }
 
         if ($dateFrom) {
-            $query->where('mul.usage_date', '>=', $dateFrom);
+            $query->whereDate('wm.movement_date', '>=', $dateFrom);
         }
 
         if ($dateTo) {
-            $query->where('mul.usage_date', '<=', $dateTo);
+            $query->whereDate('wm.movement_date', '<=', $dateTo);
         }
 
-        return collect($query->get());
+        return collect($query->get())->map(fn ($item) => [
+            'project_id' => (int) $item->project_id,
+            'project_name' => (string) $item->project_name,
+            'total_cost' => (float) $item->total_cost,
+            'total_quantity' => (float) $item->total_quantity,
+            'materials_count' => (int) $item->materials_count,
+        ]);
     }
 
     public function getMaterialUsageBySuppliers(int $organizationId, array $supplierIds, ?string $dateFrom, ?string $dateTo): Collection
@@ -245,35 +246,52 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
 
     public function getMaterialUsageSummary(int $organizationId, ?string $dateFrom, ?string $dateTo): Collection
     {
-        $query = DB::table('material_usage_logs as mul')
-            ->join('materials as m', 'mul.material_id', '=', 'm.id')
-            ->where('mul.organization_id', $organizationId);
+        $balanceQuery = DB::table('warehouse_balances as wb')
+            ->where('wb.organization_id', $organizationId);
+
+        $movementQuery = DB::table('warehouse_movements as wm')
+            ->where('wm.organization_id', $organizationId);
 
         if ($dateFrom) {
-            $query->where('mul.usage_date', '>=', $dateFrom);
+            $movementQuery->whereDate('wm.movement_date', '>=', $dateFrom);
         }
 
         if ($dateTo) {
-            $query->where('mul.usage_date', '<=', $dateTo);
+            $movementQuery->whereDate('wm.movement_date', '<=', $dateTo);
         }
 
-        $summary = $query->select([
-            DB::raw('COUNT(DISTINCT m.id) as unique_materials_count'),
-            DB::raw('COUNT(*) as total_operations'),
-            DB::raw('SUM(CASE WHEN mul.operation_type = \'receipt\' THEN mul.quantity ELSE 0 END) as total_received'),
-            DB::raw('SUM(CASE WHEN mul.operation_type = \'write_off\' THEN mul.quantity ELSE 0 END) as total_used'),
-            DB::raw('SUM(CASE WHEN mul.operation_type = \'receipt\' THEN mul.total_price ELSE 0 END) as total_received_value'),
-            DB::raw('SUM(CASE WHEN mul.operation_type = \'write_off\' THEN mul.total_price ELSE 0 END) as total_used_value')
+        $summary = (clone $balanceQuery)->select([
+            DB::raw('COUNT(DISTINCT material_id) as materials_count'),
+            DB::raw('SUM(available_quantity * COALESCE(unit_price, 0)) as inventory_value'),
+            DB::raw('SUM(CASE WHEN min_stock_level > 0 AND available_quantity <= min_stock_level THEN 1 ELSE 0 END) as low_stock_count'),
         ])->first();
 
+        $topMaterials = (clone $balanceQuery)
+            ->join('materials as m', 'wb.material_id', '=', 'm.id')
+            ->leftJoin('measurement_units as mu', 'm.measurement_unit_id', '=', 'mu.id')
+            ->select([
+                'm.name',
+                DB::raw('SUM(wb.available_quantity * COALESCE(wb.unit_price, 0)) as total_cost'),
+                DB::raw('SUM(wb.available_quantity) as total_quantity'),
+                DB::raw('MAX(mu.short_name) as unit'),
+            ])
+            ->groupBy(['m.id', 'm.name'])
+            ->orderByDesc('total_cost')
+            ->limit(5)
+            ->get()
+            ->map(fn ($item) => [
+                'name' => (string) $item->name,
+                'total_cost' => (float) $item->total_cost,
+                'total_quantity' => (float) $item->total_quantity,
+                'unit' => $item->unit,
+            ]);
+
         return collect([
-            'unique_materials_count' => $summary->unique_materials_count ?? 0,
-            'total_operations' => $summary->total_operations ?? 0,
-            'total_received' => $summary->total_received ?? 0,
-            'total_used' => $summary->total_used ?? 0,
-            'current_balance' => ($summary->total_received ?? 0) - ($summary->total_used ?? 0),
-            'total_received_value' => $summary->total_received_value ?? 0,
-            'total_used_value' => $summary->total_used_value ?? 0,
+            'total_inventory_value' => (float) ($summary->inventory_value ?? 0),
+            'total_materials_count' => (int) ($summary->materials_count ?? 0),
+            'low_stock_count' => (int) ($summary->low_stock_count ?? 0),
+            'recent_movements_count' => (int) $movementQuery->count(),
+            'top_materials' => $topMaterials->values(),
             'date_from' => $dateFrom,
             'date_to' => $dateTo
         ]);
@@ -306,23 +324,33 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
 
     public function getMaterialsWithLowStock(int $organizationId, int $threshold): Collection
     {
-        return collect(DB::table('materials as m')
-            ->leftJoin('material_usage_logs as mul', function ($join) {
-                $join->on('m.id', '=', 'mul.material_id');
-            })
+        return collect(DB::table('warehouse_balances as wb')
+            ->join('materials as m', 'wb.material_id', '=', 'm.id')
             ->leftJoin('measurement_units as mu', 'm.measurement_unit_id', '=', 'mu.id')
-            ->where('m.organization_id', $organizationId)
-            ->groupBy(['m.id', 'm.name', 'm.code', 'mu.short_name'])
-            ->havingRaw('(COALESCE(SUM(CASE WHEN mul.operation_type = \'receipt\' THEN mul.quantity ELSE 0 END), 0) - COALESCE(SUM(CASE WHEN mul.operation_type = \'write_off\' THEN mul.quantity ELSE 0 END), 0)) <= ?', [$threshold])
+            ->where('wb.organization_id', $organizationId)
+            ->groupBy(['m.id', 'm.name', 'm.code', 'm.category', 'mu.short_name'])
+            ->havingRaw('SUM(wb.available_quantity) <= COALESCE(NULLIF(MAX(wb.min_stock_level), 0), ?)', [$threshold])
             ->select([
                 'm.id',
                 'm.name',
-                'm.code',
+                'm.code as sku',
+                'm.category as category_name',
                 'mu.short_name as unit',
-                DB::raw('COALESCE(SUM(CASE WHEN mul.operation_type = \'receipt\' THEN mul.quantity ELSE 0 END), 0) - COALESCE(SUM(CASE WHEN mul.operation_type = \'write_off\' THEN mul.quantity ELSE 0 END), 0) as current_stock'),
-                DB::raw('MAX(mul.usage_date) as last_operation_date')
+                DB::raw('SUM(wb.available_quantity) as current_stock'),
+                DB::raw('MAX(wb.min_stock_level) as minimum_stock'),
+                DB::raw('MAX(wb.max_stock_level) as max_stock_level')
             ])
-            ->get());
+            ->get())
+            ->map(fn ($item) => [
+                'id' => (int) $item->id,
+                'name' => (string) $item->name,
+                'sku' => $item->sku,
+                'category_name' => $item->category_name,
+                'current_stock' => (float) $item->current_stock,
+                'minimum_stock' => (float) ($item->minimum_stock ?: $threshold),
+                'unit' => $item->unit,
+                'reorder_quantity' => max(0, (float) ($item->minimum_stock ?: $threshold) - (float) $item->current_stock),
+            ]);
     }
 
     public function getMostUsedMaterials(int $organizationId, int $limit = 10, ?string $dateFrom = null, ?string $dateTo = null): Collection
