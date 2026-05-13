@@ -15,6 +15,7 @@ use App\Models\Organization;
 use App\Services\Export\CsvExporterService;
 use App\Services\Export\ExcelExporterService;
 use App\Services\Storage\FileService;
+use App\Services\Storage\OrganizationStoragePath;
 use App\Services\Organization\OrganizationContext;
 use App\Services\Report\ReportTemplateService;
 use Carbon\Carbon;
@@ -1316,7 +1317,7 @@ class ContractorReportService
             $fileService = app(FileService::class);
             $disk = $fileService->disk($org);
             
-            $path = "reports/contractor/{$filename}";
+            $path = OrganizationStoragePath::forOrganization($organizationId, "reports/contractor/{$filename}");
             
             // Создаем временный файл
             $tempFile = tempnam(sys_get_temp_dir(), 'contractor_report_');
