@@ -26,6 +26,7 @@ class ExportController extends Controller
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
+            $this->removeEmptyFilterValues($request);
             $validated = $request->validate([
                 'filters' => ['sometimes', 'array'],
                 'filters.status' => ['sometimes', 'string'],
@@ -160,5 +161,21 @@ class ExportController extends Controller
 
             return AdminResponse::error(trans_message('payments.export.onec_error'), 500);
         }
+    }
+
+    private function removeEmptyFilterValues(Request $request): void
+    {
+        $filters = $request->input('filters');
+
+        if (!is_array($filters)) {
+            return;
+        }
+
+        $request->merge([
+            'filters' => array_filter(
+                $filters,
+                static fn ($value): bool => $value !== '' && $value !== null
+            ),
+        ]);
     }
 }
