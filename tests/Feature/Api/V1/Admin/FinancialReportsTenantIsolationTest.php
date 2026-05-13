@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
+use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Models\Contractor;
 use App\Models\Module;
 use App\Models\Organization;
@@ -52,6 +53,21 @@ class FinancialReportsTenantIsolationTest extends TestCase
 
         $response->assertStatus(422);
         $response->assertJsonValidationErrors('contractor_id');
+    }
+
+    public function test_contract_payments_report_accepts_contract_work_type_category_enum_values(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->activateReportsModule($context->organization->id);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/reports/contract-payments?' . http_build_query([
+                'work_type_category' => ContractWorkTypeCategoryEnum::SMR->value,
+                'format' => 'json',
+            ]));
+
+        $response->assertOk();
+        $response->assertJsonPath('success', true);
     }
 
     public function test_contractor_settlements_report_rejects_foreign_project_filter(): void

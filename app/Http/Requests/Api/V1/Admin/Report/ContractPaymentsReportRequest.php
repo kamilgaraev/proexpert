@@ -2,7 +2,9 @@
 
 namespace App\Http\Requests\Api\V1\Admin\Report;
 
+use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rules\Enum;
 use Illuminate\Validation\Rule;
 
 class ContractPaymentsReportRequest extends FormRequest
@@ -28,7 +30,7 @@ class ContractPaymentsReportRequest extends FormRequest
                 Rule::exists('contractors', 'id')->where('organization_id', $organizationId),
             ],
             'status' => 'nullable|string|in:draft,active,completed,terminated,suspended',
-            'work_type_category' => 'nullable|string|in:construction,design,supply,consulting,other',
+            'work_type_category' => ['nullable', new Enum(ContractWorkTypeCategoryEnum::class)],
             'date_from' => 'nullable|date',
             'date_to' => 'nullable|date|after_or_equal:date_from',
             'show_overdue' => 'nullable|in:0,1,true,false',
