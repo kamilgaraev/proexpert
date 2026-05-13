@@ -126,7 +126,13 @@ class EstimateSectionController extends Controller
         
         $this->authorizeEstimateAction('update', $section);
         
-        $cascade = $request->boolean('cascade', false);
+        $validated = $request->validate([
+            'cascade' => ['sometimes', 'boolean'],
+            'action' => ['sometimes', Rule::in(['delete_cascade', 'move_items_up'])],
+        ]);
+
+        $cascade = $request->boolean('cascade', false)
+            || (($validated['action'] ?? null) === 'delete_cascade');
         
         $this->sectionService->deleteSection($section, $cascade);
         
@@ -213,6 +219,13 @@ class EstimateSectionController extends Controller
                 if ($section->estimate_id !== $estimate->id) {
                     return AdminResponse::error(
                         trans_message('estimate.section_not_belongs_to_estimate'),
+                        Response::HTTP_UNPROCESSABLE_ENTITY
+                    );
+                }
+
+                if (($sectionData['parent_section_id'] ?? null) === $section->id) {
+                    return AdminResponse::error(
+                        trans_message('estimate.section_parent_self_forbidden'),
                         Response::HTTP_UNPROCESSABLE_ENTITY
                     );
                 }
@@ -357,7 +370,7 @@ class EstimateSectionController extends Controller
                  $this->authorize($ability, $estimateWithTrashed);
             } else {
                  // Смета не найдена совсем - возвращаем 404
-                 abort(404, 'Смета раздела не найдена');
+                 abort(404, trans_message('estimate.section_estimate_not_found'));
             }
         } else {
             $this->authorize($ability, $section->estimate);

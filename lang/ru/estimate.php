@@ -17,6 +17,8 @@ return [
     'section_deleted' => 'Раздел удален.',
     'section_moved' => 'Раздел перемещен.',
     'section_not_belongs_to_estimate' => 'Раздел не относится к выбранной смете.',
+    'section_parent_self_forbidden' => 'Раздел нельзя вложить сам в себя.',
+    'section_estimate_not_found' => 'Смета раздела не найдена.',
     'sections_reordered' => 'Порядок разделов обновлен.',
     'sections_reorder_error' => 'Не удалось обновить порядок разделов.',
     'section_numbering_recalculated' => 'Нумерация разделов обновлена.',
