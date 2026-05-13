@@ -11,8 +11,11 @@ use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
 use App\Models\Organization;
 use App\Models\ReportFile;
+use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Storage;
+use Mockery;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
@@ -121,6 +124,35 @@ class ContractorSummaryReportStorageTest extends TestCase
             ]));
 
         $response->assertStatus(422);
+    }
+
+    public function test_contractor_summary_does_not_report_success_when_report_file_storage_fails(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->activateReportsModule($context->organization->id);
+        $project = Project::factory()->create([
+            'organization_id' => $context->organization->id,
+        ]);
+
+        $storage = Mockery::mock(Filesystem::class);
+        $storage->shouldReceive('put')->once()->andThrow(new \RuntimeException('Storage unavailable'));
+
+        $fileService = Mockery::mock(FileService::class);
+        $fileService->shouldReceive('disk')->once()->andReturn($storage);
+
+        $this->app->instance(FileService::class, $fileService);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/reports/contractor-summary?' . http_build_query([
+                'project_id' => $project->id,
+                'contract_status' => 'active',
+            ]));
+
+        $response->assertStatus(500);
+        $response->assertJsonPath('success', false);
+
+        $this->assertSame(0, PersonalFile::query()->where('user_id', $context->user->id)->count());
+        $this->assertSame(0, ReportFile::query()->where('organization_id', $context->organization->id)->count());
     }
 
     private function activateReportsModule(int $organizationId): void

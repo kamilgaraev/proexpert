@@ -24,6 +24,8 @@ use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Exception;
 
+use function trans_message;
+
 class ContractorReportService
 {
     protected CsvExporterService $csvExporter;
@@ -241,21 +243,23 @@ class ContractorReportService
             }
         }
 
-        $this->storeJsonReportSnapshot($result, 'contractor_summary_report');
+        if (!$this->storeJsonReportSnapshot($result, 'contractor_summary_report')) {
+            throw new \RuntimeException(trans_message('reports.storage_failed'));
+        }
 
         return $result;
     }
 
-    private function storeJsonReportSnapshot(array $reportData, string $baseFilename): void
+    private function storeJsonReportSnapshot(array $reportData, string $baseFilename): bool
     {
         try {
             $content = json_encode($reportData, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
 
             if ($content === false) {
-                return;
+                return false;
             }
 
-            $this->excelExporter->storeReportInPersonalFiles(
+            return $this->excelExporter->storeReportInPersonalFiles(
                 $baseFilename . '_' . now()->format('d-m-Y_H-i') . '.json',
                 $content
             );
@@ -264,6 +268,8 @@ class ContractorReportService
                 'report' => $baseFilename,
                 'error' => $e->getMessage(),
             ]);
+
+            return false;
         }
     }
 

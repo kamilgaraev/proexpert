@@ -225,12 +225,12 @@ class ExcelExporterService
         }
     }
 
-    public function storeReportInPersonalFiles(string $filename, string $binaryContent, bool $registerReportFile = true): void
+    public function storeReportInPersonalFiles(string $filename, string $binaryContent, bool $registerReportFile = true): bool
     {
         $user = Auth::user();
 
         if (!$user instanceof \App\Models\User) {
-            return;
+            return false;
         }
 
         try {
@@ -243,9 +243,19 @@ class ExcelExporterService
                 : $personalPath;
             $path = $registerReportFile ? $reportPath : $personalPath;
 
-            app(\App\Services\Storage\FileService::class)
+            $stored = app(\App\Services\Storage\FileService::class)
                 ->disk($organization)
                 ->put($path, $binaryContent);
+
+            if ($stored === false) {
+                Log::warning('[ExcelExporterService] Report file storage returned false', [
+                    'filename' => $filename,
+                    'user_id' => $user->id,
+                    'path' => $path,
+                ]);
+
+                return false;
+            }
 
             PersonalFile::query()->create([
                 'user_id' => $user->id,
@@ -269,12 +279,16 @@ class ExcelExporterService
                     ]
                 );
             }
+
+            return true;
         } catch (\Throwable $e) {
             Log::warning('[ExcelExporterService] Failed to store report in personal files', [
                 'filename' => $filename,
                 'user_id' => $user->id,
                 'error' => $e->getMessage(),
             ]);
+
+            return false;
         }
     }
 
