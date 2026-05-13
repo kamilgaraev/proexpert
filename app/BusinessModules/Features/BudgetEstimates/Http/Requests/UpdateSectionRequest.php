@@ -2,7 +2,9 @@
 
 namespace App\BusinessModules\Features\BudgetEstimates\Http\Requests;
 
+use App\Models\EstimateSection;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class UpdateSectionRequest extends FormRequest
 {
@@ -19,11 +21,20 @@ class UpdateSectionRequest extends FormRequest
      */
     public function rules(): array
     {
+        $section = $this->route('section');
+        $estimateId = (int) ($this->route('estimateId') ?: ($section instanceof EstimateSection ? $section->estimate_id : 0));
+        $sectionId = $section instanceof EstimateSection ? (int) $section->id : 0;
+
         return [
             'section_number' => 'sometimes|string|max:50',
             'name' => 'sometimes|string|max:255',
             'description' => 'nullable|string|max:5000',
-            'parent_section_id' => 'nullable|integer|exists:estimate_sections,id',
+            'parent_section_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('estimate_sections', 'id')->where('estimate_id', $estimateId),
+                Rule::notIn([$sectionId]),
+            ],
             'sort_order' => 'nullable|integer|min:0',
             'is_summary' => 'boolean',
         ];

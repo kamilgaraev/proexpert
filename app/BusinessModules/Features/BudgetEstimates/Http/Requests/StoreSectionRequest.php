@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Features\BudgetEstimates\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class StoreSectionRequest extends FormRequest
 {
@@ -19,11 +20,17 @@ class StoreSectionRequest extends FormRequest
      */
     public function rules(): array
     {
+        $estimateId = (int) $this->route('estimateId');
+
         return [
             'section_number' => 'nullable|string|max:50',
             'name' => 'required|string|max:255',
             'description' => 'nullable|string|max:5000',
-            'parent_section_id' => 'nullable|integer|exists:estimate_sections,id',
+            'parent_section_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('estimate_sections', 'id')->where('estimate_id', $estimateId),
+            ],
             'sort_order' => 'nullable|integer|min:0',
             'is_summary' => 'boolean',
         ];

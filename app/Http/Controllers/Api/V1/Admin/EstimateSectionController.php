@@ -16,6 +16,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 
 use function trans_message;
 
@@ -144,7 +145,12 @@ class EstimateSectionController extends Controller
         $this->authorize('update', $section->estimate);
         
         $validated = $request->validate([
-            'parent_section_id' => 'nullable|exists:estimate_sections,id',
+            'parent_section_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('estimate_sections', 'id')->where('estimate_id', $section->estimate_id),
+                Rule::notIn([$section->id]),
+            ],
             'sort_order' => 'nullable|integer',
         ]);
         
@@ -178,9 +184,17 @@ class EstimateSectionController extends Controller
         
         $validated = $request->validate([
             'sections' => 'required|array',
-            'sections.*.id' => 'required|exists:estimate_sections,id',
+            'sections.*.id' => [
+                'required',
+                'integer',
+                Rule::exists('estimate_sections', 'id')->where('estimate_id', $estimate->id),
+            ],
             'sections.*.sort_order' => 'required|integer|min:0',
-            'sections.*.parent_section_id' => 'nullable|exists:estimate_sections,id',
+            'sections.*.parent_section_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('estimate_sections', 'id')->where('estimate_id', $estimate->id),
+            ],
         ]);
 
         try {

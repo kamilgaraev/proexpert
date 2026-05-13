@@ -75,13 +75,25 @@ class EstimateItemController extends Controller
         $this->authorize('update', $estimateModel);
         
         $validated = $request->validate([
-            'estimate_section_id' => 'nullable|exists:estimate_sections,id',
+            'estimate_section_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('estimate_sections', 'id')->where('estimate_id', $estimateModel->id),
+            ],
             'item_type' => 'required|in:' . implode(',', EstimatePositionItemType::values()),
             'position_number' => 'nullable|string|max:50',
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
-            'work_type_id' => 'nullable|exists:work_types,id',
-            'measurement_unit_id' => 'nullable|exists:measurement_units,id',
+            'work_type_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('work_types', 'id')->where('organization_id', $organizationId),
+            ],
+            'measurement_unit_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('measurement_units', 'id')->where('organization_id', $organizationId),
+            ],
             'quantity' => 'required|numeric|min:0',
             'unit_price' => 'required|numeric|min:0',
             'labor_hours' => 'nullable|numeric|min:0',
@@ -121,11 +133,23 @@ class EstimateItemController extends Controller
         
         $validated = $request->validate([
             'items' => 'required|array',
-            'items.*.estimate_section_id' => 'nullable|exists:estimate_sections,id',
+            'items.*.estimate_section_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('estimate_sections', 'id')->where('estimate_id', $estimateModel->id),
+            ],
             'items.*.name' => 'required|string|max:255',
             'items.*.description' => 'nullable|string',
-            'items.*.work_type_id' => 'nullable|exists:work_types,id',
-            'items.*.measurement_unit_id' => 'nullable|exists:measurement_units,id',
+            'items.*.work_type_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('work_types', 'id')->where('organization_id', $organizationId),
+            ],
+            'items.*.measurement_unit_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('measurement_units', 'id')->where('organization_id', $organizationId),
+            ],
             'items.*.quantity' => 'required|numeric|min:0',
             'items.*.unit_price' => 'required|numeric|min:0',
             'items.*.overhead_amount' => 'nullable|numeric|min:0',
@@ -268,6 +292,8 @@ class EstimateItemController extends Controller
         ]);
         
         $this->authorize('update', $item->estimate);
+        $organizationId = (int) $item->estimate->organization_id;
+        $estimateId = (int) $item->estimate->id;
         
         Log::info('[EstimateItemController::update] После authorize - успешно', [
             'item_id' => $item->id,
@@ -275,13 +301,28 @@ class EstimateItemController extends Controller
         ]);
         
         $validated = $request->validate([
-            'estimate_section_id' => 'sometimes|nullable|exists:estimate_sections,id',
+            'estimate_section_id' => [
+                'sometimes',
+                'nullable',
+                'integer',
+                Rule::exists('estimate_sections', 'id')->where('estimate_id', $estimateId),
+            ],
             'item_type' => 'sometimes|in:' . implode(',', EstimatePositionItemType::values()),
             'position_number' => 'sometimes|string|max:50',
             'name' => 'sometimes|string|max:255',
             'description' => 'nullable|string',
-            'work_type_id' => 'sometimes|nullable|exists:work_types,id',
-            'measurement_unit_id' => 'sometimes|nullable|exists:measurement_units,id',
+            'work_type_id' => [
+                'sometimes',
+                'nullable',
+                'integer',
+                Rule::exists('work_types', 'id')->where('organization_id', $organizationId),
+            ],
+            'measurement_unit_id' => [
+                'sometimes',
+                'nullable',
+                'integer',
+                Rule::exists('measurement_units', 'id')->where('organization_id', $organizationId),
+            ],
             'quantity' => 'sometimes|numeric|min:0',
             'unit_price' => 'sometimes|numeric|min:0',
             'labor_hours' => 'sometimes|numeric|min:0',
@@ -346,8 +387,18 @@ class EstimateItemController extends Controller
             'items.*.position_number' => ['sometimes', 'string', 'max:50'],
             'items.*.name' => ['sometimes', 'string', 'max:255'],
             'items.*.description' => ['sometimes', 'nullable', 'string'],
-            'items.*.work_type_id' => ['sometimes', 'nullable', 'integer', 'exists:work_types,id'],
-            'items.*.measurement_unit_id' => ['sometimes', 'nullable', 'integer', 'exists:measurement_units,id'],
+            'items.*.work_type_id' => [
+                'sometimes',
+                'nullable',
+                'integer',
+                Rule::exists('work_types', 'id')->where('organization_id', $organizationId),
+            ],
+            'items.*.measurement_unit_id' => [
+                'sometimes',
+                'nullable',
+                'integer',
+                Rule::exists('measurement_units', 'id')->where('organization_id', $organizationId),
+            ],
             'items.*.quantity' => ['sometimes', 'numeric', 'min:0'],
             'items.*.quantity_coefficient' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'items.*.quantity_total' => ['sometimes', 'nullable', 'numeric', 'min:0'],
@@ -429,7 +480,11 @@ class EstimateItemController extends Controller
         $this->authorize('update', $item->estimate);
         
         $validated = $request->validate([
-            'section_id' => 'required|exists:estimate_sections,id',
+            'section_id' => [
+                'required',
+                'integer',
+                Rule::exists('estimate_sections', 'id')->where('estimate_id', $item->estimate_id),
+            ],
         ]);
         
         $item = $this->itemService->moveToSection($item, $validated['section_id']);
@@ -477,8 +532,16 @@ class EstimateItemController extends Controller
         
         $validated = $request->validate([
             'items' => 'required|array',
-            'items.*.id' => 'required|exists:estimate_items,id',
-            'items.*.estimate_section_id' => 'nullable|exists:estimate_sections,id',
+            'items.*.id' => [
+                'required',
+                'integer',
+                Rule::exists('estimate_items', 'id')->where('estimate_id', $estimateModel->id),
+            ],
+            'items.*.estimate_section_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('estimate_sections', 'id')->where('estimate_id', $estimateModel->id),
+            ],
             'items.*.sort_order' => 'required|integer|min:0',
             'numbering_mode' => 'nullable|string|in:global,section,hierarchical',
         ]);
