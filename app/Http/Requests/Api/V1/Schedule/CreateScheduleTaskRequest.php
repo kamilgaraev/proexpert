@@ -8,6 +8,7 @@ use App\Enums\Schedule\TaskTypeEnum;
 use App\Enums\Schedule\TaskStatusEnum;
 use App\Enums\Schedule\PriorityEnum;
 use App\Domain\Authorization\Services\AuthorizationService;
+use Illuminate\Validation\Rule;
 
 class CreateScheduleTaskRequest extends FormRequest
 {
@@ -70,11 +71,45 @@ class CreateScheduleTaskRequest extends FormRequest
 
     public function rules(): array
     {
+        $organizationId = $this->getOrganizationId();
+        $scheduleId = (int) $this->route('schedule');
+
         return [
-            'parent_task_id' => 'nullable|integer|exists:schedule_tasks,id',
-            'insert_after_id' => 'nullable|integer|exists:schedule_tasks,id',
-            'work_type_id' => 'nullable|integer|exists:work_types,id',
-            'assigned_user_id' => 'nullable|integer|exists:users,id',
+            'parent_task_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('schedule_tasks', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->where('schedule_id', $scheduleId)
+                    ->whereNull('deleted_at'),
+            ],
+            'insert_after_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('schedule_tasks', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->where('schedule_id', $scheduleId)
+                    ->whereNull('deleted_at'),
+            ],
+            'work_type_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('work_types', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->whereNull('deleted_at'),
+            ],
+            'assigned_user_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('users', 'id')
+                    ->whereNull('deleted_at')
+                    ->whereIn('id', function ($query) use ($organizationId) {
+                        $query->select('user_id')
+                            ->from('organization_user')
+                            ->where('organization_id', $organizationId)
+                            ->where('is_active', true);
+                    }),
+            ],
             'name' => 'required|string|max:255',
             'description' => 'nullable|string|max:5000',
             'wbs_code' => 'nullable|string|max:50',
@@ -84,7 +119,13 @@ class CreateScheduleTaskRequest extends FormRequest
             'planned_duration_days' => 'nullable|integer|min:1',
             'planned_work_hours' => 'nullable|numeric|min:0',
             'quantity' => 'nullable|numeric|min:0',
-            'measurement_unit_id' => 'nullable|integer|exists:measurement_units,id',
+            'measurement_unit_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('measurement_units', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->whereNull('deleted_at'),
+            ],
             'status' => 'nullable|string|in:not_started,in_progress,completed,cancelled,on_hold',
             'priority' => 'nullable|string|in:low,normal,high,critical',
             'estimated_cost' => 'nullable|numeric|min:0',

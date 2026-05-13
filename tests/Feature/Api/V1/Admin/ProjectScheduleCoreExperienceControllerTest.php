@@ -13,6 +13,8 @@ use App\Models\ScheduleTask;
 use App\Models\TaskDependency;
 use App\Models\TaskResource;
 use App\Models\User;
+use App\Models\WorkType;
+use App\Models\MeasurementUnit;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
@@ -161,6 +163,92 @@ class ProjectScheduleCoreExperienceControllerTest extends TestCase
 
         $response->assertStatus(422);
         $this->assertSame('active', $schedule->fresh()->status->value);
+    }
+
+    public function test_schedule_task_create_rejects_foreign_links_without_creating_task(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $schedule = $this->createSchedule($context->organization, $project, $context->user);
+
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $foreignUser = User::factory()->create(['current_organization_id' => $foreignOrganization->id]);
+        $foreignOrganization->users()->attach($foreignUser->id, ['is_owner' => true, 'is_active' => true]);
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignOrganization->id]);
+        $foreignSchedule = $this->createSchedule($foreignOrganization, $foreignProject, $foreignUser);
+        $foreignTask = $this->createTask($foreignOrganization, $foreignSchedule, $foreignUser);
+        $foreignWorkType = $this->createWorkType($foreignOrganization);
+        $foreignMeasurementUnit = $this->createMeasurementUnit($foreignOrganization);
+        $this->allowAdminAccess();
+
+        $basePayload = [
+            'name' => 'Scoped task',
+            'planned_start_date' => '2026-06-01',
+            'planned_end_date' => '2026-06-05',
+        ];
+
+        foreach ([
+            'assigned_user_id' => $foreignUser->id,
+            'work_type_id' => $foreignWorkType->id,
+            'measurement_unit_id' => $foreignMeasurementUnit->id,
+            'parent_task_id' => $foreignTask->id,
+            'insert_after_id' => $foreignTask->id,
+        ] as $field => $value) {
+            $response = $this->withHeaders($context->authHeaders())
+                ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/tasks", $basePayload + [
+                    $field => $value,
+                ]);
+
+            $response->assertStatus(422);
+            $response->assertJsonValidationErrors([$field]);
+        }
+
+        $this->assertDatabaseMissing('schedule_tasks', [
+            'schedule_id' => $schedule->id,
+            'name' => 'Scoped task',
+        ]);
+    }
+
+    public function test_schedule_task_update_rejects_foreign_links_without_mutating_task(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $schedule = $this->createSchedule($context->organization, $project, $context->user);
+        $task = $this->createTask($context->organization, $schedule, $context->user, [
+            'name' => 'Original scoped task',
+        ]);
+
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $foreignUser = User::factory()->create(['current_organization_id' => $foreignOrganization->id]);
+        $foreignOrganization->users()->attach($foreignUser->id, ['is_owner' => true, 'is_active' => true]);
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignOrganization->id]);
+        $foreignSchedule = $this->createSchedule($foreignOrganization, $foreignProject, $foreignUser);
+        $foreignTask = $this->createTask($foreignOrganization, $foreignSchedule, $foreignUser);
+        $foreignWorkType = $this->createWorkType($foreignOrganization);
+        $foreignMeasurementUnit = $this->createMeasurementUnit($foreignOrganization);
+        $this->allowAdminAccess();
+
+        foreach ([
+            'assigned_user_id' => $foreignUser->id,
+            'work_type_id' => $foreignWorkType->id,
+            'measurement_unit_id' => $foreignMeasurementUnit->id,
+            'parent_task_id' => $foreignTask->id,
+        ] as $field => $value) {
+            $response = $this->withHeaders($context->authHeaders())
+                ->patchJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/tasks/{$task->id}", [
+                    $field => $value,
+                    'name' => 'SHOULD-NOT-CHANGE',
+                ]);
+
+            $response->assertStatus(422);
+            $response->assertJsonValidationErrors([$field]);
+            $task->refresh();
+            $this->assertSame('Original scoped task', $task->name);
+            $this->assertNull($task->assigned_user_id);
+            $this->assertNull($task->work_type_id);
+            $this->assertNull($task->measurement_unit_id);
+            $this->assertNull($task->parent_task_id);
+        }
     }
 
     public function test_owner_can_assign_and_remove_task_resource_with_schedule_scope(): void
@@ -374,6 +462,29 @@ class ProjectScheduleCoreExperienceControllerTest extends TestCase
             'constraint_type' => 'none',
             'level' => 0,
             'sort_order' => 1,
+        ], $overrides));
+    }
+
+    private function createWorkType(Organization $organization, array $overrides = []): WorkType
+    {
+        return WorkType::query()->create(array_merge([
+            'organization_id' => $organization->id,
+            'name' => 'Schedule work type ' . random_int(1000, 9999),
+            'code' => 'SWT-' . random_int(1000, 9999),
+            'default_price' => 1000,
+            'is_active' => true,
+        ], $overrides));
+    }
+
+    private function createMeasurementUnit(Organization $organization, array $overrides = []): MeasurementUnit
+    {
+        return MeasurementUnit::query()->create(array_merge([
+            'organization_id' => $organization->id,
+            'name' => 'Schedule unit ' . random_int(1000, 9999),
+            'short_name' => 'su' . random_int(1000, 9999),
+            'type' => 'work',
+            'is_default' => false,
+            'is_system' => false,
         ], $overrides));
     }
 

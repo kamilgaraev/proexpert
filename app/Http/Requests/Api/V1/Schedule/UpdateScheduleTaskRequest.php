@@ -4,6 +4,7 @@ namespace App\Http\Requests\Api\V1\Schedule;
 
 use Illuminate\Foundation\Http\FormRequest;
 use App\Domain\Authorization\Services\AuthorizationService;
+use Illuminate\Validation\Rule;
 
 class UpdateScheduleTaskRequest extends FormRequest
 {
@@ -40,6 +41,10 @@ class UpdateScheduleTaskRequest extends FormRequest
 
     public function rules(): array
     {
+        $organizationId = $this->getOrganizationId();
+        $scheduleId = (int) $this->route('schedule');
+        $taskId = (int) $this->route('task');
+
         return [
             'name' => 'sometimes|string|max:255',
             'description' => 'sometimes|string|nullable',
@@ -69,12 +74,47 @@ class UpdateScheduleTaskRequest extends FormRequest
             'actual_cost' => 'sometimes|numeric|min:0|nullable',
             'quantity' => 'sometimes|numeric|min:0|nullable',
             'completed_quantity' => 'sometimes|numeric|min:0|nullable',
-            'measurement_unit_id' => 'sometimes|integer|exists:measurement_units,id|nullable',
+            'measurement_unit_id' => [
+                'sometimes',
+                'integer',
+                'nullable',
+                Rule::exists('measurement_units', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->whereNull('deleted_at'),
+            ],
             
             // Связи
-            'assigned_user_id' => 'sometimes|integer|exists:users,id|nullable',
-            'work_type_id' => 'sometimes|integer|exists:work_types,id|nullable',
-            'parent_task_id' => 'sometimes|integer|exists:schedule_tasks,id|nullable',
+            'assigned_user_id' => [
+                'sometimes',
+                'integer',
+                'nullable',
+                Rule::exists('users', 'id')
+                    ->whereNull('deleted_at')
+                    ->whereIn('id', function ($query) use ($organizationId) {
+                        $query->select('user_id')
+                            ->from('organization_user')
+                            ->where('organization_id', $organizationId)
+                            ->where('is_active', true);
+                    }),
+            ],
+            'work_type_id' => [
+                'sometimes',
+                'integer',
+                'nullable',
+                Rule::exists('work_types', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->whereNull('deleted_at'),
+            ],
+            'parent_task_id' => [
+                'sometimes',
+                'integer',
+                'nullable',
+                Rule::exists('schedule_tasks', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->where('schedule_id', $scheduleId)
+                    ->whereNull('deleted_at'),
+                Rule::notIn([$taskId]),
+            ],
             
             // Ограничения
             'constraint_type' => 'sometimes|string|in:none,must_start_on,must_finish_on,start_no_earlier_than,start_no_later_than,finish_no_earlier_than,finish_no_later_than|nullable',
@@ -89,7 +129,12 @@ class UpdateScheduleTaskRequest extends FormRequest
 
             // Интервалы
             'intervals' => 'sometimes|array|nullable',
-            'intervals.*.id' => 'sometimes|integer|exists:schedule_task_intervals,id',
+            'intervals.*.id' => [
+                'sometimes',
+                'integer',
+                Rule::exists('schedule_task_intervals', 'id')
+                    ->where('schedule_task_id', $taskId),
+            ],
             'intervals.*.start_date' => 'required_with:intervals|date',
             'intervals.*.end_date' => 'required_with:intervals|date|after_or_equal:intervals.*.start_date',
             'intervals.*.duration_days' => 'required_with:intervals|integer|min:1',
