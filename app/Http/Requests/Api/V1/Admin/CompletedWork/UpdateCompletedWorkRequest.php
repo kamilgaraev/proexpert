@@ -26,7 +26,7 @@ class UpdateCompletedWorkRequest extends FormRequest
         /** @var CompletedWork $completedWork */
         $completedWork = $this->route('completedWork') ?? $this->route('completed_work');
         $organizationId = $completedWork->organization_id;
-        $projectId = $this->input('project_id', $completedWork->project_id);
+        $projectId = (int) $this->input('project_id', $completedWork->project_id);
 
         return [
             'project_id' => ['sometimes', 'required', 'integer', new ProjectAccessibleRule()],
@@ -45,15 +45,54 @@ class UpdateCompletedWorkRequest extends FormRequest
                 },
             ],
             'work_type_id' => ['sometimes', 'nullable', 'integer', Rule::exists('work_types', 'id')->where('organization_id', $organizationId)],
-            'user_id' => ['sometimes', 'nullable', 'integer', Rule::exists('users', 'id')],
+            'user_id' => [
+                'sometimes',
+                'nullable',
+                'integer',
+                Rule::exists('users', 'id')
+                    ->whereNull('deleted_at')
+                    ->whereIn('id', function ($query) use ($organizationId) {
+                        $query->select('user_id')
+                            ->from('organization_user')
+                            ->where('organization_id', $organizationId)
+                            ->where('is_active', true);
+                    }),
+            ],
             'contractor_id' => [
                 'sometimes',
                 'nullable',
                 'integer',
                 Rule::exists('contractors', 'id')->where('organization_id', $organizationId),
             ],
-            'schedule_task_id' => ['sometimes', 'nullable', 'integer', Rule::exists('schedule_tasks', 'id')],
-            'estimate_item_id' => ['sometimes', 'nullable', 'integer', Rule::exists('estimate_items', 'id')],
+            'schedule_task_id' => [
+                'sometimes',
+                'nullable',
+                'integer',
+                Rule::exists('schedule_tasks', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->whereNull('deleted_at')
+                    ->whereIn('schedule_id', function ($query) use ($projectId, $organizationId) {
+                        $query->select('id')
+                            ->from('project_schedules')
+                            ->where('organization_id', $organizationId)
+                            ->where('project_id', $projectId)
+                            ->whereNull('deleted_at');
+                    }),
+            ],
+            'estimate_item_id' => [
+                'sometimes',
+                'nullable',
+                'integer',
+                Rule::exists('estimate_items', 'id')
+                    ->whereNull('deleted_at')
+                    ->whereIn('estimate_id', function ($query) use ($projectId, $organizationId) {
+                        $query->select('id')
+                            ->from('estimates')
+                            ->where('organization_id', $organizationId)
+                            ->where('project_id', $projectId)
+                            ->whereNull('deleted_at');
+                    }),
+            ],
             'quantity' => 'sometimes|required|numeric|min:0.001',
             'completed_quantity' => 'sometimes|nullable|numeric|min:0',
             'price' => 'sometimes|nullable|numeric|min:0',

@@ -14,6 +14,8 @@ use App\Enums\ProjectOrganizationRole;
 use App\Models\CompletedWork;
 use App\Models\Contract;
 use App\Models\Contractor;
+use App\Models\Estimate;
+use App\Models\EstimateItem;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\ProjectSchedule;
@@ -316,6 +318,125 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
         $this->assertArrayHasKey('contractor_id', $contractorResponse->json('errors.errors'));
     }
 
+    public function test_completed_work_create_rejects_foreign_user_schedule_task_and_estimate_item(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $contractor = $this->createContractor($context->organization, 'Scoped Create Work Contractor');
+        $workType = $this->createWorkType($context->organization, 'Scoped create work');
+
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $foreignUser = User::factory()->create(['current_organization_id' => $foreignOrganization->id]);
+        $foreignOrganization->users()->attach($foreignUser->id, ['is_owner' => true, 'is_active' => true]);
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignOrganization->id]);
+        $foreignSchedule = $this->createSchedule($foreignOrganization, $foreignProject, $foreignUser);
+        $foreignTask = $this->createScheduleTask($foreignOrganization, $foreignSchedule, $foreignUser);
+        $foreignEstimate = $this->createEstimate($foreignOrganization, $foreignProject);
+        $foreignEstimateItem = $this->createEstimateItem($foreignEstimate);
+        $this->allowAdminAccess();
+
+        $basePayload = [
+            'project_id' => $project->id,
+            'contractor_id' => $contractor->id,
+            'work_type_id' => $workType->id,
+            'quantity' => 3,
+            'price' => 1000,
+            'completion_date' => '2026-06-22',
+            'status' => 'pending',
+        ];
+
+        $userResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/works", $basePayload + [
+                'user_id' => $foreignUser->id,
+            ]);
+
+        $userResponse->assertStatus(422);
+        $userResponse->assertJsonValidationErrors(['user_id']);
+
+        $taskResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/works", $basePayload + [
+                'schedule_task_id' => $foreignTask->id,
+            ]);
+
+        $taskResponse->assertStatus(422);
+        $taskResponse->assertJsonValidationErrors(['schedule_task_id']);
+
+        $estimateItemResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/works", $basePayload + [
+                'estimate_item_id' => $foreignEstimateItem->id,
+            ]);
+
+        $estimateItemResponse->assertStatus(422);
+        $estimateItemResponse->assertJsonValidationErrors(['estimate_item_id']);
+
+        $this->assertDatabaseMissing('completed_works', [
+            'project_id' => $project->id,
+            'user_id' => $foreignUser->id,
+        ]);
+        $this->assertDatabaseMissing('completed_works', [
+            'project_id' => $project->id,
+            'schedule_task_id' => $foreignTask->id,
+        ]);
+        $this->assertDatabaseMissing('completed_works', [
+            'project_id' => $project->id,
+            'estimate_item_id' => $foreignEstimateItem->id,
+        ]);
+    }
+
+    public function test_completed_work_update_rejects_foreign_user_schedule_task_and_estimate_item_without_mutation(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $contractor = $this->createContractor($context->organization, 'Scoped Update Work Contractor');
+        $work = $this->createCompletedWork($context->organization, $project, $contractor, [
+            'notes' => 'Original scoped work',
+            'user_id' => $context->user->id,
+        ]);
+
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $foreignUser = User::factory()->create(['current_organization_id' => $foreignOrganization->id]);
+        $foreignOrganization->users()->attach($foreignUser->id, ['is_owner' => true, 'is_active' => true]);
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignOrganization->id]);
+        $foreignSchedule = $this->createSchedule($foreignOrganization, $foreignProject, $foreignUser);
+        $foreignTask = $this->createScheduleTask($foreignOrganization, $foreignSchedule, $foreignUser);
+        $foreignEstimate = $this->createEstimate($foreignOrganization, $foreignProject);
+        $foreignEstimateItem = $this->createEstimateItem($foreignEstimate);
+        $this->allowAdminAccess();
+
+        $userResponse = $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/projects/{$project->id}/works/{$work->id}", [
+                'user_id' => $foreignUser->id,
+                'notes' => 'SHOULD-NOT-CHANGE-USER',
+            ]);
+
+        $userResponse->assertStatus(422);
+        $userResponse->assertJsonValidationErrors(['user_id']);
+        $this->assertSame('Original scoped work', $work->fresh()->notes);
+        $this->assertSame($context->user->id, $work->fresh()->user_id);
+
+        $taskResponse = $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/projects/{$project->id}/works/{$work->id}", [
+                'schedule_task_id' => $foreignTask->id,
+                'notes' => 'SHOULD-NOT-CHANGE-TASK',
+            ]);
+
+        $taskResponse->assertStatus(422);
+        $taskResponse->assertJsonValidationErrors(['schedule_task_id']);
+        $this->assertSame('Original scoped work', $work->fresh()->notes);
+        $this->assertNull($work->fresh()->schedule_task_id);
+
+        $estimateItemResponse = $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/projects/{$project->id}/works/{$work->id}", [
+                'estimate_item_id' => $foreignEstimateItem->id,
+                'notes' => 'SHOULD-NOT-CHANGE-ESTIMATE',
+            ]);
+
+        $estimateItemResponse->assertStatus(422);
+        $estimateItemResponse->assertJsonValidationErrors(['estimate_item_id']);
+        $this->assertSame('Original scoped work', $work->fresh()->notes);
+        $this->assertNull($work->fresh()->estimate_item_id);
+    }
+
     public function test_owner_can_attach_completed_work_to_existing_schedule_task(): void
     {
         $context = AdminApiTestContext::create();
@@ -577,6 +698,40 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
             'constraint_type' => 'none',
             'level' => 0,
             'sort_order' => 1,
+        ], $overrides));
+    }
+
+    private function createEstimate(Organization $organization, Project $project, array $overrides = []): Estimate
+    {
+        return Estimate::query()->create(array_merge([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'number' => 'EST-WORK-' . random_int(10000, 99999),
+            'name' => 'Completed work estimate',
+            'type' => 'local',
+            'status' => 'approved',
+            'estimate_date' => '2026-06-01',
+            'total_direct_costs' => 10000,
+            'total_overhead_costs' => 0,
+            'total_estimated_profit' => 0,
+            'total_amount' => 10000,
+            'total_amount_with_vat' => 12000,
+        ], $overrides));
+    }
+
+    private function createEstimateItem(Estimate $estimate, array $overrides = []): EstimateItem
+    {
+        return EstimateItem::query()->create(array_merge([
+            'estimate_id' => $estimate->id,
+            'position_number' => '1',
+            'name' => 'Completed work estimate item',
+            'quantity' => 10,
+            'unit_price' => 1000,
+            'direct_costs' => 10000,
+            'overhead_amount' => 0,
+            'profit_amount' => 0,
+            'total_amount' => 10000,
+            'is_manual' => true,
         ], $overrides));
     }
 
