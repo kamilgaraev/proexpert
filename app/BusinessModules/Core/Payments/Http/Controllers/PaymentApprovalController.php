@@ -26,36 +26,54 @@ class PaymentApprovalController extends Controller
             $userId = (int) $request->user()->id;
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $approvals = $this->approvalService->getPendingApprovalsForUser($userId, $organizationId);
+            $page = max(1, (int) $request->input('page', 1));
+            $perPage = max(1, min(100, (int) $request->input('per_page', 20)));
+            $total = $approvals->count();
+            $pagedApprovals = $approvals->forPage($page, $perPage)->values();
 
             return AdminResponse::paginated(
-                $approvals->map(fn ($approval) => [
+                $pagedApprovals->map(fn ($approval) => [
+                    'id' => $approval->id,
                     'payment_document_id' => $approval->payment_document_id,
                     'payment_document' => [
                         'id' => $approval->paymentDocument->id,
                         'document_number' => $approval->paymentDocument->document_number,
                         'document_type' => $approval->paymentDocument->document_type->value,
                         'document_type_label' => $approval->paymentDocument->document_type->label(),
-                        'amount' => $approval->paymentDocument->amount,
+                        'amount' => (float) $approval->paymentDocument->amount,
                         'currency' => $approval->paymentDocument->currency,
                         'payer_name' => $approval->paymentDocument->getPayerName(),
                         'payee_name' => $approval->paymentDocument->getPayeeName(),
                         'description' => $approval->paymentDocument->description,
+                        'document_date' => $approval->paymentDocument->document_date?->toDateString(),
                     ],
+                    'status' => $approval->status,
                     'approval_role' => $approval->approval_role,
                     'approval_role_label' => $approval->getRoleLabel(),
                     'approval_level' => $approval->approval_level,
                     'approval_order' => $approval->approval_order,
                     'amount_threshold' => $approval->amount_threshold,
-                    'can_approve' => $approval->canApproveAmount($approval->paymentDocument->amount),
+                    'can_approve' => $approval->canApproveAmount((float) $approval->paymentDocument->amount),
+                    'due_date' => $approval->due_date?->toDateString(),
                     'notified_at' => $approval->notified_at?->toDateTimeString(),
                     'reminder_count' => $approval->reminder_count,
                     'created_at' => $approval->created_at->toDateTimeString(),
                 ]),
                 [
-                    'total' => $approvals->count(),
-                    'total_amount' => $approvals->sum(fn ($approval) => $approval->paymentDocument->amount),
+                    'current_page' => $page,
+                    'from' => $total > 0 ? (($page - 1) * $perPage) + 1 : null,
+                    'last_page' => max(1, (int) ceil($total / $perPage)),
+                    'links' => [],
+                    'path' => $request->url(),
+                    'per_page' => $perPage,
+                    'to' => $total > 0 ? min($page * $perPage, $total) : null,
+                    'total' => $total,
                 ],
-                trans_message('payments.approval.loaded')
+                trans_message('payments.approval.loaded'),
+                200,
+                [
+                    'total_amount' => $approvals->sum(fn ($approval) => $approval->paymentDocument->amount),
+                ]
             );
         } catch (\Exception $e) {
             Log::error('payment_approval.my_approvals.error', [

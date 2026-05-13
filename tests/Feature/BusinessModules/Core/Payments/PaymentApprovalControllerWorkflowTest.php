@@ -63,6 +63,37 @@ class PaymentApprovalControllerWorkflowTest extends TestCase
         ]);
     }
 
+    public function test_my_approvals_returns_admin_queue_payload_with_pagination_and_tenant_scope(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $document = $this->createPendingApprovalDocument($context);
+
+        $foreignContext = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($foreignContext->organization->id);
+        $foreignDocument = $this->createPendingApprovalDocument($foreignContext);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/payments/approvals/my?status=pending&per_page=15&page=1');
+
+        $response->assertOk();
+        $response->assertJsonPath('success', true);
+        $response->assertJsonPath('meta.current_page', 1);
+        $response->assertJsonPath('meta.per_page', 15);
+        $response->assertJsonPath('meta.total', 1);
+        $this->assertEquals(1000.0, $response->json('summary.total_amount'));
+
+        $ids = collect($response->json('data'))->pluck('payment_document_id')->all();
+        $this->assertContains($document->id, $ids);
+        $this->assertNotContains($foreignDocument->id, $ids);
+
+        $approval = $response->json('data.0');
+        $this->assertIsInt($approval['id']);
+        $this->assertSame('pending', $approval['status']);
+        $this->assertArrayHasKey('due_date', $approval);
+        $this->assertSame($document->document_number, $approval['payment_document']['document_number']);
+    }
+
     private function createPendingApprovalDocument(AdminApiTestContext $context): PaymentDocument
     {
         $document = PaymentDocument::query()->create([
