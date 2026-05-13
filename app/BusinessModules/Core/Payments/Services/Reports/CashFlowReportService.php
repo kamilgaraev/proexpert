@@ -71,7 +71,7 @@ class CashFlowReportService
             ->where('status', 'completed')
             ->whereNotNull('payer_contractor_id') // Платежи от контрагентов
             ->whereBetween('transaction_date', [$dateFrom, $dateTo])
-            ->with(['invoice', 'payerContractor'])
+            ->with(['paymentDocument', 'payerContractor'])
             ->get();
     }
 
@@ -84,7 +84,7 @@ class CashFlowReportService
             ->where('status', 'completed')
             ->whereNotNull('payee_contractor_id') // Платежи контрагентам
             ->whereBetween('transaction_date', [$dateFrom, $dateTo])
-            ->with(['invoice', 'payeeContractor'])
+            ->with(['paymentDocument', 'payeeContractor'])
             ->get();
     }
 
@@ -209,7 +209,7 @@ class CashFlowReportService
     private function groupByType(Collection $transactions): array
     {
         $grouped = $transactions->groupBy(function($t) {
-            return $t->invoice?->document_type?->value ?? 'unknown';
+            return $t->paymentDocument?->document_type?->value ?? 'unknown';
         });
 
         return $grouped->map(function($items, $type) {
