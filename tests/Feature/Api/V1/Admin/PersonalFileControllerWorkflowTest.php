@@ -45,6 +45,16 @@ class PersonalFileControllerWorkflowTest extends TestCase
             'is_folder' => true,
         ]);
 
+        $rootIndexResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/personal-files?per_page=10');
+
+        $rootIndexResponse->assertOk();
+        $rootItems = collect($rootIndexResponse->json('data'));
+        $rootFolder = $rootItems->firstWhere('filename', 'docs');
+        $this->assertNotNull($rootFolder);
+        $this->assertTrue($rootFolder['is_folder']);
+        $this->assertSame('docs', $rootFolder['path']);
+
         $uploadResponse = $this->withHeaders($context->authHeaders())
             ->post('/api/v1/admin/personal-files/upload', [
                 'parent_path' => 'docs',
@@ -92,6 +102,48 @@ class PersonalFileControllerWorkflowTest extends TestCase
         $response->assertStatus(422);
         $response->assertJsonPath('success', false);
         $this->assertDatabaseCount('personal_files', 0);
+    }
+
+    public function test_deleting_personal_folder_removes_nested_registry_records_and_storage_objects(): void
+    {
+        Storage::fake('s3');
+
+        $context = AdminApiTestContext::create();
+
+        $folder = PersonalFile::query()->create([
+            'user_id' => $context->user->id,
+            'path' => $context->user->id . '/docs/',
+            'filename' => 'docs',
+            'size' => 0,
+            'is_folder' => true,
+        ]);
+        $nestedFile = PersonalFile::query()->create([
+            'user_id' => $context->user->id,
+            'path' => $context->user->id . '/docs/contract.pdf',
+            'filename' => 'contract.pdf',
+            'size' => 12,
+            'is_folder' => false,
+        ]);
+        $siblingFile = PersonalFile::query()->create([
+            'user_id' => $context->user->id,
+            'path' => $context->user->id . '/archive/contract.pdf',
+            'filename' => 'contract.pdf',
+            'size' => 12,
+            'is_folder' => false,
+        ]);
+        Storage::disk('s3')->put($nestedFile->path, 'pdf');
+        Storage::disk('s3')->put($siblingFile->path, 'pdf');
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->deleteJson('/api/v1/admin/personal-files/' . $folder->id);
+
+        $response->assertOk();
+        $response->assertJsonPath('success', true);
+        $this->assertDatabaseMissing('personal_files', ['id' => $folder->id]);
+        $this->assertDatabaseMissing('personal_files', ['id' => $nestedFile->id]);
+        $this->assertDatabaseHas('personal_files', ['id' => $siblingFile->id]);
+        Storage::disk('s3')->assertMissing($nestedFile->path);
+        Storage::disk('s3')->assertExists($siblingFile->path);
     }
 
     public function test_empty_file_filter_query_values_are_ignored(): void

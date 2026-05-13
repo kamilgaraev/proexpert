@@ -38,11 +38,15 @@ class PersonalFileController extends Controller
             $sortDir = $params['sort_dir'] ?? 'desc';
             $perPage = (int)($params['per_page'] ?? 15);
 
-            $query = PersonalFile::where('user_id', $user->id)
-                ->where('is_folder', false);
+            $query = PersonalFile::where('user_id', $user->id);
 
             if (isset($params['folder'])) {
-                $query->where('path', 'like', $user->id . '/' . $params['folder'] . '%');
+                $folder = $this->normalizeRelativePath($params['folder']);
+                $folderPath = $this->userPath((int) $user->id, $folder);
+
+                $query
+                    ->where('path', 'like', $folderPath . '/%')
+                    ->where('path', '!=', $folderPath . '/');
             }
 
             if (isset($params['filename'])) {
@@ -69,7 +73,7 @@ class PersonalFileController extends Controller
                 $payload['download_url'] = null;
 
                 try {
-                    if ($storage->exists($file->path)) {
+                    if (!$file->is_folder && $storage->exists($file->path)) {
                         $payload['download_url'] = $storage->temporaryUrl($file->path, now()->addHours(1));
                     }
                 } catch (\Exception $e) {
@@ -197,6 +201,25 @@ class PersonalFileController extends Controller
 
             $org = OrganizationContext::getOrganization() ?? $user->currentOrganization;
             $storage = $this->fileService->disk($org);
+
+            if ($file->is_folder) {
+                $nestedFiles = PersonalFile::query()
+                    ->where('user_id', $user->id)
+                    ->where('path', 'like', $file->path . '%')
+                    ->get();
+
+                foreach ($nestedFiles as $nestedFile) {
+                    if (!$nestedFile->is_folder && $storage->exists($nestedFile->path)) {
+                        $storage->delete($nestedFile->path);
+                    }
+                }
+
+                PersonalFile::query()
+                    ->whereIn('id', $nestedFiles->pluck('id'))
+                    ->delete();
+
+                return AdminResponse::success(null, trans_message('files.deleted'));
+            }
 
             if ($storage->exists($file->path)) {
                 $storage->delete($file->path);
