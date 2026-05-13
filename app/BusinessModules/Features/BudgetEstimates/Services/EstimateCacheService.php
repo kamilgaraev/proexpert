@@ -5,6 +5,7 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services;
 use App\Models\Estimate;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
+use League\Flysystem\FilesystemException;
 
 class EstimateCacheService
 {
@@ -149,8 +150,11 @@ class EstimateCacheService
 
         $disk = Storage::disk('s3');
 
-        if ($disk->exists($path)) {
-            $disk->delete($path);
+        try {
+            if ($disk->exists($path)) {
+                $disk->delete($path);
+            }
+        } catch (FilesystemException) {
         }
     }
 

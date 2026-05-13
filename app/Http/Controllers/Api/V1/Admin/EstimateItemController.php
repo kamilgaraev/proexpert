@@ -50,7 +50,7 @@ class EstimateItemController extends Controller
                 ->with(['workType', 'measurementUnit', 'section'])
         )
             ->orderBy('id', 'asc')
-            ->paginate($request->input('per_page', 50));
+            ->paginate($this->normalizePerPage($request->input('per_page', 50)));
         
         return AdminResponse::paginated(
             EstimateItemResource::collection($items),
@@ -181,9 +181,9 @@ class EstimateItemController extends Controller
         );
     }
 
-    public function showForProject(Request $request, $project, int $estimateId, EstimateItem $item): JsonResponse
+    public function showForProject(Request $request, $project, int $estimate, EstimateItem $item): JsonResponse
     {
-        $item = $this->resolveProjectItem($item, $estimateId);
+        $item = $this->resolveProjectItem($item, (int) $request->route('estimate'));
 
         return $this->show($item);
     }
@@ -347,9 +347,9 @@ class EstimateItemController extends Controller
         );
     }
 
-    public function updateForProject(Request $request, $project, int $estimateId, EstimateItem $item): JsonResponse
+    public function updateForProject(Request $request, $project, int $estimate, EstimateItem $item): JsonResponse
     {
-        $item = $this->resolveProjectItem($item, $estimateId);
+        $item = $this->resolveProjectItem($item, (int) $request->route('estimate'));
 
         return $this->update($request, $item);
     }
@@ -463,9 +463,9 @@ class EstimateItemController extends Controller
         return AdminResponse::success(null, trans_message('estimate.item_deleted'));
     }
 
-    public function destroyForProject(Request $request, $project, int $estimateId, EstimateItem $item): JsonResponse
+    public function destroyForProject(Request $request, $project, int $estimate, EstimateItem $item): JsonResponse
     {
-        $item = $this->resolveProjectItem($item, $estimateId);
+        $item = $this->resolveProjectItem($item, (int) $request->route('estimate'));
 
         return $this->destroy($item);
     }
@@ -495,9 +495,9 @@ class EstimateItemController extends Controller
         );
     }
 
-    public function moveForProject(Request $request, $project, int $estimateId, EstimateItem $item): JsonResponse
+    public function moveForProject(Request $request, $project, int $estimate, EstimateItem $item): JsonResponse
     {
-        $item = $this->resolveProjectItem($item, $estimateId);
+        $item = $this->resolveProjectItem($item, (int) $request->route('estimate'));
 
         return $this->move($request, $item);
     }
@@ -656,5 +656,16 @@ class EstimateItemController extends Controller
         }
 
         return $item;
+    }
+
+    private function normalizePerPage(mixed $value): int
+    {
+        $perPage = (int) $value;
+
+        if ($perPage <= 0) {
+            return 1000;
+        }
+
+        return min($perPage, 1000);
     }
 }
