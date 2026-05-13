@@ -89,6 +89,7 @@ return [
     'catalog_position_update_error' => 'Не удалось обновить позицию каталога.',
     'catalog_position_deleted' => 'Позиция каталога удалена.',
     'catalog_position_delete_error' => 'Не удалось удалить позицию каталога.',
+    'catalog_position_used' => 'Позиция используется в сметах и не может быть удалена.',
 
     'categories_load_error' => 'Не удалось загрузить категории.',
     'category_tree_load_error' => 'Не удалось загрузить дерево категорий.',

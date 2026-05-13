@@ -16,6 +16,7 @@ use Illuminate\Http\Response;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Log;
 use Throwable;
+
 use function trans_message;
 
 class EstimatePositionCatalogController extends Controller
@@ -28,15 +29,15 @@ class EstimatePositionCatalogController extends Controller
     {
         try {
             $organizationId = $request->user()->current_organization_id;
-            $perPage = (int) $request->input('per_page', 15);
-            $sortBy = $request->input('sort_by', 'name');
-            $sortDirection = $request->input('sort_direction', 'asc');
-            $filters = $request->only([
+            $perPage = $this->normalizePerPage($request->input('per_page', 15));
+            $sortBy = $this->normalizeSortBy($request->input('sort_by', 'name'));
+            $sortDirection = $this->normalizeSortDirection($request->input('sort_direction', 'asc'));
+            $filters = $this->compactFilters($request->only([
                 'category_id',
                 'item_type',
                 'is_active',
                 'search',
-            ]);
+            ]));
 
             $positions = $this->service->getAllPositions(
                 $organizationId,
@@ -185,7 +186,7 @@ class EstimatePositionCatalogController extends Controller
                 );
             }
 
-            $filters = $request->only(['category_id', 'item_type', 'is_active']);
+            $filters = $this->compactFilters($request->only(['category_id', 'item_type', 'is_active']));
             $positions = $this->service->search($organizationId, $query, $filters);
 
             return $this->paginatedResponse($positions);
@@ -222,6 +223,51 @@ class EstimatePositionCatalogController extends Controller
                 'prev' => $positions->previousPageUrl(),
                 'next' => $positions->nextPageUrl(),
             ]
+        );
+    }
+
+    private function normalizePerPage(mixed $value): int
+    {
+        $perPage = (int) $value;
+
+        if ($perPage <= 0) {
+            return 1000;
+        }
+
+        return min($perPage, 1000);
+    }
+
+    private function normalizeSortBy(mixed $value): string
+    {
+        $allowed = [
+            'id',
+            'name',
+            'code',
+            'item_type',
+            'unit_price',
+            'usage_count',
+            'is_active',
+            'created_at',
+            'updated_at',
+        ];
+
+        return in_array($value, $allowed, true) ? (string) $value : 'name';
+    }
+
+    private function normalizeSortDirection(mixed $value): string
+    {
+        return strtolower((string) $value) === 'desc' ? 'desc' : 'asc';
+    }
+
+    /**
+     * @param array<string, mixed> $filters
+     * @return array<string, mixed>
+     */
+    private function compactFilters(array $filters): array
+    {
+        return array_filter(
+            $filters,
+            static fn (mixed $value): bool => $value !== null && $value !== ''
         );
     }
 }

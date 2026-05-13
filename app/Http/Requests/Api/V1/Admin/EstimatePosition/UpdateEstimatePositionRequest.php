@@ -4,6 +4,7 @@ namespace App\Http\Requests\Api\V1\Admin\EstimatePosition;
 
 use Illuminate\Foundation\Http\FormRequest;
 use App\Enums\EstimatePositionItemType;
+use Illuminate\Validation\Rule;
 
 class UpdateEstimatePositionRequest extends FormRequest
 {
@@ -24,18 +25,41 @@ class UpdateEstimatePositionRequest extends FormRequest
         $positionId = $this->route('id');
 
         return [
-            'category_id' => 'sometimes|nullable|integer|exists:estimate_position_catalog_categories,id',
+            'category_id' => [
+                'sometimes',
+                'nullable',
+                'integer',
+                Rule::exists('estimate_position_catalog_categories', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->whereNull('deleted_at'),
+            ],
             'name' => 'sometimes|string|max:255',
             'code' => [
                 'sometimes',
                 'string',
                 'max:255',
-                "unique:estimate_position_catalog,code,{$positionId},id,organization_id,{$organizationId}",
+                Rule::unique('estimate_position_catalog', 'code')
+                    ->ignore($positionId)
+                    ->where('organization_id', $organizationId)
+                    ->whereNull('deleted_at'),
             ],
             'description' => 'sometimes|nullable|string',
             'item_type' => 'sometimes|in:' . implode(',', EstimatePositionItemType::values()),
-            'measurement_unit_id' => 'sometimes|integer|exists:measurement_units,id',
-            'work_type_id' => 'sometimes|nullable|integer|exists:work_types,id',
+            'measurement_unit_id' => [
+                'sometimes',
+                'integer',
+                Rule::exists('measurement_units', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->whereNull('deleted_at'),
+            ],
+            'work_type_id' => [
+                'sometimes',
+                'nullable',
+                'integer',
+                Rule::exists('work_types', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->whereNull('deleted_at'),
+            ],
             'unit_price' => 'sometimes|numeric|min:0',
             'direct_costs' => 'sometimes|nullable|numeric|min:0',
             'overhead_percent' => 'sometimes|nullable|numeric|min:0|max:100',

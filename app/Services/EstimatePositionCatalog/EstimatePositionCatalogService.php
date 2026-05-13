@@ -9,6 +9,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Pagination\LengthAwarePaginator;
 
+use function trans_message;
+
 class EstimatePositionCatalogService
 {
     public function __construct(
@@ -36,7 +38,7 @@ class EstimatePositionCatalogService
             $query->where('item_type', $filters['item_type']);
         }
 
-        if (!empty($filters['is_active'])) {
+        if (array_key_exists('is_active', $filters) && $filters['is_active'] !== '') {
             $query->where('is_active', $filters['is_active']);
         }
 
@@ -143,9 +145,9 @@ class EstimatePositionCatalogService
                 throw new \RuntimeException('Position not found');
             }
 
-            // if (!$position->canBeDeleted()) {
-            //     throw new \DomainException('Позиция используется в сметах и не может быть удалена');
-            // }
+            if (!$position->canBeDeleted()) {
+                throw new \DomainException(trans_message('estimate.catalog_position_used'));
+            }
 
             // Помечаем как неактивную перед удалением для надежности
             $position->update(['is_active' => false]);

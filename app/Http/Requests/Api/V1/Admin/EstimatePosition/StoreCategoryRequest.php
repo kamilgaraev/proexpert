@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Api\V1\Admin\EstimatePosition;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class StoreCategoryRequest extends FormRequest
 {
@@ -19,8 +20,16 @@ class StoreCategoryRequest extends FormRequest
      */
     public function rules(): array
     {
+        $organizationId = $this->user()->current_organization_id;
+
         return [
-            'parent_id' => 'nullable|integer|exists:estimate_position_catalog_categories,id',
+            'parent_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('estimate_position_catalog_categories', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->whereNull('deleted_at'),
+            ],
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
             'sort_order' => 'sometimes|integer|min:0',

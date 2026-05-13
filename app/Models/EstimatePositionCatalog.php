@@ -148,10 +148,12 @@ class EstimatePositionCatalog extends Model
      */
     public function scopeSearch($query, string $searchTerm)
     {
+        $searchTerm = mb_strtolower($searchTerm);
+
         return $query->where(function ($q) use ($searchTerm) {
-            $q->where('name', 'ilike', "%{$searchTerm}%")
-                ->orWhere('code', 'ilike', "%{$searchTerm}%")
-                ->orWhere('description', 'ilike', "%{$searchTerm}%");
+            $q->whereRaw('LOWER(name) LIKE ?', ["%{$searchTerm}%"])
+                ->orWhereRaw('LOWER(code) LIKE ?', ["%{$searchTerm}%"])
+                ->orWhereRaw('LOWER(description) LIKE ?', ["%{$searchTerm}%"]);
         });
     }
 

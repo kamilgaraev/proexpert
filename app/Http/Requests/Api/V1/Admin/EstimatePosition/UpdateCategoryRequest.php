@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Api\V1\Admin\EstimatePosition;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class UpdateCategoryRequest extends FormRequest
 {
@@ -19,8 +20,17 @@ class UpdateCategoryRequest extends FormRequest
      */
     public function rules(): array
     {
+        $organizationId = $this->user()->current_organization_id;
+
         return [
-            'parent_id' => 'sometimes|nullable|integer|exists:estimate_position_catalog_categories,id',
+            'parent_id' => [
+                'sometimes',
+                'nullable',
+                'integer',
+                Rule::exists('estimate_position_catalog_categories', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->whereNull('deleted_at'),
+            ],
             'name' => 'sometimes|string|max:255',
             'description' => 'sometimes|nullable|string',
             'sort_order' => 'sometimes|integer|min:0',
