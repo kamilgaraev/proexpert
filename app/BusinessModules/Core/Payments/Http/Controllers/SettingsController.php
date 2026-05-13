@@ -50,6 +50,7 @@ class SettingsController extends Controller
     public function update(Request $request): JsonResponse
     {
         try {
+            $this->removeEmptySettingsValues($request);
             $validated = $request->validate([
                 'default_payment_terms_days' => ['nullable', 'integer', 'min:1', 'max:365'],
                 'enable_auto_overdue' => ['nullable', 'boolean'],
@@ -83,6 +84,14 @@ class SettingsController extends Controller
 
             return AdminResponse::error(trans_message('payments.settings.update_error'), 500);
         }
+    }
+
+    private function removeEmptySettingsValues(Request $request): void
+    {
+        $request->replace(array_filter(
+            $request->all(),
+            static fn ($value): bool => $value !== '' && $value !== null
+        ));
     }
     
     /**
