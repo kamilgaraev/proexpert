@@ -166,6 +166,7 @@
       "safety-management.briefings.manage",
       "safety-management.permits.manage",
       "safety-management.incidents.create",
+      "safety-management.incidents.review",
       "safety-management.violations.create",
       "safety-management.violations.resolve"
     ],
