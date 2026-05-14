@@ -395,6 +395,10 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
                 $q->where('organization_user.organization_id', $organizationId);
             })
             ->with([
+                'organizations',
+                'assignedProjects' => function ($q) {
+                    $q->wherePivot('is_active', true);
+                },
                 'roleAssignments' => function ($q) use ($context) {
                     $q->where('context_id', $context->id)
                         ->where('is_active', true);

@@ -111,7 +111,7 @@ class User extends Authenticatable implements JWTSubject, MustVerifyEmail
     public function organizations(): BelongsToMany
     {
         return $this->belongsToMany(Organization::class)
-            ->withPivot(['is_owner', 'is_active', 'settings'])
+            ->withPivot(['is_owner', 'is_active', 'settings', 'project_access_mode'])
             ->withTimestamps();
     }
 
@@ -174,7 +174,7 @@ class User extends Authenticatable implements JWTSubject, MustVerifyEmail
     public function assignedProjects(): BelongsToMany
     {
         return $this->belongsToMany(Project::class, 'project_user')
-            ->withPivot('role')
+            ->withPivot(['role', 'assigned_by_user_id', 'is_active', 'assigned_at'])
             ->withTimestamps();
     }
 

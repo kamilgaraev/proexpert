@@ -110,7 +110,7 @@ class Project extends Model
     public function users(): BelongsToMany
     {
         return $this->belongsToMany(User::class, 'project_user')
-            ->withPivot('role')
+            ->withPivot(['role', 'assigned_by_user_id', 'is_active', 'assigned_at'])
             ->withTimestamps();
     }
 

@@ -9,6 +9,7 @@ use App\Http\Responses\AdminResponse;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Services\Project\ProjectContextService;
+use App\Services\Project\UserProjectAccessService;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -19,10 +20,14 @@ use function trans_message;
 class ProjectContextMiddleware
 {
     protected ProjectContextService $projectContextService;
+    protected UserProjectAccessService $userProjectAccessService;
 
-    public function __construct(ProjectContextService $projectContextService)
-    {
+    public function __construct(
+        ProjectContextService $projectContextService,
+        UserProjectAccessService $userProjectAccessService
+    ) {
         $this->projectContextService = $projectContextService;
+        $this->userProjectAccessService = $userProjectAccessService;
     }
 
     public function handle(Request $request, Closure $next): Response
@@ -57,6 +62,16 @@ class ProjectContextMiddleware
 
         if (!$this->projectContextService->canOrganizationAccessProject($project, $organization)) {
             Log::warning('Unauthorized project access attempt', [
+                'project_id' => $project->id,
+                'organization_id' => $organization->id,
+                'user_id' => $user->id,
+            ]);
+
+            return AdminResponse::error(trans_message('project.access_denied'), Response::HTTP_FORBIDDEN);
+        }
+
+        if (!$this->userProjectAccessService->canAccessProject($user, $project, $organization->id)) {
+            Log::warning('Unauthorized user project scope attempt', [
                 'project_id' => $project->id,
                 'organization_id' => $organization->id,
                 'user_id' => $user->id,

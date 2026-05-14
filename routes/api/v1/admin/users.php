@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Admin\CustomerAccessController;
 use App\Http\Controllers\Api\V1\Admin\UserManagementController;
+use App\Http\Controllers\Api\V1\Admin\UserProjectAccessController;
 
 /*
 |--------------------------------------------------------------------------
@@ -28,6 +29,9 @@ Route::get('users/{user}', [UserManagementController::class, 'show'])
 Route::get('users/{user}/customer-access', [CustomerAccessController::class, 'show'])
     ->middleware('authorize:admin.users.view')
     ->name('users.customer-access.show');
+Route::get('users/{user}/project-access', [UserProjectAccessController::class, 'show'])
+    ->middleware('authorize:admin.users.view')
+    ->name('users.project-access.show');
 Route::put('users/{user}', [UserManagementController::class, 'update'])
     ->middleware('authorize:admin.users.edit')
     ->name('users.update');
@@ -37,6 +41,9 @@ Route::patch('users/{user}', [UserManagementController::class, 'update'])
 Route::put('users/{user}/customer-access', [CustomerAccessController::class, 'update'])
     ->middleware('authorize:admin.users.edit')
     ->name('users.customer-access.update');
+Route::put('users/{user}/project-access', [UserProjectAccessController::class, 'update'])
+    ->middleware('authorize:admin.users.edit')
+    ->name('users.project-access.update');
 
 Route::post('users/{user}/block', [UserManagementController::class, 'block'])
     ->middleware('authorize:admin.users.block')

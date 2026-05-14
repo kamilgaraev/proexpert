@@ -6,7 +6,9 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use App\Models\Project;
 use App\Services\Project\ProjectContextService;
+use App\Services\Project\UserProjectAccessService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -16,8 +18,10 @@ use function trans_message;
 
 class ProjectSelectorController extends Controller
 {
-    public function __construct(private readonly ProjectContextService $projectContextService)
-    {
+    public function __construct(
+        private readonly ProjectContextService $projectContextService,
+        private readonly UserProjectAccessService $userProjectAccessService
+    ) {
     }
 
     public function availableProjects(Request $request): JsonResponse
@@ -38,7 +42,32 @@ class ProjectSelectorController extends Controller
                 );
             }
 
-            $projects = $this->projectContextService->getAccessibleProjects($organization);
+            $projectModels = $this->userProjectAccessService
+                ->queryAccessibleProjects($user, $organization->id)
+                ->get();
+
+            $projects = $projectModels
+                ->map(function (Project $project) use ($organization): ?array {
+                    $role = $this->projectContextService->getOrganizationRole($project, $organization);
+
+                    if (!$role) {
+                        Log::warning('Project without role found', [
+                            'project_id' => $project->id,
+                            'organization_id' => $organization->id,
+                        ]);
+
+                        return null;
+                    }
+
+                    return [
+                        'project' => $project,
+                        'role' => $role,
+                        'is_owner' => $project->organization_id === $organization->id,
+                    ];
+                })
+                ->filter()
+                ->values()
+                ->all();
             $projectsData = array_map(function (array $projectData) {
                 $project = $projectData['project'];
                 $role = $projectData['role'];

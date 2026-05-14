@@ -3,6 +3,7 @@
 namespace App\Services\User;
 
 use App\DTOs\Activity\ActivityEventData;
+use App\Enums\UserProjectAccessMode;
 use App\Enums\Activity\ActivityActionEnum;
 use App\Enums\Activity\ActivityResultEnum;
 use App\Enums\Activity\ActivitySeverityEnum;
@@ -14,6 +15,7 @@ use App\Helpers\AdminPanelAccessHelper;
 use App\Services\Activity\ActivityEventRecorder;
 use App\Services\Logging\LoggingService;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -151,6 +153,24 @@ class UserService
         }
     }
 
+    private function defaultProjectAccessModeForRole(string $roleSlug): string
+    {
+        return in_array($roleSlug, ['organization_owner', 'organization_admin', 'web_admin'], true)
+            ? UserProjectAccessMode::ALL_PROJECTS->value
+            : UserProjectAccessMode::ASSIGNED_PROJECTS->value;
+    }
+
+    private function ensureOrganizationMembershipProjectAccessMode(User $user, int $organizationId, string $roleSlug): void
+    {
+        DB::table('organization_user')
+            ->where('user_id', $user->id)
+            ->where('organization_id', $organizationId)
+            ->update([
+                'project_access_mode' => $this->defaultProjectAccessModeForRole($roleSlug),
+                'updated_at' => now(),
+            ]);
+    }
+
 
     /**
      * Проверяет, существует ли роль в новой системе авторизации
@@ -269,6 +289,7 @@ class UserService
             
             // Назначаем роль существующему пользователю
             $this->userRepository->attachToOrganization($existingUser->id, $intOrganizationId);
+            $this->ensureOrganizationMembershipProjectAccessMode($existingUser, $intOrganizationId, $adminRoleSlug);
             $this->userRepository->assignRoleToUser($existingUser->id, $adminRoleSlug, $intOrganizationId);
             $this->userRepository->update($existingUser->id, ['name' => $data['name']]);
             
@@ -308,6 +329,7 @@ class UserService
             // Создаем нового пользователя
             $newUser = $this->userRepository->create($data);
             $this->userRepository->attachToOrganization($newUser->id, $intOrganizationId);
+            $this->ensureOrganizationMembershipProjectAccessMode($newUser, $intOrganizationId, $adminRoleSlug);
             $this->userRepository->assignRoleToUser($newUser->id, $adminRoleSlug, $intOrganizationId);
             
             if (!$newUser->hasVerifiedEmail()) {
@@ -420,6 +442,9 @@ class UserService
             })
             ->with([
                 'organizations',
+                'assignedProjects' => function ($query) {
+                    $query->wherePivot('is_active', true);
+                },
                 'roleAssignments' => function ($query) use ($contextId) {
                     if ($contextId) {
                         $query->where('context_id', $contextId);
@@ -795,6 +820,7 @@ class UserService
             }
             // If user exists but not foreman, add them to the org with the foreman role
             $this->userRepository->attachToOrganization($existingUser->id, $organizationId, false); // Ensure attached, NOT as owner
+            $this->ensureOrganizationMembershipProjectAccessMode($existingUser, (int) $organizationId, $roleSlug);
             $this->userRepository->assignRoleToUser($existingUser->id, $roleSlug, $organizationId);
             $this->userRepository->update($existingUser->id, ['name' => $data['name']]); // Update name
             return $this->userRepository->find($existingUser->id);
@@ -802,6 +828,7 @@ class UserService
              // If user doesn't exist, create them and assign role/org
             $newUser = $this->userRepository->create($data);
             $this->userRepository->attachToOrganization($newUser->id, $organizationId, false); // Attach as NOT an owner
+            $this->ensureOrganizationMembershipProjectAccessMode($newUser, (int) $organizationId, $roleSlug);
             $this->userRepository->assignRoleToUser($newUser->id, $roleSlug, $organizationId);
 
             if (!$newUser->hasVerifiedEmail()) {
@@ -985,6 +1012,7 @@ class UserService
             }
             // Пользователь существует, но роли нет. Привязываем к организации и назначаем роль.
             $this->userRepository->attachToOrganization($existingUser->id, $intOrganizationId, false, true); // Не владелец, активный
+            $this->ensureOrganizationMembershipProjectAccessMode($existingUser, $intOrganizationId, $roleSlug);
             $this->userRepository->assignRoleToUser($existingUser->id, $roleSlug, $intOrganizationId);
             // Обновляем имя, если оно изменилось
             $this->userRepository->update($existingUser->id, ['name' => $userData['name']]);
@@ -993,6 +1021,7 @@ class UserService
             $userData['current_organization_id'] = $intOrganizationId;
             $newUser = $this->userRepository->create($userData);
             $this->userRepository->attachToOrganization($newUser->id, $intOrganizationId, false, true);
+            $this->ensureOrganizationMembershipProjectAccessMode($newUser, $intOrganizationId, $roleSlug);
             $this->userRepository->assignRoleToUser($newUser->id, $roleSlug, $intOrganizationId);
             
             if (!$newUser->hasVerifiedEmail()) {

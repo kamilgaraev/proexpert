@@ -9,11 +9,13 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use App\Services\Project\ProjectContextService;
+use App\Services\Project\UserProjectAccessService;
 
 class AdminProjectAccessService
 {
     public function __construct(
         private readonly ProjectContextService $projectContextService,
+        private readonly UserProjectAccessService $userProjectAccessService,
     ) {
     }
 
@@ -22,6 +24,10 @@ class AdminProjectAccessService
         $organization = $this->resolveCurrentOrganization($user);
 
         if (!$organization instanceof Organization) {
+            return null;
+        }
+
+        if (!$this->userProjectAccessService->canAccessProject($user, $project, $organization->id)) {
             return null;
         }
 
