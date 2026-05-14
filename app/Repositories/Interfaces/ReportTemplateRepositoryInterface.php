@@ -44,4 +44,6 @@ interface ReportTemplateRepositoryInterface extends BaseRepositoryInterface
      * @return ReportTemplate
      */
     public function setDefault(ReportTemplate $template): ReportTemplate;
-} 
+
+    public function deleteById(int $templateId): bool;
+}

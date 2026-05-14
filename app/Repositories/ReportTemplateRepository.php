@@ -1,15 +1,25 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Repositories;
 
 use App\Models\ReportTemplate;
 use App\Repositories\Interfaces\ReportTemplateRepositoryInterface;
-use Illuminate\Http\Request;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class ReportTemplateRepository extends BaseRepository implements ReportTemplateRepositoryInterface
 {
+    private const ALLOWED_SORTS = [
+        'name' => 'name',
+        'created_at' => 'created_at',
+        'updated_at' => 'updated_at',
+        'report_type' => 'report_type',
+        'is_default' => 'is_default',
+    ];
+
     public function __construct()
     {
         parent::__construct(ReportTemplate::class);
@@ -17,7 +27,11 @@ class ReportTemplateRepository extends BaseRepository implements ReportTemplateR
 
     public function getPaginatedTemplatesForOrganization(int $organizationId, Request $request, int $perPage): LengthAwarePaginator
     {
-        $query = $this->model->where('organization_id', $organizationId);
+        $query = $this->model
+            ->where(function ($query) use ($organizationId): void {
+                $query->where('organization_id', $organizationId)
+                    ->orWhereNull('organization_id');
+            });
 
         if ($request->filled('report_type')) {
             $query->where('report_type', $request->input('report_type'));
@@ -26,35 +40,34 @@ class ReportTemplateRepository extends BaseRepository implements ReportTemplateR
         if ($request->filled('name')) {
             $query->where('name', 'like', '%' . $request->input('name') . '%');
         }
-        
-        $sortBy = $request->input('sort_by', 'name');
-        $sortDirection = $request->input('sort_direction', 'asc');
-        $query->orderBy($sortBy, $sortDirection);
 
-        return $query->paginate($perPage);
+        $sortBy = $this->normalizeSortBy($request->input('sort_by'));
+        $sortDirection = $this->normalizeSortDirection($request->input('sort_direction'));
+
+        return $query
+            ->orderBy($sortBy, $sortDirection)
+            ->paginate($perPage);
     }
 
     public function findByIdForOrganization(int $templateId, int $organizationId): ?ReportTemplate
     {
         return $this->model
             ->where('id', $templateId)
-            ->where(function ($query) use ($organizationId) {
+            ->where(function ($query) use ($organizationId): void {
                 $query->where('organization_id', $organizationId)
-                      ->orWhereNull('organization_id'); // Системные шаблоны доступны всем
+                    ->orWhereNull('organization_id');
             })
             ->first();
     }
-    
+
     public function findDefaultTemplate(string $reportType, int $organizationId): ?ReportTemplate
     {
-        // Сначала ищем дефолтный шаблон организации
         $template = $this->model
             ->where('report_type', $reportType)
             ->where('organization_id', $organizationId)
             ->where('is_default', true)
             ->first();
-        
-        // Если не найден - берем системный дефолтный шаблон
+
         if (!$template) {
             $template = $this->model
                 ->where('report_type', $reportType)
@@ -62,24 +75,44 @@ class ReportTemplateRepository extends BaseRepository implements ReportTemplateR
                 ->where('is_default', true)
                 ->first();
         }
-        
+
         return $template;
     }
 
     public function setDefault(ReportTemplate $template): ReportTemplate
     {
-        return DB::transaction(function () use ($template) {
-            // Сбрасываем флаг is_default у других шаблонов этого типа для этой организации
+        return DB::transaction(function () use ($template): ReportTemplate {
             $this->model
                 ->where('organization_id', $template->organization_id)
                 ->where('report_type', $template->report_type)
                 ->where('id', '!=', $template->id)
                 ->update(['is_default' => false]);
 
-            // Устанавливаем флаг для текущего шаблона
             $template->is_default = true;
             $template->save();
+
             return $template;
         });
     }
-} 
+
+    public function deleteById(int $templateId): bool
+    {
+        $template = $this->model->find($templateId);
+
+        return $template ? (bool) $template->delete() : false;
+    }
+
+    private function normalizeSortBy(mixed $value): string
+    {
+        $sortBy = is_string($value) ? strtolower($value) : 'name';
+
+        return self::ALLOWED_SORTS[$sortBy] ?? 'name';
+    }
+
+    private function normalizeSortDirection(mixed $value): string
+    {
+        $sortDirection = is_string($value) ? strtolower($value) : 'asc';
+
+        return in_array($sortDirection, ['asc', 'desc'], true) ? $sortDirection : 'asc';
+    }
+}
