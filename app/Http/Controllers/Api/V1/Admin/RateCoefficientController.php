@@ -8,7 +8,6 @@ use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Admin\RateCoefficient\StoreRateCoefficientRequest;
 use App\Http\Requests\Api\V1\Admin\RateCoefficient\UpdateRateCoefficientRequest;
-use App\Http\Resources\Api\V1\Admin\RateCoefficient\RateCoefficientCollection;
 use App\Http\Resources\Api\V1\Admin\RateCoefficient\RateCoefficientResource;
 use App\Http\Responses\AdminResponse;
 use App\Services\RateCoefficient\RateCoefficientService;
@@ -30,15 +29,30 @@ class RateCoefficientController extends Controller
         try {
             $perPage = (int) $request->input('per_page', 15);
             $coefficients = $this->coefficientService->getAllCoefficients($request, $perPage);
-            $payload = (new RateCoefficientCollection($coefficients))->response()->getData(true);
+            $data = RateCoefficientResource::collection($coefficients->getCollection())->resolve($request);
+            $meta = [
+                'current_page' => $coefficients->currentPage(),
+                'from' => $coefficients->firstItem(),
+                'last_page' => $coefficients->lastPage(),
+                'path' => $coefficients->path(),
+                'per_page' => $coefficients->perPage(),
+                'to' => $coefficients->lastItem(),
+                'total' => $coefficients->total(),
+            ];
+            $links = [
+                'first' => $coefficients->url(1),
+                'last' => $coefficients->url($coefficients->lastPage()),
+                'prev' => $coefficients->previousPageUrl(),
+                'next' => $coefficients->nextPageUrl(),
+            ];
 
             return AdminResponse::paginated(
-                $payload['data'] ?? [],
-                is_array($payload['meta'] ?? null) ? $payload['meta'] : [],
+                $data,
+                $meta,
                 null,
                 Response::HTTP_OK,
                 null,
-                is_array($payload['links'] ?? null) ? $payload['links'] : null
+                $links
             );
         } catch (\Throwable $e) {
             Log::error('Failed to load rate coefficients', [
