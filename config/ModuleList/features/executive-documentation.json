@@ -1,0 +1,63 @@
+{
+  "name": "Исполнительная документация",
+  "slug": "executive-documentation",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "subscription",
+  "category": "pto",
+  "description": "Контур реестров, комплектов, актов скрытых работ, исполнительных схем и сдачи документации.",
+  "class_name": "App\\BusinessModules\\Features\\ExecutiveDocumentation\\ExecutiveDocumentationModule",
+  "service_provider": "App\\BusinessModules\\Features\\ExecutiveDocumentation\\ExecutiveDocumentationServiceProvider",
+  "pricing": {
+    "base_price": 4900,
+    "currency": "RUB",
+    "included_in_plans": ["profi", "enterprise"],
+    "duration_days": 30
+  },
+  "permissions": [
+    "executive-documentation.view",
+    "executive-documentation.create",
+    "executive-documentation.edit",
+    "executive-documentation.delete",
+    "executive-documentation.submit",
+    "executive-documentation.review",
+    "executive-documentation.approve",
+    "executive-documentation.reject",
+    "executive-documentation.archive",
+    "executive-documentation.export",
+    "executive-documentation.templates.manage",
+    "executive-documentation.settings.manage"
+  ],
+  "features": [
+    "Реестр исполнительной документации по объекту",
+    "Комплекты документов по этапам и зонам",
+    "Согласование, замечания и версии документов",
+    "Передача заказчику через customer-портал"
+  ],
+  "dependencies": [
+    "organizations",
+    "users",
+    "project-management",
+    "contract-management",
+    "file-management",
+    "report-templates"
+  ],
+  "optional_integrations": [
+    "quality-control",
+    "handover-acceptance",
+    "change-management"
+  ],
+  "conflicts": [],
+  "limits": {
+    "max_register_items": null,
+    "max_document_versions": null,
+    "archive_retention_days": 1825
+  },
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "development_status": "stable",
+  "icon": "files",
+  "display_order": 42,
+  "tags": ["pto", "documents", "as-built", "customer"]
+}

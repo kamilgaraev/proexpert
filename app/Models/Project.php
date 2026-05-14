@@ -107,7 +107,7 @@ class Project extends Model
     /**
      * Получить пользователей, назначенных на проект.
      */
-    public function users()
+    public function users(): BelongsToMany
     {
         return $this->belongsToMany(User::class, 'project_user')
             ->withPivot('role')

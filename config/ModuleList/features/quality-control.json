@@ -1,0 +1,65 @@
+{
+  "name": "Контроль качества",
+  "slug": "quality-control",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "subscription",
+  "category": "execution",
+  "description": "Контур входного, операционного и приемочного контроля качества работ и материалов на объекте.",
+  "class_name": "App\\BusinessModules\\Features\\QualityControl\\QualityControlModule",
+  "service_provider": "App\\BusinessModules\\Features\\QualityControl\\QualityControlServiceProvider",
+  "pricing": {
+    "base_price": 3900,
+    "currency": "RUB",
+    "included_in_plans": ["profi", "enterprise"],
+    "duration_days": 30
+  },
+  "permissions": [
+    "quality-control.view",
+    "quality-control.create",
+    "quality-control.edit",
+    "quality-control.delete",
+    "quality-control.inspect",
+    "quality-control.approve",
+    "quality-control.reject",
+    "quality-control.defects.view",
+    "quality-control.defects.create",
+    "quality-control.defects.assign",
+    "quality-control.defects.resolve",
+    "quality-control.defects.verify",
+    "quality-control.reports.export",
+    "quality-control.settings.manage"
+  ],
+  "features": [
+    "Планы инспекций и контрольные карты",
+    "Фиксация дефектов с ответственными и сроками",
+    "Фотофиксация, замечания и повторная проверка",
+    "Связь с журналом работ, зонами, сметами и подрядчиками"
+  ],
+  "dependencies": [
+    "organizations",
+    "users",
+    "project-management",
+    "contract-management",
+    "budget-estimates",
+    "file-management"
+  ],
+  "optional_integrations": [
+    "site-requests",
+    "handover-acceptance",
+    "executive-documentation"
+  ],
+  "conflicts": [],
+  "limits": {
+    "max_inspections_per_month": null,
+    "max_defects_per_project": null,
+    "photo_retention_days": 365
+  },
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "development_status": "stable",
+  "icon": "badge-check",
+  "display_order": 41,
+  "tags": ["quality", "defects", "inspection", "handover"]
+}

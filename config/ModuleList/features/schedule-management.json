@@ -28,7 +28,12 @@
     "schedule-management.export",
     "schedule-management.notifications",
     "schedule-management.import_from_estimate",
-    "schedule-management.sync_with_estimate"
+    "schedule-management.sync_with_estimate",
+    "schedule.lookahead.view",
+    "schedule.lookahead.manage",
+    "schedule.daily_plan.view",
+    "schedule.daily_plan.manage",
+    "schedule.daily_plan.confirm"
   ],
   
   "features": [
@@ -46,7 +51,9 @@
     "Импорт объемов и ресурсов из сметы",
     "Двусторонняя синхронизация со сметой",
     "Автоматический расчет длительности на основе трудозатрат",
-    "Отслеживание прогресса выполнения объемов работ"
+    "Отслеживание прогресса выполнения объемов работ",
+    "Lookahead-планирование на 2-6 недель",
+    "Дневные планы работ с подтверждением выполнения"
   ],
   
   "dependencies": [

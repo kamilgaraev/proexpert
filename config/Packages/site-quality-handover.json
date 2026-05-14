@@ -1,0 +1,135 @@
+{
+  "slug": "site-quality-handover",
+  "name": "Качество и приемка",
+  "description": "Контур контроля качества, дефектов, исполнительной документации и передачи результата заказчику.",
+  "icon": "clipboard-check",
+  "color": "#059669",
+  "sort_order": 7,
+  "schema_version": 2,
+  "foundation_modules": [
+    "organizations",
+    "users",
+    "project-management",
+    "contract-management",
+    "catalog-management",
+    "dashboard-widgets",
+    "data-filters",
+    "brigades"
+  ],
+  "integrations": [
+    {
+      "package_slug": "estimates-pto",
+      "module_slug": "budget-estimates",
+      "label": "Сметы и объемы работ"
+    },
+    {
+      "package_slug": "objects-execution",
+      "module_slug": "site-requests",
+      "label": "Заявки и замечания с площадки"
+    }
+  ],
+  "recommended_addons": [
+    {
+      "module_slug": "file-management",
+      "label": "Файлы, фото и версии документов"
+    }
+  ],
+  "business_outcomes": [
+    "Контроль качества работ до приемки",
+    "Единый реестр дефектов и punch-list",
+    "Прозрачная передача результата заказчику"
+  ],
+  "data_sources": [
+    {
+      "module_slug": "quality-control",
+      "label": "Инспекции и дефекты"
+    },
+    {
+      "module_slug": "handover-acceptance",
+      "label": "Приемка и punch-list"
+    }
+  ],
+  "capabilities": [
+    {
+      "slug": "quality-to-handover",
+      "label": "Дефекты переходят в punch-list",
+      "requires_modules": [
+        "quality-control",
+        "handover-acceptance"
+      ]
+    }
+  ],
+  "tiers": {
+    "base": {
+      "label": "Контроль",
+      "description": "Инспекции качества, дефекты и приемка зон.",
+      "price": 5900,
+      "billing_model": "subscription",
+      "duration_days": 30,
+      "modules": [
+        "project-management",
+        "contract-management",
+        "budget-estimates",
+        "file-management",
+        "quality-control",
+        "handover-acceptance",
+        "one-c-basic-exchange"
+      ],
+      "highlights": [
+        "Контроль качества",
+        "Дефекты и ответственные",
+        "Приемка зон"
+      ]
+    },
+    "pro": {
+      "label": "ПТО",
+      "description": "Качество, приемка и исполнительная документация.",
+      "price": 7900,
+      "billing_model": "subscription",
+      "duration_days": 30,
+      "modules": [
+        "project-management",
+        "contract-management",
+        "budget-estimates",
+        "file-management",
+        "reports",
+        "report-templates",
+        "quality-control",
+        "executive-documentation",
+        "handover-acceptance",
+        "one-c-basic-exchange"
+      ],
+      "highlights": [
+        "Исполнительная документация",
+        "Комплекты приемки",
+        "Версии и замечания"
+      ]
+    },
+    "enterprise": {
+      "label": "Сдача заказчику",
+      "description": "Полный контур качества, исполнительной документации, изменений и customer-приемки.",
+      "price": 9900,
+      "billing_model": "subscription",
+      "duration_days": 30,
+      "modules": [
+        "project-management",
+        "contract-management",
+        "budget-estimates",
+        "payments",
+        "file-management",
+        "reports",
+        "report-templates",
+        "quality-control",
+        "executive-documentation",
+        "change-management",
+        "handover-acceptance",
+        "one-c-basic-exchange"
+      ],
+      "highlights": [
+        "Customer-приемка",
+        "Изменения и претензии",
+        "Комплект сдачи объекта"
+      ]
+    }
+  }
+}

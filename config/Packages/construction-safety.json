@@ -1,0 +1,111 @@
+{
+  "slug": "construction-safety",
+  "name": "Безопасность стройки",
+  "description": "Охрана труда, инструктажи, допуски, нарушения, инциденты и контроль устранения.",
+  "icon": "shield-check",
+  "color": "#DC2626",
+  "sort_order": 8,
+  "schema_version": 2,
+  "foundation_modules": [
+    "organizations",
+    "users",
+    "project-management",
+    "contract-management",
+    "catalog-management",
+    "dashboard-widgets",
+    "data-filters",
+    "brigades"
+  ],
+  "integrations": [
+    {
+      "package_slug": "objects-execution",
+      "module_slug": "site-requests",
+      "label": "Нарушения и заявки с объекта"
+    }
+  ],
+  "recommended_addons": [
+    {
+      "module_slug": "video-monitoring",
+      "label": "Видео и события с площадки"
+    }
+  ],
+  "business_outcomes": [
+    "Контроль допусков и инструктажей",
+    "Фиксация нарушений и инцидентов",
+    "Управляемое устранение предписаний"
+  ],
+  "data_sources": [
+    {
+      "module_slug": "safety-management",
+      "label": "Охрана труда и безопасность"
+    }
+  ],
+  "capabilities": [],
+  "tiers": {
+    "base": {
+      "label": "Старт",
+      "description": "Инструктажи, нарушения и базовая отчетность по безопасности.",
+      "price": 3900,
+      "billing_model": "subscription",
+      "duration_days": 30,
+      "modules": [
+        "project-management",
+        "catalog-management",
+        "brigades",
+        "file-management",
+        "safety-management",
+        "one-c-basic-exchange"
+      ],
+      "highlights": [
+        "Инструктажи",
+        "Нарушения",
+        "Предписания"
+      ]
+    },
+    "pro": {
+      "label": "Контроль",
+      "description": "Безопасность с подрядчиками, файлами и видеофиксацией.",
+      "price": 5900,
+      "billing_model": "subscription",
+      "duration_days": 30,
+      "modules": [
+        "project-management",
+        "catalog-management",
+        "brigades",
+        "file-management",
+        "contractor-portal",
+        "video-monitoring",
+        "safety-management",
+        "one-c-basic-exchange"
+      ],
+      "highlights": [
+        "Подрядчики",
+        "Фото и видео",
+        "Расследования"
+      ]
+    },
+    "enterprise": {
+      "label": "Корпоративный",
+      "description": "Расширенный контур HSE для нескольких объектов и подрядчиков.",
+      "price": 7900,
+      "billing_model": "subscription",
+      "duration_days": 30,
+      "modules": [
+        "project-management",
+        "catalog-management",
+        "brigades",
+        "file-management",
+        "contractor-portal",
+        "video-monitoring",
+        "reports",
+        "safety-management",
+        "one-c-basic-exchange"
+      ],
+      "highlights": [
+        "Сводки по объектам",
+        "Отчеты HSE",
+        "Контроль подрядчиков"
+      ]
+    }
+  }
+}

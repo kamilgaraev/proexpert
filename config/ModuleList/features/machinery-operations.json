@@ -1,0 +1,62 @@
+{
+  "name": "Техника и механизмы",
+  "slug": "machinery-operations",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "subscription",
+  "category": "resources",
+  "description": "Контур учета техники, заявок, смен, простоев, ГСМ и связки механизмов с выполнением работ.",
+  "class_name": "App\\BusinessModules\\Features\\MachineryOperations\\MachineryOperationsModule",
+  "service_provider": "App\\BusinessModules\\Features\\MachineryOperations\\MachineryOperationsServiceProvider",
+  "pricing": {
+    "base_price": 3900,
+    "currency": "RUB",
+    "included_in_plans": ["business", "profi", "enterprise"],
+    "duration_days": 30
+  },
+  "permissions": [
+    "machinery-operations.view",
+    "machinery-operations.create",
+    "machinery-operations.edit",
+    "machinery-operations.delete",
+    "machinery-operations.requests.create",
+    "machinery-operations.requests.approve",
+    "machinery-operations.shifts.create",
+    "machinery-operations.shifts.approve",
+    "machinery-operations.downtime.manage",
+    "machinery-operations.fuel.manage",
+    "machinery-operations.reports.export",
+    "machinery-operations.settings.manage"
+  ],
+  "features": [
+    "Каталог техники и механизмов",
+    "Заявки на технику и назначение на объект",
+    "Сменные рапорты, моточасы, простой и ГСМ",
+    "Связь со сметными механизмами и выполненными работами"
+  ],
+  "dependencies": [
+    "organizations",
+    "users",
+    "project-management",
+    "budget-estimates",
+    "site-requests"
+  ],
+  "optional_integrations": [
+    "production-labor",
+    "payments",
+    "basic-warehouse"
+  ],
+  "conflicts": [],
+  "limits": {
+    "max_machines": null,
+    "max_shifts_per_month": null,
+    "fuel_transactions_per_month": null
+  },
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "development_status": "stable",
+  "icon": "truck",
+  "display_order": 44,
+  "tags": ["machinery", "fuel", "downtime", "resources"]
+}

@@ -1,0 +1,63 @@
+{
+  "name": "Охрана труда и безопасность",
+  "slug": "safety-management",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "subscription",
+  "category": "execution",
+  "description": "Контур инструктажей, допусков, нарушений, происшествий и предписаний по безопасности на стройке.",
+  "class_name": "App\\BusinessModules\\Features\\SafetyManagement\\SafetyManagementModule",
+  "service_provider": "App\\BusinessModules\\Features\\SafetyManagement\\SafetyManagementServiceProvider",
+  "pricing": {
+    "base_price": 2900,
+    "currency": "RUB",
+    "included_in_plans": ["business", "profi", "enterprise"],
+    "duration_days": 30
+  },
+  "permissions": [
+    "safety-management.view",
+    "safety-management.create",
+    "safety-management.edit",
+    "safety-management.delete",
+    "safety-management.briefings.manage",
+    "safety-management.permits.manage",
+    "safety-management.incidents.create",
+    "safety-management.incidents.review",
+    "safety-management.violations.create",
+    "safety-management.violations.resolve",
+    "safety-management.prescriptions.approve",
+    "safety-management.reports.export",
+    "safety-management.settings.manage"
+  ],
+  "features": [
+    "Инструктажи и допуски сотрудников и подрядчиков",
+    "Нарушения, предписания и контроль устранения",
+    "Регистрация инцидентов и расследований",
+    "Мобильная фиксация с фото и геометкой"
+  ],
+  "dependencies": [
+    "organizations",
+    "users",
+    "project-management",
+    "brigades",
+    "file-management"
+  ],
+  "optional_integrations": [
+    "video-monitoring",
+    "quality-control",
+    "contractor-portal"
+  ],
+  "conflicts": [],
+  "limits": {
+    "max_incidents_per_month": null,
+    "max_briefings_per_month": null,
+    "retention_days": 1825
+  },
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "development_status": "stable",
+  "icon": "shield-check",
+  "display_order": 43,
+  "tags": ["safety", "hse", "briefings", "incidents"]
+}

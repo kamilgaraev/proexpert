@@ -7,6 +7,7 @@ namespace Tests\Feature\Api\V1\Admin;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
+use App\Models\ConstructionJournal;
 use App\Models\Project;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
@@ -16,6 +17,7 @@ use App\Models\User;
 use App\Models\WorkType;
 use App\Models\MeasurementUnit;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -405,6 +407,204 @@ class ProjectScheduleCoreExperienceControllerTest extends TestCase
 
         $deleteResponse->assertOk();
         $this->assertDatabaseMissing('task_dependencies', ['id' => $dependency->id]);
+    }
+
+    public function test_lookahead_daily_plan_requires_resolved_hard_constraints_or_explicit_override(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $schedule = $this->createSchedule($context->organization, $project, $context->user, [
+            'status' => 'active',
+        ]);
+        $task = $this->createTask($context->organization, $schedule, $context->user, [
+            'name' => 'Foundation reinforcement',
+            'planned_start_date' => '2026-06-08',
+            'planned_end_date' => '2026-06-12',
+        ]);
+        $this->allowAdminAccess();
+
+        $planResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/lookahead-plans", [
+                'start_date' => '2026-06-08',
+                'end_date' => '2026-06-21',
+                'title' => 'Two week lookahead',
+            ]);
+
+        $planResponse->assertCreated();
+        $planResponse->assertJsonPath('data.workflow_summary.status', 'draft');
+        $planId = (int) $planResponse->json('data.id');
+
+        $planTaskResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/lookahead-plans/{$planId}/tasks", [
+                'schedule_task_id' => $task->id,
+                'planned_start_date' => '2026-06-08',
+                'planned_end_date' => '2026-06-10',
+                'planned_quantity' => 25,
+                'planned_work_hours' => 24,
+            ]);
+
+        $planTaskResponse->assertCreated();
+        $planTaskId = (int) $planTaskResponse->json('data.id');
+
+        $constraintResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/lookahead-tasks/{$planTaskId}/constraints", [
+                'constraint_type' => 'material_missing',
+                'title' => 'Rebar delivery not confirmed',
+                'severity' => 'hard',
+                'due_date' => '2026-06-07',
+            ]);
+
+        $constraintResponse->assertCreated();
+        $constraintResponse->assertJsonPath('data.status', 'open');
+        $constraintId = (int) $constraintResponse->json('data.id');
+
+        $dailyResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/daily-plans", [
+                'lookahead_plan_id' => $planId,
+                'work_date' => '2026-06-08',
+                'assignments' => [
+                    [
+                        'lookahead_plan_task_id' => $planTaskId,
+                        'planned_quantity' => 10,
+                        'planned_work_hours' => 8,
+                    ],
+                ],
+            ]);
+
+        $dailyResponse->assertCreated();
+        $dailyPlanId = (int) $dailyResponse->json('data.id');
+
+        $publishBlockedResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/daily-plans/{$dailyPlanId}/publish");
+
+        $publishBlockedResponse->assertStatus(422);
+        $publishBlockedResponse->assertJsonPath('errors.constraints.0.id', $constraintId);
+
+        $publishOverrideResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/daily-plans/{$dailyPlanId}/publish", [
+                'override_constraint_ids' => [$constraintId],
+                'override_reason' => 'Material delivery confirmed by supplier call',
+            ]);
+
+        $publishOverrideResponse->assertOk();
+        $publishOverrideResponse->assertJsonPath('data.status', 'published');
+        $publishOverrideResponse->assertJsonPath('data.workflow_summary.problem_flags.0.key', 'hard_constraint_overridden');
+
+        $this->assertDatabaseHas('daily_work_plans', [
+            'id' => $dailyPlanId,
+            'status' => 'published',
+        ]);
+        $this->assertSame(
+            'Material delivery confirmed by supplier call',
+            DB::table('work_constraints')->where('id', $constraintId)->value('override_reason')
+        );
+
+        ConstructionJournal::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'name' => 'General works journal',
+            'journal_number' => 'J-1',
+            'start_date' => '2026-06-01',
+            'status' => 'active',
+            'created_by_user_id' => $context->user->id,
+        ]);
+
+        $assignmentId = (int) $publishOverrideResponse->json('data.assignments.0.id');
+
+        $factResponse = $this->withHeaders($context->authHeaders())
+            ->patchJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/daily-plan-assignments/{$assignmentId}/fact", [
+                'status' => 'done',
+                'completed_quantity' => 10,
+                'actual_work_hours' => 8,
+                'fact_comment' => 'Reinforcement installed on axis A-B',
+            ]);
+
+        $factResponse->assertOk();
+        $factResponse->assertJsonPath('data.status', 'done');
+        $this->assertDatabaseHas('construction_journal_entries', [
+            'schedule_task_id' => $task->id,
+            'entry_date' => '2026-06-08 00:00:00',
+        ]);
+
+        $submitResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/daily-plans/{$dailyPlanId}/submit", [
+                'summary_comment' => 'Daily plan completed',
+            ]);
+
+        $submitResponse->assertOk();
+        $submitResponse->assertJsonPath('data.status', 'submitted');
+
+        $returnResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/daily-plans/{$dailyPlanId}/return", [
+                'return_reason' => 'Need quantity clarification',
+            ]);
+
+        $returnResponse->assertOk();
+        $returnResponse->assertJsonPath('data.status', 'returned');
+        $returnResponse->assertJsonPath('data.workflow_summary.available_actions.0', 'record_fact');
+
+        $correctedFactResponse = $this->withHeaders($context->authHeaders())
+            ->patchJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/daily-plan-assignments/{$assignmentId}/fact", [
+                'status' => 'partially_done',
+                'completed_quantity' => 3,
+                'actual_work_hours' => 16,
+                'fact_comment' => 'Corrected fact after return',
+            ]);
+
+        $correctedFactResponse->assertOk();
+        $correctedFactResponse->assertJsonPath('data.status', 'partially_done');
+        $this->assertSame('in_progress', DB::table('daily_work_plans')->where('id', $dailyPlanId)->value('status'));
+
+        $resubmitResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/daily-plans/{$dailyPlanId}/submit", [
+                'summary_comment' => 'Submitted again after clarification',
+            ]);
+
+        $resubmitResponse->assertOk();
+        $resubmitResponse->assertJsonPath('data.status', 'submitted');
+
+        $acceptResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/daily-plans/{$dailyPlanId}/accept");
+
+        $acceptResponse->assertOk();
+        $acceptResponse->assertJsonPath('data.status', 'accepted');
+
+        $closeResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/daily-plans/{$dailyPlanId}/close");
+
+        $closeResponse->assertOk();
+        $closeResponse->assertJsonPath('data.status', 'closed');
+
+        $plansResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/lookahead-plans");
+
+        $plansResponse->assertOk();
+        $plansResponse->assertJsonPath('data.0.id', $planId);
+        $plansResponse->assertJsonPath('data.0.daily_plans.0.status', 'closed');
+
+        $lockedFactResponse = $this->withHeaders($context->authHeaders())
+            ->patchJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/daily-plan-assignments/{$assignmentId}/fact", [
+                'status' => 'not_done',
+                'failure_reason' => 'Cannot rewrite accepted plan',
+            ]);
+
+        $lockedFactResponse->assertStatus(422);
+        $this->assertSame('partially_done', DB::table('daily_work_plan_assignments')->where('id', $assignmentId)->value('status'));
+        $this->assertSame(
+            'approved',
+            DB::table('construction_journal_entries')->where('schedule_task_id', $task->id)->value('status')
+        );
+
+        $revisionResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/daily-plans/{$dailyPlanId}/revise", [
+                'revision_reason' => 'Actual quantity changed after close',
+            ]);
+
+        $revisionResponse->assertCreated();
+        $revisionResponse->assertJsonPath('data.status', 'draft');
+        $revisionResponse->assertJsonPath('data.revision_of_daily_plan_id', $dailyPlanId);
+        $revisionResponse->assertJsonPath('data.assignments.0.schedule_task_id', $task->id);
+        $this->assertSame('closed', DB::table('daily_work_plans')->where('id', $dailyPlanId)->value('status'));
     }
 
     private function createSchedule(

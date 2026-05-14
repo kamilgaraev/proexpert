@@ -1,0 +1,65 @@
+{
+  "name": "Приемка и punch-list",
+  "slug": "handover-acceptance",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "subscription",
+  "category": "handover",
+  "description": "Контур приемки зон, чек-листов, punch-list, устранения замечаний и передачи результата заказчику.",
+  "class_name": "App\\BusinessModules\\Features\\HandoverAcceptance\\HandoverAcceptanceModule",
+  "service_provider": "App\\BusinessModules\\Features\\HandoverAcceptance\\HandoverAcceptanceServiceProvider",
+  "pricing": {
+    "base_price": 3900,
+    "currency": "RUB",
+    "included_in_plans": ["profi", "enterprise"],
+    "duration_days": 30
+  },
+  "permissions": [
+    "handover-acceptance.view",
+    "handover-acceptance.create",
+    "handover-acceptance.edit",
+    "handover-acceptance.delete",
+    "handover-acceptance.submit",
+    "handover-acceptance.inspect",
+    "handover-acceptance.approve",
+    "handover-acceptance.reject",
+    "handover-acceptance.punch-list.create",
+    "handover-acceptance.punch-list.resolve",
+    "handover-acceptance.punch-list.verify",
+    "handover-acceptance.customer-sign",
+    "handover-acceptance.reports.export",
+    "handover-acceptance.settings.manage"
+  ],
+  "features": [
+    "Приемка зон, этапов и комплектов работ",
+    "Punch-list с ответственными, сроками и повторной проверкой",
+    "Связь с дефектами качества и исполнительной документацией",
+    "Заказчик видит готовность и подписывает результат в customer-портале"
+  ],
+  "dependencies": [
+    "organizations",
+    "users",
+    "project-management",
+    "contract-management",
+    "quality-control",
+    "file-management"
+  ],
+  "optional_integrations": [
+    "executive-documentation",
+    "change-management",
+    "payments"
+  ],
+  "conflicts": [],
+  "limits": {
+    "max_acceptance_items": null,
+    "max_punch_items": null,
+    "signature_retention_days": 1825
+  },
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "development_status": "stable",
+  "icon": "clipboard-check",
+  "display_order": 47,
+  "tags": ["handover", "acceptance", "punch-list", "customer"]
+}

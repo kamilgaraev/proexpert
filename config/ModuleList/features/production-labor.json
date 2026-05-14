@@ -1,0 +1,64 @@
+{
+  "name": "Наряды и выработка",
+  "slug": "production-labor",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "subscription",
+  "category": "resources",
+  "description": "Контур нарядов, сменных заданий, выработки бригад и подготовки начислений по выполненным работам.",
+  "class_name": "App\\BusinessModules\\Features\\ProductionLabor\\ProductionLaborModule",
+  "service_provider": "App\\BusinessModules\\Features\\ProductionLabor\\ProductionLaborServiceProvider",
+  "pricing": {
+    "base_price": 3900,
+    "currency": "RUB",
+    "included_in_plans": ["business", "profi", "enterprise"],
+    "duration_days": 30
+  },
+  "permissions": [
+    "production-labor.view",
+    "production-labor.create",
+    "production-labor.edit",
+    "production-labor.delete",
+    "production-labor.work-orders.create",
+    "production-labor.work-orders.approve",
+    "production-labor.output.record",
+    "production-labor.output.approve",
+    "production-labor.payroll.prepare",
+    "production-labor.payroll.approve",
+    "production-labor.reports.export",
+    "production-labor.settings.manage"
+  ],
+  "features": [
+    "Наряды и сменные задания по бригадам",
+    "Учет фактической выработки и отклонений",
+    "Связь с журналом работ, сметами и актами",
+    "Подготовка начислений без ручного пересчета"
+  ],
+  "dependencies": [
+    "organizations",
+    "users",
+    "project-management",
+    "brigades",
+    "budget-estimates",
+    "workflow-management",
+    "time-tracking"
+  ],
+  "optional_integrations": [
+    "payments",
+    "machinery-operations",
+    "act-reporting"
+  ],
+  "conflicts": [],
+  "limits": {
+    "max_work_orders_per_month": null,
+    "max_output_entries_per_month": null,
+    "payroll_retention_days": 1095
+  },
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "development_status": "stable",
+  "icon": "hard-hat",
+  "display_order": 45,
+  "tags": ["labor", "work-orders", "output", "payroll"]
+}

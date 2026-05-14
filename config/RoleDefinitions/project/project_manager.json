@@ -238,6 +238,27 @@
       "brigades.invitations.create",
       "brigades.assignments.view",
       "brigades.assignments.edit"
+    ],
+    "quality-control": [
+      "*"
+    ],
+    "executive-documentation": [
+      "*"
+    ],
+    "safety-management": [
+      "*"
+    ],
+    "machinery-operations": [
+      "*"
+    ],
+    "production-labor": [
+      "*"
+    ],
+    "change-management": [
+      "*"
+    ],
+    "handover-acceptance": [
+      "*"
     ]
   },
   "interface_access": [

@@ -21,6 +21,7 @@ use App\Http\Controllers\Api\V1\Admin\Contract\ContractStateEventController;
 use App\Http\Controllers\Api\V1\Admin\Schedule\ProjectScheduleController;
 use App\Http\Controllers\Api\V1\Admin\Schedule\ScheduleTaskController;
 use App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ScheduleEstimateController;
+use App\BusinessModules\Features\ScheduleManagement\Http\Controllers\LookaheadPlanningController;
 
 /**
  * PROJECT-BASED ROUTES
@@ -171,6 +172,19 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         Route::post('/{schedule}/sync-to-estimate', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ScheduleEstimateController::class, 'syncToEstimate']);
         Route::get('/{schedule}/estimate-conflicts', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ScheduleEstimateController::class, 'getConflicts']);
         Route::get('/{schedule}/estimate-info', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ScheduleEstimateController::class, 'getEstimateInfo']);
+
+        Route::get('/{schedule}/lookahead-plans', [LookaheadPlanningController::class, 'indexPlans']);
+        Route::post('/{schedule}/lookahead-plans', [LookaheadPlanningController::class, 'storePlan']);
+        Route::post('/{schedule}/lookahead-plans/{plan}/tasks', [LookaheadPlanningController::class, 'storePlanTask']);
+        Route::post('/{schedule}/lookahead-tasks/{planTask}/constraints', [LookaheadPlanningController::class, 'storeConstraint']);
+        Route::post('/{schedule}/daily-plans', [LookaheadPlanningController::class, 'storeDailyPlan']);
+        Route::post('/{schedule}/daily-plans/{dailyPlan}/publish', [LookaheadPlanningController::class, 'publishDailyPlan']);
+        Route::post('/{schedule}/daily-plans/{dailyPlan}/submit', [LookaheadPlanningController::class, 'submitDailyPlan']);
+        Route::post('/{schedule}/daily-plans/{dailyPlan}/accept', [LookaheadPlanningController::class, 'acceptDailyPlan']);
+        Route::post('/{schedule}/daily-plans/{dailyPlan}/return', [LookaheadPlanningController::class, 'returnDailyPlan']);
+        Route::post('/{schedule}/daily-plans/{dailyPlan}/close', [LookaheadPlanningController::class, 'closeDailyPlan']);
+        Route::post('/{schedule}/daily-plans/{dailyPlan}/revise', [LookaheadPlanningController::class, 'reviseDailyPlan']);
+        Route::patch('/{schedule}/daily-plan-assignments/{assignment}/fact', [LookaheadPlanningController::class, 'recordAssignmentFact']);
     });
     
     // === MATERIAL ANALYTICS (в контексте проекта) ===

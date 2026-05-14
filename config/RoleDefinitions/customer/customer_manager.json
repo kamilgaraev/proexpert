@@ -23,7 +23,28 @@
     "customer.support.manage",
     "customer.profile.view"
   ],
-  "module_permissions": {},
+  "module_permissions": {
+    "quality-control": [
+      "quality-control.view",
+      "quality-control.defects.view"
+    ],
+    "executive-documentation": [
+      "executive-documentation.view",
+      "executive-documentation.review",
+      "executive-documentation.export"
+    ],
+    "change-management": [
+      "change-management.view",
+      "change-management.create",
+      "change-management.rfi.create",
+      "change-management.customer-submit"
+    ],
+    "handover-acceptance": [
+      "handover-acceptance.view",
+      "handover-acceptance.inspect",
+      "handover-acceptance.reject"
+    ]
+  },
   "interface_access": [
     "customer",
     "admin"

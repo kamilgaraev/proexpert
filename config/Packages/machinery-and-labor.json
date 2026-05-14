@@ -1,0 +1,138 @@
+{
+  "slug": "machinery-and-labor",
+  "name": "Техника и выработка",
+  "description": "Учет техники, смен, простоев, нарядов, выработки и подготовки начислений.",
+  "icon": "truck",
+  "color": "#D97706",
+  "sort_order": 9,
+  "schema_version": 2,
+  "foundation_modules": [
+    "organizations",
+    "users",
+    "project-management",
+    "contract-management",
+    "catalog-management",
+    "dashboard-widgets",
+    "data-filters",
+    "brigades"
+  ],
+  "integrations": [
+    {
+      "package_slug": "finance-acts",
+      "module_slug": "payments",
+      "label": "Начисления и выплаты"
+    },
+    {
+      "package_slug": "supply-warehouse",
+      "module_slug": "basic-warehouse",
+      "label": "ГСМ и материалы"
+    }
+  ],
+  "recommended_addons": [
+    {
+      "module_slug": "rate-management",
+      "label": "Расценки и коэффициенты"
+    }
+  ],
+  "business_outcomes": [
+    "Прозрачная загрузка техники",
+    "Связь смен и нарядов с фактом работ",
+    "Подготовка начислений без ручных таблиц"
+  ],
+  "data_sources": [
+    {
+      "module_slug": "machinery-operations",
+      "label": "Техника и смены"
+    },
+    {
+      "module_slug": "production-labor",
+      "label": "Наряды и выработка"
+    }
+  ],
+  "capabilities": [],
+  "tiers": {
+    "base": {
+      "label": "Ресурсы",
+      "description": "Техника, наряды и фактическая выработка на объекте.",
+      "price": 6900,
+      "billing_model": "subscription",
+      "duration_days": 30,
+      "modules": [
+        "project-management",
+        "contract-management",
+        "catalog-management",
+        "budget-estimates",
+        "site-requests",
+        "brigades",
+        "workflow-management",
+        "time-tracking",
+        "machinery-operations",
+        "production-labor",
+        "one-c-basic-exchange"
+      ],
+      "highlights": [
+        "Заявки на технику",
+        "Сменные рапорты",
+        "Наряды"
+      ]
+    },
+    "pro": {
+      "label": "План-факт",
+      "description": "Ресурсы, склад, начисления и акты.",
+      "price": 8900,
+      "billing_model": "subscription",
+      "duration_days": 30,
+      "modules": [
+        "project-management",
+        "contract-management",
+        "catalog-management",
+        "budget-estimates",
+        "site-requests",
+        "brigades",
+        "workflow-management",
+        "time-tracking",
+        "basic-warehouse",
+        "payments",
+        "act-reporting",
+        "machinery-operations",
+        "production-labor",
+        "one-c-basic-exchange"
+      ],
+      "highlights": [
+        "ГСМ и склад",
+        "Начисления",
+        "Связь с актами"
+      ]
+    },
+    "enterprise": {
+      "label": "Корпоративный",
+      "description": "Полный контур ресурсов, аналитики, расценок и финансового план-факта.",
+      "price": 11900,
+      "billing_model": "subscription",
+      "duration_days": 30,
+      "modules": [
+        "project-management",
+        "contract-management",
+        "catalog-management",
+        "budget-estimates",
+        "site-requests",
+        "brigades",
+        "workflow-management",
+        "time-tracking",
+        "basic-warehouse",
+        "payments",
+        "act-reporting",
+        "rate-management",
+        "reports",
+        "machinery-operations",
+        "production-labor",
+        "one-c-basic-exchange"
+      ],
+      "highlights": [
+        "Расценки",
+        "Аналитика ресурсов",
+        "Финансовый план-факт"
+      ]
+    }
+  }
+}

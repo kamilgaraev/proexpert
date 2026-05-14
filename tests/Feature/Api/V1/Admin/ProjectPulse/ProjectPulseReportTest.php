@@ -6,6 +6,8 @@ namespace Tests\Feature\Api\V1\Admin\ProjectPulse;
 
 use App\BusinessModules\Features\AIAssistant\Models\ProjectPulseReport;
 use App\Models\Project;
+use App\Models\ProjectSchedule;
+use App\Models\ScheduleTask;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -210,5 +212,107 @@ class ProjectPulseReportTest extends TestCase
             ->firstWhere('id', 'purchase_request:' . $purchaseRequestId . ':no_order');
 
         self::assertNull($fact);
+    }
+
+    public function test_project_pulse_contains_overdue_open_work_constraint_in_project_scope(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $organization = $context->organization;
+        $project = Project::factory()->create([
+            'organization_id' => $organization->id,
+            'name' => 'РљРѕСЂРїСѓСЃ Рђ',
+            'status' => 'active',
+        ]);
+        $schedule = ProjectSchedule::query()->create([
+            'project_id' => $project->id,
+            'organization_id' => $organization->id,
+            'created_by_user_id' => $context->user->id,
+            'name' => 'Р“СЂР°С„РёРє РєРѕСЂРїСѓСЃР° Рђ',
+            'planned_start_date' => now()->subDays(10)->toDateString(),
+            'planned_end_date' => now()->addDays(20)->toDateString(),
+            'status' => 'active',
+            'is_template' => false,
+            'calculation_settings' => [],
+            'display_settings' => [],
+            'critical_path_calculated' => false,
+            'overall_progress_percent' => 20,
+        ]);
+        $task = ScheduleTask::query()->create([
+            'schedule_id' => $schedule->id,
+            'organization_id' => $organization->id,
+            'created_by_user_id' => $context->user->id,
+            'name' => 'РњРѕРЅРѕР»РёС‚ РїРµСЂРІРѕРіРѕ СЌС‚Р°Р¶Р°',
+            'task_type' => 'task',
+            'planned_start_date' => now()->subDays(6)->toDateString(),
+            'planned_end_date' => now()->addDays(3)->toDateString(),
+            'planned_duration_days' => 10,
+            'planned_work_hours' => 80,
+            'quantity' => 100,
+            'progress_percent' => 40,
+            'status' => 'in_progress',
+            'priority' => 'normal',
+            'constraint_type' => 'none',
+            'level' => 0,
+            'sort_order' => 1,
+        ]);
+        $lookaheadPlanId = DB::table('lookahead_plans')->insertGetId([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'schedule_id' => $schedule->id,
+            'created_by_user_id' => $context->user->id,
+            'title' => 'РџР»Р°РЅ РЅР° РґРІРµ РЅРµРґРµР»Рё',
+            'start_date' => now()->startOfWeek()->toDateString(),
+            'end_date' => now()->startOfWeek()->addDays(13)->toDateString(),
+            'status' => 'published',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $planTaskId = DB::table('lookahead_plan_tasks')->insertGetId([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'schedule_id' => $schedule->id,
+            'lookahead_plan_id' => $lookaheadPlanId,
+            'schedule_task_id' => $task->id,
+            'planned_start_date' => now()->toDateString(),
+            'planned_end_date' => now()->addDays(2)->toDateString(),
+            'readiness_status' => 'blocked',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $constraintId = DB::table('work_constraints')->insertGetId([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'schedule_id' => $schedule->id,
+            'lookahead_plan_task_id' => $planTaskId,
+            'schedule_task_id' => $task->id,
+            'created_by_user_id' => $context->user->id,
+            'constraint_type' => 'material',
+            'title' => 'РќРµ РїСЂРёРІРµР·РµРЅР° Р°СЂРјР°С‚СѓСЂР°',
+            'severity' => 'hard',
+            'status' => 'open',
+            'due_date' => now()->subDay()->toDateString(),
+            'created_at' => now()->subDays(2),
+            'updated_at' => now()->subDay(),
+        ]);
+
+        $response = $this
+            ->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/ai-assistant/project-pulse/generate', [
+                'project_id' => $project->id,
+                'period' => 'today',
+                'use_ai' => false,
+            ]);
+
+        $response->assertOk();
+        $fact = collect($response->json('data.facts'))
+            ->firstWhere('id', 'work_constraint:' . $constraintId . ':overdue');
+
+        self::assertNotNull($fact);
+        self::assertSame('schedule', $fact['category']);
+        self::assertSame('work_constraint', $fact['type']);
+        self::assertSame('critical', $fact['priority']);
+        self::assertSame($project->id, $fact['project_id']);
+        self::assertSame($constraintId, $fact['related_entity']['id']);
+        self::assertSame('/projects/' . $project->id . '/schedules/' . $schedule->id . '/lookahead', $fact['primary_action']['route']);
     }
 }

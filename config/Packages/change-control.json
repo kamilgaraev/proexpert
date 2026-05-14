@@ -1,0 +1,123 @@
+{
+  "slug": "change-control",
+  "name": "Изменения и претензии",
+  "description": "RFI, change orders, дополнительные работы, претензии и согласование влияния на бюджет и сроки.",
+  "icon": "git-pull-request-arrow",
+  "color": "#7C3AED",
+  "sort_order": 10,
+  "schema_version": 2,
+  "foundation_modules": [
+    "organizations",
+    "users",
+    "project-management",
+    "contract-management",
+    "catalog-management",
+    "dashboard-widgets",
+    "data-filters",
+    "brigades"
+  ],
+  "integrations": [
+    {
+      "package_slug": "estimates-pto",
+      "module_slug": "budget-estimates",
+      "label": "Влияние на смету"
+    },
+    {
+      "package_slug": "objects-execution",
+      "module_slug": "schedule-management",
+      "label": "Влияние на график"
+    }
+  ],
+  "recommended_addons": [
+    {
+      "module_slug": "executive-documentation",
+      "label": "Документальные основания"
+    }
+  ],
+  "business_outcomes": [
+    "Изменения проходят согласованный workflow",
+    "Влияние на бюджет и сроки видно до утверждения",
+    "Заказчик согласует изменения в customer-портале"
+  ],
+  "data_sources": [
+    {
+      "module_slug": "change-management",
+      "label": "RFI, изменения и претензии"
+    }
+  ],
+  "capabilities": [],
+  "tiers": {
+    "base": {
+      "label": "Контроль",
+      "description": "RFI, изменения и претензии с финансовым влиянием.",
+      "price": 5900,
+      "billing_model": "subscription",
+      "duration_days": 30,
+      "modules": [
+        "project-management",
+        "contract-management",
+        "budget-estimates",
+        "payments",
+        "change-management",
+        "one-c-basic-exchange"
+      ],
+      "highlights": [
+        "RFI",
+        "Change orders",
+        "Претензии"
+      ]
+    },
+    "pro": {
+      "label": "Согласование",
+      "description": "Изменения со сроками, документами и customer-согласованием.",
+      "price": 7900,
+      "billing_model": "subscription",
+      "duration_days": 30,
+      "modules": [
+        "project-management",
+        "contract-management",
+        "budget-estimates",
+        "payments",
+        "schedule-management",
+        "file-management",
+        "reports",
+        "report-templates",
+        "executive-documentation",
+        "change-management",
+        "one-c-basic-exchange"
+      ],
+      "highlights": [
+        "Влияние на сроки",
+        "Основания и файлы",
+        "Customer-согласование"
+      ]
+    },
+    "enterprise": {
+      "label": "Корпоративный",
+      "description": "Полный коммерческий контроль изменений, претензий, приемки и аналитики.",
+      "price": 9900,
+      "billing_model": "subscription",
+      "duration_days": 30,
+      "modules": [
+        "project-management",
+        "contract-management",
+        "budget-estimates",
+        "payments",
+        "schedule-management",
+        "file-management",
+        "reports",
+        "report-templates",
+        "quality-control",
+        "executive-documentation",
+        "change-management",
+        "handover-acceptance",
+        "one-c-basic-exchange"
+      ],
+      "highlights": [
+        "Претензионная работа",
+        "Приемка",
+        "Аналитика изменений"
+      ]
+    }
+  }
+}

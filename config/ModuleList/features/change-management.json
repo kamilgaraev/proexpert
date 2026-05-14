@@ -1,0 +1,64 @@
+{
+  "name": "Изменения, RFI и претензии",
+  "slug": "change-management",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "subscription",
+  "category": "commercial",
+  "description": "Контур запросов информации, изменений объемов, дополнительных работ, претензий и согласований с заказчиком.",
+  "class_name": "App\\BusinessModules\\Features\\ChangeManagement\\ChangeManagementModule",
+  "service_provider": "App\\BusinessModules\\Features\\ChangeManagement\\ChangeManagementServiceProvider",
+  "pricing": {
+    "base_price": 4900,
+    "currency": "RUB",
+    "included_in_plans": ["profi", "enterprise"],
+    "duration_days": 30
+  },
+  "permissions": [
+    "change-management.view",
+    "change-management.create",
+    "change-management.edit",
+    "change-management.delete",
+    "change-management.rfi.create",
+    "change-management.rfi.answer",
+    "change-management.change-orders.create",
+    "change-management.change-orders.approve",
+    "change-management.claims.create",
+    "change-management.claims.resolve",
+    "change-management.customer-submit",
+    "change-management.reports.export",
+    "change-management.settings.manage"
+  ],
+  "features": [
+    "RFI и ответы с контролем сроков",
+    "Change orders с влиянием на сроки и бюджет",
+    "Претензии, основания, доказательства и решения",
+    "Согласование с заказчиком через customer-портал"
+  ],
+  "dependencies": [
+    "organizations",
+    "users",
+    "project-management",
+    "contract-management",
+    "budget-estimates",
+    "payments"
+  ],
+  "optional_integrations": [
+    "executive-documentation",
+    "schedule-management",
+    "handover-acceptance"
+  ],
+  "conflicts": [],
+  "limits": {
+    "max_change_orders_per_month": null,
+    "max_rfi_per_month": null,
+    "claim_retention_days": 1825
+  },
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "development_status": "stable",
+  "icon": "git-pull-request-arrow",
+  "display_order": 46,
+  "tags": ["rfi", "changes", "claims", "customer"]
+}

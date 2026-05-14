@@ -107,7 +107,11 @@
     "schedule-management": [
       "schedule.view",
       "schedule.create",
-      "schedule.edit"
+      "schedule.edit",
+      "schedule.lookahead.view",
+      "schedule.lookahead.manage",
+      "schedule.daily_plan.view",
+      "schedule.daily_plan.manage"
     ],
     "budget-estimates": [
       "budget-estimates.view",
@@ -136,6 +140,68 @@
       "brigades.requests.view",
       "brigades.invitations.view",
       "brigades.assignments.view"
+    ],
+    "quality-control": [
+      "quality-control.view",
+      "quality-control.create",
+      "quality-control.edit",
+      "quality-control.inspect",
+      "quality-control.defects.view",
+      "quality-control.defects.create",
+      "quality-control.defects.assign",
+      "quality-control.defects.resolve",
+      "quality-control.reports.export"
+    ],
+    "executive-documentation": [
+      "executive-documentation.view",
+      "executive-documentation.create",
+      "executive-documentation.edit",
+      "executive-documentation.submit",
+      "executive-documentation.export"
+    ],
+    "safety-management": [
+      "safety-management.view",
+      "safety-management.create",
+      "safety-management.edit",
+      "safety-management.briefings.manage",
+      "safety-management.permits.manage",
+      "safety-management.incidents.create",
+      "safety-management.violations.create",
+      "safety-management.violations.resolve"
+    ],
+    "machinery-operations": [
+      "machinery-operations.view",
+      "machinery-operations.requests.create",
+      "machinery-operations.requests.approve",
+      "machinery-operations.shifts.create",
+      "machinery-operations.shifts.approve",
+      "machinery-operations.downtime.manage",
+      "machinery-operations.fuel.manage"
+    ],
+    "production-labor": [
+      "production-labor.view",
+      "production-labor.work-orders.create",
+      "production-labor.work-orders.approve",
+      "production-labor.output.record",
+      "production-labor.output.approve"
+    ],
+    "change-management": [
+      "change-management.view",
+      "change-management.create",
+      "change-management.edit",
+      "change-management.rfi.create",
+      "change-management.rfi.answer",
+      "change-management.change-orders.create",
+      "change-management.claims.create"
+    ],
+    "handover-acceptance": [
+      "handover-acceptance.view",
+      "handover-acceptance.create",
+      "handover-acceptance.edit",
+      "handover-acceptance.submit",
+      "handover-acceptance.inspect",
+      "handover-acceptance.punch-list.create",
+      "handover-acceptance.punch-list.resolve"
     ]
   },
   "interface_access": [

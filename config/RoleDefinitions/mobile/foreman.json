@@ -96,7 +96,11 @@
     ],
     "schedule-management": [
       "schedule.view",
-      "schedule.notifications"
+      "schedule.notifications",
+      "schedule.lookahead.view",
+      "schedule.daily_plan.view",
+      "schedule.daily_plan.manage",
+      "schedule.daily_plan.confirm"
     ],
     "basic-warehouse": [
       "warehouse.view",
@@ -120,6 +124,40 @@
       "construction-journal.edit",
       "construction-journal.delete",
       "construction-journal.export"
+    ],
+    "quality-control": [
+      "quality-control.view",
+      "quality-control.create",
+      "quality-control.inspect",
+      "quality-control.defects.view",
+      "quality-control.defects.create",
+      "quality-control.defects.resolve"
+    ],
+    "safety-management": [
+      "safety-management.view",
+      "safety-management.briefings.manage",
+      "safety-management.incidents.create",
+      "safety-management.violations.create",
+      "safety-management.violations.resolve"
+    ],
+    "machinery-operations": [
+      "machinery-operations.view",
+      "machinery-operations.requests.create",
+      "machinery-operations.shifts.create",
+      "machinery-operations.downtime.manage",
+      "machinery-operations.fuel.manage"
+    ],
+    "production-labor": [
+      "production-labor.view",
+      "production-labor.work-orders.create",
+      "production-labor.output.record"
+    ],
+    "handover-acceptance": [
+      "handover-acceptance.view",
+      "handover-acceptance.create",
+      "handover-acceptance.submit",
+      "handover-acceptance.punch-list.create",
+      "handover-acceptance.punch-list.resolve"
     ]
   },
   "interface_access": [

@@ -21,6 +21,7 @@ class ScheduleManagementServiceProvider extends ServiceProvider
         $this->app->singleton(\App\BusinessModules\Features\ScheduleManagement\Services\DurationCalculationService::class);
         $this->app->singleton(\App\BusinessModules\Features\ScheduleManagement\Services\EstimateScheduleImportService::class);
         $this->app->singleton(\App\BusinessModules\Features\ScheduleManagement\Services\EstimateSyncService::class);
+        $this->app->singleton(\App\BusinessModules\Features\ScheduleManagement\Services\LookaheadPlanningService::class);
     }
 
     public function boot(): void
