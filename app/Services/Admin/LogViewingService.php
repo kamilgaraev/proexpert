@@ -1,16 +1,23 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services\Admin;
 
-use App\Repositories\Interfaces\Log\WorkCompletionLogRepositoryInterface;
-use Illuminate\Http\Request;
-use Carbon\Carbon;
 use App\Exceptions\BusinessLogicException;
-use Illuminate\Support\Facades\Log;
+use App\Repositories\Interfaces\Log\WorkCompletionLogRepositoryInterface;
+use Carbon\Carbon;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+
+use function trans_message;
 
 class LogViewingService
 {
+    private const DEFAULT_PER_PAGE = 15;
+    private const MAX_PER_PAGE = 100;
+
     private const ALLOWED_WORK_LOG_SORTS = [
         'created_at' => 'created_at',
         'updated_at' => 'updated_at',
@@ -23,94 +30,27 @@ class LogViewingService
         'total_price' => 'total_price',
     ];
 
-    protected WorkCompletionLogRepositoryInterface $workLogRepo;
-
     public function __construct(
-        WorkCompletionLogRepositoryInterface $workLogRepo
+        protected WorkCompletionLogRepositoryInterface $workLogRepo
     ) {
-        $this->workLogRepo = $workLogRepo;
     }
 
-    /**
-     * Helper для получения ID текущей организации администратора.
-     */
-    protected function getCurrentOrgId(Request $request): int
-    {
-        /** @var \App\Models\User|null $user */
-        $user = $request->user();
-        $organizationId = $request->attributes->get('current_organization_id');
-        if (!$organizationId) {
-            Log::error('Failed to determine organization context in LogViewingService', ['user_id' => $user?->id, 'request_attributes' => $request->attributes->all()]);
-            throw new BusinessLogicException('Контекст организации не определен для просмотра логов.', 500);
-        }
-        return (int)$organizationId;
-    }
-
-    /**
-     * Подготовка фильтров и параметров пагинации для логов.
-     */
-    protected function prepareLogRequestParams(Request $request, array $allowedFilters): array
-    {
-        $params = [];
-        $params['filters'] = [];
-        foreach ($allowedFilters as $key) {
-            if ($request->has($key) && !is_null($request->query($key)) && $request->query($key) !== '') {
-                $params['filters'][$key] = $request->query($key);
-            }
-        }
-
-        // Обработка дат
-        if (!empty($params['filters']['date_from'])) {
-            try {
-                $params['filters']['date_from'] = Carbon::parse($params['filters']['date_from'])->startOfDay();
-            } catch (\Exception $e) {
-                unset($params['filters']['date_from']);
-            }
-        }
-        if (!empty($params['filters']['date_to'])) {
-            try {
-                $params['filters']['date_to'] = Carbon::parse($params['filters']['date_to'])->endOfDay();
-            } catch (\Exception $e) {
-                unset($params['filters']['date_to']);
-            }
-        }
-
-        // Параметры пагинации и сортировки
-        $params['perPage'] = (int)$request->query('per_page', 15);
-        $sortBy = $request->query('sort_by', 'created_at');
-        $sortDirection = $request->query('sort_direction', 'desc');
-
-        $sortBy = is_string($sortBy) ? strtolower($sortBy) : 'created_at';
-        $sortDirection = is_string($sortDirection) ? strtolower($sortDirection) : 'desc';
-
-        $params['sortBy'] = self::ALLOWED_WORK_LOG_SORTS[$sortBy] ?? 'created_at';
-        $params['sortDirection'] = in_array($sortDirection, ['asc', 'desc'], true) ? $sortDirection : 'desc';
-
-        return $params;
-    }
-
-    /**
-     * Получить пагинированный список логов использования материалов.
-     * 
-     * @deprecated Функциональность больше не поддерживается. 
-     *             Используйте модуль складского учета.
-     */
     public function getMaterialUsageLogs(Request $request): LengthAwarePaginator
     {
-        throw new BusinessLogicException(
-            'Логи использования материалов больше не поддерживаются. Используйте модуль складского учета.',
-            410
-        );
+        throw new BusinessLogicException(trans_message('logs.material_usage_deprecated'), 410);
     }
 
-    /**
-     * Получить пагинированный список логов выполнения работ.
-     */
     public function getWorkCompletionLogs(Request $request): LengthAwarePaginator
     {
         try {
             $organizationId = $this->getCurrentOrgId($request);
-            $params = $this->prepareLogRequestParams($request, ['project_id', 'work_type_id', 'user_id', 'date_from', 'date_to']);
+            $params = $this->prepareLogRequestParams($request, [
+                'project_id',
+                'work_type_id',
+                'user_id',
+                'date_from',
+                'date_to',
+            ]);
 
             return $this->workLogRepo->getPaginatedLogs(
                 $organizationId,
@@ -127,7 +67,8 @@ class LogViewingService
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
             ]);
-            throw new BusinessLogicException('Внутренняя ошибка сервера при получении логов работ.', 500, $e);
+
+            throw new BusinessLogicException(trans_message('logs.work_load_error'), 500, $e);
         }
     }
 
@@ -135,18 +76,17 @@ class LogViewingService
     {
         try {
             $organizationId = $this->getCurrentOrgId($request);
-            
+
             $category = $request->query('category', 'all');
             $level = $request->query('level');
             $event = $request->query('event');
             $dateFrom = $request->query('date_from');
             $dateTo = $request->query('date_to');
             $userId = $request->query('user_id');
-            $page = (int) $request->query('page', 1);
-            $perPage = (int) $request->query('per_page', 15);
+            $page = $this->normalizePage($request->query('page'));
+            $perPage = $this->normalizePerPage($request->query('per_page'));
 
-            $allowedCategories = ['all', 'audit', 'business', 'security'];
-            if (!in_array($category, $allowedCategories)) {
+            if (!is_string($category) || !in_array($category, ['all', 'audit', 'business', 'security'], true)) {
                 $category = 'all';
             }
 
@@ -159,13 +99,12 @@ class LogViewingService
             ]);
 
             $total = count($logs);
-            $lastPage = (int) ceil($total / $perPage);
+            $lastPage = max(1, (int) ceil($total / $perPage));
+            $page = min($page, $lastPage);
             $offset = ($page - 1) * $perPage;
-            
-            $paginatedLogs = array_slice($logs, $offset, $perPage);
 
             return [
-                'data' => $paginatedLogs,
+                'data' => array_slice($logs, $offset, $perPage),
                 'current_page' => $page,
                 'per_page' => $perPage,
                 'total' => $total,
@@ -179,27 +118,83 @@ class LogViewingService
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
             ]);
-            throw new BusinessLogicException('Внутренняя ошибка сервера при получении системных логов.', 500, $e);
+
+            throw new BusinessLogicException(trans_message('logs.system_load_error'), 500, $e);
         }
+    }
+
+    protected function getCurrentOrgId(Request $request): int
+    {
+        /** @var \App\Models\User|null $user */
+        $user = $request->user();
+        $organizationId = $request->attributes->get('current_organization_id');
+
+        if (!$organizationId) {
+            Log::error('Failed to determine organization context in LogViewingService', [
+                'user_id' => $user?->id,
+                'request_attributes' => $request->attributes->all(),
+            ]);
+
+            throw new BusinessLogicException(trans_message('logs.organization_context_missing'), 500);
+        }
+
+        return (int) $organizationId;
+    }
+
+    protected function prepareLogRequestParams(Request $request, array $allowedFilters): array
+    {
+        $params = [
+            'filters' => [],
+        ];
+
+        foreach ($allowedFilters as $key) {
+            if ($request->has($key) && $request->query($key) !== null && $request->query($key) !== '') {
+                $params['filters'][$key] = $request->query($key);
+            }
+        }
+
+        if (!empty($params['filters']['date_from'])) {
+            try {
+                $params['filters']['date_from'] = Carbon::parse($params['filters']['date_from'])->startOfDay();
+            } catch (\Exception) {
+                unset($params['filters']['date_from']);
+            }
+        }
+
+        if (!empty($params['filters']['date_to'])) {
+            try {
+                $params['filters']['date_to'] = Carbon::parse($params['filters']['date_to'])->endOfDay();
+            } catch (\Exception) {
+                unset($params['filters']['date_to']);
+            }
+        }
+
+        $sortBy = $request->query('sort_by', 'created_at');
+        $sortDirection = $request->query('sort_direction', 'desc');
+        $sortBy = is_string($sortBy) ? strtolower($sortBy) : 'created_at';
+        $sortDirection = is_string($sortDirection) ? strtolower($sortDirection) : 'desc';
+
+        $params['perPage'] = $this->normalizePerPage($request->query('per_page'));
+        $params['sortBy'] = self::ALLOWED_WORK_LOG_SORTS[$sortBy] ?? 'created_at';
+        $params['sortDirection'] = in_array($sortDirection, ['asc', 'desc'], true) ? $sortDirection : 'desc';
+
+        return $params;
     }
 
     protected function readStructuredLogs(int $organizationId, string $category, array $filters): array
     {
         $logs = [];
         $targetCategories = $category === 'all' ? ['AUDIT', 'BUSINESS', 'SECURITY'] : [strtoupper($category)];
-        
+
         $logFiles = glob(storage_path('logs/*.log'));
-        if ($logFiles === false || empty($logFiles)) {
+        if ($logFiles === false || $logFiles === []) {
             return [];
         }
 
         rsort($logFiles);
-        $filesToRead = array_slice($logFiles, 0, 3);
-        $totalLines = 0;
-        $matchedLines = 0;
 
-        foreach ($filesToRead as $file) {
-            if (!file_exists($file) || !is_readable($file)) {
+        foreach (array_slice($logFiles, 0, 3) as $file) {
+            if (!is_file($file) || !is_readable($file)) {
                 continue;
             }
 
@@ -209,81 +204,27 @@ class LogViewingService
             }
 
             while (($line = fgets($handle)) !== false) {
-                $totalLines++;
-                
                 if (strpos($line, '{') === false) {
                     continue;
                 }
 
                 $jsonStart = strpos($line, '{');
-                $jsonPart = substr($line, $jsonStart);
-                
-                $logEntry = @json_decode($jsonPart, true);
-                if (!$logEntry || !is_array($logEntry)) {
-                    continue;
-                }
-                
-                if (!isset($logEntry['category']) || !in_array($logEntry['category'], $targetCategories)) {
+                if ($jsonStart === false) {
                     continue;
                 }
 
-                $logOrgId = null;
-                if (isset($logEntry['organization_id']) && $logEntry['organization_id'] !== null) {
-                    $logOrgId = (int) $logEntry['organization_id'];
-                } elseif (isset($logEntry['context']['organization_id']) && $logEntry['context']['organization_id'] !== null) {
-                    $logOrgId = (int) $logEntry['context']['organization_id'];
-                }
-
-                if ($logOrgId === null || $logOrgId !== $organizationId) {
+                $logEntry = json_decode(substr($line, $jsonStart), true);
+                if (!is_array($logEntry)) {
                     continue;
                 }
 
-                if (!empty($filters['level']) && strtoupper($logEntry['level'] ?? '') !== strtoupper($filters['level'])) {
+                if (!$this->systemLogMatches($logEntry, $targetCategories, $organizationId, $filters)) {
                     continue;
                 }
 
-                if (!empty($filters['event']) && !str_contains($logEntry['event'] ?? '', $filters['event'])) {
-                    continue;
-                }
-
-                if (!empty($filters['user_id'])) {
-                    $logUserId = $logEntry['user_id'] ?? $logEntry['context']['user_id'] ?? null;
-                    if ($logUserId === null || (int) $logUserId !== (int) $filters['user_id']) {
-                        continue;
-                    }
-                }
-
-                if (!empty($filters['date_from']) || !empty($filters['date_to'])) {
-                    try {
-                        $timestamp = $logEntry['timestamp'] ?? null;
-                        if (!$timestamp) {
-                            continue;
-                        }
-                        
-                        $logDate = Carbon::parse($timestamp);
-                        
-                        if (!empty($filters['date_from'])) {
-                            $dateFrom = Carbon::parse($filters['date_from'])->startOfDay();
-                            if ($logDate->lt($dateFrom)) {
-                                continue;
-                            }
-                        }
-                        
-                        if (!empty($filters['date_to'])) {
-                            $dateTo = Carbon::parse($filters['date_to'])->endOfDay();
-                            if ($logDate->gt($dateTo)) {
-                                continue;
-                            }
-                        }
-                    } catch (\Exception $e) {
-                        continue;
-                    }
-                }
-
-                $matchedLines++;
                 $logs[] = $logEntry;
-                
-                if ($matchedLines >= 1000) {
+
+                if (count($logs) >= 1000) {
                     break 2;
                 }
             }
@@ -291,10 +232,83 @@ class LogViewingService
             fclose($handle);
         }
 
-        usort($logs, function ($a, $b) {
-            return strcmp($b['timestamp'] ?? '', $a['timestamp'] ?? '');
-        });
+        usort($logs, static fn (array $a, array $b): int => strcmp($b['timestamp'] ?? '', $a['timestamp'] ?? ''));
 
         return $logs;
     }
-} 
+
+    private function systemLogMatches(array $logEntry, array $targetCategories, int $organizationId, array $filters): bool
+    {
+        if (!isset($logEntry['category']) || !in_array($logEntry['category'], $targetCategories, true)) {
+            return false;
+        }
+
+        $logOrgId = $logEntry['organization_id'] ?? $logEntry['context']['organization_id'] ?? null;
+        if ($logOrgId === null || (int) $logOrgId !== $organizationId) {
+            return false;
+        }
+
+        if (!empty($filters['level']) && strtoupper((string) ($logEntry['level'] ?? '')) !== strtoupper((string) $filters['level'])) {
+            return false;
+        }
+
+        if (!empty($filters['event']) && !str_contains((string) ($logEntry['event'] ?? ''), (string) $filters['event'])) {
+            return false;
+        }
+
+        if (!empty($filters['user_id'])) {
+            $logUserId = $logEntry['user_id'] ?? $logEntry['context']['user_id'] ?? null;
+            if ($logUserId === null || (int) $logUserId !== (int) $filters['user_id']) {
+                return false;
+            }
+        }
+
+        return $this->systemLogDateMatches($logEntry, $filters);
+    }
+
+    private function systemLogDateMatches(array $logEntry, array $filters): bool
+    {
+        if (empty($filters['date_from']) && empty($filters['date_to'])) {
+            return true;
+        }
+
+        try {
+            $timestamp = $logEntry['timestamp'] ?? null;
+            if (!$timestamp) {
+                return false;
+            }
+
+            $logDate = Carbon::parse($timestamp);
+
+            if (!empty($filters['date_from']) && $logDate->lt(Carbon::parse($filters['date_from'])->startOfDay())) {
+                return false;
+            }
+
+            if (!empty($filters['date_to']) && $logDate->gt(Carbon::parse($filters['date_to'])->endOfDay())) {
+                return false;
+            }
+        } catch (\Exception) {
+            return false;
+        }
+
+        return true;
+    }
+
+    private function normalizePage(mixed $value): int
+    {
+        $page = filter_var($value ?? 1, FILTER_VALIDATE_INT);
+
+        return is_int($page) && $page > 0 ? $page : 1;
+    }
+
+    private function normalizePerPage(mixed $value): int
+    {
+        $perPage = filter_var($value ?? self::DEFAULT_PER_PAGE, FILTER_VALIDATE_INT);
+
+        if (!is_int($perPage) || $perPage <= 0) {
+            return self::DEFAULT_PER_PAGE;
+        }
+
+        return min($perPage, self::MAX_PER_PAGE);
+    }
+}
