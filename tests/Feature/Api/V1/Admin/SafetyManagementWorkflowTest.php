@@ -6,6 +6,7 @@ namespace Tests\Feature\Api\V1\Admin;
 
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\BusinessModules\Features\SafetyManagement\Models\SafetyCorrectiveAction;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermit;
 use App\Models\Project;
 use App\Models\User;
@@ -56,7 +57,7 @@ final class SafetyManagementWorkflowTest extends TestCase
         $submittedPermit = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/safety-management/work-permits/{$permitId}/submit");
         $submittedPermit->assertOk()
-            ->assertJsonPath('data.status', 'submitted')
+            ->assertJsonPath('data.status', 'pending_approval')
             ->assertJsonPath('data.available_actions.0', 'approve');
 
         $approvedPermit = $this->withHeaders($context->authHeaders())
@@ -66,6 +67,25 @@ final class SafetyManagementWorkflowTest extends TestCase
         $approvedPermit->assertOk()
             ->assertJsonPath('data.status', 'approved')
             ->assertJsonPath('data.approved_by_user_id', $context->user->id);
+
+        $activePermit = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/safety-management/work-permits/{$permitId}/activate");
+        $activePermit->assertOk()
+            ->assertJsonPath('data.status', 'active')
+            ->assertJsonPath('data.available_actions.0', 'suspend');
+
+        $suspendedPermit = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/safety-management/work-permits/{$permitId}/suspend", [
+                'reason' => 'Wind speed exceeded safe limit',
+            ]);
+        $suspendedPermit->assertOk()
+            ->assertJsonPath('data.status', 'suspended')
+            ->assertJsonPath('data.available_actions.0', 'resume');
+
+        $resumedPermit = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/safety-management/work-permits/{$permitId}/resume");
+        $resumedPermit->assertOk()
+            ->assertJsonPath('data.status', 'active');
 
         $closedPermit = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/safety-management/work-permits/{$permitId}/close", [
@@ -88,24 +108,68 @@ final class SafetyManagementWorkflowTest extends TestCase
 
         $incidentResponse->assertCreated()
             ->assertJsonPath('data.status', 'reported')
-            ->assertJsonPath('data.available_actions.0', 'start_investigation')
+            ->assertJsonPath('data.available_actions.0', 'triage')
             ->assertJsonPath('data.problem_flags.0.code', 'investigation_required');
         $incidentId = (int) $incidentResponse->json('data.id');
+
+        $triageResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/safety-management/incidents/{$incidentId}/triage", [
+                'comment' => 'Needs formal investigation',
+            ]);
+        $triageResponse->assertOk()
+            ->assertJsonPath('data.status', 'triage')
+            ->assertJsonPath('data.available_actions.0', 'start_investigation');
 
         $investigationResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/safety-management/incidents/{$incidentId}/start-investigation", [
                 'assigned_to_user_id' => $assignee->id,
             ]);
         $investigationResponse->assertOk()
-            ->assertJsonPath('data.status', 'investigating')
+            ->assertJsonPath('data.status', 'investigation')
             ->assertJsonPath('data.assigned_to_user_id', $assignee->id);
+
+        $correctiveStage = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/safety-management/incidents/{$incidentId}/corrective-actions", [
+                'root_cause' => 'Ice on access path',
+            ]);
+        $correctiveStage->assertOk()
+            ->assertJsonPath('data.status', 'corrective_actions');
 
         $blockedCloseResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/safety-management/incidents/{$incidentId}/close", [
-                'root_cause' => '',
-                'corrective_actions' => '',
+                'root_cause' => 'Ice on access path',
+                'corrective_actions' => 'Surface cleaned and anti-slip mats installed',
             ]);
         $blockedCloseResponse->assertStatus(422);
+
+        $correctiveAction = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/safety-management/corrective-actions', [
+                'incident_id' => $incidentId,
+                'title' => 'Install anti-slip mats',
+                'description' => 'Install anti-slip mats at the main entrance',
+                'severity' => 'high',
+                'assigned_to_user_id' => $assignee->id,
+                'due_date' => now()->addDay()->toDateString(),
+            ]);
+        $correctiveAction->assertCreated()
+            ->assertJsonPath('data.status', 'open')
+            ->assertJsonPath('data.available_actions.0', 'resolve');
+        $correctiveActionId = (int) $correctiveAction->json('data.id');
+
+        $resolvedAction = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/safety-management/corrective-actions/{$correctiveActionId}/resolve", [
+                'resolution_comment' => 'Mats installed',
+            ]);
+        $resolvedAction->assertOk()
+            ->assertJsonPath('data.status', 'resolved')
+            ->assertJsonPath('data.available_actions.0', 'verify');
+
+        $verifiedAction = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/safety-management/corrective-actions/{$correctiveActionId}/verify", [
+                'verification_comment' => 'Verified on site',
+            ]);
+        $verifiedAction->assertOk()
+            ->assertJsonPath('data.status', 'verified');
 
         $closedIncident = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/safety-management/incidents/{$incidentId}/close", [
@@ -115,6 +179,24 @@ final class SafetyManagementWorkflowTest extends TestCase
         $closedIncident->assertOk()
             ->assertJsonPath('data.status', 'closed')
             ->assertJsonPath('data.closed_by_user_id', $context->user->id);
+
+        $briefingResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/safety-management/briefings', [
+                'project_id' => $project->id,
+                'title' => 'Toolbox talk before hot works',
+                'briefing_type' => 'toolbox',
+                'conducted_at' => now()->toIso8601String(),
+                'topics' => ['hot works', 'fire watch'],
+                'participants' => [
+                    ['user_id' => $assignee->id],
+                    ['external_name' => 'Ivan Petrov', 'company_name' => 'Subcontractor LLC', 'role_name' => 'welder'],
+                ],
+            ]);
+        $briefingResponse->assertCreated()
+            ->assertJsonCount(2, 'data.participants');
+        $briefingParticipants = collect($briefingResponse->json('data.participants'));
+        $this->assertTrue($briefingParticipants->contains('user_id', $assignee->id));
+        $this->assertTrue($briefingParticipants->contains('external_name', 'Ivan Petrov'));
 
         $violationResponse = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/safety-management/violations', [
@@ -161,6 +243,7 @@ final class SafetyManagementWorkflowTest extends TestCase
         $permitIds = collect($listResponse->json('data'))->pluck('id')->all();
         $this->assertContains($permitId, $permitIds);
         $this->assertNotContains('Foreign permit', collect($listResponse->json('data'))->pluck('title')->all());
+        $this->assertTrue(SafetyCorrectiveAction::query()->where('incident_id', $incidentId)->where('status', 'verified')->exists());
     }
 
     private function allowModuleAccess(): void

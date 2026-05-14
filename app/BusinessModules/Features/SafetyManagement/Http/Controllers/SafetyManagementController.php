@@ -6,8 +6,6 @@ namespace App\BusinessModules\Features\SafetyManagement\Http\Controllers;
 
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyBriefingResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyCorrectiveActionResource;
-use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyBriefingResource;
-use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyCorrectiveActionResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyIncidentResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyViolationResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyWorkPermitResource;
@@ -17,6 +15,7 @@ use App\Http\Responses\AdminResponse;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -31,245 +30,65 @@ final class SafetyManagementController extends Controller
     public function permits(Request $request): JsonResponse
     {
         try {
-            $permits = $this->service->paginatePermits(
+            return $this->paginatedResponse($this->service->paginatePermits(
                 (int) $request->attributes->get('current_organization_id'),
                 min((int) $request->input('per_page', 20), 100),
                 $request->only(['project_id', 'status'])
-            );
-
-            return AdminResponse::paginated(
-                SafetyWorkPermitResource::collection($permits->getCollection()),
-                [
-                    'current_page' => $permits->currentPage(),
-                    'per_page' => $permits->perPage(),
-                    'total' => $permits->total(),
-                    'last_page' => $permits->lastPage(),
-                ]
-            );
+            ), SafetyWorkPermitResource::class);
         } catch (\Throwable $exception) {
-            Log::error('safety_management.permits.index.error', [
-                'user_id' => $request->user()?->id,
-                'error' => $exception->getMessage(),
-            ]);
-
-            return AdminResponse::error(trans_message('safety_management.errors.index_failed'), 500);
+            return $this->failedIndex($request, $exception, 'permits');
         }
     }
 
     public function incidents(Request $request): JsonResponse
     {
         try {
-            $incidents = $this->service->paginateIncidents(
+            return $this->paginatedResponse($this->service->paginateIncidents(
                 (int) $request->attributes->get('current_organization_id'),
                 min((int) $request->input('per_page', 20), 100),
                 $request->only(['project_id', 'status'])
-            );
-
-            return $this->paginatedResponse($incidents, SafetyIncidentResource::class);
+            ), SafetyIncidentResource::class);
         } catch (\Throwable $exception) {
-            Log::error('safety_management.incidents.index.error', [
-                'user_id' => $request->user()?->id,
-                'error' => $exception->getMessage(),
-            ]);
-
-            return AdminResponse::error(trans_message('safety_management.errors.index_failed'), 500);
+            return $this->failedIndex($request, $exception, 'incidents');
         }
     }
 
     public function violations(Request $request): JsonResponse
     {
         try {
-            $violations = $this->service->paginateViolations(
+            return $this->paginatedResponse($this->service->paginateViolations(
                 (int) $request->attributes->get('current_organization_id'),
                 min((int) $request->input('per_page', 20), 100),
                 $request->only(['project_id', 'status'])
-            );
-
-            return $this->paginatedResponse($violations, SafetyViolationResource::class);
+            ), SafetyViolationResource::class);
         } catch (\Throwable $exception) {
-            Log::error('safety_management.violations.index.error', [
-                'user_id' => $request->user()?->id,
-                'error' => $exception->getMessage(),
-            ]);
-
-            return AdminResponse::error(trans_message('safety_management.errors.index_failed'), 500);
+            return $this->failedIndex($request, $exception, 'violations');
         }
     }
 
     public function briefings(Request $request): JsonResponse
     {
         try {
-            $briefings = $this->service->paginateBriefings(
+            return $this->paginatedResponse($this->service->paginateBriefings(
                 (int) $request->attributes->get('current_organization_id'),
                 min((int) $request->input('per_page', 20), 100),
                 $request->only(['project_id'])
-            );
-
-            return AdminResponse::paginated(
-                SafetyBriefingResource::collection($briefings->getCollection()),
-                [
-                    'current_page' => $briefings->currentPage(),
-                    'per_page' => $briefings->perPage(),
-                    'total' => $briefings->total(),
-                    'last_page' => $briefings->lastPage(),
-                ]
-            );
+            ), SafetyBriefingResource::class);
         } catch (\Throwable $exception) {
-            Log::error('safety_management.briefings.index.error', [
-                'user_id' => $request->user()?->id,
-                'error' => $exception->getMessage(),
-            ]);
-
-            return AdminResponse::error(trans_message('safety_management.errors.index_failed'), 500);
+            return $this->failedIndex($request, $exception, 'briefings');
         }
     }
 
     public function correctiveActions(Request $request): JsonResponse
     {
         try {
-            $actions = $this->service->paginateCorrectiveActions(
+            return $this->paginatedResponse($this->service->paginateCorrectiveActions(
                 (int) $request->attributes->get('current_organization_id'),
                 min((int) $request->input('per_page', 20), 100),
                 $request->only(['project_id', 'status', 'incident_id', 'violation_id'])
-            );
-
-            return AdminResponse::paginated(
-                SafetyCorrectiveActionResource::collection($actions->getCollection()),
-                [
-                    'current_page' => $actions->currentPage(),
-                    'per_page' => $actions->perPage(),
-                    'total' => $actions->total(),
-                    'last_page' => $actions->lastPage(),
-                ]
-            );
+            ), SafetyCorrectiveActionResource::class);
         } catch (\Throwable $exception) {
-            Log::error('safety_management.corrective_actions.index.error', [
-                'user_id' => $request->user()?->id,
-                'error' => $exception->getMessage(),
-            ]);
-
-            return AdminResponse::error(trans_message('safety_management.errors.index_failed'), 500);
-        }
-    }
-
-    public function storeBriefing(Request $request): JsonResponse
-    {
-        try {
-            $validated = $request->validate([
-                'project_id' => ['required', 'integer'],
-                'title' => ['required', 'string', 'max:255'],
-                'briefing_type' => ['required', 'string', 'max:80'],
-                'location_name' => ['nullable', 'string', 'max:255'],
-                'conducted_at' => ['required', 'date'],
-                'topics' => ['nullable', 'array'],
-                'topics.*' => ['string', 'max:255'],
-                'notes' => ['nullable', 'string', 'max:5000'],
-                'participants' => ['required', 'array', 'min:1'],
-                'participants.*.user_id' => ['nullable', 'integer'],
-                'participants.*.external_name' => ['nullable', 'string', 'max:255'],
-                'participants.*.company_name' => ['nullable', 'string', 'max:255'],
-                'participants.*.role_name' => ['nullable', 'string', 'max:255'],
-                'participants.*.signed_at' => ['nullable', 'date'],
-                'metadata' => ['nullable', 'array'],
-            ]);
-
-            return AdminResponse::success(
-                new SafetyBriefingResource($this->service->createBriefing(
-                    (int) $request->attributes->get('current_organization_id'),
-                    (int) $request->user()?->id,
-                    $validated
-                )),
-                trans_message('safety_management.messages.briefing_created'),
-                201
-            );
-        } catch (ValidationException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
-        } catch (DomainException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422);
-        } catch (\Throwable $exception) {
-            Log::error('safety_management.briefings.store.error', [
-                'user_id' => $request->user()?->id,
-                'error' => $exception->getMessage(),
-            ]);
-
-            return AdminResponse::error(trans_message('safety_management.errors.store_failed'), 500);
-        }
-    }
-
-    public function storeCorrectiveAction(Request $request): JsonResponse
-    {
-        try {
-            $validated = $request->validate([
-                'incident_id' => ['nullable', 'integer'],
-                'violation_id' => ['nullable', 'integer'],
-                'title' => ['required', 'string', 'max:255'],
-                'description' => ['nullable', 'string', 'max:5000'],
-                'assigned_to_user_id' => ['nullable', 'integer'],
-                'severity' => ['nullable', 'string', Rule::in(['minor', 'major', 'critical'])],
-                'due_date' => ['nullable', 'date'],
-                'metadata' => ['nullable', 'array'],
-            ]);
-
-            return AdminResponse::success(
-                new SafetyCorrectiveActionResource($this->service->createCorrectiveAction(
-                    (int) $request->attributes->get('current_organization_id'),
-                    (int) $request->user()?->id,
-                    $validated
-                )),
-                trans_message('safety_management.messages.corrective_action_created'),
-                201
-            );
-        } catch (ValidationException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
-        } catch (DomainException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422);
-        } catch (\Throwable $exception) {
-            Log::error('safety_management.corrective_actions.store.error', [
-                'user_id' => $request->user()?->id,
-                'error' => $exception->getMessage(),
-            ]);
-
-            return AdminResponse::error(trans_message('safety_management.errors.store_failed'), 500);
-        }
-    }
-
-    public function briefings(Request $request): JsonResponse
-    {
-        try {
-            $briefings = $this->service->paginateBriefings(
-                (int) $request->attributes->get('current_organization_id'),
-                min((int) $request->input('per_page', 20), 100),
-                $request->only(['project_id'])
-            );
-
-            return $this->paginatedResponse($briefings, SafetyBriefingResource::class);
-        } catch (\Throwable $exception) {
-            Log::error('safety_management.briefings.index.error', [
-                'user_id' => $request->user()?->id,
-                'error' => $exception->getMessage(),
-            ]);
-
-            return AdminResponse::error(trans_message('safety_management.errors.index_failed'), 500);
-        }
-    }
-
-    public function correctiveActions(Request $request): JsonResponse
-    {
-        try {
-            $actions = $this->service->paginateCorrectiveActions(
-                (int) $request->attributes->get('current_organization_id'),
-                min((int) $request->input('per_page', 20), 100),
-                $request->only(['project_id', 'status', 'incident_id', 'violation_id'])
-            );
-
-            return $this->paginatedResponse($actions, SafetyCorrectiveActionResource::class);
-        } catch (\Throwable $exception) {
-            Log::error('safety_management.corrective_actions.index.error', [
-                'user_id' => $request->user()?->id,
-                'error' => $exception->getMessage(),
-            ]);
-
-            return AdminResponse::error(trans_message('safety_management.errors.index_failed'), 500);
+            return $this->failedIndex($request, $exception, 'corrective_actions');
         }
     }
 
@@ -304,12 +123,7 @@ final class SafetyManagementController extends Controller
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
-            Log::error('safety_management.permits.store.error', [
-                'user_id' => $request->user()?->id,
-                'error' => $exception->getMessage(),
-            ]);
-
-            return AdminResponse::error(trans_message('safety_management.errors.store_failed'), 500);
+            return $this->failedStore($request, $exception, 'permits');
         }
     }
 
@@ -373,41 +187,6 @@ final class SafetyManagementController extends Controller
         return $this->permitAction($request, $id, fn ($permit) => $this->service->resumePermit($permit));
     }
 
-    public function activatePermit(Request $request, int $id): JsonResponse
-    {
-        return $this->permitAction($request, $id, fn ($permit) => $this->service->activatePermit($permit));
-    }
-
-    public function suspendPermit(Request $request, int $id): JsonResponse
-    {
-        try {
-            $validated = $request->validate(['comment' => ['required', 'string', 'max:1000']]);
-        } catch (ValidationException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
-        }
-
-        return $this->permitAction(
-            $request,
-            $id,
-            fn ($permit) => $this->service->suspendPermit($permit, (int) $request->user()?->id, $validated['comment'])
-        );
-    }
-
-    public function rejectPermit(Request $request, int $id): JsonResponse
-    {
-        try {
-            $validated = $request->validate(['comment' => ['required', 'string', 'max:1000']]);
-        } catch (ValidationException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
-        }
-
-        return $this->permitAction(
-            $request,
-            $id,
-            fn ($permit) => $this->service->rejectPermit($permit, (int) $request->user()?->id, $validated['comment'])
-        );
-    }
-
     public function closePermit(Request $request, int $id): JsonResponse
     {
         try {
@@ -452,68 +231,7 @@ final class SafetyManagementController extends Controller
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
-            Log::error('safety_management.incidents.store.error', [
-                'user_id' => $request->user()?->id,
-                'error' => $exception->getMessage(),
-            ]);
-
-            return AdminResponse::error(trans_message('safety_management.errors.store_failed'), 500);
-        }
-    }
-
-    public function incidents(Request $request): JsonResponse
-    {
-        try {
-            $incidents = $this->service->paginateIncidents(
-                (int) $request->attributes->get('current_organization_id'),
-                min((int) $request->input('per_page', 20), 100),
-                $request->only(['project_id', 'status'])
-            );
-
-            return AdminResponse::paginated(
-                SafetyIncidentResource::collection($incidents->getCollection()),
-                [
-                    'current_page' => $incidents->currentPage(),
-                    'per_page' => $incidents->perPage(),
-                    'total' => $incidents->total(),
-                    'last_page' => $incidents->lastPage(),
-                ]
-            );
-        } catch (\Throwable $exception) {
-            Log::error('safety_management.incidents.index.error', [
-                'user_id' => $request->user()?->id,
-                'error' => $exception->getMessage(),
-            ]);
-
-            return AdminResponse::error(trans_message('safety_management.errors.index_failed'), 500);
-        }
-    }
-
-    public function violations(Request $request): JsonResponse
-    {
-        try {
-            $violations = $this->service->paginateViolations(
-                (int) $request->attributes->get('current_organization_id'),
-                min((int) $request->input('per_page', 20), 100),
-                $request->only(['project_id', 'status'])
-            );
-
-            return AdminResponse::paginated(
-                SafetyViolationResource::collection($violations->getCollection()),
-                [
-                    'current_page' => $violations->currentPage(),
-                    'per_page' => $violations->perPage(),
-                    'total' => $violations->total(),
-                    'last_page' => $violations->lastPage(),
-                ]
-            );
-        } catch (\Throwable $exception) {
-            Log::error('safety_management.violations.index.error', [
-                'user_id' => $request->user()?->id,
-                'error' => $exception->getMessage(),
-            ]);
-
-            return AdminResponse::error(trans_message('safety_management.errors.index_failed'), 500);
+            return $this->failedStore($request, $exception, 'incidents');
         }
     }
 
@@ -547,21 +265,6 @@ final class SafetyManagementController extends Controller
         );
     }
 
-    public function triageIncident(Request $request, int $id): JsonResponse
-    {
-        try {
-            $validated = $request->validate(['comment' => ['nullable', 'string', 'max:1000']]);
-        } catch (ValidationException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
-        }
-
-        return $this->incidentAction(
-            $request,
-            $id,
-            fn ($incident) => $this->service->triageIncident($incident, (int) $request->user()?->id, $validated['comment'] ?? null)
-        );
-    }
-
     public function startCorrectiveActions(Request $request, int $id): JsonResponse
     {
         try {
@@ -589,24 +292,6 @@ final class SafetyManagementController extends Controller
             $request,
             $id,
             fn ($incident) => $this->service->cancelIncident($incident, (int) $request->user()?->id, $validated['reason'])
-        );
-    }
-
-    public function requestIncidentCorrectiveActions(Request $request, int $id): JsonResponse
-    {
-        try {
-            $validated = $request->validate([
-                'root_cause' => ['required', 'string', 'max:5000'],
-                'corrective_actions' => ['required', 'string', 'max:5000'],
-            ]);
-        } catch (ValidationException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
-        }
-
-        return $this->incidentAction(
-            $request,
-            $id,
-            fn ($incident) => $this->service->startCorrectiveActions($incident, $validated['root_cause'])
         );
     }
 
@@ -657,12 +342,7 @@ final class SafetyManagementController extends Controller
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
-            Log::error('safety_management.violations.store.error', [
-                'user_id' => $request->user()?->id,
-                'error' => $exception->getMessage(),
-            ]);
-
-            return AdminResponse::error(trans_message('safety_management.errors.store_failed'), 500);
+            return $this->failedStore($request, $exception, 'violations');
         }
     }
 
@@ -678,36 +358,6 @@ final class SafetyManagementController extends Controller
             $request,
             $id,
             fn ($violation) => $this->service->resolveViolation($violation, (int) $request->user()?->id, $validated['resolution_comment'])
-        );
-    }
-
-    public function resolveCorrectiveAction(Request $request, int $id): JsonResponse
-    {
-        try {
-            $validated = $request->validate(['resolution_comment' => ['required', 'string', 'max:1000']]);
-        } catch (ValidationException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
-        }
-
-        return $this->correctiveAction(
-            $request,
-            $id,
-            fn ($action) => $this->service->resolveCorrectiveAction($action, (int) $request->user()?->id, $validated['resolution_comment'])
-        );
-    }
-
-    public function verifyCorrectiveAction(Request $request, int $id): JsonResponse
-    {
-        try {
-            $validated = $request->validate(['verification_comment' => ['nullable', 'string', 'max:1000']]);
-        } catch (ValidationException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
-        }
-
-        return $this->correctiveAction(
-            $request,
-            $id,
-            fn ($action) => $this->service->verifyCorrectiveAction($action, (int) $request->user()?->id, $validated['verification_comment'] ?? '')
         );
     }
 
@@ -747,12 +397,7 @@ final class SafetyManagementController extends Controller
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
-            Log::error('safety_management.briefings.store.error', [
-                'user_id' => $request->user()?->id,
-                'error' => $exception->getMessage(),
-            ]);
-
-            return AdminResponse::error(trans_message('safety_management.errors.store_failed'), 500);
+            return $this->failedStore($request, $exception, 'briefings');
         }
     }
 
@@ -784,12 +429,7 @@ final class SafetyManagementController extends Controller
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
-            Log::error('safety_management.corrective_actions.store.error', [
-                'user_id' => $request->user()?->id,
-                'error' => $exception->getMessage(),
-            ]);
-
-            return AdminResponse::error(trans_message('safety_management.errors.store_failed'), 500);
+            return $this->failedStore($request, $exception, 'corrective_actions');
         }
     }
 
@@ -891,24 +531,7 @@ final class SafetyManagementController extends Controller
         }
     }
 
-    private function correctiveAction(Request $request, int $id, callable $action): JsonResponse
-    {
-        try {
-            $correctiveAction = $this->service->findCorrectiveAction((int) $request->attributes->get('current_organization_id'), $id);
-
-            if ($correctiveAction === null) {
-                return AdminResponse::error(trans_message('safety_management.errors.corrective_action_not_found'), 404);
-            }
-
-            return AdminResponse::success(new SafetyCorrectiveActionResource($action($correctiveAction)));
-        } catch (DomainException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422);
-        } catch (\Throwable $exception) {
-            return $this->failedAction($request, $exception);
-        }
-    }
-
-    private function paginatedResponse($paginator, string $resourceClass): JsonResponse
+    private function paginatedResponse(LengthAwarePaginator $paginator, string $resourceClass): JsonResponse
     {
         return AdminResponse::paginated(
             $resourceClass::collection($paginator->getCollection()),
@@ -919,6 +542,26 @@ final class SafetyManagementController extends Controller
                 'last_page' => $paginator->lastPage(),
             ]
         );
+    }
+
+    private function failedIndex(Request $request, \Throwable $exception, string $scope): JsonResponse
+    {
+        Log::error("safety_management.{$scope}.index.error", [
+            'user_id' => $request->user()?->id,
+            'error' => $exception->getMessage(),
+        ]);
+
+        return AdminResponse::error(trans_message('safety_management.errors.index_failed'), 500);
+    }
+
+    private function failedStore(Request $request, \Throwable $exception, string $scope): JsonResponse
+    {
+        Log::error("safety_management.{$scope}.store.error", [
+            'user_id' => $request->user()?->id,
+            'error' => $exception->getMessage(),
+        ]);
+
+        return AdminResponse::error(trans_message('safety_management.errors.store_failed'), 500);
     }
 
     private function failedAction(Request $request, \Throwable $exception): JsonResponse

@@ -42,7 +42,7 @@ final class SafetyManagementMobileWorkflowTest extends TestCase
         $incidentResponse->assertCreated()
             ->assertJsonPath('data.status', 'reported')
             ->assertJsonPath('data.project_id', $project->id)
-            ->assertJsonPath('data.available_actions.0', 'start_investigation');
+            ->assertJsonPath('data.available_actions.0', 'triage');
 
         $violationResponse = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/mobile/safety-management/violations', [

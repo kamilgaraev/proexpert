@@ -202,6 +202,8 @@ final class SafetyManagementService
 
         $permit->update([
             'status' => 'active',
+            'suspended_at' => null,
+            'suspended_by_user_id' => null,
             'suspension_reason' => null,
         ]);
 
@@ -329,18 +331,20 @@ final class SafetyManagementService
             throw new DomainException(trans_message('safety_management.errors.incident_close_evidence_required'));
         }
 
-        $openActions = SafetyCorrectiveAction::query()
-            ->where('incident_id', $incident->id)
-            ->whereIn('status', ['open', 'resolved'])
-            ->exists();
+        if (in_array($incident->severity, ['major', 'critical', 'high'], true)) {
+            $openActions = SafetyCorrectiveAction::query()
+                ->where('incident_id', $incident->id)
+                ->whereIn('status', ['open', 'resolved'])
+                ->exists();
 
-        $hasVerifiedActions = SafetyCorrectiveAction::query()
-            ->where('incident_id', $incident->id)
-            ->where('status', 'verified')
-            ->exists();
+            $hasVerifiedActions = SafetyCorrectiveAction::query()
+                ->where('incident_id', $incident->id)
+                ->where('status', 'verified')
+                ->exists();
 
-        if ($openActions || !$hasVerifiedActions) {
-            throw new DomainException(trans_message('safety_management.errors.incident_close_corrective_actions_required'));
+            if ($openActions || !$hasVerifiedActions) {
+                throw new DomainException(trans_message('safety_management.errors.incident_close_corrective_actions_required'));
+            }
         }
 
         $incident->update([

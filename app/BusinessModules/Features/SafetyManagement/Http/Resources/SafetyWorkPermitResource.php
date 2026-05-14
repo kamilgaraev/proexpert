@@ -20,7 +20,7 @@ final class SafetyWorkPermitResource extends JsonResource
             'pending_approval' => ['approve', 'reject'],
             'approved' => ['activate', 'suspend', 'close'],
             'active' => ['suspend', 'close'],
-            'suspended' => ['activate', 'close'],
+            'suspended' => ['resume', 'close'],
             default => [],
         };
 
