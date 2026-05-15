@@ -7,10 +7,12 @@ namespace App\BusinessModules\Features\ExecutiveDocumentation\Http\Controllers;
 use App\BusinessModules\Features\ExecutiveDocumentation\Http\Resources\ExecutiveDocumentRemarkResource;
 use App\BusinessModules\Features\ExecutiveDocumentation\Http\Resources\ExecutiveDocumentResource;
 use App\BusinessModules\Features\ExecutiveDocumentation\Http\Resources\ExecutiveDocumentSetResource;
+use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentVersion;
 use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentationService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use App\Models\ConstructionJournal;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -116,6 +118,8 @@ final class ExecutiveDocumentationController extends Controller
             if ($set === null) {
                 return AdminResponse::error(trans_message('executive_documentation.errors.not_found'), 404);
             }
+
+            $validated = $this->normalizeDocumentReferences($validated, $set);
 
             return AdminResponse::success(
                 new ExecutiveDocumentResource($this->service->addDocument($set, (int) auth()->id(), $validated)),
@@ -297,7 +301,7 @@ final class ExecutiveDocumentationController extends Controller
             ],
             'work_log_extract' => [
                 'section_name' => ['required', 'string', 'max:255'],
-                'metadata.log_name' => ['required', 'string', 'max:255'],
+                'metadata.journal_id' => ['required', 'integer'],
                 'metadata.period' => ['required', 'string', 'max:120'],
                 'metadata.page_range' => ['nullable', 'string', 'max:120'],
             ],
@@ -317,6 +321,37 @@ final class ExecutiveDocumentationController extends Controller
             ],
             default => [],
         };
+    }
+
+    /**
+     * @param array<string, mixed> $validated
+     * @return array<string, mixed>
+     */
+    private function normalizeDocumentReferences(array $validated, ExecutiveDocumentSet $set): array
+    {
+        if (($validated['document_type'] ?? null) !== 'work_log_extract') {
+            return $validated;
+        }
+
+        $journalId = (int) data_get($validated, 'metadata.journal_id');
+        $journal = ConstructionJournal::query()
+            ->where('organization_id', $set->organization_id)
+            ->where('project_id', $set->project_id)
+            ->find($journalId);
+
+        if ($journal === null) {
+            throw ValidationException::withMessages([
+                'metadata.journal_id' => trans_message('executive_documentation.errors.journal_not_found'),
+            ]);
+        }
+
+        $metadata = $validated['metadata'] ?? [];
+        $metadata['journal_id'] = $journal->id;
+        $metadata['journal_name'] = $journal->name;
+        $metadata['journal_number'] = $journal->journal_number;
+        $validated['metadata'] = $metadata;
+
+        return $validated;
     }
 
     private function failed(string $action, ?int $id, \Throwable $e): JsonResponse

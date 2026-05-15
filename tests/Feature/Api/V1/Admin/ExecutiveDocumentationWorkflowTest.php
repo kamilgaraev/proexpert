@@ -6,6 +6,7 @@ namespace Tests\Feature\Api\V1\Admin;
 
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\ConstructionJournal;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
@@ -256,6 +257,84 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
             'organization_id' => $context->organization->id,
             'document_type' => 'material_certificate',
         ]);
+    }
+
+    public function test_work_log_extract_must_be_connected_to_project_journal(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreignContext = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignContext->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $setResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/executive-documentation/sets', [
+                'project_id' => $project->id,
+                'title' => 'Work log extracts',
+            ]);
+
+        $setResponse->assertCreated();
+        $setId = (int) $setResponse->json('data.id');
+
+        $ownJournal = ConstructionJournal::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'name' => 'General work journal',
+            'journal_number' => 'GJ-2026-001',
+            'start_date' => now()->subWeek()->toDateString(),
+            'status' => 'active',
+            'created_by_user_id' => $context->user->id,
+        ]);
+        $foreignJournal = ConstructionJournal::query()->create([
+            'organization_id' => $foreignContext->organization->id,
+            'project_id' => $foreignProject->id,
+            'name' => 'Foreign work journal',
+            'journal_number' => 'GJ-FOREIGN',
+            'start_date' => now()->subWeek()->toDateString(),
+            'status' => 'active',
+            'created_by_user_id' => $foreignContext->user->id,
+        ]);
+
+        $foreignJournalResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
+                'document_type' => 'work_log_extract',
+                'title' => 'Work log extract',
+                'section_name' => 'Axis A-B',
+                'metadata' => [
+                    'journal_id' => $foreignJournal->id,
+                    'period' => '01.05.2026-07.05.2026',
+                    'page_range' => '12-16',
+                ],
+                'initial_version' => [
+                    'file_url' => 's3://org-' . $context->organization->id . '/executive/work-log.pdf',
+                    'version_number' => '1.0',
+                ],
+            ]);
+
+        $foreignJournalResponse->assertStatus(422);
+        $foreignJournalResponse->assertJsonValidationErrors(['metadata.journal_id']);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
+                'document_type' => 'work_log_extract',
+                'title' => 'Work log extract',
+                'section_name' => 'Axis A-B',
+                'metadata' => [
+                    'journal_id' => $ownJournal->id,
+                    'period' => '01.05.2026-07.05.2026',
+                    'page_range' => '12-16',
+                ],
+                'initial_version' => [
+                    'file_url' => 's3://org-' . $context->organization->id . '/executive/work-log.pdf',
+                    'version_number' => '1.0',
+                ],
+            ]);
+
+        $response->assertCreated();
+        $response->assertJsonPath('data.metadata.journal_id', $ownJournal->id);
+        $response->assertJsonPath('data.metadata.journal_name', 'General work journal');
+        $response->assertJsonPath('data.metadata.journal_number', 'GJ-2026-001');
     }
 
     private function allowModuleAccess(): void

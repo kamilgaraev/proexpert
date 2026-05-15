@@ -34,6 +34,7 @@ final class ExecutiveDocumentResource extends JsonResource
             'completed_work_id' => $document->completed_work_id,
             'inspection_date' => $document->inspection_date?->format('Y-m-d'),
             'participants' => $document->participants,
+            'metadata' => $document->metadata,
             'workflow_summary' => $workflow->toArray(),
             'problem_flags' => $workflow->problemFlags,
             'available_actions' => $workflow->availableActions,
