@@ -17,7 +17,21 @@
     "customer.requests.view",
     "customer.profile.view"
   ],
-  "module_permissions": {},
+  "module_permissions": {
+    "quality-control": [
+      "quality-control.view",
+      "quality-control.defects.view"
+    ],
+    "executive-documentation": [
+      "executive-documentation.view"
+    ],
+    "change-management": [
+      "change-management.view"
+    ],
+    "handover-acceptance": [
+      "handover-acceptance.view"
+    ]
+  },
   "interface_access": [
     "customer",
     "admin"

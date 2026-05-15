@@ -40,7 +40,7 @@ class EstimateSyncService
             throw new \DomainException('Смета не найдена');
         }
 
-        return DB::transaction(function () use ($schedule, $estimate, $force) {
+        return DB::transaction(function () use ($schedule, $estimate) {
             $results = [
                 'updated' => 0,
                 'added' => 0,

@@ -1,0 +1,72 @@
+<?php
+
+declare(strict_types=1);
+
+return [
+    'asset_statuses' => [
+        'available' => 'Доступна',
+        'assigned' => 'Назначена',
+        'in_operation' => 'В работе',
+        'maintenance' => 'На обслуживании',
+        'unavailable' => 'Недоступна',
+        'archived' => 'В архиве',
+    ],
+    'shift_statuses' => [
+        'draft' => 'Черновик',
+        'submitted' => 'На проверке',
+        'approved' => 'Утвержден',
+        'rejected' => 'Возвращен',
+    ],
+    'maintenance_statuses' => [
+        'open' => 'Открыта',
+        'in_progress' => 'В работе',
+        'completed' => 'Завершена',
+        'cancelled' => 'Отменена',
+    ],
+    'actions' => [
+        'assign' => 'Назначить',
+        'start_operation' => 'Начать работу',
+        'return_available' => 'Вернуть в доступные',
+        'maintenance' => 'Отправить на обслуживание',
+        'unavailable' => 'Сделать недоступной',
+        'archive' => 'Архивировать',
+        'submit' => 'Отправить',
+        'approve' => 'Утвердить',
+        'reject' => 'Вернуть',
+        'complete' => 'Завершить',
+    ],
+    'problem_flags' => [
+        'asset_unavailable' => 'Техника недоступна для назначения.',
+        'asset_in_maintenance' => 'Техника находится на обслуживании.',
+    ],
+    'messages' => [
+        'asset_created' => 'Единица техники создана.',
+        'shift_created' => 'Сменный рапорт техники создан.',
+        'downtime_created' => 'Простой техники зафиксирован.',
+        'fuel_created' => 'Выдача ГСМ зафиксирована.',
+        'maintenance_created' => 'Заявка на обслуживание создана.',
+    ],
+    'errors' => [
+        'organization_missing' => 'Организация не определена.',
+        'module_not_active' => 'Модуль эксплуатации техники не активирован.',
+        'action_failed' => 'Не удалось выполнить действие по технике.',
+        'asset_not_found' => 'Единица техники не найдена.',
+        'project_not_found' => 'Проект не найден в организации.',
+        'machinery_not_found' => 'Тип техники не найден в организации.',
+        'schedule_task_not_found' => 'Задача графика не найдена в организации.',
+        'assignment_not_found' => 'Назначение техники не найдено.',
+        'shift_not_found' => 'Сменный рапорт не найден.',
+        'maintenance_not_found' => 'Заявка на обслуживание не найдена.',
+        'asset_assign_invalid_status' => 'Технику нельзя назначить из текущего статуса.',
+        'asset_start_invalid_status' => 'Работу техники можно начать только после назначения.',
+        'asset_maintenance_invalid_status' => 'Технику нельзя отправить на обслуживание из текущего статуса.',
+        'asset_unavailable_invalid_status' => 'Архивную технику нельзя сделать недоступной.',
+        'asset_available_invalid_status' => 'Технику нельзя вернуть в доступные из текущего статуса.',
+        'asset_archive_invalid_status' => 'Работающую или назначенную технику нельзя архивировать.',
+        'shift_asset_not_operational' => 'Сменный рапорт можно создать только для назначенной или работающей техники.',
+        'shift_submit_invalid_status' => 'Отправить можно только черновик сменного рапорта.',
+        'shift_approve_invalid_status' => 'Утвердить можно только отправленный сменный рапорт.',
+        'shift_reject_invalid_status' => 'Вернуть можно только отправленный сменный рапорт.',
+        'maintenance_complete_invalid_status' => 'Завершить можно только открытую заявку на обслуживание.',
+    ],
+];

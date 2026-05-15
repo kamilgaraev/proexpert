@@ -13,21 +13,27 @@ final class LookaheadPlanTaskResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        $task = $this->resource;
+
+        if (!$task instanceof LookaheadPlanTask) {
+            return [];
+        }
+
         return [
-            'id' => $this->id,
-            'lookahead_plan_id' => $this->lookahead_plan_id,
-            'schedule_task_id' => $this->schedule_task_id,
-            'planned_start_date' => $this->planned_start_date?->format('Y-m-d'),
-            'planned_end_date' => $this->planned_end_date?->format('Y-m-d'),
-            'planned_quantity' => $this->planned_quantity !== null ? (float) $this->planned_quantity : null,
-            'planned_work_hours' => $this->planned_work_hours !== null ? (float) $this->planned_work_hours : null,
-            'readiness_status' => $this->readiness_status,
-            'schedule_task' => $this->whenLoaded('scheduleTask', fn () => $this->scheduleTask ? [
-                'id' => $this->scheduleTask->id,
-                'name' => $this->scheduleTask->name,
-                'status' => $this->scheduleTask->status?->value,
-            ] : null),
-            'constraints' => WorkConstraintResource::collection($this->whenLoaded('constraints')),
+            'id' => $task->id,
+            'lookahead_plan_id' => $task->lookahead_plan_id,
+            'schedule_task_id' => $task->schedule_task_id,
+            'planned_start_date' => $task->planned_start_date?->format('Y-m-d'),
+            'planned_end_date' => $task->planned_end_date?->format('Y-m-d'),
+            'planned_quantity' => $task->planned_quantity !== null ? (float) $task->planned_quantity : null,
+            'planned_work_hours' => $task->planned_work_hours !== null ? (float) $task->planned_work_hours : null,
+            'readiness_status' => $task->readiness_status,
+            'schedule_task' => $task->relationLoaded('scheduleTask') && $task->scheduleTask ? [
+                'id' => $task->scheduleTask->id,
+                'name' => $task->scheduleTask->name,
+                'status' => $task->scheduleTask->status?->value,
+            ] : null,
+            'constraints' => $task->relationLoaded('constraints') ? WorkConstraintResource::collection($task->constraints) : [],
         ];
     }
 }

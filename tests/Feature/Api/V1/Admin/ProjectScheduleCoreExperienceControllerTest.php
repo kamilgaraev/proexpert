@@ -6,8 +6,14 @@ namespace Tests\Feature\Api\V1\Admin;
 
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Enums\EstimatePositionItemType;
 use App\Models\Organization;
 use App\Models\ConstructionJournal;
+use App\Models\Contract;
+use App\Models\ContractEstimateItem;
+use App\Models\Contractor;
+use App\Models\Estimate;
+use App\Models\EstimateItem;
 use App\Models\Project;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
@@ -416,10 +422,52 @@ class ProjectScheduleCoreExperienceControllerTest extends TestCase
         $schedule = $this->createSchedule($context->organization, $project, $context->user, [
             'status' => 'active',
         ]);
+        $contractor = Contractor::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Schedule contractor',
+        ]);
+        $contract = Contract::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'contractor_id' => $contractor->id,
+            'number' => 'CNT-LA-1',
+            'date' => '2026-06-01',
+            'subject' => 'Foundation works',
+            'total_amount' => 25000,
+            'status' => 'active',
+        ]);
+        $estimate = Estimate::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'contract_id' => $contract->id,
+            'number' => 'EST-LA-1',
+            'name' => 'Lookahead estimate',
+            'status' => 'approved',
+            'estimate_date' => '2026-06-01',
+            'total_amount' => 25000,
+        ]);
+        $estimateItem = EstimateItem::query()->create([
+            'estimate_id' => $estimate->id,
+            'position_number' => '1',
+            'item_type' => EstimatePositionItemType::WORK->value,
+            'name' => 'Foundation reinforcement',
+            'quantity' => 25,
+            'quantity_total' => 25,
+            'unit_price' => 1000,
+            'total_amount' => 25000,
+        ]);
+        ContractEstimateItem::query()->create([
+            'contract_id' => $contract->id,
+            'estimate_id' => $estimate->id,
+            'estimate_item_id' => $estimateItem->id,
+            'quantity' => 25,
+            'amount' => 25000,
+        ]);
         $task = $this->createTask($context->organization, $schedule, $context->user, [
             'name' => 'Foundation reinforcement',
             'planned_start_date' => '2026-06-08',
             'planned_end_date' => '2026-06-12',
+            'estimate_item_id' => $estimateItem->id,
         ]);
         $this->allowAdminAccess();
 
@@ -504,6 +552,7 @@ class ProjectScheduleCoreExperienceControllerTest extends TestCase
             'project_id' => $project->id,
             'name' => 'General works journal',
             'journal_number' => 'J-1',
+            'contract_id' => $contract->id,
             'start_date' => '2026-06-01',
             'status' => 'active',
             'created_by_user_id' => $context->user->id,

@@ -351,6 +351,26 @@ class ModulesOverviewControllerTest extends TestCase
         $this->assertSame('standalone', $solution['access_source'] ?? null);
     }
 
+    public function test_overview_exposes_admin_entries_for_machinery_and_labor_package(): void
+    {
+        $response = $this->actingAs($this->user, 'api_landing')
+            ->getJson('/api/v1/landing/modules/overview');
+
+        $solution = collect($response->json('data.solutions'))
+            ->firstWhere('slug', 'machinery-and-labor');
+
+        $response->assertOk();
+        $this->assertNotNull($solution);
+        $this->assertContains(
+            ['module_slug' => 'machinery-operations', 'label' => 'Ресурсы → Техника', 'path' => '/machinery-operations'],
+            $solution['admin_entries'] ?? []
+        );
+        $this->assertContains(
+            ['module_slug' => 'production-labor', 'label' => 'Ресурсы → Наряды и выработка', 'path' => '/production-labor'],
+            $solution['admin_entries'] ?? []
+        );
+    }
+
     private function createModule(
         string $slug,
         string $name,

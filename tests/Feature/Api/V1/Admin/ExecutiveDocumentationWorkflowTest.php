@@ -10,6 +10,8 @@ use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -50,6 +52,10 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
                 'work_type_name' => 'Reinforcement',
                 'section_name' => 'Axis A-B',
                 'inspection_date' => now()->toDateString(),
+                'metadata' => [
+                    'act_number' => 'HWA-2026-001',
+                    'representative' => 'Customer representative',
+                ],
                 'participants' => [
                     ['name' => 'Site engineer', 'role' => 'contractor'],
                     ['name' => 'Customer representative', 'role' => 'customer'],
@@ -184,6 +190,72 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
         $customerResponse->assertOk();
         $ids = collect($customerResponse->json('data'))->pluck('id')->all();
         $this->assertNotContains($ownSetId, $ids);
+    }
+
+    public function test_document_file_is_uploaded_to_organization_s3_path_and_type_fields_are_required(): void
+    {
+        Storage::fake('s3');
+
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $setResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/executive-documentation/sets', [
+                'project_id' => $project->id,
+                'title' => 'Material certificates',
+            ]);
+
+        $setResponse->assertCreated();
+        $setId = (int) $setResponse->json('data.id');
+
+        $invalidResponse = $this->withHeaders($context->authHeaders())
+            ->post('/api/v1/admin/executive-documentation/sets/' . $setId . '/documents', [
+                'document_type' => 'material_certificate',
+                'title' => 'Concrete certificate',
+                'initial_version' => [
+                    'version_number' => '1.0',
+                    'file' => UploadedFile::fake()->createWithContent('certificate.pdf', str_repeat('a', 1024)),
+                ],
+            ]);
+
+        $invalidResponse->assertStatus(422);
+        $invalidResponse->assertJsonValidationErrors([
+            'metadata.material_name',
+            'metadata.batch_number',
+            'metadata.supplier_name',
+            'metadata.certificate_number',
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->post('/api/v1/admin/executive-documentation/sets/' . $setId . '/documents', [
+                'document_type' => 'material_certificate',
+                'title' => 'Concrete certificate',
+                'section_name' => 'Axis A-B',
+                'metadata' => [
+                    'material_name' => 'Concrete B25',
+                    'batch_number' => 'BATCH-42',
+                    'supplier_name' => 'Concrete plant',
+                    'certificate_number' => 'CERT-2026-001',
+                ],
+                'initial_version' => [
+                    'version_number' => '1.0',
+                    'file' => UploadedFile::fake()->createWithContent('certificate.pdf', str_repeat('a', 1024)),
+                ],
+            ]);
+
+        $response->assertCreated();
+        $path = (string) $response->json('data.versions.0.file_url');
+
+        $this->assertStringStartsWith("org-{$context->organization->id}/executive-documentation/", $path);
+        $this->assertStringEndsWith('.pdf', $path);
+        Storage::disk('s3')->assertExists($path);
+        $this->assertDatabaseHas('executive_documents', [
+            'id' => $response->json('data.id'),
+            'organization_id' => $context->organization->id,
+            'document_type' => 'material_certificate',
+        ]);
     }
 
     private function allowModuleAccess(): void

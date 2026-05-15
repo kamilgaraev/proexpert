@@ -32,6 +32,19 @@ class WorkflowGuardService
 
         $blockers = [];
 
+        if ((float) $entry->workVolumes->sum('quantity') <= 0) {
+            $blockers[] = $this->blocker(
+                'missing_work_volume',
+                trans_message('workflow.blockers.missing_work_volume'),
+                'work_volume_missing',
+                false,
+                ['add_work_volume'],
+                null,
+            );
+
+            return $blockers;
+        }
+
         foreach ($entry->workVolumes as $volume) {
             if (!$volume->estimate_item_id) {
                 $blockers[] = $this->blocker(

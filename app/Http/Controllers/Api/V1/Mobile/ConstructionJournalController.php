@@ -239,4 +239,32 @@ class ConstructionJournalController extends Controller
             return MobileResponse::error(trans_message('mobile_construction_journal.errors.load_failed'), 500);
         }
     }
+
+    public function entryFormOptions(ConstructionJournal $journal, Request $request): JsonResponse
+    {
+        try {
+            $user = $request->user();
+            if (!$user) {
+                return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
+            }
+
+            $this->mobileJournalService->assertJournalAccess($user, $journal);
+            $this->authorize('view', $journal);
+
+            return MobileResponse::success($this->mobileJournalService->buildEntryFormOptions($user, $journal));
+        } catch (AuthorizationException $exception) {
+            return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            Log::error('mobile.construction_journal.entry_form_options.error', [
+                'user_id' => $request->user()?->id,
+                'organization_id' => $request->user()?->current_organization_id,
+                'journal_id' => $journal->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return MobileResponse::error(trans_message('mobile_construction_journal.errors.load_failed'), 500);
+        }
+    }
 }

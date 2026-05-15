@@ -39,6 +39,7 @@ class JournalApprovalService
         }
 
         $this->validateEntryForSubmission($entry);
+        $this->validateWorkflowForSubmission($entry);
 
         $entry->submit();
         $this->completedWorkFactService->syncFromJournalEntry($entry->fresh([
@@ -52,6 +53,28 @@ class JournalApprovalService
         $this->recordEntryAudit('construction_journal_entry.submitted', $entry);
 
         return $entry->fresh();
+    }
+
+    private function validateWorkflowForSubmission(ConstructionJournalEntry $entry): void
+    {
+        $blockers = $this->workflowGuardService->journalEntryBlockers($entry);
+        $hardBlockers = array_values(array_filter(
+            $blockers,
+            fn (array $blocker): bool => !($blocker['can_override'] ?? false)
+        ));
+
+        if ($hardBlockers === []) {
+            return;
+        }
+
+        $messages = array_values(array_unique(array_filter(array_map(
+            fn (array $blocker): string => (string) ($blocker['message'] ?? ''),
+            $hardBlockers
+        ))));
+
+        throw new DomainException(
+            trans_message('construction_journal.errors.submit_validation_prefix') . ': ' . implode('; ', $messages)
+        );
     }
 
     public function approve(ConstructionJournalEntry $entry, User $approver, ?array $override = null): ConstructionJournalEntry
@@ -197,7 +220,7 @@ class JournalApprovalService
             $errors[] = trans_message('construction_journal.errors.validation_entry_date');
         }
 
-        if ($entry->workVolumes()->count() === 0) {
+        if ((float) $entry->workVolumes()->sum('quantity') <= 0) {
             $errors[] = trans_message('construction_journal.errors.validation_work_volumes');
         }
 

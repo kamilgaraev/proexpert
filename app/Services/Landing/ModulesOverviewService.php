@@ -141,6 +141,7 @@ class ModulesOverviewService
                     ),
                     'business_outcomes' => $package['business_outcomes'] ?? [],
                     'data_sources' => $package['data_sources'] ?? [],
+                    'admin_entries' => $package['admin_entries'] ?? [],
                     'capabilities' => $this->filterCapabilities($package['capabilities'] ?? [], $activeSlugs),
                     'tiers' => $tiers,
                 ];

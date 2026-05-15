@@ -8,9 +8,13 @@ use App\BusinessModules\Features\ScheduleManagement\Models\DailyWorkPlan;
 use App\BusinessModules\Features\ScheduleManagement\Models\LookaheadPlan;
 use App\BusinessModules\Features\ScheduleManagement\Models\LookaheadPlanTask;
 use App\BusinessModules\Features\ScheduleManagement\Models\WorkConstraint;
+use App\BusinessModules\Features\SafetyManagement\Models\SafetyIncident;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
+use App\Enums\EstimatePositionItemType;
 use App\Models\ConstructionJournal;
+use App\Models\Estimate;
+use App\Models\EstimateItem;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\ProjectSchedule;
@@ -33,6 +37,25 @@ class ScheduleDailyPlanningWorkflowTest extends TestCase
         $organization->users()->attach($user->id, ['is_owner' => false, 'is_active' => true]);
         $project = Project::factory()->create(['organization_id' => $organization->id]);
         $project->users()->attach($user->id, ['role' => 'foreman']);
+        $estimate = Estimate::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'number' => 'EST-DP-1',
+            'name' => 'Tower estimate',
+            'status' => 'approved',
+            'estimate_date' => '2026-06-01',
+            'total_amount' => 10000,
+        ]);
+        $estimateItem = EstimateItem::query()->create([
+            'estimate_id' => $estimate->id,
+            'position_number' => '1',
+            'item_type' => EstimatePositionItemType::WORK->value,
+            'name' => 'Foundation reinforcement',
+            'quantity' => 10,
+            'quantity_total' => 10,
+            'unit_price' => 1000,
+            'total_amount' => 10000,
+        ]);
 
         $schedule = ProjectSchedule::query()->create([
             'project_id' => $project->id,
@@ -53,6 +76,7 @@ class ScheduleDailyPlanningWorkflowTest extends TestCase
             'planned_end_date' => '2026-06-10',
             'quantity' => 10,
             'planned_work_hours' => 8,
+            'estimate_item_id' => $estimateItem->id,
             'progress_percent' => 0,
             'status' => 'not_started',
             'sort_order' => 1,
@@ -152,6 +176,31 @@ class ScheduleDailyPlanningWorkflowTest extends TestCase
         $factResponse->assertOk()
             ->assertJsonPath('data.status', 'done')
             ->assertJsonPath('data.journal_entry_id', fn ($value): bool => $value !== null);
+        $journalEntryId = (int) $factResponse->json('data.journal_entry_id');
+
+        $updatedFactResponse = $this->actingAs($user, 'api_mobile')
+            ->patchJson("/api/v1/mobile/schedule/daily-plan-assignments/{$assignment->id}/fact", [
+                'status' => 'partially_done',
+                'completed_quantity' => 6,
+                'actual_work_hours' => 7,
+                'fact_comment' => 'Updated from mobile before submit',
+            ]);
+
+        $updatedFactResponse->assertOk()
+            ->assertJsonPath('data.status', 'partially_done')
+            ->assertJsonPath('data.journal_entry_id', $journalEntryId);
+        $this->assertSame(1, DB::table('construction_journal_entries')
+            ->where('schedule_task_id', $task->id)
+            ->whereDate('entry_date', '2026-06-08')
+            ->count());
+        $this->assertDatabaseHas('construction_journal_entries', [
+            'id' => $journalEntryId,
+            'work_description' => 'Updated from mobile before submit',
+        ]);
+        $this->assertDatabaseHas('journal_work_volumes', [
+            'journal_entry_id' => $journalEntryId,
+            'quantity' => 6,
+        ]);
 
         $submitResponse = $this->actingAs($user, 'api_mobile')
             ->postJson("/api/v1/mobile/schedule/daily-plans/{$dailyPlan->id}/submit", [
@@ -255,6 +304,20 @@ class ScheduleDailyPlanningWorkflowTest extends TestCase
             'status' => 'open',
             'due_date' => '2026-06-08',
         ]);
+        $safetyConstraint = WorkConstraint::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'schedule_id' => $schedule->id,
+            'lookahead_plan_task_id' => $lookaheadTask->id,
+            'schedule_task_id' => $task->id,
+            'created_by_user_id' => $user->id,
+            'constraint_type' => 'safety_permit_missing',
+            'title' => 'Hot work permit missing',
+            'description' => 'Crew cannot start without a permit',
+            'severity' => 'hard',
+            'status' => 'open',
+            'due_date' => '2026-06-08',
+        ]);
 
         $siteRequestResponse = $this->actingAs($user, 'api_mobile')
             ->postJson("/api/v1/mobile/schedule/work-constraints/{$materialConstraint->id}/linked-action", [
@@ -303,6 +366,28 @@ class ScheduleDailyPlanningWorkflowTest extends TestCase
         ]);
         $this->assertSame(1, QualityDefect::query()
             ->where('metadata->source->work_constraint_id', $qualityConstraint->id)
+            ->count());
+
+        $safetyIncidentResponse = $this->actingAs($user, 'api_mobile')
+            ->postJson("/api/v1/mobile/schedule/work-constraints/{$safetyConstraint->id}/linked-action", [
+                'comment' => 'No permit found on site',
+            ]);
+
+        $safetyIncidentResponse->assertCreated()
+            ->assertJsonPath('data.type', 'safety_incident')
+            ->assertJsonPath('data.entity.title', 'Hot work permit missing')
+            ->assertJsonPath('data.entity.metadata.source.work_constraint_id', $safetyConstraint->id);
+        $safetyIncidentId = $safetyIncidentResponse->json('data.entity.id');
+        $this->assertDatabaseHas('safety_incidents', [
+            'id' => $safetyIncidentId,
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'incident_type' => 'unsafe_condition',
+            'status' => 'reported',
+            'reported_by_user_id' => $user->id,
+        ]);
+        $this->assertSame(1, SafetyIncident::query()
+            ->where('metadata->source->work_constraint_id', $safetyConstraint->id)
             ->count());
     }
 }

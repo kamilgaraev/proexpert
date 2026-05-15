@@ -287,7 +287,7 @@ class ConstructionJournalPayloadService
 
         if (Gate::forUser($user)->allows('update', $entry)) {
             $actions[] = 'update';
-            if ($entry->status?->canSubmit()) {
+            if ($entry->status?->canSubmit() && $this->entryReadyForSubmission($entry)) {
                 $actions[] = 'submit';
             }
         }
@@ -311,6 +311,23 @@ class ConstructionJournalPayloadService
         }
 
         return array_values(array_unique($actions));
+    }
+
+    private function entryReadyForSubmission(ConstructionJournalEntry $entry): bool
+    {
+        $entry->loadMissing('workVolumes');
+
+        if (trim((string) $entry->work_description) === ''
+            || $entry->entry_date === null
+            || (float) $entry->workVolumes->sum('quantity') <= 0) {
+            return false;
+        }
+
+        $blockers = $this->workflowGuardService->journalEntryBlockers($entry);
+
+        return !collect($blockers)->contains(
+            fn (array $blocker): bool => !($blocker['can_override'] ?? false)
+        );
     }
 
     public function paginationMeta(LengthAwarePaginator $paginator): array

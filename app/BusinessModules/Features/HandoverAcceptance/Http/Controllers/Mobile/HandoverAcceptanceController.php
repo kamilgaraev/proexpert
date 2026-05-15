@@ -1,0 +1,121 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Features\HandoverAcceptance\Http\Controllers\Mobile;
+
+use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\AcceptanceFindingResource;
+use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\AcceptanceScopeResource;
+use App\BusinessModules\Features\HandoverAcceptance\Services\HandoverAcceptanceService;
+use App\Http\Controllers\Controller;
+use App\Http\Responses\MobileResponse;
+use DomainException;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
+
+final class HandoverAcceptanceController extends Controller
+{
+    public function __construct(private readonly HandoverAcceptanceService $service)
+    {
+    }
+
+    public function index(Request $request): JsonResponse
+    {
+        try {
+            $scopes = $this->service->listScopes(
+                (int) $request->attributes->get('current_organization_id'),
+                $request->only(['project_id'])
+            );
+
+            return MobileResponse::success([
+                'items' => AcceptanceScopeResource::collection($scopes)->resolve(),
+                'meta' => [
+                    'total' => $scopes->count(),
+                    'project_id' => $request->integer('project_id') ?: null,
+                ],
+            ]);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'index');
+        }
+    }
+
+    public function storeFinding(Request $request, int $session): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'title' => ['required', 'string', 'max:255'],
+                'description' => ['nullable', 'string', 'max:2000'],
+                'severity' => ['nullable', 'string', Rule::in(['minor', 'major', 'critical'])],
+                'create_quality_defect' => ['nullable', 'boolean'],
+            ]);
+
+            return MobileResponse::success(
+                new AcceptanceFindingResource($this->service->addFinding(
+                    $this->service->findSession((int) $request->attributes->get('current_organization_id'), $session),
+                    (int) $request->user()?->id,
+                    $validated
+                )),
+                trans_message('handover_acceptance.messages.finding_created'),
+                201
+            );
+        } catch (ValidationException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'finding.store');
+        }
+    }
+
+    public function resolveFinding(Request $request, int $finding): JsonResponse
+    {
+        try {
+            $validated = $request->validate(['resolution_comment' => ['required', 'string', 'max:2000']]);
+
+            return MobileResponse::success(new AcceptanceFindingResource($this->service->resolveFinding(
+                $this->service->findFinding((int) $request->attributes->get('current_organization_id'), $finding),
+                (int) $request->user()?->id,
+                $validated
+            )));
+        } catch (ValidationException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'finding.resolve');
+        }
+    }
+
+    public function readyForReinspection(Request $request, int $scope): JsonResponse
+    {
+        return $this->scopeAction($request, $scope, fn ($model) => $this->service->markReadyForReinspection($model), 'ready_for_reinspection');
+    }
+
+    private function scopeAction(Request $request, int $scope, callable $action, string $logAction): JsonResponse
+    {
+        try {
+            return MobileResponse::success(new AcceptanceScopeResource($action(
+                $this->service->findScope((int) $request->attributes->get('current_organization_id'), $scope)
+            )));
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, $logAction);
+        }
+    }
+
+    private function failed(Request $request, \Throwable $exception, string $action): JsonResponse
+    {
+        Log::error('handover_acceptance.mobile_failed', [
+            'action' => $action,
+            'organization_id' => $request->attributes->get('current_organization_id'),
+            'user_id' => $request->user()?->id,
+            'error' => $exception->getMessage(),
+        ]);
+
+        return MobileResponse::error(trans_message('handover_acceptance.errors.action_failed'), 500);
+    }
+}

@@ -1,49 +1,71 @@
 <?php
 
+$configEnv = static function (string $key, mixed $default = null): mixed {
+    $value = $_ENV[$key] ?? $_SERVER[$key] ?? getenv($key);
+
+    if ($value === false || $value === null || $value === '') {
+        return $default;
+    }
+
+    if (is_bool($default)) {
+        return filter_var($value, FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE) ?? $default;
+    }
+
+    if (is_int($default)) {
+        return (int) $value;
+    }
+
+    if (is_float($default)) {
+        return (float) $value;
+    }
+
+    return $value;
+};
+
 return [
-    'enabled' => env('AI_ASSISTANT_ENABLED', true),
+    'enabled' => $configEnv('AI_ASSISTANT_ENABLED', true),
 
-    'default_limit' => env('AI_ASSISTANT_DEFAULT_LIMIT', 5000),
+    'default_limit' => $configEnv('AI_ASSISTANT_DEFAULT_LIMIT', 5000),
 
-    'cache_ttl' => env('AI_ASSISTANT_CACHE_TTL', 3600),
+    'cache_ttl' => $configEnv('AI_ASSISTANT_CACHE_TTL', 3600),
 
     'conversation_history_days' => 90,
 
     'llm' => [
-        'provider' => env('LLM_PROVIDER', 'yandex'),
+        'provider' => $configEnv('LLM_PROVIDER', 'yandex'),
 
         'yandex' => [
-            'api_key' => env('YANDEX_API_KEY'),
-            'folder_id' => env('YANDEX_FOLDER_ID', 'b1gbp06r4m40cduru9dg'),
-            'model_uri' => env('YANDEX_MODEL_URI', 'gpt://b1gbp06r4m40cduru9dg/aliceai-llm/latest'),
-            'max_tokens' => env('YANDEX_MAX_TOKENS', 2000),
-            'temperature' => env('YANDEX_TEMPERATURE', 0.7),
-            'use_async' => env('YANDEX_USE_ASYNC', false),
+            'api_key' => $configEnv('YANDEX_API_KEY'),
+            'folder_id' => $configEnv('YANDEX_FOLDER_ID', 'b1gbp06r4m40cduru9dg'),
+            'model_uri' => $configEnv('YANDEX_MODEL_URI', 'gpt://b1gbp06r4m40cduru9dg/aliceai-llm/latest'),
+            'max_tokens' => $configEnv('YANDEX_MAX_TOKENS', 2000),
+            'temperature' => $configEnv('YANDEX_TEMPERATURE', 0.7),
+            'use_async' => $configEnv('YANDEX_USE_ASYNC', false),
         ],
 
         'openai' => [
-            'api_key' => env('OPENAI_API_KEY'),
-            'model' => env('OPENAI_MODEL', 'gpt-4o-mini'),
-            'max_tokens' => env('OPENAI_MAX_TOKENS', 2000),
-            'temperature' => env('OPENAI_TEMPERATURE', 0.7),
+            'api_key' => $configEnv('OPENAI_API_KEY'),
+            'model' => $configEnv('OPENAI_MODEL', 'gpt-4o-mini'),
+            'max_tokens' => $configEnv('OPENAI_MAX_TOKENS', 2000),
+            'temperature' => $configEnv('OPENAI_TEMPERATURE', 0.7),
         ],
 
         'deepseek' => [
-            'api_key' => env('DEEPSEEK_API_KEY'),
-            'model' => env('DEEPSEEK_MODEL', 'deepseek-chat'),
-            'max_tokens' => env('DEEPSEEK_MAX_TOKENS', 2000),
-            'temperature' => env('DEEPSEEK_TEMPERATURE', 1),
+            'api_key' => $configEnv('DEEPSEEK_API_KEY'),
+            'model' => $configEnv('DEEPSEEK_MODEL', 'deepseek-chat'),
+            'max_tokens' => $configEnv('DEEPSEEK_MAX_TOKENS', 2000),
+            'temperature' => $configEnv('DEEPSEEK_TEMPERATURE', 1),
         ],
     ],
 
-    'openai_api_key' => env('OPENAI_API_KEY'),
-    'openai_model' => env('OPENAI_MODEL', 'gpt-4o-mini'),
-    'max_tokens' => env('OPENAI_MAX_TOKENS', 2000),
+    'openai_api_key' => $configEnv('OPENAI_API_KEY'),
+    'openai_model' => $configEnv('OPENAI_MODEL', 'gpt-4o-mini'),
+    'max_tokens' => $configEnv('OPENAI_MAX_TOKENS', 2000),
 
     'project_pulse' => [
-        'enabled' => env('PROJECT_PULSE_ENABLED', true),
-        'ai_enabled' => env('PROJECT_PULSE_AI_ENABLED', true),
-        'cache_ttl' => env('PROJECT_PULSE_CACHE_TTL', 3600),
+        'enabled' => $configEnv('PROJECT_PULSE_ENABLED', true),
+        'ai_enabled' => $configEnv('PROJECT_PULSE_AI_ENABLED', true),
+        'cache_ttl' => $configEnv('PROJECT_PULSE_CACHE_TTL', 3600),
         'auto_cleanup_days' => 90,
         'periods' => ['today', 'yesterday', 'week'],
         'categories' => [
@@ -54,6 +76,13 @@ return [
             'finance' => 'Финансы',
             'contract' => 'Договоры',
             'schedule' => 'График',
+            'quality' => 'Качество',
+            'documentation' => 'Исполнительная документация',
+            'safety' => 'HSE',
+            'machinery' => 'Техника',
+            'labor' => 'Выработка',
+            'change' => 'Изменения',
+            'handover' => 'Сдача',
             'report' => 'Отчеты',
             'work' => 'Работы',
             'people' => 'Исполнители',

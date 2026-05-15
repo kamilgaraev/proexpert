@@ -15,6 +15,23 @@ use App\Models\ScheduleTask;
 use Carbon\Carbon;
 use App\Traits\HasOnboardingDemo;
 
+/**
+ * @property int $id
+ * @property int $project_id
+ * @property string|null $event_type
+ * @property Carbon $event_date
+ * @property Carbon|null $end_date
+ * @property string|null $event_time
+ * @property int|null $duration_minutes
+ * @property bool $is_all_day
+ * @property bool $is_recurring
+ * @property string|null $recurrence_pattern
+ * @property array<string, mixed>|null $recurrence_config
+ * @property int|null $reminder_before_hours
+ * @property bool $reminder_sent
+ * @property string|null $color
+ * @property string|null $icon
+ */
 class ProjectEvent extends Model
 {
     use HasFactory, SoftDeletes, HasOnboardingDemo;
@@ -266,7 +283,7 @@ class ProjectEvent extends Model
             ->where('is_blocking', true)
             ->where(function ($query) use ($start, $end) {
                 $query->whereBetween('event_date', [$start->toDateString(), $end->toDateString()])
-                    ->orWhere(function ($q) use ($start, $end) {
+                    ->orWhere(function ($q) use ($start) {
                         $q->where('event_date', '<=', $start->toDateString())
                           ->whereNotNull('end_date')
                           ->where('end_date', '>=', $start->toDateString());
@@ -346,7 +363,7 @@ class ProjectEvent extends Model
     {
         return $query->where(function ($q) use ($startDate, $endDate) {
             $q->whereBetween('event_date', [$startDate, $endDate])
-              ->orWhere(function ($subQuery) use ($startDate, $endDate) {
+              ->orWhere(function ($subQuery) use ($startDate) {
                   $subQuery->where('event_date', '<=', $startDate)
                            ->whereNotNull('end_date')
                            ->where('end_date', '>=', $startDate);

@@ -6,6 +6,9 @@ namespace App\BusinessModules\Features\AIAssistant\Http\Resources;
 
 use Illuminate\Http\Resources\Json\JsonResource;
 
+/**
+ * @mixin \App\BusinessModules\Features\AIAssistant\Models\Message
+ */
 class MessageResource extends JsonResource
 {
     public function toArray($request): array
@@ -20,4 +23,3 @@ class MessageResource extends JsonResource
         ];
     }
 }
-

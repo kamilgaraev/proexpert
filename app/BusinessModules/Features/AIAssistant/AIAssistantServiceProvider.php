@@ -35,6 +35,7 @@ use App\BusinessModules\Features\AIAssistant\Services\LLM\OpenAIProvider;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\YandexGPTProvider;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\ProjectPulseFactSourceRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseContractFactSource;
+use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseConstructionErpFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseFinanceFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulsePeopleFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseProcurementFactSource;
@@ -113,6 +114,7 @@ class AIAssistantServiceProvider extends ServiceProvider
                 $app->make(ProjectPulseFinanceFactSource::class),
                 $app->make(ProjectPulseContractFactSource::class),
                 $app->make(ProjectPulseScheduleFactSource::class),
+                $app->make(ProjectPulseConstructionErpFactSource::class),
                 $app->make(ProjectPulseReportFactSource::class),
                 $app->make(ProjectPulseWorkFactSource::class),
                 $app->make(ProjectPulsePeopleFactSource::class),

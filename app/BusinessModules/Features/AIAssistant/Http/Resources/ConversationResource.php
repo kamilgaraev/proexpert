@@ -8,6 +8,9 @@ use App\BusinessModules\Features\AIAssistant\Models\Message;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Http\Resources\MissingValue;
 
+/**
+ * @mixin \App\BusinessModules\Features\AIAssistant\Models\Conversation
+ */
 class ConversationResource extends JsonResource
 {
     public function toArray($request): array

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\ScheduleManagement\Services;
 
+use App\BusinessModules\Features\BudgetEstimates\Services\JournalApprovalService;
 use App\BusinessModules\Features\ScheduleManagement\Models\DailyWorkPlan;
 use App\BusinessModules\Features\ScheduleManagement\Models\DailyWorkPlanAssignment;
 use App\BusinessModules\Features\ScheduleManagement\Models\LookaheadPlan;
@@ -15,6 +16,7 @@ use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
+use App\Models\User;
 use Carbon\Carbon;
 use DomainException;
 use Illuminate\Database\Eloquent\Collection;
@@ -29,6 +31,11 @@ final class LookaheadPlanningService
         'dailyPlans.assignments.journalEntry',
         'dailyPlans.assignments.lookaheadPlanTask.constraints',
     ];
+
+    public function __construct(
+        private readonly JournalApprovalService $journalApprovalService,
+    ) {
+    }
 
     public function listPlans(ProjectSchedule $schedule): Collection
     {
@@ -224,7 +231,9 @@ final class LookaheadPlanningService
 
             $this->journalEntriesForDailyPlan($daily)
                 ->where('status', JournalEntryStatusEnum::DRAFT)
-                ->each(fn (ConstructionJournalEntry $entry): bool => $entry->update(['status' => JournalEntryStatusEnum::SUBMITTED]));
+                ->each(function (ConstructionJournalEntry $entry): void {
+                    $this->journalApprovalService->submitForApproval($entry->load(['journal', 'createdBy', 'workVolumes']));
+                });
 
             return $daily->fresh(['assignments.scheduleTask', 'assignments.journalEntry', 'assignments.lookaheadPlanTask.constraints']);
         });
@@ -239,6 +248,8 @@ final class LookaheadPlanningService
         }
 
         return DB::transaction(function () use ($daily, $userId): DailyWorkPlan {
+            $approver = User::query()->findOrFail($userId);
+
             $daily->update([
                 'status' => 'accepted',
                 'accepted_at' => now(),
@@ -247,11 +258,12 @@ final class LookaheadPlanningService
 
             $this->journalEntriesForDailyPlan($daily)
                 ->where('status', JournalEntryStatusEnum::SUBMITTED)
-                ->each(fn (ConstructionJournalEntry $entry): bool => $entry->update([
-                    'status' => JournalEntryStatusEnum::APPROVED,
-                    'approved_by_user_id' => $userId,
-                    'approved_at' => now(),
-                ]));
+                ->each(function (ConstructionJournalEntry $entry) use ($approver): void {
+                    $this->journalApprovalService->approve(
+                        $entry->load(['journal', 'createdBy', 'scheduleTask', 'workVolumes']),
+                        $approver,
+                    );
+                });
 
             return $daily->fresh(['assignments.scheduleTask', 'assignments.journalEntry', 'assignments.lookaheadPlanTask.constraints']);
         });
@@ -507,11 +519,40 @@ final class LookaheadPlanningService
         if ($entry) {
             $entry->update($payload);
 
+            $this->syncAssignmentWorkVolume($entry->refresh(), $assignment, $data);
+
             return $entry->refresh();
         }
 
-        return ConstructionJournalEntry::query()->create($payload + [
+        $entry = ConstructionJournalEntry::query()->create($payload + [
             'entry_number' => $journal->getNextEntryNumber(),
+        ]);
+
+        $this->syncAssignmentWorkVolume($entry, $assignment, $data);
+
+        return $entry->refresh();
+    }
+
+    private function syncAssignmentWorkVolume(ConstructionJournalEntry $entry, DailyWorkPlanAssignment $assignment, array $data): void
+    {
+        $quantity = (float) ($data['completed_quantity'] ?? $assignment->completed_quantity ?? 0);
+
+        $entry->loadMissing('scheduleTask');
+        $task = $entry->scheduleTask;
+
+        if ($quantity <= 0 || !$task) {
+            $entry->workVolumes()->delete();
+
+            return;
+        }
+
+        $entry->workVolumes()->delete();
+        $entry->workVolumes()->create([
+            'estimate_item_id' => $task->estimate_item_id,
+            'work_type_id' => $task->work_type_id,
+            'quantity' => $quantity,
+            'measurement_unit_id' => $task->measurement_unit_id,
+            'notes' => $data['fact_comment'] ?? $assignment->fact_comment,
         ]);
     }
 

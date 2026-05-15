@@ -11,6 +11,9 @@ use App\BusinessModules\Features\ScheduleManagement\Models\DailyWorkPlan;
 use App\BusinessModules\Features\ScheduleManagement\Models\DailyWorkPlanAssignment;
 use App\BusinessModules\Features\ScheduleManagement\Models\WorkConstraint;
 use App\BusinessModules\Features\ScheduleManagement\Services\LookaheadPlanningService;
+use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyIncidentResource;
+use App\BusinessModules\Features\SafetyManagement\Models\SafetyIncident;
+use App\BusinessModules\Features\SafetyManagement\Services\SafetyManagementService;
 use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\PersonnelTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
@@ -33,6 +36,7 @@ class MobileProjectScheduleService
         private readonly LookaheadPlanningService $lookaheadPlanningService,
         private readonly SiteRequestService $siteRequestService,
         private readonly QualityDefectService $qualityDefectService,
+        private readonly SafetyManagementService $safetyManagementService,
     ) {
     }
 
@@ -195,9 +199,11 @@ class MobileProjectScheduleService
         }
 
         return DB::transaction(function () use ($user, $constraint, $data): array {
-            $action = $constraint->constraint_type === 'quality_blocker'
-                ? $this->createQualityDefectFromConstraint($user, $constraint, $data)
-                : $this->createSiteRequestFromConstraint($user, $constraint, $data);
+            $action = match ($constraint->constraint_type) {
+                'quality_blocker' => $this->createQualityDefectFromConstraint($user, $constraint, $data),
+                'safety_permit_missing' => $this->createSafetyIncidentFromConstraint($user, $constraint, $data),
+                default => $this->createSiteRequestFromConstraint($user, $constraint, $data),
+            };
 
             $metadata = $constraint->metadata ?? [];
             $metadata['linked_action'] = [
@@ -402,6 +408,14 @@ class MobileProjectScheduleService
             return $defect ? $this->mapLinkedQualityDefect($defect) : null;
         }
 
+        if ($type === 'safety_incident' && $id > 0) {
+            $incident = SafetyIncident::query()
+                ->where('organization_id', $constraint->organization_id)
+                ->find($id);
+
+            return $incident ? $this->mapLinkedSafetyIncident($incident) : null;
+        }
+
         return null;
     }
 
@@ -434,6 +448,30 @@ class MobileProjectScheduleService
         );
 
         return $this->mapLinkedQualityDefect($defect);
+    }
+
+    private function createSafetyIncidentFromConstraint(User $user, WorkConstraint $constraint, array $data): array
+    {
+        $incident = $this->safetyManagementService->createIncident(
+            (int) $constraint->organization_id,
+            (int) $user->id,
+            [
+                'project_id' => (int) $constraint->project_id,
+                'title' => $constraint->title,
+                'incident_type' => 'unsafe_condition',
+                'severity' => $constraint->severity === 'hard' ? 'high' : 'minor',
+                'occurred_at' => now()->toDateTimeString(),
+                'description' => $this->appendComment($constraint->description, $data['comment'] ?? null),
+                'immediate_actions' => $constraint->due_date !== null
+                    ? trans_message('mobile_schedule.messages.constraint_safety_action_due', [
+                        'date' => $constraint->due_date->format('d.m.Y'),
+                    ])
+                    : null,
+                'metadata' => $this->makeLinkedEntityMetadata($constraint),
+            ]
+        );
+
+        return $this->mapLinkedSafetyIncident($incident);
     }
 
     private function makeSiteRequestData(WorkConstraint $constraint, array $data): array
@@ -532,7 +570,7 @@ class MobileProjectScheduleService
             'material_missing' => SiteRequestTypeEnum::MATERIAL_REQUEST,
             'labor_missing' => SiteRequestTypeEnum::PERSONNEL_REQUEST,
             'machinery_missing' => SiteRequestTypeEnum::EQUIPMENT_REQUEST,
-            'access_blocked', 'customer_decision', 'design_question', 'executive_doc_missing', 'safety_permit_missing', 'weather_risk', 'other' => SiteRequestTypeEnum::ISSUE_REPORT,
+            'access_blocked', 'customer_decision', 'design_question', 'executive_doc_missing', 'weather_risk', 'other' => SiteRequestTypeEnum::ISSUE_REPORT,
             default => throw new DomainException(trans_message('mobile_schedule.errors.constraint_type_not_supported')),
         };
     }
@@ -585,6 +623,15 @@ class MobileProjectScheduleService
                 'statusHistory.changedBy',
             ])))->resolve(),
             'route' => "/quality-control/defects/{$defect->id}",
+        ];
+    }
+
+    private function mapLinkedSafetyIncident(SafetyIncident $incident): array
+    {
+        return [
+            'type' => 'safety_incident',
+            'entity' => (new SafetyIncidentResource($incident->fresh(['project:id,name', 'assignedUser:id,name'])))->resolve(),
+            'route' => "/safety-management/incidents/{$incident->id}",
         ];
     }
 

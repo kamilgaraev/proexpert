@@ -18,7 +18,30 @@
     "customer.requests.view",
     "customer.profile.view"
   ],
-  "module_permissions": {},
+  "module_permissions": {
+    "quality-control": [
+      "quality-control.view",
+      "quality-control.defects.view"
+    ],
+    "executive-documentation": [
+      "executive-documentation.view",
+      "executive-documentation.review",
+      "executive-documentation.approve",
+      "executive-documentation.reject",
+      "executive-documentation.export"
+    ],
+    "change-management": [
+      "change-management.view",
+      "change-management.customer-submit"
+    ],
+    "handover-acceptance": [
+      "handover-acceptance.view",
+      "handover-acceptance.inspect",
+      "handover-acceptance.approve",
+      "handover-acceptance.reject",
+      "handover-acceptance.customer-sign"
+    ]
+  },
   "interface_access": [
     "customer",
     "admin"

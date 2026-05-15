@@ -11,7 +11,18 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Support\Carbon;
 
+/**
+ * @property int $id
+ * @property int $organization_id
+ * @property int $user_id
+ * @property string|null $title
+ * @property array|null $context
+ * @property Carbon|null $created_at
+ * @property Carbon|null $updated_at
+ * @property-read User|null $user
+ */
 class Conversation extends Model
 {
     protected $table = 'ai_conversations';

@@ -49,6 +49,18 @@
       "label": "Наряды и выработка"
     }
   ],
+  "admin_entries": [
+    {
+      "module_slug": "machinery-operations",
+      "label": "Ресурсы → Техника",
+      "path": "/machinery-operations"
+    },
+    {
+      "module_slug": "production-labor",
+      "label": "Ресурсы → Наряды и выработка",
+      "path": "/production-labor"
+    }
+  ],
   "capabilities": [],
   "tiers": {
     "base": {

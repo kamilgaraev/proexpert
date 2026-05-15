@@ -7,6 +7,7 @@ return [
     'override_forbidden' => 'У вас нет права на обход блокировки',
     'override_reason_required' => 'Укажите причину обхода блокировки',
     'blockers' => [
+        'missing_work_volume' => 'Добавьте хотя бы один объем выполненных работ',
         'missing_estimate_item' => 'Для записи журнала нужно выбрать позицию сметы',
         'schedule_missing' => 'Работа не привязана к задаче графика',
         'contract_missing' => 'Позиция сметы не покрыта договором',

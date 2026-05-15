@@ -13,6 +13,8 @@ Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.conte
 
     Route::get('/construction-journals/{journal}/entries', [ConstructionJournalController::class, 'entries'])
         ->name('construction-journals.entries.index');
+    Route::get('/construction-journals/{journal}/entry-form-options', [ConstructionJournalController::class, 'entryFormOptions'])
+        ->name('construction-journals.entry-form-options');
     Route::post('/construction-journals/{journal}/entries', [ConstructionJournalEntryController::class, 'store'])
         ->name('construction-journals.entries.store');
 

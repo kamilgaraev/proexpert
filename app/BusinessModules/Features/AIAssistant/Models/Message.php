@@ -7,7 +7,18 @@ namespace App\BusinessModules\Features\AIAssistant\Models;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
+/**
+ * @property int $id
+ * @property int $conversation_id
+ * @property string $role
+ * @property string $content
+ * @property int|null $tokens_used
+ * @property string|null $model
+ * @property array|null $metadata
+ * @property Carbon|null $created_at
+ */
 class Message extends Model
 {
     protected $table = 'ai_messages';

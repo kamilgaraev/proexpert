@@ -23,6 +23,7 @@
     "production-labor.work-orders.approve",
     "production-labor.output.record",
     "production-labor.output.approve",
+    "production-labor.output.override",
     "production-labor.payroll.prepare",
     "production-labor.payroll.approve",
     "production-labor.reports.export",

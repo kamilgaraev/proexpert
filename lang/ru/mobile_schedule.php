@@ -20,6 +20,7 @@ return [
     ],
     'messages' => [
         'constraint_linked_action_created' => 'Связанная задача по ограничению создана.',
+        'constraint_safety_action_due' => 'Проверить и оформить допуск до :date.',
     ],
     'statuses' => [
         'scheduled' => 'Запланировано',

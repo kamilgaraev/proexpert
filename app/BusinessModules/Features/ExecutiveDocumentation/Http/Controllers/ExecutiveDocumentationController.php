@@ -14,6 +14,7 @@ use App\Http\Responses\AdminResponse;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rules\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -83,6 +84,7 @@ final class ExecutiveDocumentationController extends Controller
     public function storeDocument(Request $request, int $setId): JsonResponse
     {
         try {
+            $documentType = (string) $request->input('document_type');
             $validated = $request->validate([
                 'document_type' => ['required', 'string', Rule::in([
                     'hidden_work_act',
@@ -101,10 +103,12 @@ final class ExecutiveDocumentationController extends Controller
                 'inspection_date' => ['nullable', 'date'],
                 'participants' => ['nullable', 'array'],
                 'initial_version' => ['nullable', 'array'],
-                'initial_version.file_url' => ['required_with:initial_version', 'string', 'max:2000'],
+                'initial_version.file_url' => ['nullable', 'required_without:initial_version.file', 'string', 'max:2000'],
+                'initial_version.file' => ['nullable', 'required_without:initial_version.file_url', File::types(['pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png'])->max(25 * 1024)],
                 'initial_version.version_number' => ['required_with:initial_version', 'string', 'max:40'],
                 'initial_version.uploaded_at' => ['nullable', 'date'],
                 'metadata' => ['nullable', 'array'],
+                ...$this->documentTypeRules($documentType),
             ]);
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $set = $this->service->findSet($setId, $organizationId);
@@ -257,6 +261,62 @@ final class ExecutiveDocumentationController extends Controller
         }
 
         return $document;
+    }
+
+    /**
+     * @return array<string, array<int, string>>
+     */
+    private function documentTypeRules(string $documentType): array
+    {
+        return match ($documentType) {
+            'hidden_work_act' => [
+                'work_type_name' => ['required', 'string', 'max:255'],
+                'section_name' => ['required', 'string', 'max:255'],
+                'inspection_date' => ['required', 'date'],
+                'metadata.act_number' => ['required', 'string', 'max:120'],
+                'metadata.representative' => ['nullable', 'string', 'max:255'],
+            ],
+            'executive_scheme' => [
+                'section_name' => ['required', 'string', 'max:255'],
+                'metadata.drawing_number' => ['required', 'string', 'max:120'],
+                'metadata.revision' => ['required', 'string', 'max:80'],
+                'metadata.scale' => ['nullable', 'string', 'max:80'],
+            ],
+            'material_certificate' => [
+                'metadata.material_name' => ['required', 'string', 'max:255'],
+                'metadata.batch_number' => ['required', 'string', 'max:120'],
+                'metadata.supplier_name' => ['required', 'string', 'max:255'],
+                'metadata.certificate_number' => ['required', 'string', 'max:120'],
+            ],
+            'test_protocol' => [
+                'section_name' => ['required', 'string', 'max:255'],
+                'inspection_date' => ['required', 'date'],
+                'metadata.protocol_number' => ['required', 'string', 'max:120'],
+                'metadata.test_type' => ['required', 'string', 'max:255'],
+                'metadata.laboratory_name' => ['required', 'string', 'max:255'],
+            ],
+            'work_log_extract' => [
+                'section_name' => ['required', 'string', 'max:255'],
+                'metadata.log_name' => ['required', 'string', 'max:255'],
+                'metadata.period' => ['required', 'string', 'max:120'],
+                'metadata.page_range' => ['nullable', 'string', 'max:120'],
+            ],
+            'photo_report' => [
+                'section_name' => ['required', 'string', 'max:255'],
+                'inspection_date' => ['required', 'date'],
+                'work_type_name' => ['required', 'string', 'max:255'],
+                'metadata.photo_count' => ['nullable', 'string', 'max:80'],
+            ],
+            'handover_package' => [
+                'section_name' => ['required', 'string', 'max:255'],
+                'metadata.package_number' => ['required', 'string', 'max:120'],
+                'metadata.responsible_person' => ['required', 'string', 'max:255'],
+            ],
+            'other' => [
+                'metadata.document_purpose' => ['required', 'string', 'max:500'],
+            ],
+            default => [],
+        };
     }
 
     private function failed(string $action, ?int $id, \Throwable $e): JsonResponse
