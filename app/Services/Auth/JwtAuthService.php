@@ -478,7 +478,7 @@ class JwtAuthService
             
             return [
                 'success' => false,
-                'message' => 'РўРѕРєРµРЅ РїСЂРѕСЃСЂРѕС‡РµРЅ Рё РЅРµ РјРѕР¶РµС‚ Р±С‹С‚СЊ РѕР±РЅРѕРІР»РµРЅ',
+                'message' => trans_message('auth.token_error'),
                 'status_code' => 401
             ];
         } catch (JWTException $e) {
@@ -490,7 +490,7 @@ class JwtAuthService
             
             return [
                 'success' => false,
-                'message' => 'РћС€РёР±РєР° РѕР±РЅРѕРІР»РµРЅРёСЏ С‚РѕРєРµРЅР°',
+                'message' => trans_message('auth.token_error'),
                 'status_code' => 500
             ];
         }
