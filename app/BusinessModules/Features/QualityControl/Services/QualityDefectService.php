@@ -6,10 +6,13 @@ namespace App\BusinessModules\Features\QualityControl\Services;
 
 use App\BusinessModules\Features\QualityControl\Enums\QualityDefectStatusEnum;
 use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
+use App\Models\Organization;
 use App\Models\Contractor;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\Storage\FileService;
 use DomainException;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 
@@ -26,6 +29,7 @@ final class QualityDefectService
 
     public function __construct(
         private readonly QualityDefectNumberGenerator $numberGenerator,
+        private readonly FileService $fileService,
     ) {
     }
 
@@ -206,12 +210,34 @@ final class QualityDefectService
 
     private function storePhotos(QualityDefect $defect, array $photos, int $organizationId, int $userId): void
     {
+        $organization = Organization::query()->find($organizationId);
+
         foreach ($photos as $photo) {
+            $url = $photo['url'] ?? null;
+
+            if (($photo['file'] ?? null) instanceof UploadedFile) {
+                $url = $this->fileService->upload(
+                    $photo['file'],
+                    "quality-control/defects/{$defect->id}",
+                    null,
+                    'private',
+                    $organization
+                );
+
+                if ($url === false) {
+                    throw new DomainException(trans_message('quality_control.errors.photo_upload_failed'));
+                }
+            }
+
+            if (!is_string($url) || trim($url) === '') {
+                continue;
+            }
+
             $defect->photos()->create([
                 'organization_id' => $organizationId,
                 'uploaded_by' => $userId,
                 'type' => $photo['type'] ?? 'before',
-                'url' => $photo['url'],
+                'url' => $url,
                 'caption' => $photo['caption'] ?? null,
                 'metadata' => $photo['metadata'] ?? null,
             ]);

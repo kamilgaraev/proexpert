@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\QualityControl\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\File;
 
 final class StoreQualityDefectRequest extends FormRequest
 {
@@ -32,7 +33,8 @@ final class StoreQualityDefectRequest extends FormRequest
             'metadata' => ['nullable', 'array'],
             'photos' => ['nullable', 'array'],
             'photos.*.type' => ['required_with:photos', 'string', Rule::in(['before', 'after', 'evidence', 'other'])],
-            'photos.*.url' => ['required_with:photos', 'string', 'max:2000'],
+            'photos.*.url' => ['nullable', 'required_without:photos.*.file', 'string', 'max:2000'],
+            'photos.*.file' => ['nullable', 'required_without:photos.*.url', File::image()->max(10 * 1024)],
             'photos.*.caption' => ['nullable', 'string', 'max:255'],
             'photos.*.metadata' => ['nullable', 'array'],
         ];

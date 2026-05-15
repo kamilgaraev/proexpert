@@ -13,7 +13,9 @@ use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Validation\Rules\File;
 
 final class QualityDefectController extends Controller
 {
@@ -157,8 +159,9 @@ final class QualityDefectController extends Controller
             $validated = $request->validate([
                 'comment' => ['nullable', 'string', 'max:1000'],
                 'photos' => ['nullable', 'array'],
-                'photos.*.type' => ['required_with:photos', 'string'],
-                'photos.*.url' => ['required_with:photos', 'string', 'max:2000'],
+                'photos.*.type' => ['required_with:photos', 'string', Rule::in(['before', 'after', 'evidence', 'other'])],
+                'photos.*.url' => ['nullable', 'required_without:photos.*.file', 'string', 'max:2000'],
+                'photos.*.file' => ['nullable', 'required_without:photos.*.url', File::image()->max(10 * 1024)],
                 'photos.*.caption' => ['nullable', 'string', 'max:255'],
                 'photos.*.metadata' => ['nullable', 'array'],
             ]);

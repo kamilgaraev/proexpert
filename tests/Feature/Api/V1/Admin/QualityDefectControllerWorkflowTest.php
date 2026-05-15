@@ -12,6 +12,8 @@ use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -145,6 +147,38 @@ class QualityDefectControllerWorkflowTest extends TestCase
             'organization_id' => $context->organization->id,
             'title' => 'Foreign assignee defect',
         ]);
+    }
+
+    public function test_owner_can_create_quality_defect_with_uploaded_photo_in_s3(): void
+    {
+        Storage::fake('s3');
+
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->post('/api/v1/admin/quality-control/defects', [
+                'project_id' => $project->id,
+                'title' => 'Photo quality defect',
+                'severity' => 'major',
+                'photos' => [
+                    [
+                        'type' => 'before',
+                        'file' => UploadedFile::fake()->image('before.jpg', 1200, 800),
+                        'caption' => 'Before repair',
+                    ],
+                ],
+            ]);
+
+        $response->assertCreated();
+        $response->assertJsonPath('data.photos.0.type', 'before');
+
+        $path = (string) $response->json('data.photos.0.url');
+
+        $this->assertStringStartsWith("org-{$context->organization->id}/quality-control/defects/", $path);
+        Storage::disk('s3')->assertExists($path);
     }
 
     public function test_defect_requires_result_evidence_before_resolve_when_inspection_required(): void
