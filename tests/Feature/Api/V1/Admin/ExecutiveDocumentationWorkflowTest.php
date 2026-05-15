@@ -30,6 +30,8 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
 
     public function test_admin_can_prepare_review_approve_and_transmit_executive_document_set(): void
     {
+        Storage::fake('s3');
+
         $context = AdminApiTestContext::create();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $this->allowAdminAccess();
@@ -95,7 +97,7 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
         $setId = (int) $setResponse->json('data.id');
 
         $documentResponse = $this->withHeaders($context->authHeaders())
-            ->postJson("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
+            ->post("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
                 'document_type' => 'hidden_work_act',
                 'title' => 'Hidden works act for foundation reinforcement',
                 'completed_work_id' => $completedWork->id,
@@ -110,7 +112,7 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
                     ['name' => 'Customer representative', 'role' => 'customer'],
                 ],
                 'initial_version' => [
-                    'file_url' => 's3://org-' . $context->organization->id . '/executive/foundation-v1.pdf',
+                    'file' => $this->fakeDocumentFile('foundation-v1.pdf'),
                     'version_number' => '1.0',
                     'uploaded_at' => now()->toISOString(),
                 ],
@@ -285,6 +287,26 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
             'path' => 'Foundation / Axis A-B',
         ]);
 
+        $linkOnlyResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/executive-documentation/sets/' . $setId . '/documents', [
+                'document_type' => 'material_certificate',
+                'title' => 'Concrete certificate',
+                'metadata' => [
+                    'project_location_id' => $location->id,
+                    'material_id' => $material->id,
+                    'batch_number' => 'BATCH-42',
+                    'supplier_id' => $supplier->id,
+                    'certificate_number' => 'CERT-2026-001',
+                ],
+                'initial_version' => [
+                    'version_number' => '1.0',
+                    'file_url' => 'https://files.example.com/certificate.pdf',
+                ],
+            ]);
+
+        $linkOnlyResponse->assertStatus(422);
+        $linkOnlyResponse->assertJsonValidationErrors(['initial_version.file']);
+
         $invalidResponse = $this->withHeaders($context->authHeaders())
             ->post('/api/v1/admin/executive-documentation/sets/' . $setId . '/documents', [
                 'document_type' => 'material_certificate',
@@ -335,6 +357,8 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
 
     public function test_work_log_extract_must_be_connected_to_project_journal(): void
     {
+        Storage::fake('s3');
+
         $context = AdminApiTestContext::create();
         $foreignContext = AdminApiTestContext::create();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
@@ -400,7 +424,7 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
         ]);
 
         $foreignJournalResponse = $this->withHeaders($context->authHeaders())
-            ->postJson("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
+            ->post("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
                 'document_type' => 'work_log_extract',
                 'title' => 'Work log extract',
                 'metadata' => [
@@ -411,7 +435,7 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
                     'page_range' => '12-16',
                 ],
                 'initial_version' => [
-                    'file_url' => 's3://org-' . $context->organization->id . '/executive/work-log.pdf',
+                    'file' => $this->fakeDocumentFile('work-log-foreign-journal.pdf'),
                     'version_number' => '1.0',
                 ],
             ]);
@@ -420,7 +444,7 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
         $foreignJournalResponse->assertJsonValidationErrors(['metadata.journal_id']);
 
         $foreignEntryResponse = $this->withHeaders($context->authHeaders())
-            ->postJson("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
+            ->post("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
                 'document_type' => 'work_log_extract',
                 'title' => 'Work log extract',
                 'metadata' => [
@@ -431,7 +455,7 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
                     'page_range' => '12-16',
                 ],
                 'initial_version' => [
-                    'file_url' => 's3://org-' . $context->organization->id . '/executive/work-log.pdf',
+                    'file' => $this->fakeDocumentFile('work-log-foreign-entry.pdf'),
                     'version_number' => '1.0',
                 ],
             ]);
@@ -440,7 +464,7 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
         $foreignEntryResponse->assertJsonValidationErrors(['metadata.journal_entry_id']);
 
         $response = $this->withHeaders($context->authHeaders())
-            ->postJson("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
+            ->post("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
                 'document_type' => 'work_log_extract',
                 'title' => 'Work log extract',
                 'metadata' => [
@@ -451,7 +475,7 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
                     'page_range' => '12-16',
                 ],
                 'initial_version' => [
-                    'file_url' => 's3://org-' . $context->organization->id . '/executive/work-log.pdf',
+                    'file' => $this->fakeDocumentFile('work-log.pdf'),
                     'version_number' => '1.0',
                 ],
             ]);
@@ -467,6 +491,8 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
 
     public function test_material_certificate_must_be_connected_to_material_and_supplier(): void
     {
+        Storage::fake('s3');
+
         $context = AdminApiTestContext::create();
         $foreignContext = AdminApiTestContext::create();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
@@ -520,7 +546,7 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
         $setId = (int) $setResponse->json('data.id');
 
         $foreignMaterialResponse = $this->withHeaders($context->authHeaders())
-            ->postJson("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
+            ->post("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
                 'document_type' => 'material_certificate',
                 'title' => 'Concrete certificate',
                 'metadata' => [
@@ -530,7 +556,7 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
                     'certificate_number' => 'CERT-2026-001',
                 ],
                 'initial_version' => [
-                    'file_url' => 's3://org-' . $context->organization->id . '/executive/certificate.pdf',
+                    'file' => $this->fakeDocumentFile('certificate-foreign-material.pdf'),
                     'version_number' => '1.0',
                 ],
             ]);
@@ -539,7 +565,7 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
         $foreignMaterialResponse->assertJsonValidationErrors(['metadata.material_id']);
 
         $foreignSupplierResponse = $this->withHeaders($context->authHeaders())
-            ->postJson("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
+            ->post("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
                 'document_type' => 'material_certificate',
                 'title' => 'Concrete certificate',
                 'metadata' => [
@@ -549,7 +575,7 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
                     'certificate_number' => 'CERT-2026-001',
                 ],
                 'initial_version' => [
-                    'file_url' => 's3://org-' . $context->organization->id . '/executive/certificate.pdf',
+                    'file' => $this->fakeDocumentFile('certificate-foreign-supplier.pdf'),
                     'version_number' => '1.0',
                 ],
             ]);
@@ -558,7 +584,7 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
         $foreignSupplierResponse->assertJsonValidationErrors(['metadata.supplier_id']);
 
         $response = $this->withHeaders($context->authHeaders())
-            ->postJson("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
+            ->post("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
                 'document_type' => 'material_certificate',
                 'title' => 'Concrete certificate',
                 'metadata' => [
@@ -568,7 +594,7 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
                     'certificate_number' => 'CERT-2026-001',
                 ],
                 'initial_version' => [
-                    'file_url' => 's3://org-' . $context->organization->id . '/executive/certificate.pdf',
+                    'file' => $this->fakeDocumentFile('certificate.pdf'),
                     'version_number' => '1.0',
                 ],
             ]);
@@ -579,6 +605,11 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
         $response->assertJsonPath('data.metadata.material_code', 'MAT-B25');
         $response->assertJsonPath('data.metadata.supplier_id', $supplier->id);
         $response->assertJsonPath('data.metadata.supplier_name', 'Concrete plant');
+    }
+
+    private function fakeDocumentFile(string $name): UploadedFile
+    {
+        return UploadedFile::fake()->createWithContent($name, str_repeat('a', 1024));
     }
 
     private function allowModuleAccess(): void

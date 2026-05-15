@@ -112,33 +112,28 @@ final class ExecutiveDocumentationService
             throw new DomainException(trans_message('executive_documentation.errors.version_locked_after_transmit'));
         }
 
-        $fileUrl = $data['file_url'] ?? null;
-        if (($data['file'] ?? null) instanceof UploadedFile) {
-            $organization = Organization::query()->find($document->organization_id);
-            $uploadedPath = $this->fileService->upload(
-                $data['file'],
-                "executive-documentation/project-{$document->project_id}/set-{$document->document_set_id}",
-                null,
-                'private',
-                $organization
-            );
-
-            if ($uploadedPath === false) {
-                throw new DomainException(trans_message('executive_documentation.errors.version_file_upload_failed'));
-            }
-
-            $fileUrl = $uploadedPath;
+        if (!($data['file'] ?? null) instanceof UploadedFile) {
+            throw new DomainException(trans_message('executive_documentation.errors.version_file_required'));
         }
 
-        if (!is_string($fileUrl) || $fileUrl === '') {
-            throw new DomainException(trans_message('executive_documentation.errors.version_file_required'));
+        $organization = Organization::query()->find($document->organization_id);
+        $uploadedPath = $this->fileService->upload(
+            $data['file'],
+            "executive-documentation/project-{$document->project_id}/set-{$document->document_set_id}",
+            null,
+            'private',
+            $organization
+        );
+
+        if ($uploadedPath === false) {
+            throw new DomainException(trans_message('executive_documentation.errors.version_file_upload_failed'));
         }
 
         return $document->versions()->create([
             'organization_id' => $document->organization_id,
             'uploaded_by' => $userId,
             'version_number' => $data['version_number'],
-            'file_url' => $fileUrl,
+            'file_url' => $uploadedPath,
             'comment' => $data['comment'] ?? null,
             'uploaded_at' => $data['uploaded_at'] ?? now(),
             'metadata' => $data['metadata'] ?? null,
