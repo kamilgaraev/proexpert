@@ -13,6 +13,9 @@ Route::prefix('api/v1/admin/executive-documentation')
         Route::get('/sets', [ExecutiveDocumentationController::class, 'index'])
             ->middleware('authorize:executive-documentation.view')
             ->name('sets.index');
+        Route::get('/references', [ExecutiveDocumentationController::class, 'references'])
+            ->middleware('authorize:executive-documentation.view')
+            ->name('references.index');
         Route::post('/sets', [ExecutiveDocumentationController::class, 'storeSet'])
             ->middleware('authorize:executive-documentation.create')
             ->name('sets.store');

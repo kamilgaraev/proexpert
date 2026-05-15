@@ -10,9 +10,16 @@ use App\BusinessModules\Features\ExecutiveDocumentation\Http\Resources\Executive
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentVersion;
 use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentationService;
+use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceScope;
+use App\BusinessModules\Features\HandoverAcceptance\Models\ProjectLocation;
+use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use App\Models\CompletedWork;
 use App\Models\ConstructionJournal;
+use App\Models\ConstructionJournalEntry;
+use App\Models\Material;
+use App\Models\Supplier;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -80,6 +87,71 @@ final class ExecutiveDocumentationController extends Controller
             return AdminResponse::success(new ExecutiveDocumentSetResource($set));
         } catch (\Throwable $e) {
             return $this->failed('show_set', $id, $e);
+        }
+    }
+
+    public function references(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'project_id' => ['required', 'integer'],
+            ]);
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $projectId = (int) $validated['project_id'];
+
+            return AdminResponse::success([
+                'completed_works' => CompletedWork::query()
+                    ->where('organization_id', $organizationId)
+                    ->where('project_id', $projectId)
+                    ->with(['workType:id,name', 'journalEntry:id,entry_number,entry_date'])
+                    ->latest('completion_date')
+                    ->limit(100)
+                    ->get()
+                    ->map(static fn (CompletedWork $work): array => [
+                        'id' => $work->id,
+                        'name' => $work->workType?->name ?? $work->notes ?? ('Работа #' . $work->id),
+                        'work_type_name' => $work->workType?->name,
+                        'completion_date' => $work->completion_date?->format('Y-m-d'),
+                        'quantity' => $work->quantity,
+                        'journal_entry_id' => $work->journal_entry_id,
+                        'journal_entry_number' => $work->journalEntry?->entry_number,
+                    ])
+                    ->values(),
+                'project_locations' => ProjectLocation::query()
+                    ->where('organization_id', $organizationId)
+                    ->where('project_id', $projectId)
+                    ->orderBy('path')
+                    ->orderBy('name')
+                    ->limit(200)
+                    ->get(['id', 'name', 'code', 'location_type', 'path'])
+                    ->values(),
+                'acceptance_scopes' => AcceptanceScope::query()
+                    ->where('organization_id', $organizationId)
+                    ->where('project_id', $projectId)
+                    ->with('location:id,name,code,path')
+                    ->latest('id')
+                    ->limit(100)
+                    ->get()
+                    ->map(static fn (AcceptanceScope $scope): array => [
+                        'id' => $scope->id,
+                        'title' => $scope->title,
+                        'status' => $scope->status,
+                        'project_location_id' => $scope->project_location_id,
+                        'location_name' => $scope->location?->name,
+                    ])
+                    ->values(),
+                'quality_defects' => QualityDefect::query()
+                    ->where('organization_id', $organizationId)
+                    ->where('project_id', $projectId)
+                    ->latest('id')
+                    ->limit(100)
+                    ->get(['id', 'defect_number', 'title', 'status', 'location_name', 'completed_work_id'])
+                    ->values(),
+            ]);
+        } catch (ValidationException $e) {
+            return AdminResponse::error($e->getMessage(), 422, $e->errors());
+        } catch (\Throwable $e) {
+            return $this->failed('references', null, $e);
         }
     }
 
@@ -274,45 +346,52 @@ final class ExecutiveDocumentationController extends Controller
     {
         return match ($documentType) {
             'hidden_work_act' => [
-                'work_type_name' => ['required', 'string', 'max:255'],
-                'section_name' => ['required', 'string', 'max:255'],
+                'completed_work_id' => ['required', 'integer'],
+                'metadata.project_location_id' => ['required', 'integer'],
                 'inspection_date' => ['required', 'date'],
                 'metadata.act_number' => ['required', 'string', 'max:120'],
                 'metadata.representative' => ['nullable', 'string', 'max:255'],
             ],
             'executive_scheme' => [
-                'section_name' => ['required', 'string', 'max:255'],
+                'metadata.project_location_id' => ['required', 'integer'],
+                'completed_work_id' => ['nullable', 'integer'],
                 'metadata.drawing_number' => ['required', 'string', 'max:120'],
                 'metadata.revision' => ['required', 'string', 'max:80'],
                 'metadata.scale' => ['nullable', 'string', 'max:80'],
             ],
             'material_certificate' => [
-                'metadata.material_name' => ['required', 'string', 'max:255'],
+                'metadata.project_location_id' => ['nullable', 'integer'],
+                'metadata.material_id' => ['required', 'integer'],
                 'metadata.batch_number' => ['required', 'string', 'max:120'],
-                'metadata.supplier_name' => ['required', 'string', 'max:255'],
+                'metadata.supplier_id' => ['required', 'integer'],
                 'metadata.certificate_number' => ['required', 'string', 'max:120'],
             ],
             'test_protocol' => [
-                'section_name' => ['required', 'string', 'max:255'],
+                'metadata.project_location_id' => ['required', 'integer'],
+                'completed_work_id' => ['required', 'integer'],
+                'metadata.material_id' => ['nullable', 'integer'],
+                'metadata.quality_defect_id' => ['nullable', 'integer'],
                 'inspection_date' => ['required', 'date'],
                 'metadata.protocol_number' => ['required', 'string', 'max:120'],
                 'metadata.test_type' => ['required', 'string', 'max:255'],
                 'metadata.laboratory_name' => ['required', 'string', 'max:255'],
             ],
             'work_log_extract' => [
-                'section_name' => ['required', 'string', 'max:255'],
+                'metadata.project_location_id' => ['required', 'integer'],
                 'metadata.journal_id' => ['required', 'integer'],
+                'metadata.journal_entry_id' => ['required', 'integer'],
                 'metadata.period' => ['required', 'string', 'max:120'],
                 'metadata.page_range' => ['nullable', 'string', 'max:120'],
             ],
             'photo_report' => [
-                'section_name' => ['required', 'string', 'max:255'],
+                'metadata.project_location_id' => ['required', 'integer'],
+                'completed_work_id' => ['nullable', 'integer'],
+                'metadata.quality_defect_id' => ['nullable', 'integer'],
                 'inspection_date' => ['required', 'date'],
-                'work_type_name' => ['required', 'string', 'max:255'],
                 'metadata.photo_count' => ['nullable', 'string', 'max:80'],
             ],
             'handover_package' => [
-                'section_name' => ['required', 'string', 'max:255'],
+                'metadata.acceptance_scope_id' => ['required', 'integer'],
                 'metadata.package_number' => ['required', 'string', 'max:120'],
                 'metadata.responsible_person' => ['required', 'string', 'max:255'],
             ],
@@ -329,10 +408,25 @@ final class ExecutiveDocumentationController extends Controller
      */
     private function normalizeDocumentReferences(array $validated, ExecutiveDocumentSet $set): array
     {
-        if (($validated['document_type'] ?? null) !== 'work_log_extract') {
-            return $validated;
-        }
+        $validated = $this->normalizeProjectLocationReference($validated, $set);
+        $validated = $this->normalizeCompletedWorkReference($validated, $set);
+        $validated = $this->normalizeQualityDefectReference($validated, $set);
+        $validated = $this->normalizeAcceptanceScopeReference($validated, $set);
 
+        return match ($validated['document_type'] ?? null) {
+            'material_certificate' => $this->normalizeMaterialCertificateReferences($validated, $set),
+            'test_protocol' => $this->normalizeTestProtocolReferences($validated, $set),
+            'work_log_extract' => $this->normalizeWorkLogExtractReferences($validated, $set),
+            default => $validated,
+        };
+    }
+
+    /**
+     * @param array<string, mixed> $validated
+     * @return array<string, mixed>
+     */
+    private function normalizeWorkLogExtractReferences(array $validated, ExecutiveDocumentSet $set): array
+    {
         $journalId = (int) data_get($validated, 'metadata.journal_id');
         $journal = ConstructionJournal::query()
             ->where('organization_id', $set->organization_id)
@@ -345,10 +439,234 @@ final class ExecutiveDocumentationController extends Controller
             ]);
         }
 
+        $entryId = (int) data_get($validated, 'metadata.journal_entry_id');
+        $entry = ConstructionJournalEntry::query()
+            ->where('journal_id', $journal->id)
+            ->find($entryId);
+
+        if ($entry === null) {
+            throw ValidationException::withMessages([
+                'metadata.journal_entry_id' => trans_message('executive_documentation.errors.journal_entry_not_found'),
+            ]);
+        }
+
         $metadata = $validated['metadata'] ?? [];
         $metadata['journal_id'] = $journal->id;
         $metadata['journal_name'] = $journal->name;
         $metadata['journal_number'] = $journal->journal_number;
+        $metadata['journal_entry_id'] = $entry->id;
+        $metadata['journal_entry_number'] = $entry->entry_number;
+        $metadata['journal_entry_date'] = $entry->entry_date?->format('Y-m-d');
+        $metadata['work_description'] = $entry->work_description;
+        $validated['metadata'] = $metadata;
+
+        return $validated;
+    }
+
+    /**
+     * @param array<string, mixed> $validated
+     * @return array<string, mixed>
+     */
+    private function normalizeProjectLocationReference(array $validated, ExecutiveDocumentSet $set): array
+    {
+        $locationId = (int) data_get($validated, 'metadata.project_location_id');
+
+        if ($locationId <= 0) {
+            return $validated;
+        }
+
+        $location = ProjectLocation::query()
+            ->where('organization_id', $set->organization_id)
+            ->where('project_id', $set->project_id)
+            ->find($locationId);
+
+        if ($location === null) {
+            throw ValidationException::withMessages([
+                'metadata.project_location_id' => trans_message('executive_documentation.errors.project_location_not_found'),
+            ]);
+        }
+
+        $metadata = is_array($validated['metadata'] ?? null) ? $validated['metadata'] : [];
+        $metadata['project_location_id'] = $location->id;
+        $metadata['project_location_name'] = $location->name;
+        $metadata['project_location_code'] = $location->code;
+        $validated['metadata'] = $metadata;
+        $validated['section_name'] = $validated['section_name'] ?? $location->name;
+
+        return $validated;
+    }
+
+    /**
+     * @param array<string, mixed> $validated
+     * @return array<string, mixed>
+     */
+    private function normalizeCompletedWorkReference(array $validated, ExecutiveDocumentSet $set): array
+    {
+        $completedWorkId = (int) ($validated['completed_work_id'] ?? 0);
+
+        if ($completedWorkId <= 0) {
+            return $validated;
+        }
+
+        $work = CompletedWork::query()
+            ->where('organization_id', $set->organization_id)
+            ->where('project_id', $set->project_id)
+            ->with(['workType:id,name', 'journalEntry:id,entry_number,entry_date'])
+            ->find($completedWorkId);
+
+        if ($work === null) {
+            throw ValidationException::withMessages([
+                'completed_work_id' => trans_message('executive_documentation.errors.completed_work_not_found'),
+            ]);
+        }
+
+        $metadata = is_array($validated['metadata'] ?? null) ? $validated['metadata'] : [];
+        $metadata['completed_work_id'] = $work->id;
+        $metadata['completed_work_date'] = $work->completion_date?->format('Y-m-d');
+        $metadata['completed_work_quantity'] = (string) $work->quantity;
+        $metadata['journal_entry_id'] = $metadata['journal_entry_id'] ?? $work->journal_entry_id;
+        $metadata['journal_entry_number'] = $metadata['journal_entry_number'] ?? $work->journalEntry?->entry_number;
+        $validated['metadata'] = $metadata;
+        $validated['work_type_name'] = $validated['work_type_name'] ?? $work->workType?->name;
+
+        return $validated;
+    }
+
+    /**
+     * @param array<string, mixed> $validated
+     * @return array<string, mixed>
+     */
+    private function normalizeQualityDefectReference(array $validated, ExecutiveDocumentSet $set): array
+    {
+        $defectId = (int) data_get($validated, 'metadata.quality_defect_id');
+
+        if ($defectId <= 0) {
+            return $validated;
+        }
+
+        $defect = QualityDefect::query()
+            ->where('organization_id', $set->organization_id)
+            ->where('project_id', $set->project_id)
+            ->find($defectId);
+
+        if ($defect === null) {
+            throw ValidationException::withMessages([
+                'metadata.quality_defect_id' => trans_message('executive_documentation.errors.quality_defect_not_found'),
+            ]);
+        }
+
+        $metadata = is_array($validated['metadata'] ?? null) ? $validated['metadata'] : [];
+        $metadata['quality_defect_id'] = $defect->id;
+        $metadata['quality_defect_number'] = $defect->defect_number;
+        $metadata['quality_defect_title'] = $defect->title;
+        $validated['metadata'] = $metadata;
+
+        return $validated;
+    }
+
+    /**
+     * @param array<string, mixed> $validated
+     * @return array<string, mixed>
+     */
+    private function normalizeAcceptanceScopeReference(array $validated, ExecutiveDocumentSet $set): array
+    {
+        $scopeId = (int) data_get($validated, 'metadata.acceptance_scope_id');
+
+        if ($scopeId <= 0) {
+            return $validated;
+        }
+
+        $scope = AcceptanceScope::query()
+            ->where('organization_id', $set->organization_id)
+            ->where('project_id', $set->project_id)
+            ->with('location:id,name,code')
+            ->find($scopeId);
+
+        if ($scope === null) {
+            throw ValidationException::withMessages([
+                'metadata.acceptance_scope_id' => trans_message('executive_documentation.errors.acceptance_scope_not_found'),
+            ]);
+        }
+
+        $metadata = is_array($validated['metadata'] ?? null) ? $validated['metadata'] : [];
+        $metadata['acceptance_scope_id'] = $scope->id;
+        $metadata['acceptance_scope_title'] = $scope->title;
+        $metadata['project_location_id'] = $metadata['project_location_id'] ?? $scope->project_location_id;
+        $metadata['project_location_name'] = $metadata['project_location_name'] ?? $scope->location?->name;
+        $validated['metadata'] = $metadata;
+        $validated['section_name'] = $validated['section_name'] ?? $scope->location?->name ?? $scope->title;
+
+        return $validated;
+    }
+
+    /**
+     * @param array<string, mixed> $validated
+     * @return array<string, mixed>
+     */
+    private function normalizeMaterialCertificateReferences(array $validated, ExecutiveDocumentSet $set): array
+    {
+        $materialId = (int) data_get($validated, 'metadata.material_id');
+        $material = Material::query()
+            ->where('organization_id', $set->organization_id)
+            ->where('is_active', true)
+            ->find($materialId);
+
+        if ($material === null) {
+            throw ValidationException::withMessages([
+                'metadata.material_id' => trans_message('executive_documentation.errors.material_not_found'),
+            ]);
+        }
+
+        $supplierId = (int) data_get($validated, 'metadata.supplier_id');
+        $supplier = Supplier::query()
+            ->where('organization_id', $set->organization_id)
+            ->where('is_active', true)
+            ->find($supplierId);
+
+        if ($supplier === null) {
+            throw ValidationException::withMessages([
+                'metadata.supplier_id' => trans_message('executive_documentation.errors.supplier_not_found'),
+            ]);
+        }
+
+        $metadata = $validated['metadata'] ?? [];
+        $metadata['material_id'] = $material->id;
+        $metadata['material_name'] = $material->name;
+        $metadata['material_code'] = $material->code;
+        $metadata['supplier_id'] = $supplier->id;
+        $metadata['supplier_name'] = $supplier->name;
+        $validated['metadata'] = $metadata;
+
+        return $validated;
+    }
+
+    /**
+     * @param array<string, mixed> $validated
+     * @return array<string, mixed>
+     */
+    private function normalizeTestProtocolReferences(array $validated, ExecutiveDocumentSet $set): array
+    {
+        $materialId = (int) data_get($validated, 'metadata.material_id');
+
+        if ($materialId <= 0) {
+            return $validated;
+        }
+
+        $material = Material::query()
+            ->where('organization_id', $set->organization_id)
+            ->where('is_active', true)
+            ->find($materialId);
+
+        if ($material === null) {
+            throw ValidationException::withMessages([
+                'metadata.material_id' => trans_message('executive_documentation.errors.material_not_found'),
+            ]);
+        }
+
+        $metadata = is_array($validated['metadata'] ?? null) ? $validated['metadata'] : [];
+        $metadata['material_id'] = $material->id;
+        $metadata['material_name'] = $material->name;
+        $metadata['material_code'] = $material->code;
         $validated['metadata'] = $metadata;
 
         return $validated;
