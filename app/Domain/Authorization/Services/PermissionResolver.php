@@ -202,6 +202,7 @@ class PermissionResolver
             'ai_estimates' => 'ai-estimates',
             'time_tracking' => 'time-tracking',
             'warehouse' => 'basic-warehouse',
+            'mdm' => 'catalog-management',
         ];
         
         // Обратный маппинг: budget-estimates.* -> estimates.* (для обратной совместимости)
@@ -210,6 +211,7 @@ class PermissionResolver
             'schedule-management' => 'schedule',
             'act-reporting' => 'act_reports',
             'basic-warehouse' => 'warehouse',
+            'catalog-management' => 'mdm',
         ];
         
         $modulesToCheck = [$module];
@@ -558,6 +560,7 @@ class PermissionResolver
             'time_tracking' => 'time-tracking',
             'report_templates' => 'report-templates',
             'warehouse' => 'basic-warehouse',
+            'mdm' => 'catalog-management',
             'workforce' => 'workforce-management',
             'one_c_exchange' => 'one-c-basic-exchange',
             'one-c-exchange' => 'one-c-basic-exchange',
@@ -570,6 +573,7 @@ class PermissionResolver
             'time-tracking' => 'time_tracking',
             'report-templates' => 'report_templates',
             'basic-warehouse' => 'warehouse',
+            'catalog-management' => 'mdm',
             'workforce-management' => 'workforce',
             'one-c-basic-exchange' => 'one_c_exchange',
         ];
