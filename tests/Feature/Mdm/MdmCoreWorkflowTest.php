@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Mdm;
 
 use App\BusinessModules\Core\Mdm\Models\MdmDuplicateGroup;
+use App\BusinessModules\Core\Mdm\Models\MdmRecord;
 use App\BusinessModules\Core\Mdm\Models\MdmRelationship;
 use App\BusinessModules\Core\Mdm\Services\MdmDuplicateDetectionService;
 use App\BusinessModules\Core\Mdm\Services\MdmRecordService;
@@ -119,6 +120,17 @@ final class MdmCoreWorkflowTest extends TestCase
         $response->assertOk();
         $response->assertJsonPath('success', true);
         $response->assertJsonPath('data.entities.0.type', 'contractor');
+
+        $record = MdmRecord::query()
+            ->where('organization_id', $context->organization->id)
+            ->where('entity_type', 'contractor')
+            ->firstOrFail();
+        $showResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/mdm/records/{$record->id}");
+
+        $showResponse->assertOk();
+        $showResponse->assertJsonPath('success', true);
+        $showResponse->assertJsonPath('data.entity_type', 'contractor');
     }
 
     public function test_duplicate_decision_archive_history_and_import_preview_are_available_via_admin_api(): void

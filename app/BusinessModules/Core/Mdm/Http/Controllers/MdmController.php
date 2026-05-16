@@ -117,6 +117,21 @@ class MdmController extends Controller
         }
     }
 
+    public function record(Request $request, MdmRecord $record): JsonResponse
+    {
+        try {
+            if ((int) $record->organization_id !== $this->organizationId($request)) {
+                return AdminResponse::error(trans_message('mdm.errors.not_found'), 404);
+            }
+
+            return AdminResponse::success($record);
+        } catch (Throwable $e) {
+            Log::error('MDM record show failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
+
+            return AdminResponse::error(trans_message('mdm.errors.records_failed'), 500);
+        }
+    }
+
     public function sync(Request $request): JsonResponse
     {
         try {
@@ -241,7 +256,9 @@ class MdmController extends Controller
             $relationships = MdmRelationship::query()
                 ->where('organization_id', $organizationId)
                 ->when($request->filled('source_type'), static fn ($query) => $query->where('source_type', $request->query('source_type')))
+                ->when($request->filled('source_id'), static fn ($query) => $query->where('source_id', (int) $request->query('source_id')))
                 ->when($request->filled('target_type'), static fn ($query) => $query->where('target_type', $request->query('target_type')))
+                ->when($request->filled('target_id'), static fn ($query) => $query->where('target_id', (int) $request->query('target_id')))
                 ->orderByDesc('updated_at')
                 ->paginate(min(max((int) $request->query('per_page', 25), 1), 100));
 

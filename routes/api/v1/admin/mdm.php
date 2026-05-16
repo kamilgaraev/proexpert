@@ -12,6 +12,7 @@ Route::prefix('mdm')
             Route::get('/entities', [MdmController::class, 'entities'])->name('entities');
             Route::get('/dashboard', [MdmController::class, 'dashboard'])->name('dashboard');
             Route::get('/records', [MdmController::class, 'records'])->name('records');
+            Route::get('/records/{record}', [MdmController::class, 'record'])->name('records.show');
             Route::get('/duplicates', [MdmController::class, 'duplicates'])->name('duplicates');
             Route::get('/relationships', [MdmController::class, 'relationships'])->name('relationships');
             Route::get('/history', [MdmController::class, 'history'])->name('history');
