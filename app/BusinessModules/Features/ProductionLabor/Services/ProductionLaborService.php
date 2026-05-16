@@ -9,6 +9,7 @@ use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborPayrollAc
 use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborTimesheet;
 use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborWorkOrder;
 use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborWorkOrderLine;
+use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
 use App\Models\Project;
 use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -54,7 +55,7 @@ final class ProductionLaborService
     public function paginateTimesheets(int $organizationId, int $perPage, array $filters = []): LengthAwarePaginator
     {
         return ProductionLaborTimesheet::query()
-            ->with(['workOrder:id,order_number,title', 'entries.line:id,name,requires_safety_permit'])
+            ->with(['workOrder:id,order_number,title', 'entries.line:id,name,requires_safety_permit', 'entries.employee'])
             ->where('organization_id', $organizationId)
             ->when($filters['project_id'] ?? null, fn ($query, $projectId) => $query->where('project_id', $projectId))
             ->when($filters['work_order_id'] ?? null, fn ($query, $workOrderId) => $query->where('work_order_id', $workOrderId))
@@ -249,6 +250,18 @@ final class ProductionLaborService
 
             foreach ($payload['entries'] as $entryPayload) {
                 $line = $this->findLine($organizationId, (int) $entryPayload['work_order_line_id']);
+                $includeInPayroll = $entryPayload['include_in_payroll'] ?? true;
+
+                if ((bool) $includeInPayroll && !empty($entryPayload['worker_name'])) {
+                    throw new DomainException(trans_message('production_labor.errors.worker_name_not_allowed_for_payroll'));
+                }
+
+                $employee = $this->resolveTimesheetEmployee(
+                    $organizationId,
+                    $entryPayload['employee_id'] ?? null,
+                    $payload['shift_date'],
+                    (bool) $includeInPayroll
+                );
 
                 if ((int) $line->work_order_id !== (int) $workOrder->id) {
                     throw new DomainException(trans_message('production_labor.errors.line_not_in_order'));
@@ -262,6 +275,8 @@ final class ProductionLaborService
                     'organization_id' => $organizationId,
                     'work_order_line_id' => $line->id,
                     'user_id' => $entryPayload['user_id'] ?? null,
+                    'employee_id' => $employee?->id,
+                    'include_in_payroll' => (bool) $includeInPayroll,
                     'worker_name' => $entryPayload['worker_name'] ?? null,
                     'hours' => $entryPayload['hours'],
                     'safety_permit_reference' => $entryPayload['safety_permit_reference'] ?? null,
@@ -269,7 +284,7 @@ final class ProductionLaborService
                 ]);
             }
 
-            return $timesheet->load(['workOrder:id,order_number,title', 'entries.line:id,name,requires_safety_permit']);
+            return $timesheet->load(['workOrder:id,order_number,title', 'entries.line:id,name,requires_safety_permit', 'entries.employee']);
         });
     }
 
@@ -397,5 +412,42 @@ final class ProductionLaborService
         if (!$exists) {
             throw new DomainException(trans_message('production_labor.errors.project_not_found'));
         }
+    }
+
+    private function resolveTimesheetEmployee(
+        int $organizationId,
+        mixed $employeeId,
+        string $shiftDate,
+        bool $includeInPayroll
+    ): ?WorkforceEmployee {
+        if (!$includeInPayroll) {
+            return null;
+        }
+
+        if ($employeeId === null || $employeeId === '') {
+            throw new DomainException(trans_message('production_labor.errors.employee_required_for_payroll'));
+        }
+
+        $employee = WorkforceEmployee::query()
+            ->where('organization_id', $organizationId)
+            ->find((int) $employeeId);
+
+        if (!$employee) {
+            throw new DomainException(trans_message('production_labor.errors.employee_not_found'));
+        }
+
+        if ($employee->employment_status === 'inactive') {
+            throw new DomainException(trans_message('production_labor.errors.employee_inactive_for_shift'));
+        }
+
+        if ($employee->employment_status === 'dismissed' && $employee->dismissal_date !== null && $employee->dismissal_date->lt($shiftDate)) {
+            throw new DomainException(trans_message('production_labor.errors.employee_inactive_for_shift'));
+        }
+
+        if ($employee->hire_date->gt($shiftDate)) {
+            throw new DomainException(trans_message('production_labor.errors.employee_inactive_for_shift'));
+        }
+
+        return $employee;
     }
 }

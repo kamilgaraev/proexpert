@@ -307,6 +307,8 @@ final class ProductionLaborController extends Controller
             'entries' => ['required', 'array', 'min:1'],
             'entries.*.work_order_line_id' => ['required', 'integer'],
             'entries.*.user_id' => ['nullable', 'integer'],
+            'entries.*.employee_id' => ['nullable', 'integer'],
+            'entries.*.include_in_payroll' => ['nullable', 'boolean'],
             'entries.*.worker_name' => ['nullable', 'string', 'max:255'],
             'entries.*.hours' => ['required', 'numeric', 'min:0.01'],
             'entries.*.safety_permit_reference' => ['nullable', 'string', 'max:120'],

@@ -37,9 +37,17 @@ final class ProductionLaborTimesheetResource extends JsonResource
                 'id' => $entry->id,
                 'work_order_line_id' => $entry->work_order_line_id,
                 'user_id' => $entry->user_id,
+                'employee_id' => $entry->employee_id,
+                'include_in_payroll' => (bool) $entry->include_in_payroll,
                 'worker_name' => $entry->worker_name,
                 'hours' => (float) $entry->hours,
                 'safety_permit_reference' => $entry->safety_permit_reference,
+                'employee' => $entry->relationLoaded('employee') && $entry->employee ? [
+                    'id' => $entry->employee->id,
+                    'personnel_number' => $entry->employee->personnel_number,
+                    'full_name' => $entry->employee->full_name,
+                    'employment_status' => $entry->employee->employment_status,
+                ] : null,
             ])->values()),
             'created_at' => $timesheet->created_at?->toIso8601String(),
         ];

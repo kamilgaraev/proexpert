@@ -15,6 +15,7 @@ return [
     App\BusinessModules\Features\QualityControl\QualityControlServiceProvider::class,
     App\BusinessModules\Features\SafetyManagement\SafetyManagementServiceProvider::class,
     App\BusinessModules\Features\MachineryOperations\MachineryOperationsServiceProvider::class,
+    App\BusinessModules\Features\WorkforceManagement\WorkforceManagementServiceProvider::class,
     App\BusinessModules\Features\ProductionLabor\ProductionLaborServiceProvider::class,
     App\BusinessModules\Features\ChangeManagement\ChangeManagementServiceProvider::class,
     App\BusinessModules\Features\HandoverAcceptance\HandoverAcceptanceServiceProvider::class,

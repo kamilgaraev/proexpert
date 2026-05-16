@@ -6,6 +6,7 @@ namespace Tests\Feature\Api\V1\Admin;
 
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
@@ -24,6 +25,14 @@ final class ProductionLaborWorkflowTest extends TestCase
         $foreignContext = AdminApiTestContext::create();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $foreignProject = Project::factory()->create(['organization_id' => $foreignContext->organization->id]);
+        $employee = WorkforceEmployee::create([
+            'organization_id' => $context->organization->id,
+            'personnel_number' => 'EMP-001',
+            'last_name' => 'Worker',
+            'first_name' => 'One',
+            'employment_status' => 'active',
+            'hire_date' => now()->subMonth()->toDateString(),
+        ]);
         $this->allowAccess('web_admin');
 
         $workOrderResponse = $this->withHeaders($context->authHeaders())
@@ -91,7 +100,7 @@ final class ProductionLaborWorkflowTest extends TestCase
                 'shift_date' => now()->toDateString(),
                 'entries' => [[
                     'work_order_line_id' => $lineId,
-                    'worker_name' => 'Worker One',
+                    'employee_id' => $employee->id,
                     'hours' => 8,
                 ]],
             ]);
@@ -103,12 +112,14 @@ final class ProductionLaborWorkflowTest extends TestCase
                 'shift_date' => now()->toDateString(),
                 'entries' => [[
                     'work_order_line_id' => $lineId,
-                    'worker_name' => 'Worker One',
+                    'employee_id' => $employee->id,
                     'hours' => 8,
                     'safety_permit_reference' => 'WP-1',
                 ]],
             ]);
         $timesheet->assertCreated()
+            ->assertJsonPath('data.entries.0.employee_id', $employee->id)
+            ->assertJsonPath('data.entries.0.include_in_payroll', true)
             ->assertJsonPath('data.entries.0.safety_permit_reference', 'WP-1');
 
         $this->withHeaders($context->authHeaders())
