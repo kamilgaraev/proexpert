@@ -218,6 +218,7 @@ Route::prefix('v1/admin')->middleware('admin.response')->name('admin.')->group(f
         // Подключаем существующие файлы маршрутов для админки
         require __DIR__ . '/api/v1/admin/projects.php';
         require __DIR__ . '/api/v1/admin/catalogs.php';
+        require __DIR__ . '/api/v1/admin/mdm.php';
         require __DIR__ . '/api/v1/admin/users.php';
         require __DIR__ . '/api/v1/admin/logs.php';
         require __DIR__ . '/api/v1/admin/activity.php';

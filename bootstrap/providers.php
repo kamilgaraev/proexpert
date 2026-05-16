@@ -3,6 +3,7 @@
 return [
     App\BusinessModules\Addons\AIEstimates\AIEstimatesServiceProvider::class,
     App\BusinessModules\Addons\EstimateGeneration\EstimateGenerationServiceProvider::class,
+    App\BusinessModules\Core\Mdm\MdmServiceProvider::class,
     App\BusinessModules\Core\Payments\PaymentsServiceProvider::class,
     App\BusinessModules\Features\AIAssistant\AIAssistantServiceProvider::class,
     App\BusinessModules\Features\ContractManagement\ContractManagementServiceProvider::class,

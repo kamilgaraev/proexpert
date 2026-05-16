@@ -111,7 +111,12 @@ class CatalogManagementModule implements ModuleInterface, ConfigurableInterface
             'cost_categories.create',
             'cost_categories.edit',
             'cost_categories.delete',
-            'cost_categories.import'
+            'cost_categories.import',
+            'mdm.view',
+            'mdm.manage',
+            'mdm.duplicates.resolve',
+            'mdm.import.preview',
+            'mdm.archive'
         ];
     }
 
@@ -139,7 +144,8 @@ class CatalogManagementModule implements ModuleInterface, ConfigurableInterface
             'max_materials' => null,
             'max_suppliers' => null,
             'max_contractors' => null,
-            'max_work_types' => null
+            'max_work_types' => null,
+            'max_mdm_records' => null
         ];
     }
 
