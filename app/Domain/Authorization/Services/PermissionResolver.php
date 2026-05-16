@@ -558,6 +558,7 @@ class PermissionResolver
             'time_tracking' => 'time-tracking',
             'report_templates' => 'report-templates',
             'warehouse' => 'basic-warehouse',
+            'workforce' => 'workforce-management',
             'one_c_exchange' => 'one-c-basic-exchange',
             'one-c-exchange' => 'one-c-basic-exchange',
         ];
@@ -569,6 +570,7 @@ class PermissionResolver
             'time-tracking' => 'time_tracking',
             'report-templates' => 'report_templates',
             'basic-warehouse' => 'warehouse',
+            'workforce-management' => 'workforce',
             'one-c-basic-exchange' => 'one_c_exchange',
         ];
 

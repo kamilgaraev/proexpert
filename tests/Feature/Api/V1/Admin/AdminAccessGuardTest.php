@@ -28,6 +28,7 @@ it('returns a normalized admin response when an admin viewer tries to create a p
     $response
         ->assertForbidden()
         ->assertJsonPath('success', false)
+        ->assertJsonPath('message', trans_message('errors.unauthorized'))
         ->assertJsonStructure([
             'success',
             'message',
