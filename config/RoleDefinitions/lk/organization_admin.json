@@ -20,7 +20,16 @@
     "profile.edit",
     "admin.access",
     "admin.dashboard.view",
-    "admin.projects.view"
+    "admin.projects.view",
+    "mdm.view",
+    "mdm.manage",
+    "mdm.duplicates.resolve",
+    "mdm.import.preview",
+    "mdm.import.apply",
+    "mdm.change_requests.review",
+    "mdm.archive",
+    "mdm.owners.assign",
+    "mdm.merge.apply"
   ],
   "module_permissions": {
     "projects": [
@@ -117,7 +126,16 @@
       "work_types.delete",
       "work_types.materials.manage",
       "measurement_units.view",
-      "cost_categories.view"
+      "cost_categories.view",
+      "mdm.view",
+      "mdm.manage",
+      "mdm.duplicates.resolve",
+      "mdm.import.preview",
+      "mdm.import.apply",
+      "mdm.change_requests.review",
+      "mdm.archive",
+      "mdm.owners.assign",
+      "mdm.merge.apply"
     ],
     "workflow-management": [
       "completed_works.view",

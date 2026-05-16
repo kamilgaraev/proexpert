@@ -13,6 +13,7 @@ class MdmDuplicateGroup extends Model
         'organization_id',
         'entity_type',
         'fingerprint',
+        'match_strategy',
         'status',
         'confidence',
         'suggested_master_entity_id',

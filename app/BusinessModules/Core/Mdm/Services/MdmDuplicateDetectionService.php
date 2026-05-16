@@ -13,7 +13,8 @@ class MdmDuplicateDetectionService
     public function __construct(
         private readonly MdmRecordService $recordService,
         private readonly MdmEntityRegistry $registry,
-        private readonly MdmChangeLogService $changeLogService
+        private readonly MdmChangeLogService $changeLogService,
+        private readonly MdmSimilarityService $similarityService
     ) {
     }
 
@@ -43,6 +44,7 @@ class MdmDuplicateDetectionService
                         'fingerprint' => hash('sha256', $type . '|' . $normalizedKey),
                     ],
                     [
+                        'match_strategy' => 'exact',
                         'status' => 'open',
                         'confidence' => 100,
                         'suggested_master_entity_id' => $records->sortByDesc('quality_score')->first()->entity_id,
@@ -72,6 +74,72 @@ class MdmDuplicateDetectionService
 
                     if ($member->wasRecentlyCreated) {
                         $membersLinked++;
+                    }
+                }
+            }
+
+            $records = MdmRecord::query()
+                ->where('organization_id', $organizationId)
+                ->where('entity_type', $type)
+                ->where('status', 'active')
+                ->get()
+                ->values();
+
+            for ($i = 0; $i < $records->count(); $i++) {
+                for ($j = $i + 1; $j < $records->count(); $j++) {
+                    $left = $records[$i];
+                    $right = $records[$j];
+
+                    if ($left->normalized_key !== null && $left->normalized_key === $right->normalized_key) {
+                        continue;
+                    }
+
+                    $match = $this->similarityService->compare(
+                        $type,
+                        $left->normalized_values ?? [],
+                        $right->normalized_values ?? []
+                    );
+
+                    if ($match['score'] < 85) {
+                        continue;
+                    }
+
+                    $ids = collect([$left->entity_id, $right->entity_id])->sort()->values()->all();
+                    $group = MdmDuplicateGroup::query()->firstOrCreate(
+                        [
+                            'organization_id' => $organizationId,
+                            'entity_type' => $type,
+                            'fingerprint' => hash('sha256', $type . '|fuzzy|' . implode(':', $ids)),
+                        ],
+                        [
+                            'match_strategy' => 'fuzzy',
+                            'status' => 'open',
+                            'confidence' => $match['score'],
+                            'suggested_master_entity_id' => $left->quality_score >= $right->quality_score ? $left->entity_id : $right->entity_id,
+                        ]
+                    );
+
+                    if ($group->wasRecentlyCreated) {
+                        $groupsCreated++;
+                    }
+
+                    foreach ([$left, $right] as $record) {
+                        $member = MdmDuplicateMember::query()->updateOrCreate(
+                            [
+                                'duplicate_group_id' => $group->id,
+                                'entity_type' => $type,
+                                'entity_id' => $record->entity_id,
+                            ],
+                            [
+                                'role' => $record->entity_id === $group->suggested_master_entity_id ? 'master' : 'candidate',
+                                'score' => $match['score'],
+                                'evidence' => $match['evidence'],
+                            ]
+                        );
+
+                        if ($member->wasRecentlyCreated) {
+                            $membersLinked++;
+                        }
                     }
                 }
             }

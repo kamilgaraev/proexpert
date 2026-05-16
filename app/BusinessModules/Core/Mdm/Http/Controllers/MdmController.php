@@ -14,6 +14,9 @@ use App\BusinessModules\Core\Mdm\Services\MdmDuplicateDetectionService;
 use App\BusinessModules\Core\Mdm\Services\MdmChangeRequestService;
 use App\BusinessModules\Core\Mdm\Services\MdmEntityRegistry;
 use App\BusinessModules\Core\Mdm\Services\MdmImportService;
+use App\BusinessModules\Core\Mdm\Services\MdmFileImportParser;
+use App\BusinessModules\Core\Mdm\Services\MdmMergeService;
+use App\BusinessModules\Core\Mdm\Services\MdmQualityPolicyService;
 use App\BusinessModules\Core\Mdm\Services\MdmRecordService;
 use App\BusinessModules\Core\Mdm\Services\MdmRelationshipService;
 use App\Http\Controllers\Controller;
@@ -32,7 +35,10 @@ class MdmController extends Controller
         private readonly MdmDuplicateDetectionService $duplicateDetectionService,
         private readonly MdmRelationshipService $relationshipService,
         private readonly MdmImportService $importService,
-        private readonly MdmChangeRequestService $changeRequestService
+        private readonly MdmChangeRequestService $changeRequestService,
+        private readonly MdmMergeService $mergeService,
+        private readonly MdmQualityPolicyService $qualityPolicyService,
+        private readonly MdmFileImportParser $fileImportParser
     ) {
     }
 
@@ -436,6 +442,143 @@ class MdmController extends Controller
             Log::error('MDM owner assign failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.owner_assign_failed'), 500);
+        }
+    }
+
+    public function mergePlan(Request $request, MdmDuplicateGroup $group): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'master_entity_id' => ['required', 'integer'],
+            ]);
+
+            if ((int) $group->organization_id !== $this->organizationId($request)) {
+                return AdminResponse::error(trans_message('mdm.errors.not_found'), 404);
+            }
+
+            $run = $this->mergeService->plan($group->load('members'), (int) $validated['master_entity_id']);
+
+            return AdminResponse::success($run, trans_message('mdm.messages.merge_plan_ready'));
+        } catch (Throwable $e) {
+            Log::error('MDM merge plan failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
+
+            return AdminResponse::error(trans_message('mdm.errors.merge_failed'), 500);
+        }
+    }
+
+    public function mergeApply(Request $request, MdmDuplicateGroup $group): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'master_entity_id' => ['required', 'integer'],
+            ]);
+
+            if ((int) $group->organization_id !== $this->organizationId($request)) {
+                return AdminResponse::error(trans_message('mdm.errors.not_found'), 404);
+            }
+
+            $run = $this->mergeService->apply($group->load('members'), (int) $validated['master_entity_id'], $request->user()?->id);
+
+            return AdminResponse::success($run, trans_message('mdm.messages.merge_applied'));
+        } catch (Throwable $e) {
+            Log::error('MDM merge apply failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
+
+            return AdminResponse::error(trans_message('mdm.errors.merge_failed'), 500);
+        }
+    }
+
+    public function qualityPolicies(Request $request): JsonResponse
+    {
+        try {
+            $organizationId = $this->organizationId($request);
+            $policies = collect(array_keys($this->registry->all()))
+                ->map(fn (string $entityType): array => array_merge(
+                    ['entity_type' => $entityType],
+                    $this->qualityPolicyService->get($organizationId, $entityType)
+                ))
+                ->values()
+                ->all();
+
+            return AdminResponse::success($policies);
+        } catch (Throwable $e) {
+            Log::error('MDM quality policies failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
+
+            return AdminResponse::error(trans_message('mdm.errors.quality_policies_failed'), 500);
+        }
+    }
+
+    public function updateQualityPolicy(Request $request, string $entityType): JsonResponse
+    {
+        try {
+            abort_unless(array_key_exists($entityType, $this->registry->all()), 404);
+
+            $validated = $request->validate([
+                'required_fields' => ['required', 'array'],
+                'required_fields.*' => ['string'],
+                'field_weights' => ['required', 'array'],
+                'validation_rules' => ['nullable', 'array'],
+                'min_acceptable_score' => ['required', 'integer', 'min:0', 'max:100'],
+            ]);
+
+            $policy = $this->qualityPolicyService->upsert($this->organizationId($request), $entityType, $validated);
+
+            return AdminResponse::success($policy, trans_message('mdm.messages.quality_policy_saved'));
+        } catch (Throwable $e) {
+            Log::error('MDM quality policy update failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
+
+            return AdminResponse::error(trans_message('mdm.errors.quality_policy_save_failed'), 500);
+        }
+    }
+
+    public function fileImportPreview(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'entity_type' => ['required', 'string', Rule::in(array_keys($this->registry->all()))],
+                'file' => ['required', 'file', 'mimes:csv,txt,xlsx,xls'],
+                'mapping' => ['nullable', 'array'],
+            ]);
+
+            $rows = $this->fileImportParser->parse($validated['file']->getRealPath(), $validated['mapping'] ?? []);
+            $batch = $this->importService->preview(
+                $this->organizationId($request),
+                $validated['entity_type'],
+                $rows,
+                $request->user()?->id,
+                'file'
+            );
+
+            return AdminResponse::success($batch, trans_message('mdm.messages.import_preview_ready'));
+        } catch (Throwable $e) {
+            Log::error('MDM file import preview failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
+
+            return AdminResponse::error(trans_message('mdm.errors.import_failed'), 500);
+        }
+    }
+
+    public function fileImportApply(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'entity_type' => ['required', 'string', Rule::in(array_keys($this->registry->all()))],
+                'file' => ['required', 'file', 'mimes:csv,txt,xlsx,xls'],
+                'mapping' => ['nullable', 'array'],
+            ]);
+
+            $rows = $this->fileImportParser->parse($validated['file']->getRealPath(), $validated['mapping'] ?? []);
+            $batch = $this->importService->apply(
+                $this->organizationId($request),
+                $validated['entity_type'],
+                $rows,
+                $request->user()?->id,
+                'file'
+            );
+
+            return AdminResponse::success($batch, trans_message('mdm.messages.import_applied'));
+        } catch (Throwable $e) {
+            Log::error('MDM file import apply failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
+
+            return AdminResponse::error(trans_message('mdm.errors.import_failed'), 500);
         }
     }
 

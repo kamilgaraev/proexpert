@@ -28,7 +28,7 @@ class MdmRecordService
         $organizationId = (int) $model->getAttribute('organization_id');
         $entityId = (int) $model->getKey();
         $attributes = $model->getAttributes();
-        $quality = $this->qualityService->evaluate($entityType, $attributes);
+        $quality = $this->qualityService->evaluate($entityType, $attributes, $organizationId);
 
         $record = MdmRecord::query()->firstOrNew([
             'organization_id' => $organizationId,

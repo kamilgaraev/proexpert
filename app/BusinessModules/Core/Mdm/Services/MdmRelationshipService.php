@@ -10,82 +10,80 @@ use Illuminate\Support\Facades\Schema;
 
 class MdmRelationshipService
 {
+    public function __construct(
+        private readonly MdmRelationshipSourceRegistry $sourceRegistry
+    ) {
+    }
+
     public function syncOrganization(int $organizationId): array
     {
         $synced = 0;
+        $bySource = [];
 
-        if (Schema::hasTable('work_type_materials')) {
-            $rows = DB::table('work_type_materials')
-                ->where('organization_id', $organizationId)
-                ->get(['work_type_id', 'material_id', 'default_quantity']);
+        foreach ($this->sourceRegistry->sources() as $source) {
+            if (!$this->available($source)) {
+                $bySource[$source['table']] = ['synced' => 0, 'skipped' => true];
+                continue;
+            }
 
-            foreach ($rows as $row) {
+            $query = DB::table($source['table'])
+                ->whereNotNull($source['source_column'])
+                ->whereNotNull($source['target_column']);
+
+            if (($source['organization_column'] ?? null) !== null && Schema::hasColumn($source['table'], $source['organization_column'])) {
+                $query->where($source['organization_column'], $organizationId);
+            }
+
+            $sourceSynced = 0;
+
+            foreach ($query->get() as $row) {
+                $metadata = [];
+                foreach ($source['metadata_columns'] ?? [] as $column) {
+                    if (property_exists($row, $column)) {
+                        $metadata[$column] = $row->{$column};
+                    }
+                }
+
                 MdmRelationship::query()->updateOrCreate(
                     [
                         'organization_id' => $organizationId,
-                        'source_type' => 'work_type',
-                        'source_id' => (int) $row->work_type_id,
-                        'target_type' => 'material',
-                        'target_id' => (int) $row->material_id,
-                        'relationship_type' => 'uses_material',
+                        'source_type' => $source['source_type'] ?? (string) $row->{$source['source_type_column']},
+                        'source_id' => (int) $row->{$source['source_column']},
+                        'target_type' => $source['target_type'],
+                        'target_id' => (int) $row->{$source['target_column']},
+                        'relationship_type' => $source['relationship_type'],
                     ],
                     [
                         'strength' => 1,
-                        'metadata' => ['default_quantity' => $row->default_quantity],
+                        'metadata' => $metadata,
                     ]
                 );
+
                 $synced++;
+                $sourceSynced++;
+            }
+
+            $bySource[$source['table'] . ':' . $source['relationship_type']] = [
+                'synced' => $sourceSynced,
+                'skipped' => false,
+            ];
+        }
+
+        return ['relationships_synced' => $synced, 'sources' => $bySource];
+    }
+
+    private function available(array $source): bool
+    {
+        if (!Schema::hasTable($source['table'])) {
+            return false;
+        }
+
+        foreach ([$source['source_column'], $source['target_column'], $source['organization_column'] ?? null, $source['source_type_column'] ?? null] as $column) {
+            if ($column !== null && !Schema::hasColumn($source['table'], $column)) {
+                return false;
             }
         }
 
-        if (Schema::hasTable('estimate_position_catalog')) {
-            $rows = DB::table('estimate_position_catalog')
-                ->where('organization_id', $organizationId)
-                ->whereNotNull('work_type_id')
-                ->get(['id', 'work_type_id']);
-
-            foreach ($rows as $row) {
-                MdmRelationship::query()->updateOrCreate(
-                    [
-                        'organization_id' => $organizationId,
-                        'source_type' => 'estimate_position',
-                        'source_id' => (int) $row->id,
-                        'target_type' => 'work_type',
-                        'target_id' => (int) $row->work_type_id,
-                        'relationship_type' => 'based_on_work_type',
-                    ],
-                    ['strength' => 1]
-                );
-                $synced++;
-            }
-        }
-
-        if (Schema::hasTable('warehouse_identifiers')) {
-            $rows = DB::table('warehouse_identifiers')
-                ->where('organization_id', $organizationId)
-                ->whereNotNull('entity_type')
-                ->whereNotNull('entity_id')
-                ->get(['id', 'entity_type', 'entity_id', 'code']);
-
-            foreach ($rows as $row) {
-                MdmRelationship::query()->updateOrCreate(
-                    [
-                        'organization_id' => $organizationId,
-                        'source_type' => (string) $row->entity_type,
-                        'source_id' => (int) $row->entity_id,
-                        'target_type' => 'warehouse_identifier',
-                        'target_id' => (int) $row->id,
-                        'relationship_type' => 'identified_by',
-                    ],
-                    [
-                        'strength' => 1,
-                        'metadata' => ['code' => $row->code],
-                    ]
-                );
-                $synced++;
-            }
-        }
-
-        return ['relationships_synced' => $synced];
+        return true;
     }
 }

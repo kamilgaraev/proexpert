@@ -23,7 +23,7 @@ class MdmImportService
         $accepted = 0;
 
         foreach ($rows as $index => $row) {
-            $quality = $this->qualityService->evaluate($entityType, is_array($row) ? $row : []);
+            $quality = $this->qualityService->evaluate($entityType, is_array($row) ? $row : [], $organizationId);
 
             if ($quality['score'] >= 70) {
                 $accepted++;
@@ -61,7 +61,7 @@ class MdmImportService
 
             foreach ($rows as $index => $row) {
                 $data = is_array($row) ? $row : [];
-                $quality = $this->qualityService->evaluate($entityType, $data);
+                $quality = $this->qualityService->evaluate($entityType, $data, $organizationId);
 
                 if ($quality['score'] < 70) {
                     $rejected++;

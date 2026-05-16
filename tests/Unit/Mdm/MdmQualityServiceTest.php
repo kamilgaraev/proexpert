@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Mdm;
 
 use App\BusinessModules\Core\Mdm\Services\MdmNormalizationService;
+use App\BusinessModules\Core\Mdm\Services\MdmQualityPolicyService;
 use App\BusinessModules\Core\Mdm\Services\MdmQualityService;
 use PHPUnit\Framework\TestCase;
 
@@ -12,7 +13,7 @@ final class MdmQualityServiceTest extends TestCase
 {
     public function test_contractors_receive_quality_issues_for_missing_and_invalid_requisites(): void
     {
-        $service = new MdmQualityService(new MdmNormalizationService());
+        $service = new MdmQualityService(new MdmNormalizationService(), new MdmQualityPolicyService());
 
         $result = $service->evaluate('contractor', [
             'name' => '',
@@ -30,7 +31,7 @@ final class MdmQualityServiceTest extends TestCase
 
     public function test_complete_material_has_high_quality_score(): void
     {
-        $service = new MdmQualityService(new MdmNormalizationService());
+        $service = new MdmQualityService(new MdmNormalizationService(), new MdmQualityPolicyService());
 
         $result = $service->evaluate('material', [
             'name' => 'Бетон М300',

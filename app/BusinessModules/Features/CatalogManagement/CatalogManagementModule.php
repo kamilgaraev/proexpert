@@ -116,7 +116,11 @@ class CatalogManagementModule implements ModuleInterface, ConfigurableInterface
             'mdm.manage',
             'mdm.duplicates.resolve',
             'mdm.import.preview',
-            'mdm.archive'
+            'mdm.import.apply',
+            'mdm.change_requests.review',
+            'mdm.archive',
+            'mdm.owners.assign',
+            'mdm.merge.apply'
         ];
     }
 
