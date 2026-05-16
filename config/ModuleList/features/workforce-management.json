@@ -1,0 +1,211 @@
+{
+  "name": "Персонал и трудозатраты",
+  "slug": "workforce-management",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "subscription",
+  "category": "resources",
+  "description": "Единый раздел для персонала, нарядов, выработки, учета смен, начислений и управленческого контроля трудозатрат.",
+  "class_name": "App\\BusinessModules\\Features\\WorkforceManagement\\WorkforceManagementModule",
+  "service_provider": "App\\BusinessModules\\Features\\WorkforceManagement\\WorkforceManagementServiceProvider",
+  "pricing": {
+    "currency": "RUB",
+    "duration_days": 30,
+    "levels": {
+      "start": {
+        "price": 3900
+      },
+      "pro": {
+        "price": 6900
+      },
+      "corporate": {
+        "price": 9900
+      }
+    }
+  },
+  "permissions": [
+    "workforce.view",
+    "workforce.employees.basic",
+    "workforce.production-labor.view",
+    "workforce.production-labor.manage",
+    "workforce.production-labor.approve",
+    "workforce.hr.manage",
+    "workforce.structure.manage",
+    "workforce.attendance.manage",
+    "workforce.payroll-source.manage",
+    "workforce.payroll-source.validate",
+    "workforce.payroll-source.lock",
+    "workforce.exports.generate",
+    "workforce.exports.approve",
+    "workforce.settings.manage",
+    "production-labor.view",
+    "production-labor.create",
+    "production-labor.edit",
+    "production-labor.delete",
+    "production-labor.work-orders.create",
+    "production-labor.work-orders.approve",
+    "production-labor.output.record",
+    "production-labor.output.approve",
+    "production-labor.output.override",
+    "production-labor.payroll.prepare",
+    "production-labor.payroll.approve",
+    "production-labor.reports.export",
+    "production-labor.settings.manage"
+  ],
+  "features": [
+    "Наряды и сменные задания по бригадам",
+    "Учет фактической выработки и отклонений",
+    "Подготовка начислений по выполненным работам",
+    "Контроль тарифов, отчетов и прав доступа по персоналу"
+  ],
+  "tariff_levels": {
+    "start": {
+      "label": "Старт",
+      "description": "Базовый учет нарядов и фактической выработки по объектам.",
+      "capabilities": [
+        "work-orders",
+        "output-recording",
+        "brigade-context"
+      ],
+      "modules": [
+        "production-labor"
+      ],
+      "permissions": [
+        "workforce.view",
+        "workforce.employees.basic",
+        "workforce.production-labor.view",
+        "workforce.production-labor.manage",
+        "production-labor.view",
+        "production-labor.work-orders.create",
+        "production-labor.output.record"
+      ]
+    },
+    "pro": {
+      "label": "Про",
+      "description": "Управление нарядами, согласование выработки и подготовка начислений.",
+      "capabilities": [
+        "work-orders",
+        "output-recording",
+        "brigade-context",
+        "work-order-approval",
+        "output-approval",
+        "payroll-preparation"
+      ],
+      "modules": [
+        "production-labor",
+        "time-tracking",
+        "workflow-management"
+      ],
+      "permissions": [
+        "workforce.view",
+        "workforce.employees.basic",
+        "workforce.production-labor.view",
+        "workforce.production-labor.manage",
+        "workforce.production-labor.approve",
+        "workforce.attendance.manage",
+        "workforce.payroll-source.manage",
+        "workforce.payroll-source.validate",
+        "workforce.exports.generate",
+        "production-labor.view",
+        "production-labor.work-orders.create",
+        "production-labor.work-orders.approve",
+        "production-labor.output.record",
+        "production-labor.output.approve",
+        "production-labor.payroll.prepare"
+      ]
+    },
+    "corporate": {
+      "label": "Корпоративный",
+      "description": "Полный контур контроля персонала, начислений, отчетности и настроек.",
+      "capabilities": [
+        "work-orders",
+        "output-recording",
+        "brigade-context",
+        "work-order-approval",
+        "output-approval",
+        "payroll-preparation",
+        "payroll-approval",
+        "output-override",
+        "report-export",
+        "settings-management"
+      ],
+      "modules": [
+        "production-labor",
+        "time-tracking",
+        "workflow-management",
+        "payments",
+        "reports",
+        "rate-management"
+      ],
+      "permissions": [
+        "workforce.view",
+        "workforce.employees.basic",
+        "workforce.production-labor.view",
+        "workforce.production-labor.manage",
+        "workforce.production-labor.approve",
+        "workforce.hr.manage",
+        "workforce.structure.manage",
+        "workforce.attendance.manage",
+        "workforce.payroll-source.manage",
+        "workforce.payroll-source.validate",
+        "workforce.payroll-source.lock",
+        "workforce.exports.generate",
+        "workforce.exports.approve",
+        "workforce.settings.manage",
+        "production-labor.view",
+        "production-labor.create",
+        "production-labor.edit",
+        "production-labor.delete",
+        "production-labor.work-orders.create",
+        "production-labor.work-orders.approve",
+        "production-labor.output.record",
+        "production-labor.output.approve",
+        "production-labor.output.override",
+        "production-labor.payroll.prepare",
+        "production-labor.payroll.approve",
+        "production-labor.reports.export",
+        "production-labor.settings.manage"
+      ]
+    }
+  },
+  "dependencies": [
+    "organizations",
+    "users",
+    "project-management",
+    "brigades",
+    "budget-estimates",
+    "workflow-management",
+    "time-tracking"
+  ],
+  "included_modules": [
+    "production-labor"
+  ],
+  "legacy_aliases": [
+    "production-labor"
+  ],
+  "optional_integrations": [
+    "payments",
+    "rate-management",
+    "reports"
+  ],
+  "conflicts": [],
+  "limits": {
+    "max_work_orders_per_month": null,
+    "max_output_entries_per_month": null,
+    "payroll_retention_days": 1095
+  },
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "development_status": "stable",
+  "icon": "users",
+  "display_order": 45,
+  "tags": [
+    "workforce",
+    "personnel",
+    "labor",
+    "work-orders",
+    "output",
+    "payroll"
+  ]
+}

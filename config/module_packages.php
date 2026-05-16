@@ -33,6 +33,7 @@ return [
         'executive-documentation' => 'package',
         'safety-management' => 'package',
         'machinery-operations' => 'package',
+        'workforce-management' => 'package',
         'production-labor' => 'package',
         'change-management' => 'package',
         'handover-acceptance' => 'package',
@@ -54,5 +55,15 @@ return [
         'video-monitoring' => 'addon',
         'contractor-portal' => 'addon',
         'system-logs' => 'internal',
+    ],
+
+    'module_aliases' => [
+        'production-labor' => 'workforce-management',
+    ],
+
+    'package_children' => [
+        'workforce-management' => [
+            'production-labor',
+        ],
     ],
 ];

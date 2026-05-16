@@ -368,6 +368,37 @@
       "brigades.invitations.create",
       "brigades.assignments.view",
       "brigades.assignments.edit"
+    ],
+    "workforce-management": [
+      "workforce.view",
+      "workforce.employees.basic",
+      "workforce.production-labor.view",
+      "workforce.production-labor.manage",
+      "workforce.production-labor.approve",
+      "workforce.hr.manage",
+      "workforce.structure.manage",
+      "workforce.attendance.manage",
+      "workforce.payroll-source.manage",
+      "workforce.payroll-source.validate",
+      "workforce.payroll-source.lock",
+      "workforce.exports.generate",
+      "workforce.exports.approve",
+      "workforce.settings.manage"
+    ],
+    "production-labor": [
+      "production-labor.view",
+      "production-labor.create",
+      "production-labor.edit",
+      "production-labor.delete",
+      "production-labor.work-orders.create",
+      "production-labor.work-orders.approve",
+      "production-labor.output.record",
+      "production-labor.output.approve",
+      "production-labor.output.override",
+      "production-labor.payroll.prepare",
+      "production-labor.payroll.approve",
+      "production-labor.reports.export",
+      "production-labor.settings.manage"
     ]
   },
   "interface_access": [

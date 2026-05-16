@@ -68,6 +68,14 @@
       "brigades.invitations.view",
       "brigades.assignments.view"
     ],
+    "workforce-management": [
+      "workforce.view",
+      "workforce.employees.basic",
+      "workforce.production-labor.view"
+    ],
+    "production-labor": [
+      "production-labor.view"
+    ],
     "site-requests": [
       "site_requests.view"
     ]

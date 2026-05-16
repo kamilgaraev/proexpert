@@ -8,10 +8,21 @@
   "description": "Контур нарядов, сменных заданий, выработки бригад и подготовки начислений по выполненным работам.",
   "class_name": "App\\BusinessModules\\Features\\ProductionLabor\\ProductionLaborModule",
   "service_provider": "App\\BusinessModules\\Features\\ProductionLabor\\ProductionLaborServiceProvider",
+  "parent_module": "workforce-management",
+  "package_role": "alias",
+  "included_in_workforce_levels": [
+    "start",
+    "pro",
+    "corporate"
+  ],
   "pricing": {
     "base_price": 3900,
     "currency": "RUB",
-    "included_in_plans": ["business", "profi", "enterprise"],
+    "included_in_plans": [
+      "business",
+      "profi",
+      "enterprise"
+    ],
     "duration_days": 30
   },
   "permissions": [
@@ -60,6 +71,11 @@
   "can_deactivate": true,
   "development_status": "stable",
   "icon": "hard-hat",
-  "display_order": 45,
-  "tags": ["labor", "work-orders", "output", "payroll"]
+  "display_order": 46,
+  "tags": [
+    "labor",
+    "work-orders",
+    "output",
+    "payroll"
+  ]
 }
