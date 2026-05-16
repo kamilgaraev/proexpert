@@ -120,6 +120,10 @@ final class MdmCoreWorkflowTest extends TestCase
         $response->assertOk();
         $response->assertJsonPath('success', true);
         $response->assertJsonPath('data.entities.0.type', 'contractor');
+        $response->assertJsonPath('data.entities.0.title', 'Контрагенты');
+        $response->assertJsonPath('data.entities.0.source_total', 1);
+        $response->assertJsonPath('data.entities.0.mdm_total', 1);
+        $response->assertJsonPath('data.entities.0.coverage_percent', 100);
 
         $record = MdmRecord::query()
             ->where('organization_id', $context->organization->id)

@@ -123,17 +123,31 @@ class MdmRecordService
 
     public function summary(int $organizationId): array
     {
-        return MdmRecord::query()
+        $mdmSummary = MdmRecord::query()
             ->selectRaw('entity_type, count(*) as total, avg(quality_score) as avg_quality')
             ->where('organization_id', $organizationId)
             ->groupBy('entity_type')
             ->orderBy('entity_type')
             ->get()
-            ->map(static fn (MdmRecord $record): array => [
-                'type' => $record->entity_type,
-                'total' => (int) $record->getAttribute('total'),
-                'avg_quality' => round((float) $record->getAttribute('avg_quality'), 2),
-            ])
+            ->keyBy('entity_type');
+
+        return collect($this->registry->all())
+            ->map(function (array $definition, string $entityType) use ($organizationId, $mdmSummary): array {
+                /** @var MdmRecord|null $record */
+                $record = $mdmSummary->get($entityType);
+                $mdmTotal = $record === null ? 0 : (int) $record->getAttribute('total');
+                $sourceTotal = $this->registry->query($entityType, $organizationId)->count();
+
+                return [
+                    'type' => $entityType,
+                    'title' => $definition['title'],
+                    'total' => $mdmTotal,
+                    'mdm_total' => $mdmTotal,
+                    'source_total' => $sourceTotal,
+                    'coverage_percent' => $sourceTotal > 0 ? round(($mdmTotal / $sourceTotal) * 100, 2) : 0.0,
+                    'avg_quality' => $record === null ? 0.0 : round((float) $record->getAttribute('avg_quality'), 2),
+                ];
+            })
             ->values()
             ->all();
     }
