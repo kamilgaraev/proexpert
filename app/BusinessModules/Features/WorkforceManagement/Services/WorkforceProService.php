@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\WorkforceManagement\Services;
 
 use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborTimesheetEntry;
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
+use App\BusinessModules\Features\WorkforceManagement\Services\WorkforceEmployeeService;
 use App\Models\Project;
 use DomainException;
 use Illuminate\Database\Query\Builder;
@@ -14,6 +15,10 @@ use Illuminate\Support\Facades\DB;
 
 final class WorkforceProService
 {
+    public function __construct(private readonly WorkforceEmployeeService $employeeService)
+    {
+    }
+
     public function list(string $table, int $organizationId): Collection
     {
         return DB::table($table)
@@ -31,7 +36,7 @@ final class WorkforceProService
             'updated_at' => now(),
         ]));
 
-        return (array) DB::table($table)->where('id', $id)->first();
+        return $this->decorateRecord($table, $organizationId, DB::table($table)->where('id', $id)->first());
     }
 
     public function update(string $table, int $organizationId, int $id, array $payload): array
@@ -46,7 +51,7 @@ final class WorkforceProService
             'updated_at' => now(),
         ]));
 
-        return (array) DB::table($table)->where('organization_id', $organizationId)->where('id', $id)->first();
+        return $this->decorateRecord($table, $organizationId, DB::table($table)->where('organization_id', $organizationId)->where('id', $id)->first());
     }
 
     public function storeStaffUnit(int $organizationId, array $payload): array
@@ -171,8 +176,54 @@ final class WorkforceProService
         }
 
         return $this->store('workforce_orders', $organizationId, array_merge($payload, [
-            'status' => $payload['status'] ?? 'draft',
+            'status' => 'draft',
         ]));
+    }
+
+    public function approveOrder(int $organizationId, int $orderId): array
+    {
+        $order = $this->assertRecord('workforce_orders', $organizationId, $orderId);
+        $this->assertDraftStatus($order);
+
+        return $this->update('workforce_orders', $organizationId, $orderId, ['status' => 'approved']);
+    }
+
+    public function applyOrder(int $organizationId, int $orderId): array
+    {
+        $order = $this->assertRecord('workforce_orders', $organizationId, $orderId);
+
+        if (($order->status ?? null) !== 'approved') {
+            throw new DomainException(trans_message('workforce.errors.workflow_transition_forbidden'));
+        }
+
+        $payload = $this->decodePayload($order->payload ?? null);
+
+        if ($order->order_type !== 'dismissal') {
+            throw new DomainException(trans_message('workforce.errors.order_type_not_supported'));
+        }
+
+        if ($order->employee_id === null) {
+            throw new DomainException(trans_message('workforce.errors.employee_not_found'));
+        }
+
+        $this->employeeService->dismiss($organizationId, (int) $order->employee_id, $payload['effective_date'] ?? (string) $order->order_date);
+
+        return $this->update('workforce_orders', $organizationId, $orderId, ['status' => 'applied']);
+    }
+
+    public function cancelOrder(int $organizationId, int $orderId): array
+    {
+        $order = $this->assertRecord('workforce_orders', $organizationId, $orderId);
+
+        if ($order->status === 'applied') {
+            throw new DomainException(trans_message('workforce.errors.workflow_transition_forbidden'));
+        }
+
+        if ($order->status === 'cancelled') {
+            return (array) $order;
+        }
+
+        return $this->update('workforce_orders', $organizationId, $orderId, ['status' => 'cancelled']);
     }
 
     public function approveAbsence(int $organizationId, int $absenceId): array
@@ -642,6 +693,21 @@ final class WorkforceProService
         }
 
         return $data;
+    }
+
+    private function decodePayload(mixed $payload): array
+    {
+        if (is_array($payload)) {
+            return $payload;
+        }
+
+        if (is_string($payload) && $payload !== '') {
+            $decoded = json_decode($payload, true);
+
+            return is_array($decoded) ? $decoded : [];
+        }
+
+        return [];
     }
 
     private function statusLabel(string $status): string

@@ -440,6 +440,61 @@ final class WorkforceProductionReadinessTest extends TestCase
             ->assertJsonPath('data.scope_label', trans_message('workforce.scope_labels.organization'));
     }
 
+    public function test_dismissal_order_approval_and_apply_updates_employee_lifecycle(): void
+    {
+        $context = AdminApiTestContext::create();
+        $employee = $this->employee($context, 'ORDER-001');
+        [$departmentId, $positionId, $staffUnitId] = $this->structure($context);
+        $this->allowAccess('web_admin');
+
+        DB::table('workforce_employee_assignments')->insert([
+            'organization_id' => $context->organization->id,
+            'employee_id' => $employee->id,
+            'staff_unit_id' => $staffUnitId,
+            'department_id' => $departmentId,
+            'position_id' => $positionId,
+            'valid_from' => '2026-05-01',
+            'status' => 'active',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $order = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/orders', [
+                'employee_id' => $employee->id,
+                'order_number' => 'ORD-' . uniqid(),
+                'order_date' => '2026-05-18',
+                'order_type' => 'dismissal',
+                'status' => 'approved',
+                'payload' => [
+                    'effective_date' => '2026-05-20',
+                ],
+            ]);
+        $order->assertCreated()
+            ->assertJsonPath('data.status', 'draft');
+        $orderId = (int) $order->json('data.id');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/workforce/orders/{$orderId}/approve")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'approved');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/workforce/orders/{$orderId}/apply")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'applied')
+            ->assertJsonPath('data.status_label', trans_message('workforce.statuses.applied'));
+
+        $employee->refresh();
+        $this->assertSame('dismissed', $employee->employment_status);
+        $this->assertSame('2026-05-20', $employee->dismissal_date?->toDateString());
+
+        $this->assertDatabaseHas('workforce_employee_assignments', [
+            'employee_id' => $employee->id,
+            'valid_to' => '2026-05-20',
+        ]);
+    }
+
     private function employee(AdminApiTestContext $context, string $personnelNumber, string $status = 'active'): WorkforceEmployee
     {
         return WorkforceEmployee::create([

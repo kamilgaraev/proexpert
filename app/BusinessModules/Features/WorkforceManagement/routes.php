@@ -82,6 +82,15 @@ Route::prefix('api/v1/admin/workforce')
             ->middleware('authorize:workforce.view');
         Route::post('/orders', [WorkforceProController::class, 'storeOrder'])
             ->middleware('authorize:workforce.attendance.manage');
+        Route::post('/orders/{orderId}/approve', [WorkforceProController::class, 'approveOrder'])
+            ->whereNumber('orderId')
+            ->middleware('authorize:workforce.attendance.manage');
+        Route::post('/orders/{orderId}/apply', [WorkforceProController::class, 'applyOrder'])
+            ->whereNumber('orderId')
+            ->middleware('authorize:workforce.attendance.manage');
+        Route::post('/orders/{orderId}/cancel', [WorkforceProController::class, 'cancelOrder'])
+            ->whereNumber('orderId')
+            ->middleware('authorize:workforce.attendance.manage');
         Route::get('/payroll-periods', [WorkforceProController::class, 'payrollPeriods'])
             ->middleware('authorize:workforce.view');
         Route::post('/payroll-periods', [WorkforceProController::class, 'storePayrollPeriod'])

@@ -217,6 +217,39 @@ final class WorkforceProController extends Controller
         }
     }
 
+    public function approveOrder(Request $request, int $orderId): JsonResponse
+    {
+        try {
+            return AdminResponse::success($this->service->approveOrder($this->organizationId($request), $orderId), trans_message('workforce.messages.record_updated'));
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'orders.approve');
+        }
+    }
+
+    public function applyOrder(Request $request, int $orderId): JsonResponse
+    {
+        try {
+            return AdminResponse::success($this->service->applyOrder($this->organizationId($request), $orderId), trans_message('workforce.messages.record_updated'));
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'orders.apply');
+        }
+    }
+
+    public function cancelOrder(Request $request, int $orderId): JsonResponse
+    {
+        try {
+            return AdminResponse::success($this->service->cancelOrder($this->organizationId($request), $orderId), trans_message('workforce.messages.record_updated'));
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'orders.cancel');
+        }
+    }
+
     public function payrollPeriods(Request $request): JsonResponse
     {
         return $this->list($request, 'workforce_payroll_periods');
@@ -416,7 +449,7 @@ final class WorkforceProController extends Controller
             'absence_type_name' => ['nullable', 'string', 'max:255'],
             'start_date' => ['required', 'date'],
             'end_date' => ['required', 'date', 'after_or_equal:start_date'],
-            'status' => ['nullable', Rule::in(['draft', 'approved', 'cancelled'])],
+            'status' => ['nullable', Rule::in(['draft', 'approved', 'applied', 'cancelled'])],
             'comment' => ['nullable', 'string', 'max:255'],
         ];
     }
