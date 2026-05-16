@@ -377,6 +377,69 @@ final class WorkforceProductionReadinessTest extends TestCase
             ->assertJsonPath('message', trans_message('workforce.errors.structure_has_active_assignments'));
     }
 
+    public function test_workforce_payload_has_business_labels(): void
+    {
+        $context = AdminApiTestContext::create();
+        $employee = $this->employee($context, 'LABEL-001');
+        $this->allowAccess('web_admin');
+
+        $absence = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/absences', [
+                'employee_id' => $employee->id,
+                'absence_type_code' => 'vacation',
+                'start_date' => '2026-05-10',
+                'end_date' => '2026-05-12',
+            ]);
+        $absence->assertCreated();
+
+        $period = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/payroll-periods', [
+                'period_start' => '2026-05-01',
+                'period_end' => '2026-05-31',
+            ]);
+        $period->assertCreated();
+        $periodId = (int) $period->json('data.id');
+
+        DB::table('workforce_payroll_validation_issues')->insert([
+            'organization_id' => $context->organization->id,
+            'payroll_period_id' => $periodId,
+            'severity' => 'blocking',
+            'issue_code' => 'missing_assignment',
+            'message' => trans_message('workforce.validation.missing_assignment'),
+            'entity_type' => 'payroll_source_row',
+            'employee_id' => $employee->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/workforce/absences')
+            ->assertOk()
+            ->assertJsonPath('data.0.employee_label', 'Иванов Иван')
+            ->assertJsonPath('data.0.status_label', trans_message('workforce.statuses.draft'));
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/workforce/payroll-periods')
+            ->assertOk()
+            ->assertJsonPath('data.0.status_label', trans_message('workforce.statuses.draft'))
+            ->assertJsonPath('data.0.workflow_summary.description', trans_message('workforce.workflow.payroll_period_all_projects'));
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/validation-issues")
+            ->assertOk()
+            ->assertJsonPath('data.0.issue_label', trans_message('workforce.issue_labels.missing_assignment'))
+            ->assertJsonPath('data.0.severity_label', trans_message('workforce.severity_labels.blocking'))
+            ->assertJsonPath('data.0.next_action_label', trans_message('workforce.issue_actions.missing_assignment'));
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/accounting-mappings', [
+                'scope_type' => 'organization',
+                'accounting_account' => '20.01',
+            ])
+            ->assertCreated()
+            ->assertJsonPath('data.scope_label', trans_message('workforce.scope_labels.organization'));
+    }
+
     private function employee(AdminApiTestContext $context, string $personnelNumber, string $status = 'active'): WorkforceEmployee
     {
         return WorkforceEmployee::create([

@@ -23,7 +23,8 @@ final class WorkforceCorporateService
             ->where('organization_id', $organizationId)
             ->orderBy('priority')
             ->orderByDesc('id')
-            ->get();
+            ->get()
+            ->map(fn (object $record): array => $this->decorateAccountingMapping($organizationId, $record));
     }
 
     public function storeAccountingMapping(int $organizationId, array $payload): array
@@ -37,7 +38,7 @@ final class WorkforceCorporateService
             'updated_at' => now(),
         ]));
 
-        return (array) DB::table('workforce_accounting_mappings')->where('organization_id', $organizationId)->where('id', $id)->first();
+        return $this->decorateAccountingMapping($organizationId, DB::table('workforce_accounting_mappings')->where('organization_id', $organizationId)->where('id', $id)->first());
     }
 
     public function updateAccountingMapping(int $organizationId, int $mappingId, array $payload): array
@@ -51,7 +52,7 @@ final class WorkforceCorporateService
             ->where('id', $mappingId)
             ->update(array_merge($this->normalizeMappingPayload($payload + ['scope_type' => $merged['scope_type']]), ['updated_at' => now()]));
 
-        return (array) DB::table('workforce_accounting_mappings')->where('organization_id', $organizationId)->where('id', $mappingId)->first();
+        return $this->decorateAccountingMapping($organizationId, DB::table('workforce_accounting_mappings')->where('organization_id', $organizationId)->where('id', $mappingId)->first());
     }
 
     public function lockPayrollPeriod(int $organizationId, int $periodId, int $userId): array
@@ -91,17 +92,21 @@ final class WorkforceCorporateService
         return DB::table('workforce_export_packages')
             ->where('organization_id', $organizationId)
             ->orderByDesc('id')
-            ->get();
+            ->get()
+            ->map(fn (object $record): array => $this->decorateExportPackage($organizationId, $record));
     }
 
     public function showExportPackage(int $organizationId, int $packageId): array
     {
-        $package = (array) $this->assertRecord('workforce_export_packages', $organizationId, $packageId);
+        $package = $this->decorateExportPackage($organizationId, $this->assertRecord('workforce_export_packages', $organizationId, $packageId));
         $package['files'] = DB::table('workforce_export_package_files')
             ->where('organization_id', $organizationId)
             ->where('export_package_id', $packageId)
             ->orderBy('id')
             ->get()
+            ->map(fn (object $record): array => array_merge((array) $record, [
+                'file_type_label' => trans_message("workforce.file_type_labels.{$record->file_type}"),
+            ]))
             ->all();
 
         return $package;
@@ -514,6 +519,67 @@ final class WorkforceCorporateService
         }
 
         return $payload;
+    }
+
+    private function decorateAccountingMapping(int $organizationId, ?object $record): array
+    {
+        if (!$record) {
+            throw new DomainException(trans_message('workforce.errors.record_not_found'));
+        }
+
+        $data = (array) $record;
+        $data['scope_label'] = $this->scopeLabel($organizationId, (string) $record->scope_type, $record->scope_id !== null ? (int) $record->scope_id : null);
+
+        return $data;
+    }
+
+    private function decorateExportPackage(int $organizationId, object $record): array
+    {
+        $data = (array) $record;
+        $data['status_label'] = trans_message("workforce.statuses.{$record->status}");
+        $data['payroll_period_label'] = $this->payrollPeriodLabel($organizationId, (int) $record->payroll_period_id);
+        $data['workflow_summary'] = [
+            'label' => $data['payroll_period_label'],
+            'description' => trans_message("workforce.workflow.export_package_{$record->status}"),
+        ];
+
+        return $data;
+    }
+
+    private function payrollPeriodLabel(int $organizationId, int $periodId): ?string
+    {
+        $period = DB::table('workforce_payroll_periods')
+            ->where('organization_id', $organizationId)
+            ->where('id', $periodId)
+            ->first(['period_start', 'period_end']);
+
+        return $period ? sprintf('%s - %s', $period->period_start, $period->period_end) : null;
+    }
+
+    private function scopeLabel(int $organizationId, string $scopeType, ?int $scopeId): string
+    {
+        if ($scopeType === 'organization') {
+            return trans_message('workforce.scope_labels.organization');
+        }
+
+        $table = match ($scopeType) {
+            'project' => 'projects',
+            'department' => 'workforce_departments',
+            'staff_unit' => 'workforce_staff_units',
+            default => null,
+        };
+
+        if ($table === null || $scopeId === null) {
+            return trans_message('workforce.scope_labels.unknown');
+        }
+
+        $field = $table === 'workforce_staff_units' ? 'code' : 'name';
+        $label = DB::table($table)
+            ->where('organization_id', $organizationId)
+            ->where('id', $scopeId)
+            ->value($field);
+
+        return $label ? (string) $label : trans_message("workforce.scope_labels.{$scopeType}");
     }
 
     private function assertProject(int $organizationId, int $projectId): void

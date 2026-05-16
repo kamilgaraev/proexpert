@@ -19,7 +19,8 @@ final class WorkforceProService
         return DB::table($table)
             ->where('organization_id', $organizationId)
             ->orderByDesc('id')
-            ->get();
+            ->get()
+            ->map(fn (object $record): array => $this->decorateRecord($table, $organizationId, $record));
     }
 
     public function store(string $table, int $organizationId, array $payload): array
@@ -369,7 +370,8 @@ final class WorkforceProService
             ->where('organization_id', $organizationId)
             ->where('payroll_period_id', $periodId)
             ->orderBy('work_date')
-            ->get();
+            ->get()
+            ->map(fn (object $record): array => $this->decorateRecord('workforce_payroll_source_rows', $organizationId, $record));
     }
 
     public function payrollValidationIssues(int $organizationId, int $periodId): Collection
@@ -380,7 +382,8 @@ final class WorkforceProService
             ->where('organization_id', $organizationId)
             ->where('payroll_period_id', $periodId)
             ->orderBy('id')
-            ->get();
+            ->get()
+            ->map(fn (object $record): array => $this->decorateRecord('workforce_payroll_validation_issues', $organizationId, $record));
     }
 
     public function assertRecord(string $table, int $organizationId, int $id): object
@@ -597,6 +600,75 @@ final class WorkforceProService
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+    }
+
+    private function decorateRecord(string $table, int $organizationId, object $record): array
+    {
+        $data = (array) $record;
+
+        if (isset($record->status)) {
+            $data['status_label'] = $this->statusLabel((string) $record->status);
+        }
+
+        if ($table === 'workforce_staff_units') {
+            $data['department_label'] = $this->recordName('workforce_departments', $organizationId, (int) $record->department_id);
+            $data['position_label'] = $this->recordName('workforce_positions', $organizationId, (int) $record->position_id);
+        }
+
+        if (in_array($table, ['workforce_absences', 'workforce_business_trips', 'workforce_payroll_source_rows', 'workforce_payroll_validation_issues'], true) && isset($record->employee_id)) {
+            $data['employee_label'] = $this->employeeLabel($organizationId, (int) $record->employee_id);
+        }
+
+        if (isset($record->project_id) && $record->project_id !== null) {
+            $data['project_label'] = Project::query()
+                ->where('organization_id', $organizationId)
+                ->whereKey((int) $record->project_id)
+                ->value('name');
+        }
+
+        if ($table === 'workforce_payroll_periods') {
+            $data['workflow_summary'] = [
+                'label' => sprintf('%s - %s', $record->period_start, $record->period_end),
+                'description' => $record->project_id === null
+                    ? trans_message('workforce.workflow.payroll_period_all_projects')
+                    : trans_message('workforce.workflow.payroll_period_project'),
+            ];
+        }
+
+        if ($table === 'workforce_payroll_validation_issues') {
+            $data['issue_label'] = trans_message("workforce.issue_labels.{$record->issue_code}");
+            $data['severity_label'] = trans_message("workforce.severity_labels.{$record->severity}");
+            $data['next_action_label'] = trans_message("workforce.issue_actions.{$record->issue_code}");
+        }
+
+        return $data;
+    }
+
+    private function statusLabel(string $status): string
+    {
+        return trans_message("workforce.statuses.{$status}");
+    }
+
+    private function recordName(string $table, int $organizationId, int $id): ?string
+    {
+        return DB::table($table)
+            ->where('organization_id', $organizationId)
+            ->where('id', $id)
+            ->value('name');
+    }
+
+    private function employeeLabel(int $organizationId, int $employeeId): ?string
+    {
+        $employee = WorkforceEmployee::query()
+            ->where('organization_id', $organizationId)
+            ->whereKey($employeeId)
+            ->first(['last_name', 'first_name', 'middle_name']);
+
+        if (!$employee) {
+            return null;
+        }
+
+        return trim(implode(' ', array_filter([$employee->last_name, $employee->first_name, $employee->middle_name])));
     }
 
     private function normalizeJsonPayload(array $payload): array
