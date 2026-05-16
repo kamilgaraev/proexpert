@@ -52,11 +52,33 @@ it('resolves workforce permissions through workforce management package access',
 
     Cache::flush();
 
-    $this->mock(AccessController::class, function (MockInterface $mock) use ($context): void {
+    app()->instance(AccessController::class, \Mockery::mock(AccessController::class, function (MockInterface $mock) use ($context): void {
         $mock->shouldReceive('hasModuleAccess')
             ->withArgs(static fn (int $organizationId, string $module): bool => $organizationId === $context->organization->id)
             ->andReturnUsing(static fn (int $organizationId, string $module): bool => $module === 'workforce-management');
-    });
+    }));
+
+    app()->forgetInstance(ModulePermissionChecker::class);
+    app()->forgetInstance(PermissionResolver::class);
+    app()->forgetInstance(AuthorizationService::class);
+
+    expect(app(AuthorizationService::class)->can($context->user, 'workforce.view', [
+        'context_type' => 'organization',
+        'organization_id' => $context->organization->id,
+    ]))->toBeTrue();
+});
+
+it('organization owner resolves workforce permissions through workforce management package access', function (): void {
+    /** @var \Tests\TestCase $this */
+    $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+
+    Cache::flush();
+
+    app()->instance(AccessController::class, \Mockery::mock(AccessController::class, function (MockInterface $mock) use ($context): void {
+        $mock->shouldReceive('hasModuleAccess')
+            ->withArgs(static fn (int $organizationId, string $module): bool => $organizationId === $context->organization->id)
+            ->andReturnUsing(static fn (int $organizationId, string $module): bool => $module === 'workforce-management');
+    }));
 
     app()->forgetInstance(ModulePermissionChecker::class);
     app()->forgetInstance(PermissionResolver::class);
