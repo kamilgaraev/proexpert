@@ -81,6 +81,10 @@ final class WorkforceAttendanceService
 
         $this->assertPayrollPeriodOpen($organizationId, $workDate, $projectId);
 
+        if ((string) $payload['status'] === 'at_work' && $this->hasApprovedAbsence($organizationId, $employeeId, $workDate)) {
+            throw new DomainException(trans_message('workforce.errors.attendance_conflicts_with_absence'));
+        }
+
         $id = DB::table('workforce_attendance_corrections')->insertGetId([
             'organization_id' => $organizationId,
             'employee_id' => $employeeId,
@@ -333,5 +337,17 @@ final class WorkforceAttendanceService
         if ($exists) {
             throw new DomainException(trans_message('workforce.errors.payroll_period_locked'));
         }
+    }
+
+    private function hasApprovedAbsence(int $organizationId, int $employeeId, string $workDate): bool
+    {
+        return DB::table('workforce_absences')
+            ->where('organization_id', $organizationId)
+            ->where('employee_id', $employeeId)
+            ->where('status', 'approved')
+            ->whereNull('deleted_at')
+            ->whereDate('start_date', '<=', $workDate)
+            ->whereDate('end_date', '>=', $workDate)
+            ->exists();
     }
 }

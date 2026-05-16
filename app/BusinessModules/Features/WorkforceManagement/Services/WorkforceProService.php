@@ -236,10 +236,11 @@ final class WorkforceProService
             ->first();
 
         if (!$absenceType) {
+            $absenceTypeCode = $payload['absence_type_code'] ?? 'vacation';
             $absenceTypeId = DB::table('workforce_absence_types')->insertGetId([
                 'organization_id' => $organizationId,
-                'code' => $payload['absence_type_code'] ?? 'vacation',
-                'name' => $payload['absence_type_name'] ?? trans_message('workforce.absence_types.vacation'),
+                'code' => $absenceTypeCode,
+                'name' => $payload['absence_type_name'] ?? trans_message('workforce.absence_types.' . $absenceTypeCode),
                 'affects_payroll' => true,
                 'created_at' => now(),
                 'updated_at' => now(),
