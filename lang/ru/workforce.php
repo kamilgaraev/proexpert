@@ -11,6 +11,7 @@ return [
         'record_updated' => 'Запись обновлена.',
         'payroll_source_built' => 'Источник зарплатных данных собран.',
         'payroll_period_validated' => 'Расчетный период проверен.',
+        'payroll_statement_prepared' => 'Ведомость начислений подготовлена.',
         'payroll_period_locked' => 'Расчетный период закрыт.',
         'export_package_created' => 'Пакет экспорта создан.',
     ],
@@ -98,6 +99,7 @@ return [
         'applied' => 'Применено',
         'cancelled' => 'Отменено',
         'validated' => 'Проверен',
+        'prepared' => 'Подготовлена',
         'locked' => 'Закрыт',
         'created' => 'Подготовлен',
         'sent' => 'Отправлен',
@@ -142,6 +144,7 @@ return [
         'export_package_sent' => 'Пакет отправлен во внешнюю зарплатную систему.',
         'export_package_accepted' => 'Пакет принят зарплатной системой.',
         'export_package_rejected' => 'Пакет отклонен и требует повторной подготовки.',
+        'payroll_statement_prepared' => 'Ведомость собрана по проверенным нарядам и табельным данным.',
     ],
     'absence_types' => [
         'vacation' => 'Отпуск',

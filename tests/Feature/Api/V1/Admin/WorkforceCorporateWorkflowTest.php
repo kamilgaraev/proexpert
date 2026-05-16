@@ -134,6 +134,32 @@ final class WorkforceCorporateWorkflowTest extends TestCase
             ->assertJsonPath('message', trans_message('workforce.errors.export_package_accepted'));
     }
 
+    public function test_payroll_statement_is_created_from_validated_source_rows(): void
+    {
+        Storage::fake('s3');
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $employee = $this->employee($context, 'EMP-STMT-100');
+        $this->allowAccess('web_admin');
+
+        $periodId = $this->preparedValidatedPeriod($context, $project->id, $employee->id);
+
+        $statement = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/statements");
+
+        $statement->assertCreated()
+            ->assertJsonPath('data.status', 'prepared')
+            ->assertJsonPath('data.rows.0.employee_id', $employee->id)
+            ->assertJsonPath('data.rows.0.hours', '8.00')
+            ->assertJsonPath('data.rows.0.gross_amount', '4000.00');
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/statements")
+            ->assertOk()
+            ->assertJsonPath('data.0.rows.0.employee_id', $employee->id)
+            ->assertJsonPath('data.0.rows.0.gross_amount', '4000.00');
+    }
+
     private function preparedValidatedPeriod(AdminApiTestContext $context, int $projectId, int $employeeId): int
     {
         [$departmentId, $positionId, $staffUnitId, $scheduleId] = $this->createStructure($context);

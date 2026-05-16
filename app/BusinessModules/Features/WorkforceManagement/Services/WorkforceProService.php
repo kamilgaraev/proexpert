@@ -538,6 +538,112 @@ final class WorkforceProService
             ->map(fn (object $record): array => $this->decorateRecord('workforce_payroll_validation_issues', $organizationId, $record));
     }
 
+    public function payrollStatements(int $organizationId, int $periodId): Collection
+    {
+        $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
+
+        return DB::table('workforce_payroll_statements')
+            ->where('organization_id', $organizationId)
+            ->where('payroll_period_id', $periodId)
+            ->orderByDesc('id')
+            ->get()
+            ->map(fn (object $record): array => $this->payrollStatementPayload($organizationId, $record));
+    }
+
+    public function createPayrollStatement(int $organizationId, int $periodId, int $userId): array
+    {
+        $period = $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
+
+        if ($period->status === 'locked') {
+            throw new DomainException(trans_message('workforce.errors.payroll_period_locked'));
+        }
+
+        if ($period->status !== 'validated') {
+            throw new DomainException(trans_message('workforce.errors.payroll_period_not_validated'));
+        }
+
+        $sourceRows = DB::table('workforce_payroll_source_rows')
+            ->where('organization_id', $organizationId)
+            ->where('payroll_period_id', $periodId)
+            ->get();
+
+        if ($sourceRows->isEmpty()) {
+            throw new DomainException(trans_message('workforce.errors.payroll_source_empty'));
+        }
+
+        if (DB::table('workforce_payroll_validation_issues')->where('organization_id', $organizationId)->where('payroll_period_id', $periodId)->where('severity', 'blocking')->exists()) {
+            throw new DomainException(trans_message('workforce.errors.payroll_period_has_blocking_issues'));
+        }
+
+        $statementId = DB::transaction(function () use ($organizationId, $periodId, $userId, $sourceRows): int {
+            $statement = DB::table('workforce_payroll_statements')
+                ->where('organization_id', $organizationId)
+                ->where('payroll_period_id', $periodId)
+                ->first();
+
+            if ($statement === null) {
+                $statementId = DB::table('workforce_payroll_statements')->insertGetId([
+                    'organization_id' => $organizationId,
+                    'payroll_period_id' => $periodId,
+                    'statement_number' => 'PAY-' . $periodId . '-' . now()->format('YmdHis'),
+                    'status' => 'prepared',
+                    'created_by_user_id' => $userId,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            } else {
+                $statementId = (int) $statement->id;
+                DB::table('workforce_payroll_statement_rows')
+                    ->where('organization_id', $organizationId)
+                    ->where('payroll_statement_id', $statementId)
+                    ->delete();
+            }
+
+            $totalHours = 0.0;
+            $grossAmount = 0.0;
+
+            $sourceRows
+                ->groupBy(fn (object $row): string => $row->employee_id . ':' . ($row->project_id ?? 'all'))
+                ->each(function (Collection $rows) use ($organizationId, $periodId, $statementId, &$totalHours, &$grossAmount): void {
+                    $first = $rows->first();
+                    $hours = (float) $rows->sum(fn (object $row): float => (float) $row->hours);
+                    $amount = (float) $rows->sum(fn (object $row): float => (float) $row->amount);
+                    $totalHours += $hours;
+                    $grossAmount += $amount;
+
+                    DB::table('workforce_payroll_statement_rows')->insert([
+                        'organization_id' => $organizationId,
+                        'payroll_statement_id' => $statementId,
+                        'payroll_period_id' => $periodId,
+                        'employee_id' => (int) $first->employee_id,
+                        'project_id' => $first->project_id !== null ? (int) $first->project_id : null,
+                        'hours' => round($hours, 2),
+                        'gross_amount' => round($amount, 2),
+                        'source_row_ids' => json_encode($rows->pluck('id')->values()->all(), JSON_THROW_ON_ERROR),
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                });
+
+            DB::table('workforce_payroll_statements')
+                ->where('organization_id', $organizationId)
+                ->where('id', $statementId)
+                ->update([
+                    'status' => 'prepared',
+                    'total_hours' => round($totalHours, 2),
+                    'gross_amount' => round($grossAmount, 2),
+                    'updated_at' => now(),
+                ]);
+
+            return $statementId;
+        });
+
+        return $this->payrollStatementPayload(
+            $organizationId,
+            DB::table('workforce_payroll_statements')->where('organization_id', $organizationId)->where('id', $statementId)->first()
+        );
+    }
+
     private function calendarDays(CarbonImmutable $start, CarbonImmutable $end): array
     {
         $weekdays = [
@@ -865,6 +971,46 @@ final class WorkforceProService
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+    }
+
+    private function payrollStatementPayload(int $organizationId, ?object $record): array
+    {
+        if ($record === null) {
+            throw new DomainException(trans_message('workforce.errors.record_not_found'));
+        }
+
+        $rows = DB::table('workforce_payroll_statement_rows')
+            ->where('organization_id', $organizationId)
+            ->where('payroll_statement_id', $record->id)
+            ->orderBy('employee_id')
+            ->get()
+            ->map(fn (object $row): array => [
+                'id' => (int) $row->id,
+                'employee_id' => (int) $row->employee_id,
+                'employee_label' => $this->employeeLabel($organizationId, (int) $row->employee_id),
+                'project_id' => $row->project_id !== null ? (int) $row->project_id : null,
+                'project_label' => $row->project_id !== null
+                    ? Project::query()->where('organization_id', $organizationId)->whereKey((int) $row->project_id)->value('name')
+                    : null,
+                'hours' => number_format((float) $row->hours, 2, '.', ''),
+                'gross_amount' => number_format((float) $row->gross_amount, 2, '.', ''),
+            ])
+            ->all();
+
+        return [
+            'id' => (int) $record->id,
+            'payroll_period_id' => (int) $record->payroll_period_id,
+            'statement_number' => (string) $record->statement_number,
+            'status' => (string) $record->status,
+            'status_label' => $this->statusLabel((string) $record->status),
+            'total_hours' => number_format((float) $record->total_hours, 2, '.', ''),
+            'gross_amount' => number_format((float) $record->gross_amount, 2, '.', ''),
+            'rows' => $rows,
+            'workflow_summary' => [
+                'label' => (string) $record->statement_number,
+                'description' => trans_message('workforce.workflow.payroll_statement_prepared'),
+            ],
+        ];
     }
 
     private function decorateRecord(string $table, int $organizationId, object $record): array

@@ -413,6 +413,32 @@ final class WorkforceProController extends Controller
         }
     }
 
+    public function payrollStatements(Request $request, int $periodId): JsonResponse
+    {
+        try {
+            return AdminResponse::success($this->service->payrollStatements($this->organizationId($request), $periodId));
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 404);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'payroll_statements.index');
+        }
+    }
+
+    public function createPayrollStatement(Request $request, int $periodId): JsonResponse
+    {
+        try {
+            return AdminResponse::success(
+                $this->service->createPayrollStatement($this->organizationId($request), $periodId, (int) $request->user()?->id),
+                trans_message('workforce.messages.payroll_statement_prepared'),
+                201
+            );
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'payroll_statements.store');
+        }
+    }
+
     private function list(Request $request, string $table): JsonResponse
     {
         try {

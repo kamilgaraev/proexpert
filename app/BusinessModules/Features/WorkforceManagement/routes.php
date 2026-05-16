@@ -127,6 +127,12 @@ Route::prefix('api/v1/admin/workforce')
         Route::get('/payroll-periods/{periodId}/validation-issues', [WorkforceProController::class, 'payrollValidationIssues'])
             ->whereNumber('periodId')
             ->middleware('authorize:workforce.view');
+        Route::get('/payroll-periods/{periodId}/statements', [WorkforceProController::class, 'payrollStatements'])
+            ->whereNumber('periodId')
+            ->middleware('authorize:workforce.view');
+        Route::post('/payroll-periods/{periodId}/statements', [WorkforceProController::class, 'createPayrollStatement'])
+            ->whereNumber('periodId')
+            ->middleware('authorize:workforce.payroll-source.manage');
         Route::post('/payroll-periods/{periodId}/lock', [WorkforceCorporateController::class, 'lockPayrollPeriod'])
             ->whereNumber('periodId')
             ->middleware('authorize:workforce.payroll-source.lock');
