@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\BusinessModules\Features\WorkforceManagement\Http\Controllers\WorkforceEmployeeController;
+use App\BusinessModules\Features\WorkforceManagement\Http\Controllers\WorkforceProController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('api/v1/admin/workforce')
@@ -22,4 +23,81 @@ Route::prefix('api/v1/admin/workforce')
         Route::post('/employees/{employeeId}/dismiss', [WorkforceEmployeeController::class, 'dismiss'])
             ->whereNumber('employeeId')
             ->middleware('authorize:workforce.employees.basic');
+
+        Route::get('/departments', [WorkforceProController::class, 'departments'])
+            ->middleware('authorize:workforce.view');
+        Route::post('/departments', [WorkforceProController::class, 'storeDepartment'])
+            ->middleware('authorize:workforce.structure.manage');
+        Route::put('/departments/{departmentId}', [WorkforceProController::class, 'updateDepartment'])
+            ->whereNumber('departmentId')
+            ->middleware('authorize:workforce.structure.manage');
+        Route::get('/positions', [WorkforceProController::class, 'positions'])
+            ->middleware('authorize:workforce.view');
+        Route::post('/positions', [WorkforceProController::class, 'storePosition'])
+            ->middleware('authorize:workforce.structure.manage');
+        Route::put('/positions/{positionId}', [WorkforceProController::class, 'updatePosition'])
+            ->whereNumber('positionId')
+            ->middleware('authorize:workforce.structure.manage');
+        Route::get('/staff-units', [WorkforceProController::class, 'staffUnits'])
+            ->middleware('authorize:workforce.view');
+        Route::post('/staff-units', [WorkforceProController::class, 'storeStaffUnit'])
+            ->middleware('authorize:workforce.structure.manage');
+        Route::put('/staff-units/{staffUnitId}', [WorkforceProController::class, 'updateStaffUnit'])
+            ->whereNumber('staffUnitId')
+            ->middleware('authorize:workforce.structure.manage');
+        Route::post('/employee-assignments', [WorkforceProController::class, 'storeEmployeeAssignment'])
+            ->middleware('authorize:workforce.structure.manage');
+        Route::put('/employee-assignments/{assignmentId}', [WorkforceProController::class, 'updateEmployeeAssignment'])
+            ->whereNumber('assignmentId')
+            ->middleware('authorize:workforce.structure.manage');
+        Route::get('/work-schedules', [WorkforceProController::class, 'workSchedules'])
+            ->middleware('authorize:workforce.view');
+        Route::post('/work-schedules', [WorkforceProController::class, 'storeWorkSchedule'])
+            ->middleware('authorize:workforce.attendance.manage');
+        Route::post('/work-schedules/{scheduleId}/days', [WorkforceProController::class, 'storeWorkScheduleDay'])
+            ->whereNumber('scheduleId')
+            ->middleware('authorize:workforce.attendance.manage');
+        Route::get('/absences', [WorkforceProController::class, 'absences'])
+            ->middleware('authorize:workforce.view');
+        Route::post('/absences', [WorkforceProController::class, 'storeAbsence'])
+            ->middleware('authorize:workforce.attendance.manage');
+        Route::post('/absences/{absenceId}/approve', [WorkforceProController::class, 'approveAbsence'])
+            ->whereNumber('absenceId')
+            ->middleware('authorize:workforce.attendance.manage');
+        Route::post('/absences/{absenceId}/cancel', [WorkforceProController::class, 'cancelAbsence'])
+            ->whereNumber('absenceId')
+            ->middleware('authorize:workforce.attendance.manage');
+        Route::get('/business-trips', [WorkforceProController::class, 'businessTrips'])
+            ->middleware('authorize:workforce.view');
+        Route::post('/business-trips', [WorkforceProController::class, 'storeBusinessTrip'])
+            ->middleware('authorize:workforce.attendance.manage');
+        Route::post('/business-trips/{tripId}/approve', [WorkforceProController::class, 'approveBusinessTrip'])
+            ->whereNumber('tripId')
+            ->middleware('authorize:workforce.attendance.manage');
+        Route::post('/business-trips/{tripId}/cancel', [WorkforceProController::class, 'cancelBusinessTrip'])
+            ->whereNumber('tripId')
+            ->middleware('authorize:workforce.attendance.manage');
+        Route::get('/orders', [WorkforceProController::class, 'orders'])
+            ->middleware('authorize:workforce.view');
+        Route::post('/orders', [WorkforceProController::class, 'storeOrder'])
+            ->middleware('authorize:workforce.attendance.manage');
+        Route::get('/payroll-periods', [WorkforceProController::class, 'payrollPeriods'])
+            ->middleware('authorize:workforce.view');
+        Route::post('/payroll-periods', [WorkforceProController::class, 'storePayrollPeriod'])
+            ->middleware('authorize:workforce.payroll-source.manage');
+        Route::get('/payroll-periods/{periodId}', [WorkforceProController::class, 'showPayrollPeriod'])
+            ->whereNumber('periodId')
+            ->middleware('authorize:workforce.view');
+        Route::post('/payroll-periods/{periodId}/build-source', [WorkforceProController::class, 'buildPayrollSource'])
+            ->whereNumber('periodId')
+            ->middleware('authorize:workforce.payroll-source.manage');
+        Route::post('/payroll-periods/{periodId}/validate', [WorkforceProController::class, 'validatePayrollPeriod'])
+            ->whereNumber('periodId')
+            ->middleware('authorize:workforce.payroll-source.validate');
+        Route::get('/payroll-periods/{periodId}/source-rows', [WorkforceProController::class, 'payrollSourceRows'])
+            ->whereNumber('periodId')
+            ->middleware('authorize:workforce.view');
+        Route::get('/payroll-periods/{periodId}/validation-issues', [WorkforceProController::class, 'payrollValidationIssues'])
+            ->whereNumber('periodId')
+            ->middleware('authorize:workforce.view');
     });

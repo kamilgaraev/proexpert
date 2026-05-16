@@ -1,0 +1,411 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Features\WorkforceManagement\Services;
+
+use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborTimesheetEntry;
+use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
+use App\Models\Project;
+use DomainException;
+use Illuminate\Database\Query\Builder;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+
+final class WorkforceProService
+{
+    public function list(string $table, int $organizationId): Collection
+    {
+        return DB::table($table)
+            ->where('organization_id', $organizationId)
+            ->orderByDesc('id')
+            ->get();
+    }
+
+    public function store(string $table, int $organizationId, array $payload): array
+    {
+        $id = DB::table($table)->insertGetId(array_merge($this->normalizeJsonPayload($payload), [
+            'organization_id' => $organizationId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]));
+
+        return (array) DB::table($table)->where('id', $id)->first();
+    }
+
+    public function update(string $table, int $organizationId, int $id, array $payload): array
+    {
+        $this->assertRecord($table, $organizationId, $id);
+        DB::table($table)->where('organization_id', $organizationId)->where('id', $id)->update(array_merge($this->normalizeJsonPayload($payload), [
+            'updated_at' => now(),
+        ]));
+
+        return (array) DB::table($table)->where('organization_id', $organizationId)->where('id', $id)->first();
+    }
+
+    public function storeStaffUnit(int $organizationId, array $payload): array
+    {
+        $this->assertRecord('workforce_departments', $organizationId, (int) $payload['department_id']);
+        $this->assertRecord('workforce_positions', $organizationId, (int) $payload['position_id']);
+
+        return $this->store('workforce_staff_units', $organizationId, $payload);
+    }
+
+    public function updateStaffUnit(int $organizationId, int $staffUnitId, array $payload): array
+    {
+        if (array_key_exists('department_id', $payload)) {
+            $this->assertRecord('workforce_departments', $organizationId, (int) $payload['department_id']);
+        }
+
+        if (array_key_exists('position_id', $payload)) {
+            $this->assertRecord('workforce_positions', $organizationId, (int) $payload['position_id']);
+        }
+
+        return $this->update('workforce_staff_units', $organizationId, $staffUnitId, $payload);
+    }
+
+    public function storeAssignment(int $organizationId, array $payload, ?int $assignmentId = null): array
+    {
+        $this->assertEmployee($organizationId, (int) $payload['employee_id']);
+        $staffUnit = $this->assertRecord('workforce_staff_units', $organizationId, (int) $payload['staff_unit_id']);
+        $this->assertRecord('workforce_departments', $organizationId, (int) $payload['department_id']);
+        $this->assertRecord('workforce_positions', $organizationId, (int) $payload['position_id']);
+
+        if ((int) ($payload['department_id'] ?? 0) !== (int) $staffUnit->department_id || (int) ($payload['position_id'] ?? 0) !== (int) $staffUnit->position_id) {
+            throw new DomainException(trans_message('workforce.errors.staff_unit_structure_mismatch'));
+        }
+
+        if (!empty($payload['work_schedule_id'])) {
+            $this->assertRecord('workforce_work_schedules', $organizationId, (int) $payload['work_schedule_id']);
+        }
+
+        if (!empty($payload['project_id'])) {
+            $this->assertProject($organizationId, (int) $payload['project_id']);
+        }
+
+        if ($this->hasOverlappingAssignment($organizationId, (int) $payload['employee_id'], $payload['valid_from'], $payload['valid_to'] ?? null, $assignmentId)) {
+            throw new DomainException(trans_message('workforce.errors.assignment_overlap'));
+        }
+
+        return $assignmentId === null
+            ? $this->store('workforce_employee_assignments', $organizationId, $payload)
+            : $this->update('workforce_employee_assignments', $organizationId, $assignmentId, $payload);
+    }
+
+    public function storeScheduleDay(int $organizationId, int $scheduleId, array $payload): array
+    {
+        $this->assertRecord('workforce_work_schedules', $organizationId, $scheduleId);
+
+        return $this->store('workforce_work_schedule_days', $organizationId, array_merge($payload, [
+            'work_schedule_id' => $scheduleId,
+        ]));
+    }
+
+    public function storeAbsence(int $organizationId, array $payload): array
+    {
+        $this->assertEmployee($organizationId, (int) $payload['employee_id']);
+        $absenceType = DB::table('workforce_absence_types')
+            ->where('organization_id', $organizationId)
+            ->where('code', $payload['absence_type_code'] ?? 'vacation')
+            ->first();
+
+        if (!$absenceType) {
+            $absenceTypeId = DB::table('workforce_absence_types')->insertGetId([
+                'organization_id' => $organizationId,
+                'code' => $payload['absence_type_code'] ?? 'vacation',
+                'name' => $payload['absence_type_name'] ?? trans_message('workforce.absence_types.vacation'),
+                'affects_payroll' => true,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        } else {
+            $absenceTypeId = $absenceType->id;
+        }
+
+        unset($payload['absence_type_code'], $payload['absence_type_name']);
+
+        return $this->store('workforce_absences', $organizationId, array_merge($payload, [
+            'absence_type_id' => $absenceTypeId,
+            'status' => $payload['status'] ?? 'draft',
+        ]));
+    }
+
+    public function storeBusinessTrip(int $organizationId, array $payload): array
+    {
+        $this->assertEmployee($organizationId, (int) $payload['employee_id']);
+
+        if (!empty($payload['project_id'])) {
+            $this->assertProject($organizationId, (int) $payload['project_id']);
+        }
+
+        return $this->store('workforce_business_trips', $organizationId, array_merge($payload, [
+            'status' => $payload['status'] ?? 'draft',
+        ]));
+    }
+
+    public function storeOrder(int $organizationId, array $payload): array
+    {
+        if (!empty($payload['employee_id'])) {
+            $this->assertEmployee($organizationId, (int) $payload['employee_id']);
+        }
+
+        return $this->store('workforce_orders', $organizationId, array_merge($payload, [
+            'status' => $payload['status'] ?? 'draft',
+        ]));
+    }
+
+    public function setStatus(string $table, int $organizationId, int $id, string $status): array
+    {
+        return $this->update($table, $organizationId, $id, ['status' => $status]);
+    }
+
+    public function storePayrollPeriod(int $organizationId, int $userId, array $payload): array
+    {
+        if (!empty($payload['project_id'])) {
+            $this->assertProject($organizationId, (int) $payload['project_id']);
+        }
+
+        return $this->store('workforce_payroll_periods', $organizationId, array_merge($payload, [
+            'status' => 'draft',
+            'created_by_user_id' => $userId,
+        ]));
+    }
+
+    public function buildPayrollSource(int $organizationId, int $periodId): array
+    {
+        $period = $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
+
+        DB::transaction(function () use ($organizationId, $periodId, $period): void {
+            DB::table('workforce_payroll_source_rows')->where('organization_id', $organizationId)->where('payroll_period_id', $periodId)->delete();
+
+            ProductionLaborTimesheetEntry::query()
+                ->with(['timesheet.workOrder', 'line'])
+                ->where('organization_id', $organizationId)
+                ->where('include_in_payroll', true)
+                ->whereNotNull('employee_id')
+                ->whereHas('timesheet', function ($query) use ($period): void {
+                    $query->whereBetween('shift_date', [$period->period_start, $period->period_end]);
+                })
+                ->whereHas('timesheet.workOrder', function ($query) use ($period): void {
+                    $query->whereIn('status', ['accepted', 'closed'])
+                        ->when($period->project_id !== null, fn ($nested) => $nested->where('project_id', $period->project_id));
+                })
+                ->get()
+                ->each(function (ProductionLaborTimesheetEntry $entry) use ($organizationId, $periodId): void {
+                    $timesheet = $entry->timesheet;
+                    $workOrder = $timesheet->workOrder;
+                    $line = $entry->line;
+                    $amount = (float) $entry->hours * (float) ($line?->hour_rate ?? 0);
+
+                    DB::table('workforce_payroll_source_rows')->insert([
+                        'organization_id' => $organizationId,
+                        'payroll_period_id' => $periodId,
+                        'employee_id' => $entry->employee_id,
+                        'project_id' => $timesheet->project_id,
+                        'work_order_id' => $entry->timesheet->work_order_id,
+                        'work_order_line_id' => $entry->work_order_line_id,
+                        'timesheet_entry_id' => $entry->id,
+                        'work_date' => $timesheet->shift_date?->toDateString(),
+                        'source_type' => 'timesheet_hours',
+                        'hours' => $entry->hours,
+                        'amount' => round($amount, 2),
+                        'payload' => json_encode([
+                            'source' => 'production-labor',
+                            'work_order_number' => $workOrder?->order_number,
+                        ], JSON_THROW_ON_ERROR),
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                });
+        });
+
+        return $this->payrollSourceRows($organizationId, $periodId)->all();
+    }
+
+    public function validatePayrollPeriod(int $organizationId, int $periodId): array
+    {
+        $period = $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
+
+        DB::transaction(function () use ($organizationId, $periodId, $period): void {
+            DB::table('workforce_payroll_validation_issues')->where('organization_id', $organizationId)->where('payroll_period_id', $periodId)->delete();
+
+            $rows = DB::table('workforce_payroll_source_rows')
+                ->where('organization_id', $organizationId)
+                ->where('payroll_period_id', $periodId)
+                ->get();
+
+            foreach ($rows as $row) {
+                $assignment = $this->assignmentForDate($organizationId, (int) $row->employee_id, (string) $row->work_date);
+
+                if (!$assignment) {
+                    $this->issue($organizationId, $periodId, 'missing_assignment', trans_message('workforce.validation.missing_assignment'), $row);
+                    continue;
+                }
+
+                if ($assignment->work_schedule_id === null) {
+                    $this->issue($organizationId, $periodId, 'missing_work_schedule', trans_message('workforce.validation.missing_work_schedule'), $row);
+                } elseif (!$this->workScheduleAllowsWorkDate($organizationId, (int) $assignment->work_schedule_id, (string) $row->work_date)) {
+                    $this->issue($organizationId, $periodId, 'work_schedule_conflict', trans_message('workforce.validation.work_schedule_conflict'), $row);
+                }
+
+                $absence = DB::table('workforce_absences')
+                    ->join('workforce_absence_types', 'workforce_absence_types.id', '=', 'workforce_absences.absence_type_id')
+                    ->where('workforce_absences.organization_id', $organizationId)
+                    ->where('workforce_absences.employee_id', $row->employee_id)
+                    ->where('workforce_absences.status', 'approved')
+                    ->where('workforce_absence_types.affects_payroll', true)
+                    ->whereDate('workforce_absences.start_date', '<=', $row->work_date)
+                    ->whereDate('workforce_absences.end_date', '>=', $row->work_date)
+                    ->exists();
+
+                if ($absence) {
+                    $this->issue($organizationId, $periodId, 'absence_conflict', trans_message('workforce.validation.absence_conflict'), $row);
+                }
+            }
+
+            $hasBlockingIssues = DB::table('workforce_payroll_validation_issues')
+                ->where('organization_id', $organizationId)
+                ->where('payroll_period_id', $periodId)
+                ->where('severity', 'blocking')
+                ->exists();
+
+            DB::table('workforce_payroll_periods')
+                ->where('organization_id', $organizationId)
+                ->where('id', $period->id)
+                ->update([
+                    'status' => $hasBlockingIssues ? 'draft' : 'validated',
+                    'updated_at' => now(),
+                ]);
+        });
+
+        return $this->payrollValidationIssues($organizationId, $periodId)->all();
+    }
+
+    public function payrollSourceRows(int $organizationId, int $periodId): Collection
+    {
+        $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
+
+        return DB::table('workforce_payroll_source_rows')
+            ->where('organization_id', $organizationId)
+            ->where('payroll_period_id', $periodId)
+            ->orderBy('work_date')
+            ->get();
+    }
+
+    public function payrollValidationIssues(int $organizationId, int $periodId): Collection
+    {
+        $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
+
+        return DB::table('workforce_payroll_validation_issues')
+            ->where('organization_id', $organizationId)
+            ->where('payroll_period_id', $periodId)
+            ->orderBy('id')
+            ->get();
+    }
+
+    public function assertRecord(string $table, int $organizationId, int $id): object
+    {
+        $record = DB::table($table)->where('organization_id', $organizationId)->where('id', $id)->first();
+
+        if (!$record) {
+            throw new DomainException(trans_message('workforce.errors.record_not_found'));
+        }
+
+        return $record;
+    }
+
+    private function assertEmployee(int $organizationId, int $employeeId): void
+    {
+        if (!WorkforceEmployee::query()->where('organization_id', $organizationId)->whereKey($employeeId)->exists()) {
+            throw new DomainException(trans_message('workforce.errors.employee_not_found'));
+        }
+    }
+
+    private function assertProject(int $organizationId, int $projectId): void
+    {
+        if (!Project::query()->where('organization_id', $organizationId)->whereKey($projectId)->exists()) {
+            throw new DomainException(trans_message('workforce.errors.project_not_found'));
+        }
+    }
+
+    private function hasOverlappingAssignment(int $organizationId, int $employeeId, string $validFrom, ?string $validTo, ?int $ignoreId = null): bool
+    {
+        return DB::table('workforce_employee_assignments')
+            ->where('organization_id', $organizationId)
+            ->where('employee_id', $employeeId)
+            ->where('status', 'active')
+            ->when($ignoreId !== null, fn (Builder $query) => $query->where('id', '!=', $ignoreId))
+            ->whereDate('valid_from', '<=', $validTo ?? '9999-12-31')
+            ->where(function (Builder $query) use ($validFrom): void {
+                $query->whereNull('valid_to')->orWhereDate('valid_to', '>=', $validFrom);
+            })
+            ->exists();
+    }
+
+    private function assignmentForDate(int $organizationId, int $employeeId, string $date): ?object
+    {
+        return DB::table('workforce_employee_assignments')
+            ->where('organization_id', $organizationId)
+            ->where('employee_id', $employeeId)
+            ->where('status', 'active')
+            ->whereDate('valid_from', '<=', $date)
+            ->where(function (Builder $query) use ($date): void {
+                $query->whereNull('valid_to')->orWhereDate('valid_to', '>=', $date);
+            })
+            ->first();
+    }
+
+    private function workScheduleAllowsWorkDate(int $organizationId, int $scheduleId, string $date): bool
+    {
+        $schedule = DB::table('workforce_work_schedules')
+            ->where('organization_id', $organizationId)
+            ->where('id', $scheduleId)
+            ->where('is_active', true)
+            ->first();
+
+        if (!$schedule || (float) $schedule->hours_per_day <= 0) {
+            return false;
+        }
+
+        $day = DB::table('workforce_work_schedule_days')
+            ->where('organization_id', $organizationId)
+            ->where('work_schedule_id', $scheduleId)
+            ->whereDate('work_date', $date)
+            ->first();
+
+        if (!$day) {
+            return true;
+        }
+
+        return $day->day_type === 'work' && (float) $day->planned_hours > 0;
+    }
+
+    private function issue(int $organizationId, int $periodId, string $code, string $message, object $row): void
+    {
+        DB::table('workforce_payroll_validation_issues')->insert([
+            'organization_id' => $organizationId,
+            'payroll_period_id' => $periodId,
+            'severity' => 'blocking',
+            'issue_code' => $code,
+            'message' => $message,
+            'entity_type' => 'payroll_source_row',
+            'entity_id' => $row->id,
+            'employee_id' => $row->employee_id,
+            'project_id' => $row->project_id,
+            'payload' => json_encode(['work_date' => $row->work_date], JSON_THROW_ON_ERROR),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function normalizeJsonPayload(array $payload): array
+    {
+        foreach (['metadata', 'payload', 'week_pattern'] as $field) {
+            if (array_key_exists($field, $payload) && is_array($payload[$field])) {
+                $payload[$field] = json_encode($payload[$field], JSON_THROW_ON_ERROR);
+            }
+        }
+
+        return $payload;
+    }
+}
