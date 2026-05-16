@@ -8,6 +8,7 @@ use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborTimesheet
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
 use App\BusinessModules\Features\WorkforceManagement\Services\WorkforceEmployeeService;
 use App\Models\Project;
+use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Collection;
@@ -125,6 +126,105 @@ final class WorkforceProService
         return $this->store('workforce_work_schedule_days', $organizationId, array_merge($payload, [
             'work_schedule_id' => $scheduleId,
         ]));
+    }
+
+    public function scheduleCalendar(int $organizationId, string $dateFrom, string $dateTo, ?int $projectId = null): array
+    {
+        if ($projectId !== null) {
+            $this->assertProject($organizationId, $projectId);
+        }
+
+        $start = CarbonImmutable::parse($dateFrom)->startOfDay();
+        $end = CarbonImmutable::parse($dateTo)->startOfDay();
+        $days = $this->calendarDays($start, $end);
+
+        $assignments = DB::table('workforce_employee_assignments as assignment')
+            ->join('workforce_employees as employee', 'employee.id', '=', 'assignment.employee_id')
+            ->join('workforce_departments as department', 'department.id', '=', 'assignment.department_id')
+            ->join('workforce_positions as position', 'position.id', '=', 'assignment.position_id')
+            ->leftJoin('workforce_work_schedules as schedule', 'schedule.id', '=', 'assignment.work_schedule_id')
+            ->where('assignment.organization_id', $organizationId)
+            ->where('assignment.status', 'active')
+            ->whereNull('assignment.deleted_at')
+            ->whereNull('employee.deleted_at')
+            ->whereDate('assignment.valid_from', '<=', $end->toDateString())
+            ->where(function (Builder $query) use ($start): void {
+                $query->whereNull('assignment.valid_to')->orWhereDate('assignment.valid_to', '>=', $start->toDateString());
+            })
+            ->when($projectId !== null, fn (Builder $query) => $query->where('assignment.project_id', $projectId))
+            ->orderBy('employee.last_name')
+            ->orderBy('employee.first_name')
+            ->select([
+                'assignment.id',
+                'assignment.employee_id',
+                'assignment.work_schedule_id',
+                'assignment.valid_from',
+                'assignment.valid_to',
+                'employee.last_name',
+                'employee.first_name',
+                'employee.middle_name',
+                'department.name as department_label',
+                'position.name as position_label',
+                'schedule.hours_per_day',
+            ])
+            ->get();
+
+        $scheduleIds = $assignments
+            ->pluck('work_schedule_id')
+            ->filter()
+            ->map(fn (mixed $id): int => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        $scheduleDays = empty($scheduleIds)
+            ? collect()
+            : DB::table('workforce_work_schedule_days')
+                ->where('organization_id', $organizationId)
+                ->whereIn('work_schedule_id', $scheduleIds)
+                ->whereBetween('work_date', [$start->toDateString(), $end->toDateString()])
+                ->get()
+                ->keyBy(fn (object $record): string => $record->work_schedule_id . ':' . $record->work_date);
+
+        $employeeIds = $assignments
+            ->pluck('employee_id')
+            ->map(fn (mixed $id): int => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        $absences = empty($employeeIds)
+            ? collect()
+            : DB::table('workforce_absences as absence')
+                ->join('workforce_absence_types as type', 'type.id', '=', 'absence.absence_type_id')
+                ->where('absence.organization_id', $organizationId)
+                ->whereIn('absence.employee_id', $employeeIds)
+                ->where('absence.status', 'approved')
+                ->whereDate('absence.start_date', '<=', $end->toDateString())
+                ->whereDate('absence.end_date', '>=', $start->toDateString())
+                ->select('absence.employee_id', 'absence.start_date', 'absence.end_date', 'type.name as label')
+                ->get()
+                ->groupBy('employee_id');
+
+        $businessTrips = empty($employeeIds)
+            ? collect()
+            : DB::table('workforce_business_trips')
+                ->where('organization_id', $organizationId)
+                ->whereIn('employee_id', $employeeIds)
+                ->where('status', 'approved')
+                ->whereDate('start_date', '<=', $end->toDateString())
+                ->whereDate('end_date', '>=', $start->toDateString())
+                ->select('employee_id', 'start_date', 'end_date', 'destination')
+                ->get()
+                ->groupBy('employee_id');
+
+        return [
+            'days' => $days,
+            'employees' => $assignments
+                ->map(fn (object $assignment): array => $this->calendarEmployeeRow($assignment, $days, $scheduleDays, $absences, $businessTrips))
+                ->values()
+                ->all(),
+        ];
     }
 
     public function storeAbsence(int $organizationId, array $payload): array
@@ -435,6 +535,119 @@ final class WorkforceProService
             ->orderBy('id')
             ->get()
             ->map(fn (object $record): array => $this->decorateRecord('workforce_payroll_validation_issues', $organizationId, $record));
+    }
+
+    private function calendarDays(CarbonImmutable $start, CarbonImmutable $end): array
+    {
+        $weekdays = [
+            1 => 'Пн',
+            2 => 'Вт',
+            3 => 'Ср',
+            4 => 'Чт',
+            5 => 'Пт',
+            6 => 'Сб',
+            7 => 'Вс',
+        ];
+
+        $days = [];
+
+        for ($date = $start; $date->lte($end); $date = $date->addDay()) {
+            $days[] = [
+                'date' => $date->toDateString(),
+                'label' => $date->format('d.m'),
+                'weekday' => $weekdays[$date->dayOfWeekIso],
+            ];
+        }
+
+        return $days;
+    }
+
+    private function calendarEmployeeRow(object $assignment, array $days, Collection $scheduleDays, Collection $absences, Collection $businessTrips): array
+    {
+        $employeeDays = [];
+
+        foreach ($days as $day) {
+            $date = (string) $day['date'];
+            $employeeDays[$date] = $this->calendarStatusForDate($assignment, $date, $scheduleDays, $absences, $businessTrips);
+        }
+
+        return [
+            'employee_id' => (int) $assignment->employee_id,
+            'full_name' => trim(implode(' ', array_filter([$assignment->last_name, $assignment->first_name, $assignment->middle_name]))),
+            'assignment_label' => sprintf('%s / %s', $assignment->position_label, $assignment->department_label),
+            'days' => $employeeDays,
+        ];
+    }
+
+    private function calendarStatusForDate(object $assignment, string $date, Collection $scheduleDays, Collection $absences, Collection $businessTrips): array
+    {
+        if ($date < (string) $assignment->valid_from || ($assignment->valid_to !== null && $date > (string) $assignment->valid_to)) {
+            return [
+                'status' => 'not_scheduled',
+                'status_label' => trans_message('workforce.calendar.not_scheduled'),
+                'hours' => 0,
+            ];
+        }
+
+        $absence = $this->periodRecordForDate($absences->get($assignment->employee_id, collect()), $date);
+
+        if ($absence !== null) {
+            return [
+                'status' => 'absence',
+                'status_label' => (string) ($absence->label ?: trans_message('workforce.calendar.absence')),
+                'hours' => 0,
+            ];
+        }
+
+        $trip = $this->periodRecordForDate($businessTrips->get($assignment->employee_id, collect()), $date);
+
+        if ($trip !== null) {
+            return [
+                'status' => 'business_trip',
+                'status_label' => trans_message('workforce.calendar.business_trip'),
+                'hours' => 0,
+            ];
+        }
+
+        if ($assignment->work_schedule_id === null) {
+            return [
+                'status' => 'not_scheduled',
+                'status_label' => trans_message('workforce.calendar.schedule_missing'),
+                'hours' => 0,
+            ];
+        }
+
+        $scheduleDay = $scheduleDays->get($assignment->work_schedule_id . ':' . $date);
+
+        if ($scheduleDay !== null && $scheduleDay->day_type !== 'work') {
+            return [
+                'status' => 'day_off',
+                'status_label' => $scheduleDay->day_type === 'holiday'
+                    ? trans_message('workforce.calendar.holiday')
+                    : trans_message('workforce.calendar.day_off'),
+                'hours' => 0,
+            ];
+        }
+
+        return [
+            'status' => 'workday',
+            'status_label' => trans_message('workforce.calendar.workday'),
+            'hours' => $this->calendarHours($scheduleDay?->planned_hours ?? $assignment->hours_per_day ?? 0),
+        ];
+    }
+
+    private function periodRecordForDate(Collection $records, string $date): ?object
+    {
+        return $records->first(
+            fn (object $record): bool => (string) $record->start_date <= $date && (string) $record->end_date >= $date
+        );
+    }
+
+    private function calendarHours(mixed $value): int|float
+    {
+        $hours = (float) $value;
+
+        return floor($hours) === $hours ? (int) $hours : $hours;
     }
 
     public function assertRecord(string $table, int $organizationId, int $id): object

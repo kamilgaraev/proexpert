@@ -130,6 +130,15 @@ return [
     'absence_types' => [
         'vacation' => 'Отпуск',
     ],
+    'calendar' => [
+        'workday' => 'Рабочий день',
+        'day_off' => 'Выходной',
+        'holiday' => 'Праздник',
+        'absence' => 'Отсутствие',
+        'business_trip' => 'Командировка',
+        'not_scheduled' => 'Не назначен',
+        'schedule_missing' => 'График не назначен',
+    ],
     'validation' => [
         'missing_assignment' => 'Нет активного назначения сотрудника на дату работы.',
         'missing_work_schedule' => 'Нет графика работы для назначения сотрудника.',

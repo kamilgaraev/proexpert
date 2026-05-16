@@ -91,6 +91,30 @@ final class WorkforceProController extends Controller
         return $this->assignment($request, $assignmentId);
     }
 
+    public function scheduleCalendar(Request $request): JsonResponse
+    {
+        try {
+            $payload = $request->validate([
+                'date_from' => ['required', 'date'],
+                'date_to' => ['required', 'date', 'after_or_equal:date_from'],
+                'project_id' => ['nullable', 'integer'],
+            ]);
+
+            return AdminResponse::success($this->service->scheduleCalendar(
+                $this->organizationId($request),
+                (string) $payload['date_from'],
+                (string) $payload['date_to'],
+                isset($payload['project_id']) ? (int) $payload['project_id'] : null
+            ));
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'schedule_calendar.index');
+        }
+    }
+
     public function workSchedules(Request $request): JsonResponse
     {
         return $this->list($request, 'workforce_work_schedules');

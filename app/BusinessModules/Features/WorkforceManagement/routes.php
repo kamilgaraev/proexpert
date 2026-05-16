@@ -54,6 +54,8 @@ Route::prefix('api/v1/admin/workforce')
         Route::put('/employee-assignments/{assignmentId}', [WorkforceProController::class, 'updateEmployeeAssignment'])
             ->whereNumber('assignmentId')
             ->middleware('authorize:workforce.structure.manage');
+        Route::get('/schedule-calendar', [WorkforceProController::class, 'scheduleCalendar'])
+            ->middleware('authorize:workforce.view');
         Route::get('/work-schedules', [WorkforceProController::class, 'workSchedules'])
             ->middleware('authorize:workforce.view');
         Route::post('/work-schedules', [WorkforceProController::class, 'storeWorkSchedule'])
