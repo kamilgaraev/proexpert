@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\WorkforceManagement\Http\Controllers;
 
+use App\BusinessModules\Features\WorkforceManagement\Http\Resources\WorkforceEmployeeCardResource;
 use App\BusinessModules\Features\WorkforceManagement\Http\Resources\WorkforceEmployeeResource;
 use App\BusinessModules\Features\WorkforceManagement\Services\WorkforceEmployeeService;
 use App\Http\Controllers\Controller;
@@ -66,6 +67,27 @@ final class WorkforceEmployeeController extends Controller
             return AdminResponse::error($exception->getMessage(), 404);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'employees.show');
+        }
+    }
+
+    public function card(Request $request, int $employeeId): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'work_date' => ['nullable', 'date'],
+            ]);
+
+            return AdminResponse::success(new WorkforceEmployeeCardResource($this->service->card(
+                (int) $request->attributes->get('current_organization_id'),
+                $employeeId,
+                $validated['work_date'] ?? null
+            )));
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 404);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'employees.card');
         }
     }
 

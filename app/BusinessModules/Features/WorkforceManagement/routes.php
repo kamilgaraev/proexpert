@@ -18,6 +18,9 @@ Route::prefix('api/v1/admin/workforce')
         Route::get('/employees/{employeeId}', [WorkforceEmployeeController::class, 'show'])
             ->whereNumber('employeeId')
             ->middleware('authorize:workforce.view');
+        Route::get('/employees/{employeeId}/card', [WorkforceEmployeeController::class, 'card'])
+            ->whereNumber('employeeId')
+            ->middleware('authorize:workforce.view');
         Route::put('/employees/{employeeId}', [WorkforceEmployeeController::class, 'update'])
             ->whereNumber('employeeId')
             ->middleware('authorize:workforce.employees.basic');

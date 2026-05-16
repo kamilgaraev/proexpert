@@ -102,6 +102,68 @@ final class WorkforceEmployeeService
         return $employee;
     }
 
+    public function card(int $organizationId, int $employeeId, ?string $workDate = null): array
+    {
+        $employee = $this->find($organizationId, $employeeId);
+        $date = Carbon::parse($workDate ?? now()->toDateString())->toDateString();
+        $assignment = $this->currentAssignment($organizationId, $employeeId, $date);
+        $schedule = $assignment?->work_schedule_id
+            ? $this->scheduleForDate($organizationId, (int) $assignment->work_schedule_id, $date)
+            : null;
+        $activeAbsence = $this->activeAbsence($organizationId, $employeeId, $date);
+        $activeBusinessTrip = $this->activeBusinessTrip($organizationId, $employeeId, $date);
+        $presence = $this->presence($employee->employment_status, $date, $assignment, $schedule, $activeAbsence, $activeBusinessTrip);
+
+        return [
+            'id' => $employee->id,
+            'personnel_number' => $employee->personnel_number,
+            'full_name' => $employee->full_name,
+            'employment_status' => $employee->employment_status,
+            'employment_status_label' => trans_message("workforce.employee_statuses.{$employee->employment_status}"),
+            'presence' => $presence,
+            'current_assignment' => $assignment ? [
+                'id' => $assignment->id,
+                'department_id' => $assignment->department_id,
+                'department_label' => $assignment->department_label,
+                'position_id' => $assignment->position_id,
+                'position_label' => $assignment->position_label,
+                'staff_unit_id' => $assignment->staff_unit_id,
+                'staff_unit_label' => $assignment->staff_unit_label,
+                'project_id' => $assignment->project_id,
+                'project_label' => $assignment->project_label,
+                'rate' => (float) $assignment->rate,
+                'valid_from' => $assignment->valid_from,
+                'valid_to' => $assignment->valid_to,
+            ] : null,
+            'current_schedule' => $assignment?->work_schedule_id ? [
+                'id' => $assignment->work_schedule_id,
+                'label' => $assignment->schedule_label,
+                'code' => $assignment->schedule_code,
+                'hours_per_day' => $assignment->schedule_hours_per_day !== null ? (float) $assignment->schedule_hours_per_day : null,
+                'day_type' => $schedule?->day_type,
+                'planned_hours' => $schedule?->planned_hours !== null ? (float) $schedule->planned_hours : null,
+            ] : null,
+            'active_absence' => $activeAbsence,
+            'active_business_trip' => $activeBusinessTrip,
+            'available_actions' => [
+                'dismiss' => [
+                    'enabled' => $employee->employment_status !== 'dismissed',
+                    'label' => trans_message('workforce.actions.dismiss'),
+                    'reason' => $employee->employment_status === 'dismissed'
+                        ? trans_message('workforce.actions.employee_already_dismissed')
+                        : null,
+                ],
+                'assign' => [
+                    'enabled' => $employee->employment_status === 'active',
+                    'label' => trans_message('workforce.actions.assign'),
+                    'reason' => $employee->employment_status !== 'active'
+                        ? trans_message('workforce.actions.employee_not_active')
+                        : null,
+                ],
+            ],
+        ];
+    }
+
     private function assertUserBelongsToOrganization(int $organizationId, mixed $userId): void
     {
         if ($userId === null || $userId === '') {
@@ -150,5 +212,152 @@ final class WorkforceEmployeeService
         if ($exists) {
             throw new DomainException(trans_message('workforce.errors.dismissal_locked_payroll_period'));
         }
+    }
+
+    private function currentAssignment(int $organizationId, int $employeeId, string $date): ?object
+    {
+        return DB::table('workforce_employee_assignments as assignment')
+            ->join('workforce_departments as department', 'department.id', '=', 'assignment.department_id')
+            ->join('workforce_positions as position', 'position.id', '=', 'assignment.position_id')
+            ->join('workforce_staff_units as staff_unit', 'staff_unit.id', '=', 'assignment.staff_unit_id')
+            ->leftJoin('projects as project', 'project.id', '=', 'assignment.project_id')
+            ->leftJoin('workforce_work_schedules as schedule', 'schedule.id', '=', 'assignment.work_schedule_id')
+            ->where('assignment.organization_id', $organizationId)
+            ->where('assignment.employee_id', $employeeId)
+            ->where('assignment.status', 'active')
+            ->whereDate('assignment.valid_from', '<=', $date)
+            ->where(function ($query) use ($date): void {
+                $query->whereNull('assignment.valid_to')
+                    ->orWhereDate('assignment.valid_to', '>=', $date);
+            })
+            ->orderByDesc('assignment.valid_from')
+            ->select([
+                'assignment.id',
+                'assignment.department_id',
+                'assignment.position_id',
+                'assignment.staff_unit_id',
+                'assignment.project_id',
+                'assignment.work_schedule_id',
+                'assignment.rate',
+                'assignment.valid_from',
+                'assignment.valid_to',
+                'department.name as department_label',
+                'position.name as position_label',
+                'staff_unit.code as staff_unit_label',
+                'project.name as project_label',
+                'schedule.code as schedule_code',
+                'schedule.name as schedule_label',
+                'schedule.hours_per_day as schedule_hours_per_day',
+            ])
+            ->first();
+    }
+
+    private function scheduleForDate(int $organizationId, int $scheduleId, string $date): ?object
+    {
+        return DB::table('workforce_work_schedule_days')
+            ->where('organization_id', $organizationId)
+            ->where('work_schedule_id', $scheduleId)
+            ->whereDate('work_date', $date)
+            ->select(['day_type', 'planned_hours'])
+            ->first();
+    }
+
+    private function activeAbsence(int $organizationId, int $employeeId, string $date): ?array
+    {
+        $absence = DB::table('workforce_absences as absence')
+            ->join('workforce_absence_types as type', 'type.id', '=', 'absence.absence_type_id')
+            ->where('absence.organization_id', $organizationId)
+            ->where('absence.employee_id', $employeeId)
+            ->where('absence.status', 'approved')
+            ->whereDate('absence.start_date', '<=', $date)
+            ->whereDate('absence.end_date', '>=', $date)
+            ->select([
+                'absence.id',
+                'absence.start_date',
+                'absence.end_date',
+                'absence.status',
+                'type.code as type_code',
+                'type.name as type_label',
+            ])
+            ->first();
+
+        return $absence ? [
+            'id' => $absence->id,
+            'type_code' => $absence->type_code,
+            'type_label' => $absence->type_label,
+            'start_date' => $absence->start_date,
+            'end_date' => $absence->end_date,
+            'status' => $absence->status,
+        ] : null;
+    }
+
+    private function activeBusinessTrip(int $organizationId, int $employeeId, string $date): ?array
+    {
+        $trip = DB::table('workforce_business_trips')
+            ->where('organization_id', $organizationId)
+            ->where('employee_id', $employeeId)
+            ->where('status', 'approved')
+            ->whereDate('start_date', '<=', $date)
+            ->whereDate('end_date', '>=', $date)
+            ->select(['id', 'project_id', 'start_date', 'end_date', 'destination', 'purpose', 'status'])
+            ->first();
+
+        return $trip ? [
+            'id' => $trip->id,
+            'project_id' => $trip->project_id,
+            'start_date' => $trip->start_date,
+            'end_date' => $trip->end_date,
+            'destination' => $trip->destination,
+            'purpose' => $trip->purpose,
+            'status' => $trip->status,
+        ] : null;
+    }
+
+    private function presence(
+        string $employmentStatus,
+        string $date,
+        ?object $assignment,
+        ?object $schedule,
+        ?array $activeAbsence,
+        ?array $activeBusinessTrip
+    ): array {
+        if ($employmentStatus !== 'active') {
+            return $this->presencePayload('not_at_work', $date, 0, 'employment_status');
+        }
+
+        if ($activeBusinessTrip !== null) {
+            return $this->presencePayload('business_trip', $date, null, 'business_trip');
+        }
+
+        if ($activeAbsence !== null) {
+            return $this->presencePayload('absence', $date, null, 'absence');
+        }
+
+        if ($assignment === null) {
+            return $this->presencePayload('not_at_work', $date, 0, 'assignment');
+        }
+
+        if ($assignment->work_schedule_id === null) {
+            return $this->presencePayload('not_scheduled', $date, null, 'schedule');
+        }
+
+        if ($schedule !== null && $schedule->day_type !== 'work') {
+            return $this->presencePayload('scheduled_day_off', $date, (float) $schedule->planned_hours, 'schedule');
+        }
+
+        $hours = $schedule?->planned_hours ?? $assignment->schedule_hours_per_day ?? 8;
+
+        return $this->presencePayload('at_work', $date, (float) $hours, 'schedule');
+    }
+
+    private function presencePayload(string $status, string $date, ?float $hours, string $source): array
+    {
+        return [
+            'status' => $status,
+            'label' => trans_message("workforce.presence.{$status}"),
+            'work_date' => $date,
+            'hours' => $hours,
+            'source_label' => trans_message("workforce.presence_sources.{$source}"),
+        ];
     }
 }
