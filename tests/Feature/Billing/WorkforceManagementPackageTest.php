@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Billing;
 
+use App\Services\Modules\PackageCatalogService;
 use PHPUnit\Framework\TestCase;
 
 final class WorkforceManagementPackageTest extends TestCase
@@ -32,6 +33,28 @@ final class WorkforceManagementPackageTest extends TestCase
         $this->assertTrue(class_exists($manifest['class_name']));
         $this->assertStringContainsString('Единый раздел', $manifest['description']);
         $this->assertSame([], $this->permissionsWithPrefix($manifest['permissions'], 'workforce-management.'));
+    }
+
+    public function test_workforce_management_is_registered_as_package_catalog_solution(): void
+    {
+        $catalog = $this->catalog();
+        $package = $catalog->requirePackage('workforce-management');
+
+        $this->assertSame('workforce-management', $package['slug']);
+        $this->assertSame(2, $package['schema_version']);
+        $this->assertSame(['base', 'pro', 'enterprise'], array_keys($package['tiers']));
+
+        $this->assertContains('workforce-management', $catalog->tierModules('workforce-management', 'base'));
+        $this->assertContains('production-labor', $catalog->tierModules('workforce-management', 'base'));
+
+        foreach ($catalog->tierModules('workforce-management', 'base') as $moduleSlug) {
+            $this->assertContains($moduleSlug, $catalog->tierModules('workforce-management', 'pro'));
+            $this->assertContains($moduleSlug, $catalog->tierModules('workforce-management', 'enterprise'));
+        }
+
+        foreach ($catalog->tierModules('workforce-management', 'pro') as $moduleSlug) {
+            $this->assertContains($moduleSlug, $catalog->tierModules('workforce-management', 'enterprise'));
+        }
     }
 
     public function test_workforce_tariff_capabilities_and_permissions_are_cumulative(): void
@@ -164,6 +187,14 @@ final class WorkforceManagementPackageTest extends TestCase
         $config = require $this->basePath . '/config/module_packages.php';
 
         return $config['module_classifications'] ?? [];
+    }
+
+    private function catalog(): PackageCatalogService
+    {
+        return new PackageCatalogService(
+            $this->basePath . '/config/Packages',
+            $this->basePath . '/config/ModuleList',
+        );
     }
 
     /**

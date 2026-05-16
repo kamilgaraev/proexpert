@@ -196,6 +196,8 @@ class ModulesOverviewControllerTest extends TestCase
     {
         $projectModule = $this->createModule('project-management', 'Управление проектами', 'free', true, false, 0);
         $brigadesModule = $this->createModule('brigades', 'Бригады', 'free', true, false, 0);
+        $this->createModule('workforce-management', 'Персонал и трудозатраты', 'subscription', true, false, 0);
+        $this->createModule('production-labor', 'Наряды и выработка', 'subscription', true, false, 0);
         $this->createModule('video-monitoring', 'Видеонаблюдение', 'subscription', true, false, 1900);
         $usersModule = $this->createModule('users', 'Пользователи', 'free', false, true, 0);
         $organizationsModule = $this->createModule('organizations', 'Организации', 'free', false, true, 0);
@@ -219,8 +221,9 @@ class ModulesOverviewControllerTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('success', true)
-            ->assertJsonPath('data.summary.total_solutions_count', 6)
+            ->assertJsonPath('data.summary.total_solutions_count', 11)
             ->assertJsonFragment(['slug' => 'objects-execution'])
+            ->assertJsonFragment(['slug' => 'workforce-management'])
             ->assertJsonFragment(['slug' => 'brigades'])
             ->assertJsonFragment(['slug' => 'video-monitoring'])
             ->assertJsonFragment(['slug' => 'users', 'is_system' => true])
@@ -228,8 +231,10 @@ class ModulesOverviewControllerTest extends TestCase
 
         $standaloneSlugs = collect($response->json('data.standalone_modules'))->pluck('slug')->all();
 
-        $this->assertContains('brigades', $standaloneSlugs);
-        $this->assertContains('video-monitoring', $standaloneSlugs);
+        $this->assertNotContains('video-monitoring', $standaloneSlugs);
+        $this->assertNotContains('brigades', $standaloneSlugs);
+        $this->assertNotContains('workforce-management', $standaloneSlugs);
+        $this->assertNotContains('production-labor', $standaloneSlugs);
         $this->assertNotContains('contractor-portal', $standaloneSlugs);
         $this->assertNotContains('users', $standaloneSlugs);
         $this->assertNotContains('organizations', $standaloneSlugs);
@@ -239,7 +244,10 @@ class ModulesOverviewControllerTest extends TestCase
         $this->assertNull($advancedModules->firstWhere('slug', 'contractor-portal'));
         $this->assertTrue($advancedModules->firstWhere('slug', 'users')['is_system']);
         $this->assertSame('packaged', $advancedModules->firstWhere('slug', 'project-management')['classification']);
-        $this->assertSame('standalone', $advancedModules->firstWhere('slug', 'brigades')['classification']);
+        $this->assertSame('packaged', $advancedModules->firstWhere('slug', 'brigades')['classification']);
+        $this->assertSame('packaged', $advancedModules->firstWhere('slug', 'video-monitoring')['classification']);
+        $this->assertSame('packaged', $advancedModules->firstWhere('slug', 'workforce-management')['classification']);
+        $this->assertSame('packaged', $advancedModules->firstWhere('slug', 'production-labor')['classification']);
 
         $objectsExecution = collect($response->json('data.solutions'))->firstWhere('slug', 'objects-execution');
         $recommendedAddonSlugs = collect($objectsExecution['recommended_addons'] ?? [])->pluck('module_slug')->all();
