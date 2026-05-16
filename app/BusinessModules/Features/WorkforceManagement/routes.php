@@ -56,6 +56,14 @@ Route::prefix('api/v1/admin/workforce')
             ->middleware('authorize:workforce.structure.manage');
         Route::get('/schedule-calendar', [WorkforceProController::class, 'scheduleCalendar'])
             ->middleware('authorize:workforce.view');
+        Route::get('/attendance-sheet', [WorkforceProController::class, 'attendanceSheet'])
+            ->middleware('authorize:workforce.view');
+        Route::get('/employees/{employeeId}/attendance-corrections', [WorkforceProController::class, 'attendanceCorrections'])
+            ->whereNumber('employeeId')
+            ->middleware('authorize:workforce.view');
+        Route::post('/employees/{employeeId}/attendance-corrections', [WorkforceProController::class, 'storeAttendanceCorrection'])
+            ->whereNumber('employeeId')
+            ->middleware('authorize:workforce.attendance.manage');
         Route::get('/work-schedules', [WorkforceProController::class, 'workSchedules'])
             ->middleware('authorize:workforce.view');
         Route::post('/work-schedules', [WorkforceProController::class, 'storeWorkSchedule'])

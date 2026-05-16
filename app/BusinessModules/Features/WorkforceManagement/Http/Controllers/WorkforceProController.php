@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\WorkforceManagement\Http\Controllers;
 
 use App\BusinessModules\Features\WorkforceManagement\Services\WorkforceProService;
+use App\BusinessModules\Features\WorkforceManagement\Services\WorkforceAttendanceService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use DomainException;
@@ -16,8 +17,10 @@ use Illuminate\Validation\ValidationException;
 
 final class WorkforceProController extends Controller
 {
-    public function __construct(private readonly WorkforceProService $service)
-    {
+    public function __construct(
+        private readonly WorkforceProService $service,
+        private readonly WorkforceAttendanceService $attendanceService
+    ) {
     }
 
     public function departments(Request $request): JsonResponse
@@ -112,6 +115,67 @@ final class WorkforceProController extends Controller
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'schedule_calendar.index');
+        }
+    }
+
+    public function attendanceSheet(Request $request): JsonResponse
+    {
+        try {
+            $payload = $request->validate([
+                'date_from' => ['required', 'date'],
+                'date_to' => ['required', 'date', 'after_or_equal:date_from'],
+                'project_id' => ['nullable', 'integer'],
+            ]);
+
+            return AdminResponse::success($this->attendanceService->sheet(
+                $this->organizationId($request),
+                (string) $payload['date_from'],
+                (string) $payload['date_to'],
+                isset($payload['project_id']) ? (int) $payload['project_id'] : null
+            ));
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'attendance_sheet.index');
+        }
+    }
+
+    public function attendanceCorrections(Request $request, int $employeeId): JsonResponse
+    {
+        try {
+            return AdminResponse::success($this->attendanceService->history($this->organizationId($request), $employeeId));
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 404);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'attendance_corrections.index');
+        }
+    }
+
+    public function storeAttendanceCorrection(Request $request, int $employeeId): JsonResponse
+    {
+        try {
+            $payload = $request->validate([
+                'work_date' => ['required', 'date'],
+                'project_id' => ['nullable', 'integer'],
+                'status' => ['required', Rule::in(['at_work', 'not_at_work', 'scheduled_day_off', 'absence', 'business_trip', 'not_scheduled'])],
+                'hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
+                'reason' => ['required', 'string', 'min:3', 'max:500'],
+            ]);
+
+            return AdminResponse::success($this->attendanceService->storeCorrection(
+                $this->organizationId($request),
+                $employeeId,
+                (int) $request->user()?->id,
+                $payload
+            ), trans_message('workforce.messages.record_created'), 201);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'attendance_corrections.store');
         }
     }
 
