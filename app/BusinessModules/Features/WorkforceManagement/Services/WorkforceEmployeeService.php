@@ -9,6 +9,8 @@ use App\Models\User;
 use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 final class WorkforceEmployeeService
 {
@@ -34,6 +36,7 @@ final class WorkforceEmployeeService
     public function create(int $organizationId, array $payload): WorkforceEmployee
     {
         $this->assertUserBelongsToOrganization($organizationId, $payload['user_id'] ?? null);
+        $this->assertActiveUserAssignmentIsUnique($organizationId, $payload['user_id'] ?? null);
 
         return WorkforceEmployee::create(array_merge($payload, [
             'organization_id' => $organizationId,
@@ -45,6 +48,7 @@ final class WorkforceEmployeeService
     {
         $employee = $this->find($organizationId, $employeeId);
         $this->assertUserBelongsToOrganization($organizationId, $payload['user_id'] ?? null);
+        $this->assertActiveUserAssignmentIsUnique($organizationId, $payload['user_id'] ?? null, $employeeId);
         $employee->update($payload);
 
         return $employee->refresh()->load('user:id,name,email,current_organization_id');
@@ -53,10 +57,31 @@ final class WorkforceEmployeeService
     public function dismiss(int $organizationId, int $employeeId, ?string $dismissalDate = null): WorkforceEmployee
     {
         $employee = $this->find($organizationId, $employeeId);
-        $employee->update([
-            'employment_status' => 'dismissed',
-            'dismissal_date' => $dismissalDate ?? now()->toDateString(),
-        ]);
+        $date = $dismissalDate ?? now()->toDateString();
+
+        if ($employee->hire_date !== null && Carbon::parse($date)->lt(Carbon::parse($employee->hire_date))) {
+            throw new DomainException(trans_message('workforce.errors.dismissal_before_hire_date'));
+        }
+
+        DB::transaction(function () use ($employee, $organizationId, $date): void {
+            $employee->update([
+                'employment_status' => 'dismissed',
+                'dismissal_date' => $date,
+            ]);
+
+            DB::table('workforce_employee_assignments')
+                ->where('organization_id', $organizationId)
+                ->where('employee_id', $employee->id)
+                ->where('status', 'active')
+                ->whereDate('valid_from', '<=', $date)
+                ->where(function ($query) use ($date): void {
+                    $query->whereNull('valid_to')->orWhereDate('valid_to', '>', $date);
+                })
+                ->update([
+                    'valid_to' => $date,
+                    'updated_at' => now(),
+                ]);
+        });
 
         return $employee->refresh()->load('user:id,name,email,current_organization_id');
     }
@@ -88,6 +113,24 @@ final class WorkforceEmployeeService
 
         if (!$exists) {
             throw new DomainException(trans_message('workforce.errors.user_not_found'));
+        }
+    }
+
+    private function assertActiveUserAssignmentIsUnique(int $organizationId, mixed $userId, ?int $ignoreEmployeeId = null): void
+    {
+        if ($userId === null || $userId === '') {
+            return;
+        }
+
+        $exists = WorkforceEmployee::query()
+            ->where('organization_id', $organizationId)
+            ->where('user_id', (int) $userId)
+            ->where('employment_status', 'active')
+            ->when($ignoreEmployeeId !== null, fn (Builder $query) => $query->whereKeyNot($ignoreEmployeeId))
+            ->exists();
+
+        if ($exists) {
+            throw new DomainException(trans_message('workforce.errors.employee_user_already_active'));
         }
     }
 }

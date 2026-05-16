@@ -70,7 +70,6 @@
     ],
     "workforce-management": [
       "workforce.view",
-      "workforce.employees.basic",
       "workforce.production-labor.view"
     ],
     "production-labor": [

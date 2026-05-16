@@ -66,7 +66,7 @@ final class WorkforceProService
 
     public function storeAssignment(int $organizationId, array $payload, ?int $assignmentId = null): array
     {
-        $this->assertEmployee($organizationId, (int) $payload['employee_id']);
+        $this->assertActiveEmployee($organizationId, (int) $payload['employee_id']);
         $staffUnit = $this->assertRecord('workforce_staff_units', $organizationId, (int) $payload['staff_unit_id']);
         $this->assertRecord('workforce_departments', $organizationId, (int) $payload['department_id']);
         $this->assertRecord('workforce_positions', $organizationId, (int) $payload['position_id']);
@@ -165,6 +165,10 @@ final class WorkforceProService
             $this->assertProject($organizationId, (int) $payload['project_id']);
         }
 
+        if ($this->hasOverlappingPayrollPeriod($organizationId, $payload['period_start'], $payload['period_end'])) {
+            throw new DomainException(trans_message('workforce.errors.payroll_period_overlap'));
+        }
+
         return $this->store('workforce_payroll_periods', $organizationId, array_merge($payload, [
             'status' => 'draft',
             'created_by_user_id' => $userId,
@@ -221,6 +225,15 @@ final class WorkforceProService
                         'updated_at' => now(),
                     ]);
                 });
+
+            DB::table('workforce_payroll_periods')
+                ->where('organization_id', $organizationId)
+                ->where('id', $period->id)
+                ->update([
+                    'status' => 'draft',
+                    'source_hash' => null,
+                    'updated_at' => now(),
+                ]);
         });
 
         return $this->payrollSourceRows($organizationId, $periodId)->all();
@@ -325,6 +338,22 @@ final class WorkforceProService
         }
     }
 
+    private function assertActiveEmployee(int $organizationId, int $employeeId): void
+    {
+        $employee = WorkforceEmployee::query()
+            ->where('organization_id', $organizationId)
+            ->whereKey($employeeId)
+            ->first();
+
+        if (!$employee) {
+            throw new DomainException(trans_message('workforce.errors.employee_not_found'));
+        }
+
+        if ($employee->employment_status !== 'active') {
+            throw new DomainException(trans_message('workforce.errors.employee_not_active'));
+        }
+    }
+
     private function assertProject(int $organizationId, int $projectId): void
     {
         if (!Project::query()->where('organization_id', $organizationId)->whereKey($projectId)->exists()) {
@@ -343,6 +372,15 @@ final class WorkforceProService
             ->where(function (Builder $query) use ($validFrom): void {
                 $query->whereNull('valid_to')->orWhereDate('valid_to', '>=', $validFrom);
             })
+            ->exists();
+    }
+
+    private function hasOverlappingPayrollPeriod(int $organizationId, string $periodStart, string $periodEnd): bool
+    {
+        return DB::table('workforce_payroll_periods')
+            ->where('organization_id', $organizationId)
+            ->whereDate('period_start', '<=', $periodEnd)
+            ->whereDate('period_end', '>=', $periodStart)
             ->exists();
     }
 

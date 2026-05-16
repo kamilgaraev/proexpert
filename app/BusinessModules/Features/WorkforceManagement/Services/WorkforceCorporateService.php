@@ -116,6 +116,7 @@ final class WorkforceCorporateService
         }
 
         $this->assertSourceRows($organizationId, $periodId);
+        $this->assertSourceHashActual($organizationId, $period);
 
         if ($this->hasPackageWithStatus($organizationId, $periodId, ['accepted'])) {
             throw new DomainException(trans_message('workforce.errors.export_package_accepted'));
@@ -163,7 +164,8 @@ final class WorkforceCorporateService
 
     public function markExportPackage(int $organizationId, int $packageId, string $status, ?string $reason = null): array
     {
-        $this->assertRecord('workforce_export_packages', $organizationId, $packageId);
+        $package = $this->assertRecord('workforce_export_packages', $organizationId, $packageId);
+        $this->assertExportTransition((string) $package->status, $status);
         $payload = ['status' => $status, 'updated_at' => now()];
 
         if ($status === 'sent') {
@@ -432,6 +434,29 @@ final class WorkforceCorporateService
             ->where('payroll_period_id', $periodId)
             ->whereIn('status', $statuses)
             ->exists();
+    }
+
+    private function assertSourceHashActual(int $organizationId, object $period): void
+    {
+        $currentHash = $this->sourceHash($organizationId, (int) $period->id);
+
+        if (($period->source_hash ?? null) !== $currentHash) {
+            throw new DomainException(trans_message('workforce.errors.payroll_source_changed'));
+        }
+    }
+
+    private function assertExportTransition(string $currentStatus, string $nextStatus): void
+    {
+        $allowed = [
+            'created' => ['sent', 'rejected'],
+            'sent' => ['accepted', 'rejected'],
+            'accepted' => [],
+            'rejected' => [],
+        ];
+
+        if (!in_array($nextStatus, $allowed[$currentStatus] ?? [], true)) {
+            throw new DomainException(trans_message('workforce.errors.export_status_transition_forbidden'));
+        }
     }
 
     private function assertNoBlockingIssues(int $organizationId, int $periodId): void

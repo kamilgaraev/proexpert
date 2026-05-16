@@ -119,6 +119,11 @@ final class WorkforceCorporateWorkflowTest extends TestCase
         $replacementId = (int) $replacement->json('data.id');
 
         $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/workforce/export-packages/{$replacementId}/mark-sent")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'sent');
+
+        $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/export-packages/{$replacementId}/mark-accepted")
             ->assertOk()
             ->assertJsonPath('data.status', 'accepted');
