@@ -36,6 +36,11 @@ final class WorkforceProService
     public function update(string $table, int $organizationId, int $id, array $payload): array
     {
         $this->assertRecord($table, $organizationId, $id);
+
+        if (($payload['is_active'] ?? null) === false && in_array($table, ['workforce_departments', 'workforce_positions'], true)) {
+            $this->assertNoActiveAssignmentsForStructure($table, $organizationId, $id);
+        }
+
         DB::table($table)->where('organization_id', $organizationId)->where('id', $id)->update(array_merge($this->normalizeJsonPayload($payload), [
             'updated_at' => now(),
         ]));
@@ -45,20 +50,32 @@ final class WorkforceProService
 
     public function storeStaffUnit(int $organizationId, array $payload): array
     {
-        $this->assertRecord('workforce_departments', $organizationId, (int) $payload['department_id']);
-        $this->assertRecord('workforce_positions', $organizationId, (int) $payload['position_id']);
+        $this->assertActiveRecord('workforce_departments', $organizationId, (int) $payload['department_id']);
+        $this->assertActiveRecord('workforce_positions', $organizationId, (int) $payload['position_id']);
 
         return $this->store('workforce_staff_units', $organizationId, $payload);
     }
 
     public function updateStaffUnit(int $organizationId, int $staffUnitId, array $payload): array
     {
+        $current = $this->assertRecord('workforce_staff_units', $organizationId, $staffUnitId);
+
+        if (($payload['is_active'] ?? null) === false) {
+            $this->assertNoActiveAssignmentsForStaffUnit($organizationId, $staffUnitId);
+        }
+
         if (array_key_exists('department_id', $payload)) {
-            $this->assertRecord('workforce_departments', $organizationId, (int) $payload['department_id']);
+            $this->assertActiveRecord('workforce_departments', $organizationId, (int) $payload['department_id']);
         }
 
         if (array_key_exists('position_id', $payload)) {
-            $this->assertRecord('workforce_positions', $organizationId, (int) $payload['position_id']);
+            $this->assertActiveRecord('workforce_positions', $organizationId, (int) $payload['position_id']);
+        }
+
+        $effectiveValidTo = $payload['valid_to'] ?? $current->valid_to;
+
+        if ($effectiveValidTo !== null && $this->hasActiveAssignmentAfterDate($organizationId, $staffUnitId, (string) $effectiveValidTo)) {
+            throw new DomainException(trans_message('workforce.errors.structure_has_active_assignments'));
         }
 
         return $this->update('workforce_staff_units', $organizationId, $staffUnitId, $payload);
@@ -67,16 +84,16 @@ final class WorkforceProService
     public function storeAssignment(int $organizationId, array $payload, ?int $assignmentId = null): array
     {
         $this->assertActiveEmployee($organizationId, (int) $payload['employee_id']);
-        $staffUnit = $this->assertRecord('workforce_staff_units', $organizationId, (int) $payload['staff_unit_id']);
-        $this->assertRecord('workforce_departments', $organizationId, (int) $payload['department_id']);
-        $this->assertRecord('workforce_positions', $organizationId, (int) $payload['position_id']);
+        $staffUnit = $this->assertActiveRecord('workforce_staff_units', $organizationId, (int) $payload['staff_unit_id']);
+        $this->assertActiveRecord('workforce_departments', $organizationId, (int) $payload['department_id']);
+        $this->assertActiveRecord('workforce_positions', $organizationId, (int) $payload['position_id']);
 
         if ((int) ($payload['department_id'] ?? 0) !== (int) $staffUnit->department_id || (int) ($payload['position_id'] ?? 0) !== (int) $staffUnit->position_id) {
             throw new DomainException(trans_message('workforce.errors.staff_unit_structure_mismatch'));
         }
 
         if (!empty($payload['work_schedule_id'])) {
-            $this->assertRecord('workforce_work_schedules', $organizationId, (int) $payload['work_schedule_id']);
+            $this->assertActiveRecord('workforce_work_schedules', $organizationId, (int) $payload['work_schedule_id']);
         }
 
         if (!empty($payload['project_id'])) {
@@ -86,6 +103,9 @@ final class WorkforceProService
         if ($this->hasOverlappingAssignment($organizationId, (int) $payload['employee_id'], $payload['valid_from'], $payload['valid_to'] ?? null, $assignmentId)) {
             throw new DomainException(trans_message('workforce.errors.assignment_overlap'));
         }
+
+        $this->assertAssignmentWithinStaffUnitPeriod($staffUnit, (string) $payload['valid_from'], $payload['valid_to'] ?? null);
+        $this->assertStaffUnitCapacity($organizationId, (int) $payload['staff_unit_id'], $payload['valid_from'], $payload['valid_to'] ?? null, (float) ($payload['rate'] ?? 1), $assignmentId);
 
         return $assignmentId === null
             ? $this->store('workforce_employee_assignments', $organizationId, $payload)
@@ -374,6 +394,17 @@ final class WorkforceProService
         return $record;
     }
 
+    private function assertActiveRecord(string $table, int $organizationId, int $id): object
+    {
+        $record = $this->assertRecord($table, $organizationId, $id);
+
+        if (isset($record->is_active) && (bool) $record->is_active === false) {
+            throw new DomainException(trans_message('workforce.errors.structure_record_inactive'));
+        }
+
+        return $record;
+    }
+
     private function assertEmployee(int $organizationId, int $employeeId): void
     {
         if (!WorkforceEmployee::query()->where('organization_id', $organizationId)->whereKey($employeeId)->exists()) {
@@ -414,6 +445,72 @@ final class WorkforceProService
             ->whereDate('valid_from', '<=', $validTo ?? '9999-12-31')
             ->where(function (Builder $query) use ($validFrom): void {
                 $query->whereNull('valid_to')->orWhereDate('valid_to', '>=', $validFrom);
+            })
+            ->exists();
+    }
+
+    private function assertAssignmentWithinStaffUnitPeriod(object $staffUnit, string $validFrom, ?string $validTo): void
+    {
+        if ($validFrom < (string) $staffUnit->valid_from) {
+            throw new DomainException(trans_message('workforce.errors.assignment_outside_staff_unit_period'));
+        }
+
+        if ($staffUnit->valid_to !== null && ($validTo === null || $validTo > (string) $staffUnit->valid_to)) {
+            throw new DomainException(trans_message('workforce.errors.assignment_outside_staff_unit_period'));
+        }
+    }
+
+    private function assertStaffUnitCapacity(int $organizationId, int $staffUnitId, string $validFrom, ?string $validTo, float $rate, ?int $ignoreAssignmentId = null): void
+    {
+        $staffUnit = $this->assertRecord('workforce_staff_units', $organizationId, $staffUnitId);
+        $usedRate = (float) DB::table('workforce_employee_assignments')
+            ->where('organization_id', $organizationId)
+            ->where('staff_unit_id', $staffUnitId)
+            ->where('status', 'active')
+            ->when($ignoreAssignmentId !== null, fn (Builder $query) => $query->where('id', '!=', $ignoreAssignmentId))
+            ->whereDate('valid_from', '<=', $validTo ?? '9999-12-31')
+            ->where(function (Builder $query) use ($validFrom): void {
+                $query->whereNull('valid_to')->orWhereDate('valid_to', '>=', $validFrom);
+            })
+            ->sum('rate');
+
+        if (($usedRate + $rate) > (float) $staffUnit->headcount) {
+            throw new DomainException(trans_message('workforce.errors.staff_unit_capacity_exceeded'));
+        }
+    }
+
+    private function assertNoActiveAssignmentsForStructure(string $table, int $organizationId, int $id): void
+    {
+        $field = match ($table) {
+            'workforce_departments' => 'department_id',
+            'workforce_positions' => 'position_id',
+            default => null,
+        };
+
+        if ($field === null) {
+            return;
+        }
+
+        if (DB::table('workforce_employee_assignments')->where('organization_id', $organizationId)->where($field, $id)->where('status', 'active')->exists()) {
+            throw new DomainException(trans_message('workforce.errors.structure_has_active_assignments'));
+        }
+    }
+
+    private function assertNoActiveAssignmentsForStaffUnit(int $organizationId, int $staffUnitId): void
+    {
+        if (DB::table('workforce_employee_assignments')->where('organization_id', $organizationId)->where('staff_unit_id', $staffUnitId)->where('status', 'active')->exists()) {
+            throw new DomainException(trans_message('workforce.errors.structure_has_active_assignments'));
+        }
+    }
+
+    private function hasActiveAssignmentAfterDate(int $organizationId, int $staffUnitId, string $date): bool
+    {
+        return DB::table('workforce_employee_assignments')
+            ->where('organization_id', $organizationId)
+            ->where('staff_unit_id', $staffUnitId)
+            ->where('status', 'active')
+            ->where(function (Builder $query) use ($date): void {
+                $query->whereNull('valid_to')->orWhereDate('valid_to', '>', $date);
             })
             ->exists();
     }

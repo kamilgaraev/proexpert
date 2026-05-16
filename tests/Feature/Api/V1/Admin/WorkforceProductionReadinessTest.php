@@ -299,6 +299,84 @@ final class WorkforceProductionReadinessTest extends TestCase
             ->assertJsonPath('message', trans_message('workforce.errors.business_trip_absence_overlap'));
     }
 
+    public function test_assignment_rejects_inactive_staff_unit(): void
+    {
+        $context = AdminApiTestContext::create();
+        $employee = $this->employee($context, 'ASSIGN-001');
+        [$departmentId, $positionId, $staffUnitId] = $this->structure($context, isActive: false);
+        $this->allowAccess('web_admin');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/employee-assignments', [
+                'employee_id' => $employee->id,
+                'staff_unit_id' => $staffUnitId,
+                'department_id' => $departmentId,
+                'position_id' => $positionId,
+                'valid_from' => '2026-05-01',
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('workforce.errors.structure_record_inactive'));
+    }
+
+    public function test_assignment_rejects_staff_unit_capacity_overflow(): void
+    {
+        $context = AdminApiTestContext::create();
+        $firstEmployee = $this->employee($context, 'CAP-001');
+        $secondEmployee = $this->employee($context, 'CAP-002');
+        [$departmentId, $positionId, $staffUnitId] = $this->structure($context, headcount: 1);
+        $this->allowAccess('web_admin');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/employee-assignments', [
+                'employee_id' => $firstEmployee->id,
+                'staff_unit_id' => $staffUnitId,
+                'department_id' => $departmentId,
+                'position_id' => $positionId,
+                'rate' => 1,
+                'valid_from' => '2026-05-01',
+            ])
+            ->assertCreated();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/employee-assignments', [
+                'employee_id' => $secondEmployee->id,
+                'staff_unit_id' => $staffUnitId,
+                'department_id' => $departmentId,
+                'position_id' => $positionId,
+                'rate' => 1,
+                'valid_from' => '2026-05-10',
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('workforce.errors.staff_unit_capacity_exceeded'));
+    }
+
+    public function test_structure_deactivation_rejects_active_assignments(): void
+    {
+        $context = AdminApiTestContext::create();
+        $employee = $this->employee($context, 'STRUCT-001');
+        [$departmentId, $positionId, $staffUnitId] = $this->structure($context);
+        $this->allowAccess('web_admin');
+
+        DB::table('workforce_employee_assignments')->insert([
+            'organization_id' => $context->organization->id,
+            'employee_id' => $employee->id,
+            'staff_unit_id' => $staffUnitId,
+            'department_id' => $departmentId,
+            'position_id' => $positionId,
+            'valid_from' => '2026-05-01',
+            'status' => 'active',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/workforce/departments/{$departmentId}", [
+                'is_active' => false,
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('workforce.errors.structure_has_active_assignments'));
+    }
+
     private function employee(AdminApiTestContext $context, string $personnelNumber, string $status = 'active'): WorkforceEmployee
     {
         return WorkforceEmployee::create([
@@ -311,12 +389,13 @@ final class WorkforceProductionReadinessTest extends TestCase
         ]);
     }
 
-    private function structure(AdminApiTestContext $context): array
+    private function structure(AdminApiTestContext $context, bool $isActive = true, int $headcount = 1): array
     {
         $departmentId = DB::table('workforce_departments')->insertGetId([
             'organization_id' => $context->organization->id,
             'code' => 'DEP-' . uniqid(),
             'name' => 'Строительный участок',
+            'is_active' => true,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -325,6 +404,7 @@ final class WorkforceProductionReadinessTest extends TestCase
             'organization_id' => $context->organization->id,
             'code' => 'POS-' . uniqid(),
             'name' => 'Монтажник',
+            'is_active' => true,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -334,7 +414,10 @@ final class WorkforceProductionReadinessTest extends TestCase
             'department_id' => $departmentId,
             'position_id' => $positionId,
             'code' => 'UNIT-' . uniqid(),
+            'headcount' => $headcount,
+            'rate' => 1,
             'valid_from' => '2026-05-01',
+            'is_active' => $isActive,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
