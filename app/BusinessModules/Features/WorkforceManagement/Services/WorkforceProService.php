@@ -126,7 +126,7 @@ final class WorkforceProService
 
         return $this->store('workforce_absences', $organizationId, array_merge($payload, [
             'absence_type_id' => $absenceTypeId,
-            'status' => $payload['status'] ?? 'draft',
+            'status' => 'draft',
         ]));
     }
 
@@ -139,7 +139,7 @@ final class WorkforceProService
         }
 
         return $this->store('workforce_business_trips', $organizationId, array_merge($payload, [
-            'status' => $payload['status'] ?? 'draft',
+            'status' => 'draft',
         ]));
     }
 
@@ -154,9 +154,52 @@ final class WorkforceProService
         ]));
     }
 
-    public function setStatus(string $table, int $organizationId, int $id, string $status): array
+    public function approveAbsence(int $organizationId, int $absenceId): array
     {
-        return $this->update($table, $organizationId, $id, ['status' => $status]);
+        $absence = $this->assertRecord('workforce_absences', $organizationId, $absenceId);
+        $this->assertDraftStatus($absence);
+        $this->assertActiveEmployee($organizationId, (int) $absence->employee_id);
+
+        if ($this->hasOverlappingApprovedAbsence($organizationId, (int) $absence->employee_id, (string) $absence->start_date, (string) $absence->end_date, $absenceId)) {
+            throw new DomainException(trans_message('workforce.errors.absence_overlap'));
+        }
+
+        return $this->update('workforce_absences', $organizationId, $absenceId, ['status' => 'approved']);
+    }
+
+    public function cancelAbsence(int $organizationId, int $absenceId): array
+    {
+        $absence = $this->assertRecord('workforce_absences', $organizationId, $absenceId);
+
+        if ($absence->status === 'cancelled') {
+            return (array) $absence;
+        }
+
+        return $this->update('workforce_absences', $organizationId, $absenceId, ['status' => 'cancelled']);
+    }
+
+    public function approveBusinessTrip(int $organizationId, int $tripId): array
+    {
+        $trip = $this->assertRecord('workforce_business_trips', $organizationId, $tripId);
+        $this->assertDraftStatus($trip);
+        $this->assertActiveEmployee($organizationId, (int) $trip->employee_id);
+
+        if ($this->hasOverlappingApprovedAbsence($organizationId, (int) $trip->employee_id, (string) $trip->start_date, (string) $trip->end_date)) {
+            throw new DomainException(trans_message('workforce.errors.business_trip_absence_overlap'));
+        }
+
+        return $this->update('workforce_business_trips', $organizationId, $tripId, ['status' => 'approved']);
+    }
+
+    public function cancelBusinessTrip(int $organizationId, int $tripId): array
+    {
+        $trip = $this->assertRecord('workforce_business_trips', $organizationId, $tripId);
+
+        if ($trip->status === 'cancelled') {
+            return (array) $trip;
+        }
+
+        return $this->update('workforce_business_trips', $organizationId, $tripId, ['status' => 'cancelled']);
     }
 
     public function storePayrollPeriod(int $organizationId, int $userId, array $payload): array
@@ -382,6 +425,25 @@ final class WorkforceProService
             ->whereDate('period_start', '<=', $periodEnd)
             ->whereDate('period_end', '>=', $periodStart)
             ->exists();
+    }
+
+    private function hasOverlappingApprovedAbsence(int $organizationId, int $employeeId, string $startDate, string $endDate, ?int $ignoreAbsenceId = null): bool
+    {
+        return DB::table('workforce_absences')
+            ->where('organization_id', $organizationId)
+            ->where('employee_id', $employeeId)
+            ->where('status', 'approved')
+            ->when($ignoreAbsenceId !== null, fn (Builder $query) => $query->where('id', '!=', $ignoreAbsenceId))
+            ->whereDate('start_date', '<=', $endDate)
+            ->whereDate('end_date', '>=', $startDate)
+            ->exists();
+    }
+
+    private function assertDraftStatus(object $record): void
+    {
+        if (($record->status ?? null) !== 'draft') {
+            throw new DomainException(trans_message('workforce.errors.workflow_transition_forbidden'));
+        }
     }
 
     private function assignmentForDate(int $organizationId, int $employeeId, string $date): ?object

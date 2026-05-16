@@ -139,12 +139,24 @@ final class WorkforceProController extends Controller
 
     public function approveAbsence(Request $request, int $absenceId): JsonResponse
     {
-        return $this->status($request, 'workforce_absences', $absenceId, 'approved');
+        try {
+            return AdminResponse::success($this->service->approveAbsence($this->organizationId($request), $absenceId), trans_message('workforce.messages.record_updated'));
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'absences.approve');
+        }
     }
 
     public function cancelAbsence(Request $request, int $absenceId): JsonResponse
     {
-        return $this->status($request, 'workforce_absences', $absenceId, 'cancelled');
+        try {
+            return AdminResponse::success($this->service->cancelAbsence($this->organizationId($request), $absenceId), trans_message('workforce.messages.record_updated'));
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'absences.cancel');
+        }
     }
 
     public function businessTrips(Request $request): JsonResponse
@@ -167,12 +179,24 @@ final class WorkforceProController extends Controller
 
     public function approveBusinessTrip(Request $request, int $tripId): JsonResponse
     {
-        return $this->status($request, 'workforce_business_trips', $tripId, 'approved');
+        try {
+            return AdminResponse::success($this->service->approveBusinessTrip($this->organizationId($request), $tripId), trans_message('workforce.messages.record_updated'));
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'business_trips.approve');
+        }
     }
 
     public function cancelBusinessTrip(Request $request, int $tripId): JsonResponse
     {
-        return $this->status($request, 'workforce_business_trips', $tripId, 'cancelled');
+        try {
+            return AdminResponse::success($this->service->cancelBusinessTrip($this->organizationId($request), $tripId), trans_message('workforce.messages.record_updated'));
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'business_trips.cancel');
+        }
     }
 
     public function orders(Request $request): JsonResponse
@@ -313,17 +337,6 @@ final class WorkforceProController extends Controller
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'employee_assignments.store');
-        }
-    }
-
-    private function status(Request $request, string $table, int $id, string $status): JsonResponse
-    {
-        try {
-            return AdminResponse::success($this->service->setStatus($table, $this->organizationId($request), $id, $status), trans_message('workforce.messages.record_updated'));
-        } catch (DomainException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422);
-        } catch (\Throwable $exception) {
-            return $this->failed($request, $exception, "{$table}.status");
         }
     }
 

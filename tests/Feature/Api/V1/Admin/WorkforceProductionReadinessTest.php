@@ -205,14 +205,108 @@ final class WorkforceProductionReadinessTest extends TestCase
             ->assertJsonPath('message', trans_message('workforce.errors.export_status_transition_forbidden'));
     }
 
-    private function employee(AdminApiTestContext $context, string $personnelNumber): WorkforceEmployee
+    public function test_absence_approval_rejects_dismissed_employee(): void
+    {
+        $context = AdminApiTestContext::create();
+        $employee = $this->employee($context, 'ABS-001', 'dismissed');
+        $this->allowAccess('web_admin');
+
+        $absence = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/absences', [
+                'employee_id' => $employee->id,
+                'absence_type_code' => 'vacation',
+                'start_date' => '2026-05-10',
+                'end_date' => '2026-05-12',
+            ]);
+        $absence->assertCreated()
+            ->assertJsonPath('data.status', 'draft');
+
+        $absenceId = (int) $absence->json('data.id');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/workforce/absences/{$absenceId}/approve")
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('workforce.errors.employee_not_active'));
+    }
+
+    public function test_absence_approval_rejects_overlapping_approved_absence(): void
+    {
+        $context = AdminApiTestContext::create();
+        $employee = $this->employee($context, 'ABS-002');
+        $this->allowAccess('web_admin');
+
+        $first = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/absences', [
+                'employee_id' => $employee->id,
+                'absence_type_code' => 'vacation',
+                'start_date' => '2026-05-10',
+                'end_date' => '2026-05-12',
+            ]);
+        $first->assertCreated();
+
+        $second = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/absences', [
+                'employee_id' => $employee->id,
+                'absence_type_code' => 'vacation',
+                'start_date' => '2026-05-11',
+                'end_date' => '2026-05-13',
+            ]);
+        $second->assertCreated();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/absences/' . (int) $first->json('data.id') . '/approve')
+            ->assertOk()
+            ->assertJsonPath('data.status', 'approved');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/absences/' . (int) $second->json('data.id') . '/approve')
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('workforce.errors.absence_overlap'));
+    }
+
+    public function test_business_trip_approval_rejects_approved_absence_overlap(): void
+    {
+        $context = AdminApiTestContext::create();
+        $employee = $this->employee($context, 'TRIP-001');
+        $this->allowAccess('web_admin');
+
+        $absence = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/absences', [
+                'employee_id' => $employee->id,
+                'absence_type_code' => 'vacation',
+                'start_date' => '2026-05-10',
+                'end_date' => '2026-05-12',
+            ]);
+        $absence->assertCreated();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/absences/' . (int) $absence->json('data.id') . '/approve')
+            ->assertOk();
+
+        $trip = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/business-trips', [
+                'employee_id' => $employee->id,
+                'start_date' => '2026-05-11',
+                'end_date' => '2026-05-13',
+                'destination' => 'Казань',
+            ]);
+        $trip->assertCreated()
+            ->assertJsonPath('data.status', 'draft');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/business-trips/' . (int) $trip->json('data.id') . '/approve')
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('workforce.errors.business_trip_absence_overlap'));
+    }
+
+    private function employee(AdminApiTestContext $context, string $personnelNumber, string $status = 'active'): WorkforceEmployee
     {
         return WorkforceEmployee::create([
             'organization_id' => $context->organization->id,
             'personnel_number' => $personnelNumber,
             'last_name' => 'Иванов',
             'first_name' => 'Иван',
-            'employment_status' => 'active',
+            'employment_status' => $status,
             'hire_date' => '2026-05-01',
         ]);
     }
