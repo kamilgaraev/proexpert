@@ -26,11 +26,12 @@ final class WorkforceAttendanceService
         $employeeIds = $assignments->pluck('employee_id')->map(fn (mixed $id): int => (int) $id)->unique()->values()->all();
         $scheduleDays = $this->scheduleDays($organizationId, $assignments, $start, $end);
         $corrections = $this->correctionsForPeriod($organizationId, $employeeIds, $start, $end, $projectId);
+        $qrScans = $this->qrScansForPeriod($organizationId, $employeeIds, $start, $end, $projectId);
 
         return [
             'days' => $days,
             'rows' => $assignments
-                ->map(fn (object $assignment): array => $this->row($assignment, $days, $scheduleDays, $corrections))
+                ->map(fn (object $assignment): array => $this->row($assignment, $days, $scheduleDays, $corrections, $qrScans))
                 ->values()
                 ->all(),
         ];
@@ -191,13 +192,30 @@ final class WorkforceAttendanceService
             ->keyBy(fn (object $record): string => $record->employee_id . ':' . $record->work_date . ':' . ($record->project_id ?? 'all'));
     }
 
-    private function row(object $assignment, array $days, Collection $scheduleDays, Collection $corrections): array
+    private function qrScansForPeriod(int $organizationId, array $employeeIds, CarbonImmutable $start, CarbonImmutable $end, ?int $projectId): Collection
+    {
+        if (empty($employeeIds) || ! DB::getSchemaBuilder()->hasTable('workforce_attendance_scan_events')) {
+            return collect();
+        }
+
+        return DB::table('workforce_attendance_scan_events')
+            ->where('organization_id', $organizationId)
+            ->where('result', 'confirmed')
+            ->whereIn('employee_id', $employeeIds)
+            ->whereBetween('work_date', [$start->toDateString(), $end->toDateString()])
+            ->when($projectId !== null, fn (Builder $query) => $query->where('project_id', $projectId))
+            ->orderBy('scanned_at')
+            ->get()
+            ->keyBy(fn (object $record): string => $record->employee_id . ':' . $record->work_date . ':' . ($record->project_id ?? 'all'));
+    }
+
+    private function row(object $assignment, array $days, Collection $scheduleDays, Collection $corrections, Collection $qrScans): array
     {
         $rowDays = [];
 
         foreach ($days as $day) {
             $date = (string) $day['date'];
-            $rowDays[$date] = $this->day($assignment, $date, $scheduleDays, $corrections);
+            $rowDays[$date] = $this->day($assignment, $date, $scheduleDays, $corrections, $qrScans);
         }
 
         return [
@@ -209,13 +227,20 @@ final class WorkforceAttendanceService
         ];
     }
 
-    private function day(object $assignment, string $date, Collection $scheduleDays, Collection $corrections): array
+    private function day(object $assignment, string $date, Collection $scheduleDays, Collection $corrections, Collection $qrScans): array
     {
         $correction = $corrections->get($assignment->employee_id . ':' . $date . ':' . ($assignment->project_id ?? 'all'))
             ?? $corrections->get($assignment->employee_id . ':' . $date . ':all');
 
         if ($correction !== null) {
             return $this->presence((string) $correction->status, $date, $correction->hours !== null ? (float) $correction->hours : null, 'manual_correction');
+        }
+
+        $qrScan = $qrScans->get($assignment->employee_id . ':' . $date . ':' . ($assignment->project_id ?? 'all'))
+            ?? $qrScans->get($assignment->employee_id . ':' . $date . ':all');
+
+        if ($qrScan !== null) {
+            return $this->presence('at_work', $date, $this->hours($assignment->hours_per_day ?? 8), 'qr_scan');
         }
 
         if ($date < (string) $assignment->valid_from || ($assignment->valid_to !== null && $date > (string) $assignment->valid_to)) {

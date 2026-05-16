@@ -152,6 +152,11 @@
       "production-labor.work-orders.create",
       "production-labor.output.record"
     ],
+    "workforce-management": [
+      "workforce.view",
+      "workforce.attendance.qr.self",
+      "workforce.attendance.scan-confirm"
+    ],
     "handover-acceptance": [
       "handover-acceptance.view",
       "handover-acceptance.create",

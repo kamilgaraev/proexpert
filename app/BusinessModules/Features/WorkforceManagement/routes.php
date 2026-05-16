@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 use App\BusinessModules\Features\WorkforceManagement\Http\Controllers\WorkforceEmployeeController;
+use App\BusinessModules\Features\WorkforceManagement\Http\Controllers\Mobile\WorkforceMobileAttendanceController;
+use App\BusinessModules\Features\WorkforceManagement\Http\Controllers\WorkforceAttendanceQrController;
 use App\BusinessModules\Features\WorkforceManagement\Http\Controllers\WorkforceCorporateController;
 use App\BusinessModules\Features\WorkforceManagement\Http\Controllers\WorkforceProController;
 use Illuminate\Support\Facades\Route;
@@ -58,6 +60,8 @@ Route::prefix('api/v1/admin/workforce')
             ->middleware('authorize:workforce.view');
         Route::get('/attendance-sheet', [WorkforceProController::class, 'attendanceSheet'])
             ->middleware('authorize:workforce.view');
+        Route::get('/attendance/qr-scans', [WorkforceAttendanceQrController::class, 'qrScans'])
+            ->middleware('authorize:workforce.audit.view');
         Route::get('/employees/{employeeId}/attendance-corrections', [WorkforceProController::class, 'attendanceCorrections'])
             ->whereNumber('employeeId')
             ->middleware('authorize:workforce.view');
@@ -154,4 +158,14 @@ Route::prefix('api/v1/admin/workforce')
         Route::put('/accounting-mappings/{mappingId}', [WorkforceCorporateController::class, 'updateAccountingMapping'])
             ->whereNumber('mappingId')
             ->middleware('authorize:workforce.settings.manage');
+    });
+
+Route::prefix('api/v1/mobile/workforce/attendance')
+    ->name('mobile.workforce.attendance.')
+    ->middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.context', 'can:access-mobile-app'])
+    ->group(function (): void {
+        Route::post('/qr', [WorkforceMobileAttendanceController::class, 'issueQr'])
+            ->middleware('authorize:workforce.attendance.qr.self');
+        Route::post('/qr/scan', [WorkforceMobileAttendanceController::class, 'scanQr'])
+            ->middleware('authorize:workforce.attendance.scan-confirm');
     });

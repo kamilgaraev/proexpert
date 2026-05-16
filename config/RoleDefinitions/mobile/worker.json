@@ -71,6 +71,10 @@
     ],
     "budget-estimates": [
       "construction-journal.view"
+    ],
+    "workforce-management": [
+      "workforce.view",
+      "workforce.attendance.qr.self"
     ]
   },
   

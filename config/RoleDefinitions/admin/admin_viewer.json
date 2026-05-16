@@ -70,7 +70,8 @@
     ],
     "workforce-management": [
       "workforce.view",
-      "workforce.production-labor.view"
+      "workforce.production-labor.view",
+      "workforce.audit.view"
     ],
     "production-labor": [
       "production-labor.view"

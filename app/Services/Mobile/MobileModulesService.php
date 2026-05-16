@@ -62,6 +62,13 @@ class MobileModulesService
             'supported_on_mobile' => true,
             'order' => 60,
         ],
+        [
+            'slug' => 'workforce-management',
+            'icon' => 'workforce',
+            'route' => 'workforce-management',
+            'supported_on_mobile' => true,
+            'order' => 70,
+        ],
     ];
 
     public function __construct(

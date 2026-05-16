@@ -396,12 +396,15 @@
       "workforce.hr.manage",
       "workforce.structure.manage",
       "workforce.attendance.manage",
+      "workforce.attendance.qr.self",
+      "workforce.attendance.scan-confirm",
       "workforce.payroll-source.manage",
       "workforce.payroll-source.validate",
       "workforce.payroll-source.lock",
       "workforce.exports.generate",
       "workforce.exports.approve",
-      "workforce.settings.manage"
+      "workforce.settings.manage",
+      "workforce.audit.view"
     ],
     "production-labor": [
       "production-labor.view",
