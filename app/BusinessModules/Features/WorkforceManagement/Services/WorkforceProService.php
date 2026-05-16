@@ -175,6 +175,10 @@ final class WorkforceProService
     {
         $period = $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
 
+        if ($period->status === 'locked') {
+            throw new DomainException(trans_message('workforce.errors.payroll_period_locked'));
+        }
+
         DB::transaction(function () use ($organizationId, $periodId, $period): void {
             DB::table('workforce_payroll_source_rows')->where('organization_id', $organizationId)->where('payroll_period_id', $periodId)->delete();
 

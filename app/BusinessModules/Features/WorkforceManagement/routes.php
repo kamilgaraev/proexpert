@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\BusinessModules\Features\WorkforceManagement\Http\Controllers\WorkforceEmployeeController;
+use App\BusinessModules\Features\WorkforceManagement\Http\Controllers\WorkforceCorporateController;
 use App\BusinessModules\Features\WorkforceManagement\Http\Controllers\WorkforceProController;
 use Illuminate\Support\Facades\Route;
 
@@ -100,4 +101,35 @@ Route::prefix('api/v1/admin/workforce')
         Route::get('/payroll-periods/{periodId}/validation-issues', [WorkforceProController::class, 'payrollValidationIssues'])
             ->whereNumber('periodId')
             ->middleware('authorize:workforce.view');
+        Route::post('/payroll-periods/{periodId}/lock', [WorkforceCorporateController::class, 'lockPayrollPeriod'])
+            ->whereNumber('periodId')
+            ->middleware('authorize:workforce.payroll-source.lock');
+        Route::post('/payroll-periods/{periodId}/export-packages', [WorkforceCorporateController::class, 'createExportPackage'])
+            ->whereNumber('periodId')
+            ->middleware('authorize:workforce.exports.generate');
+        Route::get('/export-packages', [WorkforceCorporateController::class, 'exportPackages'])
+            ->middleware('authorize:workforce.view');
+        Route::get('/export-packages/{packageId}', [WorkforceCorporateController::class, 'showExportPackage'])
+            ->whereNumber('packageId')
+            ->middleware('authorize:workforce.view');
+        Route::get('/export-packages/{packageId}/files/{fileId}/download', [WorkforceCorporateController::class, 'downloadExportFile'])
+            ->whereNumber('packageId')
+            ->whereNumber('fileId')
+            ->middleware('authorize:workforce.exports.generate');
+        Route::post('/export-packages/{packageId}/mark-sent', [WorkforceCorporateController::class, 'markSent'])
+            ->whereNumber('packageId')
+            ->middleware('authorize:workforce.exports.generate');
+        Route::post('/export-packages/{packageId}/mark-accepted', [WorkforceCorporateController::class, 'markAccepted'])
+            ->whereNumber('packageId')
+            ->middleware('authorize:workforce.exports.approve');
+        Route::post('/export-packages/{packageId}/mark-rejected', [WorkforceCorporateController::class, 'markRejected'])
+            ->whereNumber('packageId')
+            ->middleware('authorize:workforce.exports.approve');
+        Route::get('/accounting-mappings', [WorkforceCorporateController::class, 'accountingMappings'])
+            ->middleware('authorize:workforce.settings.manage');
+        Route::post('/accounting-mappings', [WorkforceCorporateController::class, 'storeAccountingMapping'])
+            ->middleware('authorize:workforce.settings.manage');
+        Route::put('/accounting-mappings/{mappingId}', [WorkforceCorporateController::class, 'updateAccountingMapping'])
+            ->whereNumber('mappingId')
+            ->middleware('authorize:workforce.settings.manage');
     });
