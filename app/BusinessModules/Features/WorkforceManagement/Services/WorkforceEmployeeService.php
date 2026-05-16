@@ -63,6 +63,8 @@ final class WorkforceEmployeeService
             throw new DomainException(trans_message('workforce.errors.dismissal_before_hire_date'));
         }
 
+        $this->assertDismissalDoesNotChangeLockedPayrollSource($organizationId, (int) $employee->id, $date);
+
         DB::transaction(function () use ($employee, $organizationId, $date): void {
             $employee->update([
                 'employment_status' => 'dismissed',
@@ -131,6 +133,22 @@ final class WorkforceEmployeeService
 
         if ($exists) {
             throw new DomainException(trans_message('workforce.errors.employee_user_already_active'));
+        }
+    }
+
+    private function assertDismissalDoesNotChangeLockedPayrollSource(int $organizationId, int $employeeId, string $dismissalDate): void
+    {
+        $exists = DB::table('workforce_payroll_periods')
+            ->join('workforce_payroll_source_rows', 'workforce_payroll_source_rows.payroll_period_id', '=', 'workforce_payroll_periods.id')
+            ->where('workforce_payroll_periods.organization_id', $organizationId)
+            ->where('workforce_payroll_periods.status', 'locked')
+            ->where('workforce_payroll_source_rows.employee_id', $employeeId)
+            ->whereDate('workforce_payroll_periods.period_start', '<=', $dismissalDate)
+            ->whereDate('workforce_payroll_periods.period_end', '>=', $dismissalDate)
+            ->exists();
+
+        if ($exists) {
+            throw new DomainException(trans_message('workforce.errors.dismissal_locked_payroll_period'));
         }
     }
 }

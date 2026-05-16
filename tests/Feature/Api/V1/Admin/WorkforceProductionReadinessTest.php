@@ -109,6 +109,48 @@ final class WorkforceProductionReadinessTest extends TestCase
             ->assertJsonPath('message', trans_message('workforce.errors.dismissal_before_hire_date'));
     }
 
+    public function test_employee_dismissal_rejects_locked_payroll_period_source_overlap(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $employee = $this->employee($context, 'LIFE-003');
+        $this->allowAccess('web_admin');
+
+        $periodId = DB::table('workforce_payroll_periods')->insertGetId([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'period_start' => '2026-05-01',
+            'period_end' => '2026-05-31',
+            'status' => 'locked',
+            'source_hash' => 'locked-source',
+            'created_by_user_id' => $context->user->id,
+            'locked_by_user_id' => $context->user->id,
+            'locked_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('workforce_payroll_source_rows')->insert([
+            'organization_id' => $context->organization->id,
+            'payroll_period_id' => $periodId,
+            'employee_id' => $employee->id,
+            'project_id' => $project->id,
+            'work_date' => '2026-05-16',
+            'source_type' => 'timesheet_hours',
+            'hours' => 8,
+            'amount' => 4000,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/workforce/employees/{$employee->id}/dismiss", [
+                'dismissal_date' => '2026-05-20',
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('workforce.errors.dismissal_locked_payroll_period'));
+    }
+
     public function test_payroll_periods_do_not_overlap(): void
     {
         $context = AdminApiTestContext::create();
