@@ -56,6 +56,7 @@ class SiteRequestService
                 'calendarEvent',
                 'group',
                 'estimateItem.measurementUnit',
+                'materialDeliveries.latestEvent',
                 'purchaseRequests.assignedUser',
                 'purchaseRequests.purchaseOrders.supplier',
                 'purchaseOrders.supplier',
@@ -88,7 +89,7 @@ class SiteRequestService
         array $filters = []
     ): LengthAwarePaginator {
         $query = SiteRequest::forOrganization($organizationId)
-            ->with(['project', 'user', 'assignedUser', 'group', 'estimateItem.measurementUnit']);
+            ->with(['project', 'user', 'assignedUser', 'group', 'estimateItem.measurementUnit', 'materialDeliveries.latestEvent']);
 
         // Применяем фильтры
         $this->applyFilters($query, $filters);

@@ -3,6 +3,7 @@
 use App\BusinessModules\Features\BasicWarehouse\Controllers\AssetController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\InventoryController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\ProjectAllocationController;
+use App\BusinessModules\Features\BasicWarehouse\Controllers\ProjectMaterialDeliveryController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehousePhotoController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseIdentifierController;
@@ -218,6 +219,20 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
                 ->name('deallocate');
             Route::get('/project/{projectId}', [ProjectAllocationController::class, 'getProjectAllocations'])
                 ->name('project');
+        });
+
+        Route::prefix('project-material-deliveries')->name('project-material-deliveries.')->middleware('authorize:warehouse.manage_stock')->group(function () {
+            Route::get('/', [ProjectMaterialDeliveryController::class, 'index'])
+                ->name('index');
+            Route::get('/{deliveryId}', [ProjectMaterialDeliveryController::class, 'show'])
+                ->whereNumber('deliveryId')
+                ->name('show');
+            Route::post('/{deliveryId}/ship', [ProjectMaterialDeliveryController::class, 'ship'])
+                ->whereNumber('deliveryId')
+                ->name('ship');
+            Route::post('/{deliveryId}/cancel', [ProjectMaterialDeliveryController::class, 'cancel'])
+                ->whereNumber('deliveryId')
+                ->name('cancel');
         });
     });
 

@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Features\SiteRequests\Http\Resources;
 
 use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
+use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\Services\Storage\FileService;
 use Illuminate\Http\Request;
@@ -205,6 +206,7 @@ class SiteRequestResource extends JsonResource
                     'name' => $purchaseOrder->supplier->name,
                 ] : null,
             ])->values()),
+            'delivery_summary' => $this->whenLoaded('materialDeliveries', fn() => $this->buildDeliverySummary()),
             'purchaseRequests' => $this->whenLoaded('purchaseRequests', fn() => $this->purchaseRequests->map(fn($purchaseRequest) => [
                 'id' => $purchaseRequest->id,
                 'request_number' => $purchaseRequest->request_number,
@@ -238,6 +240,31 @@ class SiteRequestResource extends JsonResource
             ])->values()),
             'created_at' => $this->created_at->toIso8601String(),
             'updated_at' => $this->updated_at->toIso8601String(),
+        ];
+    }
+
+    private function buildDeliverySummary(): ?array
+    {
+        if (!$this->relationLoaded('materialDeliveries') || $this->materialDeliveries->isEmpty()) {
+            return null;
+        }
+
+        /** @var ProjectMaterialDelivery $latestDelivery */
+        $latestDelivery = $this->materialDeliveries
+            ->sortByDesc(fn (ProjectMaterialDelivery $delivery) => $delivery->updated_at?->timestamp ?? 0)
+            ->first();
+
+        return [
+            'status' => $latestDelivery->status?->value,
+            'status_label' => $latestDelivery->status?->label(),
+            'status_color' => $latestDelivery->status?->color(),
+            'requested_quantity' => (float) $this->materialDeliveries->sum('requested_quantity'),
+            'reserved_quantity' => (float) $this->materialDeliveries->sum('reserved_quantity'),
+            'shipped_quantity' => (float) $this->materialDeliveries->sum('shipped_quantity'),
+            'accepted_quantity' => (float) $this->materialDeliveries->sum('accepted_quantity'),
+            'planned_delivery_date' => $latestDelivery->planned_delivery_date?->format('Y-m-d'),
+            'latest_delivery_id' => $latestDelivery->id,
+            'can_receive' => $latestDelivery->canReceive(),
         ];
     }
 }

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Services;
 
+use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
+use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDeliveryService;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
@@ -13,6 +15,7 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\Models\Contract;
 use App\Models\Supplier;
+use App\Models\User;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -25,7 +28,8 @@ class PurchaseOrderService
         private readonly PurchaseOrderPdfService $pdfService,
         private readonly SupplierPartyService $supplierPartyService,
         private readonly ProcurementAuditService $auditService,
-        private readonly ProcurementLifecycleService $lifecycleService
+        private readonly ProcurementLifecycleService $lifecycleService,
+        private readonly ProjectMaterialDeliveryService $deliveryService
     ) {
     }
 
@@ -101,6 +105,8 @@ class PurchaseOrderService
                 ]
             );
 
+            $this->syncDeliveryFromOrder($order, $request, $actorId);
+
             DB::commit();
 
             $this->invalidateCache($request->organization_id);
@@ -171,6 +177,8 @@ class PurchaseOrderService
                 'confirmed_at' => now(),
                 'total_amount' => $proposalData['total_amount'] ?? $order->total_amount,
             ]);
+
+            $this->syncDeliveryFromOrder($order, $order->purchaseRequest);
 
             if (isset($proposalData['items'])) {
                 app(SupplierProposalService::class)->createFromOrder($order, $proposalData);
@@ -314,6 +322,8 @@ class PurchaseOrderService
                 'status' => PurchaseOrderStatusEnum::IN_DELIVERY,
             ]);
 
+            $this->markDeliveryInTransit($order);
+
             DB::commit();
 
             $this->invalidateCache($order->organization_id);
@@ -428,5 +438,60 @@ class PurchaseOrderService
             })
             ->values()
             ->all();
+    }
+
+    private function syncDeliveryFromOrder(PurchaseOrder $order, PurchaseRequest $request, ?int $actorId = null): void
+    {
+        if (!$request->site_request_id) {
+            return;
+        }
+
+        $delivery = ProjectMaterialDelivery::query()
+            ->where('organization_id', $order->organization_id)
+            ->where(function ($query) use ($request): void {
+                $query->where('purchase_request_id', $request->id)
+                    ->orWhere('site_request_id', $request->site_request_id);
+            })
+            ->first();
+
+        $actor = $this->resolveDeliveryActor($request, $actorId);
+
+        if (!$delivery || !$actor) {
+            return;
+        }
+
+        $this->deliveryService->linkPurchaseOrder($delivery, $order, $actor);
+    }
+
+    private function markDeliveryInTransit(PurchaseOrder $order): void
+    {
+        $request = $order->purchaseRequest;
+
+        if (!$request || !$request->site_request_id) {
+            return;
+        }
+
+        $delivery = ProjectMaterialDelivery::query()
+            ->where('organization_id', $order->organization_id)
+            ->where('purchase_order_id', $order->id)
+            ->first();
+
+        $actor = $this->resolveDeliveryActor($request);
+
+        if (!$delivery || !$actor || $delivery->status?->canBeReceived()) {
+            return;
+        }
+
+        $this->deliveryService->ship($delivery, $actor, [
+            'quantity' => max((float) $delivery->requested_quantity, (float) $delivery->reserved_quantity),
+            'notes' => trans_message('basic_warehouse.project_material_deliveries.in_transit_from_purchase_order'),
+        ]);
+    }
+
+    private function resolveDeliveryActor(PurchaseRequest $request, ?int $actorId = null): ?User
+    {
+        $userId = $actorId ?: auth()->id() ?: $request->assigned_to ?: $request->siteRequest?->user_id;
+
+        return $userId ? User::query()->find($userId) : null;
     }
 }

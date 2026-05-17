@@ -2,7 +2,9 @@
 
 namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 
+use App\BusinessModules\Features\BasicWarehouse\Http\Resources\ProjectMaterialDeliveryResource;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseProjectAllocation;
+use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDeliveryService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -19,7 +21,8 @@ use function trans_message;
 class ProjectAllocationController extends Controller
 {
     public function __construct(
-        protected WarehouseService $warehouseService
+        protected WarehouseService $warehouseService,
+        protected ProjectMaterialDeliveryService $deliveryService
     ) {}
 
     public function allocate(Request $request): JsonResponse
@@ -126,10 +129,18 @@ class ProjectAllocationController extends Controller
             $allocation->notes = $validated['notes'] ?? $allocation->notes;
             $allocation->save();
 
+            $delivery = $this->deliveryService->createFromAllocation($allocation, $request->user(), [
+                'quantity' => $validated['quantity'],
+                'notes' => $validated['notes'] ?? null,
+            ]);
+
             DB::commit();
 
             return AdminResponse::success(
-                $allocation->load(['project', 'material', 'warehouse']),
+                [
+                    'allocation' => $allocation->load(['project', 'material', 'warehouse']),
+                    'delivery' => new ProjectMaterialDeliveryResource($delivery),
+                ],
                 trans_message('basic_warehouse.project_allocations.created'),
                 201
             );

@@ -16,6 +16,7 @@ use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\PersonnelTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
+use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -244,6 +245,11 @@ class SiteRequest extends Model
             'id', // Local key on site_requests table
             'id' // Local key on purchase_requests table
         );
+    }
+
+    public function materialDeliveries(): HasMany
+    {
+        return $this->hasMany(ProjectMaterialDelivery::class, 'site_request_id');
     }
 
     // ============================================
@@ -525,4 +531,3 @@ class SiteRequest extends Model
         return true;
     }
 }
-

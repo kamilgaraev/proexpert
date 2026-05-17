@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Services;
 
+use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDeliveryService;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
+use App\Models\User;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -31,7 +33,8 @@ class PurchaseRequestService
     ];
 
     public function __construct(
-        private readonly PurchaseRequestNumberGenerator $numberGenerator
+        private readonly PurchaseRequestNumberGenerator $numberGenerator,
+        private readonly ProjectMaterialDeliveryService $deliveryService
     ) {
     }
 
@@ -79,6 +82,8 @@ class PurchaseRequestService
 
         $existingRequest = $this->findExistingBySiteRequest($siteRequest->organization_id, $siteRequest->id);
         if ($existingRequest) {
+            $this->syncDeliveryFromSiteRequest($siteRequest, $existingRequest);
+
             return $existingRequest->fresh(self::RESOURCE_RELATIONS);
         }
 
@@ -119,6 +124,8 @@ class PurchaseRequestService
                     ],
                 ]);
             }
+
+            $this->syncDeliveryFromSiteRequest($siteRequest, $purchaseRequest);
 
             DB::commit();
 
@@ -183,6 +190,10 @@ class PurchaseRequestService
                     'needed_by' => $line['needed_by'] ?? $data['needed_by'] ?? null,
                     'metadata' => $line['metadata'] ?? null,
                 ]);
+            }
+
+            if ($siteRequest) {
+                $this->syncDeliveryFromSiteRequest($siteRequest, $purchaseRequest);
             }
 
             DB::commit();
@@ -295,6 +306,21 @@ class PurchaseRequestService
         return PurchaseRequest::forOrganization($organizationId)
             ->where('site_request_id', $siteRequestId)
             ->first();
+    }
+
+    private function syncDeliveryFromSiteRequest(SiteRequest $siteRequest, PurchaseRequest $purchaseRequest): void
+    {
+        if (!$siteRequest->material_id) {
+            return;
+        }
+
+        $actor = User::query()->find($purchaseRequest->assigned_to ?? $siteRequest->user_id);
+
+        if (!$actor) {
+            return;
+        }
+
+        $this->deliveryService->createOrLinkFromSiteRequest($siteRequest, $actor, $purchaseRequest);
     }
 
     private function invalidateCache(int $organizationId): void

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services\Mobile;
 
+use App\BusinessModules\Features\BasicWarehouse\Enums\ProjectMaterialDeliveryStatusEnum;
+use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalPayloadService;
 use App\Enums\EstimatePositionItemType;
 use App\Models\ConstructionJournal;
@@ -188,7 +190,36 @@ class MobileConstructionJournalService
                 ])
                 ->values()
                 ->all(),
+            'project_materials' => $this->buildAcceptedProjectMaterials((int) $journal->organization_id, (int) $journal->project_id),
         ];
+    }
+
+    private function buildAcceptedProjectMaterials(int $organizationId, int $projectId): array
+    {
+        return ProjectMaterialDelivery::query()
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('status', ProjectMaterialDeliveryStatusEnum::ACCEPTED->value)
+            ->where('accepted_quantity', '>', 0)
+            ->with(['material.measurementUnit', 'allocation'])
+            ->orderByDesc('accepted_at')
+            ->get()
+            ->map(static fn (ProjectMaterialDelivery $delivery): array => [
+                'material_id' => $delivery->material_id,
+                'project_material_delivery_id' => $delivery->id,
+                'warehouse_project_allocation_id' => $delivery->warehouse_project_allocation_id,
+                'name' => $delivery->material?->name,
+                'code' => $delivery->material?->code,
+                'available_quantity' => (float) $delivery->accepted_quantity,
+                'measurement_unit' => $delivery->material?->measurementUnit ? [
+                    'id' => $delivery->material->measurementUnit->id,
+                    'name' => $delivery->material->measurementUnit->name,
+                    'short_name' => $delivery->material->measurementUnit->short_name,
+                ] : null,
+                'accepted_at' => $delivery->accepted_at?->toDateTimeString(),
+            ])
+            ->values()
+            ->all();
     }
 
     private function mapEstimateOption(Estimate $estimate): array
