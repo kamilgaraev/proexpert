@@ -19,15 +19,19 @@ class StoreAssetRequest extends FormRequest
     public function rules(): array
     {
         $organizationId = $this->user()->current_organization_id;
+        $codeRules = [
+            'nullable',
+            'string',
+            'max:50',
+        ];
+
+        if (!$this->filled('warehouse_id')) {
+            $codeRules[] = Rule::unique('materials', 'code')->where('organization_id', $organizationId);
+        }
 
         return [
             'name'                => 'required|string|max:255',
-            'code'                => [
-                'nullable',
-                'string',
-                'max:50',
-                Rule::unique('materials', 'code')->where('organization_id', $organizationId),
-            ],
+            'code'                => $codeRules,
             'measurement_unit_id' => [
                 'required',
                 Rule::exists('measurement_units', 'id')
@@ -53,6 +57,13 @@ class StoreAssetRequest extends FormRequest
                             ->where('is_active', true);
                     }),
             ],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'code.unique' => trans_message('basic_warehouse.asset.code_exists', [], 'ru'),
         ];
     }
 }

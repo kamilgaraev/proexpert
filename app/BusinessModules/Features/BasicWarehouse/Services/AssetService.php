@@ -34,6 +34,17 @@ class AssetService
         $warehouseId = isset($data['warehouse_id']) ? (int) $data['warehouse_id'] : null;
         unset($data['warehouse_id']);
 
+        if ($warehouseId !== null && !empty($data['code'])) {
+            $existingAsset = $this->findActiveAssetByCode($organizationId, (string) $data['code']);
+
+            if ($existingAsset !== null) {
+                $this->createInitialWarehouseBalance($organizationId, $warehouseId, $existingAsset);
+                $this->clearAssetCache($organizationId);
+
+                return $this->getAssetById($organizationId, $existingAsset->id);
+            }
+        }
+
         // Подготовка additional_properties с типом актива
         $additionalProperties = $data['additional_properties'] ?? [];
         $additionalProperties['asset_type'] = $data['asset_type'] ?? Asset::TYPE_MATERIAL;
@@ -390,6 +401,15 @@ class AssetService
             ->findOrFail($assetId);
     }
 
+    private function findActiveAssetByCode(int $organizationId, string $code): ?Asset
+    {
+        return Asset::query()
+            ->where('organization_id', $organizationId)
+            ->where('code', $code)
+            ->where('is_active', true)
+            ->first();
+    }
+
     private function assertMeasurementUnitBelongsToOrganization(int $measurementUnitId, int $organizationId): void
     {
         $exists = MeasurementUnit::query()
@@ -408,6 +428,16 @@ class AssetService
 
     private function createInitialWarehouseBalance(int $organizationId, int $warehouseId, Asset $asset): void
     {
+        $exists = WarehouseBalance::query()
+            ->where('organization_id', $organizationId)
+            ->where('warehouse_id', $warehouseId)
+            ->where('material_id', $asset->id)
+            ->exists();
+
+        if ($exists) {
+            return;
+        }
+
         WarehouseBalance::query()->create([
             'organization_id' => $organizationId,
             'warehouse_id' => $warehouseId,

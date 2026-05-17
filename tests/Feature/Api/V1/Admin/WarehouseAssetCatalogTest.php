@@ -245,6 +245,59 @@ class WarehouseAssetCatalogTest extends TestCase
         $this->assertSame([$assetId], collect($listResponse->json('data'))->pluck('id')->all());
     }
 
+    public function test_existing_asset_code_is_attached_to_selected_warehouse_instead_of_blocking_create(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id, 'Piece', 'pcs');
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN');
+        $existingAsset = $this->createAsset($context->organization->id, $unit->id, 'Existing cement', 'EXIST-CEM');
+        $this->allowAdminAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/assets', [
+                'name' => 'Existing cement',
+                'code' => 'EXIST-CEM',
+                'measurement_unit_id' => $unit->id,
+                'asset_type' => Asset::TYPE_MATERIAL,
+                'warehouse_id' => $warehouse->id,
+                'default_price' => 300,
+            ]);
+
+        $response->assertCreated();
+        $response->assertJsonPath('data.id', $existingAsset->id);
+        $response->assertJsonPath('data.warehouse_balances.0.warehouse_id', $warehouse->id);
+
+        $this->assertSame(1, Material::query()
+            ->where('organization_id', $context->organization->id)
+            ->where('code', 'EXIST-CEM')
+            ->count());
+        $this->assertDatabaseHas('warehouse_balances', [
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $existingAsset->id,
+        ]);
+    }
+
+    public function test_duplicate_asset_code_without_warehouse_context_returns_translated_message(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id, 'Piece', 'pcs');
+        $this->createAsset($context->organization->id, $unit->id, 'Existing cement', 'EXIST-CEM');
+        $this->allowAdminAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/assets', [
+                'name' => 'Duplicate cement',
+                'code' => 'EXIST-CEM',
+                'measurement_unit_id' => $unit->id,
+                'asset_type' => Asset::TYPE_MATERIAL,
+            ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('message', 'Актив с таким артикулом уже существует.');
+        $response->assertJsonPath('errors.code.0', 'Актив с таким артикулом уже существует.');
+    }
+
     public function test_asset_label_export_rejects_foreign_asset_ids_before_export(): void
     {
         $context = AdminApiTestContext::create();

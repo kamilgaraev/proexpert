@@ -132,7 +132,7 @@ class WarehousePhotoService
         $existingCount = $owner->photos()->count();
 
         if ($existingCount + count($photoFiles) > self::MAX_PHOTOS) {
-            throw new RuntimeException(__('warehouse_basic.photo_limit_exceeded'));
+            throw new RuntimeException(trans_message('warehouse_basic.photo_limit_exceeded', [], 'ru'));
         }
 
         $organization = Organization::findOrFail((int) $user->current_organization_id);
@@ -144,7 +144,7 @@ class WarehousePhotoService
                 $path = $this->fileService->upload($photo, $directory, null, 'public', $organization);
 
                 if ($path === false) {
-                    throw new RuntimeException(__('warehouse_basic.photo_upload_failed'));
+                    throw new RuntimeException(trans_message('warehouse_basic.photo_upload_failed', [], 'ru'));
                 }
 
                 $file = $owner->files()->create([
@@ -185,7 +185,7 @@ class WarehousePhotoService
         }
 
         if ($result === []) {
-            throw new RuntimeException(__('warehouse_basic.photo_upload_empty'));
+            throw new RuntimeException(trans_message('warehouse_basic.photo_upload_empty', [], 'ru'));
         }
 
         return $result;
@@ -197,7 +197,7 @@ class WarehousePhotoService
         $materialExists = Material::where('organization_id', $organizationId)->whereKey($materialId)->exists();
 
         if (!$warehouseExists || !$materialExists) {
-            throw new RuntimeException(__('warehouse_basic.photo_target_not_found'));
+            throw new RuntimeException(trans_message('warehouse_basic.photo_target_not_found', [], 'ru'));
         }
     }
 

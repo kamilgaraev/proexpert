@@ -35,7 +35,7 @@ class WarehousePhotoController extends Controller
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error(__('warehouse_basic.photo_target_not_found'), 404);
+            return AdminResponse::error(trans_message('warehouse_basic.photo_target_not_found', [], 'ru'), 404);
         }
     }
 
@@ -49,7 +49,7 @@ class WarehousePhotoController extends Controller
                 $request->user()
             );
 
-            return AdminResponse::success($photos, __('warehouse_basic.photo_upload_success'));
+            return AdminResponse::success($photos, trans_message('warehouse_basic.photo_upload_success', [], 'ru'));
         } catch (\Throwable $exception) {
             Log::error('WarehousePhotoController::uploadAssetPhotos', [
                 'asset_id' => $assetId,
@@ -70,7 +70,7 @@ class WarehousePhotoController extends Controller
                 $fileId
             );
 
-            return AdminResponse::success(null, __('warehouse_basic.photo_delete_success'));
+            return AdminResponse::success(null, trans_message('warehouse_basic.photo_delete_success', [], 'ru'));
         } catch (\Throwable $exception) {
             Log::error('WarehousePhotoController::deleteAssetPhoto', [
                 'asset_id' => $assetId,
@@ -79,7 +79,7 @@ class WarehousePhotoController extends Controller
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error(__('warehouse_basic.photo_target_not_found'), 404);
+            return AdminResponse::error(trans_message('warehouse_basic.photo_target_not_found', [], 'ru'), 404);
         }
     }
 
@@ -101,7 +101,7 @@ class WarehousePhotoController extends Controller
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error(__('warehouse_basic.photo_target_not_found'), 404);
+            return AdminResponse::error(trans_message('warehouse_basic.photo_target_not_found', [], 'ru'), 404);
         }
     }
 
@@ -119,7 +119,7 @@ class WarehousePhotoController extends Controller
                 $request->user()
             );
 
-            return AdminResponse::success($photos, __('warehouse_basic.photo_upload_success'));
+            return AdminResponse::success($photos, trans_message('warehouse_basic.photo_upload_success', [], 'ru'));
         } catch (\Throwable $exception) {
             Log::error('WarehousePhotoController::uploadBalancePhotos', [
                 'warehouse_id' => $warehouseId,
@@ -142,7 +142,7 @@ class WarehousePhotoController extends Controller
                 $fileId
             );
 
-            return AdminResponse::success(null, __('warehouse_basic.photo_delete_success'));
+            return AdminResponse::success(null, trans_message('warehouse_basic.photo_delete_success', [], 'ru'));
         } catch (\Throwable $exception) {
             Log::error('WarehousePhotoController::deleteBalancePhoto', [
                 'warehouse_id' => $warehouseId,
@@ -152,7 +152,7 @@ class WarehousePhotoController extends Controller
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error(__('warehouse_basic.photo_target_not_found'), 404);
+            return AdminResponse::error(trans_message('warehouse_basic.photo_target_not_found', [], 'ru'), 404);
         }
     }
 
@@ -172,7 +172,7 @@ class WarehousePhotoController extends Controller
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error(__('warehouse_basic.photo_target_not_found'), 404);
+            return AdminResponse::error(trans_message('warehouse_basic.photo_target_not_found', [], 'ru'), 404);
         }
     }
 
@@ -186,7 +186,7 @@ class WarehousePhotoController extends Controller
                 $request->user()
             );
 
-            return AdminResponse::success($photos, __('warehouse_basic.photo_upload_success'));
+            return AdminResponse::success($photos, trans_message('warehouse_basic.photo_upload_success', [], 'ru'));
         } catch (\Throwable $exception) {
             Log::error('WarehousePhotoController::uploadMovementPhotos', [
                 'movement_id' => $movementId,
@@ -207,7 +207,7 @@ class WarehousePhotoController extends Controller
                 $fileId
             );
 
-            return AdminResponse::success(null, __('warehouse_basic.photo_delete_success'));
+            return AdminResponse::success(null, trans_message('warehouse_basic.photo_delete_success', [], 'ru'));
         } catch (\Throwable $exception) {
             Log::error('WarehousePhotoController::deleteMovementPhoto', [
                 'movement_id' => $movementId,
@@ -216,7 +216,7 @@ class WarehousePhotoController extends Controller
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error(__('warehouse_basic.photo_target_not_found'), 404);
+            return AdminResponse::error(trans_message('warehouse_basic.photo_target_not_found', [], 'ru'), 404);
         }
     }
 }

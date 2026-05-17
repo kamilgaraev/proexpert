@@ -100,4 +100,9 @@ class WarehousePhotoDataTest extends TestCase
         $this->assertCount(1, $data[0]['asset_photo_gallery']);
         $this->assertSame('Цемент М500', $data[0]['material_name']);
     }
+
+    public function test_warehouse_photo_upload_success_message_is_translated(): void
+    {
+        $this->assertSame('Фотографии успешно загружены', trans_message('warehouse_basic.photo_upload_success'));
+    }
 }
