@@ -14,6 +14,7 @@ Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.conte
     Route::post('/warehouse/warehouses/{warehouseId}/tasks/{taskId}/status', [WarehouseTaskController::class, 'updateStatus'])->name('warehouse.tasks.status');
     Route::get('/warehouse/materials/autocomplete', [WarehouseController::class, 'materialAutocomplete'])->name('warehouse.materials.autocomplete');
     Route::get('/warehouse/project-material-deliveries', [ProjectMaterialDeliveryController::class, 'index'])->name('warehouse.project-material-deliveries.index');
+    Route::get('/warehouse/project-material-deliveries/project-stock', [ProjectMaterialDeliveryController::class, 'projectStock'])->name('warehouse.project-material-deliveries.project-stock');
     Route::get('/warehouse/project-material-deliveries/{deliveryId}', [ProjectMaterialDeliveryController::class, 'show'])->name('warehouse.project-material-deliveries.show');
     Route::post('/warehouse/project-material-deliveries/{deliveryId}/receive', [ProjectMaterialDeliveryController::class, 'receive'])->name('warehouse.project-material-deliveries.receive');
     Route::post('/warehouse/operations/receipt', [WarehouseController::class, 'receipt'])->name('warehouse.operations.receipt');

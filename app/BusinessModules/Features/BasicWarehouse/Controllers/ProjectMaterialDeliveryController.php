@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 use App\BusinessModules\Features\BasicWarehouse\Http\Resources\ProjectMaterialDeliveryResource;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDeliveryService;
+use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialStockService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use DomainException;
@@ -20,7 +21,8 @@ use function trans_message;
 class ProjectMaterialDeliveryController extends Controller
 {
     public function __construct(
-        private readonly ProjectMaterialDeliveryService $deliveryService
+        private readonly ProjectMaterialDeliveryService $deliveryService,
+        private readonly ProjectMaterialStockService $stockService
     ) {
     }
 
@@ -46,6 +48,33 @@ class ProjectMaterialDeliveryController extends Controller
             Log::error('warehouse.project_material_deliveries.index.error', [
                 'organization_id' => $request->user()?->current_organization_id,
                 'user_id' => $request->user()?->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('basic_warehouse.project_material_deliveries.errors.load_failed'), 500);
+        }
+    }
+
+    public function projectStock(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'project_id' => ['nullable', 'integer', 'min:1'],
+            ]);
+
+            $stock = $this->stockService->getProjectStock(
+                (int) $request->user()->current_organization_id,
+                isset($validated['project_id']) ? (int) $validated['project_id'] : null
+            );
+
+            return AdminResponse::success($stock);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error(trans_message('errors.validation_failed'), 422, $exception->errors());
+        } catch (\Throwable $exception) {
+            Log::error('warehouse.project_material_deliveries.stock.error', [
+                'organization_id' => $request->user()?->current_organization_id,
+                'user_id' => $request->user()?->id,
+                'project_id' => $request->integer('project_id') ?: null,
                 'error' => $exception->getMessage(),
             ]);
 

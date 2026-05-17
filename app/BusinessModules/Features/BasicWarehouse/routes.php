@@ -224,6 +224,8 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
         Route::prefix('project-material-deliveries')->name('project-material-deliveries.')->middleware('authorize:warehouse.manage_stock')->group(function () {
             Route::get('/', [ProjectMaterialDeliveryController::class, 'index'])
                 ->name('index');
+            Route::get('/project-stock', [ProjectMaterialDeliveryController::class, 'projectStock'])
+                ->name('project-stock');
             Route::get('/{deliveryId}', [ProjectMaterialDeliveryController::class, 'show'])
                 ->whereNumber('deliveryId')
                 ->name('show');

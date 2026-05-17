@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Api\V1\Mobile;
 use App\BusinessModules\Features\BasicWarehouse\Http\Resources\ProjectMaterialDeliveryResource;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDeliveryService;
+use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialStockService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
 use DomainException;
@@ -20,7 +21,8 @@ use function trans_message;
 class ProjectMaterialDeliveryController extends Controller
 {
     public function __construct(
-        private readonly ProjectMaterialDeliveryService $deliveryService
+        private readonly ProjectMaterialDeliveryService $deliveryService,
+        private readonly ProjectMaterialStockService $stockService
     ) {
     }
 
@@ -52,6 +54,35 @@ class ProjectMaterialDeliveryController extends Controller
             Log::error('mobile.project_material_deliveries.index.error', [
                 'organization_id' => $request->user()?->current_organization_id,
                 'user_id' => $request->user()?->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return MobileResponse::error(trans_message('basic_warehouse.project_material_deliveries.errors.load_failed'), 500);
+        }
+    }
+
+    public function projectStock(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'project_id' => ['nullable', 'integer', 'min:1'],
+            ]);
+
+            $user = $request->user();
+            $stock = $this->stockService->getProjectStock(
+                (int) $user->current_organization_id,
+                isset($validated['project_id']) ? (int) $validated['project_id'] : null,
+                $user
+            );
+
+            return MobileResponse::success($stock);
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(trans_message('errors.validation_failed'), 422, $exception->errors());
+        } catch (\Throwable $exception) {
+            Log::error('mobile.project_material_deliveries.stock.error', [
+                'organization_id' => $request->user()?->current_organization_id,
+                'user_id' => $request->user()?->id,
+                'project_id' => $request->integer('project_id') ?: null,
                 'error' => $exception->getMessage(),
             ]);
 
