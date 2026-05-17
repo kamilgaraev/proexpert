@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Features\BasicWarehouse\Services;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\Models\Material;
 use App\Models\MeasurementUnit;
 use App\Services\Logging\LoggingService;
@@ -30,6 +31,8 @@ class AssetService
     public function createAsset(int $organizationId, array $data): Asset
     {
         $this->assertMeasurementUnitBelongsToOrganization((int) $data['measurement_unit_id'], $organizationId);
+        $warehouseId = isset($data['warehouse_id']) ? (int) $data['warehouse_id'] : null;
+        unset($data['warehouse_id']);
 
         // Подготовка additional_properties с типом актива
         $additionalProperties = $data['additional_properties'] ?? [];
@@ -52,7 +55,15 @@ class AssetService
             'additional_properties' => $additionalProperties,
         ]);
 
-        $asset = Asset::create($assetData);
+        $asset = DB::transaction(function () use ($assetData, $organizationId, $warehouseId): Asset {
+            $asset = Asset::create($assetData);
+
+            if ($warehouseId !== null) {
+                $this->createInitialWarehouseBalance($organizationId, $warehouseId, $asset);
+            }
+
+            return $asset;
+        });
 
         $this->logging->business('asset.created', [
             'organization_id' => $organizationId,
@@ -393,6 +404,21 @@ class AssetService
         if (!$exists) {
             throw (new ModelNotFoundException())->setModel(MeasurementUnit::class, [$measurementUnitId]);
         }
+    }
+
+    private function createInitialWarehouseBalance(int $organizationId, int $warehouseId, Asset $asset): void
+    {
+        WarehouseBalance::query()->create([
+            'organization_id' => $organizationId,
+            'warehouse_id' => $warehouseId,
+            'material_id' => $asset->id,
+            'available_quantity' => 0,
+            'reserved_quantity' => 0,
+            'unit_price' => (float) ($asset->default_price ?? 0),
+            'min_stock_level' => 0,
+            'max_stock_level' => 0,
+            'created_at' => now(),
+        ]);
     }
 }
 

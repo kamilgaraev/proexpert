@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BasicWarehouse\Http\Requests;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
+use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -43,6 +44,15 @@ class StoreAssetRequest extends FormRequest
             'description'         => 'nullable|string|max:1000',
             'category'            => 'nullable|string|max:100',
             'asset_attributes'    => 'nullable|array',
+            'warehouse_id'         => [
+                'nullable',
+                'integer',
+                Rule::exists(OrganizationWarehouse::class, 'id')
+                    ->where(static function ($query) use ($organizationId): void {
+                        $query->where('organization_id', $organizationId)
+                            ->where('is_active', true);
+                    }),
+            ],
         ];
     }
 }

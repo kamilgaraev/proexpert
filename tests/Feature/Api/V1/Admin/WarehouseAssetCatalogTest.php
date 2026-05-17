@@ -206,6 +206,45 @@ class WarehouseAssetCatalogTest extends TestCase
         $this->assertSame(1000.0, (float) $statsResponse->json('data.material.total_value'));
     }
 
+    public function test_asset_created_from_selected_warehouse_remains_visible_in_that_warehouse_catalog(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id, 'Piece', 'pcs');
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN');
+        $this->allowAdminAccess();
+
+        $createResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/assets', [
+                'name' => 'Warehouse-local asset',
+                'code' => 'WH-LOCAL',
+                'measurement_unit_id' => $unit->id,
+                'asset_type' => Asset::TYPE_MATERIAL,
+                'warehouse_id' => $warehouse->id,
+                'default_price' => 125,
+            ]);
+
+        $createResponse->assertCreated();
+        $createResponse->assertJsonPath('data.warehouse_balances.0.warehouse_id', $warehouse->id);
+        $createResponse->assertJsonPath('data.warehouse_balances.0.available_quantity', '0.000');
+        $createResponse->assertJsonPath('data.warehouse_balances.0.unit_price', '125.00');
+
+        $assetId = (int) $createResponse->json('data.id');
+        $this->assertDatabaseHas('warehouse_balances', [
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $assetId,
+            'available_quantity' => 0,
+            'reserved_quantity' => 0,
+            'unit_price' => 125,
+        ]);
+
+        $listResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/assets?warehouse_id={$warehouse->id}&per_page=20");
+
+        $listResponse->assertOk();
+        $this->assertSame([$assetId], collect($listResponse->json('data'))->pluck('id')->all());
+    }
+
     public function test_asset_label_export_rejects_foreign_asset_ids_before_export(): void
     {
         $context = AdminApiTestContext::create();
