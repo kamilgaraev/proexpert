@@ -18,6 +18,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use function trans_message;
 
 /**
  * Контроллер для операций со складом (приход, списание, перемещение)
@@ -217,7 +218,7 @@ class WarehouseOperationsController extends Controller
     public function receipt(ReceiptRequest $request): JsonResponse
     {
         $validated = $request->validated();
-        $organizationId = $request->user()->current_organization_id;
+        $organizationId = (int) $request->user()->current_organization_id;
         
         $materialId = $validated['material_id'] ?? null;
 
@@ -226,9 +227,9 @@ class WarehouseOperationsController extends Controller
             $asset = $this->assetService->createAsset($organizationId, [
                 'name'                => $materialData['name'],
                 'code'                => $materialData['code'] ?? null,
-                'measurement_unit_id' => $materialData['measurement_unit_id'],
+                'measurement_unit_id' => (int) $materialData['measurement_unit_id'],
                 'category'            => $materialData['category'] ?? null,
-                'default_price'       => $materialData['default_price'] ?? $validated['price'],
+                'default_price'       => (float) ($materialData['default_price'] ?? $validated['price']),
                 'description'         => $materialData['description'] ?? null,
                 'asset_type'          => $materialData['asset_type'] ?? 'material',
                 'is_active'           => true,
@@ -241,16 +242,21 @@ class WarehouseOperationsController extends Controller
             return AdminResponse::error('Необходимо указать material_id или данные для создания нового материала (material)', 422);
         }
         
+        $warehouseId = (int) $validated['warehouse_id'];
+        $materialId = (int) $materialId;
+        $quantity = (float) $validated['quantity'];
+        $price = (float) $validated['price'];
+
         try {
             $result = $this->warehouseService->receiveAsset(
                 $organizationId,
-                $validated['warehouse_id'],
+                $warehouseId,
                 $materialId,
-                $validated['quantity'],
-                $validated['price'],
+                $quantity,
+                $price,
                 [
                     'project_id' => $validated['project_id'] ?? null,
-                    'user_id' => $request->user()->id,
+                    'user_id' => (int) $request->user()->id,
                     'document_number' => $validated['document_number'] ?? null,
                     'reason' => $validated['reason'] ?? null,
                     'metadata' => $validated['metadata'] ?? [],
@@ -270,11 +276,11 @@ class WarehouseOperationsController extends Controller
 
             return AdminResponse::success(
                 new WarehouseMovementResource($result['movement']), 
-                __('warehouse_basic.receipt_success'), 
+                trans_message('warehouse_basic.receipt_success'),
                 201
             );
         } catch (\Exception $e) {
-            return AdminResponse::error(__('warehouse_basic.receipt_error') . ': ' . $e->getMessage(), 500);
+            return AdminResponse::error(trans_message('warehouse_basic.receipt_error') . ': ' . $e->getMessage(), 500);
         }
     }
 

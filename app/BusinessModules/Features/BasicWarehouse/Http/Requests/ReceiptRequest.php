@@ -9,12 +9,22 @@ class ReceiptRequest extends FormRequest
 {
     protected function prepareForValidation(): void
     {
-        $material = $this->input('material');
-        $metadata = $this->input('metadata');
+        $material = $this->decodeJsonInput($this->input('material'));
+        $metadata = $this->decodeJsonInput($this->input('metadata'));
+
+        if (is_array($material)) {
+            $material['measurement_unit_id'] = $this->nullableInteger($material['measurement_unit_id'] ?? null);
+            $material['default_price'] = $this->nullableFloat($material['default_price'] ?? null);
+        }
 
         $this->merge([
-            'material' => is_string($material) ? json_decode($material, true) : $material,
-            'metadata' => is_string($metadata) ? json_decode($metadata, true) : $metadata,
+            'warehouse_id' => $this->nullableInteger($this->input('warehouse_id')),
+            'material_id' => $this->nullableInteger($this->input('material_id')),
+            'material' => $material,
+            'quantity' => $this->nullableFloat($this->input('quantity')),
+            'price' => $this->nullableFloat($this->input('price')),
+            'project_id' => $this->nullableInteger($this->input('project_id')),
+            'metadata' => $metadata,
         ]);
     }
 
@@ -68,5 +78,51 @@ class ReceiptRequest extends FormRequest
             'photos' => 'nullable|array|max:4',
             'photos.*' => 'file|image|mimes:jpg,jpeg,png,webp,heic,heif|max:10240',
         ];
+    }
+
+    private function decodeJsonInput(mixed $value): mixed
+    {
+        if (!is_string($value)) {
+            return $value;
+        }
+
+        $decoded = json_decode($value, true);
+
+        return json_last_error() === JSON_ERROR_NONE ? $decoded : $value;
+    }
+
+    private function nullableInteger(mixed $value): mixed
+    {
+        $value = $this->normalizeNullableValue($value);
+
+        if ($value === null) {
+            return null;
+        }
+
+        return is_numeric($value) ? (int) $value : $value;
+    }
+
+    private function nullableFloat(mixed $value): mixed
+    {
+        $value = $this->normalizeNullableValue($value);
+
+        if ($value === null) {
+            return null;
+        }
+
+        return is_numeric($value) ? (float) $value : $value;
+    }
+
+    private function normalizeNullableValue(mixed $value): mixed
+    {
+        if (!is_string($value)) {
+            return $value;
+        }
+
+        $normalized = trim($value);
+
+        return in_array(mb_strtolower($normalized), ['', 'null', 'undefined'], true)
+            ? null
+            : $normalized;
     }
 }

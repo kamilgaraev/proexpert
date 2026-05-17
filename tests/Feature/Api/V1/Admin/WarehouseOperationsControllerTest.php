@@ -243,6 +243,38 @@ class WarehouseOperationsControllerTest extends TestCase
         ]);
     }
 
+    public function test_receipt_accepts_form_numeric_fields_as_strings(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Cement', 'CEM-FORM');
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN');
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->post('/api/v1/admin/warehouses/operations/receipt', [
+                'warehouse_id' => (string) $warehouse->id,
+                'material_id' => (string) $material->id,
+                'quantity' => '2',
+                'price' => '15000',
+                'project_id' => 'null',
+                'document_number' => '1',
+                'reason' => 'Покупка',
+                'metadata' => '[]',
+            ])
+            ->assertCreated();
+
+        $this->assertDatabaseHas('warehouse_movements', [
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $material->id,
+            'movement_type' => WarehouseMovement::TYPE_RECEIPT,
+            'quantity' => 2,
+            'price' => 15000,
+            'document_number' => '1',
+        ]);
+    }
+
     public function test_transfer_to_contractor_uses_scoped_ids_and_preserves_project_on_movements(): void
     {
         $context = AdminApiTestContext::create();
