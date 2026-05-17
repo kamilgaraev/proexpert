@@ -366,6 +366,7 @@ class ConstructionJournalEntryController extends Controller
             'equipment.*.hours_used' => 'nullable|numeric|min:0',
             'materials' => $prefix . 'nullable|array',
             'materials.*.material_id' => 'nullable|integer',
+            'materials.*.project_material_delivery_id' => 'nullable|integer',
             'materials.*.material_name' => 'required|string',
             'materials.*.quantity' => 'required|numeric|min:0',
             'materials.*.measurement_unit' => 'required|string',

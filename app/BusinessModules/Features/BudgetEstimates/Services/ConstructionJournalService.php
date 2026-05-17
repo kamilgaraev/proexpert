@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BudgetEstimates\Services;
 
+use App\BusinessModules\Features\BasicWarehouse\Enums\ProjectMaterialDeliveryStatusEnum;
+use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use BackedEnum;
 use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
 use App\Enums\ConstructionJournal\JournalStatusEnum;
@@ -438,11 +440,54 @@ class ConstructionJournalService
             $entry->materials()->create([
                 'material_id' => $material['material_id'] ?? null,
                 'estimate_item_id' => $material['estimate_item_id'] ?? null,
+                'project_material_delivery_id' => $material['project_material_delivery_id'] ?? null,
                 'material_name' => $material['material_name'],
                 'quantity' => $material['quantity'],
                 'measurement_unit' => $material['measurement_unit'],
                 'notes' => $material['notes'] ?? null,
             ]);
+        }
+    }
+
+    protected function assertProjectMaterialDeliveryScope(
+        ConstructionJournal $journal,
+        array $material,
+        ?ConstructionJournalEntry $entry = null
+    ): void {
+        $deliveryId = $material['project_material_delivery_id'] ?? null;
+
+        if (!$deliveryId) {
+            return;
+        }
+
+        $delivery = ProjectMaterialDelivery::query()
+            ->where('id', $deliveryId)
+            ->where('organization_id', $journal->organization_id)
+            ->where('project_id', $journal->project_id)
+            ->where('status', ProjectMaterialDeliveryStatusEnum::ACCEPTED->value)
+            ->first();
+
+        if (!$delivery) {
+            throw new DomainException(trans_message('construction_journal.errors.invalid_project_material_delivery'));
+        }
+
+        if (
+            isset($material['material_id'])
+            && (int) $material['material_id'] > 0
+            && (int) $material['material_id'] !== (int) $delivery->material_id
+        ) {
+            throw new DomainException(trans_message('construction_journal.errors.invalid_project_material_delivery'));
+        }
+
+        $quantity = (float) ($material['quantity'] ?? 0);
+
+        $usedQuantity = (float) $delivery->journalMaterials()
+            ->when($entry, fn ($query) => $query->where('journal_entry_id', '!=', $entry->id))
+            ->sum('quantity');
+        $availableQuantity = max(0.0, (float) $delivery->accepted_quantity - $usedQuantity);
+
+        if ($quantity > $availableQuantity) {
+            throw new DomainException(trans_message('construction_journal.errors.project_material_delivery_quantity_exceeded'));
         }
     }
 
@@ -495,6 +540,7 @@ class ConstructionJournalService
         foreach (($data['materials'] ?? []) as $material) {
             $this->assertMaterialScope($journal, $material['material_id'] ?? null);
             $this->assertEstimateResourceItemScope($journal, $material['estimate_item_id'] ?? null, $estimateId, ['material']);
+            $this->assertProjectMaterialDeliveryScope($journal, $material, $entry);
         }
 
         foreach (($data['equipment'] ?? []) as $equipment) {

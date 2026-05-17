@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -14,6 +15,7 @@ class JournalMaterial extends Model
         'journal_entry_id',
         'material_id',
         'estimate_item_id',
+        'project_material_delivery_id',
         'material_name',
         'quantity',
         'measurement_unit',
@@ -39,6 +41,11 @@ class JournalMaterial extends Model
     public function estimateItem(): BelongsTo
     {
         return $this->belongsTo(EstimateItem::class, 'estimate_item_id');
+    }
+
+    public function projectMaterialDelivery(): BelongsTo
+    {
+        return $this->belongsTo(ProjectMaterialDelivery::class, 'project_material_delivery_id');
     }
 }
 

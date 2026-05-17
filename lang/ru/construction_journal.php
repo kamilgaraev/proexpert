@@ -14,6 +14,8 @@ return [
         'export_ready' => 'Файл подготовлен.',
     ],
     'errors' => [
+        'invalid_project_material_delivery' => 'Материал объекта недоступен для этой записи журнала.',
+        'project_material_delivery_quantity_exceeded' => 'Нельзя списать больше материала, чем принято и доступно на объекте.',
         'load_failed' => 'Не удалось загрузить данные журнала работ.',
         'create_failed' => 'Не удалось создать журнал работ.',
         'update_failed' => 'Не удалось обновить журнал работ.',

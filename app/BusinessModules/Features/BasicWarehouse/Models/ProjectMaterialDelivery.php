@@ -8,6 +8,7 @@ use App\BusinessModules\Features\BasicWarehouse\Enums\ProjectMaterialDeliverySta
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
+use App\Models\JournalMaterial;
 use App\Models\Material;
 use App\Models\Organization;
 use App\Models\Project;
@@ -141,6 +142,11 @@ class ProjectMaterialDelivery extends Model
         return $this->hasOne(ProjectMaterialDeliveryEvent::class)->latestOfMany('occurred_at');
     }
 
+    public function journalMaterials(): HasMany
+    {
+        return $this->hasMany(JournalMaterial::class, 'project_material_delivery_id');
+    }
+
     public function remainingQuantityToShip(): float
     {
         $expected = max(
@@ -166,5 +172,15 @@ class ProjectMaterialDelivery extends Model
         return $status instanceof ProjectMaterialDeliveryStatusEnum
             && $status->canBeReceived()
             && $this->remainingQuantityToAccept() > 0;
+    }
+
+    public function usedQuantity(): float
+    {
+        return (float) $this->journalMaterials()->sum('quantity');
+    }
+
+    public function availableQuantity(): float
+    {
+        return max(0.0, (float) $this->getAttribute('accepted_quantity') - $this->usedQuantity());
     }
 }

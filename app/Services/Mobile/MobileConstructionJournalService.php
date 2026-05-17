@@ -204,13 +204,17 @@ class MobileConstructionJournalService
             ->with(['material.measurementUnit', 'allocation'])
             ->orderByDesc('accepted_at')
             ->get()
+            ->filter(static fn (ProjectMaterialDelivery $delivery): bool => $delivery->availableQuantity() > 0)
             ->map(static fn (ProjectMaterialDelivery $delivery): array => [
                 'material_id' => $delivery->material_id,
+                'delivery_id' => $delivery->id,
                 'project_material_delivery_id' => $delivery->id,
                 'warehouse_project_allocation_id' => $delivery->warehouse_project_allocation_id,
                 'name' => $delivery->material?->name,
                 'code' => $delivery->material?->code,
-                'available_quantity' => (float) $delivery->accepted_quantity,
+                'accepted_quantity' => (float) $delivery->accepted_quantity,
+                'used_quantity' => $delivery->usedQuantity(),
+                'available_quantity' => $delivery->availableQuantity(),
                 'measurement_unit' => $delivery->material?->measurementUnit ? [
                     'id' => $delivery->material->measurementUnit->id,
                     'name' => $delivery->material->measurementUnit->name,

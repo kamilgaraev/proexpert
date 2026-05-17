@@ -193,6 +193,7 @@ class ConstructionJournalPayloadService
                     'journal_entry_id' => $material->journal_entry_id,
                     'material_id' => $material->material_id,
                     'estimate_item_id' => $material->estimate_item_id,
+                    'project_material_delivery_id' => $material->project_material_delivery_id,
                     'material_name' => $material->material_name,
                     'quantity' => (float) $material->quantity,
                     'measurement_unit' => $material->measurement_unit,
