@@ -153,30 +153,42 @@ class WarehouseOperationsController extends Controller
      */
     public function exportM17(int $materialId, Request $request): JsonResponse
     {
-        $material = \App\Models\Material::findOrFail($materialId);
         $warehouseId = (int) $request->query('warehouse_id');
+        $organizationId = (int) $request->user()->current_organization_id;
+        $material = \App\Models\Material::query()
+            ->with(['organization', 'measurementUnit'])
+            ->where('organization_id', $organizationId)
+            ->findOrFail($materialId);
+        $warehouse = \App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse::query()
+            ->where('organization_id', $organizationId)
+            ->findOrFail($warehouseId);
 
-        if ($material->organization_id !== $request->user()->current_organization_id) {
-            return AdminResponse::error('Доступ запрещен', 403);
+        if ($material->organization_id !== $organizationId) {
+            return AdminResponse::error(trans_message('warehouse_basic.access_denied'), 403);
         }
 
         try {
-            // Получаем движения материала на конкретном складе
             $movements = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::where('material_id', $materialId)
-                ->where('warehouse_id', $warehouseId)
+                ->where('organization_id', $organizationId)
+                ->where(static function ($query) use ($warehouseId): void {
+                    $query->where('warehouse_id', $warehouseId)
+                        ->orWhere('from_warehouse_id', $warehouseId)
+                        ->orWhere('to_warehouse_id', $warehouseId);
+                })
                 ->orderBy('movement_date', 'asc')
                 ->get();
 
             $path = $this->exportManager->export('m17', [
                 'material' => $material,
+                'warehouse' => $warehouse,
                 'warehouse_id' => $warehouseId,
                 'movements' => $movements
             ]);
             $url = $this->exportManager->getTemporaryUrl($path);
             
-            return AdminResponse::success(['url' => $url], __('warehouse_basic.export_success'));
+            return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
         } catch (\Exception $e) {
-            return AdminResponse::error('Ошибка экспорта М-17: ' . $e->getMessage(), 500);
+            return AdminResponse::error(trans_message('warehouse_basic.m17_export_error') . ': ' . $e->getMessage(), 500);
         }
     }
 
