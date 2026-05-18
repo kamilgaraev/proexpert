@@ -448,6 +448,33 @@ class ProjectPulseReportTest extends TestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+        $violationId = DB::table('safety_violations')->insertGetId([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'created_by_user_id' => $context->user->id,
+            'violation_number' => 'HSE-V-ERP-001',
+            'title' => 'Нет страховочной привязи',
+            'severity' => 'critical',
+            'status' => 'open',
+            'location_name' => 'Кровля',
+            'due_date' => now()->subDay()->toDateString(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('safety_corrective_actions')->insert([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'violation_id' => $violationId,
+            'created_by_user_id' => $context->user->id,
+            'action_number' => 'HSE-C-ERP-001',
+            'title' => 'Выдать страховочные привязи',
+            'source_type' => 'violation',
+            'severity' => 'critical',
+            'status' => 'open',
+            'due_date' => now()->subDay()->toDateString(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
 
         $assetId = DB::table('machinery_assets')->insertGetId([
             'organization_id' => $organization->id,
@@ -588,6 +615,8 @@ class ProjectPulseReportTest extends TestCase
             'missing_executive_documents',
             'expired_work_permits',
             'open_safety_incidents',
+            'overdue_safety_violations',
+            'overdue_safety_corrective_actions',
             'machinery_downtime',
             'labor_underproduction',
             'unapproved_changes',

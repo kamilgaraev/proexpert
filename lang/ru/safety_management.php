@@ -31,6 +31,7 @@ return [
         'violation_resolution_required' => 'Для устранения нарушения укажите результат.',
         'briefing_participant_required' => 'Для участника инструктажа укажите сотрудника или внешнего работника.',
         'corrective_action_source_required' => 'Свяжите корректирующее действие с происшествием или нарушением.',
+        'corrective_action_single_source_required' => 'Свяжите корректирующее действие только с одним источником: происшествием или нарушением.',
         'corrective_action_resolve_invalid_status' => 'Устранить можно только открытое корректирующее действие.',
         'corrective_action_resolution_required' => 'Для устранения корректирующего действия укажите результат.',
         'corrective_action_verify_invalid_status' => 'Проверить можно только устраненное корректирующее действие.',

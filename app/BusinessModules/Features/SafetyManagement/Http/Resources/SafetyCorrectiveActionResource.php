@@ -49,6 +49,7 @@ final class SafetyCorrectiveActionResource extends JsonResource
                 'available_actions' => $actions,
                 'blocked' => false,
             ],
+            'problem_flags' => $this->problemFlags($action),
             'available_actions' => $actions,
             'project' => $this->whenLoaded('project', fn () => $action->project ? [
                 'id' => $action->project->id,
@@ -62,5 +63,18 @@ final class SafetyCorrectiveActionResource extends JsonResource
             'created_at' => $action->created_at?->toIso8601String(),
             'updated_at' => $action->updated_at?->toIso8601String(),
         ];
+    }
+
+    private function problemFlags(SafetyCorrectiveAction $action): array
+    {
+        if ($action->status !== 'verified' && $action->due_date !== null && $action->due_date->isPast()) {
+            return [[
+                'code' => 'corrective_action_overdue',
+                'severity' => 'critical',
+                'message' => trans_message('safety_management.problem_flags.corrective_action_overdue'),
+            ]];
+        }
+
+        return [];
     }
 }

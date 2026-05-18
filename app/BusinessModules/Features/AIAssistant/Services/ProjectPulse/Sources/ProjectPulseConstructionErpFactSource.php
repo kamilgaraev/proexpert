@@ -26,6 +26,8 @@ class ProjectPulseConstructionErpFactSource implements ProjectPulseFactSourceInt
             ->merge($this->missingExecutiveDocuments($context))
             ->merge($this->expiredWorkPermits($context))
             ->merge($this->openSafetyIncidents($context))
+            ->merge($this->overdueSafetyViolations($context))
+            ->merge($this->overdueSafetyCorrectiveActions($context))
             ->merge($this->machineryDowntime($context))
             ->merge($this->laborUnderproduction($context))
             ->merge($this->unapprovedChanges($context))
@@ -228,6 +230,89 @@ class ProjectPulseConstructionErpFactSource implements ProjectPulseFactSourceInt
                 primaryAction: $this->action('Открыть HSE', '/safety-management', 'safety-management.view'),
                 occurredAt: $this->dateString($row->occurred_at),
                 ageDays: $this->ageDays($context, $row->occurred_at),
+            ));
+    }
+
+    private function overdueSafetyViolations(ProjectPulseContext $context): Collection
+    {
+        if (!$this->hasTable('safety_violations')) {
+            return $this->empty();
+        }
+
+        return $this->table($context, 'safety_violations')
+            ->leftJoin('projects', 'projects.id', '=', 'safety_violations.project_id')
+            ->where('safety_violations.status', 'open')
+            ->whereNotNull('safety_violations.due_date')
+            ->whereDate('safety_violations.due_date', '<', $context->date->toDateString())
+            ->limit($this->limit())
+            ->get([
+                'safety_violations.id',
+                'safety_violations.project_id',
+                'safety_violations.violation_number',
+                'safety_violations.title',
+                'safety_violations.severity',
+                'safety_violations.status',
+                'safety_violations.due_date',
+                'projects.name as project_name',
+            ])
+            ->map(fn ($row) => new ProjectPulseFact(
+                id: 'safety_violation:' . $row->id . ':overdue',
+                type: 'overdue_safety_violations',
+                priority: in_array($row->severity, ['critical', 'high'], true) ? 'critical' : 'warning',
+                title: 'Просрочено устранение нарушения HSE',
+                text: 'Нарушение "' . ($row->title ?? $row->violation_number) . '" не устранено в установленный срок.',
+                projectId: (int) $row->project_id,
+                projectName: $row->project_name,
+                relatedEntity: $this->entity('safety_violation', (int) $row->id, 'Нарушение ' . $row->violation_number, '/safety-management'),
+                source: $this->key(),
+                category: 'safety',
+                status: $row->status,
+                nextAction: 'Проверить устранение нарушения и зафиксировать результат в HSE.',
+                primaryAction: $this->action('Открыть HSE', '/safety-management', 'safety-management.view'),
+                deadline: (string) $row->due_date,
+                ageDays: $this->ageDays($context, $row->due_date),
+            ));
+    }
+
+    private function overdueSafetyCorrectiveActions(ProjectPulseContext $context): Collection
+    {
+        if (!$this->hasTable('safety_corrective_actions')) {
+            return $this->empty();
+        }
+
+        return $this->table($context, 'safety_corrective_actions')
+            ->leftJoin('projects', 'projects.id', '=', 'safety_corrective_actions.project_id')
+            ->whereIn('safety_corrective_actions.status', ['open', 'resolved'])
+            ->whereNotNull('safety_corrective_actions.due_date')
+            ->whereDate('safety_corrective_actions.due_date', '<', $context->date->toDateString())
+            ->limit($this->limit())
+            ->get([
+                'safety_corrective_actions.id',
+                'safety_corrective_actions.project_id',
+                'safety_corrective_actions.action_number',
+                'safety_corrective_actions.title',
+                'safety_corrective_actions.source_type',
+                'safety_corrective_actions.severity',
+                'safety_corrective_actions.status',
+                'safety_corrective_actions.due_date',
+                'projects.name as project_name',
+            ])
+            ->map(fn ($row) => new ProjectPulseFact(
+                id: 'safety_corrective_action:' . $row->id . ':overdue',
+                type: 'overdue_safety_corrective_actions',
+                priority: in_array($row->severity, ['critical', 'high'], true) ? 'critical' : 'warning',
+                title: 'Просрочено корректирующее действие HSE',
+                text: 'Мера "' . ($row->title ?? $row->action_number) . '" не доведена до проверки в установленный срок.',
+                projectId: (int) $row->project_id,
+                projectName: $row->project_name,
+                relatedEntity: $this->entity('safety_corrective_action', (int) $row->id, 'Мера ' . $row->action_number, '/safety-management'),
+                source: $this->key(),
+                category: 'safety',
+                status: $row->status,
+                nextAction: 'Довести корректирующее действие до устранения и проверки ответственным HSE.',
+                primaryAction: $this->action('Открыть HSE', '/safety-management', 'safety-management.view'),
+                deadline: (string) $row->due_date,
+                ageDays: $this->ageDays($context, $row->due_date),
             ));
     }
 

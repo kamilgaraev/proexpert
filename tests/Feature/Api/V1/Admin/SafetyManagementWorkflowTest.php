@@ -246,6 +246,111 @@ final class SafetyManagementWorkflowTest extends TestCase
         $this->assertTrue(SafetyCorrectiveAction::query()->where('incident_id', $incidentId)->where('status', 'verified')->exists());
     }
 
+    public function test_expired_permit_cannot_be_activated(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $permitResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/safety-management/work-permits', [
+                'project_id' => $project->id,
+                'title' => 'Expired hot works',
+                'permit_type' => 'hot_work',
+                'valid_from' => now()->subDays(3)->toDateString(),
+                'valid_until' => now()->subDay()->toDateString(),
+                'risk_level' => 'high',
+            ]);
+
+        $permitResponse->assertCreated();
+        $permitId = (int) $permitResponse->json('data.id');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/safety-management/work-permits/{$permitId}/submit")
+            ->assertOk();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/safety-management/work-permits/{$permitId}/approve")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'approved');
+
+        $activateResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/safety-management/work-permits/{$permitId}/activate");
+
+        $activateResponse->assertStatus(422);
+        self::assertTrue(SafetyWorkPermit::query()->whereKey($permitId)->where('status', 'approved')->exists());
+    }
+
+    public function test_corrective_action_requires_exactly_one_source(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $incidentResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/safety-management/incidents', [
+                'project_id' => $project->id,
+                'title' => 'Unsafe scaffold',
+                'incident_type' => 'unsafe_condition',
+                'severity' => 'major',
+                'occurred_at' => now()->subHour()->toIso8601String(),
+            ]);
+        $incidentResponse->assertCreated();
+
+        $violationResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/safety-management/violations', [
+                'project_id' => $project->id,
+                'title' => 'Missing guard rail',
+                'severity' => 'high',
+            ]);
+        $violationResponse->assertCreated();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/safety-management/corrective-actions', [
+                'incident_id' => $incidentResponse->json('data.id'),
+                'violation_id' => $violationResponse->json('data.id'),
+                'title' => 'Fix source ambiguity',
+                'severity' => 'high',
+            ]);
+
+        $response->assertStatus(422);
+        self::assertDatabaseMissing('safety_corrective_actions', [
+            'title' => 'Fix source ambiguity',
+        ]);
+    }
+
+    public function test_overdue_corrective_action_returns_problem_flag(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $incidentResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/safety-management/incidents', [
+                'project_id' => $project->id,
+                'title' => 'Unsafe passage',
+                'incident_type' => 'unsafe_condition',
+                'severity' => 'high',
+                'occurred_at' => now()->subHour()->toIso8601String(),
+            ]);
+        $incidentResponse->assertCreated();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/safety-management/corrective-actions', [
+                'incident_id' => $incidentResponse->json('data.id'),
+                'title' => 'Install barrier',
+                'severity' => 'high',
+                'due_date' => now()->subDay()->toDateString(),
+            ]);
+
+        $response->assertCreated()
+            ->assertJsonPath('data.problem_flags.0.code', 'corrective_action_overdue')
+            ->assertJsonPath('data.problem_flags.0.severity', 'critical');
+    }
+
     private function allowModuleAccess(): void
     {
         $this->mock(AccessController::class, function (MockInterface $mock): void {

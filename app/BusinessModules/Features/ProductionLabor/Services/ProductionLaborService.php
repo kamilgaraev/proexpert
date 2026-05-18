@@ -9,6 +9,7 @@ use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborPayrollAc
 use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborTimesheet;
 use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborWorkOrder;
 use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborWorkOrderLine;
+use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermit;
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
 use App\Models\Project;
 use DomainException;
@@ -267,8 +268,19 @@ final class ProductionLaborService
                     throw new DomainException(trans_message('production_labor.errors.line_not_in_order'));
                 }
 
-                if ($line->requires_safety_permit && empty($entryPayload['safety_permit_reference'])) {
-                    throw new DomainException(trans_message('production_labor.errors.safety_permit_required'));
+                if ($line->requires_safety_permit) {
+                    $safetyPermitReference = trim((string) ($entryPayload['safety_permit_reference'] ?? ''));
+
+                    if ($safetyPermitReference === '') {
+                        throw new DomainException(trans_message('production_labor.errors.safety_permit_required'));
+                    }
+
+                    $this->assertActiveSafetyPermit(
+                        $organizationId,
+                        (int) $workOrder->project_id,
+                        $payload['shift_date'],
+                        $safetyPermitReference
+                    );
                 }
 
                 $timesheet->entries()->create([
@@ -279,7 +291,9 @@ final class ProductionLaborService
                     'include_in_payroll' => (bool) $includeInPayroll,
                     'worker_name' => $entryPayload['worker_name'] ?? null,
                     'hours' => $entryPayload['hours'],
-                    'safety_permit_reference' => $entryPayload['safety_permit_reference'] ?? null,
+                    'safety_permit_reference' => isset($entryPayload['safety_permit_reference'])
+                        ? trim((string) $entryPayload['safety_permit_reference'])
+                        : null,
                     'metadata' => $entryPayload['metadata'] ?? null,
                 ]);
             }
@@ -411,6 +425,22 @@ final class ProductionLaborService
 
         if (!$exists) {
             throw new DomainException(trans_message('production_labor.errors.project_not_found'));
+        }
+    }
+
+    private function assertActiveSafetyPermit(int $organizationId, int $projectId, string $shiftDate, string $permitNumber): void
+    {
+        $exists = SafetyWorkPermit::query()
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('permit_number', $permitNumber)
+            ->where('status', 'active')
+            ->whereDate('valid_from', '<=', $shiftDate)
+            ->whereDate('valid_until', '>=', $shiftDate)
+            ->exists();
+
+        if (!$exists) {
+            throw new DomainException(trans_message('production_labor.errors.safety_permit_required'));
         }
     }
 

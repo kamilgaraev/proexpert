@@ -170,6 +170,10 @@ final class SafetyManagementService
             throw new DomainException(trans_message('safety_management.errors.permit_activate_invalid_status'));
         }
 
+        if ($permit->valid_until->isPast()) {
+            throw new DomainException(trans_message('safety_management.errors.permit_expired'));
+        }
+
         $permit->update([
             'status' => 'active',
             'activated_at' => now(),
@@ -454,15 +458,21 @@ final class SafetyManagementService
     {
         $incident = null;
         $violation = null;
+        $hasIncident = !empty($data['incident_id']);
+        $hasViolation = !empty($data['violation_id']);
 
-        if (!empty($data['incident_id'])) {
+        if ($hasIncident && $hasViolation) {
+            throw new DomainException(trans_message('safety_management.errors.corrective_action_single_source_required'));
+        }
+
+        if ($hasIncident) {
             $incident = $this->findIncident($organizationId, (int) $data['incident_id']);
             if ($incident === null) {
                 throw new DomainException(trans_message('safety_management.errors.incident_not_found'));
             }
         }
 
-        if (!empty($data['violation_id'])) {
+        if ($hasViolation) {
             $violation = $this->findViolation($organizationId, (int) $data['violation_id']);
             if ($violation === null) {
                 throw new DomainException(trans_message('safety_management.errors.violation_not_found'));
