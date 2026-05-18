@@ -3,9 +3,8 @@
 namespace App\Services\Report;
 
 use App\Models\CustomReport;
-use App\Services\Report\ReportDataSourceRegistry;
-use App\Services\Report\Builders\ReportQueryBuilder;
 use App\Services\Logging\LoggingService;
+use App\Services\Report\Builders\ReportQueryBuilder;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 
@@ -25,18 +24,18 @@ class CustomReportBuilderService
             $this->logging->technical('report_builder.service_validation_started', [
                 'require_full_config' => $requireFullConfig,
                 'config_keys' => array_keys($config),
-                'has_name' => !empty($config['name']),
-                'has_category' => !empty($config['report_category']),
-                'has_data_sources' => !empty($config['data_sources']),
-                'has_columns' => !empty($config['columns_config'])
+                'has_name' => ! empty($config['name']),
+                'has_category' => ! empty($config['report_category']),
+                'has_data_sources' => ! empty($config['data_sources']),
+                'has_columns' => ! empty($config['columns_config']),
             ], 'info');
 
             if ($requireFullConfig) {
                 $this->logging->technical('report_builder.full_config_validation', [
                     'checking_name' => empty($config['name']),
-                    'checking_category' => empty($config['report_category'])
+                    'checking_category' => empty($config['report_category']),
                 ], 'info');
-                
+
                 if (empty($config['name'])) {
                     $errors[] = 'Название отчета обязательно';
                 }
@@ -47,21 +46,22 @@ class CustomReportBuilderService
             }
 
             $this->logging->technical('report_builder.before_structure_validation', [
-                'current_errors_count' => count($errors)
+                'current_errors_count' => count($errors),
             ], 'info');
-            
+
             $structureErrors = $this->validateConfigStructure($config);
-            
+
             $this->logging->technical('report_builder.after_structure_validation', [
                 'structure_errors_count' => count($structureErrors),
-                'structure_errors' => $structureErrors
+                'structure_errors' => $structureErrors,
             ], 'info');
-            
+
             $errors = array_merge($errors, $structureErrors);
+            $errors = array_merge($errors, $this->validateConfigSecurity($config));
 
             $this->logging->technical('report_builder.validation_completed', [
                 'errors_count' => count($errors),
-                'has_errors' => !empty($errors)
+                'has_errors' => ! empty($errors),
             ], empty($errors) ? 'info' : 'warning');
 
             return $errors;
@@ -69,10 +69,194 @@ class CustomReportBuilderService
             $this->logging->technical('report_builder.validation_exception', [
                 'message' => $e->getMessage(),
                 'file' => $e->getFile(),
-                'line' => $e->getLine()
+                'line' => $e->getLine(),
             ], 'error');
             throw $e;
         }
+    }
+
+    protected function validateConfigSecurity(array $config): array
+    {
+        $errors = [];
+        $primarySource = $config['data_sources']['primary'] ?? null;
+
+        if (! $primarySource || ! $this->registry->validateDataSource($primarySource)) {
+            return $errors;
+        }
+
+        if ($this->isSensitiveUnscopedSource($primarySource)) {
+            $errors[] = "Источник данных {$primarySource} недоступен для пользовательских отчетов без ограничения по организации";
+        }
+
+        $errors = array_merge($errors, $this->validateColumnsSecurity($config['columns_config'] ?? [], $primarySource));
+        $errors = array_merge($errors, $this->validateAggregationsSecurity($config['aggregations_config'] ?? [], $primarySource));
+        $errors = array_merge($errors, $this->validateSortingSecurity($config['sorting_config'] ?? [], $primarySource));
+
+        return $errors;
+    }
+
+    protected function validateColumnsSecurity(array $columns, string $primarySource): array
+    {
+        $errors = [];
+
+        foreach ($columns as $index => $column) {
+            $field = $column['field'] ?? null;
+            $alias = $column['alias'] ?? null;
+            $formula = $column['formula'] ?? null;
+
+            if ($alias !== null && ! $this->isSafeSqlIdentifier((string) $alias)) {
+                $errors[] = "Колонка #{$index}: недопустимый псевдоним";
+            }
+
+            if ($formula) {
+                $formulaErrors = $this->validateFormula((string) $formula, $primarySource);
+                foreach ($formulaErrors as $formulaError) {
+                    $errors[] = "Колонка #{$index}: {$formulaError}";
+                }
+
+                continue;
+            }
+
+            if ($field && ! $this->validateReportFieldReference((string) $field, $primarySource)) {
+                $errors[] = "Колонка #{$index}: недопустимое поле";
+            }
+        }
+
+        return $errors;
+    }
+
+    protected function validateAggregationsSecurity(array $config, string $primarySource): array
+    {
+        $errors = [];
+        $aliases = [];
+
+        foreach ($config['group_by'] ?? [] as $index => $field) {
+            if (! $this->validateReportFieldReference((string) $field, $primarySource)) {
+                $errors[] = "Группировка #{$index}: недопустимое поле";
+            }
+        }
+
+        foreach ($config['aggregations'] ?? [] as $index => $aggregation) {
+            $field = $aggregation['field'] ?? null;
+            $alias = $aggregation['alias'] ?? null;
+            $function = $aggregation['function'] ?? null;
+
+            if ($function !== null && ! array_key_exists((string) $function, config('custom-reports.aggregation_functions', []))) {
+                $errors[] = "Агрегация #{$index}: недопустимая функция";
+            }
+
+            if ($field && ! $this->validateReportFieldReference((string) $field, $primarySource)) {
+                $errors[] = "Агрегация #{$index}: недопустимое поле";
+            }
+
+            if ($alias === null || ! $this->isSafeSqlIdentifier((string) $alias)) {
+                $errors[] = "Агрегация #{$index}: недопустимый псевдоним";
+
+                continue;
+            }
+
+            $aliases[(string) $alias] = true;
+        }
+
+        foreach ($config['having'] ?? [] as $index => $condition) {
+            $field = $condition['field'] ?? null;
+            $operator = $condition['operator'] ?? '=';
+
+            if (! in_array((string) $operator, ['=', '!=', '>', '<', '>=', '<='], true)) {
+                $errors[] = "Условие агрегации #{$index}: недопустимый оператор";
+            }
+
+            if (! $field) {
+                $errors[] = "Условие агрегации #{$index}: не указано поле";
+
+                continue;
+            }
+
+            if (isset($aliases[(string) $field])) {
+                continue;
+            }
+
+            if (! $this->validateReportFieldReference((string) $field, $primarySource)) {
+                $errors[] = "Условие агрегации #{$index}: недопустимое поле";
+            }
+        }
+
+        return $errors;
+    }
+
+    protected function validateSortingSecurity(array $sorting, string $primarySource): array
+    {
+        $errors = [];
+
+        foreach ($sorting as $index => $sort) {
+            $field = $sort['field'] ?? null;
+            $direction = strtolower((string) ($sort['direction'] ?? 'asc'));
+
+            if ($field && ! $this->validateReportFieldReference((string) $field, $primarySource)) {
+                $errors[] = "Сортировка #{$index}: недопустимое поле";
+            }
+
+            if (! in_array($direction, ['asc', 'desc'], true)) {
+                $errors[] = "Сортировка #{$index}: недопустимое направление";
+            }
+        }
+
+        return $errors;
+    }
+
+    protected function validateFormula(string $formula, string $primarySource): array
+    {
+        $errors = [];
+
+        if (substr_count($formula, '{') !== substr_count($formula, '}')) {
+            return ['недопустимая формула'];
+        }
+
+        preg_match_all('/\{([\w\.]+)\}/', $formula, $matches);
+
+        foreach ($matches[1] as $field) {
+            if (! $this->validateReportFieldReference((string) $field, $primarySource)) {
+                $errors[] = 'формула содержит недопустимое поле';
+                break;
+            }
+        }
+
+        $expression = preg_replace('/\{[\w\.]+\}/', '1', $formula);
+        if (! is_string($expression) || ! preg_match('/^[0-9\s+\-*\/().]+$/', $expression)) {
+            $errors[] = 'формула содержит недопустимое выражение';
+        }
+
+        return $errors;
+    }
+
+    protected function validateReportFieldReference(string $field, string $primarySource): bool
+    {
+        if (! preg_match('/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/', $field)) {
+            return false;
+        }
+
+        $parsed = $this->registry->parseFieldName($field);
+        $source = $parsed['source'] ?? $primarySource;
+
+        if (! $source || ! $this->registry->validateDataSource($source)) {
+            return false;
+        }
+
+        return $this->registry->validateField($source, $parsed['field']);
+    }
+
+    protected function isSafeSqlIdentifier(string $identifier): bool
+    {
+        return preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $identifier) === 1;
+    }
+
+    protected function isSensitiveUnscopedSource(string $source): bool
+    {
+        if (! in_array($source, ['users', 'organizations'], true)) {
+            return false;
+        }
+
+        return $this->registry->getDefaultFilters($source) === [];
     }
 
     protected function validateConfigStructure(array $config): array
@@ -80,33 +264,33 @@ class CustomReportBuilderService
         $errors = [];
 
         $this->logging->technical('report_builder.structure_validation_start', [
-            'config_keys' => array_keys($config)
+            'config_keys' => array_keys($config),
         ], 'info');
 
         try {
-            if (!empty($config['data_sources'])) {
+            if (! empty($config['data_sources'])) {
                 $this->logging->technical('report_builder.validating_data_sources', [
-                    'data_sources_keys' => array_keys($config['data_sources'])
+                    'data_sources_keys' => array_keys($config['data_sources']),
                 ], 'info');
-                
+
                 $primarySource = $config['data_sources']['primary'] ?? null;
-                
+
                 $this->logging->technical('report_builder.checking_primary_source', [
-                    'primary_source' => $primarySource
+                    'primary_source' => $primarySource,
                 ], 'info');
-                
-                if ($primarySource && !$this->registry->validateDataSource($primarySource)) {
+
+                if ($primarySource && ! $this->registry->validateDataSource($primarySource)) {
                     $errors[] = "Некорректный источник данных: {$primarySource}";
                     $this->logging->technical('report_builder.invalid_primary_source', [
-                        'primary_source' => $primarySource
+                        'primary_source' => $primarySource,
                     ], 'warning');
                 }
 
-                if (!empty($config['data_sources']['joins'])) {
+                if (! empty($config['data_sources']['joins'])) {
                     $this->logging->technical('report_builder.validating_joins', [
-                        'joins_count' => count($config['data_sources']['joins'])
+                        'joins_count' => count($config['data_sources']['joins']),
                     ], 'info');
-                    
+
                     $maxJoins = config('custom-reports.limits.max_joins', 7);
                     if (count($config['data_sources']['joins']) > $maxJoins) {
                         $errors[] = "Превышено максимальное количество JOIN'ов ({$maxJoins})";
@@ -115,22 +299,22 @@ class CustomReportBuilderService
                     foreach ($config['data_sources']['joins'] as $index => $join) {
                         if (empty($join['table'])) {
                             $errors[] = "JOIN #{$index}: не указана таблица";
-                        } elseif (!$this->registry->validateDataSource($join['table'])) {
+                        } elseif (! $this->registry->validateDataSource($join['table'])) {
                             $errors[] = "JOIN #{$index}: некорректная таблица {$join['table']}";
                         }
 
-                        if (empty($join['on']) || !is_array($join['on']) || count($join['on']) !== 2) {
+                        if (empty($join['on']) || ! is_array($join['on']) || count($join['on']) !== 2) {
                             $errors[] = "JOIN #{$index}: некорректное условие связи";
                         }
                     }
                 }
             }
 
-            if (!empty($config['columns_config'])) {
+            if (! empty($config['columns_config'])) {
                 $this->logging->technical('report_builder.validating_columns', [
-                    'columns_count' => count($config['columns_config'])
+                    'columns_count' => count($config['columns_config']),
                 ], 'info');
-                
+
                 $maxColumns = config('custom-reports.limits.max_columns', 50);
                 if (count($config['columns_config']) > $maxColumns) {
                     $errors[] = "Превышено максимальное количество колонок ({$maxColumns})";
@@ -146,26 +330,26 @@ class CustomReportBuilderService
                 }
             }
 
-            if (!empty($config['aggregations_config'])) {
+            if (! empty($config['aggregations_config'])) {
                 $this->logging->technical('report_builder.validating_aggregations', [], 'info');
-                
+
                 $maxAggregations = config('custom-reports.limits.max_aggregations', 10);
                 $aggregations = $config['aggregations_config']['aggregations'] ?? [];
-                
+
                 if (count($aggregations) > $maxAggregations) {
                     $errors[] = "Превышено максимальное количество агрегаций ({$maxAggregations})";
                 }
 
-                if (!empty($config['aggregations_config']['group_by']) && empty($aggregations)) {
-                    $errors[] = "При использовании GROUP BY необходимо указать агрегатные функции";
+                if (! empty($config['aggregations_config']['group_by']) && empty($aggregations)) {
+                    $errors[] = 'При использовании GROUP BY необходимо указать агрегатные функции';
                 }
             }
 
-            if (!empty($config['query_config']['where'])) {
+            if (! empty($config['query_config']['where'])) {
                 $this->logging->technical('report_builder.validating_filters', [
-                    'filters_count' => count($config['query_config']['where'])
+                    'filters_count' => count($config['query_config']['where']),
                 ], 'info');
-                
+
                 $maxFilters = config('custom-reports.limits.max_filters', 20);
                 if (count($config['query_config']['where']) > $maxFilters) {
                     $errors[] = "Превышено максимальное количество фильтров ({$maxFilters})";
@@ -174,7 +358,7 @@ class CustomReportBuilderService
 
             $this->logging->technical('report_builder.structure_validation_completed', [
                 'errors_count' => count($errors),
-                'errors' => $errors
+                'errors' => $errors,
             ], count($errors) > 0 ? 'warning' : 'info');
 
             return $errors;
@@ -183,7 +367,7 @@ class CustomReportBuilderService
                 'exception_message' => $e->getMessage(),
                 'exception_file' => $e->getFile(),
                 'exception_line' => $e->getLine(),
-                'exception_trace' => $e->getTraceAsString()
+                'exception_trace' => $e->getTraceAsString(),
             ], 'error');
             throw $e;
         }
@@ -196,8 +380,8 @@ class CustomReportBuilderService
                 'report_id' => $report->id,
                 'report_name' => $report->name,
                 'organization_id' => $organizationId,
-                'has_aggregations' => !empty($report->aggregations_config),
-                'has_filters' => !empty($report->query_config),
+                'has_aggregations' => ! empty($report->aggregations_config),
+                'has_filters' => ! empty($report->query_config),
             ], 'debug');
 
             $config = [
@@ -208,11 +392,16 @@ class CustomReportBuilderService
                 'sorting_config' => $report->sorting_config ?? [],
             ];
 
+            $configErrors = $this->validateReportConfig($config, false);
+            if (! empty($configErrors)) {
+                throw new \InvalidArgumentException(implode('; ', $configErrors));
+            }
+
             $query = $this->queryBuilder->buildFromConfig($config, $organizationId);
 
             $this->logging->technical('report_builder.build_query_completed', [
                 'report_id' => $report->id,
-                'sql' => $query->toSql()
+                'sql' => $query->toSql(),
             ], 'debug');
 
             return $query;
@@ -222,7 +411,7 @@ class CustomReportBuilderService
                 'report_name' => $report->name,
                 'error' => $e->getMessage(),
                 'file' => $e->getFile(),
-                'line' => $e->getLine()
+                'line' => $e->getLine(),
             ], 'error');
             throw $e;
         }
@@ -235,26 +424,26 @@ class CustomReportBuilderService
                 'report_id' => $report->id,
                 'report_name' => $report->name,
                 'organization_id' => $organizationId,
-                'has_user_filters' => !empty($userFilters)
+                'has_user_filters' => ! empty($userFilters),
             ], 'debug');
 
             $query = $this->buildQueryFromConfig($report, $organizationId);
 
-            if (!empty($userFilters) && !empty($report->filters_config)) {
+            if (! empty($userFilters) && ! empty($report->filters_config)) {
                 $this->applyUserFilters($query, $userFilters, $report);
             }
 
             $startTime = microtime(true);
-            
+
             $results = $query->limit(20)->get();
-            
+
             $executionTime = (microtime(true) - $startTime) * 1000;
 
             $this->logging->business('report_builder.test_query_completed', [
                 'report_id' => $report->id,
                 'report_name' => $report->name,
                 'rows_count' => $results->count(),
-                'execution_time_ms' => round($executionTime, 2)
+                'execution_time_ms' => round($executionTime, 2),
             ]);
 
             return [
@@ -269,7 +458,7 @@ class CustomReportBuilderService
                 'report_id' => $report->id,
                 'report_name' => $report->name,
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ], 'error');
 
             return [
@@ -290,14 +479,14 @@ class CustomReportBuilderService
             ->toArray();
 
         foreach ($userFilters as $field => $value) {
-            if (!isset($configuredFilters[$field])) {
+            if (! isset($configuredFilters[$field])) {
                 continue;
             }
 
             $filterConfig = $configuredFilters[$field];
             $operator = $filterConfig['operator'] ?? '=';
 
-            if ($value === null && !($filterConfig['required'] ?? false)) {
+            if ($value === null && ! ($filterConfig['required'] ?? false)) {
                 continue;
             }
 
@@ -324,9 +513,9 @@ class CustomReportBuilderService
     public function suggestOptimizations(CustomReport $report): array
     {
         $suggestions = [];
-        
+
         $complexity = $this->estimateQueryComplexity($report);
-        
+
         if ($complexity > 100) {
             $suggestions[] = [
                 'type' => 'warning',
@@ -336,7 +525,7 @@ class CustomReportBuilderService
 
         $joins = $report->data_sources['joins'] ?? [];
         $maxJoins = config('custom-reports.limits.max_joins', 7);
-        
+
         if (count($joins) > $maxJoins / 2) {
             $suggestions[] = [
                 'type' => 'info',
@@ -345,7 +534,7 @@ class CustomReportBuilderService
         }
 
         $aggregations = $report->aggregations_config['aggregations'] ?? [];
-        
+
         if (count($aggregations) > 5) {
             $suggestions[] = [
                 'type' => 'info',
@@ -366,7 +555,7 @@ class CustomReportBuilderService
     public function cloneReport(CustomReport $report, int $userId, int $organizationId): CustomReport
     {
         $newReport = $report->replicate();
-        $newReport->name = $report->name . ' (копия)';
+        $newReport->name = $report->name.' (копия)';
         $newReport->user_id = $userId;
         $newReport->organization_id = $organizationId;
         $newReport->is_shared = false;
@@ -383,19 +572,19 @@ class CustomReportBuilderService
         $this->logging->technical('report_builder.get_filter_values_requested', [
             'data_source' => $dataSourceKey,
             'field' => $fieldKey,
-            'search' => $search
+            'search' => $search,
         ], 'debug');
 
-        if (!$this->registry->validateDataSource($dataSourceKey)) {
+        if (! $this->registry->validateDataSource($dataSourceKey)) {
             throw new \InvalidArgumentException("Некорректный источник данных: {$dataSourceKey}");
         }
 
-        if (!$this->registry->validateField($dataSourceKey, $fieldKey)) {
+        if (! $this->registry->validateField($dataSourceKey, $fieldKey)) {
             throw new \InvalidArgumentException("Некорректное поле: {$fieldKey} для источника {$dataSourceKey}");
         }
 
         $tableName = $this->registry->getTableName($dataSourceKey);
-        
+
         $query = DB::table($tableName)
             ->select($fieldKey)
             ->distinct()
@@ -445,4 +634,3 @@ class CustomReportBuilderService
         return config('custom-reports.categories', []);
     }
 }
-
