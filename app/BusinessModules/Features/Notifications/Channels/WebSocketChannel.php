@@ -4,7 +4,6 @@ namespace App\BusinessModules\Features\Notifications\Channels;
 
 use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\BusinessModules\Features\Notifications\Models\NotificationAnalytics;
-use App\BusinessModules\Features\Notifications\Events\NotificationBroadcast;
 use Illuminate\Support\Facades\Log;
 
 class WebSocketChannel
@@ -14,6 +13,7 @@ class WebSocketChannel
         try {
             if (config('broadcasting.default') !== 'reverb') {
                 Log::warning('WebSocket channel disabled: broadcasting driver is not reverb');
+
                 return false;
             }
 
@@ -43,8 +43,8 @@ class WebSocketChannel
 
             return true;
 
-        } catch (\Exception $e) {
-            Log::error('WebSocket notification failed', [
+        } catch (\Throwable $e) {
+            Log::warning('WebSocket notification failed', [
                 'notification_id' => $notification->id,
                 'error' => $e->getMessage(),
             ]);
@@ -68,7 +68,7 @@ class WebSocketChannel
         $scheme = config('broadcasting.connections.reverb.options.scheme');
 
         $interface = $notification->data['interface'] ?? 'lk';
-        $channel = 'private-App.Models.User.' . $notifiable->id . '.' . $interface;
+        $channel = 'private-App.Models.User.'.$notifiable->id.'.'.$interface;
         $event = 'notification.new';
         $data = json_encode([
             'id' => $notification->id,
@@ -105,12 +105,11 @@ class WebSocketChannel
             'body' => $response->body(),
         ]);
 
-        if (!$response->successful()) {
-            Log::error('[WebSocket] Reverb HTTP failed', [
+        if (! $response->successful()) {
+            Log::warning('[WebSocket] Reverb HTTP failed', [
                 'status' => $response->status(),
                 'body' => $response->body(),
             ]);
         }
     }
 }
-
