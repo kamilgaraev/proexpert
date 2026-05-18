@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Enums\ModuleDevelopmentStatus;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -45,10 +47,20 @@ class Module extends Model
         'is_active' => 'boolean',
         'is_system_module' => 'boolean',
         'can_deactivate' => 'boolean',
-        'development_status' => \App\Enums\ModuleDevelopmentStatus::class,
         'last_scanned_at' => 'datetime',
         'display_order' => 'integer',
     ];
+
+    protected function developmentStatus(): Attribute
+    {
+        return Attribute::make(
+            get: static fn ($value): ModuleDevelopmentStatus => ModuleDevelopmentStatus::tryFrom((string) $value)
+                ?? ModuleDevelopmentStatus::STABLE,
+            set: static fn ($value): string => $value instanceof ModuleDevelopmentStatus
+                ? $value->value
+                : (ModuleDevelopmentStatus::tryFrom((string) $value) ?? ModuleDevelopmentStatus::STABLE)->value,
+        );
+    }
 
     public function activations(): HasMany
     {
@@ -182,9 +194,9 @@ class Module extends Model
     /**
      * Получить объект enum статуса разработки
      */
-    public function getDevelopmentStatusEnum(): \App\Enums\ModuleDevelopmentStatus
+    public function getDevelopmentStatusEnum(): ModuleDevelopmentStatus
     {
-        return $this->development_status ?? \App\Enums\ModuleDevelopmentStatus::STABLE;
+        return $this->development_status ?? ModuleDevelopmentStatus::STABLE;
     }
 
     /**
@@ -192,7 +204,7 @@ class Module extends Model
      */
     public function isStable(): bool
     {
-        return $this->getDevelopmentStatusEnum() === \App\Enums\ModuleDevelopmentStatus::STABLE;
+        return $this->getDevelopmentStatusEnum() === ModuleDevelopmentStatus::STABLE;
     }
 
     /**
