@@ -131,7 +131,9 @@ services:
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=15d'
+      - '--storage.tsdb.retention.time=5d'
+      - '--storage.tsdb.retention.size=8GB'
+      - '--storage.tsdb.wal-compression'
       - '--web.enable-lifecycle'
       - '--web.enable-admin-api'
     restart: unless-stopped
@@ -219,8 +221,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      DOCKER_IMAGE_PRUNE_UNTIL: 168h
-      DOCKER_BUILDER_PRUNE_UNTIL: 168h
+      DOCKER_IMAGE_PRUNE_UNTIL: 48h
+      DOCKER_BUILDER_PRUNE_UNTIL: 48h
       DOCKER_CLEANUP_INTERVAL_SECONDS: 86400
     command:
       - /bin/sh

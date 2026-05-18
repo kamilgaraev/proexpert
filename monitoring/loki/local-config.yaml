@@ -49,7 +49,9 @@ analytics:
 
 limits_config:
   reject_old_samples: true
-  reject_old_samples_max_age: 168h
+  reject_old_samples_max_age: 72h
+  retention_period: 72h
+  max_query_lookback: 72h
   ingestion_rate_mb: 16
   ingestion_burst_size_mb: 32
   max_query_length: 0h
@@ -60,5 +62,6 @@ compactor:
   shared_store: filesystem
   compaction_interval: 10m
   retention_enabled: true
+  delete_request_store: filesystem
   retention_delete_delay: 2h
   retention_delete_worker_count: 150

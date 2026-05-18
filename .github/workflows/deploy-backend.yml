@@ -19,6 +19,7 @@ on:
       - 'Dockerfile.prod'
       - 'docker-compose.yml'
       - 'lang/**'
+      - 'monitoring/**'
       - 'public/**'
       - 'resources/**'
       - 'routes/**'
@@ -74,6 +75,7 @@ jobs:
             cd /var/www/prohelper
             SHORT_RELEASE="${{ steps.meta.outputs.short_sha }}"
             BACKEND_SERVICES="api websockets horizon worker-heavy scheduler"
+            MONITORING_SERVICES="loki promtail prometheus grafana node-exporter watchdog postgres-exporter docker-cleanup"
 
             git fetch --all --prune
             git reset --hard origin/main
@@ -101,6 +103,7 @@ jobs:
 
             echo "Pulling backend services: ${BACKEND_SERVICES}"
             docker compose pull ${BACKEND_SERVICES}
+            docker compose pull ${MONITORING_SERVICES}
 
             IMAGE_REF="ghcr.io/${{ github.repository }}/prohelper:${SHORT_RELEASE}"
             LARAVEL_UID="$(docker run --rm --entrypoint sh "${IMAGE_REF}" -c 'id -u www-data')"
@@ -122,6 +125,7 @@ jobs:
             chmod 664 storage/logs/laravel.log
 
             docker compose up -d --force-recreate --remove-orphans ${BACKEND_SERVICES}
+            docker compose up -d --force-recreate ${MONITORING_SERVICES}
 
             echo "Waiting for API health endpoint..."
             for attempt in $(seq 1 12); do
@@ -168,9 +172,9 @@ jobs:
               sleep 5
             done
 
-            echo "Pruning unused Docker images older than 7 days..."
-            docker image prune -a -f --filter "until=168h"
-            docker builder prune -a -f --filter "until=168h"
+            echo "Pruning unused Docker images older than 48 hours..."
+            docker image prune -a -f --filter "until=48h"
+            docker builder prune -a -f --filter "until=48h"
             docker system df
             df -h /
 
