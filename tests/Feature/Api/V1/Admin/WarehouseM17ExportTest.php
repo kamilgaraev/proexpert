@@ -85,7 +85,7 @@ class WarehouseM17ExportTest extends TestCase
 
         Storage::disk('s3')->assertExists($path);
 
-        $temporaryPath = tempnam(sys_get_temp_dir(), 'm17_') . '.xlsx';
+        $temporaryPath = tempnam(sys_get_temp_dir(), 'm17_').'.xlsx';
         file_put_contents($temporaryPath, Storage::disk('s3')->get($path));
 
         $spreadsheet = IOFactory::load($temporaryPath);
@@ -99,8 +99,14 @@ class WarehouseM17ExportTest extends TestCase
         $this->assertSame('первый', $sheet->getCell('E14')->getValue());
         $this->assertSame('45783 952700-35154000093', $sheet->getCell('D17')->getValue());
         $this->assertSame('УК000000001', $sheet->getCell('B28')->getValue());
+        $this->assertSame(1, (int) $sheet->getCell('C28')->getValue());
         $this->assertSame(5.0, (float) $sheet->getCell('N28')->getValue());
         $this->assertSame(2.0, (float) $sheet->getCell('P29')->getValue());
         $this->assertContains('D22:L24', $sheet->getMergeCells());
+        $this->assertContains('D25:L25', $sheet->getMergeCells());
+        $this->assertContains('Q25:R25', $sheet->getMergeCells());
+        $this->assertSame(4, $sheet->getCell('D25')->getValue());
+        $this->assertSame(5, $sheet->getCell('M25')->getValue());
+        $this->assertSame(10, $sheet->getCell('S25')->getValue());
     }
 }

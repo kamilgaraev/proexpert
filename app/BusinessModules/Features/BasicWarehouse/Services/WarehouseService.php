@@ -2,28 +2,23 @@
 
 namespace App\BusinessModules\Features\BasicWarehouse\Services;
 
+use App\BusinessModules\Features\BasicWarehouse\Contracts\WarehouseReportDataProvider;
 use App\BusinessModules\Features\BasicWarehouse\DTOs\WarehouseBalanceAggregateDTO;
-use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
-use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
-use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
-use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseItemGallery;
-use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
-use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseZone;
 use App\BusinessModules\Features\BasicWarehouse\Models\AssetReservation;
 use App\BusinessModules\Features\BasicWarehouse\Models\AutoReorderRule;
-use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseProjectAllocation;
-use App\BusinessModules\Features\BasicWarehouse\Models\InventoryAct;
-use App\BusinessModules\Features\BasicWarehouse\Contracts\WarehouseReportDataProvider;
+use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseIdentifier;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseItemGallery;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\Models\Organization;
-use App\Models\Material;
-use App\Models\Project;
-use App\Models\User;
-use App\Models\Supplier;
 use App\Services\Logging\LoggingService;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Cache;
 use Carbon\Carbon;
+use chillerlan\QRCode\QRCode;
+use chillerlan\QRCode\QROptions;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Сервис управления складом
@@ -75,7 +70,7 @@ class WarehouseService implements WarehouseReportDataProvider
             ->where('is_main', true)
             ->first();
 
-        if (!$warehouse) {
+        if (! $warehouse) {
             $warehouse = $this->createCentralWarehouse($organizationId);
         }
 
@@ -132,10 +127,10 @@ class WarehouseService implements WarehouseReportDataProvider
             } else {
                 $query->whereNull('expiry_date');
             }
-            
+
             // Если включено адресное хранение, то разделяем и по местам
             if (isset($metadata['location_code'])) {
-                 $query->where('location_code', $metadata['location_code']);
+                $query->where('location_code', $metadata['location_code']);
             }
 
             $balance = $query->first();
@@ -195,7 +190,7 @@ class WarehouseService implements WarehouseReportDataProvider
             return [
                 'balance' => $balance,
                 'movement' => $movement,
-                'new_quantity' => (float)$balance->available_quantity,
+                'new_quantity' => (float) $balance->available_quantity,
             ];
         } catch (\Exception $e) {
             DB::rollBack();
@@ -238,20 +233,22 @@ class WarehouseService implements WarehouseReportDataProvider
             $totalCost = 0;
 
             foreach ($batches as $batch) {
-                if ($remainingToWriteOff <= 0) break;
+                if ($remainingToWriteOff <= 0) {
+                    break;
+                }
 
                 $takeFromBatch = min($batch->available_quantity, $remainingToWriteOff);
-                
+
                 $batch->decreaseQuantity($takeFromBatch);
-                
+
                 $remainingToWriteOff -= $takeFromBatch;
                 $writeOffDetails[] = [
                     'balance_id' => $batch->id,
                     'quantity' => $takeFromBatch,
                     'unit_price' => $batch->unit_price,
-                    'batch_number' => $batch->batch_number
+                    'batch_number' => $batch->batch_number,
                 ];
-                
+
                 $totalCost += ($takeFromBatch * $batch->unit_price);
             }
 
@@ -325,7 +322,7 @@ class WarehouseService implements WarehouseReportDataProvider
             $totalAvailable = $sourceBatches->sum('available_quantity');
 
             if ($totalAvailable < $quantity) {
-                 throw new \InvalidArgumentException(
+                throw new \InvalidArgumentException(
                     "Недостаточно активов для перемещения. Доступно: {$totalAvailable}, запрошено: {$quantity}"
                 );
             }
@@ -335,15 +332,17 @@ class WarehouseService implements WarehouseReportDataProvider
             $sourceBatchDetails = [];
 
             foreach ($sourceBatches as $batch) {
-                if ($remainingToTransfer <= 0) break;
+                if ($remainingToTransfer <= 0) {
+                    break;
+                }
 
                 $takeFromBatch = min($batch->available_quantity, $remainingToTransfer);
-                
+
                 $batch->decreaseQuantity($takeFromBatch);
-                
+
                 $remainingToTransfer -= $takeFromBatch;
                 $transferCost += ($takeFromBatch * $batch->unit_price);
-                
+
                 $sourceBatchDetails[] = [
                     'source_batch_id' => $batch->id,
                     'quantity' => $takeFromBatch,
@@ -363,11 +362,11 @@ class WarehouseService implements WarehouseReportDataProvider
                 $quantity,
                 $transferPrice,
                 array_merge($metadata, [
-                    'reason' => 'Перемещение со склада ' . $fromWarehouseId,
-                    'is_transfer' => true
+                    'reason' => 'Перемещение со склада '.$fromWarehouseId,
+                    'is_transfer' => true,
                 ])
             );
-            
+
             // Удаляем лишнее движение, которое создал receiveAsset (нам нужны специфичные типы transfer_in/out)
             // Или просто обновим его тип и связи
             $movementIn = $targetResult['movement'];
@@ -413,7 +412,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 'movement_out' => $movementOut,
                 'movement_in' => $movementIn,
                 'avg_price' => $transferPrice,
-                'source_details' => $sourceBatchDetails
+                'source_details' => $sourceBatchDetails,
             ];
         } catch (\Exception $e) {
             DB::rollBack();
@@ -437,17 +436,17 @@ class WarehouseService implements WarehouseReportDataProvider
 
         $totalQty = $batches->sum('available_quantity');
         $totalReserved = $batches->sum('reserved_quantity');
-        
-        $totalValue = $batches->sum(fn($b) => $b->available_quantity * $b->unit_price);
+
+        $totalValue = $batches->sum(fn ($b) => $b->available_quantity * $b->unit_price);
         $avgPrice = $totalQty > 0 ? $totalValue / $totalQty : 0;
-        
+
         return new WarehouseBalanceAggregateDTO(
             materialId: $materialId,
             warehouseId: $warehouseId,
-            availableQuantity: (float)$totalQty,
-            reservedQuantity: (float)$totalReserved,
-            averagePrice: (float)$avgPrice,
-            totalValue: (float)$totalValue,
+            availableQuantity: (float) $totalQty,
+            reservedQuantity: (float) $totalReserved,
+            averagePrice: (float) $avgPrice,
+            totalValue: (float) $totalValue,
             lastMovementAt: $batches->max('last_movement_at')?->toDateTimeString(),
             material: $batches->first()->material ?? null,
             warehouse: $batches->first()->warehouse ?? null
@@ -456,6 +455,7 @@ class WarehouseService implements WarehouseReportDataProvider
 
     /**
      * Получить все остатки на складе (Агрегированные)
+     *
      * @return Collection<WarehouseBalanceAggregateDTO>
      */
     public function getWarehouseStock(int $organizationId, int $warehouseId, array $filters = []): Collection
@@ -483,7 +483,7 @@ class WarehouseService implements WarehouseReportDataProvider
             });
         }
 
-        if (!empty($filters['location_code'])) {
+        if (! empty($filters['location_code'])) {
             $query->where('location_code', $filters['location_code']);
         }
 
@@ -492,34 +492,34 @@ class WarehouseService implements WarehouseReportDataProvider
         }
 
         $allBatches = $query->get();
-        
+
         // Группируем по материалам
         $grouped = $allBatches->groupBy('material_id');
-        
-        $aggregatedCollection = new Collection();
-        
+
+        $aggregatedCollection = new Collection;
+
         foreach ($grouped as $materialId => $batches) {
             $totalQty = $batches->sum('available_quantity');
             $totalReserved = $batches->sum('reserved_quantity');
-            
-            $totalValue = $batches->sum(fn($b) => $b->available_quantity * $b->unit_price);
+
+            $totalValue = $batches->sum(fn ($b) => $b->available_quantity * $b->unit_price);
             $avgPrice = $totalQty > 0 ? $totalValue / $totalQty : 0;
-            
+
             $dto = new WarehouseBalanceAggregateDTO(
                 materialId: $materialId,
                 warehouseId: $warehouseId,
-                availableQuantity: (float)$totalQty,
-                reservedQuantity: (float)$totalReserved,
-                averagePrice: (float)$avgPrice,
-                totalValue: (float)$totalValue,
+                availableQuantity: (float) $totalQty,
+                reservedQuantity: (float) $totalReserved,
+                averagePrice: (float) $avgPrice,
+                totalValue: (float) $totalValue,
                 lastMovementAt: $batches->max('last_movement_at')?->toDateTimeString(),
                 material: $batches->first()->material,
                 warehouse: $batches->first()->warehouse
             );
-            
+
             $aggregatedCollection->push($dto);
         }
-        
+
         return $aggregatedCollection;
     }
 
@@ -565,7 +565,7 @@ class WarehouseService implements WarehouseReportDataProvider
             });
         }
 
-        if (!empty($filters['location_code'])) {
+        if (! empty($filters['location_code'])) {
             $query->where('location_code', $filters['location_code']);
         }
 
@@ -589,23 +589,56 @@ class WarehouseService implements WarehouseReportDataProvider
             ->whereIn('material_id', $allBatches->pluck('material_id')->unique())
             ->get()
             ->mapWithKeys(fn (WarehouseItemGallery $gallery) => [
-                $gallery->warehouse_id . ':' . $gallery->material_id => $gallery->photo_gallery,
+                $gallery->warehouse_id.':'.$gallery->material_id => $gallery->photo_gallery,
             ])
             ->all();
-        
+
+        $receiptPhotoMap = WarehouseMovement::with('photos')
+            ->where('organization_id', $organizationId)
+            ->where('movement_type', WarehouseMovement::TYPE_RECEIPT)
+            ->whereIn('warehouse_id', $allBatches->pluck('warehouse_id')->unique())
+            ->whereIn('material_id', $allBatches->pluck('material_id')->unique())
+            ->whereHas('photos')
+            ->orderByDesc('movement_date')
+            ->get()
+            ->groupBy(fn (WarehouseMovement $movement) => $movement->warehouse_id.':'.$movement->material_id)
+            ->map(static fn ($movements) => $movements
+                ->flatMap(static fn (WarehouseMovement $movement) => $movement->photo_gallery)
+                ->take(4)
+                ->values()
+                ->all())
+            ->all();
+
+        $identifierMap = WarehouseIdentifier::query()
+            ->where('organization_id', $organizationId)
+            ->where('entity_type', 'asset')
+            ->where('identifier_type', WarehouseIdentifier::TYPE_QR)
+            ->where('status', WarehouseIdentifier::STATUS_ACTIVE)
+            ->whereIn('entity_id', $allBatches->pluck('material_id')->unique())
+            ->orderByDesc('is_primary')
+            ->orderByDesc('updated_at')
+            ->get()
+            ->groupBy('entity_id')
+            ->map(static fn ($identifiers) => $identifiers->first())
+            ->all();
+
         // Группируем по материалам
         $grouped = $allBatches->groupBy('material_id');
-        
+
         $resultData = [];
-        
+
         foreach ($grouped as $materialId => $batches) {
             $totalQty = $batches->sum('available_quantity');
             $totalReserved = $batches->sum('reserved_quantity');
-            $totalValue = $batches->sum(fn($b) => $b->available_quantity * $b->unit_price);
+            $totalValue = $batches->sum(fn ($b) => $b->available_quantity * $b->unit_price);
             $avgPrice = $totalQty > 0 ? $totalValue / $totalQty : 0;
-            
+
             $first = $batches->first();
-            
+            $qrCode = $identifierMap[$first->material_id]->code ?? sprintf('AST-%d-%06d', $organizationId, $first->material_id);
+            $galleryKey = $first->warehouse_id.':'.$first->material_id;
+            $balancePhotos = $photoMap[$galleryKey] ?? [];
+            $receiptPhotos = $receiptPhotoMap[$galleryKey] ?? [];
+
             $item = [
                 'warehouse_id' => $first->warehouse_id,
                 'warehouse_name' => $first->warehouse->name,
@@ -615,18 +648,21 @@ class WarehouseService implements WarehouseReportDataProvider
                 'asset_type' => $first->material->additional_properties['asset_type'] ?? 'material',
                 'category' => $first->material->category,
                 'measurement_unit' => $first->material->measurementUnit->name ?? null,
-                'available_quantity' => (float)$totalQty,
-                'reserved_quantity' => (float)$totalReserved,
+                'available_quantity' => (float) $totalQty,
+                'reserved_quantity' => (float) $totalReserved,
                 'total_quantity' => $totalQty + $totalReserved,
-                'average_price' => (float)$avgPrice,
+                'average_price' => (float) $avgPrice,
                 'total_value' => $totalValue, // Точная сумма цен всех партий
-                'min_stock_level' => (float)$first->min_stock_level,
-                'max_stock_level' => (float)$first->max_stock_level,
+                'min_stock_level' => (float) $first->min_stock_level,
+                'max_stock_level' => (float) $first->max_stock_level,
                 'is_low_stock' => $first->min_stock_level > 0 && $totalQty <= $first->min_stock_level,
                 'location_code' => $batches->pluck('location_code')->filter()->unique()->implode(', '),
                 'last_movement_at' => $batches->max('last_movement_at')?->toDateTimeString(),
-                'photo_gallery' => $photoMap[$first->warehouse_id . ':' . $first->material_id] ?? [],
+                'photo_gallery' => $balancePhotos !== [] ? $balancePhotos : $receiptPhotos,
+                'receipt_photo_gallery' => $receiptPhotos,
                 'asset_photo_gallery' => $first->material->photo_gallery,
+                'qr_code' => $qrCode,
+                'qr_code_image_url' => $this->makeQrDataUri($qrCode),
             ];
 
             // Добавляем информацию о распределении по проектам (она общая для всех партий)
@@ -640,18 +676,18 @@ class WarehouseService implements WarehouseReportDataProvider
                     return [
                         'project_id' => $allocation->project_id,
                         'project_name' => $allocation->project->name,
-                        'allocated_quantity' => (float)$allocation->allocated_quantity,
+                        'allocated_quantity' => (float) $allocation->allocated_quantity,
                     ];
                 })->toArray();
 
                 $item['allocated_total'] = $allocations->sum('allocated_quantity');
-                $item['unallocated_quantity'] = (float)$totalQty - $item['allocated_total'];
+                $item['unallocated_quantity'] = (float) $totalQty - $item['allocated_total'];
             } else {
                 $item['project_allocations'] = [];
                 $item['allocated_total'] = 0;
-                $item['unallocated_quantity'] = (float)$totalQty;
+                $item['unallocated_quantity'] = (float) $totalQty;
             }
-            
+
             $resultData[] = $item;
         }
 
@@ -705,9 +741,9 @@ class WarehouseService implements WarehouseReportDataProvider
                 'material_id' => $movement->material_id,
                 'material_name' => $movement->material->name,
                 'material_code' => $movement->material->code,
-                'quantity' => (float)$movement->quantity,
-                'price' => (float)$movement->price,
-                'total_value' => (float)$movement->quantity * (float)$movement->price,
+                'quantity' => (float) $movement->quantity,
+                'price' => (float) $movement->price,
+                'total_value' => (float) $movement->quantity * (float) $movement->price,
                 'measurement_unit' => $movement->material->measurementUnit->name ?? null,
                 'project_id' => $movement->project_id,
                 'project_name' => $movement->project->name ?? null,
@@ -718,6 +754,21 @@ class WarehouseService implements WarehouseReportDataProvider
                 'photo_gallery' => $movement->photo_gallery,
             ];
         })->toArray();
+    }
+
+    private function makeQrDataUri(string $payload): string
+    {
+        $options = new QROptions([
+            'outputType' => QRCode::OUTPUT_MARKUP_SVG,
+            'eccLevel' => QRCode::ECC_M,
+            'scale' => 6,
+            'imageBase64' => false,
+            'quietzoneSize' => 2,
+        ]);
+
+        $svg = (new QRCode($options))->render($payload);
+
+        return 'data:image/svg+xml;base64,'.base64_encode($svg);
     }
 
     /**
@@ -757,7 +808,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 'inventory_date' => $act->inventory_date->toDateString(),
                 'created_by' => $act->creator->name,
                 'items_count' => $act->items->count(),
-                'discrepancies_count' => $act->items->filter(fn($item) => $item->hasDiscrepancy())->count(),
+                'discrepancies_count' => $act->items->filter(fn ($item) => $item->hasDiscrepancy())->count(),
                 'total_difference_value' => $act->items->sum('total_value'),
                 'started_at' => $act->started_at?->toDateTimeString(),
                 'completed_at' => $act->completed_at?->toDateTimeString(),
@@ -766,11 +817,11 @@ class WarehouseService implements WarehouseReportDataProvider
                     return [
                         'material_id' => $item->material_id,
                         'material_name' => $item->material->name,
-                        'expected_quantity' => (float)$item->expected_quantity,
-                        'actual_quantity' => (float)$item->actual_quantity,
-                        'difference' => (float)$item->difference,
-                        'unit_price' => (float)$item->unit_price,
-                        'total_value' => (float)$item->total_value,
+                        'expected_quantity' => (float) $item->expected_quantity,
+                        'actual_quantity' => (float) $item->actual_quantity,
+                        'difference' => (float) $item->difference,
+                        'unit_price' => (float) $item->unit_price,
+                        'total_value' => (float) $item->total_value,
                         'has_discrepancy' => $item->hasDiscrepancy(),
                     ];
                 })->toArray(),
@@ -785,58 +836,58 @@ class WarehouseService implements WarehouseReportDataProvider
     {
         $dateFrom = $filters['date_from'] ?? now()->subMonth();
         $dateTo = $filters['date_to'] ?? now();
-        
+
         // Получаем движения за период
         $movements = WarehouseMovement::where('organization_id', $organizationId)
             ->whereBetween('movement_date', [$dateFrom, $dateTo])
             ->with(['material'])
             ->get();
-        
+
         // Группируем по материалам
         $assetAnalytics = [];
         $materialIds = $movements->pluck('material_id')->unique();
-        
+
         foreach ($materialIds as $materialId) {
             $materialMovements = $movements->where('material_id', $materialId);
             $material = $materialMovements->first()->material;
-            
+
             // Расход за период (write_off)
             $consumption = $materialMovements
                 ->where('movement_type', 'write_off')
                 ->sum('quantity');
-            
+
             // Средний остаток (упрощенно - текущий остаток)
             $balance = WarehouseBalance::where('organization_id', $organizationId)
                 ->where('material_id', $materialId)
                 ->first();
-            
-            $averageStock = $balance ? (float)$balance->available_quantity : 0;
-            
+
+            $averageStock = $balance ? (float) $balance->available_quantity : 0;
+
             // Коэффициент оборачиваемости
             $turnoverRate = $averageStock > 0 ? $consumption / $averageStock : 0;
-            
+
             // Период оборачиваемости в днях
             $days = $dateFrom->diffInDays($dateTo);
             $turnoverDays = $turnoverRate > 0 ? $days / $turnoverRate : 0;
-            
+
             // ABC категория (упрощенно - по потреблению)
             $category = $turnoverRate > 2 ? 'A' : ($turnoverRate > 0.5 ? 'B' : 'C');
-            
+
             $assetAnalytics[] = [
                 'asset_id' => $materialId,
                 'asset_name' => $material->name,
                 'asset_code' => $material->code,
                 'average_stock' => $averageStock,
-                'consumption' => (float)$consumption,
+                'consumption' => (float) $consumption,
                 'turnover_rate' => round($turnoverRate, 2),
                 'turnover_days' => round($turnoverDays, 0),
                 'category' => $category,
             ];
         }
-        
+
         // Сортируем по оборачиваемости
-        usort($assetAnalytics, fn($a, $b) => $b['turnover_rate'] <=> $a['turnover_rate']);
-        
+        usort($assetAnalytics, fn ($a, $b) => $b['turnover_rate'] <=> $a['turnover_rate']);
+
         return [
             'period' => [
                 'date_from' => $dateFrom->toDateString(),
@@ -846,8 +897,8 @@ class WarehouseService implements WarehouseReportDataProvider
             'assets' => $assetAnalytics,
             'summary' => [
                 'total_assets_analyzed' => count($assetAnalytics),
-                'average_turnover_rate' => count($assetAnalytics) > 0 
-                    ? round(collect($assetAnalytics)->avg('turnover_rate'), 2) 
+                'average_turnover_rate' => count($assetAnalytics) > 0
+                    ? round(collect($assetAnalytics)->avg('turnover_rate'), 2)
                     : 0,
                 'slow_moving_count' => collect($assetAnalytics)->where('category', 'C')->count(),
                 'fast_moving_count' => collect($assetAnalytics)->where('category', 'A')->count(),
@@ -973,10 +1024,10 @@ class WarehouseService implements WarehouseReportDataProvider
             ->values()
             ->all();
         $historicalDays = 90; // Анализируем последние 90 дней
-        
+
         $dateFrom = now()->subDays($historicalDays);
         $dateTo = now();
-        
+
         // Получаем движения за исторический период
         $movements = WarehouseMovement::where('organization_id', $organizationId)
             ->whereBetween('movement_date', [$dateFrom, $dateTo])
@@ -985,39 +1036,39 @@ class WarehouseService implements WarehouseReportDataProvider
             ->when($assetIds !== [], static fn ($query) => $query->whereIn('material_id', $assetIds))
             ->with(['material'])
             ->get();
-        
+
         $forecasts = [];
         $materialIds = $movements->pluck('material_id')->unique();
-        
+
         foreach ($materialIds as $materialId) {
             $materialMovements = $movements->where('material_id', $materialId);
             $material = $materialMovements->first()->material;
-            
+
             // Простой линейный прогноз: средний расход в день * горизонт
             $totalConsumption = $materialMovements->sum('quantity');
             $averageDailyConsumption = $totalConsumption / $historicalDays;
             $predictedConsumption = $averageDailyConsumption * $horizonDays;
-            
+
             // Текущий остаток (сумма по всем партиям)
             $currentStock = WarehouseBalance::where('organization_id', $organizationId)
                 ->where('material_id', $materialId)
                 ->when($warehouseId !== null, static fn ($query) => $query->where('warehouse_id', $warehouseId))
                 ->sum('available_quantity');
-            
+
             // Дата исчерпания запасов
-            $daysUntilStockOut = $averageDailyConsumption > 0 
-                ? $currentStock / $averageDailyConsumption 
+            $daysUntilStockOut = $averageDailyConsumption > 0
+                ? $currentStock / $averageDailyConsumption
                 : 999999;
-            
+
             // Рекомендуемое количество заказа (покрытие на 30 дней)
             $recommendedOrderQuantity = max(0, $averageDailyConsumption * 30 - $currentStock);
-            
+
             // Уровень уверенности (упрощенно - на основе стабильности потребления)
             $consumptionVariance = $this->calculateVariance(
                 $materialMovements->pluck('quantity')->toArray()
             );
             $confidence = max(50, min(95, 100 - ($consumptionVariance * 10)));
-            
+
             $forecasts[] = [
                 'asset_id' => $materialId,
                 'asset_name' => $material->name,
@@ -1026,23 +1077,23 @@ class WarehouseService implements WarehouseReportDataProvider
                 'average_daily_consumption' => round($averageDailyConsumption, 2),
                 'predicted_consumption' => round($predictedConsumption, 2),
                 'recommended_order_quantity' => round($recommendedOrderQuantity, 2),
-                'estimated_stock_out_date' => $daysUntilStockOut < $horizonDays 
-                    ? now()->addDays((int)$daysUntilStockOut)->toDateString()
+                'estimated_stock_out_date' => $daysUntilStockOut < $horizonDays
+                    ? now()->addDays((int) $daysUntilStockOut)->toDateString()
                     : null,
-                'days_until_stock_out' => min((int)$daysUntilStockOut, $horizonDays),
-                'confidence' => (int)$confidence,
+                'days_until_stock_out' => min((int) $daysUntilStockOut, $horizonDays),
+                'confidence' => (int) $confidence,
                 'forecast_method' => 'linear_average',
             ];
         }
-        
+
         // Сортируем по срочности
-        usort($forecasts, fn($a, $b) => $a['days_until_stock_out'] <=> $b['days_until_stock_out']);
-        
+        usort($forecasts, fn ($a, $b) => $a['days_until_stock_out'] <=> $b['days_until_stock_out']);
+
         // Разделяем по приоритетам
-        $immediateOrders = collect($forecasts)->filter(fn($f) => $f['days_until_stock_out'] < 7)->values()->toArray();
-        $plannedOrders = collect($forecasts)->filter(fn($f) => $f['days_until_stock_out'] >= 7 && $f['days_until_stock_out'] < 30)->values()->toArray();
-        $excessiveStock = collect($forecasts)->filter(fn($f) => $f['days_until_stock_out'] > 180)->values()->toArray();
-        
+        $immediateOrders = collect($forecasts)->filter(fn ($f) => $f['days_until_stock_out'] < 7)->values()->toArray();
+        $plannedOrders = collect($forecasts)->filter(fn ($f) => $f['days_until_stock_out'] >= 7 && $f['days_until_stock_out'] < 30)->values()->toArray();
+        $excessiveStock = collect($forecasts)->filter(fn ($f) => $f['days_until_stock_out'] > 180)->values()->toArray();
+
         return [
             'forecast_period' => [
                 'start_date' => now()->toDateString(),
@@ -1073,7 +1124,7 @@ class WarehouseService implements WarehouseReportDataProvider
         $dateFrom = $filters['date_from'] ?? now()->subYear();
         $dateTo = $filters['date_to'] ?? now();
         $warehouseId = isset($filters['warehouse_id']) ? (int) $filters['warehouse_id'] : null;
-        
+
         // Получаем движения за период
         $movements = WarehouseMovement::where('organization_id', $organizationId)
             ->whereBetween('movement_date', [$dateFrom, $dateTo])
@@ -1081,25 +1132,25 @@ class WarehouseService implements WarehouseReportDataProvider
             ->when($warehouseId !== null, static fn ($query) => $query->where('warehouse_id', $warehouseId))
             ->with(['material'])
             ->get();
-        
+
         $assetAnalysis = [];
         $materialIds = $movements->pluck('material_id')->unique();
         $totalValue = 0;
-        
+
         // Первый проход: рассчитываем стоимость потребления для каждого актива
         foreach ($materialIds as $materialId) {
             $materialMovements = $movements->where('material_id', $materialId);
             $material = $materialMovements->first()->material;
-            
+
             // Стоимость потребления за период
-            $consumptionValue = $materialMovements->sum(function($m) {
-                return (float)$m->quantity * (float)$m->price;
+            $consumptionValue = $materialMovements->sum(function ($m) {
+                return (float) $m->quantity * (float) $m->price;
             });
-            
+
             // Коэффициент вариации для XYZ
             $quantities = $materialMovements->pluck('quantity')->toArray();
             $variance = $this->calculateVariance($quantities);
-            
+
             $assetAnalysis[] = [
                 'asset_id' => $materialId,
                 'asset_name' => $material->name,
@@ -1107,19 +1158,19 @@ class WarehouseService implements WarehouseReportDataProvider
                 'total_value' => $consumptionValue,
                 'consumption_variance' => $variance,
             ];
-            
+
             $totalValue += $consumptionValue;
         }
-        
+
         // Сортируем по стоимости для ABC анализа
-        usort($assetAnalysis, fn($a, $b) => $b['total_value'] <=> $a['total_value']);
-        
+        usort($assetAnalysis, fn ($a, $b) => $b['total_value'] <=> $a['total_value']);
+
         // Второй проход: присваиваем ABC категории (правило Парето)
         $cumulativePercent = 0;
         foreach ($assetAnalysis as &$asset) {
             $asset['value_percent'] = $totalValue > 0 ? ($asset['total_value'] / $totalValue) * 100 : 0;
             $cumulativePercent += $asset['value_percent'];
-            
+
             // ABC категории: A=80%, B=15%, C=5%
             if ($cumulativePercent <= 80) {
                 $asset['abc_category'] = 'A';
@@ -1128,7 +1179,7 @@ class WarehouseService implements WarehouseReportDataProvider
             } else {
                 $asset['abc_category'] = 'C';
             }
-            
+
             // XYZ категории по коэффициенту вариации
             if ($asset['consumption_variance'] < 0.1) {
                 $asset['xyz_category'] = 'X';
@@ -1137,26 +1188,26 @@ class WarehouseService implements WarehouseReportDataProvider
             } else {
                 $asset['xyz_category'] = 'Z';
             }
-            
-            $asset['combined_category'] = $asset['abc_category'] . $asset['xyz_category'];
-            
+
+            $asset['combined_category'] = $asset['abc_category'].$asset['xyz_category'];
+
             // Рекомендации по категориям
             $asset['recommendation'] = $this->getAbcXyzRecommendation($asset['combined_category']);
         }
-        
+
         // Подсчет распределения
         $abcDistribution = [
             'A' => ['count' => collect($assetAnalysis)->where('abc_category', 'A')->count(), 'value_percent' => 80],
             'B' => ['count' => collect($assetAnalysis)->where('abc_category', 'B')->count(), 'value_percent' => 15],
             'C' => ['count' => collect($assetAnalysis)->where('abc_category', 'C')->count(), 'value_percent' => 5],
         ];
-        
+
         $xyzDistribution = [
             'X' => ['count' => collect($assetAnalysis)->where('xyz_category', 'X')->count(), 'stability' => 'high'],
             'Y' => ['count' => collect($assetAnalysis)->where('xyz_category', 'Y')->count(), 'stability' => 'medium'],
             'Z' => ['count' => collect($assetAnalysis)->where('xyz_category', 'Z')->count(), 'stability' => 'low'],
         ];
-        
+
         return [
             'analysis_period' => [
                 'date_from' => $dateFrom->toDateString(),
@@ -1213,12 +1264,14 @@ class WarehouseService implements WarehouseReportDataProvider
         $remainingToReserve = $quantity;
 
         foreach ($batches as $batch) {
-            if ($remainingToReserve <= 0) break;
+            if ($remainingToReserve <= 0) {
+                break;
+            }
 
             $takeFromBatch = min($batch->available_quantity, $remainingToReserve);
-            
+
             $batch->reserve($takeFromBatch);
-            
+
             $remainingToReserve -= $takeFromBatch;
         }
     }
@@ -1229,10 +1282,10 @@ class WarehouseService implements WarehouseReportDataProvider
     public function unreserveQuantity(int $organizationId, int $warehouseId, int $materialId, float $quantity): void
     {
         // Ищем партии где есть резерв
-        // Снимаем резерв с тех партий, где он есть. Порядок не так важен, но логично снимать с тех, 
+        // Снимаем резерв с тех партий, где он есть. Порядок не так важен, но логично снимать с тех,
         // которые скорее всего были зарезервированы последними (LIFO) или первыми (FIFO).
         // Давайте снимать с тех, у кого expiry_date раньше (чтобы освободить "скоропортящиеся" для продажи) => FIFO
-        
+
         $batches = WarehouseBalance::where('organization_id', $organizationId)
             ->where('warehouse_id', $warehouseId)
             ->where('material_id', $materialId)
@@ -1240,24 +1293,26 @@ class WarehouseService implements WarehouseReportDataProvider
             ->orderByRaw('CASE WHEN expiry_date IS NOT NULL THEN expiry_date ELSE created_at END ASC')
             ->lockForUpdate()
             ->get();
-            
+
         $totalReserved = $batches->sum('reserved_quantity');
-        
+
         if ($totalReserved < $quantity) {
-             throw new \InvalidArgumentException(
+            throw new \InvalidArgumentException(
                 "Недостаточно зарезервированных активов. Зарезервировано: {$totalReserved}, запрошено: {$quantity}"
             );
         }
-        
+
         $remainingToUnreserve = $quantity;
-        
+
         foreach ($batches as $batch) {
-            if ($remainingToUnreserve <= 0) break;
-            
+            if ($remainingToUnreserve <= 0) {
+                break;
+            }
+
             $takeFromBatch = min($batch->reserved_quantity, $remainingToUnreserve);
-            
+
             $batch->unreserve($takeFromBatch);
-            
+
             $remainingToUnreserve -= $takeFromBatch;
         }
     }
@@ -1273,16 +1328,16 @@ class WarehouseService implements WarehouseReportDataProvider
         array $metadata = []
     ): array {
         DB::beginTransaction();
-        
+
         try {
             // Проверяем доступность (через getWarehouseStock или напрямую)
             // Но reserveQuantity сама проверит и выбросит исключение
-            
+
             // Создаем резервацию
-            $expiresAt = isset($metadata['expires_hours']) 
+            $expiresAt = isset($metadata['expires_hours'])
                 ? now()->addHours($metadata['expires_hours'])
                 : now()->addHours(24);
-            
+
             $reservation = AssetReservation::create([
                 'organization_id' => $organizationId,
                 'warehouse_id' => $warehouseId,
@@ -1295,10 +1350,10 @@ class WarehouseService implements WarehouseReportDataProvider
                 'reason' => $metadata['reason'] ?? null,
                 'metadata' => $metadata,
             ]);
-            
+
             // Резервируем в балансах (партии)
             $this->reserveQuantity($organizationId, $warehouseId, $materialId, $quantity);
-            
+
             $this->logging->business('warehouse.asset.reserved', [
                 'organization_id' => $organizationId,
                 'warehouse_id' => $warehouseId,
@@ -1306,20 +1361,20 @@ class WarehouseService implements WarehouseReportDataProvider
                 'quantity' => $quantity,
                 'reservation_id' => $reservation->id,
             ]);
-            
+
             DB::commit();
-            
+
             // Получаем остаток для возврата (агрегированный)
             $balance = $this->getAssetBalance($organizationId, $warehouseId, $materialId);
-            
+
             return [
                 'reserved' => true,
                 'reservation_id' => $reservation->id,
-                'quantity' => (float)$quantity,
+                'quantity' => (float) $quantity,
                 'expires_at' => $expiresAt->toDateTimeString(),
-                'remaining_available' => $balance ? (float)$balance->availableQuantity : 0,
+                'remaining_available' => $balance ? (float) $balance->availableQuantity : 0,
             ];
-            
+
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;
@@ -1332,37 +1387,37 @@ class WarehouseService implements WarehouseReportDataProvider
     public function unreserveAssets(int $reservationId): bool
     {
         DB::beginTransaction();
-        
+
         try {
             $reservation = AssetReservation::where('id', $reservationId)
                 ->where('status', 'active')
                 ->lockForUpdate()
                 ->firstOrFail();
-            
+
             // Возвращаем количество в доступные (распределяем по партиям)
             $this->unreserveQuantity(
-                $reservation->organization_id, 
-                $reservation->warehouse_id, 
-                $reservation->material_id, 
+                $reservation->organization_id,
+                $reservation->warehouse_id,
+                $reservation->material_id,
                 $reservation->quantity
             );
-            
+
             // Обновляем статус резервации
             $reservation->update([
                 'status' => 'cancelled',
                 'cancelled_at' => now(),
             ]);
-            
+
             $this->logging->business('warehouse.asset.unreserved', [
                 'reservation_id' => $reservationId,
                 'organization_id' => $reservation->organization_id,
                 'quantity' => $reservation->quantity,
             ]);
-            
+
             DB::commit();
-            
+
             return true;
-            
+
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;
@@ -1476,12 +1531,12 @@ class WarehouseService implements WarehouseReportDataProvider
         array $ruleData
     ): array {
         $warehouseId = $ruleData['warehouse_id'];
-        
+
         // Проверяем существование правила
         $existingRule = AutoReorderRule::where('warehouse_id', $warehouseId)
             ->where('material_id', $materialId)
             ->first();
-        
+
         if ($existingRule) {
             // Обновляем существующее правило
             $existingRule->update([
@@ -1493,7 +1548,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 'is_active' => $ruleData['is_active'] ?? true,
                 'notes' => $ruleData['notes'] ?? null,
             ]);
-            
+
             $rule = $existingRule;
             $action = 'updated';
         } else {
@@ -1510,26 +1565,26 @@ class WarehouseService implements WarehouseReportDataProvider
                 'is_active' => $ruleData['is_active'] ?? true,
                 'notes' => $ruleData['notes'] ?? null,
             ]);
-            
+
             $action = 'created';
         }
-        
-        $this->logging->business('warehouse.auto_reorder_rule.' . $action, [
+
+        $this->logging->business('warehouse.auto_reorder_rule.'.$action, [
             'organization_id' => $organizationId,
             'warehouse_id' => $warehouseId,
             'material_id' => $materialId,
             'rule_id' => $rule->id,
         ]);
-        
+
         return [
             'rule_id' => $rule->id,
             'action' => $action,
             'material_id' => $materialId,
             'warehouse_id' => $warehouseId,
-            'min_stock' => (float)$rule->min_stock,
-            'max_stock' => (float)$rule->max_stock,
-            'reorder_point' => (float)$rule->reorder_point,
-            'reorder_quantity' => (float)$rule->reorder_quantity,
+            'min_stock' => (float) $rule->min_stock,
+            'max_stock' => (float) $rule->max_stock,
+            'reorder_point' => (float) $rule->reorder_point,
+            'reorder_quantity' => (float) $rule->reorder_quantity,
             'is_active' => $rule->is_active,
         ];
     }
@@ -1543,23 +1598,23 @@ class WarehouseService implements WarehouseReportDataProvider
             ->where('is_active', true)
             ->with(['material', 'warehouse', 'defaultSupplier'])
             ->get();
-        
+
         $ordersToGenerate = [];
         $rulesChecked = 0;
-        
+
         foreach ($rules as $rule) {
             $rulesChecked++;
-            
+
             // Получаем текущий остаток (сумма по всем партиям)
             $currentStock = WarehouseBalance::where('organization_id', $organizationId)
                 ->where('warehouse_id', $rule->warehouse_id)
                 ->where('material_id', $rule->material_id)
                 ->sum('available_quantity');
-            
+
             // Проверяем нужно ли пополнение
             if ($rule->needsReorder($currentStock)) {
                 $orderQuantity = $rule->calculateOrderQuantity($currentStock);
-                
+
                 $ordersToGenerate[] = [
                     'rule_id' => $rule->id,
                     'material_id' => $rule->material_id,
@@ -1568,16 +1623,16 @@ class WarehouseService implements WarehouseReportDataProvider
                     'warehouse_id' => $rule->warehouse_id,
                     'warehouse_name' => $rule->warehouse->name,
                     'current_stock' => $currentStock,
-                    'reorder_point' => (float)$rule->reorder_point,
-                    'min_stock' => (float)$rule->min_stock,
-                    'max_stock' => (float)$rule->max_stock,
+                    'reorder_point' => (float) $rule->reorder_point,
+                    'min_stock' => (float) $rule->min_stock,
+                    'max_stock' => (float) $rule->max_stock,
                     'recommended_order_quantity' => $orderQuantity,
                     'supplier_id' => $rule->default_supplier_id,
                     'supplier_name' => $rule->defaultSupplier->name ?? null,
                     'priority' => $this->calculateOrderPriority($currentStock, $rule->reorder_point, $rule->min_stock),
                     'estimated_stock_out_days' => $this->estimateStockOutDays($organizationId, $rule->material_id, $currentStock),
                 ];
-                
+
                 // Обновляем время последней проверки
                 $rule->update(['last_checked_at' => now()]);
             } else {
@@ -1585,16 +1640,16 @@ class WarehouseService implements WarehouseReportDataProvider
                 $rule->update(['last_checked_at' => now()]);
             }
         }
-        
+
         // Сортируем по приоритету
-        usort($ordersToGenerate, fn($a, $b) => $b['priority'] <=> $a['priority']);
-        
+        usort($ordersToGenerate, fn ($a, $b) => $b['priority'] <=> $a['priority']);
+
         $this->logging->business('warehouse.auto_reorder.checked', [
             'organization_id' => $organizationId,
             'rules_checked' => $rulesChecked,
             'orders_to_generate' => count($ordersToGenerate),
         ]);
-        
+
         return [
             'checked_at' => now()->toDateTimeString(),
             'rules_checked' => $rulesChecked,
@@ -1607,7 +1662,7 @@ class WarehouseService implements WarehouseReportDataProvider
             ],
         ];
     }
-    
+
     /**
      * Вспомогательный метод для расчета дисперсии
      */
@@ -1616,15 +1671,15 @@ class WarehouseService implements WarehouseReportDataProvider
         if (count($values) < 2) {
             return 0;
         }
-        
+
         $mean = array_sum($values) / count($values);
-        $variance = array_reduce($values, function($carry, $value) use ($mean) {
+        $variance = array_reduce($values, function ($carry, $value) use ($mean) {
             return $carry + pow($value - $mean, 2);
         }, 0) / count($values);
-        
+
         return sqrt($variance) / ($mean > 0 ? $mean : 1);
     }
-    
+
     /**
      * Получить рекомендацию по ABC/XYZ категории
      */
@@ -1641,7 +1696,7 @@ class WarehouseService implements WarehouseReportDataProvider
             'CY' => 'Малоценный товар - стандартные запасы',
             'CZ' => 'Малоценный товар - минимальный контроль',
         ];
-        
+
         return $recommendations[$category] ?? 'Требуется анализ';
     }
 
@@ -1658,11 +1713,13 @@ class WarehouseService implements WarehouseReportDataProvider
         }
         if ($currentStock < $reorderPoint) {
             $ratio = ($reorderPoint - $currentStock) / ($reorderPoint - $minStock);
-            return max(5, min(8, (int)(5 + $ratio * 3)));
+
+            return max(5, min(8, (int) (5 + $ratio * 3)));
         }
+
         return 3;
     }
-    
+
     /**
      * Оценить количество дней до исчерпания запасов
      */
@@ -1673,15 +1730,18 @@ class WarehouseService implements WarehouseReportDataProvider
             ->where('movement_type', 'write_off')
             ->where('movement_date', '>=', now()->subDays(30))
             ->get();
-        
-        if ($movements->isEmpty()) return null;
-        
+
+        if ($movements->isEmpty()) {
+            return null;
+        }
+
         $totalConsumption = $movements->sum('quantity');
         $averageDailyConsumption = $totalConsumption / 30;
-        
-        if ($averageDailyConsumption <= 0) return null;
-        
-        return (int)($currentStock / $averageDailyConsumption);
+
+        if ($averageDailyConsumption <= 0) {
+            return null;
+        }
+
+        return (int) ($currentStock / $averageDailyConsumption);
     }
 }
-

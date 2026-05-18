@@ -29,7 +29,7 @@ class M17ExportStrategy extends BaseWarehouseExportStrategy
 
         $material->loadMissing(['organization', 'measurementUnit']);
 
-        $spreadsheet = new Spreadsheet();
+        $spreadsheet = new Spreadsheet;
         $sheet = $spreadsheet->getActiveSheet();
         $sheet->setTitle('М-17');
         $sheet->setShowGridlines(false);
@@ -175,9 +175,18 @@ class M17ExportStrategy extends BaseWarehouseExportStrategy
         $sheet->mergeCells('S22:S24');
         $sheet->setCellValue('S22', 'Примечание');
 
-        foreach (range('A', 'S') as $index => $column) {
-            $sheet->setCellValue($column . '25', $index + 1);
-        }
+        $sheet->setCellValue('A25', 1);
+        $sheet->setCellValue('B25', 2);
+        $sheet->setCellValue('C25', 3);
+        $sheet->mergeCells('D25:L25');
+        $sheet->setCellValue('D25', 4);
+        $sheet->setCellValue('M25', 5);
+        $sheet->setCellValue('N25', 6);
+        $sheet->setCellValue('O25', 7);
+        $sheet->setCellValue('P25', 8);
+        $sheet->mergeCells('Q25:R25');
+        $sheet->setCellValue('Q25', 9);
+        $sheet->setCellValue('S25', 10);
         $sheet->mergeCells('A26:L27');
         $sheet->mergeCells('M26:M27');
         $sheet->setCellValue('M26', 'Нач. ост:');
@@ -295,10 +304,10 @@ class M17ExportStrategy extends BaseWarehouseExportStrategy
         $sheet->getStyle("A1:S{$lastRow}")
             ->getAlignment()
             ->setVertical(Alignment::VERTICAL_CENTER);
-        $sheet->getStyle("N1:S6")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+        $sheet->getStyle('N1:S6')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
         $sheet->getStyle("A28:C{$lastRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
         $sheet->getStyle("N28:P{$lastRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
-        $sheet->getStyle("A22:S27")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+        $sheet->getStyle('A22:S27')->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
         $sheet->getStyle("A28:S{$lastRow}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
     }
 }
