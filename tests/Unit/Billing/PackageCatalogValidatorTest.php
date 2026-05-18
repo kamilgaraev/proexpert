@@ -77,6 +77,19 @@ class PackageCatalogValidatorTest extends TestCase
         }
     }
 
+    public function test_legacy_active_module_development_status_falls_back_to_stable(): void
+    {
+        $module = new \App\Models\Module();
+        $module->setRawAttributes([
+            'development_status' => 'active',
+        ]);
+
+        $this->assertSame(
+            ModuleDevelopmentStatus::STABLE,
+            $module->getDevelopmentStatusEnum()
+        );
+    }
+
     public function test_validator_rejects_unknown_module_slug(): void
     {
         $result = $this->validator()->validate(
