@@ -8,10 +8,16 @@ use App\BusinessModules\Features\ExecutiveDocumentation\Enums\ExecutiveDocumentS
 use App\BusinessModules\Features\ExecutiveDocumentation\Enums\ExecutiveRemarkStatusEnum;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
+use App\BusinessModules\Features\ExecutiveDocumentation\Support\ExecutiveDocumentProfileRegistry;
 use App\DTOs\Workflow\WorkflowSurfaceData;
 
 final class ExecutiveDocumentationWorkflowService
 {
+    public function __construct(
+        private readonly ExecutiveDocumentProfileRegistry $profileRegistry,
+    ) {
+    }
+
     public function forSet(ExecutiveDocumentSet $set): WorkflowSurfaceData
     {
         $documentsCount = $set->relationLoaded('documents')
@@ -65,6 +71,59 @@ final class ExecutiveDocumentationWorkflowService
                 'open_documents_count' => $openDocuments,
             ],
         );
+    }
+
+    /**
+     * @return array<string, int|bool>
+     */
+    public function readinessSummary(ExecutiveDocumentSet $set): array
+    {
+        $set->loadMissing('documents.versions', 'documents.remarks', 'documents.workType', 'documents.journalEntry');
+        $documents = $set->documents;
+        $documentsTotal = $documents->count();
+        $documentsWithFiles = $documents->filter(static fn (ExecutiveDocument $document): bool => $document->versions->isNotEmpty())->count();
+        $approvedDocuments = $documents->filter(
+            static fn (ExecutiveDocument $document): bool => in_array($document->status, [
+                ExecutiveDocumentStatusEnum::APPROVED,
+                ExecutiveDocumentStatusEnum::TRANSMITTED,
+            ], true)
+        )->count();
+        $openRemarks = $documents->sum(static fn (ExecutiveDocument $document): int => $document->remarks
+            ->filter(static fn ($remark): bool => $remark->status === ExecutiveRemarkStatusEnum::OPEN)
+            ->count());
+        $missingRequiredData = $documents->filter(fn (ExecutiveDocument $document): bool => $this->documentHasMissingRequiredData($document))->count();
+
+        return [
+            'documents_total' => $documentsTotal,
+            'documents_with_files' => $documentsWithFiles,
+            'approved_documents' => $approvedDocuments,
+            'open_remarks' => $openRemarks,
+            'missing_required_data' => $missingRequiredData,
+            'ready_to_transmit' => $documentsTotal > 0
+                && $documentsWithFiles === $documentsTotal
+                && $approvedDocuments === $documentsTotal
+                && $openRemarks === 0
+                && $missingRequiredData === 0,
+        ];
+    }
+
+    private function documentHasMissingRequiredData(ExecutiveDocument $document): bool
+    {
+        $profile = $this->profileRegistry->find($document->document_type->value);
+
+        if ($profile === null) {
+            return false;
+        }
+
+        if (($profile['requires_work_type'] ?? false) === true && $document->work_type_id === null) {
+            return true;
+        }
+
+        if (($profile['requires_journal_entry'] ?? false) === true && $document->journal_entry_id === null) {
+            return true;
+        }
+
+        return $this->profileRegistry->missingRequiredFields($document->document_type->value, $document->profile_data ?? []) !== [];
     }
 
     public function forDocument(ExecutiveDocument $document): WorkflowSurfaceData

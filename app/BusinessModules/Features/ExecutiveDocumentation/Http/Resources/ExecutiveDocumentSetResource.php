@@ -34,6 +34,7 @@ final class ExecutiveDocumentSetResource extends JsonResource
             'workflow_summary' => $workflow->toArray(),
             'problem_flags' => $workflow->problemFlags,
             'available_actions' => $workflow->availableActions,
+            'readiness_summary' => app(ExecutiveDocumentationWorkflowService::class)->readinessSummary($set),
             'project' => $this->whenLoaded('project', fn () => $this->project ? [
                 'id' => $this->project->id,
                 'name' => $this->project->name,

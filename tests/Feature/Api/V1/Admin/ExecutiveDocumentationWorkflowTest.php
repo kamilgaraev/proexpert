@@ -65,13 +65,36 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
         $workType = WorkType::query()->create([
             'organization_id' => $context->organization->id,
             'name' => 'Reinforcement',
+            'code' => 'reinforcement_works',
             'measurement_unit_id' => $unit->id,
+            'category' => 'Исполнительная документация',
+            'additional_properties' => ['contexts' => ['executive_documentation']],
             'is_active' => true,
+        ]);
+        $journal = ConstructionJournal::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'name' => 'General work journal',
+            'journal_number' => 'GJ-2026-001',
+            'start_date' => now()->subWeek()->toDateString(),
+            'status' => 'active',
+            'created_by_user_id' => $context->user->id,
+        ]);
+        $journalEntry = ConstructionJournalEntry::query()->create([
+            'journal_id' => $journal->id,
+            'entry_date' => now()->toDateString(),
+            'entry_number' => 3,
+            'work_description' => 'Foundation reinforcement',
+            'status' => 'approved',
+            'created_by_user_id' => $context->user->id,
+            'approved_by_user_id' => $context->user->id,
+            'approved_at' => now(),
         ]);
         $completedWork = CompletedWork::query()->create([
             'organization_id' => $context->organization->id,
             'project_id' => $project->id,
             'work_type_id' => $workType->id,
+            'journal_entry_id' => $journalEntry->id,
             'user_id' => $context->user->id,
             'quantity' => 12.5,
             'completion_date' => now()->toDateString(),
@@ -100,11 +123,22 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
             ->post("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
                 'document_type' => 'hidden_work_act',
                 'title' => 'Hidden works act for foundation reinforcement',
+                'work_type_id' => $workType->id,
                 'completed_work_id' => $completedWork->id,
-                'inspection_date' => now()->toDateString(),
+                'journal_entry_id' => $journalEntry->id,
+                'document_date' => now()->toDateString(),
+                'copies_count' => 2,
+                'form_variant' => 'order_344',
+                'profile_data' => [
+                    'act_number' => 'HWA-2026-001',
+                    'presented_works' => 'Foundation reinforcement',
+                    'started_at' => now()->subDay()->toDateString(),
+                    'finished_at' => now()->toDateString(),
+                    'next_works_permission' => 'Concrete works are allowed',
+                    'actual_volume' => '12.5 pcs',
+                ],
                 'metadata' => [
                     'project_location_id' => $location->id,
-                    'act_number' => 'HWA-2026-001',
                     'representative' => 'Customer representative',
                 ],
                 'participants' => [
@@ -289,14 +323,19 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
 
         $linkOnlyResponse = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/executive-documentation/sets/' . $setId . '/documents', [
-                'document_type' => 'material_certificate',
+                'document_type' => 'incoming_control_document',
                 'title' => 'Concrete certificate',
-                'metadata' => [
-                    'project_location_id' => $location->id,
-                    'material_id' => $material->id,
-                    'batch_number' => 'BATCH-42',
-                    'supplier_id' => $supplier->id,
-                    'certificate_number' => 'CERT-2026-001',
+                'document_date' => now()->toDateString(),
+                'profile_data' => [
+                    'document_number' => 'CERT-2026-001',
+                    'received_at' => now()->toDateString(),
+                    'checked_at' => now()->toDateString(),
+                    'quality_document_kind' => 'certificate',
+                    'material_name' => 'Concrete B25',
+                    'batch_details' => 'BATCH-42',
+                    'quantity' => '10 м3',
+                    'quality_document_details' => 'CERT-2026-001',
+                    'incoming_control_result' => 'accepted',
                 ],
                 'initial_version' => [
                     'version_number' => '1.0',
@@ -309,8 +348,9 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
 
         $invalidResponse = $this->withHeaders($context->authHeaders())
             ->post('/api/v1/admin/executive-documentation/sets/' . $setId . '/documents', [
-                'document_type' => 'material_certificate',
+                'document_type' => 'incoming_control_document',
                 'title' => 'Concrete certificate',
+                'document_date' => now()->toDateString(),
                 'initial_version' => [
                     'version_number' => '1.0',
                     'file' => UploadedFile::fake()->createWithContent('certificate.pdf', str_repeat('a', 1024)),
@@ -319,22 +359,65 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
 
         $invalidResponse->assertStatus(422);
         $invalidResponse->assertJsonValidationErrors([
-            'metadata.material_id',
-            'metadata.batch_number',
-            'metadata.supplier_id',
-            'metadata.certificate_number',
+            'profile_data.document_number',
+            'profile_data.received_at',
+            'profile_data.checked_at',
+            'profile_data.quality_document_kind',
+            'profile_data.material_name',
+            'profile_data.batch_details',
+            'profile_data.quantity',
+            'profile_data.quality_document_details',
+            'profile_data.incoming_control_result',
         ]);
+
+        $autoDateResponse = $this->withHeaders($context->authHeaders())
+            ->post('/api/v1/admin/executive-documentation/sets/' . $setId . '/documents', [
+                'document_type' => 'incoming_control_document',
+                'title' => 'Concrete certificate',
+                'profile_data' => [
+                    'document_number' => 'CERT-2026-001',
+                    'received_at' => now()->toDateString(),
+                    'checked_at' => now()->toDateString(),
+                    'quality_document_kind' => 'certificate',
+                    'material_name' => 'Concrete B25',
+                    'batch_details' => 'BATCH-42',
+                    'quantity' => '10 м3',
+                    'quality_document_details' => 'CERT-2026-001',
+                    'incoming_control_result' => 'accepted',
+                ],
+                'initial_version' => [
+                    'version_number' => '1.0',
+                    'file' => UploadedFile::fake()->createWithContent('certificate.pdf', str_repeat('a', 1024)),
+                ],
+            ]);
+
+        $autoDateResponse->assertCreated();
+        $autoDateResponse->assertJsonPath('data.document_date', now()->toDateString());
 
         $response = $this->withHeaders($context->authHeaders())
             ->post('/api/v1/admin/executive-documentation/sets/' . $setId . '/documents', [
-                'document_type' => 'material_certificate',
+                'document_type' => 'incoming_control_document',
                 'title' => 'Concrete certificate',
                 'section_name' => 'Axis A-B',
+                'document_date' => now()->toDateString(),
+                'copies_count' => 1,
+                'profile_data' => [
+                    'document_number' => 'CERT-2026-001',
+                    'received_at' => now()->toDateString(),
+                    'checked_at' => now()->toDateString(),
+                    'quality_document_kind' => 'certificate',
+                    'material_name' => 'Concrete B25',
+                    'manufacturer' => 'Concrete plant',
+                    'supplier' => 'Concrete plant',
+                    'batch_details' => 'BATCH-42',
+                    'quantity' => '10 м3',
+                    'quality_document_details' => 'CERT-2026-001 от ' . now()->toDateString(),
+                    'incoming_control_result' => 'accepted',
+                ],
                 'metadata' => [
+                    'project_location_id' => $location->id,
                     'material_id' => $material->id,
-                    'batch_number' => 'BATCH-42',
                     'supplier_id' => $supplier->id,
-                    'certificate_number' => 'CERT-2026-001',
                 ],
                 'initial_version' => [
                     'version_number' => '1.0',
@@ -351,11 +434,11 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
         $this->assertDatabaseHas('executive_documents', [
             'id' => $response->json('data.id'),
             'organization_id' => $context->organization->id,
-            'document_type' => 'material_certificate',
+            'document_type' => 'incoming_control_document',
         ]);
     }
 
-    public function test_work_log_extract_must_be_connected_to_project_journal(): void
+    public function test_work_journal_must_include_required_profile_fields(): void
     {
         Storage::fake('s3');
 
@@ -425,14 +508,24 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
 
         $foreignJournalResponse = $this->withHeaders($context->authHeaders())
             ->post("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
-                'document_type' => 'work_log_extract',
-                'title' => 'Work log extract',
-                'metadata' => [
-                    'project_location_id' => $location->id,
-                    'journal_id' => $foreignJournal->id,
-                    'journal_entry_id' => $foreignEntry->id,
-                    'period' => '01.05.2026-07.05.2026',
-                    'page_range' => '12-16',
+                'document_type' => 'work_journal',
+                'title' => 'Work journal package',
+                'document_date' => now()->toDateString(),
+                'profile_data' => [
+                    'journal_kind' => 'general',
+                    'journal_number' => 'GJ-2026-001',
+                    'opened_at' => now()->subWeek()->toDateString(),
+                    'journal_organization' => 'General contractor',
+                    'responsible_person' => 'Site engineer',
+                    'journal_period' => '01.05.2026-07.05.2026',
+                    'journal_status' => 'active',
+                ],
+                'relations' => [
+                    [
+                        'relation_type' => 'journal_entries',
+                        'target_type' => 'journal_entry',
+                        'target_id' => $foreignEntry->id,
+                    ],
                 ],
                 'initial_version' => [
                     'file' => $this->fakeDocumentFile('work-log-foreign-journal.pdf'),
@@ -441,19 +534,14 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
             ]);
 
         $foreignJournalResponse->assertStatus(422);
-        $foreignJournalResponse->assertJsonValidationErrors(['metadata.journal_id']);
+        $foreignJournalResponse->assertJsonValidationErrors(['relations.0.target_id']);
 
         $foreignEntryResponse = $this->withHeaders($context->authHeaders())
             ->post("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
-                'document_type' => 'work_log_extract',
-                'title' => 'Work log extract',
-                'metadata' => [
-                    'project_location_id' => $location->id,
-                    'journal_id' => $ownJournal->id,
-                    'journal_entry_id' => $foreignEntry->id,
-                    'period' => '01.05.2026-07.05.2026',
-                    'page_range' => '12-16',
-                ],
+                'document_type' => 'work_journal',
+                'title' => 'Work journal package',
+                'document_date' => now()->toDateString(),
+                'profile_data' => [],
                 'initial_version' => [
                     'file' => $this->fakeDocumentFile('work-log-foreign-entry.pdf'),
                     'version_number' => '1.0',
@@ -461,18 +549,37 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
             ]);
 
         $foreignEntryResponse->assertStatus(422);
-        $foreignEntryResponse->assertJsonValidationErrors(['metadata.journal_entry_id']);
+        $foreignEntryResponse->assertJsonValidationErrors([
+            'profile_data.journal_kind',
+            'profile_data.journal_number',
+            'profile_data.opened_at',
+            'profile_data.journal_organization',
+            'profile_data.responsible_person',
+            'profile_data.journal_period',
+            'profile_data.journal_status',
+        ]);
 
         $response = $this->withHeaders($context->authHeaders())
             ->post("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
-                'document_type' => 'work_log_extract',
-                'title' => 'Work log extract',
-                'metadata' => [
-                    'project_location_id' => $location->id,
-                    'journal_id' => $ownJournal->id,
-                    'journal_entry_id' => $ownEntry->id,
-                    'period' => '01.05.2026-07.05.2026',
-                    'page_range' => '12-16',
+                'document_type' => 'work_journal',
+                'title' => 'Work journal package',
+                'document_date' => now()->toDateString(),
+                'profile_data' => [
+                    'journal_kind' => 'general',
+                    'journal_number' => 'GJ-2026-001',
+                    'opened_at' => now()->subWeek()->toDateString(),
+                    'journal_organization' => 'General contractor',
+                    'responsible_person' => 'Site engineer',
+                    'journal_period' => '01.05.2026-07.05.2026',
+                    'journal_status' => 'active',
+                ],
+                'relations' => [
+                    [
+                        'relation_type' => 'journal_entries',
+                        'target_type' => 'journal_entry',
+                        'target_id' => $ownEntry->id,
+                        'label' => 'Concrete slab works',
+                    ],
                 ],
                 'initial_version' => [
                     'file' => $this->fakeDocumentFile('work-log.pdf'),
@@ -481,15 +588,13 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
             ]);
 
         $response->assertCreated();
-        $response->assertJsonPath('data.metadata.journal_id', $ownJournal->id);
-        $response->assertJsonPath('data.metadata.project_location_id', $location->id);
-        $response->assertJsonPath('data.metadata.journal_name', 'General work journal');
-        $response->assertJsonPath('data.metadata.journal_number', 'GJ-2026-001');
-        $response->assertJsonPath('data.metadata.journal_entry_id', $ownEntry->id);
-        $response->assertJsonPath('data.metadata.work_description', 'Concrete slab works');
+        $response->assertJsonPath('data.document_type', 'work_journal');
+        $response->assertJsonPath('data.profile_data.journal_number', 'GJ-2026-001');
+        $response->assertJsonPath('data.relations.0.target_type', 'journal_entry');
+        $response->assertJsonPath('data.relations.0.target_id', $ownEntry->id);
     }
 
-    public function test_material_certificate_must_be_connected_to_material_and_supplier(): void
+    public function test_incoming_control_document_must_include_required_profile_fields(): void
     {
         Storage::fake('s3');
 
@@ -547,13 +652,27 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
 
         $foreignMaterialResponse = $this->withHeaders($context->authHeaders())
             ->post("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
-                'document_type' => 'material_certificate',
+                'document_type' => 'incoming_control_document',
                 'title' => 'Concrete certificate',
-                'metadata' => [
-                    'material_id' => $foreignMaterial->id,
-                    'supplier_id' => $supplier->id,
-                    'batch_number' => 'BATCH-42',
-                    'certificate_number' => 'CERT-2026-001',
+                'document_date' => now()->toDateString(),
+                'profile_data' => [
+                    'document_number' => 'CERT-2026-001',
+                    'received_at' => now()->toDateString(),
+                    'checked_at' => now()->toDateString(),
+                    'quality_document_kind' => 'certificate',
+                    'material_name' => 'Concrete B25',
+                    'supplier' => 'Concrete plant',
+                    'batch_details' => 'BATCH-42',
+                    'quantity' => '10 м3',
+                    'quality_document_details' => 'CERT-2026-001',
+                    'incoming_control_result' => 'accepted',
+                ],
+                'relations' => [
+                    [
+                        'relation_type' => 'material_reference',
+                        'target_type' => 'material',
+                        'target_id' => $foreignMaterial->id,
+                    ],
                 ],
                 'initial_version' => [
                     'file' => $this->fakeDocumentFile('certificate-foreign-material.pdf'),
@@ -562,17 +681,31 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
             ]);
 
         $foreignMaterialResponse->assertStatus(422);
-        $foreignMaterialResponse->assertJsonValidationErrors(['metadata.material_id']);
+        $foreignMaterialResponse->assertJsonValidationErrors(['relations.0.target_id']);
 
         $foreignSupplierResponse = $this->withHeaders($context->authHeaders())
             ->post("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
-                'document_type' => 'material_certificate',
+                'document_type' => 'incoming_control_document',
                 'title' => 'Concrete certificate',
-                'metadata' => [
-                    'material_id' => $material->id,
-                    'supplier_id' => $foreignSupplier->id,
-                    'batch_number' => 'BATCH-42',
-                    'certificate_number' => 'CERT-2026-001',
+                'document_date' => now()->toDateString(),
+                'profile_data' => [
+                    'document_number' => 'CERT-2026-001',
+                    'received_at' => now()->toDateString(),
+                    'checked_at' => now()->toDateString(),
+                    'quality_document_kind' => 'certificate',
+                    'material_name' => 'Concrete B25',
+                    'supplier' => 'Foreign plant',
+                    'batch_details' => 'BATCH-42',
+                    'quantity' => '10 м3',
+                    'quality_document_details' => 'CERT-2026-001',
+                    'incoming_control_result' => 'accepted',
+                ],
+                'relations' => [
+                    [
+                        'relation_type' => 'supplier_document',
+                        'target_type' => 'supplier',
+                        'target_id' => $foreignSupplier->id,
+                    ],
                 ],
                 'initial_version' => [
                     'file' => $this->fakeDocumentFile('certificate-foreign-supplier.pdf'),
@@ -581,17 +714,32 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
             ]);
 
         $foreignSupplierResponse->assertStatus(422);
-        $foreignSupplierResponse->assertJsonValidationErrors(['metadata.supplier_id']);
+        $foreignSupplierResponse->assertJsonValidationErrors(['relations.0.target_id']);
 
         $response = $this->withHeaders($context->authHeaders())
             ->post("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
-                'document_type' => 'material_certificate',
+                'document_type' => 'incoming_control_document',
                 'title' => 'Concrete certificate',
-                'metadata' => [
-                    'material_id' => $material->id,
-                    'supplier_id' => $supplier->id,
-                    'batch_number' => 'BATCH-42',
-                    'certificate_number' => 'CERT-2026-001',
+                'document_date' => now()->toDateString(),
+                'profile_data' => [
+                    'document_number' => 'CERT-2026-001',
+                    'received_at' => now()->toDateString(),
+                    'checked_at' => now()->toDateString(),
+                    'quality_document_kind' => 'certificate',
+                    'material_name' => 'Concrete B25',
+                    'supplier' => 'Concrete plant',
+                    'batch_details' => 'BATCH-42',
+                    'quantity' => '10 м3',
+                    'quality_document_details' => 'CERT-2026-001',
+                    'incoming_control_result' => 'accepted',
+                ],
+                'relations' => [
+                    [
+                        'relation_type' => 'material_reference',
+                        'target_type' => 'material',
+                        'target_id' => $material->id,
+                        'label' => 'Concrete B25',
+                    ],
                 ],
                 'initial_version' => [
                     'file' => $this->fakeDocumentFile('certificate.pdf'),
@@ -600,11 +748,11 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
             ]);
 
         $response->assertCreated();
-        $response->assertJsonPath('data.metadata.material_id', $material->id);
-        $response->assertJsonPath('data.metadata.material_name', 'Concrete B25');
-        $response->assertJsonPath('data.metadata.material_code', 'MAT-B25');
-        $response->assertJsonPath('data.metadata.supplier_id', $supplier->id);
-        $response->assertJsonPath('data.metadata.supplier_name', 'Concrete plant');
+        $response->assertJsonPath('data.document_type', 'incoming_control_document');
+        $response->assertJsonPath('data.profile_data.material_name', 'Concrete B25');
+        $response->assertJsonPath('data.profile_data.supplier', 'Concrete plant');
+        $response->assertJsonPath('data.relations.0.target_type', 'material');
+        $response->assertJsonPath('data.relations.0.target_id', $material->id);
     }
 
     private function fakeDocumentFile(string $name): UploadedFile

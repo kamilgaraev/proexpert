@@ -7,13 +7,17 @@ namespace App\BusinessModules\Features\ExecutiveDocumentation\Services;
 use App\BusinessModules\Features\ExecutiveDocumentation\Enums\ExecutiveDocumentStatusEnum;
 use App\BusinessModules\Features\ExecutiveDocumentation\Enums\ExecutiveRemarkStatusEnum;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
+use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentRelation;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentRemark;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentTransmittal;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentVersion;
+use App\BusinessModules\Features\ExecutiveDocumentation\Support\ExecutiveDocumentProfileRegistry;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Models\WorkType;
 use App\Services\Storage\FileService;
+use Carbon\Carbon;
 use DomainException;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\UploadedFile;
@@ -25,6 +29,9 @@ final class ExecutiveDocumentationService
         'project',
         'documents.versions',
         'documents.remarks',
+        'documents.workType',
+        'documents.journalEntry',
+        'documents.relations',
         'transmittal',
     ];
 
@@ -33,11 +40,43 @@ final class ExecutiveDocumentationService
         'project',
         'versions',
         'remarks',
+        'workType',
+        'journalEntry',
+        'relations',
+    ];
+
+    private const EXECUTIVE_WORK_TYPE_CODES = [
+        'reinforcement_works',
+        'concrete_works',
+        'pile_well_drilling',
+        'ventilation_works',
+        'internal_engineering_systems',
+        'reinforced_concrete_works',
+        'pile_driving',
+        'structure_and_weld_protection',
+        'earthworks',
+        'roofing_works',
+        'low_current_systems_installation',
+        'building_structures_installation',
+        'pool_bowl_installation',
+        'external_engineering_networks',
+        'general_construction_works',
+        'fireproof_coating',
+        'finishing_works',
+        'preparatory_works',
+        'fire_alarm_and_extinguishing',
+        'other',
+        'commissioning_works',
+        'welding_works',
+        'facade_works',
+        'electrical_networks_and_communication_lines',
+        'electrical_installation_works',
     ];
 
     public function __construct(
         private readonly ExecutiveDocumentNumberGenerator $numberGenerator,
         private readonly FileService $fileService,
+        private readonly ExecutiveDocumentProfileRegistry $profileRegistry,
     ) {
     }
 
@@ -90,17 +129,26 @@ final class ExecutiveDocumentationService
                 'document_type' => $data['document_type'],
                 'title' => $data['title'],
                 'status' => ExecutiveDocumentStatusEnum::DRAFT,
+                'work_type_id' => $data['work_type_id'] ?? null,
                 'work_type_name' => $data['work_type_name'] ?? null,
                 'section_name' => $data['section_name'] ?? null,
                 'completed_work_id' => $data['completed_work_id'] ?? null,
+                'document_date' => $data['document_date'] ?? $data['inspection_date'] ?? $this->documentDateFromInitialVersion($data),
+                'copies_count' => $data['copies_count'] ?? null,
+                'form_variant' => $data['form_variant'] ?? null,
+                'journal_entry_id' => $data['journal_entry_id'] ?? null,
                 'inspection_date' => $data['inspection_date'] ?? null,
                 'participants' => $data['participants'] ?? null,
+                'profile_data' => $data['profile_data'] ?? null,
+                'signatories' => $data['signatories'] ?? null,
                 'metadata' => $data['metadata'] ?? null,
             ]);
 
             if (!empty($data['initial_version'])) {
                 $this->addVersion($document, $userId, $data['initial_version']);
             }
+
+            $this->syncRelations($document, $data['relations'] ?? []);
 
             return $document->fresh(self::DOCUMENT_RELATIONS);
         });
@@ -233,7 +281,7 @@ final class ExecutiveDocumentationService
 
     public function transmit(ExecutiveDocumentSet $set, int $userId, array $data): ExecutiveDocumentSet
     {
-        $set->loadMissing('documents');
+        $set->loadMissing('documents.versions', 'documents.remarks', 'documents.workType', 'documents.journalEntry');
 
         if ($set->documents->isEmpty()) {
             throw new DomainException(trans_message('executive_documentation.errors.transmit_without_documents'));
@@ -245,6 +293,10 @@ final class ExecutiveDocumentationService
 
         if ($notApproved) {
             throw new DomainException(trans_message('executive_documentation.errors.transmit_requires_approved_documents'));
+        }
+
+        if ($this->setHasIncompleteDocuments($set)) {
+            throw new DomainException(trans_message('executive_documentation.errors.transmit_requires_complete_documents'));
         }
 
         return DB::transaction(function () use ($set, $userId, $data): ExecutiveDocumentSet {
@@ -322,5 +374,111 @@ final class ExecutiveDocumentationService
         if (!$exists) {
             throw new DomainException(trans_message('executive_documentation.errors.project_not_found'));
         }
+    }
+
+    /**
+     * @return Collection<int, WorkType>
+     */
+    public function ensureExecutiveWorkTypes(int $organizationId): Collection
+    {
+        foreach (self::EXECUTIVE_WORK_TYPE_CODES as $sortOrder => $code) {
+            $workType = WorkType::withTrashed()
+                ->where('organization_id', $organizationId)
+                ->where('category', 'Исполнительная документация')
+                ->where('code', $code)
+                ->first();
+
+            $attributes = [
+                'name' => trans_message("executive_documentation.work_types.{$code}"),
+                'description' => trans_message('executive_documentation.work_type_description'),
+                'category' => 'Исполнительная документация',
+                'additional_properties' => [
+                    'contexts' => ['executive_documentation'],
+                    'source' => 'pto',
+                    'sort_order' => $sortOrder + 1,
+                ],
+                'is_active' => true,
+            ];
+
+            if ($workType === null) {
+                WorkType::query()->create([
+                    'organization_id' => $organizationId,
+                    'code' => $code,
+                    ...$attributes,
+                ]);
+
+                continue;
+            }
+
+            if ($workType->trashed()) {
+                $workType->restore();
+            }
+
+            $workType->fill($attributes)->save();
+        }
+
+        return WorkType::query()
+            ->where('organization_id', $organizationId)
+            ->where('category', 'Исполнительная документация')
+            ->whereIn('code', self::EXECUTIVE_WORK_TYPE_CODES)
+            ->orderByRaw('CASE code ' . implode(' ', array_map(
+                static fn (string $code, int $index): string => "WHEN '{$code}' THEN {$index}",
+                self::EXECUTIVE_WORK_TYPE_CODES,
+                array_keys(self::EXECUTIVE_WORK_TYPE_CODES)
+            )) . ' END')
+            ->get();
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    private function documentDateFromInitialVersion(array $data): string
+    {
+        return Carbon::parse($data['initial_version']['uploaded_at'] ?? now())->toDateString();
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $relations
+     */
+    private function syncRelations(ExecutiveDocument $document, array $relations): void
+    {
+        if ($relations === []) {
+            return;
+        }
+
+        $document->relations()->delete();
+
+        foreach ($relations as $relation) {
+            ExecutiveDocumentRelation::query()->create([
+                'organization_id' => $document->organization_id,
+                'document_id' => $document->id,
+                'relation_type' => $relation['relation_type'],
+                'target_type' => $relation['target_type'],
+                'target_id' => (int) $relation['target_id'],
+                'label' => $relation['label'] ?? null,
+                'metadata' => $relation['metadata'] ?? null,
+            ]);
+        }
+    }
+
+    private function setHasIncompleteDocuments(ExecutiveDocumentSet $set): bool
+    {
+        return $set->documents->contains(function (ExecutiveDocument $document): bool {
+            $profile = $this->profileRegistry->find($document->document_type->value);
+
+            if (($profile['requires_work_type'] ?? false) === true && $document->work_type_id === null) {
+                return true;
+            }
+
+            if (($profile['requires_journal_entry'] ?? false) === true && $document->journal_entry_id === null) {
+                return true;
+            }
+
+            if ($profile !== null && $this->profileRegistry->missingRequiredFields($document->document_type->value, $document->profile_data ?? []) !== []) {
+                return true;
+            }
+
+            return $document->versions->isEmpty() || $document->openRemarks()->exists();
+        });
     }
 }
