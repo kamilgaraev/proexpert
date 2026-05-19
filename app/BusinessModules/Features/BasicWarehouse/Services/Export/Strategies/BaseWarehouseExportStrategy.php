@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BasicWarehouse\Services\Export\Strategies;
 
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\Contracts\WarehouseExportStrategyInterface;
+use App\Models\Organization;
 use App\Services\Storage\FileService;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
@@ -25,7 +26,7 @@ abstract class BaseWarehouseExportStrategy implements WarehouseExportStrategyInt
     /**
      * Сохранение Spreadsheet в S3
      */
-    protected function saveSpreadsheetToS3(Spreadsheet $spreadsheet, string $path, $organization): string
+    protected function saveSpreadsheetToS3(Spreadsheet $spreadsheet, string $path, Organization|int|string $organization): string
     {
         $writer = new Xlsx($spreadsheet);
         
@@ -33,10 +34,11 @@ abstract class BaseWarehouseExportStrategy implements WarehouseExportStrategyInt
         $writer->save('php://output');
         $content = ob_get_clean();
         
-        $orgId = $organization instanceof \App\Models\Organization ? $organization->id : $organization;
+        $organizationModel = $organization instanceof Organization ? $organization : null;
+        $orgId = $organizationModel?->id ?? $organization;
         $s3Path = "org-{$orgId}/{$path}";
         
-        $this->fileService->disk($organization)->put($s3Path, $content);
+        $this->fileService->disk($organizationModel)->put($s3Path, $content);
 
         return $s3Path;
     }
