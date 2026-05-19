@@ -147,10 +147,7 @@ final class RefreshMarketingSeoArticlesCommand extends Command
         $tagIds = [];
 
         foreach ($tags as $tagData) {
-            $tag = BlogTag::query()
-                ->where('slug', $tagData['slug'])
-                ->orWhere('name', $tagData['name'])
-                ->firstOrNew(['slug' => $tagData['slug']]);
+            $tag = $this->resolveTag($tagData);
 
             $tag->fill([
                 'blog_context' => BlogContextEnum::MARKETING->value,
@@ -173,6 +170,30 @@ final class RefreshMarketingSeoArticlesCommand extends Command
                 $tag->usage_count = $tag->articles()->count();
                 $tag->save();
             });
+    }
+
+    private function resolveTag(array $tagData): BlogTag
+    {
+        $tagByName = BlogTag::query()
+            ->where('name', $tagData['name'])
+            ->first();
+
+        if ($tagByName instanceof BlogTag) {
+            return $tagByName;
+        }
+
+        $tagBySlug = BlogTag::query()
+            ->where('slug', $tagData['slug'])
+            ->first();
+
+        if ($tagBySlug instanceof BlogTag) {
+            return $tagBySlug;
+        }
+
+        $tag = new BlogTag();
+        $tag->slug = $tagData['slug'];
+
+        return $tag;
     }
 
     private function calculateReadingTime(string $content): int
