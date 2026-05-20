@@ -995,6 +995,53 @@ class OfficialFormsExportService
         return $this->saveSpreadsheetToS3($spreadsheet, $path, $journal->project->organization);
     }
 
+    public function exportExtendedReportToPdf(\App\Models\ConstructionJournal $journal, array $options): string
+    {
+        $journal->loadMissing('project.organization');
+
+        $from = \Carbon\Carbon::parse($options['date_from']);
+        $to = \Carbon\Carbon::parse($options['date_to']);
+
+        $entries = $this->journalEntriesForExport($journal, $from, $to, $options['estimate_id'] ?? null, true)
+            ->with([
+                'workVolumes.estimateItem.measurementUnit',
+                'workVolumes.measurementUnit',
+                'workVolumes.workType.measurementUnit',
+                'workers',
+                'equipment',
+                'materials',
+                'createdBy',
+                'approvedBy',
+            ])
+            ->orderBy('entry_date')
+            ->orderBy('entry_number')
+            ->get();
+
+        $totals = [
+            'total_entries' => $entries->count(),
+            'total_workers' => $entries->sum(fn ($entry) => $entry->workers->sum('workers_count')),
+            'total_work_hours' => $entries->sum(fn ($entry) => $entry->workers->sum('hours_worked')),
+            'total_materials' => $entries->sum(fn ($entry) => $entry->materials->count()),
+            'total_equipment' => $entries->sum(fn ($entry) => $entry->equipment->count()),
+        ];
+
+        $pdf = Pdf::loadView('estimates.exports.journal_extended_report', [
+            'journal' => $journal,
+            'entries' => $entries,
+            'period_from' => $from,
+            'period_to' => $to,
+            'options' => $options,
+            'totals' => $totals,
+        ])
+            ->setPaper('a4', 'landscape')
+            ->setOption('defaultFont', 'DejaVu Serif');
+
+        $filename = 'Extended_Report_' . ($journal->journal_number ?? $journal->id) . '.pdf';
+        $path = "exports/journal/extended/{$filename}";
+
+        return $this->savePdfToS3($pdf, $path, $journal->project->organization);
+    }
+
     // === KS-6 HELPER METHODS ===
 
     protected function setKS6Header($sheet, \App\Models\ConstructionJournal $journal, \Carbon\Carbon $from, \Carbon\Carbon $to): void

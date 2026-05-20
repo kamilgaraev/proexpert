@@ -37,7 +37,7 @@ class AssistantCapabilityCatalogTest extends TestCase
         $this->assertSame('report.project_timelines', $task['id']);
     }
 
-    public function test_material_movements_report_capability_declares_excel_artifact(): void
+    public function test_material_movements_report_capability_declares_pdf_artifact(): void
     {
         $catalog = new AssistantCapabilityCatalog;
         $task = $catalog->findById('report.material_movements');
@@ -47,7 +47,7 @@ class AssistantCapabilityCatalogTest extends TestCase
         $this->assertSame('warehouse', $task['capability']);
         $this->assertSame('generate_material_movements_report', $task['tool_name']);
         $this->assertSame(['period'], $catalog->requiredSlotNames('report.material_movements'));
-        $this->assertSame(['type' => 'excel'], $task['artifact']);
+        $this->assertSame(['type' => 'pdf'], $task['artifact']);
         $this->assertSame(['reports.view', 'admin.reports.view'], $task['read_permissions']);
     }
 

@@ -29,7 +29,7 @@ class GenerateMaterialMovementsReportTool implements AIToolInterface
 
     public function getDescription(): string
     {
-        return 'Генерирует Excel отчет по движению и расходам материалов. Возвращает ссылку на скачивание (excel_url). Этот отчет создается в формате Excel (xlsx), так как PDF для него не поддерживается.';
+        return 'Генерирует PDF отчет по движению и расходам материалов. Возвращает ссылку на скачивание (pdf_url).';
     }
 
     public function getParametersSchema(): array
@@ -64,7 +64,7 @@ class GenerateMaterialMovementsReportTool implements AIToolInterface
         $dates = $this->extractPeriodFromArguments($arguments, $period);
 
         $requestData = [
-            'format' => 'excel',
+            'format' => 'pdf',
             'date_from' => $dates['date_from'],
             'date_to' => $dates['date_to'],
         ];
@@ -85,7 +85,7 @@ class GenerateMaterialMovementsReportTool implements AIToolInterface
             $response->sendContent();
             $content = ob_get_clean();
 
-            $filename = 'material_movements_report_'.time().'.xlsx';
+            $filename = 'material_movements_report_'.time().'.pdf';
             $path = OrganizationStoragePath::forOrganization($organization->id, "reports/{$filename}");
 
             if (Storage::disk('s3')->put($path, $content) !== true) {
@@ -98,7 +98,7 @@ class GenerateMaterialMovementsReportTool implements AIToolInterface
                 'status' => 'success',
                 'message' => 'Отчет по движению материалов успешно сгенерирован',
                 'period' => $period,
-                'excel_url' => $url,
+                'pdf_url' => $url,
                 'filename' => $filename,
                 'storage_disk' => 's3',
                 'storage_path' => $path,
@@ -109,7 +109,7 @@ class GenerateMaterialMovementsReportTool implements AIToolInterface
 
             return [
                 'status' => 'error',
-                'message' => 'Ошибка при генерации отчета: '.$e->getMessage(),
+                'message' => 'Не удалось сформировать отчет по движению материалов.',
             ];
         }
     }

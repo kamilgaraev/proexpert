@@ -877,7 +877,7 @@ class ReportService
             $query->where('contracts.date', '<=', $request->query('date_to'));
         }
 
-        $contractors = $query->get()->map(function ($contractor) use ($request, $organizationId) {
+        $contractors = $query->get()->map(function ($contractor) use ($organizationId) {
             $debt = $contractor->total_completed - $contractor->total_paid;
             $settlement_status = 'settled';
             
@@ -1199,7 +1199,23 @@ class ReportService
         }
 
         if ($format === 'pdf') {
-            throw new BusinessLogicException('PDF экспорт для этого отчета пока не реализован. Используйте Excel.', 501);
+            return $this->pdfExporter->streamDownload(
+                'reports.material-movements-pdf',
+                [
+                    'title' => 'Отчет по движению материалов',
+                    'data' => $movements->values(),
+                    'totals' => $totals,
+                    'filters' => $request->only(['warehouse_id', 'material_id', 'project_id', 'movement_type', 'date_from', 'date_to']),
+                    'period' => [
+                        'date_from' => $dateFrom->format('d.m.Y'),
+                        'date_to' => $dateTo->format('d.m.Y'),
+                    ],
+                    'generated_at' => Carbon::now()->format('d.m.Y H:i'),
+                ],
+                'material_movements_report_' . now()->format('d-m-Y_H-i') . '.pdf',
+                'a4',
+                'landscape'
+            );
         }
 
         return [
@@ -1691,7 +1707,19 @@ class ReportService
         }
 
         if ($format === 'pdf') {
-            throw new BusinessLogicException('PDF экспорт для этого отчета пока не реализован. Используйте Excel.', 501);
+            return $this->pdfExporter->streamDownload(
+                'reports.project-timelines-pdf',
+                [
+                    'title' => 'Отчет по срокам выполнения проектов',
+                    'data' => $projects->values(),
+                    'totals' => $totals,
+                    'filters' => $request->only(['project_id', 'status', 'customer', 'date_from', 'date_to']),
+                    'generated_at' => Carbon::now()->format('d.m.Y H:i'),
+                ],
+                'project_timelines_report_' . now()->format('d-m-Y_H-i') . '.pdf',
+                'a4',
+                'landscape'
+            );
         }
 
         return [

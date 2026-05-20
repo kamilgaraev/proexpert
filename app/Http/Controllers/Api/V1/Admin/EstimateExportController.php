@@ -368,6 +368,7 @@ class EstimateExportController extends Controller
         $options = [
             'date_from' => $validated['date_from'],
             'date_to' => $validated['date_to'],
+            'include_volumes' => $validated['include_volumes'] ?? true,
             'include_materials' => $validated['include_materials'] ?? true,
             'include_equipment' => $validated['include_equipment'] ?? true,
             'include_workers' => $validated['include_workers'] ?? true,
@@ -378,8 +379,9 @@ class EstimateExportController extends Controller
         }
 
         try {
-            // В зависимости от формата выбираем метод (пока только Excel реализован в сервисе)
-            $path = $this->exportService->exportExtendedReportToExcel($journal, $options);
+            $path = $validated['format'] === 'pdf'
+                ? $this->exportService->exportExtendedReportToPdf($journal, $options)
+                : $this->exportService->exportExtendedReportToExcel($journal, $options);
             $url = $this->exportService->getFileService()->temporaryUrl($path, 15);
 
             return AdminResponse::success(['url' => $url]);

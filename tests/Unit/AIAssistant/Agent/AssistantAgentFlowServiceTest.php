@@ -72,10 +72,10 @@ final class AssistantAgentFlowServiceTest extends TestCase
         $toolRegistry = new AIToolRegistry;
         $toolRegistry->registerTool(new AgentFlowTool('generate_project_timelines_report', [
             'status' => 'success',
-            'excel_url' => 'https://storage.example.test/org-15/reports/timeline.xlsx',
-            'filename' => 'timeline.xlsx',
+            'pdf_url' => 'https://storage.example.test/org-15/reports/timeline.pdf',
+            'filename' => 'timeline.pdf',
             'storage_disk' => 's3',
-            'storage_path' => 'org-15/reports/timeline.xlsx',
+            'storage_path' => 'org-15/reports/timeline.pdf',
         ]));
 
         $service = $this->makeService($conversationManager, $toolRegistry);
@@ -89,9 +89,9 @@ final class AssistantAgentFlowServiceTest extends TestCase
         $metadata = $conversationManager->assistantMessages()[0]->metadata;
 
         $this->assertSame('Отчет сформирован. Файл доступен ниже.', $result['message']['content']);
-        $this->assertStringNotContainsString('https://storage.example.test/org-15/reports/timeline.xlsx', $result['message']['content']);
-        $this->assertSame('excel', $metadata['artifacts'][0]['type']);
-        $this->assertSame('https://storage.example.test/org-15/reports/timeline.xlsx', $metadata['artifacts'][0]['url']);
+        $this->assertStringNotContainsString('https://storage.example.test/org-15/reports/timeline.pdf', $result['message']['content']);
+        $this->assertSame('pdf', $metadata['artifacts'][0]['type']);
+        $this->assertSame('https://storage.example.test/org-15/reports/timeline.pdf', $metadata['artifacts'][0]['url']);
         $this->assertSame([], $metadata['missing_data']);
         $this->assertSame([], $metadata['evidence']);
         $this->assertArrayNotHasKey('confidence', $metadata);

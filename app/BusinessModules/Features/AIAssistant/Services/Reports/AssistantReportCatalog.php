@@ -52,9 +52,9 @@ final class AssistantReportCatalog
                 requiredSlots: [$this->periodSlot()],
                 optionalSlots: [$this->slot('project_id', 'project')],
                 permissions: ['reports.view', 'admin.reports.view'],
-                artifactType: 'excel',
-                defaultFormat: 'excel',
-                formats: ['excel']
+                artifactType: 'pdf',
+                defaultFormat: 'pdf',
+                formats: ['pdf']
             ),
             new AssistantReportDefinition(
                 id: 'contractor_settlements',
@@ -122,9 +122,9 @@ final class AssistantReportCatalog
                 requiredSlots: [$this->periodSlot()],
                 optionalSlots: [$this->slot('project_id', 'project')],
                 permissions: ['reports.view', 'schedule-management.view', 'admin.reports.view'],
-                artifactType: 'excel',
-                defaultFormat: 'excel',
-                formats: ['excel']
+                artifactType: 'pdf',
+                defaultFormat: 'pdf',
+                formats: ['pdf']
             ),
         ];
     }

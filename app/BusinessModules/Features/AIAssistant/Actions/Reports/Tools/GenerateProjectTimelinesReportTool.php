@@ -29,7 +29,7 @@ class GenerateProjectTimelinesReportTool implements AIToolInterface
 
     public function getDescription(): string
     {
-        return 'Генерирует Excel отчет по срокам проектов, прогрессу выполнения и отставаниям от графика. Возвращает ссылку на скачивание (excel_url). Использовать, когда спрашивают про сроки, успеваемость, отставание от графика или прогресс по проектам.';
+        return 'Генерирует PDF отчет по срокам проектов, прогрессу выполнения и отставаниям от графика. Возвращает ссылку на скачивание (pdf_url). Использовать, когда спрашивают про сроки, успеваемость, отставание от графика или прогресс по проектам.';
     }
 
     public function getParametersSchema(): array
@@ -64,7 +64,7 @@ class GenerateProjectTimelinesReportTool implements AIToolInterface
         $dates = $this->extractPeriodFromArguments($arguments, $period);
 
         $requestData = [
-            'format' => 'excel',
+            'format' => 'pdf',
             'date_from' => $dates['date_from'],
             'date_to' => $dates['date_to'],
         ];
@@ -85,7 +85,7 @@ class GenerateProjectTimelinesReportTool implements AIToolInterface
             $response->sendContent();
             $content = ob_get_clean();
 
-            $filename = 'project_timelines_report_'.time().'.xlsx';
+            $filename = 'project_timelines_report_'.time().'.pdf';
             $path = OrganizationStoragePath::forOrganization($organization->id, "reports/{$filename}");
 
             if (Storage::disk('s3')->put($path, $content) !== true) {
@@ -98,7 +98,7 @@ class GenerateProjectTimelinesReportTool implements AIToolInterface
                 'status' => 'success',
                 'message' => 'Отчет по графику работ успешно сформирован',
                 'period' => $period,
-                'excel_url' => $url,
+                'pdf_url' => $url,
                 'filename' => $filename,
                 'storage_disk' => 's3',
                 'storage_path' => $path,

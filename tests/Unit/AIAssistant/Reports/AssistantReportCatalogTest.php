@@ -53,6 +53,6 @@ final class AssistantReportCatalogTest extends TestCase
         $this->assertSame('report.project_timelines', $task['id']);
         $this->assertSame('reports', $task['domain']);
         $this->assertSame('generate_project_timelines_report', $task['tool_name']);
-        $this->assertSame(['type' => 'excel'], $task['artifact']);
+        $this->assertSame(['type' => 'pdf'], $task['artifact']);
     }
 }
