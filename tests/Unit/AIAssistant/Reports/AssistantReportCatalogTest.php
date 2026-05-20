@@ -22,7 +22,36 @@ final class AssistantReportCatalogTest extends TestCase
             'generate_time_tracking_report',
             'generate_contract_payments_report',
             'generate_project_timelines_report',
+            'generate_operational_pdf_report',
         ], $catalog->toolNames());
+    }
+
+    public function test_catalog_contains_additional_operational_pdf_reports(): void
+    {
+        $catalog = new AssistantReportCatalog;
+
+        $this->assertCount(18, $catalog->all());
+
+        foreach ([
+            'projects_summary',
+            'procurement_requests',
+            'purchase_orders',
+            'supplier_proposals',
+            'site_requests',
+            'estimates_summary',
+            'quality_defects',
+            'safety_incidents',
+            'machinery_utilization',
+            'workforce_attendance',
+        ] as $reportId) {
+            $definition = $catalog->findById($reportId);
+
+            $this->assertNotNull($definition, "Report {$reportId} must be registered");
+            $this->assertSame('generate_operational_pdf_report', $definition->toolName);
+            $this->assertSame('pdf', $definition->artifactType);
+            $this->assertSame('pdf', $definition->defaultFormat);
+            $this->assertSame(['pdf'], $definition->formats);
+        }
     }
 
     public function test_every_definition_has_operational_metadata(): void

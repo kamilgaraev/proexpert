@@ -37,6 +37,16 @@ final class AssistantReportIntentResolverTest extends TestCase
             'time tracking' => ['подготовь отчет по трудозатратам за неделю', 'time_tracking'],
             'contract payments' => ['сформируй платежи по договорам за текущий год', 'contract_payments'],
             'timelines' => ['сделай отчет по графику работ за май', 'project_timelines'],
+            'projects summary' => ['сделай сводку по проектам за месяц', 'projects_summary'],
+            'procurement requests' => ['подготовь отчет по заявкам на закупку за неделю', 'procurement_requests'],
+            'purchase orders' => ['сформируй отчет по заказам поставщикам за квартал', 'purchase_orders'],
+            'supplier proposals' => ['покажи отчет по предложениям поставщиков за май', 'supplier_proposals'],
+            'site requests' => ['нужен отчет по заявкам со стройплощадки за месяц', 'site_requests'],
+            'estimates summary' => ['сделай отчет по сметам и их статусам', 'estimates_summary'],
+            'quality defects' => ['сформируй отчет по дефектам качества за месяц', 'quality_defects'],
+            'safety incidents' => ['подготовь отчет по инцидентам безопасности за месяц', 'safety_incidents'],
+            'machinery utilization' => ['покажи отчет по работе техники и простоям', 'machinery_utilization'],
+            'workforce attendance' => ['сделай отчет по посещаемости сотрудников за неделю', 'workforce_attendance'],
         ];
     }
 

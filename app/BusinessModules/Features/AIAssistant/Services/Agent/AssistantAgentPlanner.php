@@ -86,6 +86,21 @@ final readonly class AssistantAgentPlanner
         array $context,
         AssistantTaskState $pendingState
     ): AssistantAgentDecision {
+        if ($this->isAnyReportChoice($message)) {
+            $definition = $this->reportIntentResolver->defaultReportDefinition();
+
+            if ($definition instanceof AssistantReportDefinition) {
+                $task = $definition->toAgentTask();
+                $state = $this->fillState(
+                    $this->makeState($task, $pendingState->sourceMessage),
+                    $pendingState->sourceMessage.' '.$message,
+                    $context
+                );
+
+                return $this->decisionForState($state, $task);
+            }
+        }
+
         $reportIntent = $this->reportIntentResolver->resolve($message, $context);
 
         if (($reportIntent['status'] ?? null) === 'matched' && ($reportIntent['definition'] ?? null) instanceof AssistantReportDefinition) {
@@ -101,6 +116,13 @@ final readonly class AssistantAgentPlanner
             state: $pendingState,
             clarificationQuestion: $this->reportTypeQuestion($reportIntent['candidates'] ?? [])
         );
+    }
+
+    private function isAnyReportChoice(string $message): bool
+    {
+        $normalized = mb_strtolower(trim($message));
+
+        return preg_match('/\b(любой|любые|любую|на твой выбор|выбери сам|без разницы|неважно)\b/u', $normalized) === 1;
     }
 
     /**

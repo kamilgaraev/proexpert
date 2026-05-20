@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services\Reports;
 
 use App\BusinessModules\Features\AIAssistant\DTOs\Reports\AssistantReportArtifact;
+use App\BusinessModules\Features\AIAssistant\DTOs\Reports\AssistantReportDefinition;
 use App\Models\Organization;
 use App\Models\ReportFile;
 use App\Models\User;
@@ -71,7 +72,7 @@ final readonly class AssistantReportFileService
 
         $filename = $this->filename($data, $storagePath);
         $expiresAt = $this->expiresAt($data);
-        $definition = $this->reportCatalog->findByToolName($toolName);
+        $definition = $this->definitionForArtifact($toolName, $data, $arguments);
         $type = self::URL_KEYS[$urlKey] ?? $definition?->artifactType ?? 'file';
         $downloadUrl = $this->fileService->temporaryUrl($storagePath, 24 * 60, $organization)
             ?? $this->optionalString($data[$urlKey] ?? null);
@@ -107,6 +108,26 @@ final readonly class AssistantReportFileService
             sourceTool: $toolName,
             reportFileId: (string) $reportFile->id
         );
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     * @param array<string, mixed> $arguments
+     */
+    private function definitionForArtifact(string $toolName, array $data, array $arguments): ?AssistantReportDefinition
+    {
+        foreach ([$data['report_type'] ?? null, $arguments['report_type'] ?? null] as $reportType) {
+            if (! is_string($reportType) || trim($reportType) === '') {
+                continue;
+            }
+
+            $definition = $this->reportCatalog->findById($reportType);
+            if ($definition instanceof AssistantReportDefinition) {
+                return $definition;
+            }
+        }
+
+        return $this->reportCatalog->findByToolName($toolName);
     }
 
     /**

@@ -7,6 +7,7 @@ use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\CreateSchedul
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateContractorSettlementsReportTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateContractPaymentsReportTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateMaterialMovementsReportTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateOperationalPdfReportTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateProfitabilityReportTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateProjectTimelinesReportTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateTimeTrackingReportTool;
@@ -86,6 +87,7 @@ class AIAssistantServiceProvider extends ServiceProvider
             $registry->registerTool($app->make(GenerateTimeTrackingReportTool::class));
             $registry->registerTool($app->make(GenerateContractPaymentsReportTool::class));
             $registry->registerTool($app->make(GenerateProjectTimelinesReportTool::class));
+            $registry->registerTool($app->make(GenerateOperationalPdfReportTool::class));
             $registry->registerTool($app->make(GetProjectSnapshotTool::class));
             $registry->registerTool($app->make(GetProcurementSnapshotTool::class));
             $registry->registerTool($app->make(GetContractSnapshotTool::class));

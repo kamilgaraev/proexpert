@@ -22,6 +22,14 @@ final readonly class AssistantReportIntentResolver
         private AssistantReportCatalog $catalog = new AssistantReportCatalog
     ) {}
 
+    public function defaultReportDefinition(): ?AssistantReportDefinition
+    {
+        return $this->catalog->findById('projects_summary')
+            ?? $this->catalog->findById('material_movements')
+            ?? $this->catalog->all()[0]
+            ?? null;
+    }
+
     /**
      * @param  array<string, mixed>  $context
      * @return array{

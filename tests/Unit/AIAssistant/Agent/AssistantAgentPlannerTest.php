@@ -136,6 +136,30 @@ class AssistantAgentPlannerTest extends TestCase
         $this->assertSame('generate_material_movements_report', $decision->state?->toolName);
     }
 
+    public function test_any_report_follow_up_uses_default_operational_report(): void
+    {
+        $pending = new AssistantTaskState(
+            id: 'report.unspecified',
+            domain: 'reports',
+            capability: 'reports',
+            toolName: '',
+            status: 'waiting_for_slots',
+            slots: [
+                new AssistantTaskSlot('report_type', true),
+            ],
+            sourceMessage: 'Сформируй отчет за прошлый месяц'
+        );
+
+        $decision = $this->planner()->decide('любые', [], $pending);
+
+        $this->assertSame('execute_tool', $decision->type);
+        $this->assertSame('report.projects_summary', $decision->state?->id);
+        $this->assertSame('generate_operational_pdf_report', $decision->toolName);
+        $this->assertSame('projects_summary', $decision->toolArguments['report_type']);
+        $this->assertSame('2026-04-01', $decision->toolArguments['date_from']);
+        $this->assertSame('2026-04-30', $decision->toolArguments['date_to']);
+    }
+
     public function test_warehouse_stock_report_executes_without_period(): void
     {
         $decision = $this->planner()->decide('Выгрузи отчет по остаткам склада', [

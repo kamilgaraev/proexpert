@@ -126,6 +126,76 @@ final class AssistantReportCatalog
                 defaultFormat: 'pdf',
                 formats: ['pdf']
             ),
+            $this->operationalReport(
+                id: 'projects_summary',
+                capability: 'projects',
+                label: 'сводка по проектам',
+                aliases: ['отчет по проектам', 'сводка по проектам', 'сводку по проектам', 'общий отчет по проектам', 'любой отчет', 'любые отчеты'],
+                matchTerms: ['сводка по проектам', 'сводку по проектам', 'проекты за период', 'портфель проектов', 'общий отчет', 'любой отчет']
+            ),
+            $this->operationalReport(
+                id: 'procurement_requests',
+                capability: 'procurement',
+                label: 'заявки на закупку',
+                aliases: ['отчет по заявкам на закупку', 'заявки на закупку', 'потребность в закупках'],
+                matchTerms: ['заявки на закупку', 'закупочные заявки', 'потребность в закупках', 'заявки снабжения']
+            ),
+            $this->operationalReport(
+                id: 'purchase_orders',
+                capability: 'procurement',
+                label: 'заказы поставщикам',
+                aliases: ['отчет по заказам поставщикам', 'заказы поставщикам', 'заказы на поставку'],
+                matchTerms: ['заказы поставщикам', 'заказы на поставку', 'purchase orders', 'поставки по заказам']
+            ),
+            $this->operationalReport(
+                id: 'supplier_proposals',
+                capability: 'procurement',
+                label: 'предложения поставщиков',
+                aliases: ['отчет по предложениям поставщиков', 'предложения поставщиков', 'коммерческие предложения поставщиков'],
+                matchTerms: ['предложения поставщиков', 'коммерческие предложения', 'офферы поставщиков', 'сравнение поставщиков']
+            ),
+            $this->operationalReport(
+                id: 'site_requests',
+                capability: 'production',
+                label: 'заявки со стройплощадки',
+                aliases: ['отчет по заявкам со стройплощадки', 'заявки со стройплощадки', 'заявки с объекта'],
+                matchTerms: ['заявки со стройплощадки', 'заявки с объекта', 'заявки участка', 'site requests']
+            ),
+            $this->operationalReport(
+                id: 'estimates_summary',
+                capability: 'finance',
+                label: 'сводка по сметам',
+                aliases: ['отчет по сметам', 'сводка по сметам', 'сметы и статусы'],
+                matchTerms: ['сметы', 'сводка по сметам', 'статусы смет', 'estimate']
+            ),
+            $this->operationalReport(
+                id: 'quality_defects',
+                capability: 'quality',
+                label: 'дефекты качества',
+                aliases: ['отчет по дефектам качества', 'дефекты качества', 'замечания по качеству'],
+                matchTerms: ['дефекты качества', 'замечания качества', 'quality defects', 'несоответствия']
+            ),
+            $this->operationalReport(
+                id: 'safety_incidents',
+                capability: 'safety',
+                label: 'инциденты безопасности',
+                aliases: ['отчет по инцидентам безопасности', 'инциденты безопасности', 'нарушения охраны труда'],
+                matchTerms: ['инциденты безопасности', 'нарушения безопасности', 'охрана труда', 'safety incidents']
+            ),
+            $this->operationalReport(
+                id: 'machinery_utilization',
+                capability: 'machinery',
+                label: 'работа техники',
+                aliases: ['отчет по работе техники', 'работа техники', 'простои техники'],
+                matchTerms: ['работа техники', 'простои техники', 'использование техники', 'машины и механизмы']
+            ),
+            $this->operationalReport(
+                id: 'workforce_attendance',
+                capability: 'workforce',
+                label: 'посещаемость сотрудников',
+                aliases: ['отчет по посещаемости сотрудников', 'посещаемость сотрудников', 'явка персонала'],
+                matchTerms: ['посещаемость сотрудников', 'явка персонала', 'табель посещаемости', 'пропуски сотрудников']
+            ),
         ];
     }
 
@@ -158,10 +228,10 @@ final class AssistantReportCatalog
      */
     public function toolNames(): array
     {
-        return array_map(
+        return array_values(array_unique(array_map(
             static fn (AssistantReportDefinition $definition): string => $definition->toolName,
             $this->all()
-        );
+        )));
     }
 
     /**
@@ -189,5 +259,28 @@ final class AssistantReportCatalog
     private function slot(string $name, string $type): array
     {
         return ['name' => $name, 'type' => $type];
+    }
+
+    private function operationalReport(
+        string $id,
+        string $capability,
+        string $label,
+        array $aliases,
+        array $matchTerms
+    ): AssistantReportDefinition {
+        return new AssistantReportDefinition(
+            id: $id,
+            capability: $capability,
+            label: $label,
+            toolName: 'generate_operational_pdf_report',
+            aliases: $aliases,
+            matchTerms: $matchTerms,
+            requiredSlots: [],
+            optionalSlots: [$this->periodSlot(), $this->slot('project_id', 'project')],
+            permissions: ['reports.view', 'admin.reports.view'],
+            artifactType: 'pdf',
+            defaultFormat: 'pdf',
+            formats: ['pdf']
+        );
     }
 }

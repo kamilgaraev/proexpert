@@ -18,6 +18,7 @@ class AIPermissionChecker
         'generate_time_tracking_report' => ['reports.view', 'time_tracking.view', 'admin.reports.view'],
         'generate_contract_payments_report' => ['reports.view', 'admin.reports.view'],
         'generate_project_timelines_report' => ['reports.view', 'schedule-management.view', 'admin.reports.view'],
+        'generate_operational_pdf_report' => ['reports.view', 'admin.reports.view'],
         'get_project_snapshot' => ['projects.view'],
         'get_procurement_snapshot' => ['procurement.view', 'procurement.purchase_requests.view'],
         'get_contract_snapshot' => ['contracts.view', 'admin.contracts.view'],

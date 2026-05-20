@@ -69,6 +69,13 @@ final readonly class AssistantReportSlotResolver
                 : null,
         ];
 
+        if (str_starts_with($state->id, 'report.')) {
+            $reportType = substr($state->id, 7);
+            if ($reportType !== '' && $reportType !== 'unspecified') {
+                $arguments['report_type'] = $reportType;
+            }
+        }
+
         foreach (['project_id', 'warehouse_id', 'contractor_id', 'user_id'] as $slotName) {
             $value = $state->slotValue($slotName);
             if ($value !== null && $value !== '') {

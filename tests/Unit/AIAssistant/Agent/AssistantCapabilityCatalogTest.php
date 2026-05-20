@@ -73,7 +73,8 @@ class AssistantCapabilityCatalogTest extends TestCase
             'generate_time_tracking_report',
             'generate_contract_payments_report',
             'generate_project_timelines_report',
-        ], array_column($catalog->all(), 'tool_name'));
+            'generate_operational_pdf_report',
+        ], array_values(array_unique(array_column($catalog->all(), 'tool_name'))));
     }
 
     public function test_generic_report_request_does_not_default_to_schedule_report(): void
