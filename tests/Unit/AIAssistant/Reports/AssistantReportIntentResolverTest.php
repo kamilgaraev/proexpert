@@ -14,6 +14,8 @@ final class AssistantReportIntentResolverTest extends TestCase
     #[DataProvider('reportIntentProvider')]
     public function test_resolves_report_type_from_prompt(string $message, string $expectedReportId): void
     {
+        $this->assertMatchesRegularExpression('/[А-Яа-яЁё]/u', $message);
+
         $result = (new AssistantReportIntentResolver)->resolve($message);
 
         $this->assertSame('matched', $result['status']);
@@ -27,20 +29,20 @@ final class AssistantReportIntentResolverTest extends TestCase
     public static function reportIntentProvider(): array
     {
         return [
-            'profitability' => ['sformiruy otchet po rentabelnosti za may', 'project_profitability'],
-            'work completion' => ['nuzhen otchet po vypolneniyu rabot za proshlyy mesyats', 'work_completion'],
-            'materials' => ['pokazhi dvizhenie materialov za 2 nedeli', 'material_movements'],
-            'contractors' => ['sdelay otchet po raschetam s podryadchikami za mesyats', 'contractor_settlements'],
-            'warehouse' => ['vygruzi skladskie ostatki', 'warehouse_stock'],
-            'time tracking' => ['podgotov otchet po trudozatratam za nedelyu', 'time_tracking'],
-            'contract payments' => ['sformiruy platezhi po dogovoram za tekuschiy god', 'contract_payments'],
-            'timelines' => ['sdelay otchet po grafiku rabot za may', 'project_timelines'],
+            'profitability' => ['сформируй отчет по рентабельности за май', 'project_profitability'],
+            'work completion' => ['нужен отчет по выполнению работ за прошлый месяц', 'work_completion'],
+            'materials' => ['покажи движение материалов за 2 недели', 'material_movements'],
+            'contractors' => ['сделай отчет по расчетам с подрядчиками за месяц', 'contractor_settlements'],
+            'warehouse' => ['выгрузи складские остатки', 'warehouse_stock'],
+            'time tracking' => ['подготовь отчет по трудозатратам за неделю', 'time_tracking'],
+            'contract payments' => ['сформируй платежи по договорам за текущий год', 'contract_payments'],
+            'timelines' => ['сделай отчет по графику работ за май', 'project_timelines'],
         ];
     }
 
     public function test_resolves_cyrillic_prompt_after_transliteration(): void
     {
-        $result = (new AssistantReportIntentResolver)->resolve($this->ru('\u0421\u0444\u043e\u0440\u043c\u0438\u0440\u0443\u0439 \u043e\u0442\u0447\u0435\u0442 \u043f\u043e \u0433\u0440\u0430\u0444\u0438\u043a\u0443 \u0440\u0430\u0431\u043e\u0442 \u0437\u0430 \u043c\u0430\u0439'));
+        $result = (new AssistantReportIntentResolver)->resolve('Сформируй отчет по графику работ за май');
 
         $this->assertSame('matched', $result['status']);
         $this->assertSame('project_timelines', $result['definition']->id);
@@ -48,7 +50,7 @@ final class AssistantReportIntentResolverTest extends TestCase
 
     public function test_generic_report_request_asks_for_report_type(): void
     {
-        $result = (new AssistantReportIntentResolver)->resolve('sformiruy otchet za proshlyy mesyats');
+        $result = (new AssistantReportIntentResolver)->resolve('сформируй отчет за прошлый месяц');
 
         $this->assertSame('missing_type', $result['status']);
         $this->assertGreaterThan(3, count($result['candidates']));
@@ -56,14 +58,14 @@ final class AssistantReportIntentResolverTest extends TestCase
 
     public function test_non_report_request_is_left_for_generic_assistant_flow(): void
     {
-        $result = (new AssistantReportIntentResolver)->resolve('rasskazhi chto ty umeesh');
+        $result = (new AssistantReportIntentResolver)->resolve('расскажи что ты умеешь');
 
         $this->assertSame('not_report', $result['status']);
     }
 
     public function test_context_report_type_can_select_definition_for_report_like_request(): void
     {
-        $result = (new AssistantReportIntentResolver)->resolve('sformiruy za proshlyy mesyats', [
+        $result = (new AssistantReportIntentResolver)->resolve('сформируй за прошлый месяц', [
             'ui_state' => [
                 'assistant_report_type' => 'contract_payments',
             ],
@@ -71,14 +73,5 @@ final class AssistantReportIntentResolverTest extends TestCase
 
         $this->assertSame('matched', $result['status']);
         $this->assertSame('contract_payments', $result['definition']->id);
-    }
-
-    private function ru(string $escaped): string
-    {
-        $decoded = json_decode('"'.$escaped.'"');
-
-        $this->assertIsString($decoded);
-
-        return $decoded;
     }
 }

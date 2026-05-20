@@ -35,6 +35,8 @@ final class AssistantReportCatalogTest extends TestCase
             $this->assertNotSame('', $definition->toolName);
             $this->assertNotSame([], $definition->aliases);
             $this->assertNotSame([], $definition->matchTerms);
+            $this->assertMatchesRegularExpression('/[А-Яа-яЁё]/u', implode(' ', $definition->aliases));
+            $this->assertMatchesRegularExpression('/[А-Яа-яЁё]/u', implode(' ', $definition->matchTerms));
             $this->assertNotSame([], $definition->permissions);
             $this->assertNotSame('', $definition->artifactType);
             $this->assertContains($definition->defaultFormat, $definition->formats);
