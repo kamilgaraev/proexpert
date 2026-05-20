@@ -5,6 +5,7 @@
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
     <title>Смета {{ $estimate['number'] ?? '' }}</title>
     <style>
+        @include('pdf.partials.prohelper-brand-styles')
         @page {
             margin: 12mm 15mm;
         }
@@ -321,6 +322,7 @@
     </style>
 </head>
 <body>
+    @include('pdf.partials.prohelper-brand-header')
     {{-- Header with Prohelper branding --}}
     <div class="header">
         <div>PROHELPER</div>
@@ -485,5 +487,6 @@
         <strong>Prohelper</strong> - Профессиональная система управления строительством | 
         Экспорт: {{ $metadata['export_date'] ? \Carbon\Carbon::parse($metadata['export_date'])->format('d.m.Y H:i') : '' }}
     </footer>
+    @include('pdf.partials.prohelper-brand-footer')
 </body>
 </html>

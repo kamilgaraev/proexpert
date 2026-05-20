@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <title>Отчет по выполненным работам</title>
     <style>
+        @include('pdf.partials.prohelper-brand-styles')
         body {
             font-family: 'DejaVu Sans', 'Arial Unicode MS', Arial, sans-serif;
             font-size: 9px;
@@ -62,6 +63,7 @@
     </style>
 </head>
 <body>
+    @include('pdf.partials.prohelper-brand-header')
     <div class="header">
         <div class="report-title">Отчет по выполненным работам</div>
         <div class="metadata">
@@ -100,5 +102,6 @@
     <div class="footer">
         Документ сформирован автоматически в системе ProHelper
     </div>
+    @include('pdf.partials.prohelper-brand-footer')
 </body>
 </html>

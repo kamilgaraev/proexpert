@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <title>{{ $title }}</title>
     <style>
+        @include('pdf.partials.prohelper-brand-styles')
         body {
             font-family: 'DejaVu Sans', 'Arial Unicode MS', Arial, sans-serif;
             font-size: 10px;
@@ -112,6 +113,7 @@
     </style>
 </head>
 <body>
+    @include('pdf.partials.prohelper-brand-header')
     <div class="header">
         <div class="report-title">{{ $title }}</div>
         <div class="metadata">
@@ -178,5 +180,6 @@
         Документ сформирован автоматически в системе ProHelper. 
         <span class="page-number"></span>
     </div>
+    @include('pdf.partials.prohelper-brand-footer')
 </body>
 </html>

@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ $act->title ?? 'Акт выполненных работ' }}</title>
     <style>
+        @include('pdf.partials.prohelper-brand-styles')
         body {
             font-family: 'DejaVu Sans', 'Arial Unicode MS', Arial, sans-serif;
             font-size: 12px;
@@ -116,6 +117,7 @@
     </style>
 </head>
 <body>
+    @include('pdf.partials.prohelper-brand-header')
     <div class="header">
         <div class="title">АКТ № {{ $act->act_document_number }} от «{{ $act->act_date->format('d') }}» 
         @php
@@ -214,5 +216,6 @@
             </tr>
         </table>
     </div>
+    @include('pdf.partials.prohelper-brand-footer')
 </body>
 </html> 

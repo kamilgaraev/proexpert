@@ -1,0 +1,67 @@
+.prohelper-brand-card {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    margin: 0 0 14px 0;
+    border: 1px solid #c9d8f3;
+    background-color: #f6f9ff;
+}
+.prohelper-brand-card td {
+    border: none;
+    padding: 9px 11px;
+    vertical-align: middle;
+}
+.prohelper-brand-mark {
+    width: 34px;
+    height: 34px;
+    line-height: 34px;
+    text-align: center;
+    background-color: #2563eb;
+    color: #ffffff;
+    font-family: 'DejaVu Sans', Arial, sans-serif;
+    font-size: 13px;
+    font-weight: bold;
+}
+.prohelper-brand-name {
+    color: #1e3a8a;
+    font-size: 14px;
+    font-weight: bold;
+    letter-spacing: 0.4px;
+}
+.prohelper-brand-subtitle {
+    color: #475569;
+    font-size: 8px;
+    margin-top: 2px;
+}
+.prohelper-brand-badge {
+    display: inline-block;
+    padding: 3px 7px;
+    background-color: #e8f1ff;
+    border: 1px solid #b8cff7;
+    color: #1d4ed8;
+    font-size: 8px;
+    font-weight: bold;
+    text-transform: uppercase;
+}
+.prohelper-brand-date {
+    color: #64748b;
+    font-size: 8px;
+    margin-top: 4px;
+}
+.prohelper-document-note {
+    margin-top: 14px;
+    padding: 8px 10px;
+    border-top: 1px solid #dbe5f6;
+    color: #64748b;
+    font-size: 8px;
+    text-align: center;
+}
+.prohelper-fixed-footer {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: -7mm;
+    color: #94a3b8;
+    font-size: 7px;
+    text-align: center;
+}

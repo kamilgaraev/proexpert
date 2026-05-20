@@ -43,6 +43,7 @@
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
     <title>КС-6 № {{ $journalNumber }}</title>
     <style>
+        @include('pdf.partials.prohelper-brand-styles')
         @page {
             size: A4 landscape;
             margin: 8mm 10mm 10mm;
@@ -236,6 +237,7 @@
     </style>
 </head>
 <body>
+    @include('pdf.partials.prohelper-brand-header')
     <div class="top-area">
         <div class="top-note">
             <div>Типовая межотраслевая форма № КС-6</div>
@@ -411,5 +413,6 @@
             </td>
         </tr>
     </table>
+    @include('pdf.partials.prohelper-brand-footer')
 </body>
 </html>

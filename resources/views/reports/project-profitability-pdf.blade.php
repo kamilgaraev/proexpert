@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <title>Отчет по рентабельности проектов</title>
     <style>
+        @include('pdf.partials.prohelper-brand-styles')
         body {
             font-family: 'DejaVu Sans', 'Arial Unicode MS', Arial, sans-serif;
             font-size: 8px;
@@ -56,6 +57,7 @@
     </style>
 </head>
 <body>
+    @include('pdf.partials.prohelper-brand-header')
     <div class="header">
         <div class="report-title">Отчет по рентабельности проектов</div>
         <div class="metadata">Сформирован: {{ $generated_at }}</div>
@@ -105,5 +107,6 @@
             @endforeach
         </tbody>
     </table>
+    @include('pdf.partials.prohelper-brand-footer')
 </body>
 </html>

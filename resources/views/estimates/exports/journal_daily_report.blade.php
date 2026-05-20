@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ежедневная выписка из журнала работ</title>
     <style>
+        @include('pdf.partials.prohelper-brand-styles')
         @page { margin: 15mm; }
         body { font-family: DejaVu Sans, sans-serif; font-size: 10pt; }
         h1 { text-align: center; font-size: 14pt; margin-bottom: 20px; }
@@ -26,6 +27,7 @@
     </style>
 </head>
 <body>
+    @include('pdf.partials.prohelper-brand-header')
     <h1>ЕЖЕДНЕВНАЯ ВЫПИСКА ИЗ ЖУРНАЛА РАБОТ</h1>
     
     <div class="header-info">
@@ -214,6 +216,7 @@
         </div>
         @endif
     </div>
+    @include('pdf.partials.prohelper-brand-footer')
 </body>
 </html>
 

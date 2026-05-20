@@ -39,6 +39,7 @@
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
     <title>КС-2 № {{ $documentNumber }}</title>
     <style>
+        @include('pdf.partials.prohelper-brand-styles')
         @page {
             size: A4 landscape;
             margin: 8mm 10mm 10mm;
@@ -260,6 +261,7 @@
     </style>
 </head>
 <body>
+    @include('pdf.partials.prohelper-brand-header')
     <div class="header-area">
         <div class="top-note">
             <div>Унифицированная форма № КС-2</div>
@@ -468,5 +470,6 @@
             </tr>
         </tbody>
     </table>
+    @include('pdf.partials.prohelper-brand-footer')
 </body>
 </html>
