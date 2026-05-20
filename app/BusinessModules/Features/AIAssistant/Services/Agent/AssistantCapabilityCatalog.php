@@ -4,8 +4,16 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\Agent;
 
-final class AssistantCapabilityCatalog
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportCatalog;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportIntentResolver;
+
+final readonly class AssistantCapabilityCatalog
 {
+    public function __construct(
+        private AssistantReportCatalog $reportCatalog = new AssistantReportCatalog,
+        private AssistantReportIntentResolver $reportIntentResolver = new AssistantReportIntentResolver
+    ) {}
+
     /**
      * @return array<int, array{
      *     id: string,
@@ -23,51 +31,7 @@ final class AssistantCapabilityCatalog
      */
     public function all(): array
     {
-        return [
-            [
-                'id' => 'report.project_timelines',
-                'domain' => 'reports',
-                'capability' => 'schedules',
-                'label' => 'Отчет по графику работ',
-                'tool_name' => 'generate_project_timelines_report',
-                'required_slots' => [
-                    ['name' => 'period', 'type' => 'period', 'question' => 'За какой период сформировать отчет?'],
-                ],
-                'optional_slots' => [
-                    ['name' => 'project_id', 'type' => 'project'],
-                ],
-                'read_permissions' => ['reports.view', 'schedule-management.view', 'admin.reports.view'],
-                'artifact' => ['type' => 'pdf'],
-                'intent_examples' => [
-                    'сделай отчет по графику работ',
-                    'сформируй отчет по срокам',
-                    'покажи отчет по таймлайну проекта',
-                    'отчет по отставанию от графика',
-                ],
-                'match_terms' => ['график работ', 'графику работ', 'сроки', 'таймлайн', 'отставание', 'этапы'],
-            ],
-            [
-                'id' => 'report.material_movements',
-                'domain' => 'reports',
-                'capability' => 'warehouse',
-                'label' => 'Отчет по движению материалов',
-                'tool_name' => 'generate_material_movements_report',
-                'required_slots' => [
-                    ['name' => 'period', 'type' => 'period', 'question' => 'За какой период собрать движение материалов?'],
-                ],
-                'optional_slots' => [
-                    ['name' => 'project_id', 'type' => 'project'],
-                ],
-                'read_permissions' => ['reports.view', 'admin.reports.view'],
-                'artifact' => ['type' => 'excel'],
-                'intent_examples' => [
-                    'сделай отчет по расходу материалов',
-                    'покажи движение материалов за месяц',
-                    'сформируй отчет по материалам',
-                ],
-                'match_terms' => ['движение материалов', 'расход материалов', 'материалы', 'склад'],
-            ],
-        ];
+        return $this->reportCatalog->agentTasks();
     }
 
     /**
@@ -75,13 +39,9 @@ final class AssistantCapabilityCatalog
      */
     public function findById(string $id): ?array
     {
-        foreach ($this->all() as $task) {
-            if ($task['id'] === $id) {
-                return $task;
-            }
-        }
+        $definition = $this->reportCatalog->findById($id);
 
-        return null;
+        return $definition?->toAgentTask();
     }
 
     /**
@@ -90,21 +50,11 @@ final class AssistantCapabilityCatalog
      */
     public function match(string $message, array $context): ?array
     {
-        $normalized = mb_strtolower($message);
+        $result = $this->reportIntentResolver->resolve($message, $context);
 
-        foreach ($this->all() as $task) {
-            foreach ($task['match_terms'] as $term) {
-                if (str_contains($normalized, mb_strtolower($term))) {
-                    return $task;
-                }
-            }
-        }
-
-        if (($context['source_module'] ?? null) === 'reports' && str_contains($normalized, 'отчет')) {
-            return $this->findById('report.project_timelines');
-        }
-
-        return null;
+        return ($result['status'] ?? null) === 'matched'
+            ? ($result['definition'] ?? null)?->toAgentTask()
+            : null;
     }
 
     /**

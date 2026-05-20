@@ -8,13 +8,27 @@ use App\BusinessModules\Features\AIAssistant\DTOs\Agent\AssistantAgentDecision;
 use App\BusinessModules\Features\AIAssistant\DTOs\Agent\AssistantResolvedPeriod;
 use App\BusinessModules\Features\AIAssistant\DTOs\Agent\AssistantTaskSlot;
 use App\BusinessModules\Features\AIAssistant\DTOs\Agent\AssistantTaskState;
+use App\BusinessModules\Features\AIAssistant\DTOs\Reports\AssistantReportDefinition;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportIntentResolver;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportSlotResolver;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 final readonly class AssistantAgentPlanner
 {
+    private AssistantReportIntentResolver $reportIntentResolver;
+
+    private AssistantReportSlotResolver $reportSlotResolver;
+
     public function __construct(
         private AssistantCapabilityCatalog $catalog,
-        private AssistantPeriodResolver $periodResolver
-    ) {}
+        private AssistantPeriodResolver $periodResolver,
+        ?AssistantReportIntentResolver $reportIntentResolver = null,
+        ?AssistantReportSlotResolver $reportSlotResolver = null
+    ) {
+        $this->reportIntentResolver = $reportIntentResolver ?? new AssistantReportIntentResolver;
+        $this->reportSlotResolver = $reportSlotResolver ?? new AssistantReportSlotResolver($periodResolver);
+    }
 
     /**
      * @param  array<string, mixed>  $context
@@ -22,10 +36,33 @@ final readonly class AssistantAgentPlanner
     public function decide(string $message, array $context, ?AssistantTaskState $pendingState = null): AssistantAgentDecision
     {
         if ($pendingState instanceof AssistantTaskState && $pendingState->status === 'waiting_for_slots') {
+            if ($pendingState->id === 'report.unspecified') {
+                return $this->continueUnspecifiedReport($message, $context, $pendingState);
+            }
+
             $task = $this->catalog->findById($pendingState->id);
             $state = $this->fillState($pendingState, $message, $context);
 
             return $this->decisionForState($state, $task);
+        }
+
+        $reportIntent = $this->reportIntentResolver->resolve($message, $context);
+        if (($reportIntent['status'] ?? null) === 'matched' && ($reportIntent['definition'] ?? null) instanceof AssistantReportDefinition) {
+            $this->logReportIntent('report_intent_detected', $reportIntent);
+            $task = $reportIntent['definition']->toAgentTask();
+            $state = $this->fillState($this->makeState($task, $message), $message, $context);
+
+            return $this->decisionForState($state, $task);
+        }
+
+        if (in_array($reportIntent['status'] ?? null, ['missing_type', 'ambiguous'], true)) {
+            $this->logReportIntent('report_slot_missing', $reportIntent, ['slot' => 'report_type']);
+
+            return new AssistantAgentDecision(
+                type: 'ask_clarification',
+                state: $this->unspecifiedReportState($message),
+                clarificationQuestion: $this->reportTypeQuestion($reportIntent['candidates'] ?? [])
+            );
         }
 
         $task = $this->matchTask($message, $context);
@@ -39,6 +76,31 @@ final readonly class AssistantAgentPlanner
         $state = $this->fillState($this->makeState($task, $message), $message, $context);
 
         return $this->decisionForState($state, $task);
+    }
+
+    /**
+     * @param  array<string, mixed>  $context
+     */
+    private function continueUnspecifiedReport(
+        string $message,
+        array $context,
+        AssistantTaskState $pendingState
+    ): AssistantAgentDecision {
+        $reportIntent = $this->reportIntentResolver->resolve($message, $context);
+
+        if (($reportIntent['status'] ?? null) === 'matched' && ($reportIntent['definition'] ?? null) instanceof AssistantReportDefinition) {
+            $this->logReportIntent('report_intent_detected', $reportIntent);
+            $task = $reportIntent['definition']->toAgentTask();
+            $state = $this->fillState($this->makeState($task, $pendingState->sourceMessage), $message, $context);
+
+            return $this->decisionForState($state, $task);
+        }
+
+        return new AssistantAgentDecision(
+            type: 'ask_clarification',
+            state: $pendingState,
+            clarificationQuestion: $this->reportTypeQuestion($reportIntent['candidates'] ?? [])
+        );
     }
 
     /**
@@ -62,6 +124,21 @@ final readonly class AssistantAgentPlanner
             toolName: (string) $task['tool_name'],
             status: 'waiting_for_slots',
             slots: $this->makeSlots($task),
+            sourceMessage: $message
+        );
+    }
+
+    private function unspecifiedReportState(string $message): AssistantTaskState
+    {
+        return new AssistantTaskState(
+            id: 'report.unspecified',
+            domain: 'reports',
+            capability: 'reports',
+            toolName: '',
+            status: 'waiting_for_slots',
+            slots: [
+                new AssistantTaskSlot('report_type', true),
+            ],
             sourceMessage: $message
         );
     }
@@ -116,19 +193,21 @@ final readonly class AssistantAgentPlanner
         if ($this->hasStateSlot($state, 'period') && $state->slotValue('period') === null) {
             $period = $this->resolvePeriod($message);
             if ($period instanceof AssistantResolvedPeriod) {
-                $state = $state->withSlotValue('period', [
-                    'date_from' => $period->dateFrom,
-                    'date_to' => $period->dateTo,
-                    'label' => $period->label,
-                    'source_text' => $period->sourceText,
-                ]);
+                $state = $state->withSlotValue('period', $period->toArray());
             }
         }
 
-        if ($this->hasStateSlot($state, 'project_id') && $state->slotValue('project_id') === null) {
-            $project = $this->projectFromContext($context);
-            if ($project !== null) {
-                $state = $state->withSlotValue('project_id', $project['id'], $project['label']);
+        foreach ([
+            'project_id' => 'project',
+            'warehouse_id' => 'warehouse',
+            'contractor_id' => 'contractor',
+            'user_id' => 'user',
+        ] as $slotName => $entityType) {
+            if ($this->hasStateSlot($state, $slotName) && $state->slotValue($slotName) === null) {
+                $entity = $this->reportSlotResolver->entityFromContext($context, $entityType);
+                if ($entity !== null) {
+                    $state = $state->withSlotValue($slotName, $entity['id'], $entity['label']);
+                }
             }
         }
 
@@ -151,37 +230,7 @@ final readonly class AssistantAgentPlanner
 
     private function resolvePeriod(string $message): ?AssistantResolvedPeriod
     {
-        return $this->periodResolver->resolve($message);
-    }
-
-    /**
-     * @param  array<string, mixed>  $context
-     * @return array{id: int|string, label: string|null}|null
-     */
-    private function projectFromContext(array $context): ?array
-    {
-        $entityRefs = $context['entity_refs'] ?? null;
-        if (! is_array($entityRefs)) {
-            return null;
-        }
-
-        foreach ($entityRefs as $ref) {
-            if (! is_array($ref) || ($ref['type'] ?? null) !== 'project' || ! array_key_exists('id', $ref)) {
-                continue;
-            }
-
-            $id = $ref['id'];
-            if (! is_int($id) && ! is_string($id)) {
-                continue;
-            }
-
-            return [
-                'id' => is_numeric($id) ? (int) $id : $id,
-                'label' => isset($ref['label']) && is_scalar($ref['label']) ? (string) $ref['label'] : null,
-            ];
-        }
-
-        return null;
+        return $this->reportSlotResolver->resolvePeriod($message);
     }
 
     /**
@@ -191,6 +240,12 @@ final readonly class AssistantAgentPlanner
     {
         $missingSlots = $state->missingRequiredSlotNames();
         if ($missingSlots !== []) {
+            $this->logInfo('report_slot_missing', [
+                'task_id' => $state->id,
+                'tool_name' => $state->toolName,
+                'slot' => $missingSlots[0],
+            ]);
+
             return new AssistantAgentDecision(
                 type: 'ask_clarification',
                 state: $this->stateWithStatus($state, 'waiting_for_slots'),
@@ -217,13 +272,34 @@ final readonly class AssistantAgentPlanner
             if (is_array($slot) && ($slot['name'] ?? null) === $slotName && isset($slot['question']) && is_string($slot['question'])) {
                 $question = $slot['question'];
 
-                return $question !== '' ? $question : 'Уточните недостающие данные для продолжения.';
+                if ($question !== '') {
+                    return $question;
+                }
             }
         }
 
-        return $slotName === 'period'
-            ? 'За какой период сформировать отчет?'
-            : 'Уточните недостающие данные для продолжения.';
+        return match ($slotName) {
+            'period' => 'За какой период сформировать отчет?',
+            'report_type' => 'Какой отчет нужно сформировать?',
+            default => 'Уточните недостающие данные, чтобы я мог продолжить.',
+        };
+    }
+
+    /**
+     * @param  AssistantReportDefinition[]  $candidates
+     */
+    private function reportTypeQuestion(array $candidates): string
+    {
+        $labels = array_values(array_unique(array_map(
+            static fn (AssistantReportDefinition $definition): string => $definition->label,
+            array_filter($candidates, static fn (mixed $candidate): bool => $candidate instanceof AssistantReportDefinition)
+        )));
+
+        if ($labels === []) {
+            return 'Какой отчет нужно сформировать? Например: по графику работ, движению материалов, рентабельности, остаткам склада или платежам договоров.';
+        }
+
+        return 'Какой отчет нужно сформировать? Доступные варианты: '.implode(', ', array_slice($labels, 0, 8)).'.';
     }
 
     /**
@@ -231,23 +307,7 @@ final readonly class AssistantAgentPlanner
      */
     private function toolArguments(AssistantTaskState $state): array
     {
-        $period = $state->slotValue('period');
-        $periodData = is_array($period) ? $period : [];
-
-        $arguments = [
-            'period' => isset($periodData['source_text']) && is_scalar($periodData['source_text'])
-                ? (string) $periodData['source_text']
-                : null,
-            'date_from' => isset($periodData['date_from']) && is_scalar($periodData['date_from'])
-                ? (string) $periodData['date_from']
-                : null,
-            'date_to' => isset($periodData['date_to']) && is_scalar($periodData['date_to'])
-                ? (string) $periodData['date_to']
-                : null,
-            'project_id' => $state->slotValue('project_id'),
-        ];
-
-        return array_filter($arguments, static fn (mixed $value): bool => $value !== null);
+        return $this->reportSlotResolver->toolArguments($state);
     }
 
     private function stateWithStatus(AssistantTaskState $state, string $status): AssistantTaskState
@@ -261,5 +321,32 @@ final readonly class AssistantAgentPlanner
             slots: $state->slots,
             sourceMessage: $state->sourceMessage
         );
+    }
+
+    /**
+     * @param  array<string, mixed>  $intent
+     * @param  array<string, mixed>  $context
+     */
+    private function logReportIntent(string $event, array $intent, array $context = []): void
+    {
+        $definition = $intent['definition'] ?? null;
+
+        $this->logInfo($event, array_filter([
+            'status' => is_string($intent['status'] ?? null) ? $intent['status'] : null,
+            'report_type' => $definition instanceof AssistantReportDefinition ? $definition->id : null,
+            'tool_name' => $definition instanceof AssistantReportDefinition ? $definition->toolName : null,
+            ...$context,
+        ], static fn (mixed $value): bool => $value !== null && $value !== ''));
+    }
+
+    /**
+     * @param  array<string, mixed>  $context
+     */
+    private function logInfo(string $event, array $context): void
+    {
+        try {
+            Log::info($event, $context);
+        } catch (Throwable) {
+        }
     }
 }

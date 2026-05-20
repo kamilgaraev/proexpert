@@ -32,6 +32,28 @@ class AIPermissionCheckerTest extends TestCase
         $this->assertTrue($checker->canExecuteTool($user, 'search_projects'));
     }
 
+    public function test_report_tools_require_explicit_report_permission(): void
+    {
+        $checker = new AIPermissionChecker;
+        $memberWithoutReportAccess = $this->makeUserDouble(15, true, false, false);
+        $adminWithoutReportAccess = $this->makeUserDouble(15, true, true, false);
+        $memberWithReportAccess = $this->makeUserDouble(15, true, false, false, 1, ['reports.view']);
+
+        $this->assertFalse($checker->canExecuteTool($memberWithoutReportAccess, 'generate_profitability_report'));
+        $this->assertFalse($checker->canExecuteTool($adminWithoutReportAccess, 'generate_profitability_report'));
+        $this->assertTrue($checker->canExecuteTool($memberWithReportAccess, 'generate_profitability_report'));
+    }
+
+    public function test_domain_report_tools_accept_domain_specific_permission(): void
+    {
+        $checker = new AIPermissionChecker;
+        $warehouseUser = $this->makeUserDouble(15, true, false, false, 1, ['warehouse.view']);
+        $scheduleUser = $this->makeUserDouble(15, true, false, false, 1, ['schedule-management.view']);
+
+        $this->assertTrue($checker->canExecuteTool($warehouseUser, 'generate_warehouse_stock_report'));
+        $this->assertTrue($checker->canExecuteTool($scheduleUser, 'generate_project_timelines_report'));
+    }
+
     public function test_domain_snapshot_tools_require_domain_permission(): void
     {
         $checker = new AIPermissionChecker;

@@ -153,6 +153,37 @@ final class AssistantAgentFlowServiceTest extends TestCase
         $this->assertSame('failed', $metadata['agent_state']['status']);
     }
 
+    public function test_direct_profitability_report_request_uses_agent_flow_without_llm(): void
+    {
+        $conversation = new AgentFlowConversation(505);
+        $conversationManager = new AgentFlowConversationManager($conversation);
+        $toolRegistry = new AIToolRegistry;
+        $toolRegistry->registerTool(new AgentFlowTool('generate_profitability_report', [
+            'status' => 'success',
+            'pdf_url' => 'https://storage.example.test/org-15/reports/profitability.pdf',
+            'filename' => 'profitability.pdf',
+            'storage_disk' => 's3',
+            'storage_path' => 'org-15/reports/profitability.pdf',
+        ]));
+
+        $service = $this->makeService($conversationManager, $toolRegistry);
+
+        $result = $service->ask(
+            'sformiruy otchet po rentabelnosti '.$this->ru('\u0437\u0430 \u043f\u0440\u043e\u0448\u043b\u044b\u0439 \u043c\u0435\u0441\u044f\u0446'),
+            15,
+            $this->makeUser(),
+            null,
+            $this->projectRequestPayload()
+        );
+
+        $metadata = $conversationManager->assistantMessages()[0]->metadata;
+
+        $this->assertStringContainsString('https://storage.example.test/org-15/reports/profitability.pdf', $result['message']['content']);
+        $this->assertSame('report.project_profitability', $metadata['agent_state']['id']);
+        $this->assertSame('generate_profitability_report', $metadata['tool_result']['tool_name']);
+        $this->assertSame('completed', $metadata['agent_state']['status']);
+    }
+
     private function makeService(
         AgentFlowConversationManager $conversationManager,
         AIToolRegistry $toolRegistry
@@ -282,6 +313,14 @@ final class AssistantAgentFlowServiceTest extends TestCase
         $user->id = 7;
 
         return $user;
+    }
+
+    private function ru(string $escaped): string
+    {
+        $decoded = json_decode('"'.$escaped.'"');
+        $this->assertIsString($decoded);
+
+        return $decoded;
     }
 }
 

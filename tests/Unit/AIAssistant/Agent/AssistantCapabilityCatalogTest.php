@@ -59,4 +59,29 @@ class AssistantCapabilityCatalogTest extends TestCase
         $this->assertIsArray($task);
         $this->assertSame('report.material_movements', $task['id']);
     }
+
+    public function test_catalog_exposes_all_ai_report_tools(): void
+    {
+        $catalog = new AssistantCapabilityCatalog;
+
+        $this->assertSame([
+            'generate_profitability_report',
+            'generate_work_completion_report',
+            'generate_material_movements_report',
+            'generate_contractor_settlements_report',
+            'generate_warehouse_stock_report',
+            'generate_time_tracking_report',
+            'generate_contract_payments_report',
+            'generate_project_timelines_report',
+        ], array_column($catalog->all(), 'tool_name'));
+    }
+
+    public function test_generic_report_request_does_not_default_to_schedule_report(): void
+    {
+        $catalog = new AssistantCapabilityCatalog;
+
+        $this->assertNull($catalog->match('Сформируй отчет за прошлый месяц', [
+            'source_module' => 'reports',
+        ]));
+    }
 }

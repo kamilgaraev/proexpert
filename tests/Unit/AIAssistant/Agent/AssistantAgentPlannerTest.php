@@ -104,6 +104,52 @@ class AssistantAgentPlannerTest extends TestCase
         $this->assertArrayNotHasKey('project_id', $decision->toolArguments);
     }
 
+    public function test_generic_report_request_asks_for_report_type_without_llm_execution(): void
+    {
+        $decision = $this->planner()->decide('Сформируй отчет за прошлый месяц', [], null);
+
+        $this->assertSame('ask_clarification', $decision->type);
+        $this->assertSame('report.unspecified', $decision->state?->id);
+        $this->assertSame(['report_type'], $decision->state?->missingRequiredSlotNames());
+        $this->assertStringContainsString('Какой отчет', (string) $decision->clarificationQuestion);
+    }
+
+    public function test_report_type_follow_up_resumes_unspecified_report_request(): void
+    {
+        $pending = new AssistantTaskState(
+            id: 'report.unspecified',
+            domain: 'reports',
+            capability: 'reports',
+            toolName: '',
+            status: 'waiting_for_slots',
+            slots: [
+                new AssistantTaskSlot('report_type', true),
+            ],
+            sourceMessage: 'Сформируй отчет за прошлый месяц'
+        );
+
+        $decision = $this->planner()->decide('движение материалов', [], $pending);
+
+        $this->assertSame('ask_clarification', $decision->type);
+        $this->assertSame('report.material_movements', $decision->state?->id);
+        $this->assertSame(['period'], $decision->state?->missingRequiredSlotNames());
+        $this->assertSame('generate_material_movements_report', $decision->state?->toolName);
+    }
+
+    public function test_warehouse_stock_report_executes_without_period(): void
+    {
+        $decision = $this->planner()->decide('Выгрузи отчет по остаткам склада', [
+            'entity_refs' => [
+                ['type' => 'warehouse', 'id' => 7, 'label' => 'Основной склад'],
+            ],
+        ], null);
+
+        $this->assertSame('execute_tool', $decision->type);
+        $this->assertSame('generate_warehouse_stock_report', $decision->toolName);
+        $this->assertSame(7, $decision->toolArguments['warehouse_id']);
+        $this->assertArrayNotHasKey('date_from', $decision->toolArguments);
+    }
+
     private function planner(): AssistantAgentPlanner
     {
         return new AssistantAgentPlanner(

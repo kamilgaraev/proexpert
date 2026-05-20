@@ -6,8 +6,10 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Agent;
 
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportFileService;
 use App\Models\Organization;
 use App\Models\User;
+use Illuminate\Support\Facades\Log;
 use Throwable;
 
 final class AssistantAgentExecutor
@@ -15,11 +17,13 @@ final class AssistantAgentExecutor
     public function __construct(
         private readonly AIToolRegistry $toolRegistry,
         private readonly AIPermissionChecker $permissionChecker,
-        private readonly AssistantArtifactNormalizer $artifactNormalizer
+        private readonly AssistantArtifactNormalizer $artifactNormalizer,
+        private readonly ?AssistantReportFileService $reportFileService = null
     ) {}
 
     public function execute(string $toolName, array $arguments, ?User $user, Organization $organization): array
     {
+        $startedAt = microtime(true);
         $tool = $this->toolRegistry->getTool($toolName);
 
         if ($tool === null) {
@@ -38,7 +42,9 @@ final class AssistantAgentExecutor
 
         try {
             $raw = $tool->execute($arguments, $user, $organization);
-        } catch (Throwable) {
+        } catch (Throwable $throwable) {
+            $this->logReportGenerationFailed($toolName, $organization, $user, $startedAt, $throwable::class);
+
             return $this->errorResult($toolName, $arguments, [
                 'status' => 'error',
                 'message' => 'Не удалось выполнить инструмент.',
@@ -46,9 +52,23 @@ final class AssistantAgentExecutor
         }
 
         $status = $this->resolveStatus($raw);
-        $artifacts = $status === 'error'
-            ? []
-            : $this->artifactNormalizer->fromToolResult($toolName, $raw);
+        $artifacts = $status === 'error' ? [] : $this->artifactsFromToolResult(
+            $toolName,
+            $arguments,
+            $raw,
+            $organization,
+            $user
+        );
+
+        if ($this->isReportTool($toolName)) {
+            if ($status === 'error') {
+                $this->logReportGenerationFailed($toolName, $organization, $user, $startedAt, 'tool_error_status');
+            } elseif ($artifacts === []) {
+                $this->logReportGenerationFailed($toolName, $organization, $user, $startedAt, 'missing_artifact_evidence');
+            } else {
+                $this->logReportGenerationCompleted($toolName, $organization, $user, $startedAt, $artifacts);
+            }
+        }
 
         return [
             'status' => $status,
@@ -81,6 +101,29 @@ final class AssistantAgentExecutor
         return 'success';
     }
 
+    private function artifactsFromToolResult(
+        string $toolName,
+        array $arguments,
+        mixed $raw,
+        Organization $organization,
+        ?User $user
+    ): array {
+        if ($this->isReportTool($toolName) && $this->reportFileService instanceof AssistantReportFileService) {
+            $artifacts = $this->reportFileService->artifactsFromToolResult($toolName, $raw, $organization, $user, $arguments);
+
+            if ($artifacts !== []) {
+                return $artifacts;
+            }
+        }
+
+        return $this->artifactNormalizer->fromToolResult($toolName, $raw);
+    }
+
+    private function isReportTool(string $toolName): bool
+    {
+        return str_starts_with($toolName, 'generate_') && str_ends_with($toolName, '_report');
+    }
+
     private function sanitizeErrorRaw(mixed $raw): array
     {
         $status = is_array($raw) && isset($raw['status']) && is_string($raw['status'])
@@ -106,5 +149,69 @@ final class AssistantAgentExecutor
             ],
             $artifacts
         ));
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $artifacts
+     */
+    private function logReportGenerationCompleted(
+        string $toolName,
+        Organization $organization,
+        ?User $user,
+        float $startedAt,
+        array $artifacts
+    ): void {
+        $firstArtifact = $artifacts[0] ?? [];
+
+        $this->logInfo('report_generation_completed', [
+            'organization_id' => $organization->id,
+            'user_id' => $user?->id,
+            'tool_name' => $toolName,
+            'report_type' => $firstArtifact['report_type'] ?? null,
+            'duration_ms' => $this->durationMs($startedAt),
+            'artifact_count' => count($artifacts),
+            'artifact_size' => $firstArtifact['size'] ?? null,
+            'storage_disk' => $firstArtifact['storage_disk'] ?? null,
+            'has_storage_path' => isset($firstArtifact['storage_path']),
+        ]);
+    }
+
+    private function logReportGenerationFailed(
+        string $toolName,
+        Organization $organization,
+        ?User $user,
+        float $startedAt,
+        string $failureClass
+    ): void {
+        if (! $this->isReportTool($toolName)) {
+            return;
+        }
+
+        $this->logInfo('report_generation_failed', [
+            'organization_id' => $organization->id,
+            'user_id' => $user?->id,
+            'tool_name' => $toolName,
+            'duration_ms' => $this->durationMs($startedAt),
+            'failure_class' => $failureClass,
+        ]);
+    }
+
+    private function durationMs(float $startedAt): int
+    {
+        return (int) round((microtime(true) - $startedAt) * 1000);
+    }
+
+    /**
+     * @param  array<string, mixed>  $context
+     */
+    private function logInfo(string $event, array $context): void
+    {
+        try {
+            Log::info($event, array_filter(
+                $context,
+                static fn (mixed $value): bool => $value !== null && $value !== ''
+            ));
+        } catch (Throwable) {
+        }
     }
 }

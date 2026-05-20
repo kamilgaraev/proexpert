@@ -33,14 +33,6 @@ class AIPermissionChecker
     ];
 
     private const MEMBER_TOOLS = [
-        'generate_profitability_report',
-        'generate_work_completion_report',
-        'generate_material_movements_report',
-        'generate_contractor_settlements_report',
-        'generate_warehouse_stock_report',
-        'generate_time_tracking_report',
-        'generate_contract_payments_report',
-        'generate_project_timelines_report',
         'search_projects',
         'search_warehouse',
         'search_materials',
@@ -117,6 +109,10 @@ class AIPermissionChecker
             }
         }
 
+        if ($this->isReportTool($toolName)) {
+            return false;
+        }
+
         if (in_array($toolName, self::MEMBER_TOOLS, true)) {
             return true;
         }
@@ -147,6 +143,11 @@ class AIPermissionChecker
         }
 
         return false;
+    }
+
+    private function isReportTool(string $toolName): bool
+    {
+        return str_starts_with($toolName, 'generate_') && str_ends_with($toolName, '_report');
     }
 
     private function normalizeToolName(string $toolName): string
