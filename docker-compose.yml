@@ -10,7 +10,7 @@ services:
     image: ghcr.io/kamilgaraev/proexpert/prohelper:${PROHELPER_IMAGE_TAG:-latest}
     container_name: prohelper-api
     restart: unless-stopped
-    command: "php -d memory_limit=1G artisan octane:start --server=roadrunner --host=0.0.0.0 --port=8000 --workers=1 --max-requests=100"
+    command: "php -d memory_limit=1G artisan octane:start --server=roadrunner --host=0.0.0.0 --port=8000 --workers=4 --max-requests=1000"
     ports:
       - "127.0.0.1:8000:8000"
     env_file: .env
@@ -21,8 +21,8 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/up || exit 1"]
       interval: 30s
-      timeout: 10s
-      retries: 3
+      timeout: 15s
+      retries: 5
     logging: *json-logging
 
   websockets:
@@ -89,7 +89,7 @@ services:
     image: grafana/loki:2.9.0
     container_name: loki
     ports:
-      - "3100:3100"
+      - "127.0.0.1:3100:3100"
     volumes:
       - ./monitoring/loki:/etc/loki
       - loki-data:/loki
@@ -124,7 +124,7 @@ services:
     image: prom/prometheus:v2.47.0
     container_name: prometheus
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./monitoring/prometheus:/etc/prometheus
       - prometheus-data:/prometheus
@@ -150,7 +150,7 @@ services:
     image: grafana/grafana:10.1.0
     container_name: grafana
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - grafana-data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
@@ -171,7 +171,7 @@ services:
     image: prom/node-exporter:v1.6.1
     container_name: node-exporter
     ports:
-      - "9100:9100"
+      - "127.0.0.1:9100:9100"
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
@@ -205,7 +205,7 @@ services:
     image: prometheuscommunity/postgres-exporter:v0.15.0
     container_name: postgres-exporter
     ports:
-      - "9187:9187"
+      - "127.0.0.1:9187:9187"
     environment:
       - DATA_SOURCE_NAME=${POSTGRES_EXPORTER_DSN}
     networks:
