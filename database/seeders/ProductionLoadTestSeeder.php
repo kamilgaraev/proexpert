@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Database\Seeders;
 
+use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\UserRoleAssignment;
+use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Models\Project;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Carbon;
@@ -668,7 +670,7 @@ class ProductionLoadTestSeeder extends Seeder
                     'date' => $this->now->copy()->subMonths(3)->addDays($index)->toDateString(),
                     'type' => 'contract',
                     'subject' => "Load-test contract {$contractNumber}",
-                    'work_type_category' => 'construction',
+                    'work_type_category' => ContractWorkTypeCategoryEnum::GENERAL_CONSTRUCTION->value,
                     'payment_terms' => 'Net 15',
                     'total_amount' => 4500000 + ($index * 1200000),
                     'gp_percentage' => 5,
@@ -836,7 +838,13 @@ class ProductionLoadTestSeeder extends Seeder
                 'estimated_cost' => 250000 + ($index * 45000),
                 'actual_cost' => round((250000 + ($index * 45000)) * ($progress / 100), 2),
                 'earned_value' => round((250000 + ($index * 45000)) * ($progress / 100), 2),
-                'required_resources' => $this->json(['people' => 4 + ($index % 8), 'equipment' => ['crane', 'mixer']]),
+                'required_resources' => $this->json([
+                    'people' => 4 + ($index % 8),
+                    'equipment' => [
+                        EquipmentTypeEnum::MOBILE_CRANE->value,
+                        EquipmentTypeEnum::CONCRETE_MIXER->value,
+                    ],
+                ]),
                 'constraint_type' => 'none',
                 'custom_fields' => $this->json(['load_test' => true]),
                 'notes' => 'Synthetic task',
@@ -907,7 +915,7 @@ class ProductionLoadTestSeeder extends Seeder
                 'work_end_date' => $type === 'personnel_request' ? $this->now->copy()->addDays(($index % 12) + 4)->toDateString() : null,
                 'work_location' => $type === 'personnel_request' ? 'Section A' : null,
                 'additional_conditions' => $type === 'personnel_request' ? 'Standard site access' : null,
-                'equipment_type' => $type === 'equipment_request' ? 'crane' : null,
+                'equipment_type' => $type === 'equipment_request' ? EquipmentTypeEnum::MOBILE_CRANE->value : null,
                 'equipment_count' => $type === 'equipment_request' ? 1 + ($index % 2) : null,
                 'equipment_specs' => $type === 'equipment_request' ? 'Standard construction equipment' : null,
                 'rental_start_date' => $type === 'equipment_request' ? $this->now->copy()->addDays($index % 10)->toDateString() : null,
