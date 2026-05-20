@@ -35,6 +35,7 @@ final class AssistantReportCatalogTest extends TestCase
             $this->assertNotSame('', $definition->toolName);
             $this->assertNotSame([], $definition->aliases);
             $this->assertNotSame([], $definition->matchTerms);
+            $this->assertMatchesRegularExpression('/[А-Яа-яЁё]/u', $definition->label);
             $this->assertMatchesRegularExpression('/[А-Яа-яЁё]/u', implode(' ', $definition->aliases));
             $this->assertMatchesRegularExpression('/[А-Яа-яЁё]/u', implode(' ', $definition->matchTerms));
             $this->assertNotSame([], $definition->permissions);
@@ -52,6 +53,6 @@ final class AssistantReportCatalogTest extends TestCase
         $this->assertSame('report.project_timelines', $task['id']);
         $this->assertSame('reports', $task['domain']);
         $this->assertSame('generate_project_timelines_report', $task['tool_name']);
-        $this->assertSame(['type' => 'pdf'], $task['artifact']);
+        $this->assertSame(['type' => 'excel'], $task['artifact']);
     }
 }

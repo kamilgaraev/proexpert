@@ -413,6 +413,9 @@ class AIAssistantService
             'agent_state' => $state->toArray(),
             'confidence' => 'medium',
         ]);
+        if ($this->isReportAgentState($state)) {
+            $payload = $this->sanitizeReportPayload($payload);
+        }
 
         $assistantMessage = $this->conversationManager->addMessage(
             $conversation,
@@ -470,6 +473,9 @@ class AIAssistantService
             'missing_data' => $artifacts === [] ? ['artifacts'] : [],
             'confidence' => $artifacts === [] ? 'low' : 'high',
         ]);
+        if ($this->isReportAgentState($finalState)) {
+            $payload = $this->sanitizeReportPayload($payload);
+        }
 
         $assistantMessage = $this->conversationManager->addMessage(
             $conversation,
@@ -488,6 +494,34 @@ class AIAssistantService
         return str_starts_with($state->id, 'report.')
             && str_starts_with($toolName, 'generate_')
             && str_ends_with($toolName, '_report');
+    }
+
+    protected function isReportAgentState(AssistantTaskState $state): bool
+    {
+        return str_starts_with($state->id, 'report.');
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    protected function sanitizeReportPayload(array $payload): array
+    {
+        $payload['evidence'] = [];
+        $payload['missing_data'] = [];
+        $payload['next_actions'] = [];
+        $payload['navigation_target'] = null;
+        $payload['access_limits'] = [];
+        $payload['requires_confirmation'] = false;
+
+        unset(
+            $payload['access_context'],
+            $payload['confidence'],
+            $payload['degraded_mode'],
+            $payload['telemetry']
+        );
+
+        return $payload;
     }
 
     protected function filterAgentArtifactsForOrganization(int $organizationId, array $artifacts): array
@@ -512,13 +546,9 @@ class AIAssistantService
 
         $artifact = $artifacts[0];
         $url = trim((string) ($artifact['url'] ?? ''));
-        $filename = trim((string) ($artifact['filename'] ?? ''));
-        $label = $filename !== '' ? $filename : 'Скачать файл';
 
         return $url !== ''
-            ? $this->assistantMessage('ai_assistant.report_ready', 'Отчет сформирован: :link', [
-                'link' => "[{$label}]({$url})",
-            ])
+            ? $this->assistantMessage('ai_assistant.report_ready', 'Отчет сформирован. Файл доступен ниже.')
             : $this->assistantMessage(
                 'ai_assistant.report_download_missing',
                 'Не удалось сформировать файл отчета по текущему запросу.'

@@ -57,7 +57,8 @@ final class AssistantAgentFlowServiceTest extends TestCase
         $this->assertSame('assistant', $assistantMessage->role);
         $this->assertSame('report.project_timelines', $assistantMessage->metadata['agent_state']['id']);
         $this->assertSame('waiting_for_slots', $assistantMessage->metadata['agent_state']['status']);
-        $this->assertContains('period', $assistantMessage->metadata['missing_data']);
+        $this->assertSame([], $assistantMessage->metadata['missing_data']);
+        $this->assertStringContainsString('За какой период', $assistantMessage->content);
         $this->assertSame('report.project_timelines', $conversation->context['agent_state']['id']);
         $this->assertSame('waiting_for_slots', $conversation->context['agent_state']['status']);
     }
@@ -71,10 +72,10 @@ final class AssistantAgentFlowServiceTest extends TestCase
         $toolRegistry = new AIToolRegistry;
         $toolRegistry->registerTool(new AgentFlowTool('generate_project_timelines_report', [
             'status' => 'success',
-            'pdf_url' => 'https://storage.example.test/org-15/reports/timeline.pdf',
-            'filename' => 'timeline.pdf',
+            'excel_url' => 'https://storage.example.test/org-15/reports/timeline.xlsx',
+            'filename' => 'timeline.xlsx',
             'storage_disk' => 's3',
-            'storage_path' => 'org-15/reports/timeline.pdf',
+            'storage_path' => 'org-15/reports/timeline.xlsx',
         ]));
 
         $service = $this->makeService($conversationManager, $toolRegistry);
@@ -87,8 +88,13 @@ final class AssistantAgentFlowServiceTest extends TestCase
 
         $metadata = $conversationManager->assistantMessages()[0]->metadata;
 
-        $this->assertStringContainsString('https://storage.example.test/org-15/reports/timeline.pdf', $result['message']['content']);
-        $this->assertSame('pdf', $metadata['artifacts'][0]['type']);
+        $this->assertSame('Отчет сформирован. Файл доступен ниже.', $result['message']['content']);
+        $this->assertStringNotContainsString('https://storage.example.test/org-15/reports/timeline.xlsx', $result['message']['content']);
+        $this->assertSame('excel', $metadata['artifacts'][0]['type']);
+        $this->assertSame('https://storage.example.test/org-15/reports/timeline.xlsx', $metadata['artifacts'][0]['url']);
+        $this->assertSame([], $metadata['missing_data']);
+        $this->assertSame([], $metadata['evidence']);
+        $this->assertArrayNotHasKey('confidence', $metadata);
         $this->assertSame('completed', $metadata['agent_state']['status']);
         $this->assertSame('success', $metadata['tool_result']['status']);
         $this->assertSame('generate_project_timelines_report', $metadata['tool_result']['tool_name']);
@@ -119,6 +125,7 @@ final class AssistantAgentFlowServiceTest extends TestCase
         $this->assertStringContainsString('Не удалось сформировать файл отчета', $result['message']['content']);
         $this->assertStringNotContainsString('http', $result['message']['content']);
         $this->assertSame([], $metadata['artifacts']);
+        $this->assertSame([], $metadata['missing_data']);
         $this->assertSame('failed', $metadata['agent_state']['status']);
         $this->assertSame('failed', $conversation->context['agent_state']['status']);
     }
@@ -150,6 +157,7 @@ final class AssistantAgentFlowServiceTest extends TestCase
 
         $this->assertStringNotContainsString('https://storage.example.test/org-99/reports/timeline.pdf', $result['message']['content']);
         $this->assertSame([], $metadata['artifacts']);
+        $this->assertSame([], $metadata['missing_data']);
         $this->assertSame('failed', $metadata['agent_state']['status']);
     }
 
@@ -169,7 +177,7 @@ final class AssistantAgentFlowServiceTest extends TestCase
         $service = $this->makeService($conversationManager, $toolRegistry);
 
         $result = $service->ask(
-            'sformiruy otchet po rentabelnosti '.$this->ru('\u0437\u0430 \u043f\u0440\u043e\u0448\u043b\u044b\u0439 \u043c\u0435\u0441\u044f\u0446'),
+            'Сформируй отчет по рентабельности за прошлый месяц',
             15,
             $this->makeUser(),
             null,
@@ -178,7 +186,9 @@ final class AssistantAgentFlowServiceTest extends TestCase
 
         $metadata = $conversationManager->assistantMessages()[0]->metadata;
 
-        $this->assertStringContainsString('https://storage.example.test/org-15/reports/profitability.pdf', $result['message']['content']);
+        $this->assertSame('Отчет сформирован. Файл доступен ниже.', $result['message']['content']);
+        $this->assertStringNotContainsString('https://storage.example.test/org-15/reports/profitability.pdf', $result['message']['content']);
+        $this->assertSame('https://storage.example.test/org-15/reports/profitability.pdf', $metadata['artifacts'][0]['url']);
         $this->assertSame('report.project_profitability', $metadata['agent_state']['id']);
         $this->assertSame('generate_profitability_report', $metadata['tool_result']['tool_name']);
         $this->assertSame('completed', $metadata['agent_state']['status']);
@@ -315,13 +325,6 @@ final class AssistantAgentFlowServiceTest extends TestCase
         return $user;
     }
 
-    private function ru(string $escaped): string
-    {
-        $decoded = json_decode('"'.$escaped.'"');
-        $this->assertIsString($decoded);
-
-        return $decoded;
-    }
 }
 
 final class AgentFlowAIAssistantService extends AIAssistantService

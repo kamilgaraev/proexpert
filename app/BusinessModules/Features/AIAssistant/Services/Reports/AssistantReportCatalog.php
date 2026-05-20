@@ -17,7 +17,7 @@ final class AssistantReportCatalog
             new AssistantReportDefinition(
                 id: 'project_profitability',
                 capability: 'finance',
-                label: 'project_profitability',
+                label: 'рентабельность проектов',
                 toolName: 'generate_profitability_report',
                 aliases: ['отчет по рентабельности', 'рентабельность проектов', 'прибыльность проектов'],
                 matchTerms: ['рентабельность', 'прибыльность', 'маржинальность', 'финансовая эффективность'],
@@ -31,7 +31,7 @@ final class AssistantReportCatalog
             new AssistantReportDefinition(
                 id: 'work_completion',
                 capability: 'production',
-                label: 'work_completion',
+                label: 'выполнение работ',
                 toolName: 'generate_work_completion_report',
                 aliases: ['отчет по выполнению работ', 'выполнение работ', 'закрытые работы'],
                 matchTerms: ['выполнение работ', 'выполненные работы', 'закрытые работы', 'объем работ'],
@@ -45,7 +45,7 @@ final class AssistantReportCatalog
             new AssistantReportDefinition(
                 id: 'material_movements',
                 capability: 'warehouse',
-                label: 'material_movements',
+                label: 'движение материалов',
                 toolName: 'generate_material_movements_report',
                 aliases: ['отчет по движению материалов', 'движение материалов', 'расход материалов'],
                 matchTerms: ['движение материалов', 'расход материалов', 'приход материалов', 'материалы за период'],
@@ -59,7 +59,7 @@ final class AssistantReportCatalog
             new AssistantReportDefinition(
                 id: 'contractor_settlements',
                 capability: 'contracts',
-                label: 'contractor_settlements',
+                label: 'расчеты с подрядчиками',
                 toolName: 'generate_contractor_settlements_report',
                 aliases: ['отчет по расчетам с подрядчиками', 'расчеты с подрядчиками', 'взаиморасчеты с подрядчиками'],
                 matchTerms: ['расчеты с подрядчиками', 'взаиморасчеты', 'задолженность подрядчиков', 'подрядчики'],
@@ -73,7 +73,7 @@ final class AssistantReportCatalog
             new AssistantReportDefinition(
                 id: 'warehouse_stock',
                 capability: 'warehouse',
-                label: 'warehouse_stock',
+                label: 'остатки склада',
                 toolName: 'generate_warehouse_stock_report',
                 aliases: ['отчет по остаткам склада', 'остатки склада', 'складские остатки'],
                 matchTerms: ['остатки склада', 'складские остатки', 'наличие на складе', 'остатки материалов'],
@@ -87,7 +87,7 @@ final class AssistantReportCatalog
             new AssistantReportDefinition(
                 id: 'time_tracking',
                 capability: 'workforce',
-                label: 'time_tracking',
+                label: 'трудозатраты',
                 toolName: 'generate_time_tracking_report',
                 aliases: ['отчет по трудозатратам', 'трудозатраты', 'учет рабочего времени'],
                 matchTerms: ['трудозатраты', 'рабочее время', 'табель', 'часы сотрудников'],
@@ -101,7 +101,7 @@ final class AssistantReportCatalog
             new AssistantReportDefinition(
                 id: 'contract_payments',
                 capability: 'payments',
-                label: 'contract_payments',
+                label: 'платежи по договорам',
                 toolName: 'generate_contract_payments_report',
                 aliases: ['отчет по платежам договоров', 'платежи по договорам', 'оплаты по договорам'],
                 matchTerms: ['платежи по договорам', 'оплаты по договорам', 'договорные платежи', 'платежи договоров'],
@@ -115,16 +115,16 @@ final class AssistantReportCatalog
             new AssistantReportDefinition(
                 id: 'project_timelines',
                 capability: 'schedules',
-                label: 'project_timelines',
+                label: 'график работ',
                 toolName: 'generate_project_timelines_report',
                 aliases: ['отчет по графику работ', 'график работ', 'сроки проекта', 'отставание от графика'],
                 matchTerms: ['график работ', 'сроки проекта', 'таймлайн', 'отставание от графика', 'этапы работ'],
                 requiredSlots: [$this->periodSlot()],
                 optionalSlots: [$this->slot('project_id', 'project')],
                 permissions: ['reports.view', 'schedule-management.view', 'admin.reports.view'],
-                artifactType: 'pdf',
-                defaultFormat: 'pdf',
-                formats: ['pdf']
+                artifactType: 'excel',
+                defaultFormat: 'excel',
+                formats: ['excel']
             ),
         ];
     }

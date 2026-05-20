@@ -29,7 +29,7 @@ class GenerateProjectTimelinesReportTool implements AIToolInterface
 
     public function getDescription(): string
     {
-        return 'Генерирует PDF отчет по срокам проектов (таймлайны, прогресс выполнения, задержки). Возвращает ссылку на скачивание (pdf_url). Использовать, когда спрашивают про сроки, успеваемость, отставание от графика или прогресс по проектам.';
+        return 'Генерирует Excel отчет по срокам проектов, прогрессу выполнения и отставаниям от графика. Возвращает ссылку на скачивание (excel_url). Использовать, когда спрашивают про сроки, успеваемость, отставание от графика или прогресс по проектам.';
     }
 
     public function getParametersSchema(): array
@@ -64,7 +64,7 @@ class GenerateProjectTimelinesReportTool implements AIToolInterface
         $dates = $this->extractPeriodFromArguments($arguments, $period);
 
         $requestData = [
-            'format' => 'pdf',
+            'format' => 'excel',
             'date_from' => $dates['date_from'],
             'date_to' => $dates['date_to'],
         ];
@@ -85,7 +85,7 @@ class GenerateProjectTimelinesReportTool implements AIToolInterface
             $response->sendContent();
             $content = ob_get_clean();
 
-            $filename = 'project_timelines_report_'.time().'.pdf';
+            $filename = 'project_timelines_report_'.time().'.xlsx';
             $path = OrganizationStoragePath::forOrganization($organization->id, "reports/{$filename}");
 
             if (Storage::disk('s3')->put($path, $content) !== true) {
@@ -96,9 +96,9 @@ class GenerateProjectTimelinesReportTool implements AIToolInterface
 
             return [
                 'status' => 'success',
-                'message' => 'Отчет по таймлайнам проектов успешно сгенерирован',
+                'message' => 'Отчет по графику работ успешно сформирован',
                 'period' => $period,
-                'pdf_url' => $url,
+                'excel_url' => $url,
                 'filename' => $filename,
                 'storage_disk' => 's3',
                 'storage_path' => $path,
@@ -109,7 +109,7 @@ class GenerateProjectTimelinesReportTool implements AIToolInterface
 
             return [
                 'status' => 'error',
-                'message' => 'Ошибка при генерации отчета: '.$e->getMessage(),
+                'message' => 'Не удалось сформировать отчет по графику работ.',
             ];
         }
     }
