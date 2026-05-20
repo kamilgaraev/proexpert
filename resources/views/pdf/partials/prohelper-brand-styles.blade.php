@@ -8,13 +8,13 @@
 }
 .prohelper-brand-card td {
     border: none;
-    padding: 9px 11px;
+    padding: 10px 12px;
     vertical-align: middle;
 }
 .prohelper-brand-mark {
-    width: 34px;
-    height: 34px;
-    line-height: 34px;
+    width: 36px;
+    height: 36px;
+    line-height: 36px;
     text-align: center;
     background-color: #2563eb;
     color: #ffffff;
@@ -25,28 +25,33 @@
 .prohelper-brand-name {
     color: #1e3a8a;
     font-size: 14px;
+    line-height: 18px;
     font-weight: bold;
     letter-spacing: 0.4px;
 }
 .prohelper-brand-subtitle {
     color: #475569;
     font-size: 8px;
+    line-height: 12px;
     margin-top: 2px;
 }
 .prohelper-brand-badge {
     display: inline-block;
-    padding: 3px 7px;
+    padding: 4px 8px 5px 8px;
     background-color: #e8f1ff;
     border: 1px solid #b8cff7;
     color: #1d4ed8;
     font-size: 8px;
+    line-height: 12px;
     font-weight: bold;
     text-transform: uppercase;
+    white-space: nowrap;
 }
 .prohelper-brand-date {
     color: #64748b;
     font-size: 8px;
-    margin-top: 4px;
+    line-height: 12px;
+    margin-top: 5px;
 }
 .prohelper-document-note {
     margin-top: 14px;
