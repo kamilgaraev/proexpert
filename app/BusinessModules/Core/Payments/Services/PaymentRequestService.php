@@ -14,8 +14,8 @@ use Illuminate\Support\Facades\Log;
 use function trans_message;
 
 /**
- * РЎРµСЂРІРёСЃ РґР»СЏ СЂР°Р±РѕС‚С‹ СЃ РїР»Р°С‚РµР¶РЅС‹РјРё С‚СЂРµР±РѕРІР°РЅРёСЏРјРё
- * РЎС†РµРЅР°СЂРёР№: РџРѕРґСЂСЏРґС‡РёРє -> Р“РµРЅРїРѕРґСЂСЏРґС‡РёРє (Р—Р°РєР°Р·С‡РёРє)
+ * Сервис для работы с платежными требованиями
+ * Сценарий: Подрядчик -> Генподрядчик (Заказчик)
  */
 class PaymentRequestService
 {
@@ -26,17 +26,17 @@ class PaymentRequestService
     ) {}
 
     /**
-     * РЎРѕР·РґР°С‚СЊ РїР»Р°С‚РµР¶РЅРѕРµ С‚СЂРµР±РѕРІР°РЅРёРµ РѕС‚ РїРѕРґСЂСЏРґС‡РёРєР°
+     * Создать платежное требование от подрядчика
      */
     public function createFromContractor(array $data): PaymentDocument
     {
         DB::beginTransaction();
 
         try {
-            // РћР±СЏР·Р°С‚РµР»СЊРЅР°СЏ РёРЅС„РѕСЂРјР°С†РёСЏ РґР»СЏ РїР»Р°С‚РµР¶РЅРѕРіРѕ С‚СЂРµР±РѕРІР°РЅРёСЏ
+            // Обязательная информация для платежного требования
             $this->validateRequestData($data);
 
-            // РџРѕР»СѓС‡Р°РµРј РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ РєРѕРЅС‚СЂР°РєС‚Рµ
+            // Получаем информацию о контракте
             $contract = null;
             if (isset($data['contract_id'])) {
                 $contract = Contract::query()
@@ -44,45 +44,45 @@ class PaymentRequestService
                     ->findOrFail($data['contract_id']);
             }
 
-            // Р¤РѕСЂРјРёСЂСѓРµРј РґР°РЅРЅС‹Рµ РґРѕРєСѓРјРµРЅС‚Р°
+            // Формируем данные документа
             $documentData = [
-                'organization_id' => $data['organization_id'], // РѕСЂРіР°РЅРёР·Р°С†РёСЏ-Р·Р°РєР°Р·С‡РёРє
+                'organization_id' => $data['organization_id'], // организация-заказчик
                 'project_id' => $data['project_id'] ?? $contract?->project_id,
                 'document_type' => PaymentDocumentType::PAYMENT_REQUEST->value,
                 'document_date' => $data['document_date'] ?? now(),
                 'due_date' => $data['due_date'] ?? now()->addDays($contract?->payment_terms_days ?? 14),
                 
-                // РџР»Р°С‚РµР»СЊС‰РёРє - РѕСЂРіР°РЅРёР·Р°С†РёСЏ-Р·Р°РєР°Р·С‡РёРє
+                // Плательщик - организация-заказчик
                 'payer_organization_id' => $data['organization_id'],
                 'payer_contractor_id' => null,
                 
-                // РџРѕР»СѓС‡Р°С‚РµР»СЊ - РїРѕРґСЂСЏРґС‡РёРє
+                // Получатель - подрядчик
                 'payee_organization_id' => null,
                 'payee_contractor_id' => $data['contractor_id'],
                 
-                // Р¤РёРЅР°РЅСЃС‹
+                // Финансы
                 'amount' => $data['amount'],
                 'currency' => $data['currency'] ?? 'RUB',
                 'vat_rate' => $data['vat_rate'] ?? 20,
                 
-                // РСЃС‚РѕС‡РЅРёРє
+                // Источник
                 'source_type' => $data['source_type'] ?? Contract::class,
                 'source_id' => $data['source_id'] ?? $contract?->id,
                 
-                // Р”РµС‚Р°Р»Рё
-                'description' => $data['description'] ?? 'РџР»Р°С‚РµР¶РЅРѕРµ С‚СЂРµР±РѕРІР°РЅРёРµ РѕС‚ РїРѕРґСЂСЏРґС‡РёРєР°',
+                // Детали
+                'description' => $data['description'] ?? trans_message('payments.requests.description_default'),
                 'payment_purpose' => $data['payment_purpose'] ?? $this->generatePaymentPurpose($data, $contract),
                 
-                // Р‘Р°РЅРєРѕРІСЃРєРёРµ СЂРµРєРІРёР·РёС‚С‹ РїРѕРґСЂСЏРґС‡РёРєР°
+                // Банковские реквизиты подрядчика
                 'bank_account' => $data['bank_account'] ?? null,
                 'bank_bik' => $data['bank_bik'] ?? null,
                 'bank_correspondent_account' => $data['bank_correspondent_account'] ?? null,
                 'bank_name' => $data['bank_name'] ?? null,
                 
-                // Р”РѕРєСѓРјРµРЅС‚С‹-РѕСЃРЅРѕРІР°РЅРёСЏ
+                // Документы-основания
                 'attached_documents' => $data['attached_documents'] ?? [],
                 
-                // РњРµС‚Р°РґР°РЅРЅС‹Рµ
+                // Метаданные
                 'metadata' => array_merge($data['metadata'] ?? [], [
                     'request_type' => 'contractor_to_customer',
                     'created_from' => 'contractor_portal',
@@ -91,7 +91,7 @@ class PaymentRequestService
                 'created_by_user_id' => $data['created_by_user_id'] ?? null,
             ];
 
-            // РЎРѕР·РґР°РµРј РґРѕРєСѓРјРµРЅС‚
+            // Создаем документ
             $document = $this->documentService->create($documentData);
 
             Log::info('payment_request.created', [
@@ -116,7 +116,7 @@ class PaymentRequestService
     }
 
     /**
-     * РЎРѕР·РґР°С‚СЊ РїР»Р°С‚РµР¶РЅРѕРµ С‚СЂРµР±РѕРІР°РЅРёРµ РЅР° РѕСЃРЅРѕРІРµ Р°РєС‚Р°
+     * Создать платежное требование на основе акта
      */
     public function createFromAct(Act $act, array $additionalData = []): PaymentDocument
     {
@@ -128,7 +128,10 @@ class PaymentRequestService
             'contractor_id' => $contract->contractor_id,
             'contract_id' => $contract->id,
             'amount' => $act->total_amount,
-            'description' => "РћРїР»Р°С‚Р° РїРѕ Р°РєС‚Сѓ {$act->act_number} РѕС‚ " . $act->act_date->format('d.m.Y'),
+            'description' => trans_message('payments.requests.description_from_act', [
+                'number' => (string) $act->act_number,
+                'date' => $act->act_date->format('d.m.Y'),
+            ]),
             'source_type' => Act::class,
             'source_id' => $act->id,
             'attached_documents' => [
@@ -146,7 +149,7 @@ class PaymentRequestService
     }
 
     /**
-     * РћС‚РїСЂР°РІРёС‚СЊ РїР»Р°С‚РµР¶РЅРѕРµ С‚СЂРµР±РѕРІР°РЅРёРµ РЅР° СЂР°СЃСЃРјРѕС‚СЂРµРЅРёРµ
+     * Отправить платежное требование на рассмотрение
      */
     public function submitRequest(PaymentDocument $document): PaymentDocument
     {
@@ -154,28 +157,28 @@ class PaymentRequestService
             throw new \DomainException(trans_message('payments.validation.request_submit_only_payment_requests'));
         }
 
-        // РћС‚РїСЂР°РІР»СЏРµРј РЅР° СѓС‚РІРµСЂР¶РґРµРЅРёРµ
+        // Отправляем на утверждение
         return $this->documentService->submit($document);
     }
 
     /**
-     * РџСЂРёРЅСЏС‚СЊ РїР»Р°С‚РµР¶РЅРѕРµ С‚СЂРµР±РѕРІР°РЅРёРµ (СЃРѕ СЃС‚РѕСЂРѕРЅС‹ Р·Р°РєР°Р·С‡РёРєР°)
+     * Принять платежное требование (со стороны заказчика)
      */
     public function acceptRequest(PaymentDocument $document, array $data = []): PaymentDocument
     {
         DB::beginTransaction();
 
         try {
-            // РЈС‚РІРµСЂР¶РґР°РµРј РґРѕРєСѓРјРµРЅС‚ (РµСЃР»Рё С‚СЂРµР±СѓРµС‚СЃСЏ workflow)
+            // Утверждаем документ (если требуется workflow)
             if ($document->requiresApproval()) {
-                // Workflow СѓС‚РІРµСЂР¶РґРµРЅРёСЏ Р±С‹Р» РёРЅРёС†РёРёСЂРѕРІР°РЅ РїСЂРё submit
-                // Р—РґРµСЃСЊ РјС‹ РїСЂРѕСЃС‚Рѕ РїСЂРѕРІРµСЂСЏРµРј, С‡С‚Рѕ РѕРЅ СѓС‚РІРµСЂР¶РґРµРЅ
+                // Workflow утверждения был инициирован при submit
+                // Здесь мы просто проверяем, что он утвержден
                 if ($document->status->value !== 'approved') {
                     throw new \DomainException(trans_message('payments.validation.request_must_be_approved'));
                 }
             }
 
-            // РЎРѕР·РґР°РµРј РїР»Р°С‚РµР¶РЅРѕРµ РїРѕСЂСѓС‡РµРЅРёРµ РЅР° РѕСЃРЅРѕРІРµ С‚СЂРµР±РѕРІР°РЅРёСЏ
+            // Создаем платежное поручение на основе требования
             $paymentOrder = $this->createPaymentOrderFromRequest($document, $data);
 
             Log::info('payment_request.accepted', [
@@ -199,7 +202,7 @@ class PaymentRequestService
     }
 
     /**
-     * РћС‚РєР»РѕРЅРёС‚СЊ РїР»Р°С‚РµР¶РЅРѕРµ С‚СЂРµР±РѕРІР°РЅРёРµ
+     * Отклонить платежное требование
      */
     public function rejectRequest(PaymentDocument $document, string $reason, ?\App\Models\User $user = null): PaymentDocument
     {
@@ -211,7 +214,7 @@ class PaymentRequestService
     }
 
     /**
-     * РџРѕР»СѓС‡РёС‚СЊ РІС…РѕРґСЏС‰РёРµ РїР»Р°С‚РµР¶РЅС‹Рµ С‚СЂРµР±РѕРІР°РЅРёСЏ РґР»СЏ РѕСЂРіР°РЅРёР·Р°С†РёРё
+     * Получить входящие платежные требования для организации
      */
     public function getIncomingRequests(int $organizationId, array $filters = []): Collection
     {
@@ -222,7 +225,7 @@ class PaymentRequestService
     }
 
     /**
-     * РџРѕР»СѓС‡РёС‚СЊ РёСЃС…РѕРґСЏС‰РёРµ РїР»Р°С‚РµР¶РЅС‹Рµ С‚СЂРµР±РѕРІР°РЅРёСЏ (РѕС‚РїСЂР°РІР»РµРЅРЅС‹Рµ РєРѕРЅС‚СЂР°РіРµРЅС‚Р°Рј)
+     * Получить исходящие платежные требования (отправленные контрагентам)
      */
     public function getOutgoingRequests(int $organizationId, array $filters = []): Collection
     {
@@ -233,7 +236,7 @@ class PaymentRequestService
     }
 
     /**
-     * РџРѕР»СѓС‡РёС‚СЊ С‚СЂРµР±РѕРІР°РЅРёСЏ РѕС‚ РєРѕРЅРєСЂРµС‚РЅРѕРіРѕ РїРѕРґСЂСЏРґС‡РёРєР°
+     * Получить требования от конкретного подрядчика
      */
     public function getRequestsFromContractor(int $organizationId, int $contractorId): Collection
     {
@@ -246,7 +249,7 @@ class PaymentRequestService
     }
 
     /**
-     * РџРѕР»СѓС‡РёС‚СЊ С‚СЂРµР±РѕРІР°РЅРёСЏ РїРѕ РїСЂРѕРµРєС‚Сѓ
+     * Получить требования по проекту
      */
     public function getRequestsByProject(int $projectId): Collection
     {
@@ -258,7 +261,7 @@ class PaymentRequestService
     }
 
     /**
-     * РЎС‚Р°С‚РёСЃС‚РёРєР° РїРѕ РїР»Р°С‚РµР¶РЅС‹Рј С‚СЂРµР±РѕРІР°РЅРёСЏРј
+     * Статистика по платежным требованиям
      */
     public function getStatistics(int $organizationId): array
     {
@@ -280,7 +283,7 @@ class PaymentRequestService
                 $contractor = Contractor::find($contractorId);
                 return [
                     'contractor_id' => $contractorId,
-                    'contractor_name' => $contractor?->name ?? 'РќРµРёР·РІРµСЃС‚РЅРѕ',
+                    'contractor_name' => $contractor?->name ?? trans_message('payments.requests.unknown_contractor'),
                     'count' => $items->count(),
                     'total_amount' => $items->sum('amount'),
                     'pending_amount' => $items->whereIn('status.value', ['pending_approval', 'approved'])->sum('amount'),
@@ -290,7 +293,7 @@ class PaymentRequestService
     }
 
     /**
-     * РЎРѕР·РґР°С‚СЊ РїР»Р°С‚РµР¶РЅРѕРµ РїРѕСЂСѓС‡РµРЅРёРµ РЅР° РѕСЃРЅРѕРІРµ С‚СЂРµР±РѕРІР°РЅРёСЏ
+     * Создать платежное поручение на основе требования
      */
     private function createPaymentOrderFromRequest(PaymentDocument $request, array $additionalData = []): PaymentDocument
     {
@@ -301,32 +304,34 @@ class PaymentRequestService
             'document_date' => $additionalData['document_date'] ?? now(),
             'due_date' => $additionalData['due_date'] ?? $request->due_date,
             
-            // РљРѕРїРёСЂСѓРµРј СЃС‚РѕСЂРѕРЅС‹
+            // Копируем стороны
             'payer_organization_id' => $request->payer_organization_id,
             'payer_contractor_id' => $request->payer_contractor_id,
             'payee_organization_id' => $request->payee_organization_id,
             'payee_contractor_id' => $request->payee_contractor_id,
             
-            // Р¤РёРЅР°РЅСЃС‹
+            // Финансы
             'amount' => $request->amount,
             'currency' => $request->currency,
             'vat_rate' => $request->vat_rate,
             
-            // РСЃС‚РѕС‡РЅРёРє - РїР»Р°С‚РµР¶РЅРѕРµ С‚СЂРµР±РѕРІР°РЅРёРµ
+            // Источник - платежное требование
             'source_type' => PaymentDocument::class,
             'source_id' => $request->id,
             
-            // Р”РµС‚Р°Р»Рё
-            'description' => "РџР»Р°С‚РµР¶РЅРѕРµ РїРѕСЂСѓС‡РµРЅРёРµ РїРѕ С‚СЂРµР±РѕРІР°РЅРёСЋ {$request->document_number}",
+            // Детали
+            'description' => trans_message('payments.documents.payment_order_description', [
+                'number' => (string) $request->document_number,
+            ]),
             'payment_purpose' => $request->payment_purpose,
             
-            // Р РµРєРІРёР·РёС‚С‹
+            // Реквизиты
             'bank_account' => $request->bank_account,
             'bank_bik' => $request->bank_bik,
             'bank_correspondent_account' => $request->bank_correspondent_account,
             'bank_name' => $request->bank_name,
             
-            // Р”РѕРєСѓРјРµРЅС‚С‹
+            // Документы
             'attached_documents' => array_merge(
                 $request->attached_documents ?? [],
                 [
@@ -339,7 +344,7 @@ class PaymentRequestService
                 ]
             ),
             
-            // РњРµС‚Р°РґР°РЅРЅС‹Рµ
+            // Метаданные
             'metadata' => [
                 'created_from_request' => $request->id,
                 'request_number' => $request->document_number,
@@ -352,7 +357,7 @@ class PaymentRequestService
     }
 
     /**
-     * Р’Р°Р»РёРґР°С†РёСЏ РґР°РЅРЅС‹С… С‚СЂРµР±РѕРІР°РЅРёСЏ
+     * Валидация данных требования
      */
     private function validateRequestData(array $data): void
     {
@@ -371,7 +376,7 @@ class PaymentRequestService
             throw new \InvalidArgumentException(trans_message('payments.validation.amount_positive'));
         }
 
-        // РџСЂРѕРІРµСЂРєР° РєРѕРЅС‚СЂР°РіРµРЅС‚Р°
+        // Проверка контрагента
         $contractor = Contractor::query()
             ->where('organization_id', $data['organization_id'])
             ->find($data['contractor_id']);
@@ -379,7 +384,7 @@ class PaymentRequestService
             throw new \InvalidArgumentException(trans_message('payments.validation.contractor_not_found'));
         }
 
-        // РџСЂРѕРІРµСЂРєР° Р±Р»РѕРєРёСЂРѕРІРєРё
+        // Проверка блокировки
         $account = DB::table('counterparty_accounts')
             ->where('organization_id', $data['organization_id'])
             ->where('counterparty_contractor_id', $data['contractor_id'])
@@ -391,14 +396,17 @@ class PaymentRequestService
     }
 
     /**
-     * Р“РµРЅРµСЂР°С†РёСЏ РЅР°Р·РЅР°С‡РµРЅРёСЏ РїР»Р°С‚РµР¶Р°
+     * Генерация назначения платежа
      */
     private function generatePaymentPurpose(array $data, ?Contract $contract): string
     {
         $parts = [];
 
         if ($contract) {
-            $parts[] = "РћРїР»Р°С‚Р° РїРѕ РґРѕРіРѕРІРѕСЂСѓ {$contract->contract_number} РѕС‚ " . $contract->contract_date->format('d.m.Y');
+            $parts[] = trans_message('payments.purpose.contract_payment', [
+                'number' => (string) $contract->contract_number,
+                'date' => $contract->contract_date->format('d.m.Y'),
+            ]);
         }
 
         if (isset($data['description'])) {
@@ -406,20 +414,26 @@ class PaymentRequestService
         }
 
         if (isset($data['act_number'])) {
-            $parts[] = "РђРєС‚ {$data['act_number']}";
+            $parts[] = trans_message('payments.purpose.act', [
+                'number' => (string) $data['act_number'],
+            ]);
         }
 
-        if ($data['vat_rate'] ?? 20 > 0) {
-            $parts[] = "Р’ С‚РѕРј С‡РёСЃР»Рµ РќР”РЎ {$data['vat_rate']}%";
+        $vatRate = $data['vat_rate'] ?? 20;
+
+        if ($vatRate > 0) {
+            $parts[] = trans_message('payments.purpose.vat_included', [
+                'rate' => (string) $vatRate,
+            ]);
         } else {
-            $parts[] = "Р‘РµР· РќР”РЎ";
+            $parts[] = trans_message('payments.purpose.vat_excluded');
         }
 
         return implode('. ', $parts);
     }
 
     /**
-     * РњР°СЃСЃРѕРІРѕРµ СЃРѕР·РґР°РЅРёРµ С‚СЂРµР±РѕРІР°РЅРёР№ РЅР° РѕСЃРЅРѕРІРµ Р°РєС‚РѕРІ
+     * Массовое создание требований на основе актов
      */
     public function createBulkFromActs(array $actIds, array $commonData = []): Collection
     {

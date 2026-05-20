@@ -220,14 +220,14 @@ class ProjectPulseReportTest extends TestCase
         $organization = $context->organization;
         $project = Project::factory()->create([
             'organization_id' => $organization->id,
-            'name' => 'РљРѕСЂРїСѓСЃ Рђ',
+            'name' => 'Корпус А',
             'status' => 'active',
         ]);
         $schedule = ProjectSchedule::query()->create([
             'project_id' => $project->id,
             'organization_id' => $organization->id,
             'created_by_user_id' => $context->user->id,
-            'name' => 'Р“СЂР°С„РёРє РєРѕСЂРїСѓСЃР° Рђ',
+            'name' => 'График корпуса А',
             'planned_start_date' => now()->subDays(10)->toDateString(),
             'planned_end_date' => now()->addDays(20)->toDateString(),
             'status' => 'active',
@@ -241,7 +241,7 @@ class ProjectPulseReportTest extends TestCase
             'schedule_id' => $schedule->id,
             'organization_id' => $organization->id,
             'created_by_user_id' => $context->user->id,
-            'name' => 'РњРѕРЅРѕР»РёС‚ РїРµСЂРІРѕРіРѕ СЌС‚Р°Р¶Р°',
+            'name' => 'Монолит первого этажа',
             'task_type' => 'task',
             'planned_start_date' => now()->subDays(6)->toDateString(),
             'planned_end_date' => now()->addDays(3)->toDateString(),
@@ -260,7 +260,7 @@ class ProjectPulseReportTest extends TestCase
             'project_id' => $project->id,
             'schedule_id' => $schedule->id,
             'created_by_user_id' => $context->user->id,
-            'title' => 'РџР»Р°РЅ РЅР° РґРІРµ РЅРµРґРµР»Рё',
+            'title' => 'План на две недели',
             'start_date' => now()->startOfWeek()->toDateString(),
             'end_date' => now()->startOfWeek()->addDays(13)->toDateString(),
             'status' => 'published',
@@ -287,7 +287,7 @@ class ProjectPulseReportTest extends TestCase
             'schedule_task_id' => $task->id,
             'created_by_user_id' => $context->user->id,
             'constraint_type' => 'material',
-            'title' => 'РќРµ РїСЂРёРІРµР·РµРЅР° Р°СЂРјР°С‚СѓСЂР°',
+            'title' => 'Не привезена арматура',
             'severity' => 'hard',
             'status' => 'open',
             'due_date' => now()->subDay()->toDateString(),

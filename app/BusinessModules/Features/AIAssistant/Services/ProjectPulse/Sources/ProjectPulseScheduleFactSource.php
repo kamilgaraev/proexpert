@@ -10,6 +10,8 @@ use App\BusinessModules\Features\AIAssistant\DTOs\ProjectPulse\ProjectPulseFact;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\Concerns\BuildsProjectPulseFacts;
 use Illuminate\Support\Collection;
 
+use function trans_message;
+
 class ProjectPulseScheduleFactSource implements ProjectPulseFactSourceInterface
 {
     use BuildsProjectPulseFacts;
@@ -63,22 +65,26 @@ class ProjectPulseScheduleFactSource implements ProjectPulseFactSourceInterface
                 id: 'schedule_task:' . $row->id . ':overdue',
                 type: 'schedule_task',
                 priority: 'critical',
-                title: 'Задача графика просрочена',
-                text: 'Задача графика "' . ($row->name ?? ('#' . $row->id)) . '" не закрыта в плановый срок.',
+                title: trans_message('ai_assistant.project_pulse.schedule.task_overdue_title'),
+                text: trans_message('ai_assistant.project_pulse.schedule.task_overdue_text', [
+                    'name' => (string) ($row->name ?? ('#' . $row->id)),
+                ]),
                 projectId: $row->project_id !== null ? (int) $row->project_id : null,
                 projectName: $row->project_name,
                 relatedEntity: [
                     'type' => 'schedule_task',
                     'id' => (int) $row->id,
-                    'label' => 'Задача графика #' . $row->id,
+                    'label' => trans_message('ai_assistant.project_pulse.schedule.task_label', [
+                        'id' => (string) $row->id,
+                    ]),
                     'route' => $this->scheduleRoute($row->project_id !== null ? (int) $row->project_id : null, (int) $row->schedule_id),
                 ],
                 source: $this->key(),
                 category: 'schedule',
                 status: $row->status,
-                nextAction: 'Обновить график, ответственного и следующий контрольный срок.',
+                nextAction: trans_message('ai_assistant.project_pulse.schedule.task_next_action'),
                 primaryAction: [
-                    'label' => 'Открыть задачу',
+                    'label' => trans_message('ai_assistant.project_pulse.schedule.task_primary_action'),
                     'route' => $this->scheduleRoute($row->project_id !== null ? (int) $row->project_id : null, (int) $row->schedule_id),
                     'permission' => 'schedule.view',
                 ],
@@ -124,22 +130,26 @@ class ProjectPulseScheduleFactSource implements ProjectPulseFactSourceInterface
                 id: 'work_constraint:' . $row->id . ':overdue',
                 type: 'work_constraint',
                 priority: $row->severity === 'hard' ? 'critical' : 'warning',
-                title: 'РџСЂРѕСЃСЂРѕС‡РµРЅРѕ РѕРіСЂР°РЅРёС‡РµРЅРёРµ РіРѕС‚РѕРІРЅРѕСЃС‚Рё',
-                text: 'РћРіСЂР°РЅРёС‡РµРЅРёРµ "' . ($row->title ?? ('#' . $row->id)) . '" РїСЂРѕСЃСЂРѕС‡РµРЅРѕ Рё Р±Р»РѕРєРёСЂСѓРµС‚ РїР»Р°РЅ Р±Р»РёР¶Р°Р№С€РёС… СЂР°Р±РѕС‚.',
+                title: trans_message('ai_assistant.project_pulse.schedule.constraint_overdue_title'),
+                text: trans_message('ai_assistant.project_pulse.schedule.constraint_overdue_text', [
+                    'name' => (string) ($row->title ?? ('#' . $row->id)),
+                ]),
                 projectId: $row->project_id !== null ? (int) $row->project_id : null,
                 projectName: $row->project_name,
                 relatedEntity: [
                     'type' => 'work_constraint',
                     'id' => (int) $row->id,
-                    'label' => 'РћРіСЂР°РЅРёС‡РµРЅРёРµ #' . $row->id,
+                    'label' => trans_message('ai_assistant.project_pulse.schedule.constraint_label', [
+                        'id' => (string) $row->id,
+                    ]),
                     'route' => $this->lookaheadRoute($row->project_id !== null ? (int) $row->project_id : null, (int) $row->schedule_id),
                 ],
                 source: $this->key(),
                 category: 'schedule',
                 status: $row->status,
-                nextAction: 'РЎРЅСЏС‚СЊ Р±Р»РѕРєРёСЂСѓСЋС‰РµРµ РѕРіСЂР°РЅРёС‡РµРЅРёРµ РёР»Рё Р·Р°С„РёРєСЃРёСЂРѕРІР°С‚СЊ СѓРїСЂР°РІР»РµРЅС‡РµСЃРєРѕРµ СЂРµС€РµРЅРёРµ РІ lookahead-РїР»Р°РЅРµ.',
+                nextAction: trans_message('ai_assistant.project_pulse.schedule.constraint_next_action'),
                 primaryAction: [
-                    'label' => 'РћС‚РєСЂС‹С‚СЊ lookahead',
+                    'label' => trans_message('ai_assistant.project_pulse.schedule.constraint_primary_action'),
                     'route' => $this->lookaheadRoute($row->project_id !== null ? (int) $row->project_id : null, (int) $row->schedule_id),
                     'permission' => 'schedule.view',
                 ],

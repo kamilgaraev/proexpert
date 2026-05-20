@@ -210,7 +210,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
         app(ConstructionJournalService::class)->createEntry($journal, [
             'estimate_id' => $estimate->id,
             'entry_date' => '2026-04-28',
-            'work_description' => 'Р‘РµС‚РѕРЅРёСЂРѕРІР°РЅРёРµ',
+            'work_description' => 'Бетонирование',
             'status' => 'approved',
             'work_volumes' => [
                 [
@@ -493,7 +493,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
         $entry = app(ConstructionJournalService::class)->createEntry($journal, [
             'estimate_id' => $estimate->id,
             'entry_date' => '2026-04-29',
-            'work_description' => 'РўРµСЃС‚РѕРІР°СЏ СЂР°Р±РѕС‚Р°',
+            'work_description' => 'Тестовая работа',
             'status' => 'submitted',
             'work_volumes' => [
                 [
@@ -522,7 +522,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
         $entry = app(ConstructionJournalService::class)->createEntry($journal, [
             'estimate_id' => $estimate->id,
             'entry_date' => '2026-04-29',
-            'work_description' => 'РўРµСЃС‚РѕРІР°СЏ СЂР°Р±РѕС‚Р°',
+            'work_description' => 'Тестовая работа',
             'status' => 'submitted',
             'work_volumes' => [
                 [
@@ -557,7 +557,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
             'estimate_id' => $estimate->id,
             'entry_date' => '2026-04-29',
             'entry_number' => 1,
-            'work_description' => 'РўРµСЃС‚РѕРІР°СЏ СЂР°Р±РѕС‚Р°',
+            'work_description' => 'Тестовая работа',
             'status' => 'approved',
             'created_by_user_id' => $user->id,
         ]);
@@ -674,7 +674,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
         $schedule = ProjectSchedule::create([
             'organization_id' => $organization->id,
             'project_id' => $project->id,
-            'name' => 'Р“СЂР°С„РёРє СЂР°Р±РѕС‚',
+            'name' => 'График работ',
             'status' => 'active',
         ]);
 

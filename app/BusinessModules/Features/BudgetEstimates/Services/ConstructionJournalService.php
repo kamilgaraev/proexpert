@@ -498,7 +498,7 @@ class ConstructionJournalService
             ->whereYear('created_at', $year)
             ->count() + 1;
 
-        return "РћР–Р -{$project->id}-{$year}-{$count}";
+        return "ОЖР-{$project->id}-{$year}-{$count}";
     }
 
     protected function assertContractScope(Project $project, ?int $contractId): void

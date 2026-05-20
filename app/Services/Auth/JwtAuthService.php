@@ -28,6 +28,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use App\Mail\UserWelcomeMail;
 
+use function trans_message;
+
 class JwtAuthService
 {
     protected UserRepositoryInterface $userRepository;
@@ -36,7 +38,7 @@ class JwtAuthService
     protected UserAuthSessionService $authSessionService;
 
     /**
-     * РљРѕРЅСЃС‚СЂСѓРєС‚РѕСЂ СЃРµСЂРІРёСЃР° Р°СѓС‚РµРЅС‚РёС„РёРєР°С†РёРё.
+     * Конструктор сервиса аутентификации.
      *
      * @param UserRepositoryInterface $userRepository
      * @param OrganizationRepositoryInterface $organizationRepository
@@ -55,7 +57,7 @@ class JwtAuthService
     }
 
     /**
-     * РђСѓС‚РµРЅС‚РёС„РёРєР°С†РёСЏ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ Рё РїРѕР»СѓС‡РµРЅРёРµ С‚РѕРєРµРЅР° JWT.
+     * Аутентификация пользователя и получение токена JWT.
      *
      * @param LoginDTO $loginDTO
      * @param string $guard
@@ -64,7 +66,7 @@ class JwtAuthService
     public function authenticate(LoginDTO $loginDTO, string $guard): array
     {
         Log::info('[JwtAuthService] authenticate method entered.');
-        // РЈР±РёСЂР°РµРј PerformanceMonitor РІСЂРµРјРµРЅРЅРѕ РґР»СЏ РґРёР°РіРЅРѕСЃС‚РёРєРё
+        // Убираем PerformanceMonitor временно для диагностики
         // return PerformanceMonitor::measure('auth.login', function() use ($loginDTO, $guard) { 
             $logContext = [];
             try {
@@ -115,7 +117,7 @@ class JwtAuthService
                     ]);
                     Log::info('[JwtAuthService] User last login updated.');
 
-                    // Р—Р°РіСЂСѓР¶Р°РµРј РѕС‚РЅРѕС€РµРЅРёСЏ СЃ РЅРѕРІРѕР№ СЃРёСЃС‚РµРјРѕР№ Р°РІС‚РѕСЂРёР·Р°С†РёРё (СЃ fallback)
+                    // Загружаем отношения с новой системой авторизации (с fallback)
                     $assignmentsCount = 0;
                     try {
                         $user->load('roleAssignments');
@@ -129,16 +131,16 @@ class JwtAuthService
                             'user_id' => $user->id,
                             'error' => $e->getMessage()
                         ]);
-                        // РџСЂРѕРґРѕР»Р¶Р°РµРј Р±РµР· РїСЂРѕРІРµСЂРєРё СЂРѕР»РµР№, РїРѕРєР° РЅРµ СЃРѕР·РґР°РЅС‹ С‚Р°Р±Р»РёС†С‹ РЅРѕРІРѕР№ СЃРёСЃС‚РµРјС‹
+                        // Продолжаем без проверки ролей, пока не созданы таблицы новой системы
                     }
                     
-                    // Р•СЃР»Рё РЅР°Р·РЅР°С‡РµРЅРёР№ СЂРѕР»РµР№ РЅРµС‚ РІРѕРѕР±С‰Рµ, РїСЂРѕРІРµСЂСЏРµРј Рё РІРѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј СЂРѕР»СЊ РІР»Р°РґРµР»СЊС†Р°
+                    // Если назначений ролей нет вообще, проверяем и восстанавливаем роль владельца
                     if ($assignmentsCount === 0) {
                         Log::warning('[JwtAuthService] User has no roles, checking organizations.', [
                             'user_id' => $user->id,
                         ]);
                         
-                        // РџСЂРѕРІРµСЂСЏРµРј, РµСЃС‚СЊ Р»Рё Сѓ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ РѕСЂРіР°РЅРёР·Р°С†РёРё
+                        // Проверяем, есть ли у пользователя организации
                         $ownerOrganization = $user->organizations()
                             ->wherePivot('is_owner', true)
                             ->wherePivot('is_active', true)
@@ -150,10 +152,10 @@ class JwtAuthService
                                 'organizations_count' => 1
                             ]);
                             
-                            // Р‘РµСЂРµРј РїРµСЂРІСѓСЋ РѕСЂРіР°РЅРёР·Р°С†РёСЋ Рё РЅР°Р·РЅР°С‡Р°РµРј СЂРѕР»СЊ РІР»Р°РґРµР»СЊС†Р°
+                            // Берем первую организацию и назначаем роль владельца
                             $firstOrg = $ownerOrganization;
                             
-                            // РќР°Р·РЅР°С‡Р°РµРј СЂРѕР»СЊ РІР»Р°РґРµР»СЊС†Р° С‡РµСЂРµР· РЅРѕРІСѓСЋ СЃРёСЃС‚РµРјСѓ Р°РІС‚РѕСЂРёР·Р°С†РёРё
+                            // Назначаем роль владельца через новую систему авторизации
                             try {
                                 $this->userRepository->assignRoleToUser($user->id, 'organization_owner', $firstOrg->id);
                                 Log::info('[JwtAuthService] Fixed: Owner role assigned (new auth system)', [
@@ -167,7 +169,7 @@ class JwtAuthService
                                     'organization_id' => $firstOrg->id,
                                     'error' => $roleException->getMessage()
                                 ]);
-                                // РќРµ РєСЂРёС‚РёС‡РЅР°СЏ РѕС€РёР±РєР° - СЂРѕР»Рё Р±СѓРґСѓС‚ РЅР°Р·РЅР°С‡РµРЅС‹ РїРѕСЃР»Рµ СЃРѕР·РґР°РЅРёСЏ С‚Р°Р±Р»РёС†
+                                // Не критичная ошибка - роли будут назначены после создания таблиц
                             }
                         } else {
                             Log::warning('[JwtAuthService] User has no roles and no owner organization. Role repair skipped.', [
@@ -176,16 +178,16 @@ class JwtAuthService
                         }
                     }
 
-                    // РћРїСЂРµРґРµР»СЏРµРј ID РѕСЂРіР°РЅРёР·Р°С†РёРё (РїРѕРєР° РїСЂРѕСЃС‚Рѕ РїРµСЂРІР°СЏ)
-                    $userOrganizations = $user->organizations()->pluck('organizations.id')->toArray(); // <-- РЈРєР°Р·С‹РІР°РµРј С‚Р°Р±Р»РёС†Сѓ organizations.id
-                    Log::info('[JwtAuthService] User organizations IDs.', ['user_id' => $user->id, 'organization_ids' => $userOrganizations]); // Р›РѕРіРёСЂСѓРµРј РІСЃРµ РѕСЂРіР°РЅРёР·Р°С†РёРё
+                    // Определяем ID организации (пока просто первая)
+                    $userOrganizations = $user->organizations()->pluck('organizations.id')->toArray(); // <-- Указываем таблицу organizations.id
+                    Log::info('[JwtAuthService] User organizations IDs.', ['user_id' => $user->id, 'organization_ids' => $userOrganizations]); // Логируем все организации
                     
-                    // РЇРІРЅРѕ РІС‹Р±РёСЂР°РµРј ID РѕСЂРіР°РЅРёР·Р°С†РёРё РїРµСЂРµРґ first()
-                    $organizationId = $user->organizations()->select('organizations.id')->first()?->id; // <-- РЈРєР°Р·С‹РІР°РµРј С‚Р°Р±Р»РёС†Сѓ Рё РІС‹Р±РёСЂР°РµРј organisations.id
-                    Log::info('[JwtAuthService] Organization ID determined for token (using first).', ['user_id' => $user->id, 'selected_org_id' => $organizationId]); // Р›РѕРіРёСЂСѓРµРј РІС‹Р±СЂР°РЅРЅСѓСЋ
+                    // Явно выбираем ID организации перед first()
+                    $organizationId = $user->organizations()->select('organizations.id')->first()?->id; // <-- Указываем таблицу и выбираем organisations.id
+                    Log::info('[JwtAuthService] Organization ID determined for token (using first).', ['user_id' => $user->id, 'selected_org_id' => $organizationId]); // Логируем выбранную
 
-                    // РЈСЃС‚Р°РЅР°РІР»РёРІР°РµРј current_organization_id РґР»СЏ РѕР±СЉРµРєС‚Р° User, РєРѕС‚РѕСЂС‹Р№ РІРµСЂРЅРµС‚СЃСЏ РІ РєРѕРЅС‚СЂРѕР»Р»РµСЂ
-                    // Р­С‚Рѕ РІР°Р¶РЅРѕ РґР»СЏ РєРѕСЂСЂРµРєС‚РЅРѕР№ СЂР°Р±РѕС‚С‹ Gate РІ РєРѕРЅС‚СЂРѕР»Р»РµСЂРµ
+                    // Устанавливаем current_organization_id для объекта User, который вернется в контроллер
+                    // Это важно для корректной работы Gate в контроллере
                     if ($organizationId && $user->current_organization_id !== $organizationId) {
                          $user->current_organization_id = $organizationId;
                          $user->save();
@@ -195,10 +197,10 @@ class JwtAuthService
                         $user->save();
                          Log::info('[JwtAuthService] User object\'s current_organization_id set (was null).', ['user_id' => $user->id, 'org_id' => $organizationId]);
                     } else {
-                         Log::info('[JwtAuthService] User object\'s current_organization_id not changed.', ['user_id' => $user->id, 'existing_org_id' => $user->current_organization_id, 'determined_org_id' => $organizationId]); // Р›РѕРіРёСЂСѓРµРј, РµСЃР»Рё РЅРµ РјРµРЅСЏР»Рё
+                         Log::info('[JwtAuthService] User object\'s current_organization_id not changed.', ['user_id' => $user->id, 'existing_org_id' => $user->current_organization_id, 'determined_org_id' => $organizationId]); // Логируем, если не меняли
                     }
 
-                    // Р“РµРЅРµСЂРёСЂСѓРµРј С‚РѕРєРµРЅ
+                    // Генерируем токен
                     $customClaims = ['organization_id' => $organizationId];
                     if ((bool) config('auth_tokens.sessions.enabled', true)) {
                         $authSession = $this->authSessionService->createForLogin(
@@ -212,7 +214,7 @@ class JwtAuthService
                     Log::info('[JwtAuthService] JWT token generated.');
 
                     LogService::authLog('login_success', array_merge($logContext, ['user_id' => $user->id, 'organization_id' => $organizationId]));
-                    // Р’РѕР·РІСЂР°С‰Р°РµРј $user СЃ СѓСЃС‚Р°РЅРѕРІР»РµРЅРЅС‹Рј (РЅР°РґРµРµРјСЃСЏ) current_organization_id
+                    // Возвращаем $user с установленным (надеемся) current_organization_id
                     return ['success' => true, 'token' => $token, 'user' => $user, 'status_code' => 200];
 
                 } catch (JWTException $e) {
@@ -232,7 +234,7 @@ class JwtAuthService
                     
                     return [
                         'success' => false,
-                        'message' => 'РћС€РёР±РєР° СЃРѕР·РґР°РЅРёСЏ С‚РѕРєРµРЅР° JWT',
+                        'message' => trans_message('auth.jwt_creation_error'),
                         'status_code' => 500
                     ];
                 }
@@ -248,7 +250,7 @@ class JwtAuthService
                 } catch (\Exception $ex) {
                 }
 
-                // Р—Р°РјРµРЅСЏРµРј LogService::exception РЅР° СЃС‚Р°РЅРґР°СЂС‚РЅС‹Р№ Log::error СЃ РїРѕР»РЅС‹Рј СЃС‚РµРєРѕРј
+                // Заменяем LogService::exception на стандартный Log::error с полным стеком
                 // Log::info('[JwtAuthService] Before calling LogService::exception in outer catch.');
                 // LogService::exception($e, $errorContext); 
                 // Log::info('[JwtAuthService] After calling LogService::exception in outer catch.');
@@ -256,20 +258,20 @@ class JwtAuthService
                     'context' => $errorContext,
                     'exception_class' => get_class($e),
                     'exception_message' => $e->getMessage(),
-                    'exception_trace' => $e->getTraceAsString() // Р›РѕРіРёСЂСѓРµРј РїРѕР»РЅС‹Р№ СЃС‚РµРє
+                    'exception_trace' => $e->getTraceAsString() // Логируем полный стек
                 ]);
 
                 return [
                     'success' => false,
-                    'message' => 'Р’РЅСѓС‚СЂРµРЅРЅСЏСЏ РѕС€РёР±РєР° СЃРµСЂРІРµСЂР° РїСЂРё Р°СѓС‚РµРЅС‚РёС„РёРєР°С†РёРё.',
+                    'message' => trans_message('auth.login_internal_error'),
                     'status_code' => 500
                 ];
             }
-        // }); // РљРѕРЅРµС† PerformanceMonitor
+        // }); // Конец PerformanceMonitor
     }
 
     /**
-     * РџРѕР»СѓС‡РµРЅРёРµ РёРЅС„РѕСЂРјР°С†РёРё Рѕ С‚РµРєСѓС‰РµРј РїРѕР»СЊР·РѕРІР°С‚РµР»Рµ.
+     * Получение информации о текущем пользователе.
      *
      * @param string $guard
      * @return array
@@ -290,12 +292,12 @@ class JwtAuthService
                 
                 return [
                     'success' => false,
-                    'message' => 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ Р°СѓС‚РµРЅС‚РёС„РёС†РёСЂРѕРІР°РЅ',
+                    'message' => trans_message('auth.not_authenticated'),
                     'status_code' => 401
                 ];
             }
 
-            // Р—Р°РіСЂСѓР¶Р°РµРј РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅС‹Рµ РґР°РЅРЅС‹Рµ СЃ РєСЌС€РёСЂРѕРІР°РЅРёРµРј
+            // Загружаем дополнительные данные с кэшированием
             $cacheKey = "user_with_roles_{$user->id}_" . ($user->current_organization_id ?? 'no_org');
             $userWithRoles = cache()->remember($cacheKey, 300, function() use ($user) {
                 return $this->userRepository->findWithRoles($user->id);
@@ -327,7 +329,7 @@ class JwtAuthService
             
             return [
                 'success' => false,
-                'message' => 'РўРѕРєРµРЅ РїСЂРѕСЃСЂРѕС‡РµРЅ',
+                'message' => trans_message('auth.token_expired'),
                 'status_code' => 401
             ];
         } catch (TokenInvalidException $e) {
@@ -339,7 +341,7 @@ class JwtAuthService
             
             return [
                 'success' => false,
-                'message' => 'РќРµРґРµР№СЃС‚РІРёС‚РµР»СЊРЅС‹Р№ С‚РѕРєРµРЅ',
+                'message' => trans_message('auth.token_invalid'),
                 'status_code' => 401
             ];
         } catch (JWTException $e) {
@@ -351,16 +353,16 @@ class JwtAuthService
             
             return [
                 'success' => false,
-                'message' => 'РўРѕРєРµРЅ РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚',
+                'message' => trans_message('auth.token_missing'),
                 'status_code' => 401
             ];
         }
     }
 
     /**
-     * РџРѕР»СѓС‡РµРЅРёРµ ID С‚РµРєСѓС‰РµР№ РѕСЂРіР°РЅРёР·Р°С†РёРё РёР· JWT С‚РѕРєРµРЅР°.
+     * Получение ID текущей организации из JWT токена.
      *
-     * @return int|null ID РѕСЂРіР°РЅРёР·Р°С†РёРё РёР»Рё null, РµСЃР»Рё С‚РѕРєРµРЅ РЅРµ СЃРѕРґРµСЂР¶РёС‚ organization_id.
+     * @return int|null ID организации или null, если токен не содержит organization_id.
      */
     public function sendResetLink(string $email): array
     {
@@ -426,10 +428,10 @@ class JwtAuthService
     {
         try {
             $payload = JWTAuth::parseToken()->getPayload();
-            // РџСЂРµРґРїРѕР»Р°РіР°РµРј, С‡С‚Рѕ ID РѕСЂРіР°РЅРёР·Р°С†РёРё С…СЂР°РЅРёС‚СЃСЏ РІ claim 'organization_id'
+            // Предполагаем, что ID организации хранится в claim 'organization_id'
             return $payload->get('organization_id');
         } catch (JWTException $e) {
-            // РћР±СЂР°Р±РѕС‚РєР° СЃР»СѓС‡Р°РµРІ, РєРѕРіРґР° С‚РѕРєРµРЅ РЅРµРІР°Р»РёРґРµРЅ, РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚ РёР»Рё РЅРµ СЃРѕРґРµСЂР¶РёС‚ РЅСѓР¶РЅРѕРіРѕ claim
+            // Обработка случаев, когда токен невалиден, отсутствует или не содержит нужного claim
             LogService::exception($e, [
                 'action' => 'get_current_organization_id',
                 'ip' => request()->ip()
@@ -439,7 +441,7 @@ class JwtAuthService
     }
 
     /**
-     * РћР±РЅРѕРІР»РµРЅРёРµ С‚РѕРєРµРЅР° JWT.
+     * Обновление токена JWT.
      *
      * @param string $guard
      * @return array
@@ -455,7 +457,7 @@ class JwtAuthService
             ], static fn ($value) => $value !== null);
             $token = auth($guard)->claims($claims)->refresh();
             
-            // РџРѕР»СѓС‡Р°РµРј РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ РїРѕСЃР»Рµ РѕР±РЅРѕРІР»РµРЅРёСЏ С‚РѕРєРµРЅР°
+            // Получаем пользователя после обновления токена
             $user = Auth::user();
             
             LogService::authLog('token_refresh', [
@@ -497,10 +499,10 @@ class JwtAuthService
     }
 
     /**
-     * Р’С‹С…РѕРґ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ (РёРЅРІР°Р»РёРґР°С†РёСЏ С‚РѕРєРµРЅР° JWT).
+     * Выход пользователя (инвалидация токена JWT).
      *
      * @param string $guard
-     * @param bool $logAction Р—Р°РїРёСЃС‹РІР°С‚СЊ Р»Рё СЃС‚Р°РЅРґР°СЂС‚РЅРѕРµ СЃРѕР±С‹С‚РёРµ logout РІ Р»РѕРі
+     * @param bool $logAction Записывать ли стандартное событие logout в лог
      * @return array
      */
     public function logout(string $guard, bool $logAction = true): array
@@ -530,14 +532,14 @@ class JwtAuthService
                 }
 
                 JWTAuth::invalidate($token);
-                Auth::logout(); // true - РѕС‡РёСЃС‚РёС‚СЊ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊСЃРєРёРµ РґР°РЅРЅС‹Рµ
+                Auth::logout(); // true - очистить пользовательские данные
                 
                 if (request()->hasSession()) {
                     request()->session()->invalidate();
                     request()->session()->regenerateToken();
                 }
                 
-                if ($logAction) { // <-- РџСЂРѕРІРµСЂСЏРµРј С„Р»Р°Рі РїРµСЂРµРґ Р»РѕРіРёСЂРѕРІР°РЅРёРµРј
+                if ($logAction) { // <-- Проверяем флаг перед логированием
                     LogService::authLog('logout', [
                         'user_id' => $userId,
                         'guard' => $guard,
@@ -548,14 +550,14 @@ class JwtAuthService
 
                 return [
                     'success' => true,
-                    'message' => 'Р’С‹С…РѕРґ РІС‹РїРѕР»РЅРµРЅ СѓСЃРїРµС€РЅРѕ', // Р­С‚Рѕ СЃРѕРѕР±С‰РµРЅРёРµ РЅРµ Р±СѓРґРµС‚ РІРёРґРЅРѕ РїСЂРё РІС‹Р·РѕРІРµ СЃ Gate::denies
+                    'message' => trans_message('auth.logout_success'),
                     'status_code' => 200
                 ];
             }
             
             return [
                 'success' => false,
-                'message' => 'РўРѕРєРµРЅ РЅРµ РЅР°Р№РґРµРЅ',
+                'message' => trans_message('auth.logout_token_missing'),
                 'status_code' => 401
             ];
             
@@ -569,14 +571,14 @@ class JwtAuthService
             
             return [
                 'success' => false,
-                'message' => 'РћС€РёР±РєР° РїСЂРё РІС‹С…РѕРґРµ: ' . $e->getMessage(),
+                'message' => trans_message('auth.logout_error', ['message' => $e->getMessage()]),
                 'status_code' => 500
             ];
         }
     }
 
     /**
-     * Р РµРіРёСЃС‚СЂР°С†РёСЏ РЅРѕРІРѕРіРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ.
+     * Регистрация нового пользователя.
      *
      * @param RegisterDTO $registerDTO
      * @return array
@@ -587,17 +589,17 @@ class JwtAuthService
             'email' => $registerDTO->email ?? 'N/A'
         ]);
         
-        DB::beginTransaction(); // РСЃРїРѕР»СЊР·СѓРµРј С‚СЂР°РЅР·Р°РєС†РёСЋ
+        DB::beginTransaction(); // Используем транзакцию
         try {
-            // РџРѕР»СѓС‡Р°РµРј РґР°РЅРЅС‹Рµ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
-            $userData = $registerDTO->getUserData(); // РСЃРїРѕР»СЊР·СѓРµРј getUserData()
+            // Получаем данные пользователя
+            $userData = $registerDTO->getUserData(); // Используем getUserData()
             
             Log::info('[JwtAuthService] User data prepared', [
                 'email' => $userData['email'] ?? 'N/A',
                 'name' => $userData['name'] ?? 'N/A'
             ]);
             
-            // РџСЂРѕРІРµСЂСЏРµРј, РЅРµ СЃСѓС‰РµСЃС‚РІСѓРµС‚ Р»Рё СѓР¶Рµ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ СЃ С‚Р°РєРёРј email
+            // Проверяем, не существует ли уже пользователь с таким email
             $existingUser = User::query()
                 ->whereRaw('LOWER(email) = ?', [Str::lower((string) $userData['email'])])
                 ->first();
@@ -606,11 +608,11 @@ class JwtAuthService
                     'email' => $userData['email'],
                     'user_id' => $existingUser->id
                 ]);
-                DB::rollBack(); // РѕС‚РєР°С‚С‹РІР°РµРј С‚СЂР°РЅР·Р°РєС†РёСЋ
-                return ['success' => false, 'message' => 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ СЃ С‚Р°РєРёРј email СѓР¶Рµ СЃСѓС‰РµСЃС‚РІСѓРµС‚', 'status_code' => 422];
+                DB::rollBack(); // откатываем транзакцию
+                return ['success' => false, 'message' => trans_message('auth.registration_user_exists'), 'status_code' => 422];
             }
 
-            // РЎРѕР·РґР°РµРј РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
+            // Создаем пользователя
             try {
                 $user = $this->userRepository->create($userData);
                 Log::info('[JwtAuthService] User created', [
@@ -622,30 +624,30 @@ class JwtAuthService
                     'error' => $e->getMessage(),
                     'trace' => $e->getTraceAsString()
                 ]);
-                throw $e; // РџСЂРѕР±СЂР°СЃС‹РІР°РµРј РёСЃРєР»СЋС‡РµРЅРёРµ РґР»СЏ РѕР±СЂР°Р±РѕС‚РєРё РІРѕ РІРЅРµС€РЅРµРј catch
+                throw $e; // Пробрасываем исключение для обработки во внешнем catch
             }
             
             $organization = null;
 
-            // РЎРѕР·РґР°РµРј РѕСЂРіР°РЅРёР·Р°С†РёСЋ, РµСЃР»Рё РёРјСЏ РїРµСЂРµРґР°РЅРѕ
-            $orgName = $registerDTO->organizationName; // РСЃРїРѕР»СЊР·СѓРµРј РјР°РіРёС‡РµСЃРєРёР№ __get
+            // Создаем организацию, если имя передано
+            $orgName = $registerDTO->organizationName; // Используем магический __get
             Log::info('[JwtAuthService] Organization name from DTO', [
                 'organization_name' => $orgName
             ]);
             
             if (!empty($orgName)) {
-                // РџРѕР»СѓС‡Р°РµРј РґР°РЅРЅС‹Рµ РѕСЂРіР°РЅРёР·Р°С†РёРё РёР· DTO
+                // Получаем данные организации из DTO
                 $orgData = $registerDTO->getOrganizationData();
                 
-                // Р”РѕР±Р°РІР»СЏРµРј owner_id
+                // Добавляем owner_id
                 $orgData['owner_id'] = $user->id;
                 
                 Log::info('[JwtAuthService] Organization data prepared', [
                     'org_name' => $orgData['name'],
                     'owner_id' => $orgData['owner_id'],
-                    'legal_name' => $orgData['legal_name'] ?? 'РЅРµ СѓРєР°Р·Р°РЅРѕ',
-                    'tax_number' => $orgData['tax_number'] ?? 'РЅРµ СѓРєР°Р·Р°РЅРѕ',
-                    'address' => $orgData['address'] ?? 'РЅРµ СѓРєР°Р·Р°РЅРѕ'
+                    'legal_name' => $orgData['legal_name'] ?? 'не указано',
+                    'tax_number' => $orgData['tax_number'] ?? 'не указано',
+                    'address' => $orgData['address'] ?? 'не указано'
                 ]);
                 
                 try {
@@ -662,7 +664,7 @@ class JwtAuthService
                             
                             return [
                                 'success' => false, 
-                                'message' => 'РћСЂРіР°РЅРёР·Р°С†РёСЏ СЃ С‚Р°РєРёРј РРќРќ СѓР¶Рµ Р·Р°СЂРµРіРёСЃС‚СЂРёСЂРѕРІР°РЅР° РІ СЃРёСЃС‚РµРјРµ. Р•СЃР»Рё РІС‹ СЏРІР»СЏРµС‚РµСЃСЊ СЃРѕС‚СЂСѓРґРЅРёРєРѕРј СЌС‚РѕР№ РѕСЂРіР°РЅРёР·Р°С†РёРё, РїРѕРїСЂРѕСЃРёС‚Рµ РІР»Р°РґРµР»СЊС†Р° РґРѕР±Р°РІРёС‚СЊ РІР°СЃ РІ РєРѕРјР°РЅРґСѓ.', 
+                                'message' => trans_message('auth.registration_organization_tax_number_exists'),
                                 'status_code' => 422
                             ];
                         }
@@ -709,7 +711,7 @@ class JwtAuthService
                         
                         return [
                             'success' => false, 
-                            'message' => 'РћСЂРіР°РЅРёР·Р°С†РёСЏ СЃ С‚Р°РєРёРј РРќРќ СѓР¶Рµ Р·Р°СЂРµРіРёСЃС‚СЂРёСЂРѕРІР°РЅР° РІ СЃРёСЃС‚РµРјРµ. Р•СЃР»Рё РІС‹ СЏРІР»СЏРµС‚РµСЃСЊ СЃРѕС‚СЂСѓРґРЅРёРєРѕРј СЌС‚РѕР№ РѕСЂРіР°РЅРёР·Р°С†РёРё, РїРѕРїСЂРѕСЃРёС‚Рµ РІР»Р°РґРµР»СЊС†Р° РґРѕР±Р°РІРёС‚СЊ РІР°СЃ РІ РєРѕРјР°РЅРґСѓ.', 
+                            'message' => trans_message('auth.registration_organization_tax_number_exists'),
                             'status_code' => 422
                         ];
                     }
@@ -728,7 +730,7 @@ class JwtAuthService
                 }
             }
 
-            // Р“РµРЅРµСЂРёСЂСѓРµРј JWT С‚РѕРєРµРЅ РґР»СЏ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
+            // Генерируем JWT токен для пользователя
             $token = null;
             try {
                 if ($organization) {
@@ -761,7 +763,7 @@ class JwtAuthService
                 throw $e;
             }
 
-            // Р¤РёРєСЃРёСЂСѓРµРј С‚СЂР°РЅР·Р°РєС†РёСЋ
+            // Фиксируем транзакцию
             DB::commit();
 
             if ($organization) {
@@ -783,7 +785,7 @@ class JwtAuthService
                 }
             }
 
-            // РђР’РўРћРњРђРўРР§Р•РЎРљРђРЇ Р’Р•Р РР¤РРљРђР¦РРЇ Р РЎРРќРҐР РћРќРР—РђР¦РРЇ (РІРЅРµ С‚СЂР°РЅР·Р°РєС†РёРё)
+            // АВТОМАТИЧЕСКАЯ ВЕРИФИКАЦИЯ И СИНХРОНИЗАЦИЯ (вне транзакции)
             if ($organization && !empty($organization->tax_number)) {
                 try {
                     $autoVerificationService = app(\App\Services\Security\ContractorAutoVerificationService::class);
@@ -797,7 +799,7 @@ class JwtAuthService
                     
                     $syncService = app(\App\Services\Contractor\ContractorSyncService::class);
                     
-                    // РЎРёРЅС…СЂРѕРЅРёР·РёСЂСѓРµРј С‚РѕР»СЊРєРѕ РЅРµ СЃРёРЅС…СЂРѕРЅРёР·РёСЂРѕРІР°РЅРЅС‹С… РїРѕРґСЂСЏРґС‡РёРєРѕРІ
+                    // Синхронизируем только не синхронизированных подрядчиков
                     $unsyncedContractors = $syncService->findContractorsByInn($organization->tax_number, true);
                     
                     if ($unsyncedContractors->isNotEmpty()) {
@@ -811,7 +813,7 @@ class JwtAuthService
                         ]);
                     }
                     
-                    // Р”Р»СЏ СѓРІРµРґРѕРјР»РµРЅРёР№ РёС‰РµРј Р’РЎР•РҐ РїРѕРґСЂСЏРґС‡РёРєРѕРІ СЃ С‚Р°РєРёРј РРќРќ (РІРєР»СЋС‡Р°СЏ СѓР¶Рµ СЃРёРЅС…СЂРѕРЅРёР·РёСЂРѕРІР°РЅРЅС‹С…)
+                    // Для уведомлений ищем ВСЕХ подрядчиков с таким ИНН (включая уже синхронизированных)
                     $allContractorsByInn = $syncService->findContractorsByInn($organization->tax_number, false);
                     
                     Log::info('[JwtAuthService] All contractors search by INN for notifications', [
@@ -844,14 +846,14 @@ class JwtAuthService
                                 $verificationResult
                             );
                             
-                            Log::channel('security')->info('[JwtAuthService] вњ… Customer notifications SUCCESSFULLY sent', [
+                            Log::channel('security')->info('[JwtAuthService] ✅ Customer notifications SUCCESSFULLY sent', [
                                 'organization_id' => $organization->id,
                                 'organization_name' => $organization->name,
                                 'customers_notified' => $allContractorsByInn->count(),
                                 'verification_score' => $verificationResult['verification_score']
                             ]);
                         } catch (\Exception $notifEx) {
-                            Log::channel('security')->critical('[JwtAuthService] вќЊ CRITICAL: Failed to send customer notifications', [
+                            Log::channel('security')->critical('[JwtAuthService] ❌ CRITICAL: Failed to send customer notifications', [
                                 'organization_id' => $organization->id,
                                 'organization_name' => $organization->name,
                                 'tax_number' => $organization->tax_number,
@@ -859,7 +861,7 @@ class JwtAuthService
                                 'error' => $notifEx->getMessage(),
                                 'trace' => $notifEx->getTraceAsString()
                             ]);
-                            // РќР• РїСЂРµСЂС‹РІР°РµРј СЂРµРіРёСЃС‚СЂР°С†РёСЋ, РЅРѕ Р·Р°РїРёСЃС‹РІР°РµРј РєСЂРёС‚РёС‡РµСЃРєСѓСЋ РѕС€РёР±РєСѓ
+                            // НЕ прерываем регистрацию, но записываем критическую ошибку
                         }
                     } else {
                         Log::info('[JwtAuthService] No existing contractors found for INN (no notifications to send)', [
@@ -874,11 +876,11 @@ class JwtAuthService
                         'error' => $syncException->getMessage(),
                         'trace' => $syncException->getTraceAsString()
                     ]);
-                    // РќРµ РїСЂРµСЂС‹РІР°РµРј СЂРµРіРёСЃС‚СЂР°С†РёСЋ - РІРµСЂРёС„РёРєР°С†РёСЏ РЅРµ РєСЂРёС‚РёС‡РЅР°
+                    // Не прерываем регистрацию - верификация не критична
                 }
             }
 
-            // РћС‚РїСЂР°РІР»СЏРµРј РїРёСЃСЊРјРѕ РґР»СЏ РІРµСЂРёС„РёРєР°С†РёРё email
+            // Отправляем письмо для верификации email
             try {
                 if ($verificationFrontendUrl) {
                     $user->sendFrontendEmailVerificationNotification($verificationFrontendUrl);
@@ -896,7 +898,7 @@ class JwtAuthService
                 ]);
             }
 
-            // Р’РµСЂРёС„РёС†РёСЂСѓРµРј, С‡С‚Рѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ РґРµР№СЃС‚РІРёС‚РµР»СЊРЅРѕ СЃРѕС…СЂР°РЅРµРЅ
+            // Верифицируем, что пользователь действительно сохранен
             $checkUser = $this->userRepository->findByEmail($userData['email']);
             if (!$checkUser) {
                 Log::critical('[JwtAuthService] User not found after successful registration!', [
@@ -924,7 +926,7 @@ class JwtAuthService
             ];
 
         } catch (\Exception $e) {
-            DB::rollBack(); // РћС‚РєР°С‚С‹РІР°РµРј С‚СЂР°РЅР·Р°РєС†РёСЋ
+            DB::rollBack(); // Откатываем транзакцию
             Log::error('[JwtAuthService] Register exception', [
                 'error' => $e->getMessage(),
                 'type' => get_class($e),
@@ -941,14 +943,14 @@ class JwtAuthService
             
             return [
                 'success' => false, 
-                'message' => 'РћС€РёР±РєР° РїСЂРё СЂРµРіРёСЃС‚СЂР°С†РёРё РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ: ' . $e->getMessage(), 
+                'message' => trans_message('auth.registration_error', ['message' => $e->getMessage()]),
                 'status_code' => 500
             ];
         }
     }
 
     /**
-     * Р’С‹РґР°С‡Р° С‚РµСЃС‚РѕРІРѕРіРѕ Р±Р°Р»Р°РЅСЃР° РїСЂРё СЂРµРіРёСЃС‚СЂР°С†РёРё (РµСЃР»Рё РІРєР»СЋС‡РµРЅ С‚РµСЃС‚РѕРІС‹Р№ СЂРµР¶РёРј)
+     * Выдача тестового баланса при регистрации (если включен тестовый режим)
      * 
      * @param \App\Models\Organization $organization
      * @param User $user
@@ -956,7 +958,7 @@ class JwtAuthService
      */
     protected function grantTestingBalanceIfEnabled(\App\Models\Organization $organization, User $user): void
     {
-        // РџСЂРѕРІРµСЂСЏРµРј, РІРєР»СЋС‡РµРЅ Р»Рё С‚РµСЃС‚РѕРІС‹Р№ СЂРµР¶РёРј
+        // Проверяем, включен ли тестовый режим
         if (!config('billing.testing.enabled', false)) {
             Log::debug('[JwtAuthService] Testing mode is disabled, skipping initial balance grant', [
                 'organization_id' => $organization->id,
@@ -966,7 +968,7 @@ class JwtAuthService
 
         try {
             $initialBalance = config('billing.testing.initial_balance', 0);
-            $description = config('billing.testing.description', 'РўРµСЃС‚РѕРІС‹Р№ Р±Р°Р»Р°РЅСЃ РїСЂРё СЂРµРіРёСЃС‚СЂР°С†РёРё');
+            $description = config('billing.testing.description', trans_message('auth.testing_balance_description'));
             $meta = array_merge(
                 config('billing.testing.meta', []),
                 [
@@ -984,12 +986,12 @@ class JwtAuthService
                 return;
             }
 
-            // Р’С‹РґР°РµРј Р±Р°Р»Р°РЅСЃ С‡РµСЂРµР· BalanceService
+            // Выдаем баланс через BalanceService
             $orgBalance = $this->balanceService->creditBalance(
                 $organization,
                 $initialBalance,
                 $description,
-                null, // payment = null (СЌС‚Рѕ РЅРµ РїРѕРїРѕР»РЅРµРЅРёРµ С‡РµСЂРµР· РїР»Р°С‚РµР¶)
+                null, // payment = null (это не пополнение через платеж)
                 $meta
             );
 
@@ -1006,14 +1008,14 @@ class JwtAuthService
                 'environment' => app()->environment(),
             ]);
 
-            Log::info('[JwtAuthService] вњ… Testing balance granted successfully', [
+            Log::info('[JwtAuthService] ✅ Testing balance granted successfully', [
                 'organization_id' => $organization->id,
                 'amount_rubles' => round($initialBalance / 100, 2),
                 'balance_after_rubles' => round($orgBalance->balance / 100, 2),
             ]);
 
         } catch (\Exception $e) {
-            // РќРµ РїСЂРµСЂС‹РІР°РµРј СЂРµРіРёСЃС‚СЂР°С†РёСЋ, РµСЃР»Рё РЅРµ СѓРґР°Р»РѕСЃСЊ РІС‹РґР°С‚СЊ С‚РµСЃС‚РѕРІС‹Р№ Р±Р°Р»Р°РЅСЃ
+            // Не прерываем регистрацию, если не удалось выдать тестовый баланс
             Log::error('[JwtAuthService] Failed to grant testing balance', [
                 'organization_id' => $organization->id,
                 'user_id' => $user->id,

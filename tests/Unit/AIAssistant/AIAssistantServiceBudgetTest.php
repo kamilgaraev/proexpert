@@ -423,7 +423,7 @@ class AIAssistantServiceBudgetTest extends TestCase
 
         $this->assertStringContainsString('Опирайся только на подтвержденные данные', $context);
         $this->assertSame(1, substr_count($context, '=== STRUCTURED WORKSPACE CONTEXT ==='));
-        $this->assertStringNotContainsString('Рџ', $context);
+        $this->assertStringNotContainsString("\u{0420}\u{045F}", $context);
     }
 
     private function makeService(AIToolRegistry $toolRegistry): TestableAIAssistantService

@@ -10,4 +10,6 @@ return [
     'unauthorized' => 'Пользователь не авторизован.',
     'invalid_organization_context' => 'Контекст организации не определен.',
     'invalid_custom_roles' => 'Одна или несколько ролей недоступны для текущей организации.',
+    'system_role_missing' => 'Системная роль ":role" не существует.',
+    'custom_role_missing' => 'Кастомная роль ":role" не существует.',
 ];

@@ -36,5 +36,17 @@ return [
         'delete_error' => 'Не удалось удалить отчет.',
         'report_not_found' => 'Отчет не найден.',
         'organization_missing' => 'Организация не выбрана.',
+        'schedule' => [
+            'task_overdue_title' => 'Задача графика просрочена',
+            'task_overdue_text' => 'Задача графика ":name" не закрыта в плановый срок.',
+            'task_label' => 'Задача графика #:id',
+            'task_next_action' => 'Обновить график, ответственного и следующий контрольный срок.',
+            'task_primary_action' => 'Открыть задачу',
+            'constraint_overdue_title' => 'Просрочено ограничение готовности',
+            'constraint_overdue_text' => 'Ограничение ":name" просрочено и блокирует план ближайших работ.',
+            'constraint_label' => 'Ограничение #:id',
+            'constraint_next_action' => 'Снять блокирующее ограничение или зафиксировать управленческое решение в lookahead-плане.',
+            'constraint_primary_action' => 'Открыть lookahead',
+        ],
     ],
 ];

@@ -460,8 +460,8 @@ class ActReportsPreviewTest extends TestCase
         $this->assertStringContainsString('0322001', $ks3);
         $this->assertStringContainsString('О приемке выполненных работ', $ks2);
         $this->assertStringContainsString('О стоимости выполненных работ и затрат', $ks3);
-        $this->assertStringNotContainsString('Рљ', $ks2);
-        $this->assertStringNotContainsString('Рљ', $ks3);
+        $this->assertStringNotContainsString("\u{0420}\u{0459}", $ks2);
+        $this->assertStringNotContainsString("\u{0420}\u{0459}", $ks3);
     }
 
     public function test_ks6_and_ks6a_pdf_views_render_official_landscape_layout(): void
@@ -570,8 +570,8 @@ class ActReportsPreviewTest extends TestCase
         $this->assertStringContainsString('ОБЩИЙ ЖУРНАЛ РАБОТ', $ks6);
         $this->assertStringContainsString('Журнал учета выполненных работ', $ks6a);
         $this->assertStringContainsString('Кладка стен из легкобетонных камней', $ks6a);
-        $this->assertStringNotContainsString('Рљ', $ks6);
-        $this->assertStringNotContainsString('Рљ', $ks6a);
+        $this->assertStringNotContainsString("\u{0420}\u{0459}", $ks6);
+        $this->assertStringNotContainsString("\u{0420}\u{0459}", $ks6a);
     }
 
     public function test_recalculate_repairs_existing_act_amount_to_include_estimate_vat(): void
