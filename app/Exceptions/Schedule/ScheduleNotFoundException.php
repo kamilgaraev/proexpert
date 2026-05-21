@@ -2,15 +2,16 @@
 
 namespace App\Exceptions\Schedule;
 
+use App\Http\Responses\AdminResponse;
 use Exception;
 
 class ScheduleNotFoundException extends Exception
 {
     protected ?int $scheduleId = null;
 
-    public function __construct(?int $scheduleId = null, string $message = 'График не найден', int $code = 404, ?\Throwable $previous = null)
+    public function __construct(?int $scheduleId = null, ?string $message = null, int $code = 404, ?\Throwable $previous = null)
     {
-        parent::__construct($message, $code, $previous);
+        parent::__construct($message ?? trans_message('schedule_management.schedule_not_found'), $code, $previous);
         $this->scheduleId = $scheduleId;
     }
 
@@ -22,10 +23,9 @@ class ScheduleNotFoundException extends Exception
     public function render($request)
     {
         if ($request->expectsJson()) {
-            return response()->json([
-                'message' => $this->getMessage(),
+            return AdminResponse::error($this->getMessage(), $this->getCode(), null, [
                 'schedule_id' => $this->scheduleId,
-            ], $this->code);
+            ]);
         }
 
         return redirect()->back()->withErrors(['error' => $this->getMessage()]);

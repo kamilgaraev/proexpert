@@ -2,16 +2,16 @@
 
 namespace App\Exceptions\Schedule;
 
+use App\Http\Responses\AdminResponse;
 use Exception;
-use Illuminate\Support\Collection;
 
 class CircularDependencyException extends Exception
 {
     protected array $cycleTasks = [];
 
-    public function __construct(string $message = 'Обнаружены циклические зависимости в графике', array $cycleTasks = [], int $code = 422, ?\Throwable $previous = null)
+    public function __construct(?string $message = null, array $cycleTasks = [], int $code = 422, ?\Throwable $previous = null)
     {
-        parent::__construct($message, $code, $previous);
+        parent::__construct($message ?? trans_message('schedule_management.validation_error'), $code, $previous);
         $this->cycleTasks = $cycleTasks;
     }
 
@@ -29,10 +29,9 @@ class CircularDependencyException extends Exception
     public function render($request)
     {
         if ($request->expectsJson()) {
-            return response()->json([
-                'message' => $this->getMessage(),
+            return AdminResponse::error($this->getMessage(), $this->getCode(), null, [
                 'cycle_tasks' => $this->cycleTasks,
-            ], $this->code);
+            ]);
         }
 
         return redirect()->back()->withErrors(['error' => $this->getMessage()]);

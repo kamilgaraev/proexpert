@@ -2,16 +2,16 @@
 
 namespace App\Exceptions\Schedule;
 
+use App\Http\Responses\AdminResponse;
 use Exception;
-use Illuminate\Support\Facades\Validator;
 
 class ScheduleValidationException extends Exception
 {
     protected array $errors = [];
 
-    public function __construct(string $message = 'Ошибка валидации графика', array $errors = [], int $code = 422, ?\Throwable $previous = null)
+    public function __construct(?string $message = null, array $errors = [], int $code = 422, ?\Throwable $previous = null)
     {
-        parent::__construct($message, $code, $previous);
+        parent::__construct($message ?? trans_message('schedule_management.validation_error'), $code, $previous);
         $this->errors = $errors;
     }
 
@@ -29,10 +29,7 @@ class ScheduleValidationException extends Exception
     public function render($request)
     {
         if ($request->expectsJson()) {
-            return response()->json([
-                'message' => $this->getMessage(),
-                'errors' => $this->errors,
-            ], $this->code);
+            return AdminResponse::error($this->getMessage(), $this->getCode(), $this->errors);
         }
 
         return redirect()->back()->withErrors($this->errors)->withInput();

@@ -2,15 +2,16 @@
 
 namespace App\Exceptions\Schedule;
 
+use App\Http\Responses\AdminResponse;
 use Exception;
 
 class ResourceConflictException extends Exception
 {
     protected array $conflictDetails = [];
 
-    public function __construct(string $message = 'Обнаружены конфликты ресурсов', array $conflictDetails = [], int $code = 409, ?\Throwable $previous = null)
+    public function __construct(?string $message = null, array $conflictDetails = [], int $code = 409, ?\Throwable $previous = null)
     {
-        parent::__construct($message, $code, $previous);
+        parent::__construct($message ?? trans_message('schedule_management.resource_conflicts_found'), $code, $previous);
         $this->conflictDetails = $conflictDetails;
     }
 
@@ -28,10 +29,9 @@ class ResourceConflictException extends Exception
     public function render($request)
     {
         if ($request->expectsJson()) {
-            return response()->json([
-                'message' => $this->getMessage(),
+            return AdminResponse::error($this->getMessage(), $this->getCode(), null, [
                 'conflicts' => $this->conflictDetails,
-            ], $this->code);
+            ]);
         }
 
         return redirect()->back()->with('error', $this->getMessage());
