@@ -185,6 +185,24 @@ class ProjectController extends Controller
         }
     }
 
+    public function dashboard(Request $request, int $id): JsonResponse
+    {
+        try {
+            $dashboard = $this->projectService->getProjectDashboard($id, $request);
+            return AdminResponse::success($dashboard);
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('Error in ProjectController@dashboard', [
+                'id' => $id,
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return AdminResponse::error(trans_message('project.dashboard_error'), 500);
+        }
+    }
+
     public function getProjectMaterials(int $id, Request $request): JsonResponse
     {
         try {

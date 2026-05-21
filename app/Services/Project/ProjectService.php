@@ -20,6 +20,7 @@ use App\Events\ProjectOrganizationAdded;
 use App\Events\ProjectOrganizationRoleChanged;
 use App\Events\ProjectOrganizationRemoved;
 use App\Events\ProjectCreated;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Database\Eloquent\Collection;
 use App\Exceptions\BusinessLogicException;
@@ -895,6 +896,466 @@ class ProjectService
             ]);
             throw new BusinessLogicException(trans_message('project.work_types_fetch_error'), 500);
         }
+    }
+
+    public function getProjectDashboard(int $projectId, Request $request): array
+    {
+        $project = $this->findProjectByIdForCurrentOrg($projectId, $request);
+        if (!$project) {
+            throw new BusinessLogicException(trans_message('project.not_found_or_access_denied'), 404);
+        }
+
+        try {
+            $statistics = $this->getProjectStatistics($projectId);
+            $workTypes = collect($this->getProjectWorkTypes($projectId, 8, null, 'total_cost', 'desc')['data'] ?? [])
+                ->map(fn (mixed $item): array => $this->normalizeProjectDashboardWorkStage($item))
+                ->values()
+                ->all();
+            $materials = collect($this->getProjectMaterials($projectId, 8, null, 'allocated_quantity', 'desc')['data'] ?? [])
+                ->map(fn (mixed $item): array => $this->normalizeProjectDashboardMaterial($item))
+                ->values()
+                ->all();
+            $schedule = $this->buildProjectDashboardSchedule($projectId);
+            $payments = $this->buildProjectDashboardPayments($projectId);
+            $overview = $this->buildProjectDashboardOverview($project, $statistics, $workTypes, $schedule, $payments);
+
+            return [
+                'project_id' => $projectId,
+                'generated_at' => now()->toISOString(),
+                'overview' => $overview,
+                'finance' => [
+                    'total_budget' => $overview['total_budget'],
+                    'spent_budget' => $overview['spent_budget'],
+                    'remaining_budget' => $overview['remaining_budget'],
+                    'budget_usage_percentage' => $overview['budget_usage_percentage'],
+                    'cost_breakdown' => [
+                        'works' => $this->toFloat($statistics['works']['total_work_cost'] ?? 0),
+                        'materials' => $this->toFloat($statistics['materials']['total_used_value'] ?? 0),
+                        'paid' => $payments['paid_amount'],
+                        'outgoing_due' => $payments['outgoing_remaining_amount'],
+                    ],
+                ],
+                'payments' => $payments,
+                'schedule' => $schedule,
+                'work_stages' => $workTypes,
+                'material_slices' => $materials,
+                'risks' => $this->buildProjectDashboardRisks($overview, $schedule, $payments, $materials),
+            ];
+        } catch (BusinessLogicException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            Log::error('Error getting project dashboard', [
+                'project_id' => $projectId,
+                'error' => $e->getMessage(),
+            ]);
+            throw new BusinessLogicException(trans_message('project.dashboard_fetch_error'), 500);
+        }
+    }
+
+    private function buildProjectDashboardOverview(
+        Project $project,
+        array $statistics,
+        array $workTypes,
+        array $schedule,
+        array $payments
+    ): array {
+        $totalBudget = $this->toFloat($project->budget_amount);
+        $worksCost = $this->toFloat($statistics['works']['total_work_cost'] ?? 0);
+        $materialsCost = $this->toFloat($statistics['materials']['total_used_value'] ?? 0);
+        $spentBudget = max($worksCost + $materialsCost, $payments['paid_amount']);
+        $remainingBudget = $totalBudget > 0 ? $totalBudget - $spentBudget : 0.0;
+        $budgetUsage = $totalBudget > 0 ? round(($spentBudget / $totalBudget) * 100, 2) : 0.0;
+        $completion = $schedule['active_schedule']['progress_percentage'] ?? $this->calculateProjectDashboardWorkCompletion($workTypes);
+        $calendar = $this->calculateProjectDashboardCalendarProgress($project->start_date, $project->end_date);
+
+        return [
+            'status' => $project->status,
+            'total_budget' => round($totalBudget, 2),
+            'spent_budget' => round($spentBudget, 2),
+            'remaining_budget' => round($remainingBudget, 2),
+            'budget_usage_percentage' => $budgetUsage,
+            'completion_percentage' => round($completion, 2),
+            'calendar_progress_percentage' => $calendar['progress_percentage'],
+            'days_remaining' => $calendar['days_remaining'],
+            'is_overdue' => $calendar['is_overdue'] && $project->status !== 'completed',
+            'start_date' => $project->start_date?->toDateString(),
+            'end_date' => $project->end_date?->toDateString(),
+            'team_members_count' => (int) ($statistics['team']['assigned_users_count'] ?? 0),
+        ];
+    }
+
+    private function buildProjectDashboardPayments(int $projectId): array
+    {
+        $documents = DB::table('payment_documents')
+            ->where('project_id', $projectId)
+            ->whereNull('deleted_at')
+            ->select([
+                'id',
+                'document_number',
+                'amount',
+                'paid_amount',
+                'remaining_amount',
+                'status',
+                'direction',
+                'due_date',
+                'scheduled_at',
+                'paid_at',
+            ])
+            ->get();
+
+        $activeStatuses = ['submitted', 'pending_approval', 'approved', 'scheduled', 'partially_paid'];
+        $today = now()->startOfDay();
+        $dueLimit = now()->startOfDay()->addDays(14);
+
+        $normalized = $documents->map(function (object $document) use ($activeStatuses, $today, $dueLimit): array {
+            $amount = $this->toFloat($document->amount ?? 0);
+            $paidAmount = $this->toFloat($document->paid_amount ?? 0);
+            $remainingAmount = $this->toFloat($document->remaining_amount ?? max($amount - $paidAmount, 0));
+            $status = (string) ($document->status ?? 'draft');
+            $dueDate = $document->due_date ? Carbon::parse($document->due_date)->startOfDay() : null;
+            $isActive = in_array($status, $activeStatuses, true);
+
+            return [
+                'id' => (int) $document->id,
+                'document_number' => $document->document_number,
+                'amount' => round($amount, 2),
+                'paid_amount' => round($paidAmount, 2),
+                'remaining_amount' => round($remainingAmount, 2),
+                'status' => $status,
+                'direction' => $document->direction,
+                'due_date' => $document->due_date,
+                'scheduled_at' => $document->scheduled_at,
+                'paid_at' => $document->paid_at,
+                'is_active' => $isActive,
+                'is_overdue' => $isActive && $remainingAmount > 0 && $dueDate !== null && $dueDate->lt($today),
+                'is_due_soon' => $isActive && $remainingAmount > 0 && $dueDate !== null && $dueDate->betweenIncluded($today, $dueLimit),
+            ];
+        });
+
+        $payable = $normalized->filter(fn (array $document): bool => $document['is_active'] && $document['remaining_amount'] > 0);
+        $outgoing = $payable->filter(fn (array $document): bool => $document['direction'] === 'outgoing');
+        $incoming = $payable->filter(fn (array $document): bool => $document['direction'] === 'incoming');
+        $overdue = $payable->filter(fn (array $document): bool => $document['is_overdue']);
+        $dueSoon = $payable->filter(fn (array $document): bool => $document['is_due_soon']);
+
+        return [
+            'documents_count' => $normalized->count(),
+            'total_amount' => round($normalized->sum('amount'), 2),
+            'paid_amount' => round($normalized->sum('paid_amount'), 2),
+            'remaining_amount' => round($payable->sum('remaining_amount'), 2),
+            'outgoing_remaining_amount' => round($outgoing->sum('remaining_amount'), 2),
+            'incoming_remaining_amount' => round($incoming->sum('remaining_amount'), 2),
+            'overdue_amount' => round($overdue->sum('remaining_amount'), 2),
+            'overdue_count' => $overdue->count(),
+            'due_soon_amount' => round($dueSoon->sum('remaining_amount'), 2),
+            'due_soon_count' => $dueSoon->count(),
+            'status_breakdown' => $normalized
+                ->groupBy('status')
+                ->map(fn ($items, string $status): array => [
+                    'status' => $status,
+                    'count' => $items->count(),
+                    'amount' => round($items->sum('amount'), 2),
+                    'remaining_amount' => round($items->sum('remaining_amount'), 2),
+                ])
+                ->values()
+                ->all(),
+            'upcoming' => $payable
+                ->filter(fn (array $document): bool => !empty($document['due_date']))
+                ->sortBy('due_date')
+                ->take(6)
+                ->values()
+                ->all(),
+        ];
+    }
+
+    private function buildProjectDashboardSchedule(int $projectId): array
+    {
+        $schedule = DB::table('project_schedules')
+            ->where('project_id', $projectId)
+            ->whereNull('deleted_at')
+            ->orderByRaw("CASE status WHEN 'active' THEN 0 WHEN 'draft' THEN 1 WHEN 'paused' THEN 2 ELSE 3 END")
+            ->orderByDesc('updated_at')
+            ->first([
+                'id',
+                'name',
+                'status',
+                'planned_start_date',
+                'planned_end_date',
+                'overall_progress_percent',
+                'total_estimated_cost',
+                'total_actual_cost',
+                'critical_path_calculated',
+                'critical_path_duration_days',
+            ]);
+
+        if (!$schedule) {
+            return [
+                'active_schedule' => null,
+                'tasks' => [],
+                'tasks_count' => 0,
+                'completed_tasks_count' => 0,
+                'critical_tasks_count' => 0,
+                'overdue_tasks_count' => 0,
+            ];
+        }
+
+        $counts = DB::table('schedule_tasks')
+            ->where('schedule_id', $schedule->id)
+            ->whereNull('deleted_at')
+            ->selectRaw('COUNT(*) as tasks_count')
+            ->selectRaw("SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_tasks_count")
+            ->selectRaw("SUM(CASE WHEN COALESCE(is_critical, false) = true THEN 1 ELSE 0 END) as critical_tasks_count")
+            ->selectRaw("SUM(CASE WHEN planned_end_date < CURRENT_DATE AND status NOT IN ('completed', 'cancelled') THEN 1 ELSE 0 END) as overdue_tasks_count")
+            ->first();
+
+        $tasks = DB::table('schedule_tasks as st')
+            ->leftJoin('work_types as wt', 'wt.id', '=', 'st.work_type_id')
+            ->where('st.schedule_id', $schedule->id)
+            ->whereNull('st.deleted_at')
+            ->whereNotNull('st.planned_start_date')
+            ->whereNotNull('st.planned_end_date')
+            ->orderByRaw('COALESCE(st.is_critical, false) DESC')
+            ->orderBy('st.planned_start_date')
+            ->limit(8)
+            ->get([
+                'st.id',
+                'st.name',
+                'st.status',
+                'st.planned_start_date',
+                'st.planned_end_date',
+                'st.progress_percent',
+                'st.estimated_cost',
+                'st.actual_cost',
+                'st.is_critical',
+                'wt.name as work_type_name',
+            ])
+            ->map(fn (object $task): array => [
+                'id' => (int) $task->id,
+                'name' => $task->name,
+                'work_type_name' => $task->work_type_name,
+                'status' => $task->status,
+                'start_date' => $task->planned_start_date,
+                'end_date' => $task->planned_end_date,
+                'progress_percentage' => round($this->toFloat($task->progress_percent), 2),
+                'estimated_cost' => round($this->toFloat($task->estimated_cost), 2),
+                'actual_cost' => round($this->toFloat($task->actual_cost), 2),
+                'is_critical' => (bool) $task->is_critical,
+            ])
+            ->values()
+            ->all();
+
+        return [
+            'active_schedule' => [
+                'id' => (int) $schedule->id,
+                'name' => $schedule->name,
+                'status' => $schedule->status,
+                'planned_start_date' => $schedule->planned_start_date,
+                'planned_end_date' => $schedule->planned_end_date,
+                'progress_percentage' => round($this->toFloat($schedule->overall_progress_percent), 2),
+                'estimated_cost' => round($this->toFloat($schedule->total_estimated_cost), 2),
+                'actual_cost' => round($this->toFloat($schedule->total_actual_cost), 2),
+                'critical_path_calculated' => (bool) $schedule->critical_path_calculated,
+                'critical_path_duration_days' => $schedule->critical_path_duration_days !== null ? (int) $schedule->critical_path_duration_days : null,
+            ],
+            'tasks' => $tasks,
+            'tasks_count' => (int) ($counts->tasks_count ?? 0),
+            'completed_tasks_count' => (int) ($counts->completed_tasks_count ?? 0),
+            'critical_tasks_count' => (int) ($counts->critical_tasks_count ?? 0),
+            'overdue_tasks_count' => (int) ($counts->overdue_tasks_count ?? 0),
+        ];
+    }
+
+    private function buildProjectDashboardRisks(array $overview, array $schedule, array $payments, array $materials): array
+    {
+        $risks = [];
+
+        if ($overview['is_overdue'] || $schedule['overdue_tasks_count'] > 0) {
+            $risks[] = [
+                'key' => 'schedule_overdue',
+                'category' => 'schedule',
+                'tone' => 'error',
+                'value' => $schedule['overdue_tasks_count'],
+                'metric' => 'tasks',
+            ];
+        } elseif ($overview['days_remaining'] !== null && $overview['days_remaining'] <= 30) {
+            $risks[] = [
+                'key' => 'schedule_due_soon',
+                'category' => 'schedule',
+                'tone' => 'warning',
+                'value' => $overview['days_remaining'],
+                'metric' => 'days',
+            ];
+        }
+
+        if ($overview['total_budget'] > 0 && $overview['spent_budget'] > $overview['total_budget']) {
+            $risks[] = [
+                'key' => 'budget_overrun',
+                'category' => 'finance',
+                'tone' => 'error',
+                'value' => round($overview['spent_budget'] - $overview['total_budget'], 2),
+                'metric' => 'amount',
+            ];
+        } elseif ($overview['budget_usage_percentage'] >= 90) {
+            $risks[] = [
+                'key' => 'budget_limit_close',
+                'category' => 'finance',
+                'tone' => 'warning',
+                'value' => $overview['budget_usage_percentage'],
+                'metric' => 'percent',
+            ];
+        }
+
+        if ($payments['overdue_count'] > 0) {
+            $risks[] = [
+                'key' => 'payments_overdue',
+                'category' => 'payments',
+                'tone' => 'error',
+                'value' => $payments['overdue_amount'],
+                'metric' => 'amount',
+            ];
+        } elseif ($payments['due_soon_count'] > 0) {
+            $risks[] = [
+                'key' => 'payments_due_soon',
+                'category' => 'payments',
+                'tone' => 'warning',
+                'value' => $payments['due_soon_amount'],
+                'metric' => 'amount',
+            ];
+        }
+
+        $materialWarnings = collect($materials)->filter(fn (array $material): bool => (bool) ($material['has_warning'] ?? false))->count();
+        if ($materialWarnings > 0) {
+            $risks[] = [
+                'key' => 'materials_missing_stock',
+                'category' => 'materials',
+                'tone' => 'warning',
+                'value' => $materialWarnings,
+                'metric' => 'items',
+            ];
+        }
+
+        if ($overview['completion_percentage'] + 15 < $overview['calendar_progress_percentage']) {
+            $risks[] = [
+                'key' => 'production_lag',
+                'category' => 'works',
+                'tone' => 'warning',
+                'value' => round($overview['calendar_progress_percentage'] - $overview['completion_percentage'], 2),
+                'metric' => 'percent',
+            ];
+        }
+
+        if ($risks === []) {
+            $risks[] = [
+                'key' => 'stable',
+                'category' => 'project',
+                'tone' => 'success',
+                'value' => 0,
+                'metric' => 'none',
+            ];
+        }
+
+        return $risks;
+    }
+
+    private function normalizeProjectDashboardWorkStage(mixed $item): array
+    {
+        $row = (array) $item;
+
+        return [
+            'id' => (int) ($row['work_type_id'] ?? 0),
+            'name' => $row['work_type_name'] ?? null,
+            'unit' => $row['unit'] ?? null,
+            'planned_quantity' => round($this->toFloat($row['planned_quantity'] ?? 0), 4),
+            'completed_quantity' => round($this->toFloat($row['completed_quantity'] ?? 0), 4),
+            'completion_percentage' => round($this->toFloat($row['completion_percentage'] ?? 0), 2),
+            'works_count' => (int) ($row['works_count'] ?? 0),
+            'total_cost' => round($this->toFloat($row['total_cost'] ?? 0), 2),
+            'average_unit_price' => round($this->toFloat($row['average_unit_price'] ?? 0), 2),
+            'last_completion_date' => $row['last_completion_date'] ?? null,
+            'workers_count' => (int) ($row['workers_count'] ?? 0),
+        ];
+    }
+
+    private function normalizeProjectDashboardMaterial(mixed $item): array
+    {
+        $row = (array) $item;
+
+        return [
+            'id' => (int) ($row['allocation_id'] ?? 0),
+            'material_id' => (int) ($row['material_id'] ?? 0),
+            'name' => $row['material_name'] ?? null,
+            'code' => $row['material_code'] ?? null,
+            'unit' => $row['unit'] ?? null,
+            'warehouse_name' => $row['warehouse_name'] ?? null,
+            'allocated_quantity' => round($this->toFloat($row['allocated_quantity'] ?? 0), 4),
+            'available_quantity' => round($this->toFloat($row['warehouse_available_total'] ?? 0), 4),
+            'average_price' => round($this->toFloat($row['average_price'] ?? 0), 2),
+            'allocated_value' => round($this->toFloat($row['allocated_value'] ?? 0), 2),
+            'last_operation_date' => $row['last_operation_date'] ?? null,
+            'has_warning' => (bool) ($row['has_warning'] ?? false),
+        ];
+    }
+
+    private function calculateProjectDashboardWorkCompletion(array $workTypes): float
+    {
+        $planned = collect($workTypes)->sum('planned_quantity');
+        $completed = collect($workTypes)->sum('completed_quantity');
+
+        if ($planned > 0) {
+            return min(round(($completed / $planned) * 100, 2), 100.0);
+        }
+
+        $percentages = collect($workTypes)
+            ->pluck('completion_percentage')
+            ->filter(fn (mixed $value): bool => $this->toFloat($value) > 0);
+
+        return $percentages->count() > 0 ? round($percentages->avg(), 2) : 0.0;
+    }
+
+    private function calculateProjectDashboardCalendarProgress(mixed $startDate, mixed $endDate): array
+    {
+        if (!$startDate || !$endDate) {
+            return [
+                'progress_percentage' => 0.0,
+                'days_remaining' => null,
+                'is_overdue' => false,
+            ];
+        }
+
+        $start = $startDate instanceof Carbon ? $startDate->copy()->startOfDay() : Carbon::parse($startDate)->startOfDay();
+        $end = $endDate instanceof Carbon ? $endDate->copy()->startOfDay() : Carbon::parse($endDate)->startOfDay();
+        $today = now()->startOfDay();
+
+        if ($end->lessThanOrEqualTo($start)) {
+            return [
+                'progress_percentage' => 0.0,
+                'days_remaining' => $today->diffInDays($end, false),
+                'is_overdue' => $today->gt($end),
+            ];
+        }
+
+        $totalDays = max($start->diffInDays($end), 1);
+        $elapsedDays = $start->diffInDays($today, false);
+        $progress = min(max(($elapsedDays / $totalDays) * 100, 0), 100);
+
+        return [
+            'progress_percentage' => round($progress, 2),
+            'days_remaining' => $today->diffInDays($end, false),
+            'is_overdue' => $today->gt($end),
+        ];
+    }
+
+    private function toFloat(mixed $value): float
+    {
+        if ($value === null || $value === '') {
+            return 0.0;
+        }
+
+        if (is_numeric($value)) {
+            return (float) $value;
+        }
+
+        return 0.0;
     }
 
     /**

@@ -42,15 +42,25 @@ Route::post('/projects/{projectId}/foremen/{userId}', [ProjectController::class,
 Route::delete('/projects/{projectId}/foremen/{userId}', [ProjectController::class, 'detachForeman'])->name('projects.foremen.detach');
 
 // Получить статистику по проекту
+Route::get('/projects/{id}/dashboard', [ProjectController::class, 'dashboard'])
+    ->middleware('authorize:admin.projects.analytics')
+    ->whereNumber('id')
+    ->name('projects.dashboard');
+
 Route::get('/projects/{id}/statistics', [ProjectController::class, 'statistics'])
     ->middleware('authorize:admin.projects.analytics')
+    ->whereNumber('id')
     ->name('projects.statistics');
 
 // Получить материалы проекта
-Route::get('/projects/{id}/materials', [ProjectController::class, 'getProjectMaterials'])->name('projects.materials');
+Route::get('/projects/{id}/materials', [ProjectController::class, 'getProjectMaterials'])
+    ->whereNumber('id')
+    ->name('projects.materials');
 
 // Получить типы работ проекта
-Route::get('/projects/{id}/work-types', [ProjectController::class, 'getProjectWorkTypes'])->name('projects.workTypes');
+Route::get('/projects/{id}/work-types', [ProjectController::class, 'getProjectWorkTypes'])
+    ->whereNumber('id')
+    ->name('projects.workTypes');
 
 // Получить организации проекта
 Route::get('/projects/{project}/organizations', [ProjectOrganizationController::class, 'index'])->name('projects.organizations.index');
