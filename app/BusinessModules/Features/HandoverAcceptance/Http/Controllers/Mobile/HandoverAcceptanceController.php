@@ -13,6 +13,7 @@ use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -45,11 +46,12 @@ final class HandoverAcceptanceController extends Controller
     public function storeFinding(Request $request, int $session): JsonResponse
     {
         try {
-            $validated = $request->validate([
+            $validated = $this->validated($request, [
                 'title' => ['required', 'string', 'max:255'],
                 'description' => ['nullable', 'string', 'max:2000'],
-                'severity' => ['nullable', 'string', Rule::in(['minor', 'major', 'critical'])],
-                'create_quality_defect' => ['nullable', 'boolean'],
+                'severity' => ['required', 'string', Rule::in(['minor', 'major', 'critical'])],
+                'create_quality_defect' => ['required', 'boolean'],
+                'quality_defect_inspection_required' => ['required_if:create_quality_defect,true', 'boolean'],
             ]);
 
             return MobileResponse::success(
@@ -62,7 +64,11 @@ final class HandoverAcceptanceController extends Controller
                 201
             );
         } catch (ValidationException $exception) {
-            return MobileResponse::error($exception->getMessage(), 422, $exception->errors());
+            return MobileResponse::error(
+                trans_message('handover_acceptance.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -73,7 +79,7 @@ final class HandoverAcceptanceController extends Controller
     public function resolveFinding(Request $request, int $finding): JsonResponse
     {
         try {
-            $validated = $request->validate(['resolution_comment' => ['required', 'string', 'max:2000']]);
+            $validated = $this->validated($request, ['resolution_comment' => ['required', 'string', 'max:2000']]);
 
             return MobileResponse::success(new AcceptanceFindingResource($this->service->resolveFinding(
                 $this->service->findFinding((int) $request->attributes->get('current_organization_id'), $finding),
@@ -81,7 +87,11 @@ final class HandoverAcceptanceController extends Controller
                 $validated
             )));
         } catch (ValidationException $exception) {
-            return MobileResponse::error($exception->getMessage(), 422, $exception->errors());
+            return MobileResponse::error(
+                trans_message('handover_acceptance.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -117,5 +127,28 @@ final class HandoverAcceptanceController extends Controller
         ]);
 
         return MobileResponse::error(trans_message('handover_acceptance.errors.action_failed'), 500);
+    }
+
+    private function validated(Request $request, array $rules): array
+    {
+        $validator = Validator::make($request->all(), $rules, $this->validationMessages());
+
+        if ($validator->fails()) {
+            throw new ValidationException($validator);
+        }
+
+        return $validator->validated();
+    }
+
+    private function validationMessages(): array
+    {
+        return [
+            'title.required' => trans_message('handover_acceptance.validation.title_required'),
+            'severity.required' => trans_message('handover_acceptance.validation.severity_required'),
+            'severity.in' => trans_message('handover_acceptance.validation.severity_invalid'),
+            'create_quality_defect.required' => trans_message('handover_acceptance.validation.create_quality_defect_required'),
+            'quality_defect_inspection_required.required_if' => trans_message('handover_acceptance.validation.quality_defect_inspection_required'),
+            'resolution_comment.required' => trans_message('handover_acceptance.validation.resolution_comment_required'),
+        ];
     }
 }

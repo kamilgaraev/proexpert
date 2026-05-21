@@ -171,8 +171,15 @@ final class HandoverAcceptanceController extends Controller
             $validated = $request->validate([
                 'title' => ['required', 'string', 'max:255'],
                 'description' => ['nullable', 'string', 'max:2000'],
-                'severity' => ['nullable', 'string', Rule::in(['minor', 'major', 'critical'])],
-                'create_quality_defect' => ['nullable', 'boolean'],
+                'severity' => ['required', 'string', Rule::in(['minor', 'major', 'critical'])],
+                'create_quality_defect' => ['required', 'boolean'],
+                'quality_defect_inspection_required' => ['required_if:create_quality_defect,true', 'boolean'],
+            ], [
+                'title.required' => trans_message('handover_acceptance.validation.title_required'),
+                'severity.required' => trans_message('handover_acceptance.validation.severity_required'),
+                'severity.in' => trans_message('handover_acceptance.validation.severity_invalid'),
+                'create_quality_defect.required' => trans_message('handover_acceptance.validation.create_quality_defect_required'),
+                'quality_defect_inspection_required.required_if' => trans_message('handover_acceptance.validation.quality_defect_inspection_required'),
             ]);
 
             return AdminResponse::success(

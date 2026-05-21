@@ -14,6 +14,7 @@ use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -95,11 +96,18 @@ final class SafetyManagementController extends Controller
     public function storeIncident(Request $request): JsonResponse
     {
         try {
-            $validated = $request->validate([
+            $validated = $this->validated($request, [
                 'project_id' => ['required', 'integer'],
                 'title' => ['required', 'string', 'max:255'],
-                'incident_type' => ['required', 'string', 'max:80'],
-                'severity' => ['nullable', 'string', Rule::in(['minor', 'major', 'high', 'critical'])],
+                'incident_type' => ['required', 'string', Rule::in([
+                    'unsafe_condition',
+                    'near_miss',
+                    'injury',
+                    'property_damage',
+                    'environmental',
+                    'other',
+                ])],
+                'severity' => ['required', 'string', Rule::in(['minor', 'major', 'high', 'critical'])],
                 'occurred_at' => ['required', 'date'],
                 'location_name' => ['nullable', 'string', 'max:255'],
                 'description' => ['nullable', 'string', 'max:5000'],
@@ -117,7 +125,11 @@ final class SafetyManagementController extends Controller
                 201
             );
         } catch (ValidationException $exception) {
-            return MobileResponse::error($exception->getMessage(), 422, $exception->errors());
+            return MobileResponse::error(
+                trans_message('safety_management.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -133,10 +145,10 @@ final class SafetyManagementController extends Controller
     public function storeViolation(Request $request): JsonResponse
     {
         try {
-            $validated = $request->validate([
+            $validated = $this->validated($request, [
                 'project_id' => ['required', 'integer'],
                 'title' => ['required', 'string', 'max:255'],
-                'severity' => ['nullable', 'string', Rule::in(['minor', 'major', 'high', 'critical'])],
+                'severity' => ['required', 'string', Rule::in(['minor', 'major', 'high', 'critical'])],
                 'location_name' => ['nullable', 'string', 'max:255'],
                 'description' => ['nullable', 'string', 'max:5000'],
                 'due_date' => ['nullable', 'date'],
@@ -154,7 +166,11 @@ final class SafetyManagementController extends Controller
                 201
             );
         } catch (ValidationException $exception) {
-            return MobileResponse::error($exception->getMessage(), 422, $exception->errors());
+            return MobileResponse::error(
+                trans_message('safety_management.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -170,7 +186,7 @@ final class SafetyManagementController extends Controller
     public function resolveViolation(Request $request, int $id): JsonResponse
     {
         try {
-            $validated = $request->validate(['resolution_comment' => ['required', 'string', 'max:1000']]);
+            $validated = $this->validated($request, ['resolution_comment' => ['required', 'string', 'max:1000']]);
             $violation = $this->service->findViolation((int) $request->attributes->get('current_organization_id'), $id);
 
             if ($violation === null) {
@@ -183,7 +199,11 @@ final class SafetyManagementController extends Controller
                 $validated['resolution_comment']
             )));
         } catch (ValidationException $exception) {
-            return MobileResponse::error($exception->getMessage(), 422, $exception->errors());
+            return MobileResponse::error(
+                trans_message('safety_management.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -195,5 +215,30 @@ final class SafetyManagementController extends Controller
 
             return MobileResponse::error(trans_message('safety_management.errors.action_failed'), 500);
         }
+    }
+
+    private function validated(Request $request, array $rules): array
+    {
+        $validator = Validator::make($request->all(), $rules, $this->validationMessages());
+
+        if ($validator->fails()) {
+            throw new ValidationException($validator);
+        }
+
+        return $validator->validated();
+    }
+
+    private function validationMessages(): array
+    {
+        return [
+            'project_id.required' => trans_message('safety_management.validation.project_required'),
+            'title.required' => trans_message('safety_management.validation.title_required'),
+            'incident_type.required' => trans_message('safety_management.validation.incident_type_required'),
+            'incident_type.in' => trans_message('safety_management.validation.incident_type_invalid'),
+            'severity.required' => trans_message('safety_management.validation.severity_required'),
+            'severity.in' => trans_message('safety_management.validation.severity_invalid'),
+            'occurred_at.required' => trans_message('safety_management.validation.occurred_at_required'),
+            'resolution_comment.required' => trans_message('safety_management.validation.resolution_comment_required'),
+        ];
     }
 }

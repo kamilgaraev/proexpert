@@ -96,14 +96,14 @@ final class QualityDefectService
                 'defect_number' => $this->numberGenerator->generate($organizationId),
                 'title' => $data['title'],
                 'description' => $data['description'] ?? null,
-                'severity' => $data['severity'] ?? 'major',
+                'severity' => $data['severity'],
                 'status' => $status,
                 'location_name' => $data['location_name'] ?? null,
                 'schedule_task_id' => $data['schedule_task_id'] ?? null,
                 'construction_journal_entry_id' => $data['construction_journal_entry_id'] ?? null,
                 'completed_work_id' => $data['completed_work_id'] ?? null,
                 'due_date' => $data['due_date'] ?? null,
-                'inspection_required' => $data['inspection_required'] ?? true,
+                'inspection_required' => (bool) $data['inspection_required'],
                 'metadata' => $data['metadata'] ?? null,
             ]);
 
@@ -233,10 +233,16 @@ final class QualityDefectService
                 continue;
             }
 
+            $type = $photo['type'] ?? null;
+
+            if (!is_string($type) || trim($type) === '') {
+                throw new DomainException(trans_message('quality_control.validation.photo_type_required'));
+            }
+
             $defect->photos()->create([
                 'organization_id' => $organizationId,
                 'uploaded_by' => $userId,
-                'type' => $photo['type'] ?? 'before',
+                'type' => $type,
                 'url' => $url,
                 'caption' => $photo['caption'] ?? null,
                 'metadata' => $photo['metadata'] ?? null,

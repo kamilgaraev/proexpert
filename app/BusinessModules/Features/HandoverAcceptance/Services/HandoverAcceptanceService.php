@@ -140,7 +140,7 @@ final class HandoverAcceptanceService
             $scope = $session->scope()->firstOrFail();
             $qualityDefect = null;
 
-            if (($data['create_quality_defect'] ?? false) === true) {
+            if ($data['create_quality_defect'] === true) {
                 $qualityDefect = QualityDefect::query()->create([
                     'organization_id' => $session->organization_id,
                     'project_id' => $session->project_id,
@@ -148,10 +148,10 @@ final class HandoverAcceptanceService
                     'defect_number' => 'HA-' . $session->id . '-' . now()->format('His'),
                     'title' => $data['title'],
                     'description' => $data['description'] ?? null,
-                    'severity' => $data['severity'] ?? 'major',
+                    'severity' => $data['severity'],
                     'status' => 'open',
                     'location_name' => $scope->location?->path,
-                    'inspection_required' => true,
+                    'inspection_required' => (bool) $data['quality_defect_inspection_required'],
                     'metadata' => [
                         'source' => [
                             'type' => 'acceptance_finding',
@@ -171,7 +171,7 @@ final class HandoverAcceptanceService
                 'created_by_user_id' => $userId,
                 'title' => $data['title'],
                 'description' => $data['description'] ?? null,
-                'severity' => $data['severity'] ?? 'major',
+                'severity' => $data['severity'],
                 'status' => 'open',
             ]);
 
@@ -299,24 +299,34 @@ final class HandoverAcceptanceService
         return AcceptanceScope::query()
             ->where('organization_id', $organizationId)
             ->with(self::SCOPE_RELATIONS)
-            ->findOrFail($id);
+            ->find($id)
+            ?? throw new DomainException(trans_message('handover_acceptance.errors.scope_not_found'));
     }
 
     public function findSession(int $organizationId, int $id): AcceptanceSession
     {
-        return AcceptanceSession::query()->where('organization_id', $organizationId)->with(['scope.location'])->findOrFail($id);
+        return AcceptanceSession::query()
+            ->where('organization_id', $organizationId)
+            ->with(['scope.location'])
+            ->find($id)
+            ?? throw new DomainException(trans_message('handover_acceptance.errors.session_not_found'));
     }
 
     public function findFinding(int $organizationId, int $id): AcceptanceFinding
     {
-        return AcceptanceFinding::query()->where('organization_id', $organizationId)->with(['qualityDefect'])->findOrFail($id);
+        return AcceptanceFinding::query()
+            ->where('organization_id', $organizationId)
+            ->with(['qualityDefect'])
+            ->find($id)
+            ?? throw new DomainException(trans_message('handover_acceptance.errors.finding_not_found'));
     }
 
     public function findPackageDocument(int $organizationId, int $id): HandoverPackageDocument
     {
         return HandoverPackageDocument::query()
             ->whereHas('package', fn ($query) => $query->where('organization_id', $organizationId))
-            ->findOrFail($id);
+            ->find($id)
+            ?? throw new DomainException(trans_message('handover_acceptance.errors.package_document_not_found'));
     }
 
     private function findProject(int $organizationId, int $projectId): Project

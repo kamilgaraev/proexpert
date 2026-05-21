@@ -36,6 +36,7 @@ return [
         'corrective_action_resolution_required' => 'Для устранения корректирующего действия укажите результат.',
         'corrective_action_verify_invalid_status' => 'Проверить можно только устраненное корректирующее действие.',
         'index_failed' => 'Не удалось загрузить данные охраны труда.',
+        'validation_failed' => 'Проверьте данные записи охраны труда.',
         'store_failed' => 'Не удалось создать запись охраны труда.',
         'action_failed' => 'Не удалось выполнить действие по охране труда.',
     ],
@@ -93,5 +94,15 @@ return [
         'investigation_required' => 'Требуется расследование происшествия.',
         'violation_overdue' => 'Срок устранения нарушения просрочен.',
         'corrective_action_overdue' => 'Срок корректирующего действия просрочен.',
+    ],
+    'validation' => [
+        'project_required' => 'Выберите проект',
+        'title_required' => 'Укажите название записи',
+        'incident_type_required' => 'Выберите тип происшествия',
+        'incident_type_invalid' => 'Выберите тип происшествия из списка',
+        'severity_required' => 'Укажите тяжесть',
+        'severity_invalid' => 'Выберите тяжесть из списка',
+        'occurred_at_required' => 'Укажите время происшествия',
+        'resolution_comment_required' => 'Укажите результат устранения',
     ],
 ];

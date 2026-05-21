@@ -23,13 +23,13 @@ final class StoreQualityDefectRequest extends FormRequest
             'assigned_to' => ['nullable', 'integer'],
             'title' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:5000'],
-            'severity' => ['nullable', 'string', Rule::in(['minor', 'major', 'critical'])],
+            'severity' => ['required', 'string', Rule::in(['minor', 'major', 'critical'])],
             'location_name' => ['nullable', 'string', 'max:255'],
             'schedule_task_id' => ['nullable', 'integer'],
             'construction_journal_entry_id' => ['nullable', 'integer'],
             'completed_work_id' => ['nullable', 'integer'],
             'due_date' => ['nullable', 'date'],
-            'inspection_required' => ['nullable', 'boolean'],
+            'inspection_required' => ['required', 'boolean'],
             'metadata' => ['nullable', 'array'],
             'photos' => ['nullable', 'array'],
             'photos.*.type' => ['required_with:photos', 'string', Rule::in(['before', 'after', 'evidence', 'other'])],
@@ -37,6 +37,20 @@ final class StoreQualityDefectRequest extends FormRequest
             'photos.*.file' => ['nullable', 'required_without:photos.*.url', File::image()->max(10 * 1024)],
             'photos.*.caption' => ['nullable', 'string', 'max:255'],
             'photos.*.metadata' => ['nullable', 'array'],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'project_id.required' => trans_message('quality_control.validation.project_required'),
+            'title.required' => trans_message('quality_control.validation.title_required'),
+            'severity.required' => trans_message('quality_control.validation.severity_required'),
+            'severity.in' => trans_message('quality_control.validation.severity_invalid'),
+            'inspection_required.required' => trans_message('quality_control.validation.inspection_required'),
+            'photos.*.type.required_with' => trans_message('quality_control.validation.photo_type_required'),
+            'photos.*.url.required_without' => trans_message('quality_control.validation.photo_required'),
+            'photos.*.file.required_without' => trans_message('quality_control.validation.photo_required'),
         ];
     }
 }

@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\QualityControl\Http\Controllers\Mobile;
 
-use App\BusinessModules\Features\QualityControl\Http\Requests\StoreQualityDefectRequest;
 use App\BusinessModules\Features\QualityControl\Http\Resources\QualityDefectResource;
 use App\BusinessModules\Features\QualityControl\Services\QualityDefectService;
 use App\Http\Controllers\Controller;
@@ -13,7 +12,10 @@ use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Validation\Rules\File;
 
 final class QualityDefectController extends Controller
 {
@@ -80,16 +82,43 @@ final class QualityDefectController extends Controller
         }
     }
 
-    public function store(StoreQualityDefectRequest $request): JsonResponse
+    public function store(Request $request): JsonResponse
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $defect = $this->service->create($organizationId, (int) auth()->id(), $request->validated());
+            $validated = $this->validated($request, [
+                'project_id' => ['required', 'integer'],
+                'contractor_id' => ['nullable', 'integer'],
+                'assigned_to' => ['nullable', 'integer'],
+                'title' => ['required', 'string', 'max:255'],
+                'description' => ['nullable', 'string', 'max:5000'],
+                'severity' => ['required', 'string', Rule::in(['minor', 'major', 'critical'])],
+                'location_name' => ['nullable', 'string', 'max:255'],
+                'schedule_task_id' => ['nullable', 'integer'],
+                'construction_journal_entry_id' => ['nullable', 'integer'],
+                'completed_work_id' => ['nullable', 'integer'],
+                'due_date' => ['nullable', 'date'],
+                'inspection_required' => ['required', 'boolean'],
+                'metadata' => ['nullable', 'array'],
+                'photos' => ['nullable', 'array'],
+                'photos.*.type' => ['required_with:photos', 'string', Rule::in(['before', 'after', 'evidence', 'other'])],
+                'photos.*.url' => ['nullable', 'required_without:photos.*.file', 'string', 'max:2000'],
+                'photos.*.file' => ['nullable', 'required_without:photos.*.url', File::image()->max(10 * 1024)],
+                'photos.*.caption' => ['nullable', 'string', 'max:255'],
+                'photos.*.metadata' => ['nullable', 'array'],
+            ]);
+            $defect = $this->service->create($organizationId, (int) auth()->id(), $validated);
 
             return MobileResponse::success(
                 new QualityDefectResource($defect),
                 trans_message('quality_control.messages.created'),
                 201
+            );
+        } catch (ValidationException $e) {
+            return MobileResponse::error(
+                trans_message('quality_control.errors.validation_failed'),
+                422,
+                $e->errors()
             );
         } catch (DomainException $e) {
             return MobileResponse::error($e->getMessage(), 422);
@@ -107,7 +136,7 @@ final class QualityDefectController extends Controller
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $validated = $request->validate(['comment' => ['nullable', 'string', 'max:1000']]);
+            $validated = $this->validated($request, ['comment' => ['nullable', 'string', 'max:1000']]);
             $defect = $this->findOrFail($id, $organizationId);
 
             return MobileResponse::success(new QualityDefectResource($this->service->start(
@@ -128,7 +157,7 @@ final class QualityDefectController extends Controller
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $validated = $request->validate([
+            $validated = $this->validated($request, [
                 'comment' => ['nullable', 'string', 'max:1000'],
                 'photos' => ['nullable', 'array'],
                 'photos.*.type' => ['required_with:photos', 'string'],
@@ -172,5 +201,30 @@ final class QualityDefectController extends Controller
         ]);
 
         return MobileResponse::error(trans_message("quality_control.errors.{$action}_failed"), 500);
+    }
+
+    private function validated(Request $request, array $rules): array
+    {
+        $validator = Validator::make($request->all(), $rules, $this->validationMessages());
+
+        if ($validator->fails()) {
+            throw new ValidationException($validator);
+        }
+
+        return $validator->validated();
+    }
+
+    private function validationMessages(): array
+    {
+        return [
+            'project_id.required' => trans_message('quality_control.validation.project_required'),
+            'title.required' => trans_message('quality_control.validation.title_required'),
+            'severity.required' => trans_message('quality_control.validation.severity_required'),
+            'severity.in' => trans_message('quality_control.validation.severity_invalid'),
+            'inspection_required.required' => trans_message('quality_control.validation.inspection_required'),
+            'photos.*.type.required_with' => trans_message('quality_control.validation.photo_type_required'),
+            'photos.*.url.required_without' => trans_message('quality_control.validation.photo_required'),
+            'photos.*.file.required_without' => trans_message('quality_control.validation.photo_required'),
+        ];
     }
 }

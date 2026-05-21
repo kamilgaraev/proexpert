@@ -208,13 +208,28 @@ final class SafetyManagementController extends Controller
             $validated = $request->validate([
                 'project_id' => ['required', 'integer'],
                 'title' => ['required', 'string', 'max:255'],
-                'incident_type' => ['required', 'string', 'max:80'],
-                'severity' => ['nullable', 'string', Rule::in(['minor', 'major', 'high', 'critical'])],
+                'incident_type' => ['required', 'string', Rule::in([
+                    'unsafe_condition',
+                    'near_miss',
+                    'injury',
+                    'property_damage',
+                    'environmental',
+                    'other',
+                ])],
+                'severity' => ['required', 'string', Rule::in(['minor', 'major', 'high', 'critical'])],
                 'occurred_at' => ['required', 'date'],
                 'location_name' => ['nullable', 'string', 'max:255'],
                 'description' => ['nullable', 'string', 'max:5000'],
                 'immediate_actions' => ['nullable', 'string', 'max:5000'],
                 'metadata' => ['nullable', 'array'],
+            ], [
+                'project_id.required' => trans_message('safety_management.validation.project_required'),
+                'title.required' => trans_message('safety_management.validation.title_required'),
+                'incident_type.required' => trans_message('safety_management.validation.incident_type_required'),
+                'incident_type.in' => trans_message('safety_management.validation.incident_type_invalid'),
+                'severity.required' => trans_message('safety_management.validation.severity_required'),
+                'severity.in' => trans_message('safety_management.validation.severity_invalid'),
+                'occurred_at.required' => trans_message('safety_management.validation.occurred_at_required'),
             ]);
 
             return AdminResponse::success(
@@ -319,13 +334,18 @@ final class SafetyManagementController extends Controller
             $validated = $request->validate([
                 'project_id' => ['required', 'integer'],
                 'title' => ['required', 'string', 'max:255'],
-                'severity' => ['nullable', 'string', Rule::in(['minor', 'major', 'high', 'critical'])],
+                'severity' => ['required', 'string', Rule::in(['minor', 'major', 'high', 'critical'])],
                 'location_name' => ['nullable', 'string', 'max:255'],
                 'description' => ['nullable', 'string', 'max:5000'],
                 'assigned_to_user_id' => ['nullable', 'integer'],
                 'due_date' => ['nullable', 'date'],
                 'corrective_action' => ['nullable', 'string', 'max:5000'],
                 'metadata' => ['nullable', 'array'],
+            ], [
+                'project_id.required' => trans_message('safety_management.validation.project_required'),
+                'title.required' => trans_message('safety_management.validation.title_required'),
+                'severity.required' => trans_message('safety_management.validation.severity_required'),
+                'severity.in' => trans_message('safety_management.validation.severity_invalid'),
             ]);
 
             return AdminResponse::success(

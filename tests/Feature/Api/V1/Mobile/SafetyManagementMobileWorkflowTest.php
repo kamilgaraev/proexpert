@@ -14,7 +14,7 @@ use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
-final class SafetyManagementMobileWorkflowTest extends TestCase
+final class SafetyManagementMobileTest extends TestCase
 {
     use RefreshDatabase;
 
@@ -79,6 +79,44 @@ final class SafetyManagementMobileWorkflowTest extends TestCase
             ]);
 
         $foreignProjectResponse->assertStatus(422);
+    }
+
+    public function test_mobile_incident_requires_explicit_type_and_severity(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/mobile/safety-management/incidents', [
+                'project_id' => $project->id,
+                'title' => 'Unsafe work area',
+                'occurred_at' => now()->toIso8601String(),
+            ]);
+
+        $response->assertStatus(422)
+            ->assertJsonPath('message', trans_message('safety_management.errors.validation_failed'))
+            ->assertJsonPath('errors.incident_type.0', trans_message('safety_management.validation.incident_type_required'))
+            ->assertJsonPath('errors.severity.0', trans_message('safety_management.validation.severity_required'));
+    }
+
+    public function test_mobile_violation_requires_explicit_severity(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/mobile/safety-management/violations', [
+                'project_id' => $project->id,
+                'title' => 'PPE missing',
+            ]);
+
+        $response->assertStatus(422)
+            ->assertJsonPath('message', trans_message('safety_management.errors.validation_failed'))
+            ->assertJsonPath('errors.severity.0', trans_message('safety_management.validation.severity_required'));
     }
 
     private function allowModuleAccess(): void
