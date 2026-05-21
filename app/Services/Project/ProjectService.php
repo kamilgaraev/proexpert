@@ -911,10 +911,7 @@ class ProjectService
                 ->map(fn (mixed $item): array => $this->normalizeProjectDashboardWorkStage($item))
                 ->values()
                 ->all();
-            $materials = collect($this->getProjectMaterials($projectId, 8, null, 'allocated_quantity', 'desc')['data'] ?? [])
-                ->map(fn (mixed $item): array => $this->normalizeProjectDashboardMaterial($item))
-                ->values()
-                ->all();
+            $materials = $this->buildProjectDashboardMaterialSlices($project);
             $schedule = $this->buildProjectDashboardSchedule($projectId);
             $payments = $this->buildProjectDashboardPayments($projectId);
             $overview = $this->buildProjectDashboardOverview($project, $statistics, $workTypes, $schedule, $payments);
@@ -1163,6 +1160,113 @@ class ProjectService
             'critical_tasks_count' => (int) ($counts->critical_tasks_count ?? 0),
             'overdue_tasks_count' => (int) ($counts->overdue_tasks_count ?? 0),
         ];
+    }
+
+    private function buildProjectDashboardMaterialSlices(Project $project): array
+    {
+        $allocatedRows = DB::table('warehouse_project_allocations as wpa')
+            ->join('materials as m', 'm.id', '=', 'wpa.material_id')
+            ->join('organization_warehouses as w', 'w.id', '=', 'wpa.warehouse_id')
+            ->leftJoin('measurement_units as mu', 'mu.id', '=', 'm.measurement_unit_id')
+            ->leftJoin(DB::raw('(
+                SELECT
+                    wb.material_id,
+                    wb.organization_id,
+                    SUM(wb.available_quantity) as total_available_quantity,
+                    SUM(wb.available_quantity * COALESCE(NULLIF(wb.unit_price, 0), m_inner.default_price, 0)) as total_available_value
+                FROM warehouse_balances wb
+                JOIN materials m_inner ON m_inner.id = wb.material_id
+                JOIN organization_warehouses ow ON ow.id = wb.warehouse_id
+                WHERE ow.is_active = true
+                GROUP BY wb.material_id, wb.organization_id
+            ) as warehouse_totals'), function ($join): void {
+                $join->on('warehouse_totals.material_id', '=', 'wpa.material_id')
+                    ->on('warehouse_totals.organization_id', '=', 'wpa.organization_id');
+            })
+            ->where('wpa.project_id', $project->id)
+            ->select([
+                'wpa.id',
+                'm.id as material_id',
+                'm.name',
+                'm.code',
+                'mu.short_name as unit',
+                'w.name as warehouse_name',
+                'wpa.allocated_quantity',
+                DB::raw('COALESCE(warehouse_totals.total_available_quantity, 0) as available_quantity'),
+                DB::raw('CASE WHEN COALESCE(warehouse_totals.total_available_quantity, 0) > 0 THEN warehouse_totals.total_available_value / warehouse_totals.total_available_quantity ELSE COALESCE(m.default_price, 0) END as average_price'),
+                DB::raw('wpa.allocated_quantity * CASE WHEN COALESCE(warehouse_totals.total_available_quantity, 0) > 0 THEN warehouse_totals.total_available_value / warehouse_totals.total_available_quantity ELSE COALESCE(m.default_price, 0) END as allocated_value'),
+                DB::raw('GREATEST(wpa.allocated_quantity * CASE WHEN COALESCE(warehouse_totals.total_available_quantity, 0) > 0 THEN warehouse_totals.total_available_value / warehouse_totals.total_available_quantity ELSE COALESCE(m.default_price, 0) END, COALESCE(warehouse_totals.total_available_value, 0)) as chart_value'),
+                'wpa.allocated_at as last_operation_date',
+            ])
+            ->orderByDesc('chart_value')
+            ->limit(12)
+            ->get()
+            ->map(fn (object $item): array => [
+                'id' => (int) $item->id,
+                'material_id' => (int) $item->material_id,
+                'name' => $item->name,
+                'code' => $item->code,
+                'unit' => $item->unit,
+                'warehouse_name' => $item->warehouse_name,
+                'allocated_quantity' => round($this->toFloat($item->allocated_quantity), 4),
+                'available_quantity' => round($this->toFloat($item->available_quantity), 4),
+                'average_price' => round($this->toFloat($item->average_price), 2),
+                'allocated_value' => round($this->toFloat($item->allocated_value), 2),
+                'chart_value' => round($this->toFloat($item->chart_value), 2),
+                'last_operation_date' => $item->last_operation_date,
+                'has_warning' => $this->toFloat($item->available_quantity) <= 0 && $this->toFloat($item->allocated_quantity) > 0,
+                'source' => 'project_allocation',
+            ])
+            ->keyBy('material_id');
+
+        $stockRows = DB::table('warehouse_balances as wb')
+            ->join('materials as m', 'm.id', '=', 'wb.material_id')
+            ->join('organization_warehouses as w', 'w.id', '=', 'wb.warehouse_id')
+            ->leftJoin('measurement_units as mu', 'mu.id', '=', 'm.measurement_unit_id')
+            ->where('wb.organization_id', $project->organization_id)
+            ->where('w.is_active', true)
+            ->select([
+                DB::raw('MIN(wb.id) as id'),
+                'm.id as material_id',
+                'm.name',
+                'm.code',
+                'mu.short_name as unit',
+                DB::raw('MIN(w.name) as warehouse_name'),
+                DB::raw('SUM(wb.available_quantity) as available_quantity'),
+                DB::raw('SUM(wb.available_quantity * COALESCE(NULLIF(wb.unit_price, 0), m.default_price, 0)) as chart_value'),
+                DB::raw('CASE WHEN SUM(wb.available_quantity) > 0 THEN SUM(wb.available_quantity * COALESCE(NULLIF(wb.unit_price, 0), m.default_price, 0)) / SUM(wb.available_quantity) ELSE COALESCE(MAX(m.default_price), 0) END as average_price'),
+                DB::raw('MAX(wb.updated_at) as last_operation_date'),
+            ])
+            ->groupBy('m.id', 'm.name', 'm.code', 'mu.short_name')
+            ->havingRaw('SUM(wb.available_quantity) > 0')
+            ->orderByDesc('chart_value')
+            ->limit(12)
+            ->get()
+            ->map(fn (object $item): array => [
+                'id' => (int) $item->id,
+                'material_id' => (int) $item->material_id,
+                'name' => $item->name,
+                'code' => $item->code,
+                'unit' => $item->unit,
+                'warehouse_name' => $item->warehouse_name,
+                'allocated_quantity' => 0.0,
+                'available_quantity' => round($this->toFloat($item->available_quantity), 4),
+                'average_price' => round($this->toFloat($item->average_price), 2),
+                'allocated_value' => 0.0,
+                'chart_value' => round($this->toFloat($item->chart_value), 2),
+                'last_operation_date' => $item->last_operation_date,
+                'has_warning' => false,
+                'source' => 'warehouse_stock',
+            ])
+            ->keyBy('material_id');
+
+        return $allocatedRows
+            ->union($stockRows)
+            ->values()
+            ->sortByDesc('chart_value')
+            ->take(8)
+            ->values()
+            ->all();
     }
 
     private function buildProjectDashboardRisks(array $overview, array $schedule, array $payments, array $materials): array
