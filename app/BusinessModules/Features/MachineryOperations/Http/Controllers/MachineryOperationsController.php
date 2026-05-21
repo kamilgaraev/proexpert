@@ -179,7 +179,7 @@ final class MachineryOperationsController extends Controller
                 'reason' => ['required', 'string', 'max:80'],
                 'started_at' => ['required', 'date'],
                 'ended_at' => ['nullable', 'date', 'after:started_at'],
-                'duration_minutes' => ['nullable', 'integer', 'min:0'],
+                'duration_minutes' => ['required', 'integer', 'min:1'],
                 'comment' => ['nullable', 'string', 'max:2000'],
             ]);
 
@@ -388,10 +388,10 @@ final class MachineryOperationsController extends Controller
             'asset_id' => ['required', 'integer'],
             'project_id' => ['required', 'integer'],
             'assignment_id' => ['nullable', 'integer'],
-            'report_date' => ['required', 'date'],
-            'planned_hours' => ['nullable', 'numeric', 'min:0'],
-            'actual_hours' => ['nullable', 'numeric', 'min:0'],
-            'fuel_consumed' => ['nullable', 'numeric', 'min:0'],
+            'report_date' => ['required', 'date', 'before_or_equal:today'],
+            'planned_hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
+            'actual_hours' => ['required', 'numeric', 'min:0', 'max:24'],
+            'fuel_consumed' => ['required', 'numeric', 'min:0'],
             'meter_start' => ['nullable', 'numeric', 'min:0'],
             'meter_end' => ['nullable', 'numeric', 'min:0'],
             'work_description' => ['nullable', 'string', 'max:5000'],
@@ -406,7 +406,7 @@ final class MachineryOperationsController extends Controller
             'issued_at' => ['required', 'date'],
             'fuel_type' => ['required', 'string', 'max:80'],
             'quantity' => ['required', 'numeric', 'min:0.001'],
-            'unit' => ['nullable', 'string', 'max:20'],
+            'unit' => ['required', 'string', 'max:20'],
             'cost' => ['nullable', 'numeric', 'min:0'],
             'comment' => ['nullable', 'string', 'max:2000'],
         ];

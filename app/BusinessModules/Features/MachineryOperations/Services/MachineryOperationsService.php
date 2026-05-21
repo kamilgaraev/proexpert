@@ -9,6 +9,7 @@ use App\BusinessModules\Features\MachineryOperations\Models\MachineryAssignment;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryDowntime;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryFuelIssue;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryMaintenanceOrder;
+use App\BusinessModules\Features\MachineryOperations\Models\MachineryProductionRecord;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryShiftReport;
 use App\Models\Machinery;
 use App\Models\Project;
@@ -205,9 +206,9 @@ final class MachineryOperationsService
             'reported_by_user_id' => $userId,
             'report_date' => $data['report_date'],
             'status' => 'draft',
-            'planned_hours' => $data['planned_hours'] ?? 0,
-            'actual_hours' => $data['actual_hours'] ?? 0,
-            'fuel_consumed' => $data['fuel_consumed'] ?? 0,
+            'planned_hours' => $data['planned_hours'] ?? $data['actual_hours'],
+            'actual_hours' => $data['actual_hours'],
+            'fuel_consumed' => $data['fuel_consumed'],
             'meter_start' => $data['meter_start'] ?? null,
             'meter_end' => $data['meter_end'] ?? null,
             'work_description' => $data['work_description'] ?? null,
@@ -283,7 +284,26 @@ final class MachineryOperationsService
             'reason' => $data['reason'],
             'started_at' => $data['started_at'],
             'ended_at' => $data['ended_at'] ?? null,
-            'duration_minutes' => $data['duration_minutes'] ?? 0,
+            'duration_minutes' => $data['duration_minutes'],
+            'comment' => $data['comment'] ?? null,
+        ])->fresh(['asset:id,name,asset_code', 'project:id,name']);
+    }
+
+    public function createProductionRecord(int $organizationId, int $userId, array $data): MachineryProductionRecord
+    {
+        $this->requireAsset((int) $data['asset_id'], $organizationId);
+        $this->assertProjectBelongsToOrganization((int) $data['project_id'], $organizationId);
+        $this->assertOptionalShiftBelongsToOrganization($data['shift_report_id'] ?? null, $organizationId);
+
+        return MachineryProductionRecord::query()->create([
+            'organization_id' => $organizationId,
+            'asset_id' => (int) $data['asset_id'],
+            'project_id' => (int) $data['project_id'],
+            'shift_report_id' => $data['shift_report_id'] ?? null,
+            'recorded_by_user_id' => $userId,
+            'recorded_at' => $data['recorded_at'],
+            'quantity' => $data['quantity'],
+            'unit' => $data['unit'],
             'comment' => $data['comment'] ?? null,
         ])->fresh(['asset:id,name,asset_code', 'project:id,name']);
     }
@@ -301,7 +321,7 @@ final class MachineryOperationsService
             'issued_at' => $data['issued_at'],
             'fuel_type' => $data['fuel_type'],
             'quantity' => $data['quantity'],
-            'unit' => $data['unit'] ?? 'l',
+            'unit' => $data['unit'],
             'cost' => $data['cost'] ?? 0,
             'comment' => $data['comment'] ?? null,
         ])->fresh(['asset:id,name,asset_code', 'project:id,name']);

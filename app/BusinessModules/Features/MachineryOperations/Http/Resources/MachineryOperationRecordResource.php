@@ -8,6 +8,7 @@ use App\BusinessModules\Features\MachineryOperations\Models\MachineryAssignment;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryDowntime;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryFuelIssue;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryMaintenanceOrder;
+use App\BusinessModules\Features\MachineryOperations\Models\MachineryProductionRecord;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -19,6 +20,7 @@ final class MachineryOperationRecordResource extends JsonResource
             $this->resource instanceof MachineryAssignment => $this->assignment($this->resource),
             $this->resource instanceof MachineryDowntime => $this->downtime($this->resource),
             $this->resource instanceof MachineryFuelIssue => $this->fuelIssue($this->resource),
+            $this->resource instanceof MachineryProductionRecord => $this->productionRecord($this->resource),
             $this->resource instanceof MachineryMaintenanceOrder => $this->maintenanceOrder($this->resource),
             default => [],
         };
@@ -76,6 +78,21 @@ final class MachineryOperationRecordResource extends JsonResource
             'unit' => $fuelIssue->unit,
             'cost' => $fuelIssue->cost,
             'comment' => $fuelIssue->comment,
+        ];
+    }
+
+    private function productionRecord(MachineryProductionRecord $record): array
+    {
+        return [
+            'id' => $record->id,
+            'asset_id' => $record->asset_id,
+            'project_id' => $record->project_id,
+            'shift_report_id' => $record->shift_report_id,
+            'recorded_by_user_id' => $record->recorded_by_user_id,
+            'recorded_at' => $record->recorded_at?->toIso8601String(),
+            'quantity' => $record->quantity,
+            'unit' => $record->unit,
+            'comment' => $record->comment,
         ];
     }
 

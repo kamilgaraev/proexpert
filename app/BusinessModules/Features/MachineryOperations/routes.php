@@ -106,4 +106,7 @@ Route::prefix('api/v1/mobile/machinery-operations')
         Route::post('/fuel-issues', [MobileMachineryOperationsController::class, 'storeFuelIssue'])
             ->middleware('authorize:machinery-operations.fuel.manage')
             ->name('fuel_issues.store');
+        Route::post('/production-records', [MobileMachineryOperationsController::class, 'storeProductionRecord'])
+            ->middleware('authorize:machinery-operations.shifts.create')
+            ->name('production_records.store');
     });
