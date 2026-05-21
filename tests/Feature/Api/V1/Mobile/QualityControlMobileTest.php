@@ -75,6 +75,44 @@ final class QualityControlMobileTest extends TestCase
         $this->assertSame(QualityDefectStatusEnum::READY_FOR_REVIEW, $defect->status);
     }
 
+    public function test_mobile_quality_defect_filters_are_validated_and_applied(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess();
+
+        $openCritical = $this->createDefect($context, $project, 'open', 'critical', [
+            'due_date' => now()->subDay()->toDateString(),
+        ]);
+        $openMajor = $this->createDefect($context, $project, 'open', 'major', [
+            'due_date' => now()->addDay()->toDateString(),
+        ]);
+        $resolvedCritical = $this->createDefect($context, $project, 'resolved', 'critical', [
+            'due_date' => now()->subDay()->toDateString(),
+        ]);
+
+        $filteredResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/mobile/quality-control/defects?status=open&severity=critical&overdue=1&sort_by=due_date&sort_dir=asc');
+
+        $filteredResponse->assertOk();
+        $filteredIds = collect($filteredResponse->json('data.items'))->pluck('id')->all();
+        $this->assertSame([$openCritical->id], $filteredIds);
+
+        $notOverdueResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/mobile/quality-control/defects?overdue=0&per_page=50');
+
+        $notOverdueResponse->assertOk();
+        $allIds = collect($notOverdueResponse->json('data.items'))->pluck('id')->all();
+        $this->assertContains($openCritical->id, $allIds);
+        $this->assertContains($openMajor->id, $allIds);
+        $this->assertContains($resolvedCritical->id, $allIds);
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/mobile/quality-control/defects?status=unknown')
+            ->assertStatus(422)
+            ->assertJsonPath('errors.status.0', trans_message('quality_control.validation.status_invalid'));
+    }
+
     private function allowAccess(): void
     {
         $this->mock(AccessController::class, function (MockInterface $mock): void {
@@ -95,5 +133,24 @@ final class QualityControlMobileTest extends TestCase
                 }
             );
         });
+    }
+
+    private function createDefect(
+        AdminApiTestContext $context,
+        Project $project,
+        string $status,
+        string $severity,
+        array $attributes = []
+    ): QualityDefect {
+        return QualityDefect::query()->create(array_merge([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'created_by' => $context->user->id,
+            'defect_number' => 'QD-' . uniqid(),
+            'title' => 'Mobile quality defect',
+            'severity' => $severity,
+            'status' => $status,
+            'inspection_required' => true,
+        ], $attributes));
     }
 }

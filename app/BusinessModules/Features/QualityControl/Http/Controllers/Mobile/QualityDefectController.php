@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\QualityControl\Http\Controllers\Mobile;
 
+use App\BusinessModules\Features\QualityControl\Enums\QualityDefectSeverityEnum;
+use App\BusinessModules\Features\QualityControl\Enums\QualityDefectStatusEnum;
 use App\BusinessModules\Features\QualityControl\Http\Resources\QualityDefectResource;
 use App\BusinessModules\Features\QualityControl\Services\QualityDefectService;
 use App\Http\Controllers\Controller;
@@ -29,14 +31,14 @@ final class QualityDefectController extends Controller
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $perPage = min((int) $request->input('per_page', 20), 100);
-            $filters = $request->only([
-                'status',
-                'project_id',
-                'assigned_to',
-                'severity',
-                'overdue',
-                'sort_by',
-                'sort_dir',
+            $filters = $this->validated($request, [
+                'status' => ['nullable', 'string', Rule::in(array_column(QualityDefectStatusEnum::cases(), 'value'))],
+                'project_id' => ['nullable', 'integer'],
+                'assigned_to' => ['nullable', 'integer'],
+                'severity' => ['nullable', 'string', Rule::in(array_column(QualityDefectSeverityEnum::cases(), 'value'))],
+                'overdue' => ['nullable', 'boolean'],
+                'sort_by' => ['nullable', 'string', Rule::in(['created_at', 'due_date', 'severity', 'status'])],
+                'sort_dir' => ['nullable', 'string', Rule::in(['asc', 'desc'])],
             ]);
 
             $defects = $this->service->paginate($organizationId, $perPage, $filters);
@@ -50,6 +52,12 @@ final class QualityDefectController extends Controller
                     'last_page' => $defects->lastPage(),
                 ],
             ]);
+        } catch (ValidationException $e) {
+            return MobileResponse::error(
+                trans_message('quality_control.errors.validation_failed'),
+                422,
+                $e->errors()
+            );
         } catch (\Throwable $e) {
             Log::error('quality_control.mobile.defects.index.error', [
                 'user_id' => auth()->id(),
@@ -218,10 +226,16 @@ final class QualityDefectController extends Controller
     {
         return [
             'project_id.required' => trans_message('quality_control.validation.project_required'),
+            'project_id.integer' => trans_message('quality_control.validation.project_invalid'),
+            'assigned_to.integer' => trans_message('quality_control.validation.assignee_invalid'),
+            'status.in' => trans_message('quality_control.validation.status_invalid'),
             'title.required' => trans_message('quality_control.validation.title_required'),
             'severity.required' => trans_message('quality_control.validation.severity_required'),
             'severity.in' => trans_message('quality_control.validation.severity_invalid'),
             'inspection_required.required' => trans_message('quality_control.validation.inspection_required'),
+            'overdue.boolean' => trans_message('quality_control.validation.overdue_invalid'),
+            'sort_by.in' => trans_message('quality_control.validation.sort_invalid'),
+            'sort_dir.in' => trans_message('quality_control.validation.sort_invalid'),
             'photos.*.type.required_with' => trans_message('quality_control.validation.photo_type_required'),
             'photos.*.url.required_without' => trans_message('quality_control.validation.photo_required'),
             'photos.*.file.required_without' => trans_message('quality_control.validation.photo_required'),

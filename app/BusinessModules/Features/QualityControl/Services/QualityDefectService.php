@@ -54,7 +54,7 @@ final class QualityDefectService
             $query->where('severity', (string) $filters['severity']);
         }
 
-        if (($filters['overdue'] ?? null) !== null) {
+        if (array_key_exists('overdue', $filters) && filter_var($filters['overdue'], FILTER_VALIDATE_BOOLEAN)) {
             $query->whereNotIn('status', [
                 QualityDefectStatusEnum::RESOLVED->value,
                 QualityDefectStatusEnum::CANCELLED->value,
