@@ -1235,7 +1235,7 @@ class ProjectService
                 DB::raw('SUM(wb.available_quantity) as available_quantity'),
                 DB::raw('SUM(wb.available_quantity * COALESCE(NULLIF(wb.unit_price, 0), m.default_price, 0)) as chart_value'),
                 DB::raw('CASE WHEN SUM(wb.available_quantity) > 0 THEN SUM(wb.available_quantity * COALESCE(NULLIF(wb.unit_price, 0), m.default_price, 0)) / SUM(wb.available_quantity) ELSE COALESCE(MAX(m.default_price), 0) END as average_price'),
-                DB::raw('MAX(wb.updated_at) as last_operation_date'),
+                DB::raw('MAX(wb.last_movement_at) as last_operation_date'),
             ])
             ->groupBy('m.id', 'm.name', 'm.code', 'mu.short_name')
             ->havingRaw('SUM(wb.available_quantity) > 0')
