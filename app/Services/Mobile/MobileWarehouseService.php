@@ -71,24 +71,6 @@ class MobileWarehouseService
         ];
     }
 
-    public function buildWidget(User $user): array
-    {
-        $data = $this->build($user);
-        $summary = $data['summary'];
-        $badge = $summary['low_stock_count'] > 0
-            ? (string) $summary['low_stock_count']
-            : ($summary['recent_movements_count'] > 0 ? (string) $summary['recent_movements_count'] : null);
-
-        return [
-            'description' => trans_message('mobile_dashboard.widgets.warehouse.description', [
-                'warehouses' => $summary['warehouse_count'],
-                'low_stock' => $summary['low_stock_count'],
-            ]),
-            'badge' => $badge,
-            'payload' => $data,
-        ];
-    }
-
     private function mapWarehouses(Collection $warehouses, Collection $warehouseStats): array
     {
         return $warehouses->map(function (OrganizationWarehouse $warehouse) use ($warehouseStats): array {

@@ -79,21 +79,6 @@ class MobileScheduleService
         ];
     }
 
-    public function buildWidget(User $user): array
-    {
-        $data = $this->build($user);
-        $summary = $data['summary'];
-
-        return [
-            'description' => trans_message('mobile_dashboard.widgets.schedule.description', [
-                'upcoming' => $summary['upcoming_count'],
-                'blocking' => $summary['blocking_count'],
-            ]),
-            'badge' => $summary['upcoming_count'] > 0 ? (string) $summary['upcoming_count'] : null,
-            'payload' => $data,
-        ];
-    }
-
     private function mapEvents(Collection $events): array
     {
         return $events->map(function (ProjectEvent $event): array {
