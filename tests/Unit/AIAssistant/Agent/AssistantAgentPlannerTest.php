@@ -88,6 +88,46 @@ class AssistantAgentPlannerTest extends TestCase
         $this->assertSame(56, $decision->toolArguments['project_id']);
     }
 
+    public function test_last_months_period_reply_continues_pending_work_completion_report(): void
+    {
+        $pending = new AssistantTaskState(
+            id: 'report.work_completion',
+            domain: 'reports',
+            capability: 'reports',
+            toolName: 'generate_work_completion_report',
+            status: 'waiting_for_slots',
+            slots: [
+                new AssistantTaskSlot('period', true),
+                new AssistantTaskSlot('project_id', false, 56, 'Строительство склада Литер А'),
+            ],
+            sourceMessage: 'выполнение работ'
+        );
+
+        $decision = $this->planner()->decide('за последние три месяца', [], $pending);
+
+        $this->assertSame('execute_tool', $decision->type);
+        $this->assertSame('generate_work_completion_report', $decision->toolName);
+        $this->assertSame('за последние три месяца', $decision->toolArguments['period']);
+        $this->assertSame('2026-02-04', $decision->toolArguments['date_from']);
+        $this->assertSame('2026-05-04', $decision->toolArguments['date_to']);
+        $this->assertSame(56, $decision->toolArguments['project_id']);
+    }
+
+    public function test_direct_work_completion_request_with_flexible_phrase_executes_immediately(): void
+    {
+        $decision = $this->planner()->decide(
+            'сформируй отчет по выполненным работам за последние три месяца',
+            $this->projectContext(),
+            null
+        );
+
+        $this->assertSame('execute_tool', $decision->type);
+        $this->assertSame('generate_work_completion_report', $decision->toolName);
+        $this->assertSame('2026-02-04', $decision->toolArguments['date_from']);
+        $this->assertSame('2026-05-04', $decision->toolArguments['date_to']);
+        $this->assertSame(56, $decision->toolArguments['project_id']);
+    }
+
     public function test_direct_request_with_period_executes_immediately(): void
     {
         $decision = $this->planner()->decide(

@@ -31,6 +31,8 @@ final class AssistantReportIntentResolverTest extends TestCase
         return [
             'profitability' => ['сформируй отчет по рентабельности за май', 'project_profitability'],
             'work completion' => ['нужен отчет по выполнению работ за прошлый месяц', 'work_completion'],
+            'work completion dative' => ['сформируй отчет по выполненным работам', 'work_completion'],
+            'work completion accepted works' => ['сделай отчет по закрытым объемам работ', 'work_completion'],
             'materials' => ['покажи движение материалов за 2 недели', 'material_movements'],
             'contractors' => ['сделай отчет по расчетам с подрядчиками за месяц', 'contractor_settlements'],
             'warehouse' => ['выгрузи складские остатки', 'warehouse_stock'],

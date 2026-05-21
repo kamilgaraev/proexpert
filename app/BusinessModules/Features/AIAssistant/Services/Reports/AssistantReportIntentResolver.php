@@ -11,11 +11,38 @@ final readonly class AssistantReportIntentResolver
     private const REPORT_MARKERS = [
         'otchet',
         'sformiruy',
+        'sdelay',
         'sozday',
         'vygruzi',
         'vygruzka',
         'skachay',
         'podgotov',
+    ];
+
+    private const STOP_WORDS = [
+        'dlya',
+        'i',
+        'ili',
+        'mne',
+        'na',
+        'nado',
+        'nuzhen',
+        'nuzhno',
+        'ob',
+        'o',
+        'otchet',
+        'otcheta',
+        'po',
+        'pokazhi',
+        'podgotov',
+        's',
+        'skachay',
+        'sdelay',
+        'sformiruy',
+        'so',
+        'sozday',
+        'vygruzi',
+        'za',
     ];
 
     public function __construct(
@@ -104,6 +131,8 @@ final readonly class AssistantReportIntentResolver
                 }
             }
 
+            $score += $this->semanticScore($normalized, $definition);
+
             if ($score > 0) {
                 $scores[$definition->id] = $score;
             }
@@ -155,6 +184,133 @@ final readonly class AssistantReportIntentResolver
     private function contains(string $normalized, string $needle): bool
     {
         return str_contains($normalized, $this->normalize($needle));
+    }
+
+    private function semanticScore(string $normalized, AssistantReportDefinition $definition): int
+    {
+        $messageStems = $this->significantStems($normalized);
+        if ($messageStems === []) {
+            return 0;
+        }
+
+        $score = 0;
+
+        foreach ($definition->aliases as $alias) {
+            if ($this->termMatchesStems($this->normalize($alias), $messageStems)) {
+                $score += 2;
+            }
+        }
+
+        foreach ($definition->matchTerms as $term) {
+            if ($this->termMatchesStems($this->normalize($term), $messageStems)) {
+                $score += 2;
+            }
+        }
+
+        return $score;
+    }
+
+    /**
+     * @param  string[]  $messageStems
+     */
+    private function termMatchesStems(string $normalizedTerm, array $messageStems): bool
+    {
+        $termStems = $this->significantStems($normalizedTerm);
+        if ($termStems === []) {
+            return false;
+        }
+
+        foreach ($termStems as $termStem) {
+            $matched = false;
+
+            foreach ($messageStems as $messageStem) {
+                if ($this->stemsRelated($termStem, $messageStem)) {
+                    $matched = true;
+                    break;
+                }
+            }
+
+            if (! $matched) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * @return string[]
+     */
+    private function significantStems(string $normalized): array
+    {
+        $stems = [];
+        foreach (explode(' ', $normalized) as $token) {
+            if ($token === '' || in_array($token, self::STOP_WORDS, true)) {
+                continue;
+            }
+
+            $stem = $this->stemToken($token);
+            if (strlen($stem) < 4 || in_array($stem, self::STOP_WORDS, true)) {
+                continue;
+            }
+
+            $stems[] = $stem;
+        }
+
+        return array_values(array_unique($stems));
+    }
+
+    private function stemsRelated(string $left, string $right): bool
+    {
+        return $left === $right
+            || str_starts_with($left, $right)
+            || str_starts_with($right, $left);
+    }
+
+    private function stemToken(string $token): string
+    {
+        foreach ([
+            'iyami',
+            'yami',
+            'ami',
+            'ogo',
+            'ego',
+            'omu',
+            'emu',
+            'ymi',
+            'imi',
+            'aya',
+            'uyu',
+            'iyu',
+            'iye',
+            'ye',
+            'ie',
+            'iy',
+            'yy',
+            'ym',
+            'im',
+            'oy',
+            'ey',
+            'om',
+            'em',
+            'am',
+            'ah',
+            'ya',
+            'yu',
+            'ov',
+            'ev',
+            'a',
+            'u',
+            'e',
+            'y',
+            'i',
+        ] as $ending) {
+            if (str_ends_with($token, $ending) && strlen($token) - strlen($ending) >= 4) {
+                return substr($token, 0, -strlen($ending));
+            }
+        }
+
+        return $token;
     }
 
     private function normalize(string $value): string

@@ -105,9 +105,9 @@ final class AssistantPeriodResolver
         return $this->resolveExplicitDateRange($normalized, $sourceText)
             ?? $this->resolveRelativeMonth($normalized, $sourceText, $now)
             ?? $this->resolveRelativeYear($normalized, $sourceText, $now)
+            ?? $this->resolveWeeksAgo($normalized, $sourceText, $now)
             ?? $this->resolveRelativeQuantity($normalized, $sourceText, $now)
             ?? $this->resolveLastWeeks($normalized, $sourceText, $now)
-            ?? $this->resolveWeeksAgo($normalized, $sourceText, $now)
             ?? $this->resolveNamedMonth($normalized, $sourceText, $now);
     }
 
@@ -197,14 +197,39 @@ final class AssistantPeriodResolver
 
     private function resolveRelativeQuantity(string $normalized, string $sourceText, CarbonImmutable $now): ?AssistantResolvedPeriod
     {
-        if (preg_match('/\bза\s+(\d{1,2}|[а-яё]+)\s+(день|дня|дней|неделю|недели|недель|месяц|месяца|месяцев|год|года|лет)\b/u', $normalized, $matches) !== 1) {
+        if (preg_match('/\b(?:за\s+)?(?:последн(?:ий|ие|их|юю)\s+)?квартал\b/u', $normalized) === 1) {
+            return $this->period($now->subMonthsNoOverflow(3), $now, 'Последний квартал', $sourceText);
+        }
+
+        if (preg_match('/\b(?:за\s+)?(?:последн(?:ие|их)\s+)?полгода\b/u', $normalized) === 1) {
+            return $this->period($now->subMonthsNoOverflow(6), $now, 'Последние полгода', $sourceText);
+        }
+
+        if (preg_match('/\bза\s+(день|сутки|неделю|месяц|год)\b/u', $normalized, $singleUnitMatches) === 1) {
+            return $this->relativeQuantityPeriod(1, $singleUnitMatches[1], $now, $sourceText);
+        }
+
+        if (preg_match('/\b(?:за\s+)?(?:(?:последн|крайн)(?:ий|ие|их|юю)|(?:прошедш|минувш)(?:ие|их))?\s*(\d{1,2}|[а-яё]+)\s+(день|дня|дней|сутки|неделю|недели|недель|месяц|месяца|месяцев|год|года|лет)\b/u', $normalized, $matches) !== 1) {
             return null;
         }
 
         $quantity = $this->quantityFromToken($matches[1]);
-        $unit = $this->unitFromToken($matches[2]);
+        if ($quantity === null || $quantity < 1) {
+            return null;
+        }
 
-        if ($quantity === null || $unit === null || $quantity < 1) {
+        return $this->relativeQuantityPeriod($quantity, $matches[2], $now, $sourceText);
+    }
+
+    private function relativeQuantityPeriod(
+        int $quantity,
+        string $unitToken,
+        CarbonImmutable $now,
+        string $sourceText
+    ): ?AssistantResolvedPeriod {
+        $unit = $this->unitFromToken($unitToken);
+
+        if ($unit === null || $quantity < 1) {
             return null;
         }
 
@@ -311,6 +336,10 @@ final class AssistantPeriodResolver
     private function unitFromToken(string $token): ?string
     {
         if (preg_match('/^д/u', $token) === 1) {
+            return 'day';
+        }
+
+        if (preg_match('/^сут/u', $token) === 1) {
             return 'day';
         }
 
