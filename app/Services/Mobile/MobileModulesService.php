@@ -56,11 +56,48 @@ class MobileModulesService
             'order' => 50,
         ],
         [
-            'slug' => 'budget-estimates',
+            'slug' => 'construction-journal',
+            'permission_slug' => 'budget-estimates',
+            'access_slug' => 'budget-estimates',
             'icon' => 'journal',
             'route' => 'construction_journal',
             'supported_on_mobile' => true,
+            'order' => 58,
+        ],
+        [
+            'slug' => 'budget-estimates',
+            'icon' => 'calculate',
+            'route' => null,
+            'supported_on_mobile' => false,
             'order' => 60,
+        ],
+        [
+            'slug' => 'quality-control',
+            'icon' => 'quality',
+            'route' => 'quality-control',
+            'supported_on_mobile' => true,
+            'order' => 62,
+        ],
+        [
+            'slug' => 'safety-management',
+            'icon' => 'shield-check',
+            'route' => 'safety-management',
+            'supported_on_mobile' => true,
+            'order' => 64,
+        ],
+        [
+            'slug' => 'machinery-operations',
+            'icon' => 'machinery',
+            'route' => 'machinery-operations',
+            'supported_on_mobile' => true,
+            'order' => 66,
+        ],
+        [
+            'slug' => 'production-labor',
+            'icon' => 'engineer',
+            'route' => 'production-labor',
+            'supported_on_mobile' => true,
+            'order' => 68,
         ],
         [
             'slug' => 'workforce-management',
@@ -68,6 +105,69 @@ class MobileModulesService
             'route' => 'workforce-management',
             'supported_on_mobile' => true,
             'order' => 70,
+        ],
+        [
+            'slug' => 'handover-acceptance',
+            'icon' => 'handover',
+            'route' => 'handover-acceptance',
+            'supported_on_mobile' => true,
+            'order' => 72,
+        ],
+        [
+            'slug' => 'procurement',
+            'icon' => 'procurement',
+            'route' => null,
+            'supported_on_mobile' => false,
+            'order' => 80,
+        ],
+        [
+            'slug' => 'contract-management',
+            'icon' => 'contract',
+            'route' => null,
+            'supported_on_mobile' => false,
+            'order' => 90,
+        ],
+        [
+            'slug' => 'change-management',
+            'icon' => 'change',
+            'route' => null,
+            'supported_on_mobile' => false,
+            'order' => 100,
+        ],
+        [
+            'slug' => 'executive-documentation',
+            'icon' => 'documents',
+            'route' => null,
+            'supported_on_mobile' => false,
+            'order' => 110,
+        ],
+        [
+            'slug' => 'project-management',
+            'icon' => 'project',
+            'route' => null,
+            'supported_on_mobile' => false,
+            'order' => 120,
+        ],
+        [
+            'slug' => 'catalog-management',
+            'icon' => 'catalog',
+            'route' => null,
+            'supported_on_mobile' => false,
+            'order' => 130,
+        ],
+        [
+            'slug' => 'brigades',
+            'icon' => 'brigades',
+            'route' => null,
+            'supported_on_mobile' => false,
+            'order' => 140,
+        ],
+        [
+            'slug' => 'video-monitoring',
+            'icon' => 'video',
+            'route' => null,
+            'supported_on_mobile' => false,
+            'order' => 150,
         ],
     ];
 
@@ -92,13 +192,15 @@ class MobileModulesService
 
         foreach (self::CATALOG as $config) {
             $slug = $config['slug'];
-            $grantedPermissions = $modulePermissions[$slug] ?? null;
+            $permissionSlug = $config['permission_slug'] ?? $slug;
+            $accessSlug = $config['access_slug'] ?? $slug;
+            $grantedPermissions = $modulePermissions[$permissionSlug] ?? null;
 
             if (!is_array($grantedPermissions) || $grantedPermissions === []) {
                 continue;
             }
 
-            if (!$this->accessController->hasModuleAccess($organizationId, $slug)) {
+            if (!$this->accessController->hasModuleAccess($organizationId, $accessSlug)) {
                 continue;
             }
 
