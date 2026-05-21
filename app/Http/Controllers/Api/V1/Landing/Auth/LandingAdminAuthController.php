@@ -1,70 +1,74 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1\Landing\Auth;
 
-use App\Http\Controllers\Controller;
-use App\Services\Auth\LandingAdminAuthService;
 use App\DTOs\Auth\LoginDTO;
+use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Landing\Auth\LoginRequest;
-use Illuminate\Support\Facades\Log;
+use App\Http\Responses\LandingResponse;
+use App\Services\Auth\LandingAdminAuthService;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+
+use function trans_message;
 
 class LandingAdminAuthController extends Controller
 {
-    protected LandingAdminAuthService $authService;
     protected string $guard = 'api_landing_admin';
 
-    public function __construct(LandingAdminAuthService $authService)
-    {
-        $this->authService = $authService;
+    public function __construct(
+        protected LandingAdminAuthService $authService
+    ) {
     }
 
-    /**
-     * РђРІС‚РѕСЂРёР·Р°С†РёСЏ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°.
-     */
-    public function login(LoginRequest $request)
+    public function login(LoginRequest $request): JsonResponse
     {
         $loginDTO = LoginDTO::fromRequest($request->only('email', 'password'));
         $result = $this->authService->authenticate($loginDTO);
+
         if ($result['success']) {
-            return \App\Http\Responses\LandingResponse::fromPayload([
+            return LandingResponse::success([
                 'token' => $result['token'],
                 'landingAdmin' => $result['user'],
-            ]);
+            ], trans_message('landing.admin_auth.login_success'));
         }
-        return \App\Http\Responses\LandingResponse::fromPayload(['message' => $result['message'] ?? 'Unauthorized'], 401);
+
+        return LandingResponse::error(trans_message('landing.admin_auth.login_failed'), 401);
     }
 
-    /**
-     * Р”Р°РЅРЅС‹Рµ С‚РµРєСѓС‰РµРіРѕ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°.
-     */
-    public function me(Request $request)
+    public function me(Request $request): JsonResponse
     {
         $result = $this->authService->me();
+
         if ($result['success']) {
-            return \App\Http\Responses\LandingResponse::fromPayload($result['user']);
+            return LandingResponse::success($result['user'], trans_message('landing.admin_auth.profile_loaded'));
         }
-        return \App\Http\Responses\LandingResponse::fromPayload(['message' => $result['message'] ?? 'Not found'], 404);
+
+        return LandingResponse::error(trans_message('landing.admin_auth.profile_not_found'), 404);
     }
 
-    /**
-     * РћР±РЅРѕРІР»РµРЅРёРµ JWT.
-     */
-    public function refresh()
+    public function refresh(): JsonResponse
     {
         $result = $this->authService->refresh();
+
         if ($result['success']) {
-            return \App\Http\Responses\LandingResponse::fromPayload(['token' => $result['token']]);
+            return LandingResponse::success([
+                'token' => $result['token'],
+            ], trans_message('landing.admin_auth.token_refreshed'));
         }
-        return \App\Http\Responses\LandingResponse::fromPayload(['message' => $result['message'] ?? 'Token error'], $result['status_code'] ?? 401);
+
+        return LandingResponse::error(
+            trans_message('landing.admin_auth.token_error'),
+            $result['status_code'] ?? 401
+        );
     }
 
-    /**
-     * Logout.
-     */
-    public function logout()
+    public function logout(): JsonResponse
     {
         $this->authService->logout();
-        return \App\Http\Responses\LandingResponse::fromPayload(['message' => 'Logged out']);
+
+        return LandingResponse::success(null, trans_message('landing.admin_auth.logged_out'));
     }
-} 
+}

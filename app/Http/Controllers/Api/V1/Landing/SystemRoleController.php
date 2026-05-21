@@ -1,18 +1,24 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1\Landing;
 
-use App\Http\Controllers\Controller;
 use App\Domain\Authorization\Services\RoleScanner;
+use App\Http\Controllers\Controller;
+use App\Http\Responses\LandingResponse;
 use App\Services\PermissionTranslationService;
 use Illuminate\Http\JsonResponse;
+
+use function trans_message;
 
 class SystemRoleController extends Controller
 {
     public function __construct(
         protected RoleScanner $roleScanner,
         protected PermissionTranslationService $permissionTranslator
-    ) {}
+    ) {
+    }
 
     public function index(): JsonResponse
     {
@@ -20,14 +26,13 @@ class SystemRoleController extends Controller
 
         $formattedRoles = $roles->map(function ($role) {
             $slug = $role['slug'];
-            
-            // Translate name and description
-            $name = trans("roles.{$slug}.name");
+
+            $name = trans_message("roles.{$slug}.name");
             if ($name === "roles.{$slug}.name") {
                 $name = $role['name'];
             }
 
-            $description = trans("roles.{$slug}.description");
+            $description = trans_message("roles.{$slug}.description");
             if ($description === "roles.{$slug}.description") {
                 $description = $role['description'] ?? '';
             }
@@ -48,6 +53,6 @@ class SystemRoleController extends Controller
             ];
         })->values();
 
-        return \App\Http\Responses\LandingResponse::fromPayload(['data' => $formattedRoles]);
+        return LandingResponse::success($formattedRoles, trans_message('landing.system_roles.loaded'));
     }
 }

@@ -15,6 +15,8 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 
+use function trans_message;
+
 class MultiOrganizationController extends Controller
 {
     protected MultiOrganizationService $multiOrgService;
@@ -45,7 +47,7 @@ class MultiOrganizationController extends Controller
             return $this->landingResponse([
                 'success' => false,
                 'available' => false,
-                'message' => 'Модуль "Мультиорганизация" не активирован',
+                'message' => trans_message('landing.multi_organization.module_inactive'),
                 'required_module' => 'multi-organization'
             ], 403);
         }
@@ -78,7 +80,7 @@ class MultiOrganizationController extends Controller
             
             return $this->landingResponse([
                 'success' => true,
-                'message' => 'Холдинг успешно создан',
+                'message' => trans_message('landing.multi_organization.holding_created'),
                 'data' => $group,
             ]);
         } catch (\Exception $e) {
@@ -106,7 +108,7 @@ class MultiOrganizationController extends Controller
         $group = OrganizationGroup::findOrFail($request->input('group_id'));
         
         if ($group->parent_organization_id !== $user->current_organization_id) {
-            return LandingResponse::error('Нет прав для добавления дочерней организации', 403);
+            return LandingResponse::error(trans_message('landing.multi_organization.child_add_forbidden'), 403);
         }
 
         try {
@@ -114,7 +116,7 @@ class MultiOrganizationController extends Controller
             
             return $this->landingResponse([
                 'success' => true,
-                'message' => 'Дочерняя организация успешно добавлена',
+                'message' => trans_message('landing.multi_organization.child_added'),
                 'data' => $childData,
             ]);
         } catch (\Exception $e) {
@@ -184,7 +186,7 @@ class MultiOrganizationController extends Controller
         $targetOrgId = $request->input('organization_id');
         
         if (!$this->multiOrgService->hasAccessToOrganization($authUser, $targetOrgId)) {
-            return LandingResponse::error('Нет доступа к выбранной организации', 403);
+            return LandingResponse::error(trans_message('landing.multi_organization.target_access_denied'), 403);
         }
 
         $user = \App\Models\User::findOrFail($authUser->id);
@@ -193,7 +195,7 @@ class MultiOrganizationController extends Controller
         
         return $this->landingResponse([
             'success' => true,
-            'message' => 'Контекст организации изменен',
+            'message' => trans_message('landing.multi_organization.context_changed'),
             'current_organization_id' => $targetOrgId,
         ]);
     }
@@ -251,7 +253,7 @@ class MultiOrganizationController extends Controller
 
             return $this->landingResponse([
                 'success' => true,
-                'message' => 'Дочерняя организация обновлена',
+                'message' => trans_message('landing.multi_organization.child_updated'),
                 'data' => $updatedOrg,
             ]);
         } catch (\Exception $e) {
@@ -279,7 +281,7 @@ class MultiOrganizationController extends Controller
 
             return $this->landingResponse([
                 'success' => true,
-                'message' => 'Дочерняя организация удалена',
+                'message' => trans_message('landing.multi_organization.child_deleted'),
             ]);
         } catch (\Exception $e) {
             return LandingResponse::error(trans_message('errors.business_logic_error'), 400);
@@ -349,7 +351,7 @@ class MultiOrganizationController extends Controller
 
             return $this->landingResponse([
                 'success' => true,
-                'message' => 'Пользователь добавлен в дочернюю организацию с персональной ролью',
+                'message' => trans_message('landing.multi_organization.child_user_added'),
                 'data' => $result,
             ]);
         } catch (\Exception $e) {
@@ -379,7 +381,7 @@ class MultiOrganizationController extends Controller
 
             return $this->landingResponse([
                 'success' => true,
-                'message' => 'Данные пользователя обновлены',
+                'message' => trans_message('landing.multi_organization.child_user_updated'),
                 'data' => $result,
             ]);
         } catch (\Exception $e) {
@@ -397,7 +399,7 @@ class MultiOrganizationController extends Controller
 
             return $this->landingResponse([
                 'success' => true,
-                'message' => 'Пользователь исключен из дочерней организации',
+                'message' => trans_message('landing.multi_organization.child_user_removed'),
             ]);
         } catch (\Exception $e) {
             return LandingResponse::error(trans_message('errors.business_logic_error'), 400);
@@ -439,7 +441,7 @@ class MultiOrganizationController extends Controller
 
             return $this->landingResponse([
                 'success' => true,
-                'message' => 'Настройки холдинга обновлены',
+                'message' => trans_message('landing.multi_organization.settings_updated'),
                 'data' => $group,
             ]);
         } catch (\Exception $e) {
@@ -600,7 +602,11 @@ class MultiOrganizationController extends Controller
 
             return $this->landingResponse([
                 'success' => true,
-                'message' => "Обработано пользователей: {$results['total']}, успешно: {$results['successful']}, ошибок: {$results['failed']}",
+                'message' => trans_message('landing.multi_organization.users_import_result', [
+                    'total' => $results['total'],
+                    'successful' => $results['successful'],
+                    'failed' => $results['failed'],
+                ]),
                 'data' => $results,
             ]);
         } catch (\Exception $e) {

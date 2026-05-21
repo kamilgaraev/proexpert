@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1\Landing\Auth;
 
 use App\Http\Controllers\Controller;
@@ -10,6 +12,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+
+use function trans_message;
 
 class EmailVerificationController extends Controller
 {
@@ -24,10 +28,7 @@ class EmailVerificationController extends Controller
                     'expires' => $request->query('expires'),
                 ]);
 
-                return LandingResponse::error(
-                    'РќРµРІРµСЂРЅР°СЏ СЃСЃС‹Р»РєР° РґР»СЏ РїРѕРґС‚РІРµСЂР¶РґРµРЅРёСЏ email',
-                    403
-                );
+                return LandingResponse::error(trans_message('landing.email_verification.invalid_link'), 403);
             }
 
             if (!hash_equals((string) $hash, sha1($user->getEmailForVerification()))) {
@@ -36,19 +37,15 @@ class EmailVerificationController extends Controller
                     'provided_hash' => $hash,
                 ]);
 
-                return LandingResponse::error(
-                    'РќРµРІРµСЂРЅР°СЏ СЃСЃС‹Р»РєР° РґР»СЏ РїРѕРґС‚РІРµСЂР¶РґРµРЅРёСЏ email',
-                    403
-                );
+                return LandingResponse::error(trans_message('landing.email_verification.invalid_link'), 403);
             }
 
             if ($user->hasVerifiedEmail()) {
-                return LandingResponse::success(null, 'Email СѓР¶Рµ РїРѕРґС‚РІРµСЂР¶РґРµРЅ');
+                return LandingResponse::success(null, trans_message('landing.email_verification.already_verified'));
             }
 
             if ($user->markEmailAsVerified()) {
                 event(new Verified($user));
-
                 $this->clearUserProfileCache($user);
 
                 Log::info('Email verified successfully', [
@@ -57,23 +54,15 @@ class EmailVerificationController extends Controller
                 ]);
             }
 
-            return LandingResponse::success(null, 'Email СѓСЃРїРµС€РЅРѕ РїРѕРґС‚РІРµСЂР¶РґРµРЅ');
+            return LandingResponse::success(null, trans_message('landing.email_verification.verified'));
         } catch (\Throwable $e) {
             Log::error('Email verification failed', [
                 'user_id' => $id,
                 'error' => $e->getMessage(),
             ]);
 
-            return LandingResponse::error(
-                'РћС€РёР±РєР° РїСЂРё РїРѕРґС‚РІРµСЂР¶РґРµРЅРёРё email',
-                500
-            );
+            return LandingResponse::error(trans_message('landing.email_verification.verify_error'), 500);
         }
-    }
-
-    private function clearUserProfileCache(User $user): void
-    {
-        Cache::forget("user_with_roles_{$user->id}_" . ($user->current_organization_id ?? 'no_org'));
     }
 
     public function resend(Request $request): JsonResponse
@@ -81,30 +70,21 @@ class EmailVerificationController extends Controller
         $user = $request->user();
 
         if (!$user) {
-            return \App\Http\Responses\LandingResponse::fromPayload([
-                'success' => false,
-                'message' => 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ Р°РІС‚РѕСЂРёР·РѕРІР°РЅ'
-            ], 401);
+            return LandingResponse::error(trans_message('landing.not_authenticated'), 401);
         }
 
         if ($user->hasVerifiedEmail()) {
-            return \App\Http\Responses\LandingResponse::fromPayload([
-                'success' => false,
-                'message' => 'Email СѓР¶Рµ РїРѕРґС‚РІРµСЂР¶РґРµРЅ'
-            ], 400);
+            return LandingResponse::error(trans_message('landing.email_verification.already_verified'), 400);
         }
 
         $user->sendEmailVerificationNotification();
 
         Log::info('Email verification resent', [
             'user_id' => $user->id,
-            'email' => $user->email
+            'email' => $user->email,
         ]);
 
-        return \App\Http\Responses\LandingResponse::fromPayload([
-            'success' => true,
-            'message' => 'РџРёСЃСЊРјРѕ СЃ РїРѕРґС‚РІРµСЂР¶РґРµРЅРёРµРј РѕС‚РїСЂР°РІР»РµРЅРѕ РїРѕРІС‚РѕСЂРЅРѕ'
-        ]);
+        return LandingResponse::success(null, trans_message('landing.email_verification.resent'));
     }
 
     public function check(Request $request): JsonResponse
@@ -112,17 +92,22 @@ class EmailVerificationController extends Controller
         $user = $request->user();
 
         if (!$user) {
-            return \App\Http\Responses\LandingResponse::fromPayload([
-                'success' => false,
-                'message' => 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ Р°РІС‚РѕСЂРёР·РѕРІР°РЅ',
-                'verified' => false
-            ], 401);
+            return LandingResponse::error(
+                trans_message('landing.not_authenticated'),
+                401,
+                null,
+                ['data' => ['verified' => false]]
+            );
         }
 
-        return \App\Http\Responses\LandingResponse::fromPayload([
-            'success' => true,
+        return LandingResponse::success([
             'verified' => $user->hasVerifiedEmail(),
-            'email' => $user->email
-        ]);
+            'email' => $user->email,
+        ], trans_message('landing.email_verification.status_loaded'));
+    }
+
+    private function clearUserProfileCache(User $user): void
+    {
+        Cache::forget("user_with_roles_{$user->id}_" . ($user->current_organization_id ?? 'no_org'));
     }
 }

@@ -18,6 +18,8 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 
+use function trans_message;
+
 class HoldingSitesController extends Controller
 {
     private SiteManagementService $siteService;
@@ -47,7 +49,7 @@ class HoldingSitesController extends Controller
             if (!$this->canUserManageHoldingSites($user, $organizationGroup)) {
                 return $this->landingResponse([
                     'success' => false,
-                    'message' => 'Недостаточно прав для управления сайтами холдинга'
+                    'message' => trans_message('landing.holding_sites.manage_forbidden'),
                 ], 403);
             }
 
@@ -67,7 +69,7 @@ class HoldingSitesController extends Controller
 
             return $this->landingResponse([
                 'success' => false,
-                'message' => 'Ошибка получения списка сайтов'
+                'message' => trans_message('landing.holding_sites.list_error'),
             ], 500);
         }
     }
@@ -84,7 +86,7 @@ class HoldingSitesController extends Controller
             if (!$this->canUserManageHoldingSites($user, $organizationGroup)) {
                 return $this->landingResponse([
                     'success' => false,
-                    'message' => 'Недостаточно прав для создания сайта'
+                    'message' => trans_message('landing.holding_sites.create_forbidden'),
                 ], 403);
             }
 
@@ -101,7 +103,7 @@ class HoldingSitesController extends Controller
             if ($validator->fails()) {
                 return $this->landingResponse([
                     'success' => false,
-                    'message' => 'Ошибки валидации',
+                    'message' => trans_message('landing.holding_sites.validation_error'),
                     'errors' => $validator->errors()
                 ], 422);
             }
@@ -120,7 +122,7 @@ class HoldingSitesController extends Controller
                     'preview_url' => $site->getPreviewUrl(),
                     'created_at' => $site->created_at
                 ],
-                'message' => 'Сайт успешно создан'
+                'message' => trans_message('landing.holding_sites.created'),
             ], 201);
 
         } catch (\Exception $e) {
@@ -132,7 +134,7 @@ class HoldingSitesController extends Controller
 
             return $this->landingResponse([
                 'success' => false,
-                'message' => 'Ошибка создания сайта'
+                'message' => trans_message('landing.holding_sites.create_error'),
             ], 500);
         }
     }
@@ -151,7 +153,7 @@ class HoldingSitesController extends Controller
             if (!$site->canUserEdit($user)) {
                 return $this->landingResponse([
                     'success' => false,
-                    'message' => 'Недостаточно прав для просмотра сайта'
+                    'message' => trans_message('landing.holding_sites.view_forbidden'),
                 ], 403);
             }
 
@@ -192,7 +194,7 @@ class HoldingSitesController extends Controller
 
             return $this->landingResponse([
                 'success' => false,
-                'message' => 'Ошибка получения данных сайта'
+                'message' => trans_message('landing.holding_sites.details_error'),
             ], 500);
         }
     }
@@ -211,7 +213,7 @@ class HoldingSitesController extends Controller
             if (!$site->canUserEdit($user)) {
                 return $this->landingResponse([
                     'success' => false,
-                    'message' => 'Недостаточно прав для редактирования сайта'
+                    'message' => trans_message('landing.holding_sites.edit_forbidden'),
                 ], 403);
             }
 
@@ -227,7 +229,7 @@ class HoldingSitesController extends Controller
             if ($validator->fails()) {
                 return $this->landingResponse([
                     'success' => false,
-                    'message' => 'Ошибки валидации',
+                    'message' => trans_message('landing.holding_sites.validation_error'),
                     'errors' => $validator->errors()
                 ], 422);
             }
@@ -237,12 +239,12 @@ class HoldingSitesController extends Controller
             if ($updated) {
                 return $this->landingResponse([
                     'success' => true,
-                    'message' => 'Настройки сайта обновлены'
+                    'message' => trans_message('landing.holding_sites.settings_updated'),
                 ]);
             } else {
                 return $this->landingResponse([
                     'success' => false,
-                    'message' => 'Не удалось обновить настройки'
+                    'message' => trans_message('landing.holding_sites.settings_update_error'),
                 ], 500);
             }
 
@@ -256,7 +258,7 @@ class HoldingSitesController extends Controller
 
             return $this->landingResponse([
                 'success' => false,
-                'message' => 'Ошибка обновления сайта'
+                'message' => trans_message('landing.holding_sites.update_error'),
             ], 500);
         }
     }
@@ -316,12 +318,12 @@ class HoldingSitesController extends Controller
             if ($deleted) {
                 return $this->landingResponse([
                     'success' => true,
-                    'message' => 'Сайт успешно удален'
+                    'message' => trans_message('landing.holding_sites.deleted'),
                 ]);
             } else {
                 return $this->landingResponse([
                     'success' => false,
-                    'message' => 'Не удалось удалить сайт'
+                    'message' => trans_message('landing.holding_sites.delete_error'),
                 ], 500);
             }
 
@@ -335,7 +337,7 @@ class HoldingSitesController extends Controller
 
             return $this->landingResponse([
                 'success' => false,
-                'message' => 'Ошибка удаления сайта'
+                'message' => trans_message('landing.holding_sites.delete_error'),
             ], 500);
         }
     }

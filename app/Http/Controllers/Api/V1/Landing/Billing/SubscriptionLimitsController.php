@@ -1,40 +1,39 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1\Landing\Billing;
 
 use App\Http\Controllers\Controller;
-use App\Services\Billing\SubscriptionLimitsService;
 use App\Http\Resources\Billing\SubscriptionLimitsResource;
-use Illuminate\Http\Request;
+use App\Http\Responses\LandingResponse;
+use App\Services\Billing\SubscriptionLimitsService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
+
+use function trans_message;
 
 class SubscriptionLimitsController extends Controller
 {
-    protected SubscriptionLimitsService $limitsService;
-
-    public function __construct(SubscriptionLimitsService $limitsService)
-    {
-        $this->limitsService = $limitsService;
+    public function __construct(
+        protected SubscriptionLimitsService $limitsService
+    ) {
     }
 
-    /**
-     * РџРѕР»СѓС‡РёС‚СЊ РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ Р»РёРјРёС‚Р°С… С‚РµРєСѓС‰РµР№ РїРѕРґРїРёСЃРєРё РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
-     */
     public function show(Request $request): JsonResponse
     {
         $user = Auth::user();
-        
-        // РљРµС€РёСЂСѓРµРј Р»РёРјРёС‚С‹ РїРѕРґРїРёСЃРєРё РЅР° 5 РјРёРЅСѓС‚
         $cacheKey = "subscription_limits_{$user->id}_{$user->current_organization_id}";
-        $limitsData = \Illuminate\Support\Facades\Cache::remember($cacheKey, 300, function () use ($user) {
+
+        $limitsData = Cache::remember($cacheKey, 300, function () use ($user) {
             return $this->limitsService->getUserLimitsData($user);
         });
-        
-        return \App\Http\Responses\LandingResponse::fromPayload([
-            'success' => true,
-            'data' => new SubscriptionLimitsResource($limitsData)
-        ]);
-    }
 
-} 
+        return LandingResponse::success(
+            new SubscriptionLimitsResource($limitsData),
+            trans_message('landing.subscription_limits.loaded')
+        );
+    }
+}

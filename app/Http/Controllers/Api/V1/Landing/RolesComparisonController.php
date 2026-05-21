@@ -1,65 +1,57 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1\Landing;
 
-use App\Http\Controllers\Controller;
 use App\Domain\Authorization\Services\RoleScanner;
+use App\Http\Controllers\Controller;
+use App\Http\Responses\LandingResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
+use function trans_message;
+
 class RolesComparisonController extends Controller
 {
-    protected RoleScanner $roleScanner;
-
-    public function __construct(RoleScanner $roleScanner)
-    {
-        $this->roleScanner = $roleScanner;
+    public function __construct(
+        protected RoleScanner $roleScanner
+    ) {
     }
 
-    /**
-     * РџРѕР»СѓС‡РёС‚СЊ С‚Р°Р±Р»РёС†Сѓ СЃСЂР°РІРЅРµРЅРёСЏ РІСЃРµС… СЂРѕР»РµР№
-     * GET /api/v1/landing/roles/comparison
-     */
     public function comparison(Request $request): JsonResponse
     {
         $allRoles = $this->roleScanner->getAllRoles();
-        
         $comparison = [];
-        
+
         foreach ($allRoles as $roleSlug => $roleData) {
             $comparison[] = $this->formatRoleForComparison($roleSlug, $roleData);
         }
-        
-        // РЎРѕСЂС‚РёСЂСѓРµРј РїРѕ РєРѕРЅС‚РµРєСЃС‚Сѓ Рё РЅР°Р·РІР°РЅРёСЋ
-        usort($comparison, function($a, $b) {
+
+        usort($comparison, function ($a, $b) {
             $contextOrder = ['system' => 1, 'organization' => 2, 'project' => 3];
             $contextDiff = ($contextOrder[$a['context_slug']] ?? 999) - ($contextOrder[$b['context_slug']] ?? 999);
+
             if ($contextDiff !== 0) {
                 return $contextDiff;
             }
+
             return strcmp($a['name'], $b['name']);
         });
-        
-        return \App\Http\Responses\LandingResponse::fromPayload([
-            'success' => true,
-            'data' => [
-                'roles' => $comparison,
-                'total' => count($comparison),
-                'last_updated' => now()->toIso8601String()
-            ]
-        ]);
+
+        return LandingResponse::success([
+            'roles' => $comparison,
+            'total' => count($comparison),
+            'last_updated' => now()->toIso8601String(),
+        ], trans_message('landing.roles.loaded'));
     }
 
-    /**
-     * Р¤РѕСЂРјР°С‚РёСЂРѕРІР°С‚СЊ СЂРѕР»СЊ РґР»СЏ СЃСЂР°РІРЅРµРЅРёСЏ
-     */
     protected function formatRoleForComparison(string $roleSlug, array $roleData): array
     {
         $systemPermissions = $roleData['system_permissions'] ?? [];
-        $hasBillingAccess = $this->hasBillingAccess($systemPermissions);
         $canManageRoles = $this->getCanManageRoles($roleData);
         $timeRestrictions = $this->getTimeRestrictions($roleData);
-        
+
         return [
             'slug' => $roleSlug,
             'name' => $roleData['name'] ?? $roleSlug,
@@ -68,70 +60,59 @@ class RolesComparisonController extends Controller
             'context_slug' => $roleData['context'] ?? 'unknown',
             'interfaces' => $this->translateInterfaces($roleData['interface_access'] ?? []),
             'interfaces_slugs' => $roleData['interface_access'] ?? [],
-            'billing_access' => $hasBillingAccess,
+            'billing_access' => $this->hasBillingAccess($systemPermissions),
             'can_manage_roles' => $canManageRoles['can'],
             'cannot_manage_roles' => $canManageRoles['cannot'],
             'time_restrictions' => $timeRestrictions,
             'system_permissions_count' => count($systemPermissions),
             'module_permissions_count' => $this->countModulePermissions($roleData['module_permissions'] ?? []),
-            'has_all_permissions' => in_array('*', $systemPermissions),
+            'has_all_permissions' => in_array('*', $systemPermissions, true),
             'has_all_modules' => isset($roleData['module_permissions']['*']),
         ];
     }
 
-    /**
-     * РџСЂРѕРІРµСЂРёС‚СЊ РґРѕСЃС‚СѓРї Рє Р±РёР»Р»РёРЅРіСѓ
-     */
     protected function hasBillingAccess(array $systemPermissions): bool
     {
-        // РџСЂРѕРІРµСЂСЏРµРј РЅР°Р»РёС‡РёРµ РїСЂР°РІ Р±РёР»Р»РёРЅРіР°
         $billingPermissions = [
             'billing.*',
             'billing.manage',
             'billing.view',
             'billing.edit',
             'organization.billing',
-            'modules.billing', // Р”РѕСЃС‚СѓРї Рє РјРѕРґСѓР»СЋ Р±РёР»Р»РёРЅРіР°
+            'modules.billing',
         ];
-        
-        if (in_array('*', $systemPermissions)) {
+
+        if (in_array('*', $systemPermissions, true)) {
             return true;
         }
-        
+
         foreach ($billingPermissions as $permission) {
-            if (in_array($permission, $systemPermissions)) {
+            if (in_array($permission, $systemPermissions, true)) {
                 return true;
             }
         }
-        
+
         return false;
     }
 
-    /**
-     * РџРѕР»СѓС‡РёС‚СЊ РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ С‚РѕРј, РєР°РєРёРµ СЂРѕР»Рё РјРѕР¶РµС‚ СѓРїСЂР°РІР»СЏС‚СЊ
-     */
     protected function getCanManageRoles(array $roleData): array
     {
         $hierarchy = $roleData['hierarchy'] ?? [];
         $canManage = $hierarchy['can_manage_roles'] ?? [];
         $cannotManage = $hierarchy['cannot_manage'] ?? [];
-        
+
         return [
             'can' => $this->translateRoleSlugs($canManage),
             'cannot' => $this->translateRoleSlugs($cannotManage),
-            'can_all' => in_array('*', $canManage),
-            'cannot_all' => in_array('*', $cannotManage),
+            'can_all' => in_array('*', $canManage, true),
+            'cannot_all' => in_array('*', $cannotManage, true),
         ];
     }
 
-    /**
-     * РџРѕР»СѓС‡РёС‚СЊ РІСЂРµРјРµРЅРЅС‹Рµ РѕРіСЂР°РЅРёС‡РµРЅРёСЏ
-     */
     protected function getTimeRestrictions(array $roleData): array
     {
-        $conditions = $roleData['conditions'] ?? [];
-        $timeConditions = $conditions['time'] ?? [];
-        
+        $timeConditions = $roleData['conditions']['time'] ?? [];
+
         if (empty($timeConditions)) {
             return [
                 'has_restrictions' => false,
@@ -139,7 +120,7 @@ class RolesComparisonController extends Controller
                 'working_days' => null,
             ];
         }
-        
+
         return [
             'has_restrictions' => true,
             'working_hours' => $timeConditions['working_hours'] ?? null,
@@ -147,113 +128,96 @@ class RolesComparisonController extends Controller
         ];
     }
 
-    /**
-     * РџРѕРґСЃС‡РёС‚Р°С‚СЊ РєРѕР»РёС‡РµСЃС‚РІРѕ РјРѕРґСѓР»СЊРЅС‹С… РїСЂР°РІ
-     */
     protected function countModulePermissions(array $modulePermissions): int
     {
         $count = 0;
+
         foreach ($modulePermissions as $module => $permissions) {
-            if ($module === '*' && is_array($permissions) && in_array('*', $permissions)) {
-                return 999; // Р’СЃРµ РјРѕРґСѓР»Рё Рё РІСЃРµ РїСЂР°РІР°
+            if ($module === '*' && is_array($permissions) && in_array('*', $permissions, true)) {
+                return 999;
             }
+
             if (is_array($permissions)) {
                 $count += count($permissions);
             }
         }
+
         return $count;
     }
 
-    /**
-     * РџРµСЂРµРІРµСЃС‚Рё РєРѕРЅС‚РµРєСЃС‚ РЅР° СЂСѓСЃСЃРєРёР№
-     */
     protected function translateContext(string $context): string
     {
-        return match($context) {
-            'system' => 'РЎРёСЃС‚РµРјР°',
-            'organization' => 'РћСЂРіР°РЅРёР·Р°С†РёСЏ',
-            'project' => 'РџСЂРѕРµРєС‚',
+        return match ($context) {
+            'system' => trans_message('landing.roles.contexts.system'),
+            'organization' => trans_message('landing.roles.contexts.organization'),
+            'project' => trans_message('landing.roles.contexts.project'),
             default => $context,
         };
     }
 
-    /**
-     * РџРµСЂРµРІРµСЃС‚Рё РёРЅС‚РµСЂС„РµР№СЃС‹ РЅР° СЂСѓСЃСЃРєРёР№
-     */
     protected function translateInterfaces(array $interfaces): array
     {
         $translations = [
-            'admin' => 'РђРґРјРёРЅ-РїР°РЅРµР»СЊ',
-            'lk' => 'Р›РёС‡РЅС‹Р№ РєР°Р±РёРЅРµС‚',
-            'mobile' => 'РњРѕР±РёР»СЊРЅРѕРµ РїСЂРёР»РѕР¶РµРЅРёРµ',
+            'admin' => trans_message('landing.roles.interfaces.admin'),
+            'lk' => trans_message('landing.roles.interfaces.lk'),
+            'mobile' => trans_message('landing.roles.interfaces.mobile'),
         ];
-        
-        return array_map(function($interface) use ($translations) {
+
+        return array_map(function ($interface) use ($translations) {
             return $translations[$interface] ?? $interface;
         }, $interfaces);
     }
 
-    /**
-     * РџРµСЂРµРІРµСЃС‚Рё СЃР»Р°РіРё СЂРѕР»РµР№ РІ РЅР°Р·РІР°РЅРёСЏ
-     */
     protected function translateRoleSlugs(array $roleSlugs): array
     {
         if (empty($roleSlugs)) {
             return [];
         }
-        
-        if (in_array('*', $roleSlugs)) {
-            return ['Р’СЃРµ СЂРѕР»Рё'];
+
+        if (in_array('*', $roleSlugs, true)) {
+            return [trans_message('landing.roles.all_roles')];
         }
-        
+
         $allRoles = $this->roleScanner->getAllRoles();
         $translated = [];
-        
+
         foreach ($roleSlugs as $slug) {
             $role = $allRoles->get($slug);
-            if ($role) {
-                $translated[] = $role['name'] ?? $slug;
-            } else {
-                $translated[] = $slug;
-            }
+            $translated[] = $role ? ($role['name'] ?? $slug) : $slug;
         }
-        
+
         return $translated;
     }
 
-    /**
-     * РџРµСЂРµРІРµСЃС‚Рё СЂР°Р±РѕС‡РёРµ РґРЅРё РЅР° СЂСѓСЃСЃРєРёР№
-     */
     protected function translateWorkingDays($days): ?array
     {
         if ($days === null) {
             return null;
         }
-        
-        if (is_array($days)) {
-            $dayNames = [
-                1 => 'РџРѕРЅРµРґРµР»СЊРЅРёРє',
-                2 => 'Р’С‚РѕСЂРЅРёРє',
-                3 => 'РЎСЂРµРґР°',
-                4 => 'Р§РµС‚РІРµСЂРі',
-                5 => 'РџСЏС‚РЅРёС†Р°',
-                6 => 'РЎСѓР±Р±РѕС‚Р°',
-                7 => 'Р’РѕСЃРєСЂРµСЃРµРЅСЊРµ',
-                'monday' => 'РџРѕРЅРµРґРµР»СЊРЅРёРє',
-                'tuesday' => 'Р’С‚РѕСЂРЅРёРє',
-                'wednesday' => 'РЎСЂРµРґР°',
-                'thursday' => 'Р§РµС‚РІРµСЂРі',
-                'friday' => 'РџСЏС‚РЅРёС†Р°',
-                'saturday' => 'РЎСѓР±Р±РѕС‚Р°',
-                'sunday' => 'Р’РѕСЃРєСЂРµСЃРµРЅСЊРµ',
-            ];
-            
-            return array_map(function($day) use ($dayNames) {
-                return $dayNames[$day] ?? $day;
-            }, $days);
+
+        if (!is_array($days)) {
+            return null;
         }
-        
-        return null;
+
+        $dayNames = [
+            1 => trans_message('landing.roles.days.1'),
+            2 => trans_message('landing.roles.days.2'),
+            3 => trans_message('landing.roles.days.3'),
+            4 => trans_message('landing.roles.days.4'),
+            5 => trans_message('landing.roles.days.5'),
+            6 => trans_message('landing.roles.days.6'),
+            7 => trans_message('landing.roles.days.7'),
+            'monday' => trans_message('landing.roles.days.monday'),
+            'tuesday' => trans_message('landing.roles.days.tuesday'),
+            'wednesday' => trans_message('landing.roles.days.wednesday'),
+            'thursday' => trans_message('landing.roles.days.thursday'),
+            'friday' => trans_message('landing.roles.days.friday'),
+            'saturday' => trans_message('landing.roles.days.saturday'),
+            'sunday' => trans_message('landing.roles.days.sunday'),
+        ];
+
+        return array_map(function ($day) use ($dayNames) {
+            return $dayNames[$day] ?? $day;
+        }, $days);
     }
 }
-

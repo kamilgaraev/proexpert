@@ -12,6 +12,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Tymon\JWTAuth\Facades\JWTAuth;
 
+use function trans_message;
+
 class OrganizationPackageController
 {
     public function __construct(
@@ -26,13 +28,13 @@ class OrganizationPackageController
 
             $packages = $this->packageService->getAllPackages($organizationId);
 
-            return LandingResponse::success($packages);
+            return LandingResponse::success($packages, trans_message('landing.packages.loaded'));
         } catch (\Exception $e) {
             Log::error('PackageController@index: '.$e->getMessage(), [
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            return LandingResponse::error('Не удалось получить список пакетов', 500);
+            return LandingResponse::error(trans_message('landing.packages.load_error'), 500);
         }
     }
 
@@ -55,7 +57,7 @@ class OrganizationPackageController
                 $validated['duration_days'] ?? 30
             );
 
-            return LandingResponse::success($result, 'Пакет успешно подключён');
+            return LandingResponse::success($result, trans_message('landing.packages.subscribe_success'));
         } catch (\InvalidArgumentException $e) {
             return LandingResponse::error(trans_message('errors.business_logic_error'), 422);
         } catch (InsufficientBalanceException $e) {
@@ -72,7 +74,7 @@ class OrganizationPackageController
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            return LandingResponse::error('Не удалось подключить пакет', 500);
+            return LandingResponse::error(trans_message('landing.packages.subscribe_error'), 500);
         }
     }
 
@@ -84,7 +86,7 @@ class OrganizationPackageController
 
             $this->packageService->unsubscribeFromPackage($organizationId, $packageSlug);
 
-            return LandingResponse::success(null, 'Пакет успешно отключён');
+            return LandingResponse::success(null, trans_message('landing.packages.unsubscribe_success'));
         } catch (\RuntimeException $e) {
             return LandingResponse::error(trans_message('errors.resource_not_found'), 404);
         } catch (\Exception $e) {
@@ -93,7 +95,7 @@ class OrganizationPackageController
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            return LandingResponse::error('Не удалось отключить пакет', 500);
+            return LandingResponse::error(trans_message('landing.packages.unsubscribe_error'), 500);
         }
     }
 }

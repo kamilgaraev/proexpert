@@ -1,19 +1,21 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1\Landing;
 
-use App\Http\Controllers\Controller;
 use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\SiteTemplate;
-use Illuminate\Http\Request;
+use App\Http\Controllers\Controller;
+use App\Http\Responses\LandingResponse;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 
+use function trans_message;
+
 class SiteTemplatesController extends Controller
 {
-    /**
-     * РџРѕР»СѓС‡РёС‚СЊ РґРѕСЃС‚СѓРїРЅС‹Рµ С€Р°Р±Р»РѕРЅС‹
-     */
     public function index(Request $request): JsonResponse
     {
         try {
@@ -35,27 +37,17 @@ class SiteTemplatesController extends Controller
                 ];
             });
 
-            return \App\Http\Responses\LandingResponse::fromPayload([
-                'success' => true,
-                'data' => $templatesData
-            ]);
-
-        } catch (\Exception $e) {
+            return LandingResponse::success($templatesData, trans_message('landing.site_templates.loaded'));
+        } catch (\Throwable $e) {
             Log::error('Error getting site templates', [
                 'error' => $e->getMessage(),
-                'user_id' => Auth::id()
+                'user_id' => Auth::id(),
             ]);
 
-            return \App\Http\Responses\LandingResponse::fromPayload([
-                'success' => false,
-                'message' => 'РћС€РёР±РєР° РїРѕР»СѓС‡РµРЅРёСЏ С€Р°Р±Р»РѕРЅРѕРІ'
-            ], 500);
+            return LandingResponse::error(trans_message('landing.site_templates.load_error'), 500);
         }
     }
 
-    /**
-     * РџРѕР»СѓС‡РёС‚СЊ РґРµС‚Р°Р»Рё С€Р°Р±Р»РѕРЅР°
-     */
     public function show(Request $request, string $templateKey): JsonResponse
     {
         try {
@@ -76,22 +68,15 @@ class SiteTemplatesController extends Controller
                 'layout_config' => $template->layout_config,
             ];
 
-            return \App\Http\Responses\LandingResponse::fromPayload([
-                'success' => true,
-                'data' => $templateData
-            ]);
-
-        } catch (\Exception $e) {
+            return LandingResponse::success($templateData, trans_message('landing.site_templates.details_loaded'));
+        } catch (\Throwable $e) {
             Log::error('Error getting site template', [
                 'template_key' => $templateKey,
                 'error' => $e->getMessage(),
-                'user_id' => Auth::id()
+                'user_id' => Auth::id(),
             ]);
 
-            return \App\Http\Responses\LandingResponse::fromPayload([
-                'success' => false,
-                'message' => 'РЁР°Р±Р»РѕРЅ РЅРµ РЅР°Р№РґРµРЅ'
-            ], 404);
+            return LandingResponse::error(trans_message('landing.site_templates.not_found'), 404);
         }
     }
 }

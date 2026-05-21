@@ -14,6 +14,8 @@ use Carbon\Carbon;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Log;
 
+use function trans_message;
+
 class HoldingReportsController extends Controller
 {
     private ReportEngine $reportEngine;
@@ -60,7 +62,7 @@ class HoldingReportsController extends Controller
             
             return $this->landingResponse([
                 'success' => false,
-                'message' => 'Ошибка получения данных дашборда'
+                'message' => trans_message('landing.holding_reports.dashboard_error'),
             ], 500);
         }
     }
@@ -93,7 +95,7 @@ class HoldingReportsController extends Controller
             
             return $this->landingResponse([
                 'success' => false,
-                'message' => 'Ошибка получения сравнения организаций'
+                'message' => trans_message('landing.holding_reports.comparison_error'),
             ], 500);
         }
     }
@@ -118,7 +120,7 @@ class HoldingReportsController extends Controller
             if ($startDate->diffInDays($endDate) > 365) {
                 return $this->landingResponse([
                     'success' => false,
-                    'message' => 'Максимальный период отчета - 1 год'
+                    'message' => trans_message('landing.holding_reports.period_too_long'),
                 ], 422);
             }
 
@@ -132,7 +134,7 @@ class HoldingReportsController extends Controller
         } catch (ValidationException $e) {
             return $this->landingResponse([
                 'success' => false,
-                'message' => 'Ошибка валидации',
+                'message' => trans_message('landing.holding_reports.validation_error'),
                 'errors' => $e->errors()
             ], 422);
         } catch (\Exception $e) {
@@ -144,7 +146,7 @@ class HoldingReportsController extends Controller
             
             return $this->landingResponse([
                 'success' => false,
-                'message' => 'Ошибка получения финансового отчета'
+                'message' => trans_message('landing.holding_reports.financial_error'),
             ], 500);
         }
     }
@@ -187,7 +189,7 @@ class HoldingReportsController extends Controller
             
             return $this->landingResponse([
                 'success' => false,
-                'message' => 'Ошибка получения KPI метрик'
+                'message' => trans_message('landing.holding_reports.kpi_error'),
             ], 500);
         }
     }
@@ -240,7 +242,7 @@ class HoldingReportsController extends Controller
             
             return $this->landingResponse([
                 'success' => false,
-                'message' => 'Ошибка получения быстрых метрик'
+                'message' => trans_message('landing.holding_reports.quick_metrics_error'),
             ], 500);
         }
     }
@@ -266,7 +268,7 @@ class HoldingReportsController extends Controller
             if (!$isOwner) {
                 return $this->landingResponse([
                     'success' => false,
-                    'message' => 'Только владельцы могут очищать кэш'
+                    'message' => trans_message('landing.holding_reports.cache_clear_forbidden'),
                 ], 403);
             }
 
@@ -281,7 +283,7 @@ class HoldingReportsController extends Controller
 
             return $this->landingResponse([
                 'success' => true,
-                'message' => 'Кэш отчетов успешно очищен'
+                'message' => trans_message('landing.holding_reports.cache_cleared'),
             ]);
 
         } catch (\Exception $e) {
@@ -293,7 +295,7 @@ class HoldingReportsController extends Controller
             
             return $this->landingResponse([
                 'success' => false,
-                'message' => 'Ошибка очистки кэша'
+                'message' => trans_message('landing.holding_reports.cache_clear_error'),
             ], 500);
         }
     }

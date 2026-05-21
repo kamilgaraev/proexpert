@@ -1,28 +1,29 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1\Landing;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
+use App\Http\Responses\LandingResponse;
 use App\Models\LandingAdmin;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
 
+use function trans_message;
+
 class LandingAdminController extends Controller
 {
-    /**
-     * Display a listing of the landing admins.
-     */
-    public function index()
+    public function index(): JsonResponse
     {
         $admins = LandingAdmin::query()->paginate();
-        return \App\Http\Responses\LandingResponse::fromPayload($admins);
+
+        return LandingResponse::success($admins, trans_message('landing.landing_admin.loaded'));
     }
 
-    /**
-     * Store a newly created landing admin.
-     */
-    public function store(Request $request)
+    public function store(Request $request): JsonResponse
     {
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
@@ -37,21 +38,16 @@ class LandingAdminController extends Controller
         }
 
         $admin = LandingAdmin::create($data);
-        return \App\Http\Responses\LandingResponse::fromPayload($admin, 201);
+
+        return LandingResponse::success($admin, trans_message('landing.landing_admin.created'), 201);
     }
 
-    /**
-     * Display the specified landing admin.
-     */
-    public function show(LandingAdmin $landingAdmin)
+    public function show(LandingAdmin $landingAdmin): JsonResponse
     {
-        return \App\Http\Responses\LandingResponse::fromPayload($landingAdmin);
+        return LandingResponse::success($landingAdmin, trans_message('landing.landing_admin.loaded'));
     }
 
-    /**
-     * Update the specified landing admin.
-     */
-    public function update(Request $request, LandingAdmin $landingAdmin)
+    public function update(Request $request, LandingAdmin $landingAdmin): JsonResponse
     {
         $data = $request->validate([
             'name' => ['sometimes', 'string', 'max:255'],
@@ -68,15 +64,14 @@ class LandingAdminController extends Controller
         }
 
         $landingAdmin->update($data);
-        return \App\Http\Responses\LandingResponse::fromPayload($landingAdmin);
+
+        return LandingResponse::success($landingAdmin, trans_message('landing.landing_admin.updated'));
     }
 
-    /**
-     * Remove the specified landing admin.
-     */
-    public function destroy(LandingAdmin $landingAdmin)
+    public function destroy(LandingAdmin $landingAdmin): JsonResponse
     {
         $landingAdmin->delete();
-        return \App\Http\Responses\LandingResponse::fromPayload(['message' => 'Deleted'], 204);
+
+        return LandingResponse::success(null, trans_message('landing.landing_admin.deleted'));
     }
-} 
+}
