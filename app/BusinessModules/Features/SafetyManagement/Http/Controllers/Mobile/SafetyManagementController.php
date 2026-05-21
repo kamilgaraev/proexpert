@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\SafetyManagement\Http\Controllers\Mobile;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyIncidentResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyViolationResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyWorkPermitResource;
+use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermit;
 use App\BusinessModules\Features\SafetyManagement\Services\SafetyManagementService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
@@ -20,24 +21,67 @@ use Illuminate\Validation\ValidationException;
 
 final class SafetyManagementController extends Controller
 {
+    private const PERMIT_STATUSES = [
+        'draft',
+        'pending_approval',
+        'approved',
+        'active',
+        'suspended',
+        'rejected',
+        'closed',
+        'cancelled',
+    ];
+
     public function __construct(
         private readonly SafetyManagementService $service,
     ) {
     }
 
-    public function activePermits(Request $request): JsonResponse
+    public function permits(Request $request): JsonResponse
     {
         try {
-            $permits = $this->service->activePermitsForUser(
+            $filters = $this->validated($request, [
+                'project_id' => ['nullable', 'integer'],
+                'status' => ['nullable', 'string', Rule::in(self::PERMIT_STATUSES)],
+            ]);
+
+            $permits = $this->service->mobilePermitsForUser(
                 (int) $request->attributes->get('current_organization_id'),
                 (int) $request->user()?->id,
-                $request->filled('project_id') ? (int) $request->input('project_id') : null
+                $filters
             );
 
             return MobileResponse::success(SafetyWorkPermitResource::collection(collect($permits)));
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(
+                trans_message('safety_management.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
         } catch (\Throwable $exception) {
-            Log::error('safety_management.mobile.permits.active.error', [
+            Log::error('safety_management.mobile.permits.index.error', [
                 'user_id' => $request->user()?->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return MobileResponse::error(trans_message('safety_management.errors.index_failed'), 500);
+        }
+    }
+
+    public function showPermit(Request $request, int $id): JsonResponse
+    {
+        try {
+            $permit = $this->mobilePermit($request, $id);
+
+            if ($permit === null) {
+                return MobileResponse::error(trans_message('safety_management.errors.permit_not_found'), 404);
+            }
+
+            return MobileResponse::success(new SafetyWorkPermitResource($permit));
+        } catch (\Throwable $exception) {
+            Log::error('safety_management.mobile.permits.show.error', [
+                'user_id' => $request->user()?->id,
+                'permit_id' => $id,
                 'error' => $exception->getMessage(),
             ]);
 
@@ -217,6 +261,153 @@ final class SafetyManagementController extends Controller
         }
     }
 
+    public function submitPermit(Request $request, int $id): JsonResponse
+    {
+        return $this->permitAction(
+            $request,
+            $id,
+            fn ($permit) => $this->service->submitPermit($permit),
+            'submit'
+        );
+    }
+
+    public function approvePermit(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $this->validated($request, ['approval_comment' => ['nullable', 'string', 'max:1000']]);
+
+            return $this->permitAction(
+                $request,
+                $id,
+                fn ($permit) => $this->service->approvePermit(
+                    $permit,
+                    (int) $request->user()?->id,
+                    $validated['approval_comment'] ?? null
+                ),
+                'approve'
+            );
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(
+                trans_message('safety_management.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
+        }
+    }
+
+    public function rejectPermit(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $this->validated($request, ['reason' => ['required', 'string', 'max:1000']]);
+
+            return $this->permitAction(
+                $request,
+                $id,
+                fn ($permit) => $this->service->rejectPermit($permit, (int) $request->user()?->id, $validated['reason']),
+                'reject'
+            );
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(
+                trans_message('safety_management.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
+        }
+    }
+
+    public function activatePermit(Request $request, int $id): JsonResponse
+    {
+        return $this->permitAction(
+            $request,
+            $id,
+            fn ($permit) => $this->service->activatePermit($permit),
+            'activate'
+        );
+    }
+
+    public function suspendPermit(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $this->validated($request, ['reason' => ['required', 'string', 'max:1000']]);
+
+            return $this->permitAction(
+                $request,
+                $id,
+                fn ($permit) => $this->service->suspendPermit($permit, (int) $request->user()?->id, $validated['reason']),
+                'suspend'
+            );
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(
+                trans_message('safety_management.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
+        }
+    }
+
+    public function resumePermit(Request $request, int $id): JsonResponse
+    {
+        return $this->permitAction(
+            $request,
+            $id,
+            fn ($permit) => $this->service->resumePermit($permit),
+            'resume'
+        );
+    }
+
+    public function closePermit(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $this->validated($request, ['close_comment' => ['required', 'string', 'max:1000']]);
+
+            return $this->permitAction(
+                $request,
+                $id,
+                fn ($permit) => $this->service->closePermit($permit, (int) $request->user()?->id, $validated['close_comment']),
+                'close'
+            );
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(
+                trans_message('safety_management.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
+        }
+    }
+
+    private function permitAction(Request $request, int $id, callable $action, string $logAction): JsonResponse
+    {
+        try {
+            $permit = $this->mobilePermit($request, $id);
+
+            if ($permit === null) {
+                return MobileResponse::error(trans_message('safety_management.errors.permit_not_found'), 404);
+            }
+
+            return MobileResponse::success(new SafetyWorkPermitResource($action($permit)));
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            Log::error('safety_management.mobile.permits.action.error', [
+                'action' => $logAction,
+                'user_id' => $request->user()?->id,
+                'permit_id' => $id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return MobileResponse::error(trans_message('safety_management.errors.action_failed'), 500);
+        }
+    }
+
+    private function mobilePermit(Request $request, int $id): ?SafetyWorkPermit
+    {
+        return $this->service->findMobilePermit(
+            (int) $request->attributes->get('current_organization_id'),
+            (int) $request->user()?->id,
+            $id
+        );
+    }
+
     private function validated(Request $request, array $rules): array
     {
         $validator = Validator::make($request->all(), $rules, $this->validationMessages());
@@ -237,8 +428,15 @@ final class SafetyManagementController extends Controller
             'incident_type.in' => trans_message('safety_management.validation.incident_type_invalid'),
             'severity.required' => trans_message('safety_management.validation.severity_required'),
             'severity.in' => trans_message('safety_management.validation.severity_invalid'),
+            'project_id.integer' => trans_message('safety_management.validation.project_invalid'),
+            'status.in' => trans_message('safety_management.validation.status_invalid'),
             'occurred_at.required' => trans_message('safety_management.validation.occurred_at_required'),
             'resolution_comment.required' => trans_message('safety_management.validation.resolution_comment_required'),
+            'reason.required' => trans_message('safety_management.validation.reason_required'),
+            'reason.max' => trans_message('safety_management.validation.reason_too_long'),
+            'close_comment.required' => trans_message('safety_management.validation.close_comment_required'),
+            'close_comment.max' => trans_message('safety_management.validation.comment_too_long'),
+            'approval_comment.max' => trans_message('safety_management.validation.comment_too_long'),
         ];
     }
 }

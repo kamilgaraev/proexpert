@@ -96,19 +96,30 @@ final class SafetyManagementService
         ])->fresh(['project:id,name', 'responsibleUser:id,name']);
     }
 
-    public function activePermitsForUser(int $organizationId, int $userId, ?int $projectId = null): array
+    public function mobilePermitsForUser(int $organizationId, int $userId, array $filters = []): array
     {
         return SafetyWorkPermit::forOrganization($organizationId)
             ->with(['project:id,name', 'responsibleUser:id,name'])
-            ->whereIn('status', ['approved', 'active'])
             ->where(function ($query) use ($userId): void {
                 $query->whereNull('responsible_user_id')
                     ->orWhere('responsible_user_id', $userId);
             })
-            ->when($projectId !== null, fn ($query) => $query->where('project_id', $projectId))
+            ->when(!empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
+            ->when(!empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
             ->orderBy('valid_until')
             ->get()
             ->all();
+    }
+
+    public function findMobilePermit(int $organizationId, int $userId, int $id): ?SafetyWorkPermit
+    {
+        return SafetyWorkPermit::forOrganization($organizationId)
+            ->with(['project:id,name', 'responsibleUser:id,name'])
+            ->where(function ($query) use ($userId): void {
+                $query->whereNull('responsible_user_id')
+                    ->orWhere('responsible_user_id', $userId);
+            })
+            ->find($id);
     }
 
     public function findPermit(int $organizationId, int $id): ?SafetyWorkPermit

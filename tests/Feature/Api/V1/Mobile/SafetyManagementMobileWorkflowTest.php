@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Mobile;
 
+use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermit;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
@@ -17,6 +18,126 @@ use Tests\TestCase;
 final class SafetyManagementMobileTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_mobile_permit_list_and_detail_are_scoped_to_current_user_and_organization(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $foreignContext = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignContext->organization->id]);
+        $otherUser = User::factory()->create(['current_organization_id' => $context->organization->id]);
+        $context->organization->users()->attach($otherUser->id, [
+            'is_owner' => false,
+            'is_active' => true,
+            'settings' => null,
+        ]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $ownPermit = $this->createPermit($context, $project, $context->user, 'approved');
+        $sharedPermit = $this->createPermit($context, $project, null, 'active');
+        $otherAssignedPermit = $this->createPermit($context, $project, $otherUser, 'approved');
+        $foreignPermit = $this->createPermit($foreignContext, $foreignProject, null, 'approved');
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/mobile/safety-management/work-permits');
+
+        $response->assertOk();
+        $permitIds = collect($response->json('data.data'))->pluck('id')->all();
+        $this->assertContains($ownPermit->id, $permitIds);
+        $this->assertContains($sharedPermit->id, $permitIds);
+        $this->assertNotContains($otherAssignedPermit->id, $permitIds);
+        $this->assertNotContains($foreignPermit->id, $permitIds);
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/mobile/safety-management/work-permits/{$ownPermit->id}")
+            ->assertOk()
+            ->assertJsonPath('data.available_actions.0', 'activate');
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/mobile/safety-management/work-permits/{$otherAssignedPermit->id}")
+            ->assertNotFound();
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/mobile/safety-management/work-permits?status=not-a-status')
+            ->assertStatus(422)
+            ->assertJsonPath('errors.status.0', trans_message('safety_management.validation.status_invalid'));
+    }
+
+    public function test_mobile_permit_lifecycle_actions_require_real_action_data(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $permit = $this->createPermit($context, $project, $context->user, 'draft');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/safety-management/work-permits/{$permit->id}/submit")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'pending_approval')
+            ->assertJsonPath('data.available_actions.0', 'approve');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/safety-management/work-permits/{$permit->id}/approve", [
+                'approval_comment' => 'Риски проверены',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'approved')
+            ->assertJsonPath('data.approval_comment', 'Риски проверены');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/safety-management/work-permits/{$permit->id}/activate")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'active');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/safety-management/work-permits/{$permit->id}/suspend")
+            ->assertStatus(422)
+            ->assertJsonPath('errors.reason.0', trans_message('safety_management.validation.reason_required'));
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/safety-management/work-permits/{$permit->id}/suspend", [
+                'reason' => 'Усиление ветра',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'suspended')
+            ->assertJsonPath('data.suspension_reason', 'Усиление ветра');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/safety-management/work-permits/{$permit->id}/resume")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'active');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/safety-management/work-permits/{$permit->id}/close")
+            ->assertStatus(422)
+            ->assertJsonPath('errors.close_comment.0', trans_message('safety_management.validation.close_comment_required'));
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/safety-management/work-permits/{$permit->id}/close", [
+                'close_comment' => 'Работы завершены безопасно',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'closed')
+            ->assertJsonPath('data.close_comment', 'Работы завершены безопасно');
+
+        $rejectPermit = $this->createPermit($context, $project, $context->user, 'pending_approval');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/safety-management/work-permits/{$rejectPermit->id}/reject")
+            ->assertStatus(422)
+            ->assertJsonPath('errors.reason.0', trans_message('safety_management.validation.reason_required'));
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/safety-management/work-permits/{$rejectPermit->id}/reject", [
+                'reason' => 'Не указаны меры контроля',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'rejected')
+            ->assertJsonPath('data.rejection_reason', 'Не указаны меры контроля');
+    }
 
     public function test_foreman_can_report_incident_and_resolve_violation_from_mobile_without_organization_leaks(): void
     {
@@ -148,5 +269,29 @@ final class SafetyManagementMobileTest extends TestCase
                 }
             );
         });
+    }
+
+    private function createPermit(
+        AdminApiTestContext $context,
+        Project $project,
+        ?User $responsibleUser,
+        string $status,
+        array $attributes = []
+    ): SafetyWorkPermit {
+        return SafetyWorkPermit::query()->create(array_merge([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'created_by_user_id' => $context->user->id,
+            'responsible_user_id' => $responsibleUser?->id,
+            'permit_number' => 'HSE-P-' . uniqid(),
+            'title' => 'Высотные работы',
+            'permit_type' => 'height_work',
+            'location_name' => 'Секция А',
+            'risk_level' => 'high',
+            'valid_from' => now()->subHour(),
+            'valid_until' => now()->addDay(),
+            'required_controls' => ['ограждение', 'страховка'],
+            'status' => $status,
+        ], $attributes));
     }
 }

@@ -135,6 +135,7 @@
     ],
     "safety-management": [
       "safety-management.view",
+      "safety-management.permits.manage",
       "safety-management.briefings.manage",
       "safety-management.incidents.create",
       "safety-management.violations.create",

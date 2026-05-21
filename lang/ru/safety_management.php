@@ -97,12 +97,18 @@ return [
     ],
     'validation' => [
         'project_required' => 'Выберите проект',
+        'project_invalid' => 'Выберите проект из списка',
         'title_required' => 'Укажите название записи',
         'incident_type_required' => 'Выберите тип происшествия',
         'incident_type_invalid' => 'Выберите тип происшествия из списка',
         'severity_required' => 'Укажите тяжесть',
         'severity_invalid' => 'Выберите тяжесть из списка',
+        'status_invalid' => 'Выберите статус из списка',
         'occurred_at_required' => 'Укажите время происшествия',
         'resolution_comment_required' => 'Укажите результат устранения',
+        'reason_required' => 'Укажите причину',
+        'reason_too_long' => 'Сократите причину',
+        'close_comment_required' => 'Укажите итог закрытия',
+        'comment_too_long' => 'Сократите комментарий',
     ],
 ];

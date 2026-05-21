@@ -110,9 +110,41 @@ Route::prefix('api/v1/mobile/safety-management')
     ->name('mobile.safety_management.')
     ->middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.context', 'can:access-mobile-app', 'safety-management.active'])
     ->group(function (): void {
-        Route::get('/work-permits/active', [MobileSafetyManagementController::class, 'activePermits'])
+        Route::get('/work-permits', [MobileSafetyManagementController::class, 'permits'])
             ->middleware('authorize:safety-management.view')
-            ->name('work_permits.active');
+            ->name('work_permits.index');
+        Route::get('/work-permits/{id}', [MobileSafetyManagementController::class, 'showPermit'])
+            ->whereNumber('id')
+            ->middleware('authorize:safety-management.view')
+            ->name('work_permits.show');
+        Route::post('/work-permits/{id}/submit', [MobileSafetyManagementController::class, 'submitPermit'])
+            ->whereNumber('id')
+            ->middleware('authorize:safety-management.permits.manage')
+            ->name('work_permits.submit');
+        Route::post('/work-permits/{id}/approve', [MobileSafetyManagementController::class, 'approvePermit'])
+            ->whereNumber('id')
+            ->middleware('authorize:safety-management.permits.manage')
+            ->name('work_permits.approve');
+        Route::post('/work-permits/{id}/activate', [MobileSafetyManagementController::class, 'activatePermit'])
+            ->whereNumber('id')
+            ->middleware('authorize:safety-management.permits.manage')
+            ->name('work_permits.activate');
+        Route::post('/work-permits/{id}/suspend', [MobileSafetyManagementController::class, 'suspendPermit'])
+            ->whereNumber('id')
+            ->middleware('authorize:safety-management.permits.manage')
+            ->name('work_permits.suspend');
+        Route::post('/work-permits/{id}/resume', [MobileSafetyManagementController::class, 'resumePermit'])
+            ->whereNumber('id')
+            ->middleware('authorize:safety-management.permits.manage')
+            ->name('work_permits.resume');
+        Route::post('/work-permits/{id}/reject', [MobileSafetyManagementController::class, 'rejectPermit'])
+            ->whereNumber('id')
+            ->middleware('authorize:safety-management.permits.manage')
+            ->name('work_permits.reject');
+        Route::post('/work-permits/{id}/close', [MobileSafetyManagementController::class, 'closePermit'])
+            ->whereNumber('id')
+            ->middleware('authorize:safety-management.permits.manage')
+            ->name('work_permits.close');
         Route::get('/incidents', [MobileSafetyManagementController::class, 'incidents'])
             ->middleware('authorize:safety-management.view')
             ->name('incidents.index');
