@@ -132,7 +132,7 @@ class OrganizationProfileController extends Controller
         } catch (\InvalidArgumentException $e) {
             return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
-                'message' => $e->getMessage(),
+                'message' => trans_message('errors.business_logic_error'),
             ], 422);
         } catch (\Throwable $e) {
             Log::error('Failed to update business type', [

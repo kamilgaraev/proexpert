@@ -104,7 +104,7 @@ class ContractorInvitationController extends Controller
             ]);
 
         } catch (BusinessLogicException $e) {
-            return LandingResponse::error($e->getMessage(), 400);
+            return LandingResponse::error(trans_message('contract.invitation_accept_error'), 400);
 
         } catch (\Exception $e) {
             Log::error('Failed to accept contractor invitation', [
@@ -141,7 +141,7 @@ class ContractorInvitationController extends Controller
             return LandingResponse::success(null, trans_message('contract.invitation_declined'));
 
         } catch (BusinessLogicException $e) {
-            return LandingResponse::error($e->getMessage(), 400);
+            return LandingResponse::error(trans_message('contract.invitation_decline_error'), 400);
 
         } catch (\Exception $e) {
             Log::error('Failed to decline contractor invitation', [

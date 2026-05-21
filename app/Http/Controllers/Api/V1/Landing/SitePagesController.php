@@ -160,7 +160,7 @@ class SitePagesController extends Controller
 
             return LandingResponse::success($this->builderDataService->getEditorPayload($site->fresh())['pages'], trans_message('holding_site_builder.updated'));
         } catch (\InvalidArgumentException $e) {
-            return LandingResponse::error($e->getMessage(), 422);
+            return LandingResponse::error(trans_message('holding_site_builder.validation_error'), 422);
         } catch (\Throwable $e) {
             Log::error('Holding site page delete failed', [
                 'organization_id' => $request->attributes->get('current_organization_id'),

@@ -99,7 +99,7 @@ final class ExecutiveDocumentProfileRegistry
                 'relations' => [
                     $this->relation('quality_documents', 'incoming_control_document', true),
                     $this->relation('executive_schemes', 'geodetic_scheme', true),
-                    $this->relation('journal_entry', 'journal_entry', false),
+                    $this->relation('journal_entry', 'journal_entry', true),
                 ],
                 'signatory_roles' => [
                     'developer_control_representative',

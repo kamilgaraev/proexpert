@@ -16,6 +16,7 @@ use App\Http\Resources\Brigades\BrigadeResponseResource;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class BrigadeRequestManagementController extends Controller
 {
@@ -72,23 +73,45 @@ class BrigadeRequestManagementController extends Controller
     public function approveResponse(Request $request, int $requestId, int $responseId): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id') ?? $request->user()?->current_organization_id;
-        $response = BrigadeResponse::query()
-            ->with(['request', 'brigade.specializations', 'request.project', 'request.contractorOrganization'])
-            ->where('request_id', $requestId)
-            ->whereKey($responseId)
-            ->firstOrFail();
 
-        if ($response->request->contractor_organization_id !== (int) $organizationId) {
-            return AdminResponse::error(trans_message('brigades.forbidden'), 403);
-        }
+        return DB::transaction(function () use ($organizationId, $requestId, $responseId): JsonResponse {
+            $response = BrigadeResponse::query()
+                ->where('request_id', $requestId)
+                ->whereKey($responseId)
+                ->lockForUpdate()
+                ->firstOrFail();
 
-        $response->update(['status' => BrigadeStatuses::RESPONSE_APPROVED]);
-        $response->request->update(['status' => BrigadeStatuses::REQUEST_IN_REVIEW]);
-        $assignment = $this->workflowService->createAssignmentFromResponse($response);
+            $brigadeRequest = BrigadeRequest::query()
+                ->whereKey($requestId)
+                ->lockForUpdate()
+                ->firstOrFail();
 
-        return AdminResponse::success([
-            'response' => new BrigadeResponseResource($response),
-            'assignment' => new BrigadeProjectAssignmentResource($assignment->load(['project', 'contractorOrganization', 'brigade.specializations'])),
-        ], trans_message('brigades.response_approved'));
+            if ($brigadeRequest->contractor_organization_id !== (int) $organizationId) {
+                return AdminResponse::error(trans_message('brigades.forbidden'), 403);
+            }
+
+            if ($brigadeRequest->status !== BrigadeStatuses::REQUEST_OPEN) {
+                return AdminResponse::error(trans_message('brigades.request_invalid_status'), 409);
+            }
+
+            if ($response->status !== BrigadeStatuses::RESPONSE_PENDING) {
+                return AdminResponse::error(trans_message('brigades.response_invalid_status'), 409);
+            }
+
+            $response->setRelation('request', $brigadeRequest);
+            $response->update(['status' => BrigadeStatuses::RESPONSE_APPROVED]);
+            $brigadeRequest->update(['status' => BrigadeStatuses::REQUEST_IN_REVIEW]);
+            $assignment = $this->workflowService->createAssignmentFromResponse($response);
+            $updatedResponse = BrigadeResponse::query()
+                ->with(['request.project', 'request.contractorOrganization', 'brigade.specializations'])
+                ->findOrFail($response->id);
+
+            return AdminResponse::success([
+                'response' => new BrigadeResponseResource($updatedResponse),
+                'assignment' => new BrigadeProjectAssignmentResource(
+                    $assignment->load(['project', 'contractorOrganization', 'brigade.specializations'])
+                ),
+            ], trans_message('brigades.response_approved'));
+        });
     }
 }

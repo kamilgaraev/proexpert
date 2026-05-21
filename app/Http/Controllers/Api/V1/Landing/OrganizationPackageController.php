@@ -57,15 +57,15 @@ class OrganizationPackageController
 
             return LandingResponse::success($result, 'Пакет успешно подключён');
         } catch (\InvalidArgumentException $e) {
-            return LandingResponse::error($e->getMessage(), 422);
+            return LandingResponse::error(trans_message('errors.business_logic_error'), 422);
         } catch (InsufficientBalanceException $e) {
-            return LandingResponse::error($e->getMessage(), 402);
+            return LandingResponse::error(trans_message('errors.insufficient_balance'), 402);
         } catch (\RuntimeException $e) {
             Log::error('PackageController@subscribe: '.$e->getMessage(), [
                 'request' => $request->all(),
             ]);
 
-            return LandingResponse::error($e->getMessage(), 404);
+            return LandingResponse::error(trans_message('errors.resource_not_found'), 404);
         } catch (\Exception $e) {
             Log::error('PackageController@subscribe: '.$e->getMessage(), [
                 'request' => $request->all(),
@@ -86,7 +86,7 @@ class OrganizationPackageController
 
             return LandingResponse::success(null, 'Пакет успешно отключён');
         } catch (\RuntimeException $e) {
-            return LandingResponse::error($e->getMessage(), 404);
+            return LandingResponse::error(trans_message('errors.resource_not_found'), 404);
         } catch (\Exception $e) {
             Log::error('PackageController@unsubscribe: '.$e->getMessage(), [
                 'package_slug' => $packageSlug,

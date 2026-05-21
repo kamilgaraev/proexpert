@@ -194,7 +194,7 @@ class SiteBlocksController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return LandingResponse::error($e->getMessage() ?: trans_message('holding_site_builder.blocks.publish_error'), 500);
+            return LandingResponse::error(trans_message('holding_site_builder.blocks.publish_error'), 500);
         }
     }
 

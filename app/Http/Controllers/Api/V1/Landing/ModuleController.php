@@ -1,11 +1,15 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1\Landing;
 
 use App\Http\Controllers\Controller;
-use App\Http\Responses\Api\V1\ErrorResponse;
-use App\Http\Responses\Api\V1\SuccessResponse;
+use App\Http\Responses\LandingResponse;
 use App\Models\Module;
+use App\Models\OrganizationModuleActivation;
+use App\Models\OrganizationSubscription;
+use App\Modules\Core\AccessController;
 use App\Modules\Core\ModuleManager;
 use App\Modules\Services\ModuleActivationService;
 use App\Modules\Services\ModuleBillingService;
@@ -14,600 +18,682 @@ use App\Services\Landing\ModulesOverviewService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpFoundation\Response;
+use Throwable;
+
+use function trans_message;
 
 class ModuleController extends Controller
 {
-    protected ModuleManager $moduleManager;
-    protected ModuleActivationService $activationService;
-    protected ModuleBillingService $billingService;
-    protected ModulePermissionService $permissionService;
-
     public function __construct(
-        ModuleManager $moduleManager,
-        ModuleActivationService $activationService,
-        ModuleBillingService $billingService,
-        ModulePermissionService $permissionService,
+        private readonly ModuleManager $moduleManager,
+        private readonly ModuleActivationService $activationService,
+        private readonly ModuleBillingService $billingService,
+        private readonly ModulePermissionService $permissionService,
         private readonly ModulesOverviewService $modulesOverviewService
     ) {
-        $this->moduleManager = $moduleManager;
-        $this->activationService = $activationService;
-        $this->billingService = $billingService;
-        $this->permissionService = $permissionService;
     }
 
     public function overview(Request $request): JsonResponse
     {
         try {
-            $user = Auth::user();
-            $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+            $organizationId = $this->currentOrganizationId($request);
 
-            if (! $organizationId) {
-                return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+            if ($organizationId === null) {
+                return $this->organizationNotFound();
             }
 
-            return (new SuccessResponse($this->modulesOverviewService->build((int) $organizationId)))->toResponse($request);
-        } catch (\Throwable $e) {
-            Log::error('ModuleController@overview: ' . $e->getMessage(), [
-                'user_id' => Auth::id(),
-                'organization_id' => $request->attributes->get('current_organization_id'),
-                'trace' => $e->getTraceAsString(),
-            ]);
-
-            return (new ErrorResponse('Не удалось загрузить обзор модулей', 500))->toResponse($request);
+            return LandingResponse::success($this->modulesOverviewService->build($organizationId));
+        } catch (Throwable $exception) {
+            return $this->serverError($exception, 'landing_modules.overview_load_error', $request);
         }
     }
 
-    /**
-     * Получить список всех доступных модулей с их статусами
-     */
     public function index(Request $request): JsonResponse
     {
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
-        
-        if (!$organizationId) {
-            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+        try {
+            $organizationId = $this->currentOrganizationId($request);
+
+            if ($organizationId === null) {
+                return $this->organizationNotFound();
+            }
+
+            $cacheKey = "modules_with_status_{$organizationId}";
+            $modulesWithStatus = Cache::remember($cacheKey, 300, function () use ($organizationId) {
+                $allModules = $this->moduleManager->getAllAvailableModules();
+                $activeModules = $this->moduleManager->getOrganizationModules($organizationId);
+                $activeModuleSlugs = $activeModules->pluck('slug')->toArray();
+                $moduleIds = Module::query()->whereIn('slug', $activeModuleSlugs)->pluck('id', 'slug');
+
+                $activations = OrganizationModuleActivation::query()
+                    ->where('organization_id', $organizationId)
+                    ->whereIn('module_id', $moduleIds->values())
+                    ->with('module')
+                    ->get()
+                    ->keyBy(static fn (OrganizationModuleActivation $activation): string => $activation->module->slug);
+
+                return $allModules->map(function (Module $module) use ($activeModuleSlugs, $activations): array {
+                    $isActive = ! $module->can_deactivate || in_array($module->slug, $activeModuleSlugs, true);
+                    $activation = $isActive && isset($activations[$module->slug]) ? $activations[$module->slug] : null;
+
+                    return [
+                        'slug' => $module->slug,
+                        'name' => $module->name,
+                        'description' => $module->description,
+                        'type' => $module->type,
+                        'category' => $module->category,
+                        'billing_model' => $module->billing_model,
+                        'price' => $module->getPrice(),
+                        'currency' => $module->getCurrency(),
+                        'duration_days' => $module->getDurationDays(),
+                        'features' => $module->features ?? [],
+                        'permissions' => $module->permissions ?? [],
+                        'icon' => $module->icon,
+                        'can_deactivate' => $module->can_deactivate,
+                        'is_active' => $isActive,
+                        'development_status' => $module->getDevelopmentStatusInfo(),
+                        'activation' => $activation ? [
+                            'activated_at' => $activation->activated_at,
+                            'expires_at' => $activation->expires_at,
+                            'status' => $activation->status,
+                            'days_until_expiration' => $activation->getDaysUntilExpiration(),
+                            'is_auto_renew_enabled' => $activation->is_auto_renew_enabled ?? true,
+                            'is_bundled_with_plan' => $activation->is_bundled_with_plan ?? false,
+                        ] : null,
+                    ];
+                })->groupBy('category');
+            });
+
+            return LandingResponse::success($modulesWithStatus->toArray());
+        } catch (Throwable $exception) {
+            return $this->serverError($exception, 'landing_modules.load_error', $request);
         }
-
-        // Кешируем модули на 5 минут - они редко меняются
-        $cacheKey = "modules_with_status_{$organizationId}";
-        $modulesWithStatus = \Illuminate\Support\Facades\Cache::remember($cacheKey, 300, function () use ($organizationId) {
-            
-            $allModules = $this->moduleManager->getAllAvailableModules();
-            $activeModules = $this->moduleManager->getOrganizationModules($organizationId);
-            $activeModuleSlugs = $activeModules->pluck('slug')->toArray();
-            
-            // КРИТИЧНО: Предзагружаем ВСЕ активации сразу одним запросом вместо N+1
-            // Сначала получаем ID модулей по их slug'ам, затем активации
-            $moduleIds = \App\Models\Module::whereIn('slug', $activeModuleSlugs)->pluck('id', 'slug');
-            
-            $activations = \App\Models\OrganizationModuleActivation::where('organization_id', $organizationId)
-                ->whereIn('module_id', $moduleIds->values())
-                ->with('module')
-                ->get()
-                ->keyBy(function($activation) {
-                    return $activation->module->slug;
-                });
-
-            return $allModules->map(function ($module) use ($activeModuleSlugs, $activations) {
-                // Системные модули (can_deactivate: false) всегда активны
-                $isActive = !$module->can_deactivate || in_array($module->slug, $activeModuleSlugs);
-                $activation = $isActive && isset($activations[$module->slug]) ? $activations[$module->slug] : null;
-                
-                return [
-                    'slug' => $module->slug,
-                    'name' => $module->name,
-                    'description' => $module->description,
-                    'type' => $module->type,
-                    'category' => $module->category,
-                    'billing_model' => $module->billing_model,
-                    'price' => $module->getPrice(),
-                    'currency' => $module->getCurrency(),
-                    'duration_days' => $module->getDurationDays(),
-                    'features' => $module->features ?? [],
-                    'permissions' => $module->permissions ?? [],
-                    'icon' => $module->icon,
-                    'can_deactivate' => $module->can_deactivate,
-                    'is_active' => $isActive,
-                    'development_status' => $module->getDevelopmentStatusInfo(),
-                    'activation' => $activation ? [
-                        'activated_at' => $activation->activated_at,
-                        'expires_at' => $activation->expires_at,
-                        'status' => $activation->status,
-                        'days_until_expiration' => $activation->getDaysUntilExpiration(),
-                        'is_auto_renew_enabled' => $activation->is_auto_renew_enabled ?? true,
-                        'is_bundled_with_plan' => $activation->is_bundled_with_plan ?? false
-                    ] : null
-                ];
-            })->groupBy('category');
-        });
-
-        return (new SuccessResponse($modulesWithStatus->toArray()))->toResponse($request);
     }
 
-    /**
-     * Получить список только активных модулей организации
-     */
     public function active(Request $request): JsonResponse
     {
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
-        
-        if (!$organizationId) {
-            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+        try {
+            $organizationId = $this->currentOrganizationId($request);
+
+            if ($organizationId === null) {
+                return $this->organizationNotFound();
+            }
+
+            $cacheKey = "active_modules_{$organizationId}";
+            $activeModules = Cache::remember(
+                $cacheKey,
+                300,
+                fn () => $this->moduleManager->getOrganizationModules($organizationId)
+            );
+
+            return LandingResponse::success(Module::toPublicCollection($activeModules));
+        } catch (Throwable $exception) {
+            return $this->serverError($exception, 'landing_modules.active_load_error', $request);
         }
-
-        // Кешируем активные модули на 5 минут
-        $cacheKey = "active_modules_{$organizationId}";
-        $activeModules = \Illuminate\Support\Facades\Cache::remember($cacheKey, 300, function () use ($organizationId) {
-            return $this->moduleManager->getOrganizationModules($organizationId);
-        });
-
-        return (new SuccessResponse(Module::toPublicCollection($activeModules)))->toResponse($request);
     }
 
-    /**
-     * Предпросмотр активации модуля
-     */
     public function activationPreview(Request $request, string $moduleSlug): JsonResponse
     {
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
-        
-        if (!$organizationId) {
-            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+        try {
+            $organizationId = $this->currentOrganizationId($request);
+
+            if ($organizationId === null) {
+                return $this->organizationNotFound();
+            }
+
+            $preview = $this->activationService->getActivationPreview($organizationId, $moduleSlug);
+
+            if (! ($preview['success'] ?? false)) {
+                return $this->resultError($preview, 'landing_modules.activation_preview_error');
+            }
+
+            return LandingResponse::success($this->resultData($preview));
+        } catch (Throwable $exception) {
+            return $this->serverError($exception, 'landing_modules.activation_preview_error', $request);
         }
-
-        $preview = $this->activationService->getActivationPreview($organizationId, $moduleSlug);
-
-        if (!$preview['success']) {
-            return (new ErrorResponse($preview['message'], 404))->toResponse($request);
-        }
-
-        return (new SuccessResponse($preview))->toResponse($request);
     }
 
-    /**
-     * Активировать модуль
-     */
     public function activate(Request $request): JsonResponse
     {
-        $request->validate([
-            'module_slug' => 'required|string',
-            'settings' => 'sometimes|array',
-        ]);
+        try {
+            $validated = $request->validate([
+                'module_slug' => ['required', 'string'],
+                'settings' => ['sometimes', 'array'],
+            ]);
+            $organizationId = $this->currentOrganizationId($request);
 
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
-        
-        if (!$organizationId) {
-            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+            if ($organizationId === null) {
+                return $this->organizationNotFound();
+            }
+
+            $result = $this->activationService->activateModule(
+                $organizationId,
+                (string) $validated['module_slug'],
+                ['settings' => $validated['settings'] ?? []]
+            );
+
+            if (! ($result['success'] ?? false)) {
+                return $this->resultError($result, 'landing_modules.activation_failed');
+            }
+
+            app(AccessController::class)->clearAccessCache($organizationId);
+
+            return LandingResponse::success(
+                $this->resultData($result),
+                trans_message('landing_modules.activation_success')
+            );
+        } catch (ValidationException $exception) {
+            return $this->validationError($exception);
+        } catch (Throwable $exception) {
+            return $this->serverError($exception, 'landing_modules.activation_failed', $request);
         }
-
-        $result = $this->activationService->activateModule(
-            $organizationId,
-            $request->input('module_slug'),
-            [
-                'settings' => $request->input('settings', [])
-            ]
-        );
-
-        if (!$result['success']) {
-            return (new ErrorResponse($result['message'], 400))->toResponse($request);
-        }
-
-        app(\App\Modules\Core\AccessController::class)->clearAccessCache($organizationId);
-
-        return (new SuccessResponse($result))->toResponse($request);
     }
 
-    /**
-     * Превью деактивации модуля - показать что потеряет пользователь
-     */
     public function deactivationPreview(Request $request, string $moduleSlug): JsonResponse
     {
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
-        
-        if (!$organizationId) {
-            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+        try {
+            $organizationId = $this->currentOrganizationId($request);
+
+            if ($organizationId === null) {
+                return $this->organizationNotFound();
+            }
+
+            $result = $this->moduleManager->deactivationPreview($organizationId, $moduleSlug);
+
+            if (! ($result['success'] ?? false)) {
+                return $this->resultError($result, 'landing_modules.deactivation_preview_error');
+            }
+
+            return LandingResponse::success($this->resultData($result));
+        } catch (Throwable $exception) {
+            return $this->serverError($exception, 'landing_modules.deactivation_preview_error', $request);
         }
-
-        $result = $this->moduleManager->deactivationPreview($organizationId, $moduleSlug);
-
-        if (!$result['success']) {
-            return (new ErrorResponse($result['message'], $result['code'] === 'MODULE_NOT_FOUND' ? 404 : 400))->toResponse($request);
-        }
-
-        return (new SuccessResponse($result))->toResponse($request);
     }
 
-    /**
-     * Деактивировать модуль
-     */
     public function deactivate(Request $request, string $moduleSlug): JsonResponse
     {
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
-        
-        if (!$organizationId) {
-            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+        try {
+            $organizationId = $this->currentOrganizationId($request);
+
+            if ($organizationId === null) {
+                return $this->organizationNotFound();
+            }
+
+            $result = $this->activationService->deactivateModule(
+                $organizationId,
+                $moduleSlug,
+                $request->boolean('with_refund', false)
+            );
+
+            if (! ($result['success'] ?? false)) {
+                return $this->resultError($result, 'landing_modules.deactivation_failed');
+            }
+
+            app(AccessController::class)->clearAccessCache($organizationId);
+
+            return LandingResponse::success(
+                $this->resultData($result),
+                trans_message('landing_modules.deactivation_success')
+            );
+        } catch (Throwable $exception) {
+            return $this->serverError($exception, 'landing_modules.deactivation_failed', $request);
         }
-
-        $withRefund = $request->boolean('with_refund', false);
-        
-        $result = $this->activationService->deactivateModule($organizationId, $moduleSlug, $withRefund);
-
-        if (!$result['success']) {
-            return (new ErrorResponse($result['message'], 400))->toResponse($request);
-        }
-
-        app(\App\Modules\Core\AccessController::class)->clearAccessCache($organizationId);
-
-        return (new SuccessResponse($result))->toResponse($request);
     }
 
-    /**
-     * Продлить модуль
-     */
     public function renew(Request $request, string $moduleSlug): JsonResponse
     {
-        $request->validate([
-            'additional_days' => 'sometimes|integer|min:1|max:365'
-        ]);
+        try {
+            $validated = $request->validate([
+                'additional_days' => ['sometimes', 'integer', 'min:1', 'max:365'],
+            ]);
+            $organizationId = $this->currentOrganizationId($request);
 
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
-        
-        if (!$organizationId) {
-            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+            if ($organizationId === null) {
+                return $this->organizationNotFound();
+            }
+
+            $result = $this->activationService->renewModule(
+                $organizationId,
+                $moduleSlug,
+                (int) ($validated['additional_days'] ?? 30)
+            );
+
+            if (! ($result['success'] ?? false)) {
+                return $this->resultError($result, 'landing_modules.renew_failed');
+            }
+
+            app(AccessController::class)->clearAccessCache($organizationId);
+
+            return LandingResponse::success($this->resultData($result), trans_message('landing_modules.renew_success'));
+        } catch (ValidationException $exception) {
+            return $this->validationError($exception);
+        } catch (Throwable $exception) {
+            return $this->serverError($exception, 'landing_modules.renew_failed', $request);
         }
-
-        $additionalDays = $request->input('additional_days', 30);
-        
-        $result = $this->activationService->renewModule($organizationId, $moduleSlug, $additionalDays);
-
-        if (!$result['success']) {
-            return (new ErrorResponse($result['message'], 400))->toResponse($request);
-        }
-
-        app(\App\Modules\Core\AccessController::class)->clearAccessCache($organizationId);
-
-        return (new SuccessResponse($result))->toResponse($request);
     }
 
-    /**
-     * Проверить доступ к модулю
-     */
     public function checkAccess(Request $request): JsonResponse
     {
-        $request->validate([
-            'module_slug' => 'required|string'
-        ]);
+        try {
+            $validated = $request->validate([
+                'module_slug' => ['required', 'string'],
+            ]);
+            $organizationId = $this->currentOrganizationId($request);
 
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
-        
-        if (!$organizationId) {
-            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+            if ($organizationId === null) {
+                return $this->organizationNotFound();
+            }
+
+            $moduleSlug = (string) $validated['module_slug'];
+
+            return LandingResponse::success([
+                'module_slug' => $moduleSlug,
+                'has_access' => $this->moduleManager->hasAccess($organizationId, $moduleSlug),
+            ]);
+        } catch (ValidationException $exception) {
+            return $this->validationError($exception);
+        } catch (Throwable $exception) {
+            return $this->serverError($exception, 'landing_modules.access_check_error', $request);
         }
-
-        $moduleSlug = $request->input('module_slug');
-        $hasAccess = $this->moduleManager->hasAccess($organizationId, $moduleSlug);
-
-        return (new SuccessResponse([
-            'module_slug' => $moduleSlug,
-            'has_access' => $hasAccess
-        ]))->toResponse($request);
     }
 
-    /**
-     * Получить истекающие модули
-     */
     public function expiring(Request $request): JsonResponse
     {
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
-        
-        if (!$organizationId) {
-            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+        try {
+            $organizationId = $this->currentOrganizationId($request);
+
+            if ($organizationId === null) {
+                return $this->organizationNotFound();
+            }
+
+            $daysAhead = (int) $request->input('days', 7);
+            $cacheKey = "expiring_modules_{$organizationId}_{$daysAhead}";
+            $expiringModules = Cache::remember(
+                $cacheKey,
+                3600,
+                fn () => $this->activationService->getExpiringModules($organizationId, $daysAhead)
+            );
+
+            return LandingResponse::success($expiringModules);
+        } catch (Throwable $exception) {
+            return $this->serverError($exception, 'landing_modules.expiring_load_error', $request);
         }
-
-        $daysAhead = $request->input('days', 7); // Исправлено: используем 'days' как в логах
-        
-        // Кешируем истекающие модули на 1 час
-        $cacheKey = "expiring_modules_{$organizationId}_{$daysAhead}";
-        $expiringModules = \Illuminate\Support\Facades\Cache::remember($cacheKey, 3600, function () use ($organizationId, $daysAhead) {
-            return $this->activationService->getExpiringModules($organizationId, $daysAhead);
-        });
-
-        return (new SuccessResponse($expiringModules))->toResponse($request);
     }
 
-    /**
-     * Получить информацию о биллинге модулей
-     */
     public function billing(Request $request): JsonResponse
     {
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
-        
-        if (!$organizationId) {
-            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+        try {
+            $organizationId = $this->currentOrganizationId($request);
+
+            if ($organizationId === null) {
+                return $this->organizationNotFound();
+            }
+
+            $cacheKey = "module_billing_{$organizationId}";
+            $billingData = Cache::remember($cacheKey, 120, function () use ($organizationId): array {
+                return [
+                    'stats' => $this->billingService->getOrganizationBillingStats($organizationId),
+                    'upcoming' => $this->billingService->getUpcomingBilling($organizationId),
+                ];
+            });
+
+            return LandingResponse::success($billingData);
+        } catch (Throwable $exception) {
+            return $this->serverError($exception, 'landing_modules.billing_load_error', $request);
         }
-
-        // Кешируем биллинг на 2 минуты
-        $cacheKey = "module_billing_{$organizationId}";
-        $billingData = \Illuminate\Support\Facades\Cache::remember($cacheKey, 120, function () use ($organizationId) {
-            return [
-                'stats' => $this->billingService->getOrganizationBillingStats($organizationId),
-                'upcoming' => $this->billingService->getUpcomingBilling($organizationId)
-            ];
-        });
-
-        return (new SuccessResponse($billingData))->toResponse($request);
     }
 
-    /**
-     * Получить историю биллинга
-     */
     public function billingHistory(Request $request): JsonResponse
     {
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
-        
-        if (!$organizationId) {
-            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+        try {
+            $organizationId = $this->currentOrganizationId($request);
+
+            if ($organizationId === null) {
+                return $this->organizationNotFound();
+            }
+
+            return LandingResponse::success(
+                $this->billingService->getBillingHistory($organizationId, $request->input('module_slug'))
+            );
+        } catch (Throwable $exception) {
+            return $this->serverError($exception, 'landing_modules.billing_history_load_error', $request);
         }
-
-        $moduleSlug = $request->input('module_slug');
-        $history = $this->billingService->getBillingHistory($organizationId, $moduleSlug);
-
-        return (new SuccessResponse($history))->toResponse($request);
     }
 
-    /**
-     * Получить права доступа пользователя
-     */
     public function permissions(Request $request): JsonResponse
     {
-        $user = Auth::user();
-        
-        // Кешируем права доступа пользователя на 5 минут
-        $cacheKey = "user_permissions_{$user->id}_{$user->current_organization_id}";
-        $permissionsData = \Illuminate\Support\Facades\Cache::remember($cacheKey, 300, function () use ($user) {
-            return [
-                'permissions' => $this->permissionService->getUserAvailablePermissions($user),
-                'active_modules' => $this->permissionService->getUserActiveModules($user),
-                'permission_matrix' => $this->permissionService->getUserModulePermissionMatrix($user)
-            ];
-        });
+        try {
+            $user = Auth::user();
 
-        return (new SuccessResponse($permissionsData))->toResponse($request);
+            if (! $user) {
+                return LandingResponse::error(trans_message('errors.unauthenticated'), Response::HTTP_UNAUTHORIZED);
+            }
+
+            $cacheKey = "user_permissions_{$user->id}_{$user->current_organization_id}";
+            $permissionsData = Cache::remember($cacheKey, 300, function () use ($user): array {
+                return [
+                    'permissions' => $this->permissionService->getUserAvailablePermissions($user),
+                    'active_modules' => $this->permissionService->getUserActiveModules($user),
+                    'permission_matrix' => $this->permissionService->getUserModulePermissionMatrix($user),
+                ];
+            });
+
+            return LandingResponse::success($permissionsData);
+        } catch (Throwable $exception) {
+            return $this->serverError($exception, 'landing_modules.permissions_load_error', $request);
+        }
     }
 
-    /**
-     * Массовая активация модулей
-     */
     public function bulkActivate(Request $request): JsonResponse
     {
-        $request->validate([
-            'module_slugs' => 'required|array',
-            'module_slugs.*' => 'string'
-        ]);
+        try {
+            $validated = $request->validate([
+                'module_slugs' => ['required', 'array'],
+                'module_slugs.*' => ['string'],
+            ]);
+            $organizationId = $this->currentOrganizationId($request);
 
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
-        
-        if (!$organizationId) {
-            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+            if ($organizationId === null) {
+                return $this->organizationNotFound();
+            }
+
+            $result = $this->activationService->bulkActivateModules($organizationId, $validated['module_slugs']);
+            app(AccessController::class)->clearAccessCache($organizationId);
+
+            if (! ($result['success'] ?? false)) {
+                return $this->resultError($result, 'landing_modules.bulk_activation_failed');
+            }
+
+            return LandingResponse::success(
+                $this->resultData($result),
+                trans_message('landing_modules.bulk_activation_success')
+            );
+        } catch (ValidationException $exception) {
+            return $this->validationError($exception);
+        } catch (Throwable $exception) {
+            return $this->serverError($exception, 'landing_modules.bulk_activation_failed', $request);
         }
-
-        $moduleSlugs = $request->input('module_slugs');
-        $result = $this->activationService->bulkActivateModules($organizationId, $moduleSlugs);
-
-        app(\App\Modules\Core\AccessController::class)->clearAccessCache($organizationId);
-
-        return (new SuccessResponse($result))->toResponse($request);
     }
 
     public function getBundledModules(Request $request): JsonResponse
     {
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
-        
-        if (!$organizationId) {
-            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+        try {
+            $organizationId = $this->currentOrganizationId($request);
+
+            if ($organizationId === null) {
+                return $this->organizationNotFound();
+            }
+
+            $subscription = OrganizationSubscription::query()
+                ->where('organization_id', $organizationId)
+                ->where('status', 'active')
+                ->with(['activeBundledModules.module', 'plan'])
+                ->first();
+
+            if (! $subscription) {
+                return LandingResponse::success(
+                    [
+                        'bundled_modules' => [],
+                        'has_subscription' => false,
+                    ],
+                    trans_message('landing_modules.no_active_subscription')
+                );
+            }
+
+            $bundledModules = $subscription->activeBundledModules->map(static function ($activation): array {
+                return [
+                    'id' => $activation->module->id,
+                    'name' => $activation->module->name,
+                    'slug' => $activation->module->slug,
+                    'description' => $activation->module->description,
+                    'category' => $activation->module->category,
+                    'icon' => $activation->module->icon,
+                    'activated_at' => $activation->activated_at,
+                    'expires_at' => $activation->expires_at,
+                    'status' => $activation->status,
+                ];
+            });
+
+            return LandingResponse::success([
+                'bundled_modules' => $bundledModules,
+                'has_subscription' => true,
+                'subscription' => [
+                    'plan_name' => $subscription->plan->name,
+                    'ends_at' => $subscription->ends_at,
+                ],
+            ]);
+        } catch (Throwable $exception) {
+            return $this->serverError($exception, 'landing_modules.bundled_load_error', $request);
         }
-
-        $subscription = \App\Models\OrganizationSubscription::where('organization_id', $organizationId)
-            ->where('status', 'active')
-            ->with(['activeBundledModules.module'])
-            ->first();
-
-        if (!$subscription) {
-            return (new SuccessResponse([
-                'bundled_modules' => [],
-                'has_subscription' => false,
-                'message' => 'Нет активной подписки'
-            ]))->toResponse($request);
-        }
-
-        $bundledModules = $subscription->activeBundledModules->map(function ($activation) {
-            return [
-                'id' => $activation->module->id,
-                'name' => $activation->module->name,
-                'slug' => $activation->module->slug,
-                'description' => $activation->module->description,
-                'category' => $activation->module->category,
-                'icon' => $activation->module->icon,
-                'activated_at' => $activation->activated_at,
-                'expires_at' => $activation->expires_at,
-                'status' => $activation->status,
-            ];
-        });
-
-        return (new SuccessResponse([
-            'bundled_modules' => $bundledModules,
-            'has_subscription' => true,
-            'subscription' => [
-                'plan_name' => $subscription->plan->name,
-                'ends_at' => $subscription->ends_at,
-            ]
-        ]))->toResponse($request);
     }
 
     public function activateTrial(Request $request, string $moduleSlug): JsonResponse
     {
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
-        
-        if (!$organizationId) {
-            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+        try {
+            $organizationId = $this->currentOrganizationId($request);
+
+            if ($organizationId === null) {
+                return $this->organizationNotFound();
+            }
+
+            $result = $this->moduleManager->activateTrial($organizationId, $moduleSlug);
+
+            if (! ($result['success'] ?? false)) {
+                return $this->resultError($result, 'landing_modules.trial_activation_failed');
+            }
+
+            app(AccessController::class)->clearAccessCache($organizationId);
+
+            return LandingResponse::success(
+                $this->resultData($result),
+                trans_message('landing_modules.trial_activation_success')
+            );
+        } catch (Throwable $exception) {
+            return $this->serverError($exception, 'landing_modules.trial_activation_failed', $request);
         }
-        
-        $result = $this->moduleManager->activateTrial($organizationId, $moduleSlug);
-        
-        if (!$result['success']) {
-            return (new ErrorResponse(
-                $result['message'], 
-                $result['code'] === 'TRIAL_ALREADY_USED' ? 409 : 400,
-                ['code' => $result['code']]
-            ))->toResponse($request);
-        }
-        
-        app(\App\Modules\Core\AccessController::class)->clearAccessCache($organizationId);
-        
-        return (new SuccessResponse($result))->toResponse($request);
     }
 
     public function checkTrialAvailability(Request $request, string $moduleSlug): JsonResponse
     {
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
-        
-        if (!$organizationId) {
-            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+        try {
+            $organizationId = $this->currentOrganizationId($request);
+
+            if ($organizationId === null) {
+                return $this->organizationNotFound();
+            }
+
+            $module = Module::query()->where('slug', $moduleSlug)->first();
+
+            if (! $module) {
+                return LandingResponse::error(trans_message('landing_modules.module_not_found'), Response::HTTP_NOT_FOUND);
+            }
+
+            if ($module->isFree()) {
+                return LandingResponse::success(
+                    [
+                        'trial_available' => false,
+                        'reason' => 'FREE_MODULE',
+                    ],
+                    trans_message('landing_modules.free_module_trial_unavailable')
+                );
+            }
+
+            $hasUsedTrial = $this->moduleManager->hasUsedTrial($organizationId, $module->id);
+            $hasAccess = $this->moduleManager->hasAccess($organizationId, $moduleSlug);
+            $pricingConfig = $module->pricing_config ?? [];
+
+            return LandingResponse::success([
+                'trial_available' => ! $hasUsedTrial && ! $hasAccess,
+                'has_used_trial' => $hasUsedTrial,
+                'is_active' => $hasAccess,
+                'trial_days' => $pricingConfig['trial_days'] ?? 14,
+                'module' => [
+                    'name' => $module->name,
+                    'slug' => $module->slug,
+                    'price' => $module->getPrice(),
+                    'currency' => $module->getCurrency(),
+                    'billing_model' => $module->billing_model,
+                ],
+            ]);
+        } catch (Throwable $exception) {
+            return $this->serverError($exception, 'landing_modules.trial_check_error', $request);
         }
-        
-        $module = Module::where('slug', $moduleSlug)->first();
-        
-        if (!$module) {
-            return (new ErrorResponse('Модуль не найден', 404))->toResponse($request);
-        }
-        
-        if ($module->isFree()) {
-            return (new SuccessResponse([
-                'trial_available' => false,
-                'reason' => 'FREE_MODULE',
-                'message' => 'Trial период доступен только для платных модулей'
-            ]))->toResponse($request);
-        }
-        
-        $hasUsedTrial = $this->moduleManager->hasUsedTrial($organizationId, $module->id);
-        $hasAccess = $this->moduleManager->hasAccess($organizationId, $moduleSlug);
-        
-        $pricingConfig = $module->pricing_config ?? [];
-        $trialDays = $pricingConfig['trial_days'] ?? 14;
-        
-        return (new SuccessResponse([
-            'trial_available' => !$hasUsedTrial && !$hasAccess,
-            'has_used_trial' => $hasUsedTrial,
-            'is_active' => $hasAccess,
-            'trial_days' => $trialDays,
-            'module' => [
-                'name' => $module->name,
-                'slug' => $module->slug,
-                'price' => $module->getPrice(),
-                'currency' => $module->getCurrency(),
-                'billing_model' => $module->billing_model
-            ]
-        ]))->toResponse($request);
     }
 
     public function convertTrialToPaid(Request $request, string $moduleSlug): JsonResponse
     {
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
-        
-        if (!$organizationId) {
-            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+        try {
+            $organizationId = $this->currentOrganizationId($request);
+
+            if ($organizationId === null) {
+                return $this->organizationNotFound();
+            }
+
+            $result = $this->moduleManager->convertTrialToPaid($organizationId, $moduleSlug);
+
+            if (! ($result['success'] ?? false)) {
+                return $this->resultError($result, 'landing_modules.trial_conversion_failed');
+            }
+
+            app(AccessController::class)->clearAccessCache($organizationId);
+
+            return LandingResponse::success(
+                $this->resultData($result),
+                trans_message('landing_modules.trial_conversion_success')
+            );
+        } catch (Throwable $exception) {
+            return $this->serverError($exception, 'landing_modules.trial_conversion_failed', $request);
         }
-        
-        $result = $this->moduleManager->convertTrialToPaid($organizationId, $moduleSlug);
-        
-        if (!$result['success']) {
-            return (new ErrorResponse(
-                $result['message'],
-                $result['code'] === 'INSUFFICIENT_BALANCE' ? 402 : 400,
-                ['code' => $result['code']]
-            ))->toResponse($request);
-        }
-        
-        app(\App\Modules\Core\AccessController::class)->clearAccessCache($organizationId);
-        
-        return (new SuccessResponse($result))->toResponse($request);
     }
 
-    /**
-     * Включить/выключить автопродление модуля
-     */
     public function toggleAutoRenew(Request $request, string $moduleSlug): JsonResponse
     {
-        $request->validate([
-            'enabled' => 'required|boolean'
-        ]);
+        try {
+            $validated = $request->validate([
+                'enabled' => ['required', 'boolean'],
+            ]);
+            $organizationId = $this->currentOrganizationId($request);
 
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
-        
-        if (!$organizationId) {
-            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+            if ($organizationId === null) {
+                return $this->organizationNotFound();
+            }
+
+            $result = $this->moduleManager->toggleAutoRenew($organizationId, $moduleSlug, (bool) $validated['enabled']);
+
+            if (! ($result['success'] ?? false)) {
+                return $this->resultError($result, 'landing_modules.auto_renew_failed');
+            }
+
+            return LandingResponse::success(
+                $this->resultData($result),
+                trans_message('landing_modules.auto_renew_success')
+            );
+        } catch (ValidationException $exception) {
+            return $this->validationError($exception);
+        } catch (Throwable $exception) {
+            return $this->serverError($exception, 'landing_modules.auto_renew_failed', $request);
         }
-
-        $result = $this->moduleManager->toggleAutoRenew(
-            $organizationId, 
-            $moduleSlug, 
-            $request->input('enabled')
-        );
-
-        if (!$result['success']) {
-            return (new ErrorResponse($result['message'], 400, [
-                'code' => $result['code']
-            ]))->toResponse($request);
-        }
-
-        return (new SuccessResponse($result))->toResponse($request);
     }
 
-    /**
-     * Массовое включение/выключение автопродления
-     */
     public function bulkToggleAutoRenew(Request $request): JsonResponse
     {
-        $request->validate([
-            'enabled' => 'required|boolean'
+        try {
+            $validated = $request->validate([
+                'enabled' => ['required', 'boolean'],
+            ]);
+            $organizationId = $this->currentOrganizationId($request);
+
+            if ($organizationId === null) {
+                return $this->organizationNotFound();
+            }
+
+            $result = $this->moduleManager->bulkToggleAutoRenew($organizationId, (bool) $validated['enabled']);
+
+            if (! ($result['success'] ?? false)) {
+                return $this->resultError($result, 'landing_modules.auto_renew_bulk_failed');
+            }
+
+            return LandingResponse::success(
+                $this->resultData($result),
+                trans_message('landing_modules.auto_renew_bulk_success')
+            );
+        } catch (ValidationException $exception) {
+            return $this->validationError($exception);
+        } catch (Throwable $exception) {
+            return $this->serverError($exception, 'landing_modules.auto_renew_bulk_failed', $request);
+        }
+    }
+
+    private function currentOrganizationId(Request $request): ?int
+    {
+        $organizationId = $request->attributes->get('current_organization_id')
+            ?? $request->user()?->current_organization_id;
+
+        return $organizationId ? (int) $organizationId : null;
+    }
+
+    private function organizationNotFound(): JsonResponse
+    {
+        return LandingResponse::error(
+            trans_message('landing_modules.organization_not_found'),
+            Response::HTTP_NOT_FOUND
+        );
+    }
+
+    private function validationError(ValidationException $exception): JsonResponse
+    {
+        return LandingResponse::error(
+            trans_message('errors.validation_failed'),
+            Response::HTTP_UNPROCESSABLE_ENTITY,
+            $exception->errors()
+        );
+    }
+
+    private function resultError(array $result, string $defaultMessageKey): JsonResponse
+    {
+        $code = isset($result['code']) && is_scalar($result['code']) ? (string) $result['code'] : null;
+        $messageKey = $code ? 'landing_modules.codes.' . $code : $defaultMessageKey;
+
+        return LandingResponse::error(
+            trans_message($messageKey) === $messageKey ? trans_message($defaultMessageKey) : trans_message($messageKey),
+            $this->statusFromResultCode($code),
+            null,
+            $code ? ['code' => $code] : []
+        );
+    }
+
+    private function resultData(array $result): array
+    {
+        unset($result['success'], $result['message']);
+
+        return $result;
+    }
+
+    private function statusFromResultCode(?string $code): int
+    {
+        return match ($code) {
+            'MODULE_NOT_FOUND' => Response::HTTP_NOT_FOUND,
+            'TRIAL_ALREADY_USED',
+            'MODULE_ALREADY_ACTIVE',
+            'MISSING_DEPENDENCIES',
+            'MODULE_CONFLICTS' => Response::HTTP_CONFLICT,
+            'INSUFFICIENT_BALANCE' => Response::HTTP_PAYMENT_REQUIRED,
+            default => Response::HTTP_BAD_REQUEST,
+        };
+    }
+
+    private function serverError(Throwable $exception, string $messageKey, Request $request): JsonResponse
+    {
+        Log::error('Landing module request failed', [
+            'message_key' => $messageKey,
+            'user_id' => $request->user()?->id,
+            'organization_id' => $request->attributes->get('current_organization_id'),
+            'exception' => $exception,
         ]);
 
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
-        
-        if (!$organizationId) {
-            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
-        }
-
-        $result = $this->moduleManager->bulkToggleAutoRenew(
-            $organizationId, 
-            $request->input('enabled')
-        );
-
-        if (!$result['success']) {
-            return (new ErrorResponse($result['message'], 400, [
-                'code' => $result['code']
-            ]))->toResponse($request);
-        }
-
-        return (new SuccessResponse($result))->toResponse($request);
+        return LandingResponse::error(trans_message($messageKey), Response::HTTP_INTERNAL_SERVER_ERROR);
     }
 }

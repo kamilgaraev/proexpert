@@ -72,7 +72,7 @@ class UserInvitationController extends Controller
                 201
             );
         } catch (BusinessLogicException $e) {
-            return LandingResponse::error($e->getMessage(), 422);
+            return LandingResponse::error(trans_message('user_invitations.errors.create_failed'), 422);
         }
     }
 
@@ -109,7 +109,7 @@ class UserInvitationController extends Controller
 
             return LandingResponse::success(null, trans_message('user_invitations.messages.cancelled'));
         } catch (BusinessLogicException $e) {
-            return LandingResponse::error($e->getMessage(), 422);
+            return LandingResponse::error(trans_message('user_invitations.errors.cancel_failed'), 422);
         }
     }
 
@@ -129,7 +129,7 @@ class UserInvitationController extends Controller
                 trans_message('user_invitations.messages.resent')
             );
         } catch (BusinessLogicException $e) {
-            return LandingResponse::error($e->getMessage(), 422);
+            return LandingResponse::error(trans_message('user_invitations.errors.resend_failed'), 422);
         }
     }
 
@@ -184,7 +184,7 @@ class UserInvitationController extends Controller
                 'name' => $user->name,
             ], trans_message('user_invitations.messages.accepted'));
         } catch (BusinessLogicException $e) {
-            return LandingResponse::error($e->getMessage(), 422);
+            return LandingResponse::error(trans_message('user_invitations.errors.accept_failed'), 422);
         }
     }
 }

@@ -82,7 +82,7 @@ class MultiOrganizationController extends Controller
                 'data' => $group,
             ]);
         } catch (\Exception $e) {
-            return LandingResponse::error($e->getMessage(), 400);
+            return LandingResponse::error(trans_message('errors.business_logic_error'), 400);
         }
     }
 
@@ -118,7 +118,7 @@ class MultiOrganizationController extends Controller
                 'data' => $childData,
             ]);
         } catch (\Exception $e) {
-            return LandingResponse::error($e->getMessage(), 400);
+            return LandingResponse::error(trans_message('errors.business_logic_error'), 400);
         }
     }
 
@@ -135,7 +135,7 @@ class MultiOrganizationController extends Controller
                 'data' => $hierarchy,
             ]);
         } catch (\Exception $e) {
-            return LandingResponse::error($e->getMessage(), 400);
+            return LandingResponse::error(trans_message('errors.business_logic_error'), 400);
         }
     }
 
@@ -170,7 +170,7 @@ class MultiOrganizationController extends Controller
                 'data' => $data,
             ]);
         } catch (\Exception $e) {
-            return LandingResponse::error($e->getMessage(), 403);
+            return LandingResponse::error(trans_message('errors.forbidden'), 403);
         }
     }
 
@@ -225,7 +225,7 @@ class MultiOrganizationController extends Controller
                 'data' => $result,
             ]);
         } catch (\Exception $e) {
-            return LandingResponse::error($e->getMessage(), 400);
+            return LandingResponse::error(trans_message('errors.business_logic_error'), 400);
         }
     }
 
@@ -255,7 +255,7 @@ class MultiOrganizationController extends Controller
                 'data' => $updatedOrg,
             ]);
         } catch (\Exception $e) {
-            return LandingResponse::error($e->getMessage(), 400);
+            return LandingResponse::error(trans_message('errors.business_logic_error'), 400);
         }
     }
 
@@ -282,7 +282,7 @@ class MultiOrganizationController extends Controller
                 'message' => 'Дочерняя организация удалена',
             ]);
         } catch (\Exception $e) {
-            return LandingResponse::error($e->getMessage(), 400);
+            return LandingResponse::error(trans_message('errors.business_logic_error'), 400);
         }
     }
 
@@ -311,7 +311,7 @@ class MultiOrganizationController extends Controller
                 'data' => $result,
             ]);
         } catch (\Exception $e) {
-            return LandingResponse::error($e->getMessage(), 400);
+            return LandingResponse::error(trans_message('errors.business_logic_error'), 400);
         }
     }
 
@@ -353,7 +353,7 @@ class MultiOrganizationController extends Controller
                 'data' => $result,
             ]);
         } catch (\Exception $e) {
-            return LandingResponse::error($e->getMessage(), 400);
+            return LandingResponse::error(trans_message('errors.business_logic_error'), 400);
         }
     }
 
@@ -383,7 +383,7 @@ class MultiOrganizationController extends Controller
                 'data' => $result,
             ]);
         } catch (\Exception $e) {
-            return LandingResponse::error($e->getMessage(), 400);
+            return LandingResponse::error(trans_message('errors.business_logic_error'), 400);
         }
     }
 
@@ -400,7 +400,7 @@ class MultiOrganizationController extends Controller
                 'message' => 'Пользователь исключен из дочерней организации',
             ]);
         } catch (\Exception $e) {
-            return LandingResponse::error($e->getMessage(), 400);
+            return LandingResponse::error(trans_message('errors.business_logic_error'), 400);
         }
     }
 
@@ -417,7 +417,7 @@ class MultiOrganizationController extends Controller
                 'data' => $stats,
             ]);
         } catch (\Exception $e) {
-            return LandingResponse::error($e->getMessage(), 400);
+            return LandingResponse::error(trans_message('errors.business_logic_error'), 400);
         }
     }
 
@@ -443,7 +443,7 @@ class MultiOrganizationController extends Controller
                 'data' => $group,
             ]);
         } catch (\Exception $e) {
-            return LandingResponse::error($e->getMessage(), 400);
+            return LandingResponse::error(trans_message('errors.business_logic_error'), 400);
         }
     }
 
@@ -460,7 +460,7 @@ class MultiOrganizationController extends Controller
                 'data' => $dashboard,
             ]);
         } catch (\Exception $e) {
-            return LandingResponse::error($e->getMessage(), 400);
+            return LandingResponse::error(trans_message('errors.business_logic_error'), 400);
         }
     }
 
@@ -477,7 +477,7 @@ class MultiOrganizationController extends Controller
                 ],
             ]);
         } catch (\Exception $e) {
-            return LandingResponse::error($e->getMessage(), 400);
+            return LandingResponse::error(trans_message('errors.business_logic_error'), 400);
         }
     }
 
@@ -568,7 +568,7 @@ class MultiOrganizationController extends Controller
                 }),
             ]);
         } catch (\Exception $e) {
-            return LandingResponse::error($e->getMessage(), 400);
+            return LandingResponse::error(trans_message('errors.business_logic_error'), 400);
         }
     }
 
@@ -604,7 +604,7 @@ class MultiOrganizationController extends Controller
                 'data' => $results,
             ]);
         } catch (\Exception $e) {
-            return LandingResponse::error($e->getMessage(), 400);
+            return LandingResponse::error(trans_message('errors.business_logic_error'), 400);
         }
     }
 

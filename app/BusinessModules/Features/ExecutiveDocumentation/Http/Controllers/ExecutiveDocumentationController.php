@@ -11,6 +11,7 @@ use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentVersion;
 use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentationService;
+use App\BusinessModules\Features\ExecutiveDocumentation\Services\HiddenWorkActAutofillService;
 use App\BusinessModules\Features\ExecutiveDocumentation\Support\ExecutiveDocumentProfileRegistry;
 use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceScope;
 use App\BusinessModules\Features\HandoverAcceptance\Models\ProjectLocation;
@@ -36,6 +37,7 @@ final class ExecutiveDocumentationController extends Controller
     public function __construct(
         private readonly ExecutiveDocumentationService $service,
         private readonly ExecutiveDocumentProfileRegistry $profileRegistry,
+        private readonly HiddenWorkActAutofillService $hiddenWorkActAutofillService,
     ) {
     }
 
@@ -117,11 +119,21 @@ final class ExecutiveDocumentationController extends Controller
                 'completed_works' => CompletedWork::query()
                     ->where('organization_id', $organizationId)
                     ->where('project_id', $projectId)
-                    ->with(['workType:id,name', 'journalEntry:id,entry_number,entry_date'])
+                    ->with([
+                        'workType:id,name',
+                        'journalEntry.journal:id,name,journal_number',
+                        'journalEntry.workVolumes.workType:id,name',
+                        'journalEntry.workVolumes.estimateItem:id,name,position_number',
+                        'journalEntry.workVolumes.measurementUnit:id,name,short_name',
+                        'journalEntry.materials:id,journal_entry_id,material_name,quantity,measurement_unit',
+                        'journalWorkVolume.workType:id,name',
+                        'journalWorkVolume.estimateItem:id,name,position_number',
+                        'journalWorkVolume.measurementUnit:id,name,short_name',
+                    ])
                     ->latest('completion_date')
                     ->limit(100)
                     ->get()
-                    ->map(static fn (CompletedWork $work): array => [
+                    ->map(fn (CompletedWork $work): array => [
                         'id' => $work->id,
                         'name' => $work->workType?->name ?? $work->notes ?? ('Работа #' . $work->id),
                         'work_type_name' => $work->workType?->name,
@@ -129,6 +141,10 @@ final class ExecutiveDocumentationController extends Controller
                         'quantity' => $work->quantity,
                         'journal_entry_id' => $work->journal_entry_id,
                         'journal_entry_number' => $work->journalEntry?->entry_number,
+                        'hidden_work_act_defaults' => $this->hiddenWorkActAutofillService->forCompletedWorkReference(
+                            $work,
+                            $organizationId
+                        ),
                     ])
                     ->values(),
                 'project_locations' => ProjectLocation::query()
@@ -180,11 +196,21 @@ final class ExecutiveDocumentationController extends Controller
                     ->whereHas('journal', static fn ($query) => $query
                         ->where('organization_id', $organizationId)
                         ->where('project_id', $projectId))
-                    ->with('journal:id,name,journal_number')
+                    ->with([
+                        'journal:id,name,journal_number',
+                        'workVolumes.workType:id,name',
+                        'workVolumes.estimateItem:id,name,position_number',
+                        'workVolumes.measurementUnit:id,name,short_name',
+                        'materials:id,journal_entry_id,material_name,quantity,measurement_unit',
+                        'completedWorks.workType:id,name',
+                        'completedWorks.journalWorkVolume.workType:id,name',
+                        'completedWorks.journalWorkVolume.estimateItem:id,name,position_number',
+                        'completedWorks.journalWorkVolume.measurementUnit:id,name,short_name',
+                    ])
                     ->latest('entry_date')
                     ->limit(200)
                     ->get()
-                    ->map(static fn (ConstructionJournalEntry $entry): array => [
+                    ->map(fn (ConstructionJournalEntry $entry): array => [
                         'id' => $entry->id,
                         'journal_id' => $entry->journal_id,
                         'journal_name' => $entry->journal?->name,
@@ -193,6 +219,26 @@ final class ExecutiveDocumentationController extends Controller
                         'entry_date' => $entry->entry_date?->format('Y-m-d'),
                         'work_description' => $entry->work_description,
                         'status' => $entry->status?->value ?? $entry->status,
+                        'work_volumes' => $entry->workVolumes
+                            ->map(static fn ($volume): array => [
+                                'id' => $volume->id,
+                                'work_name' => $volume->workType?->name ?? $volume->estimateItem?->name,
+                                'quantity' => $volume->quantity,
+                                'measurement_unit' => $volume->measurementUnit?->short_name ?? $volume->measurementUnit?->name,
+                            ])
+                            ->values(),
+                        'materials' => $entry->materials
+                            ->map(static fn ($material): array => [
+                                'id' => $material->id,
+                                'material_name' => $material->material_name,
+                                'quantity' => $material->quantity,
+                                'measurement_unit' => $material->measurement_unit,
+                            ])
+                            ->values(),
+                        'hidden_work_act_defaults' => $this->hiddenWorkActAutofillService->forJournalEntryReference(
+                            $entry,
+                            $organizationId
+                        ),
                     ])
                     ->values(),
                 'materials' => Material::query()
@@ -425,14 +471,15 @@ final class ExecutiveDocumentationController extends Controller
      */
     private function normalizeDocumentReferences(array $validated, ExecutiveDocumentSet $set): array
     {
-        $validated = $this->validateDocumentProfile($validated);
         $validated = $this->normalizeWorkTypeReference($validated, $set);
-        $validated = $this->normalizeJournalEntryReference($validated, $set);
         $validated = $this->normalizeProjectLocationReference($validated, $set);
         $validated = $this->normalizeCompletedWorkReference($validated, $set);
+        $validated = $this->hiddenWorkActAutofillService->applyToDocumentPayload($validated, $set);
+        $validated = $this->normalizeJournalEntryReference($validated, $set);
         $validated = $this->normalizeQualityDefectReference($validated, $set);
         $validated = $this->normalizeAcceptanceScopeReference($validated, $set);
         $validated = $this->normalizeDocumentRelations($validated, $set);
+        $validated = $this->validateDocumentProfile($validated);
 
         return $validated;
     }

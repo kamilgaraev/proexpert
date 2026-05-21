@@ -7,6 +7,7 @@ namespace Tests\Feature\Api\V1\Admin;
 use App\BusinessModules\Features\HandoverAcceptance\Models\ProjectLocation;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\CompletedWork;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
 use App\Models\Material;
@@ -72,6 +73,22 @@ final class ExecutiveDocumentationProfileContractTest extends TestCase
             'approved_by_user_id' => $context->user->id,
             'approved_at' => now(),
         ]);
+        $volume = $entry->workVolumes()->create([
+            'work_type_id' => $workType->id,
+            'quantity' => 25,
+            'measurement_unit_id' => $unit->id,
+        ]);
+        CompletedWork::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'work_type_id' => $workType->id,
+            'journal_entry_id' => $entry->id,
+            'journal_work_volume_id' => $volume->id,
+            'user_id' => $context->user->id,
+            'quantity' => 25,
+            'completion_date' => now()->toDateString(),
+            'status' => 'confirmed',
+        ]);
         $material = Material::query()->create([
             'organization_id' => $context->organization->id,
             'name' => 'Бетон B25',
@@ -122,6 +139,11 @@ final class ExecutiveDocumentationProfileContractTest extends TestCase
 
         $this->assertEquals($journal->id, $response->json('data.journals.0.id'));
         $this->assertEquals($entry->id, $response->json('data.journal_entries.0.id'));
+        $this->assertStringStartsWith('АСР-', (string) $response->json('data.journal_entries.0.hidden_work_act_defaults.profile_data.act_number'));
+        $this->assertStringContainsString('Армирование фундаментной плиты', (string) $response->json('data.journal_entries.0.hidden_work_act_defaults.profile_data.presented_works'));
+        $this->assertSame(now()->toDateString(), $response->json('data.journal_entries.0.hidden_work_act_defaults.profile_data.started_at'));
+        $this->assertSame(now()->toDateString(), $response->json('data.journal_entries.0.hidden_work_act_defaults.profile_data.finished_at'));
+        $this->assertStringContainsString('25.000', (string) $response->json('data.journal_entries.0.hidden_work_act_defaults.profile_data.actual_volume'));
         $this->assertEquals($material->id, $response->json('data.materials.0.id'));
         $this->assertEquals($supplier->id, $response->json('data.suppliers.0.id'));
         $this->assertEquals($location->id, $response->json('data.project_locations.0.id'));

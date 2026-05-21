@@ -6,6 +6,7 @@ namespace Tests\Feature\Api\V1\Admin;
 
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
 use App\BusinessModules\Features\HandoverAcceptance\Models\ProjectLocation;
 use App\Models\CompletedWork;
 use App\Models\ConstructionJournal;
@@ -17,6 +18,7 @@ use App\Models\Supplier;
 use App\Models\User;
 use App\Models\WorkType;
 use App\Modules\Core\AccessController;
+use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
@@ -275,6 +277,152 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
         $customerResponse->assertOk();
         $ids = collect($customerResponse->json('data'))->pluck('id')->all();
         $this->assertNotContains($ownSetId, $ids);
+    }
+
+    public function test_hidden_work_act_autofills_dates_number_and_required_data_from_journal(): void
+    {
+        Storage::fake('s3');
+        Carbon::setTestNow('2026-05-20 10:00:00');
+
+        try {
+            $context = AdminApiTestContext::create();
+            $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+            $this->allowAdminAccess();
+            $this->allowModuleAccess();
+
+            $unit = MeasurementUnit::query()->create([
+                'organization_id' => $context->organization->id,
+                'name' => 'Кубический метр',
+                'short_name' => 'м3',
+                'type' => 'work',
+            ]);
+            $workType = WorkType::query()->create([
+                'organization_id' => $context->organization->id,
+                'name' => 'Бетонные работы',
+                'code' => 'concrete_works',
+                'measurement_unit_id' => $unit->id,
+                'category' => 'Исполнительная документация',
+                'additional_properties' => ['contexts' => ['executive_documentation']],
+                'is_active' => true,
+            ]);
+            $journal = ConstructionJournal::query()->create([
+                'organization_id' => $context->organization->id,
+                'project_id' => $project->id,
+                'name' => 'Общий журнал работ',
+                'journal_number' => 'ОЖР-1',
+                'start_date' => '2026-05-01',
+                'status' => 'active',
+                'created_by_user_id' => $context->user->id,
+            ]);
+            $startEntry = ConstructionJournalEntry::query()->create([
+                'journal_id' => $journal->id,
+                'entry_date' => '2026-05-10',
+                'entry_number' => 11,
+                'work_description' => 'Подготовка основания под плиту',
+                'status' => 'approved',
+                'created_by_user_id' => $context->user->id,
+                'approved_by_user_id' => $context->user->id,
+                'approved_at' => now(),
+            ]);
+            $finishEntry = ConstructionJournalEntry::query()->create([
+                'journal_id' => $journal->id,
+                'entry_date' => '2026-05-12',
+                'entry_number' => 12,
+                'work_description' => 'Бетонирование фундаментной плиты',
+                'status' => 'approved',
+                'created_by_user_id' => $context->user->id,
+                'approved_by_user_id' => $context->user->id,
+                'approved_at' => now(),
+            ]);
+            $volume = $finishEntry->workVolumes()->create([
+                'work_type_id' => $workType->id,
+                'quantity' => 12.5,
+                'measurement_unit_id' => $unit->id,
+            ]);
+            $finishEntry->materials()->create([
+                'material_name' => 'Бетон B25',
+                'quantity' => 12.5,
+                'measurement_unit' => 'м3',
+            ]);
+            $completedWork = CompletedWork::query()->create([
+                'organization_id' => $context->organization->id,
+                'project_id' => $project->id,
+                'work_type_id' => $workType->id,
+                'journal_entry_id' => $finishEntry->id,
+                'journal_work_volume_id' => $volume->id,
+                'user_id' => $context->user->id,
+                'quantity' => 12.5,
+                'completion_date' => '2026-05-13',
+                'status' => 'confirmed',
+            ]);
+
+            $setResponse = $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/executive-documentation/sets', [
+                    'project_id' => $project->id,
+                    'title' => 'Комплект АОСР',
+                ]);
+
+            $setResponse->assertCreated();
+            $setId = (int) $setResponse->json('data.id');
+            $qualityDocument = ExecutiveDocument::query()->create([
+                'organization_id' => $context->organization->id,
+                'project_id' => $project->id,
+                'document_set_id' => $setId,
+                'created_by' => $context->user->id,
+                'document_type' => 'incoming_control_document',
+                'title' => 'Паспорт качества бетона',
+                'status' => 'draft',
+                'document_date' => '2026-05-14',
+                'profile_data' => [
+                    'document_number' => 'ПС-1',
+                ],
+            ]);
+
+            $response = $this->withHeaders($context->authHeaders())
+                ->post("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
+                    'document_type' => 'hidden_work_act',
+                    'title' => 'Акт бетонирования фундаментной плиты',
+                    'work_type_id' => $workType->id,
+                    'journal_entry_id' => $startEntry->id,
+                    'completed_work_id' => $completedWork->id,
+                    'relations' => [
+                        [
+                            'relation_type' => 'journal_entry',
+                            'target_type' => 'journal_entry',
+                            'target_id' => $finishEntry->id,
+                        ],
+                        [
+                            'relation_type' => 'quality_documents',
+                            'target_type' => 'incoming_control_document',
+                            'target_id' => $qualityDocument->id,
+                        ],
+                    ],
+                    'initial_version' => [
+                        'file' => $this->fakeDocumentFile('hidden-work-act.pdf'),
+                        'version_number' => '1.0',
+                    ],
+                ]);
+
+            $response->assertCreated();
+            $response->assertJsonPath('data.document_type', 'hidden_work_act');
+            $response->assertJsonPath('data.document_date', '2026-05-14');
+            $response->assertJsonPath('data.journal_entry_id', $startEntry->id);
+            $response->assertJsonPath('data.completed_work_id', $completedWork->id);
+            $response->assertJsonPath('data.profile_data.started_at', '2026-05-10');
+            $response->assertJsonPath('data.profile_data.finished_at', '2026-05-13');
+            $response->assertJsonPath('data.profile_data.next_works_permission', 'Последующие работы разрешаются после приемки указанных скрытых работ.');
+            $this->assertStringStartsWith('АСР-202605-', (string) $response->json('data.profile_data.act_number'));
+            $this->assertStringContainsString('Подготовка основания под плиту', (string) $response->json('data.profile_data.presented_works'));
+            $this->assertStringContainsString('Бетонирование фундаментной плиты', (string) $response->json('data.profile_data.presented_works'));
+            $this->assertStringContainsString('12.500 м3', (string) $response->json('data.profile_data.actual_volume'));
+            $this->assertStringContainsString('Бетон B25', (string) $response->json('data.profile_data.materials_summary'));
+            $relationTargets = collect($response->json('data.relations'))->pluck('target_id')->all();
+            $this->assertContains($startEntry->id, $relationTargets);
+            $this->assertContains($finishEntry->id, $relationTargets);
+            $this->assertContains($qualityDocument->id, $relationTargets);
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 
     public function test_document_file_is_uploaded_to_organization_s3_path_and_type_fields_are_required(): void

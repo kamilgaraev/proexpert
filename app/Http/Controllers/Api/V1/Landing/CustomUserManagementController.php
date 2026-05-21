@@ -145,7 +145,7 @@ class CustomUserManagementController extends Controller
 
             return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
-                'message' => 'РћС€РёР±РєР° РїСЂРё СЃРѕР·РґР°РЅРёРё РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ: ' . $e->getMessage()
+                'message' => trans_message('landing_users.admin_create_error')
             ], 500);
         }
     }

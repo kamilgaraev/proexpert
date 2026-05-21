@@ -16,8 +16,11 @@ use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\BusinessModules\Features\BasicWarehouse\Http\Resources\WarehouseMovementResource;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use InvalidArgumentException;
+use Throwable;
 use function trans_message;
 
 /**
@@ -56,8 +59,10 @@ class WarehouseOperationsController extends Controller
             $url = $this->exportManager->getTemporaryUrl($path);
             
             return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
-        } catch (\Exception $e) {
-            return AdminResponse::error(trans_message('warehouse_basic.m4_export_error') . ': ' . $e->getMessage(), 500);
+        } catch (Throwable $exception) {
+            return $this->warehouseError('m4_export', $exception, $request, 'warehouse_basic.m4_export_error', 500, [
+                'movement_id' => $id,
+            ]);
         }
     }
 
@@ -85,8 +90,10 @@ class WarehouseOperationsController extends Controller
             $url = $this->exportManager->getTemporaryUrl($path);
             
             return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
-        } catch (\Exception $e) {
-            return AdminResponse::error(trans_message('warehouse_basic.m11_export_error') . ': ' . $e->getMessage(), 500);
+        } catch (Throwable $exception) {
+            return $this->warehouseError('m11_export', $exception, $request, 'warehouse_basic.m11_export_error', 500, [
+                'movement_id' => $id,
+            ]);
         }
     }
 
@@ -114,8 +121,10 @@ class WarehouseOperationsController extends Controller
             $url = $this->exportManager->getTemporaryUrl($path);
             
             return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
-        } catch (\Exception $e) {
-            return AdminResponse::error(trans_message('warehouse_basic.m15_export_error') . ': ' . $e->getMessage(), 500);
+        } catch (Throwable $exception) {
+            return $this->warehouseError('m15_export', $exception, $request, 'warehouse_basic.m15_export_error', 500, [
+                'movement_id' => $id,
+            ]);
         }
     }
 
@@ -143,8 +152,10 @@ class WarehouseOperationsController extends Controller
             $url = $this->exportManager->getTemporaryUrl($path);
             
             return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
-        } catch (\Exception $e) {
-            return AdminResponse::error(trans_message('warehouse_basic.m7_export_error') . ': ' . $e->getMessage(), 500);
+        } catch (Throwable $exception) {
+            return $this->warehouseError('m7_export', $exception, $request, 'warehouse_basic.m7_export_error', 500, [
+                'movement_id' => $id,
+            ]);
         }
     }
 
@@ -187,8 +198,11 @@ class WarehouseOperationsController extends Controller
             $url = $this->exportManager->getTemporaryUrl($path);
             
             return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
-        } catch (\Exception $e) {
-            return AdminResponse::error(trans_message('warehouse_basic.m17_export_error') . ': ' . $e->getMessage(), 500);
+        } catch (Throwable $exception) {
+            return $this->warehouseError('m17_export', $exception, $request, 'warehouse_basic.m17_export_error', 500, [
+                'material_id' => $materialId,
+                'warehouse_id' => $warehouseId,
+            ]);
         }
     }
 
@@ -218,8 +232,10 @@ class WarehouseOperationsController extends Controller
             $url = $this->exportManager->getTemporaryUrl($path);
             
             return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
-        } catch (\Exception $e) {
-            return AdminResponse::error(trans_message('warehouse_basic.m8_export_error') . ': ' . $e->getMessage(), 500);
+        } catch (Throwable $exception) {
+            return $this->warehouseError('m8_export', $exception, $request, 'warehouse_basic.m8_export_error', 500, [
+                'reservation_id' => $reservationId,
+            ]);
         }
     }
 
@@ -291,8 +307,8 @@ class WarehouseOperationsController extends Controller
                 trans_message('warehouse_basic.receipt_success'),
                 201
             );
-        } catch (\Exception $e) {
-            return AdminResponse::error(trans_message('warehouse_basic.receipt_error') . ': ' . $e->getMessage(), 500);
+        } catch (Throwable $exception) {
+            return $this->warehouseError('receipt', $exception, $request, 'warehouse_basic.receipt_error');
         }
     }
 
@@ -325,10 +341,10 @@ class WarehouseOperationsController extends Controller
                 'remaining_total_quantity' => $result['remaining_total_quantity'],
             ], trans_message('warehouse_basic.write_off_success'));
 
-        } catch (\InvalidArgumentException $e) {
-            return AdminResponse::error($e->getMessage(), 422);
-        } catch (\Exception $e) {
-            return AdminResponse::error(trans_message('warehouse_basic.write_off_error') . ': ' . $e->getMessage(), 500);
+        } catch (InvalidArgumentException $exception) {
+            return $this->warehouseError('write_off_validation', $exception, $request, 'warehouse_basic.operation_validation_error', 422);
+        } catch (Throwable $exception) {
+            return $this->warehouseError('write_off', $exception, $request, 'warehouse_basic.write_off_error');
         }
     }
 
@@ -361,10 +377,10 @@ class WarehouseOperationsController extends Controller
                 'avg_price' => $result['avg_price'],
             ], trans_message('warehouse_basic.transfer_success'));
             
-        } catch (\InvalidArgumentException $e) {
-            return AdminResponse::error($e->getMessage(), 422);
-        } catch (\Exception $e) {
-            return AdminResponse::error(trans_message('warehouse_basic.transfer_error') . ': ' . $e->getMessage(), 500);
+        } catch (InvalidArgumentException $exception) {
+            return $this->warehouseError('transfer_validation', $exception, $request, 'warehouse_basic.operation_validation_error', 422);
+        } catch (Throwable $exception) {
+            return $this->warehouseError('transfer', $exception, $request, 'warehouse_basic.transfer_error');
         }
     }
 
@@ -392,10 +408,10 @@ class WarehouseOperationsController extends Controller
 
             return AdminResponse::success(null, trans_message('warehouse_basic.reserve_success'));
             
-        } catch (\InvalidArgumentException $e) {
-            return AdminResponse::error($e->getMessage(), 422);
-        } catch (\Exception $e) {
-            return AdminResponse::error(trans_message('warehouse_basic.reserve_error') . ': ' . $e->getMessage(), 500);
+        } catch (InvalidArgumentException $exception) {
+            return $this->warehouseError('reserve_validation', $exception, $request, 'warehouse_basic.operation_validation_error', 422);
+        } catch (Throwable $exception) {
+            return $this->warehouseError('reserve', $exception, $request, 'warehouse_basic.reserve_error');
         }
     }
 
@@ -423,10 +439,10 @@ class WarehouseOperationsController extends Controller
 
             return AdminResponse::success($result, trans_message('warehouse_basic.unreserve_success'));
             
-        } catch (\InvalidArgumentException $e) {
-            return AdminResponse::error($e->getMessage(), 422);
-        } catch (\Exception $e) {
-            return AdminResponse::error(trans_message('warehouse_basic.unreserve_error') . ': ' . $e->getMessage(), 500);
+        } catch (InvalidArgumentException $exception) {
+            return $this->warehouseError('unreserve_validation', $exception, $request, 'warehouse_basic.operation_validation_error', 422);
+        } catch (Throwable $exception) {
+            return $this->warehouseError('unreserve', $exception, $request, 'warehouse_basic.unreserve_error');
         }
     }
 
@@ -456,9 +472,27 @@ class WarehouseOperationsController extends Controller
 
             return AdminResponse::success($result, trans_message('warehouse_basic.transfer_to_contractor_success'));
 
-        } catch (\Exception $e) {
-            return AdminResponse::error(trans_message('warehouse_basic.transfer_to_contractor_error') . ': ' . $e->getMessage(), 500);
+        } catch (Throwable $exception) {
+            return $this->warehouseError('transfer_to_contractor', $exception, $request, 'warehouse_basic.transfer_to_contractor_error');
         }
+    }
+
+    private function warehouseError(
+        string $operation,
+        Throwable $exception,
+        Request $request,
+        string $messageKey,
+        int $status = 500,
+        array $context = []
+    ): JsonResponse {
+        Log::error('Warehouse operation failed', array_merge($context, [
+            'operation' => $operation,
+            'user_id' => $request->user()?->id,
+            'organization_id' => $request->user()?->current_organization_id,
+            'exception' => $exception,
+        ]));
+
+        return AdminResponse::error(trans_message($messageKey), $status);
     }
 }
 

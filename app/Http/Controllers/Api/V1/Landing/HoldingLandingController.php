@@ -137,10 +137,7 @@ class HoldingLandingController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return LandingResponse::error(
-                $e->getMessage() ?: trans_message('holding_site_builder.validation_error'),
-                422
-            );
+            return LandingResponse::error(trans_message('holding_site_builder.validation_error'), 422);
         } catch (\Throwable $e) {
             Log::error('Holding site builder publish failed', [
                 'organization_id' => $request->attributes->get('current_organization_id'),
@@ -148,7 +145,7 @@ class HoldingLandingController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return LandingResponse::error($e->getMessage() ?: trans_message('holding_site_builder.publish_error'), 500);
+            return LandingResponse::error(trans_message('holding_site_builder.publish_error'), 500);
         }
     }
 
