@@ -976,7 +976,7 @@ class ReportService
             'user_id' => $request->user()?->id
         ]);
 
-        $assetType = (string) ($request->query('asset_type') ?: 'material');
+        $assetType = $request->filled('asset_type') ? (string) $request->query('asset_type') : null;
 
         $query = DB::table('warehouse_balances')
             ->join('materials', 'warehouse_balances.material_id', '=', 'materials.id')
@@ -1001,7 +1001,11 @@ class ReportService
                 DB::raw('(warehouse_balances.available_quantity * warehouse_balances.unit_price) as total_value')
             );
 
-        $this->applyWarehouseStockAssetTypeFilter($query, $assetType);
+        $this->applyWarehouseStockPresenceFilter($query, $organizationId);
+
+        if ($assetType !== null) {
+            $this->applyWarehouseStockAssetTypeFilter($query, $assetType);
+        }
 
         if ($request->filled('warehouse_id')) {
             $query->where('warehouse_balances.warehouse_id', $request->query('warehouse_id'));
@@ -1096,12 +1100,26 @@ class ReportService
             'title' => 'Отчет по остаткам на складах',
             'data' => $stocks->values(),
             'totals' => $totals,
-            'filters' => array_merge(
-                $request->only(['warehouse_id', 'material_id', 'category', 'show_critical_only']),
-                ['asset_type' => $assetType]
-            ),
+            'filters' => $request->only(['warehouse_id', 'material_id', 'category', 'asset_type', 'show_critical_only']),
             'generated_at' => Carbon::now(),
         ];
+    }
+
+    private function applyWarehouseStockPresenceFilter(\Illuminate\Database\Query\Builder $query, int $organizationId): void
+    {
+        $query->where(function (\Illuminate\Database\Query\Builder $presenceQuery) use ($organizationId): void {
+            $presenceQuery
+                ->whereRaw('(warehouse_balances.available_quantity + warehouse_balances.reserved_quantity) > 0')
+                ->orWhereExists(function (\Illuminate\Database\Query\Builder $movementQuery) use ($organizationId): void {
+                    $movementQuery
+                        ->selectRaw('1')
+                        ->from('warehouse_movements')
+                        ->where('warehouse_movements.organization_id', $organizationId)
+                        ->whereColumn('warehouse_movements.warehouse_id', 'warehouse_balances.warehouse_id')
+                        ->whereColumn('warehouse_movements.material_id', 'warehouse_balances.material_id')
+                        ->limit(1);
+                });
+        });
     }
 
     private function applyWarehouseStockAssetTypeFilter(\Illuminate\Database\Query\Builder $query, string $assetType): void

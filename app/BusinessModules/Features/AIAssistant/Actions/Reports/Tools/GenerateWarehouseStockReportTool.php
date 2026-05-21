@@ -48,7 +48,6 @@ class GenerateWarehouseStockReportTool implements AIToolInterface
     {
         $requestData = [
             'format' => 'pdf',
-            'asset_type' => 'material',
         ];
 
         if (isset($arguments['warehouse_id'])) {

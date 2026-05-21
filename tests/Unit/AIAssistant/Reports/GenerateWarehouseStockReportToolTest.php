@@ -16,7 +16,7 @@ use Tests\TestCase;
 
 final class GenerateWarehouseStockReportToolTest extends TestCase
 {
-    public function test_requests_material_stock_report_only(): void
+    public function test_requests_stock_report_without_asset_type_restriction(): void
     {
         $organization = Organization::factory()->make(['id' => 77]);
         $user = User::factory()->make(['id' => 12, 'current_organization_id' => 77]);
@@ -27,7 +27,7 @@ final class GenerateWarehouseStockReportToolTest extends TestCase
             ->once()
             ->with(Mockery::on(static function (Request $request): bool {
                 return $request->query('format') === 'pdf'
-                    && $request->query('asset_type') === 'material'
+                    && ! $request->query->has('asset_type')
                     && (int) $request->attributes->get('current_organization_id') === 77;
             }))
             ->andReturn(new StreamedResponse(static function (): void {

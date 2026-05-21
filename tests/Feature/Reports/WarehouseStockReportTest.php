@@ -4,6 +4,7 @@ namespace Tests\Feature\Reports;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\Models\Material;
 use App\Models\Organization;
 use App\Models\User;
@@ -72,7 +73,7 @@ class WarehouseStockReportTest extends TestCase
         $this->assertEquals($filters, $report['filters']);
     }
 
-    public function test_get_warehouse_stock_report_defaults_to_material_assets_only(): void
+    public function test_get_warehouse_stock_report_includes_stock_assets_of_all_types(): void
     {
         [$organization, $warehouse, $material, $tool, $user] = $this->createStockReportContext();
 
@@ -83,8 +84,8 @@ class WarehouseStockReportTest extends TestCase
             $this->makeWarehouseStockRequest($organization, $user)
         );
 
-        $this->assertSame(['Cement M500'], $report['data']->pluck('material_name')->all());
-        $this->assertSame('material', $report['filters']['asset_type']);
+        $this->assertEqualsCanonicalizing(['Cement M500', 'Screwdriver'], $report['data']->pluck('material_name')->all());
+        $this->assertArrayNotHasKey('asset_type', $report['filters']);
     }
 
     public function test_get_warehouse_stock_report_can_filter_tool_assets_explicitly(): void
@@ -100,6 +101,29 @@ class WarehouseStockReportTest extends TestCase
 
         $this->assertSame(['Screwdriver'], $report['data']->pluck('material_name')->all());
         $this->assertSame('tool', $report['filters']['asset_type']);
+    }
+
+    public function test_get_warehouse_stock_report_excludes_zero_balance_assets_without_movements(): void
+    {
+        [$organization, $warehouse, $material, $tool, $user] = $this->createStockReportContext();
+        $bareAsset = Material::query()->create([
+            'organization_id' => $organization->id,
+            'name' => 'Bare drill',
+            'code' => 'TOOL-EMPTY',
+            'additional_properties' => ['asset_type' => 'tool'],
+            'is_active' => true,
+        ]);
+
+        $this->createBalance((int) $organization->id, (int) $warehouse->id, (int) $material->id, 12);
+        $this->createBalance((int) $organization->id, (int) $warehouse->id, (int) $tool->id, 0);
+        $this->createMovement((int) $organization->id, (int) $warehouse->id, (int) $tool->id, 3);
+        $this->createBalance((int) $organization->id, (int) $warehouse->id, (int) $bareAsset->id, 0);
+
+        $report = $this->reportService->getWarehouseStockReport(
+            $this->makeWarehouseStockRequest($organization, $user)
+        );
+
+        $this->assertEqualsCanonicalizing(['Cement M500', 'Screwdriver'], $report['data']->pluck('material_name')->all());
     }
 
     private function createStockReportContext(): array
@@ -146,6 +170,20 @@ class WarehouseStockReportTest extends TestCase
         ]);
     }
 
+    private function createMovement(int $organizationId, int $warehouseId, int $materialId, float $quantity): WarehouseMovement
+    {
+        return WarehouseMovement::query()->create([
+            'organization_id' => $organizationId,
+            'warehouse_id' => $warehouseId,
+            'material_id' => $materialId,
+            'movement_type' => WarehouseMovement::TYPE_WRITE_OFF,
+            'quantity' => $quantity,
+            'price' => 100,
+            'document_number' => 'TEST-' . $materialId,
+            'movement_date' => now(),
+        ]);
+    }
+
     private function makeWarehouseStockRequest(Organization $organization, User $user, array $query = []): Request
     {
         $request = Request::create('/api/v1/admin/reports/warehouse-stock', 'GET', $query);
@@ -155,4 +193,3 @@ class WarehouseStockReportTest extends TestCase
         return $request;
     }
 }
-
