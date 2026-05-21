@@ -6,7 +6,7 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\Auth;
 use App\Models\Role;
-use App\Models\Material; // Импортируем модель Material
+use App\Models\Material; // РРјРїРѕСЂС‚РёСЂСѓРµРј РјРѕРґРµР»СЊ Material
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
@@ -16,7 +16,7 @@ class UpdateMaterialRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        // Доступ к контроллеру уже проверен middleware стеком авторизации админки
+        // Р”РѕСЃС‚СѓРї Рє РєРѕРЅС‚СЂРѕР»Р»РµСЂСѓ СѓР¶Рµ РїСЂРѕРІРµСЂРµРЅ middleware СЃС‚РµРєРѕРј Р°РІС‚РѕСЂРёР·Р°С†РёРё Р°РґРјРёРЅРєРё
         return Auth::check(); 
     }
 
@@ -25,13 +25,13 @@ class UpdateMaterialRequest extends FormRequest
         $organizationId = $this->getOrganizationId();
 
         /** @var Material|string|null $material */
-        $material = $this->route('material'); // Может быть моделью или ID
+        $material = $this->route('material'); // РњРѕР¶РµС‚ Р±С‹С‚СЊ РјРѕРґРµР»СЊСЋ РёР»Рё ID
 
         if ($material && !($material instanceof Material)) {
             $material = Material::find($material);
         }
 
-        $materialId = $material?->id; // ID текущего материала
+        $materialId = $material?->id; // ID С‚РµРєСѓС‰РµРіРѕ РјР°С‚РµСЂРёР°Р»Р°
 
         return [
             'name' => [
@@ -44,7 +44,7 @@ class UpdateMaterialRequest extends FormRequest
                         return $query->where('organization_id', $organizationId)
                                     ->whereNull('deleted_at');
                     })
-                    ->ignore($materialId), // Игнорируем текущий материал
+                    ->ignore($materialId), // РРіРЅРѕСЂРёСЂСѓРµРј С‚РµРєСѓС‰РёР№ РјР°С‚РµСЂРёР°Р»
             ],
             'code' => 'sometimes|nullable|string|max:50',
             'measurement_unit_id' => [
@@ -59,7 +59,7 @@ class UpdateMaterialRequest extends FormRequest
             'additional_properties' => 'sometimes|nullable|array',
             'is_active' => 'sometimes|boolean',
             
-            // Поля для бухгалтерской интеграции
+            // РџРѕР»СЏ РґР»СЏ Р±СѓС…РіР°Р»С‚РµСЂСЃРєРѕР№ РёРЅС‚РµРіСЂР°С†РёРё
             'external_code' => [
                 'sometimes',
                 'nullable', 
@@ -70,7 +70,7 @@ class UpdateMaterialRequest extends FormRequest
                         return $query->where('organization_id', $organizationId)
                                     ->whereNull('deleted_at');
                     })
-                    ->ignore($materialId), // Игнорируем текущий материал
+                    ->ignore($materialId), // РРіРЅРѕСЂРёСЂСѓРµРј С‚РµРєСѓС‰РёР№ РјР°С‚РµСЂРёР°Р»
             ],
             'sbis_nomenclature_code' => 'sometimes|nullable|string|max:100',
             'sbis_unit_code' => 'sometimes|nullable|string|max:100',
@@ -106,20 +106,20 @@ class UpdateMaterialRequest extends FormRequest
     }
 
     /**
-     * Получить пользовательские сообщения об ошибках для правил проверки.
+     * РџРѕР»СѓС‡РёС‚СЊ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊСЃРєРёРµ СЃРѕРѕР±С‰РµРЅРёСЏ РѕР± РѕС€РёР±РєР°С… РґР»СЏ РїСЂР°РІРёР» РїСЂРѕРІРµСЂРєРё.
      *
      * @return array<string, string>
      */
     public function messages(): array
     {
         return [
-            'name.required' => 'Название материала обязательно для заполнения.',
-            'name.unique' => 'Материал с таким названием уже существует в вашей организации.',
-            'measurement_unit_id.required' => 'Необходимо указать единицу измерения.',
-            'measurement_unit_id.exists' => 'Выбранная единица измерения не существует.',
-            'external_code.unique' => 'Материал с таким внешним кодом уже существует в вашей организации.',
-            'default_price.min' => 'Цена по умолчанию не может быть отрицательной.',
-            'consumption_rates.*.min' => 'Норма списания не может быть отрицательной.',
+            'name.required' => 'РќР°Р·РІР°РЅРёРµ РјР°С‚РµСЂРёР°Р»Р° РѕР±СЏР·Р°С‚РµР»СЊРЅРѕ РґР»СЏ Р·Р°РїРѕР»РЅРµРЅРёСЏ.',
+            'name.unique' => 'РњР°С‚РµСЂРёР°Р» СЃ С‚Р°РєРёРј РЅР°Р·РІР°РЅРёРµРј СѓР¶Рµ СЃСѓС‰РµСЃС‚РІСѓРµС‚ РІ РІР°С€РµР№ РѕСЂРіР°РЅРёР·Р°С†РёРё.',
+            'measurement_unit_id.required' => 'РќРµРѕР±С…РѕРґРёРјРѕ СѓРєР°Р·Р°С‚СЊ РµРґРёРЅРёС†Сѓ РёР·РјРµСЂРµРЅРёСЏ.',
+            'measurement_unit_id.exists' => 'Р’С‹Р±СЂР°РЅРЅР°СЏ РµРґРёРЅРёС†Р° РёР·РјРµСЂРµРЅРёСЏ РЅРµ СЃСѓС‰РµСЃС‚РІСѓРµС‚.',
+            'external_code.unique' => 'РњР°С‚РµСЂРёР°Р» СЃ С‚Р°РєРёРј РІРЅРµС€РЅРёРј РєРѕРґРѕРј СѓР¶Рµ СЃСѓС‰РµСЃС‚РІСѓРµС‚ РІ РІР°С€РµР№ РѕСЂРіР°РЅРёР·Р°С†РёРё.',
+            'default_price.min' => 'Р¦РµРЅР° РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РЅРµ РјРѕР¶РµС‚ Р±С‹С‚СЊ РѕС‚СЂРёС†Р°С‚РµР»СЊРЅРѕР№.',
+            'consumption_rates.*.min' => 'РќРѕСЂРјР° СЃРїРёСЃР°РЅРёСЏ РЅРµ РјРѕР¶РµС‚ Р±С‹С‚СЊ РѕС‚СЂРёС†Р°С‚РµР»СЊРЅРѕР№.',
         ];
     }
 
@@ -128,9 +128,9 @@ class UpdateMaterialRequest extends FormRequest
         $errors = (new ValidationException($validator))->errors();
 
         throw new HttpResponseException(
-            response()->json([
+            \App\Http\Responses\AdminResponse::fromPayload([
                 'success' => false,
-                'message' => 'Данные не прошли валидацию.',
+                'message' => 'Р”Р°РЅРЅС‹Рµ РЅРµ РїСЂРѕС€Р»Рё РІР°Р»РёРґР°С†РёСЋ.',
                 'errors' => $errors,
             ], JsonResponse::HTTP_UNPROCESSABLE_ENTITY)
         );

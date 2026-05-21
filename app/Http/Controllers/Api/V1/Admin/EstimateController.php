@@ -418,7 +418,7 @@ class EstimateController extends Controller
         // Проверка разрешенных переходов
         if (!in_array($newStatus, $allowedTransitions[$currentStatus] ?? [])) {
             throw new \DomainException(
-                __('estimate.status_invalid_transition', ['from' => $currentStatus, 'to' => $newStatus])
+                trans_message('estimate.status_invalid_transition', ['from' => $currentStatus, 'to' => $newStatus])
             );
         }
         

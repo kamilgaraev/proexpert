@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Responses\LandingResponse;
 use Illuminate\Support\Facades\Route;
 
 // Роуты для холдинговых поддоменов (исключая служебные)
@@ -14,10 +15,9 @@ Route::get('/', function () {
 });
 
 Route::get('/login', function () {
-    return response()->json(['message' => 'Please use API endpoints for authentication'], 401);
+    return LandingResponse::error(trans_message('auth.token_missing'), 401);
 })->name('login');
 
 
 Route::get('/metrics', [App\Http\Controllers\MetricsController::class, 'metrics']);
-
 

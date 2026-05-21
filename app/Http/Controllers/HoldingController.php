@@ -65,7 +65,7 @@ class HoldingController extends Controller
             'stats' => $this->getHoldingStats($holding),
         ];
 
-        return response()->json([
+        return \App\Http\Responses\LandingResponse::fromPayload([
             'success' => true,
             'data' => $data,
             'view' => 'holding.dashboard',
@@ -78,7 +78,7 @@ class HoldingController extends Controller
         $holding = $request->attributes->get('holding');
 
         if (!$user) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
                 'message' => 'Authorization required',
                 'redirect' => '/login',
@@ -86,7 +86,7 @@ class HoldingController extends Controller
         }
 
         if (!$this->multiOrgService->hasAccessToOrganization($user, $holding->parent_organization_id)) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
                 'message' => 'Access denied',
             ], 403);
@@ -94,7 +94,7 @@ class HoldingController extends Controller
 
         $hierarchy = $this->multiOrgService->getOrganizationHierarchy($holding->parent_organization_id);
 
-        return response()->json([
+        return \App\Http\Responses\LandingResponse::fromPayload([
             'success' => true,
             'data' => [
                 'holding' => $holding,
@@ -111,7 +111,7 @@ class HoldingController extends Controller
         $holding = $request->attributes->get('holding');
 
         if (!$this->multiOrgService->hasAccessToOrganization($user, $holding->parent_organization_id)) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
                 'message' => 'Access denied',
             ], 403);
@@ -137,7 +137,7 @@ class HoldingController extends Controller
                 ];
             });
 
-        return response()->json([
+        return \App\Http\Responses\LandingResponse::fromPayload([
             'success' => true,
             'data' => $childOrganizations,
         ]);

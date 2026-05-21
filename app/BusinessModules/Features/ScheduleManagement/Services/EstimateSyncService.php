@@ -1,13 +1,19 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\ScheduleManagement\Services;
 
-use App\Models\ProjectSchedule;
-use App\Models\ScheduleTask;
+use App\Enums\Schedule\TaskStatusEnum;
+use App\Enums\Schedule\TaskTypeEnum;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
-use Illuminate\Support\Facades\DB;
+use App\Models\EstimateSection;
+use App\Models\ProjectSchedule;
+use App\Models\ScheduleTask;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class EstimateSyncService
 {
@@ -15,15 +21,6 @@ class EstimateSyncService
         private readonly EstimateScheduleImportService $importService
     ) {}
 
-    /**
-     * Синхронизировать график со сметой (обновить данные из сметы)
-     * 
-     * @param ProjectSchedule $schedule График
-     * @param bool $force Принудительная синхронизация
-     * @return array Результаты синхронизации
-     * 
-     * @throws \DomainException Если график не связан со сметой
-     */
     public function syncScheduleWithEstimate(ProjectSchedule $schedule, bool $force = false): array
     {
         if (!$schedule->estimate_id) {
@@ -35,12 +32,12 @@ class EstimateSyncService
         }
 
         $estimate = $schedule->estimate;
-        
+
         if (!$estimate) {
             throw new \DomainException('Смета не найдена');
         }
 
-        return DB::transaction(function () use ($schedule, $estimate) {
+        return DB::transaction(function () use ($schedule, $estimate): array {
             $results = [
                 'updated' => 0,
                 'added' => 0,
@@ -49,32 +46,22 @@ class EstimateSyncService
                 'changes' => [],
             ];
 
-            // Получаем все задачи графика, связанные со сметой
             $tasks = $schedule->tasks()
                 ->whereNotNull('estimate_item_id')
                 ->with('estimateItem')
                 ->get();
 
-            // Обновляем существующие задачи
             foreach ($tasks as $task) {
                 $item = $task->estimateItem;
-                
-                if (!$item) {
-                    // Позиция удалена из сметы
-                    $results['removed']++;
-                    $results['changes'][] = [
-                        'type' => 'removed',
-                        'task_id' => $task->id,
-                        'task_name' => $task->name,
-                        'message' => 'Позиция удалена из сметы',
-                    ];
+
+                if (!$item || $item->estimate_id !== $estimate->id || !$item->isWork()) {
+                    $this->removeObsoleteTask($task, $results);
                     continue;
                 }
 
-                // Проверяем изменения и обновляем
                 $changes = $this->updateTaskFromItem($task, $item);
-                
-                if (!empty($changes)) {
+
+                if ($changes !== []) {
                     $results['updated']++;
                     $results['changes'][] = [
                         'type' => 'updated',
@@ -85,23 +72,39 @@ class EstimateSyncService
                 }
             }
 
-            // Проверяем наличие новых позиций в смете
-            $existingItemIds = $tasks->pluck('estimate_item_id')->filter()->toArray();
-            $estimateItemIds = $estimate->items()->pluck('id')->toArray();
-            $newItemIds = array_diff($estimateItemIds, $existingItemIds);
+            $existingItemIds = $schedule->tasks()
+                ->whereNotNull('estimate_item_id')
+                ->pluck('estimate_item_id')
+                ->map(static fn ($id): int => (int) $id)
+                ->all();
 
-            if (count($newItemIds) > 0) {
-                $results['added'] = count($newItemIds);
-                $results['changes'][] = [
-                    'type' => 'info',
-                    'message' => "Обнаружено {$results['added']} новых позиций в смете. Используйте полный реимпорт для добавления.",
-                ];
+            $estimateItemIds = $estimate->items()
+                ->works()
+                ->pluck('id')
+                ->map(static fn ($id): int => (int) $id)
+                ->all();
+
+            $newItemIds = array_values(array_diff($estimateItemIds, $existingItemIds));
+
+            if ($newItemIds !== []) {
+                $this->appendNewEstimateItems($schedule, $estimate, $newItemIds, $results);
             }
 
-            // Обновляем статус синхронизации
-            $this->markScheduleAsSynced($schedule);
+            $this->removeEmptySectionTasks($schedule, $results);
+            $this->importService->recalculateScheduleDates($schedule);
 
-            \Log::info('schedule.synced_with_estimate', [
+            $schedule->update([
+                'total_estimated_cost' => $estimate->total_amount,
+                'critical_path_calculated' => false,
+            ]);
+
+            if ($results['conflicts'] === []) {
+                $this->markScheduleAsSynced($schedule);
+            } else {
+                $this->markScheduleAsConflict($schedule);
+            }
+
+            Log::info('schedule.synced_with_estimate', [
                 'schedule_id' => $schedule->id,
                 'estimate_id' => $estimate->id,
                 'results' => $results,
@@ -111,12 +114,6 @@ class EstimateSyncService
         });
     }
 
-    /**
-     * Синхронизировать прогресс выполнения из графика в смету
-     * 
-     * @param ProjectSchedule $schedule График
-     * @return array Результаты синхронизации
-     */
     public function syncEstimateProgress(ProjectSchedule $schedule): array
     {
         if (!$schedule->estimate_id) {
@@ -128,7 +125,7 @@ class EstimateSyncService
             'items' => [],
         ];
 
-        return DB::transaction(function () use ($schedule, &$results) {
+        return DB::transaction(function () use ($schedule, &$results): array {
             $tasks = $schedule->tasks()
                 ->whereNotNull('estimate_item_id')
                 ->where('progress_percent', '>', 0)
@@ -137,17 +134,15 @@ class EstimateSyncService
 
             foreach ($tasks as $task) {
                 $item = $task->estimateItem;
-                
+
                 if (!$item) {
                     continue;
                 }
 
-                // Рассчитываем фактический объем выполненных работ
-                $actualQuantity = $task->quantity 
-                    ? $task->quantity * ($task->progress_percent / 100) 
+                $actualQuantity = $task->quantity
+                    ? (float) $task->quantity * ((float) $task->progress_percent / 100)
                     : null;
 
-                // Обновляем метаданные позиции сметы
                 $metadata = $item->metadata ?? [];
                 $metadata['progress_from_schedule'] = [
                     'schedule_id' => $schedule->id,
@@ -169,7 +164,7 @@ class EstimateSyncService
                 ];
             }
 
-            \Log::info('estimate.progress_synced_from_schedule', [
+            Log::info('estimate.progress_synced_from_schedule', [
                 'schedule_id' => $schedule->id,
                 'estimate_id' => $schedule->estimate_id,
                 'updated_items' => $results['updated'],
@@ -179,12 +174,6 @@ class EstimateSyncService
         });
     }
 
-    /**
-     * Обнаружить конфликты между графиком и сметой
-     * 
-     * @param ProjectSchedule $schedule График
-     * @return array Список конфликтов
-     */
     public function detectConflicts(ProjectSchedule $schedule): array
     {
         if (!$schedule->estimate_id) {
@@ -200,35 +189,32 @@ class EstimateSyncService
 
         foreach ($tasks as $task) {
             $item = $task->estimateItem;
-            
+
             if (!$item) {
                 $conflicts[] = [
                     'type' => 'missing_item',
                     'severity' => 'high',
                     'task_id' => $task->id,
                     'task_name' => $task->name,
-                    'message' => 'Позиция сметы не найдена (возможно удалена)',
+                    'message' => 'Позиция сметы не найдена',
                 ];
                 continue;
             }
 
-            // Проверка изменения объемов
-            if ($task->quantity && $item->quantity_total && 
-                abs($task->quantity - $item->quantity_total) > 0.01) {
+            $quantity = $this->itemQuantity($item);
+            if ($this->numericValuesDiffer($task->quantity, $quantity, 0.01)) {
                 $conflicts[] = [
                     'type' => 'quantity_mismatch',
                     'severity' => 'medium',
                     'task_id' => $task->id,
                     'task_name' => $task->name,
                     'schedule_value' => $task->quantity,
-                    'estimate_value' => $item->quantity_total,
+                    'estimate_value' => $quantity,
                     'message' => 'Объем работ в графике отличается от сметы',
                 ];
             }
 
-            // Проверка изменения стоимости
-            if ($task->estimated_cost && $item->total_amount &&
-                abs($task->estimated_cost - $item->total_amount) > 1) {
+            if ($this->numericValuesDiffer($task->estimated_cost, $item->total_amount, 1.0)) {
                 $conflicts[] = [
                     'type' => 'cost_mismatch',
                     'severity' => 'low',
@@ -240,9 +226,7 @@ class EstimateSyncService
                 ];
             }
 
-            // Проверка изменения трудозатрат
-            if ($task->labor_hours_from_estimate && $item->labor_hours &&
-                abs($task->labor_hours_from_estimate - $item->labor_hours) > 0.1) {
+            if ($this->numericValuesDiffer($task->labor_hours_from_estimate, $item->labor_hours, 0.1)) {
                 $conflicts[] = [
                     'type' => 'labor_hours_mismatch',
                     'severity' => 'medium',
@@ -258,58 +242,6 @@ class EstimateSyncService
         return $conflicts;
     }
 
-    /**
-     * Обновить задачу на основе позиции сметы
-     * 
-     * @param ScheduleTask $task Задача
-     * @param EstimateItem $item Позиция сметы
-     * @return array Список изменений
-     */
-    private function updateTaskFromItem(ScheduleTask $task, EstimateItem $item): array
-    {
-        $changes = [];
-        $updates = [];
-
-        // Проверяем и обновляем название
-        if ($task->name !== $item->name) {
-            $changes[] = "Название: '{$task->name}' → '{$item->name}'";
-            $updates['name'] = $item->name;
-        }
-
-        // Обновляем объем
-        if ($item->quantity_total && (!$task->quantity || abs($task->quantity - $item->quantity_total) > 0.01)) {
-            $changes[] = "Объем: {$task->quantity} → {$item->quantity_total}";
-            $updates['quantity'] = $item->quantity_total;
-        }
-
-        // Обновляем стоимость
-        if ($item->total_amount && (!$task->estimated_cost || abs($task->estimated_cost - $item->total_amount) > 1)) {
-            $changes[] = "Стоимость: {$task->estimated_cost} → {$item->total_amount}";
-            $updates['estimated_cost'] = $item->total_amount;
-            $updates['resource_cost'] = $item->total_amount;
-        }
-
-        // Обновляем трудозатраты
-        if ($item->labor_hours && (!$task->labor_hours_from_estimate || abs($task->labor_hours_from_estimate - $item->labor_hours) > 0.1)) {
-            $changes[] = "Трудозатраты: {$task->labor_hours_from_estimate} → {$item->labor_hours}";
-            $updates['labor_hours_from_estimate'] = $item->labor_hours;
-            $updates['planned_work_hours'] = $item->labor_hours;
-        }
-
-        // Применяем обновления
-        if (!empty($updates)) {
-            $task->update($updates);
-        }
-
-        return $changes;
-    }
-
-    /**
-     * Пометить график как синхронизированный
-     * 
-     * @param ProjectSchedule $schedule График
-     * @return void
-     */
     public function markScheduleAsSynced(ProjectSchedule $schedule): void
     {
         $schedule->update([
@@ -318,12 +250,6 @@ class EstimateSyncService
         ]);
     }
 
-    /**
-     * Пометить график как рассинхронизированный
-     * 
-     * @param ProjectSchedule $schedule График
-     * @return void
-     */
     public function markScheduleAsOutOfSync(ProjectSchedule $schedule): void
     {
         $schedule->update([
@@ -331,17 +257,321 @@ class EstimateSyncService
         ]);
     }
 
-    /**
-     * Пометить график как имеющий конфликты
-     * 
-     * @param ProjectSchedule $schedule График
-     * @return void
-     */
     public function markScheduleAsConflict(ProjectSchedule $schedule): void
     {
         $schedule->update([
             'sync_status' => 'conflict',
         ]);
     }
-}
 
+    private function updateTaskFromItem(ScheduleTask $task, EstimateItem $item): array
+    {
+        $changes = [];
+        $updates = [];
+
+        if ($task->name !== $item->name) {
+            $changes[] = "name: {$task->name} -> {$item->name}";
+            $updates['name'] = $item->name;
+        }
+
+        $description = $item->description ?? $item->justification;
+        if ($task->description !== $description) {
+            $changes[] = 'description';
+            $updates['description'] = $description;
+        }
+
+        $quantity = $this->itemQuantity($item);
+        if ($this->numericValuesDiffer($task->quantity, $quantity, 0.01)) {
+            $changes[] = "quantity: {$task->quantity} -> {$quantity}";
+            $updates['quantity'] = $quantity;
+        }
+
+        if ($this->numericValuesDiffer($task->estimated_cost, $item->total_amount, 1.0)) {
+            $changes[] = "cost: {$task->estimated_cost} -> {$item->total_amount}";
+            $updates['estimated_cost'] = $item->total_amount;
+            $updates['resource_cost'] = $item->total_amount;
+        }
+
+        if ($this->numericValuesDiffer($task->labor_hours_from_estimate, $item->labor_hours, 0.1)) {
+            $changes[] = "labor_hours: {$task->labor_hours_from_estimate} -> {$item->labor_hours}";
+            $updates['labor_hours_from_estimate'] = $item->labor_hours;
+            $updates['planned_work_hours'] = $item->labor_hours ?? 0;
+        }
+
+        if ($this->nullableIntChanged($task->work_type_id, $item->work_type_id)) {
+            $changes[] = 'work_type_id';
+            $updates['work_type_id'] = $item->work_type_id;
+        }
+
+        if ($this->nullableIntChanged($task->measurement_unit_id, $item->measurement_unit_id)) {
+            $changes[] = 'measurement_unit_id';
+            $updates['measurement_unit_id'] = $item->measurement_unit_id;
+        }
+
+        if ($updates !== []) {
+            $task->update($updates);
+        }
+
+        return $changes;
+    }
+
+    private function appendNewEstimateItems(
+        ProjectSchedule $schedule,
+        Estimate $estimate,
+        array $newItemIds,
+        array &$results
+    ): void {
+        $items = EstimateItem::query()
+            ->where('estimate_id', $estimate->id)
+            ->whereIn('id', $newItemIds)
+            ->works()
+            ->with(['section', 'workType', 'measurementUnit'])
+            ->get();
+
+        $options = $this->buildImportOptions($schedule);
+        $startDate = $this->nextStartDate($schedule);
+        $sortOrder = (int) ($schedule->tasks()->max('sort_order') ?? 0) + 1;
+
+        foreach ($items as $item) {
+            if (!$item->section instanceof EstimateSection) {
+                $this->addConflict($results, 'missing_section', 'high', null, $item->name, 'У позиции сметы нет раздела');
+                continue;
+            }
+
+            $sectionTask = $this->findOrCreateSectionTask(
+                $schedule,
+                $item->section,
+                $startDate->copy(),
+                $sortOrder,
+                $options,
+                $results
+            );
+
+            $taskStartDate = $this->nextTaskStartDate($sectionTask, $startDate);
+            $task = $this->importService->createTaskFromItem(
+                $schedule,
+                $item,
+                $item->section,
+                $sectionTask,
+                $taskStartDate,
+                $sortOrder++,
+                $options
+            );
+
+            $results['added']++;
+            $results['changes'][] = [
+                'type' => 'added',
+                'task_id' => $task->id,
+                'task_name' => $task->name,
+                'estimate_item_id' => $item->id,
+            ];
+
+            $this->refreshSectionTaskDates($sectionTask);
+            $startDate = Carbon::parse($task->planned_end_date)->addDay();
+        }
+    }
+
+    private function findOrCreateSectionTask(
+        ProjectSchedule $schedule,
+        EstimateSection $section,
+        Carbon $startDate,
+        int &$sortOrder,
+        array $options,
+        array &$results
+    ): ScheduleTask {
+        $existing = $schedule->tasks()
+            ->whereNull('parent_task_id')
+            ->where('estimate_section_id', $section->id)
+            ->where('task_type', TaskTypeEnum::SUMMARY->value)
+            ->first();
+
+        if ($existing) {
+            return $existing;
+        }
+
+        $sectionTask = $this->importService->createTaskFromSection(
+            $schedule,
+            $section,
+            $startDate,
+            $sortOrder++,
+            $options
+        );
+
+        $results['changes'][] = [
+            'type' => 'added_section',
+            'task_id' => $sectionTask->id,
+            'task_name' => $sectionTask->name,
+            'estimate_section_id' => $section->id,
+        ];
+
+        return $sectionTask;
+    }
+
+    private function removeObsoleteTask(ScheduleTask $task, array &$results): void
+    {
+        if (!$this->canDeleteObsoleteTask($task)) {
+            $this->addConflict(
+                $results,
+                'removed_item_has_progress',
+                'high',
+                $task->id,
+                $task->name,
+                'Связанная позиция сметы удалена, но задача уже имеет факт или статус'
+            );
+            return;
+        }
+
+        $parentTask = $task->parentTask;
+        $taskName = $task->name;
+        $taskId = $task->id;
+
+        $task->delete();
+
+        $results['removed']++;
+        $results['changes'][] = [
+            'type' => 'removed',
+            'task_id' => $taskId,
+            'task_name' => $taskName,
+        ];
+
+        if ($parentTask instanceof ScheduleTask) {
+            $this->refreshSectionTaskDates($parentTask);
+        }
+    }
+
+    private function removeEmptySectionTasks(ProjectSchedule $schedule, array &$results): void
+    {
+        $sectionTasks = $schedule->tasks()
+            ->whereNull('parent_task_id')
+            ->whereNull('estimate_item_id')
+            ->whereNotNull('estimate_section_id')
+            ->where('task_type', TaskTypeEnum::SUMMARY->value)
+            ->get();
+
+        foreach ($sectionTasks as $sectionTask) {
+            if ($sectionTask->childTasks()->exists() || !$this->canDeleteObsoleteTask($sectionTask)) {
+                continue;
+            }
+
+            $taskName = $sectionTask->name;
+            $taskId = $sectionTask->id;
+
+            $sectionTask->delete();
+
+            $results['removed']++;
+            $results['changes'][] = [
+                'type' => 'removed_section',
+                'task_id' => $taskId,
+                'task_name' => $taskName,
+            ];
+        }
+    }
+
+    private function canDeleteObsoleteTask(ScheduleTask $task): bool
+    {
+        $status = $task->status instanceof TaskStatusEnum
+            ? $task->status
+            : TaskStatusEnum::tryFrom((string) $task->status);
+
+        if ($status !== null && $status !== TaskStatusEnum::NOT_STARTED) {
+            return false;
+        }
+
+        if ((float) ($task->progress_percent ?? 0) > 0) {
+            return false;
+        }
+
+        if ((float) ($task->completed_quantity ?? 0) > 0) {
+            return false;
+        }
+
+        return !$task->completedWorks()->exists();
+    }
+
+    private function refreshSectionTaskDates(ScheduleTask $sectionTask): void
+    {
+        $freshTask = $sectionTask->fresh('childTasks');
+
+        if ($freshTask instanceof ScheduleTask) {
+            $this->importService->updateSectionTaskDates($freshTask);
+        }
+    }
+
+    private function nextStartDate(ProjectSchedule $schedule): Carbon
+    {
+        $latestTaskEndDate = $schedule->tasks()->max('planned_end_date');
+
+        if ($latestTaskEndDate) {
+            return Carbon::parse($latestTaskEndDate)->addDay();
+        }
+
+        if ($schedule->planned_start_date) {
+            return Carbon::parse($schedule->planned_start_date);
+        }
+
+        return Carbon::now();
+    }
+
+    private function nextTaskStartDate(ScheduleTask $sectionTask, Carbon $defaultStartDate): Carbon
+    {
+        $latestChildEndDate = $sectionTask->childTasks()->max('planned_end_date');
+
+        if ($latestChildEndDate) {
+            return Carbon::parse($latestChildEndDate)->addDay();
+        }
+
+        return $defaultStartDate->copy();
+    }
+
+    private function buildImportOptions(ProjectSchedule $schedule): array
+    {
+        $settings = $schedule->calculation_settings ?? [];
+        $workingDaysPerWeek = (int) ($settings['working_days_per_week'] ?? 5);
+
+        return [
+            'workers_count' => (int) ($settings['workers_count'] ?? 1),
+            'hours_per_day' => (int) ($settings['working_hours_per_day'] ?? $settings['hours_per_day'] ?? 8),
+            'include_weekends' => (bool) ($settings['include_weekends'] ?? $workingDaysPerWeek >= 7),
+            'auto_calculate_dates' => true,
+        ];
+    }
+
+    private function itemQuantity(EstimateItem $item): mixed
+    {
+        return $item->quantity_total ?? $item->quantity;
+    }
+
+    private function numericValuesDiffer(mixed $current, mixed $next, float $tolerance): bool
+    {
+        if ($current === null || $next === null) {
+            return $current !== $next;
+        }
+
+        return abs((float) $current - (float) $next) > $tolerance;
+    }
+
+    private function nullableIntChanged(mixed $current, mixed $next): bool
+    {
+        $currentValue = $current === null ? null : (int) $current;
+        $nextValue = $next === null ? null : (int) $next;
+
+        return $currentValue !== $nextValue;
+    }
+
+    private function addConflict(
+        array &$results,
+        string $type,
+        string $severity,
+        ?int $taskId,
+        string $taskName,
+        string $message
+    ): void {
+        $results['conflicts'][] = [
+            'type' => $type,
+            'severity' => $severity,
+            'task_id' => $taskId,
+            'task_name' => $taskName,
+            'message' => $message,
+        ];
+    }
+}

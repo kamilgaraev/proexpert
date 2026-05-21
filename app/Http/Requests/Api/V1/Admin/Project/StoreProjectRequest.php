@@ -42,7 +42,7 @@ class StoreProjectRequest extends FormRequest
             'is_archived' => 'sometimes|boolean',
             'additional_info' => 'nullable|array',
             
-            // Новые поля для интеграции с бухгалтерским учетом
+            // РќРѕРІС‹Рµ РїРѕР»СЏ РґР»СЏ РёРЅС‚РµРіСЂР°С†РёРё СЃ Р±СѓС…РіР°Р»С‚РµСЂСЃРєРёРј СѓС‡РµС‚РѕРј
             'external_code' => 'nullable|string|max:100',
             'cost_category_id' => 'nullable|exists:cost_categories,id',
             'accounting_data' => 'nullable|array',
@@ -54,16 +54,16 @@ class StoreProjectRequest extends FormRequest
     }
 
     /**
-     * Получить пользовательские сообщения об ошибках для правил проверки.
+     * РџРѕР»СѓС‡РёС‚СЊ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊСЃРєРёРµ СЃРѕРѕР±С‰РµРЅРёСЏ РѕР± РѕС€РёР±РєР°С… РґР»СЏ РїСЂР°РІРёР» РїСЂРѕРІРµСЂРєРё.
      *
      * @return array<string, string>
      */
     public function messages(): array
     {
         return [
-            'name.required' => 'Название проекта обязательно для заполнения.',
-            'end_date.after_or_equal' => 'Дата окончания должна быть больше или равна дате начала.',
-            'cost_category_id.exists' => 'Выбранная категория затрат не существует.',
+            'name.required' => 'РќР°Р·РІР°РЅРёРµ РїСЂРѕРµРєС‚Р° РѕР±СЏР·Р°С‚РµР»СЊРЅРѕ РґР»СЏ Р·Р°РїРѕР»РЅРµРЅРёСЏ.',
+            'end_date.after_or_equal' => 'Р”Р°С‚Р° РѕРєРѕРЅС‡Р°РЅРёСЏ РґРѕР»Р¶РЅР° Р±С‹С‚СЊ Р±РѕР»СЊС€Рµ РёР»Рё СЂР°РІРЅР° РґР°С‚Рµ РЅР°С‡Р°Р»Р°.',
+            'cost_category_id.exists' => 'Р’С‹Р±СЂР°РЅРЅР°СЏ РєР°С‚РµРіРѕСЂРёСЏ Р·Р°С‚СЂР°С‚ РЅРµ СЃСѓС‰РµСЃС‚РІСѓРµС‚.',
         ];
     }
 
@@ -72,9 +72,9 @@ class StoreProjectRequest extends FormRequest
         $errors = (new ValidationException($validator))->errors();
 
         throw new HttpResponseException(
-            response()->json([
+            \App\Http\Responses\AdminResponse::fromPayload([
                 'success' => false,
-                'message' => 'Данные не прошли валидацию.',
+                'message' => 'Р”Р°РЅРЅС‹Рµ РЅРµ РїСЂРѕС€Р»Рё РІР°Р»РёРґР°С†РёСЋ.',
                 'errors' => $errors,
             ], JsonResponse::HTTP_UNPROCESSABLE_ENTITY)
         );

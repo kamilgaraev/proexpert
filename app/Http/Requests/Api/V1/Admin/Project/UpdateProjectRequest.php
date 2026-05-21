@@ -5,12 +5,12 @@ namespace App\Http\Requests\Api\V1\Admin\Project;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Auth;
 use App\Models\Role;
-use App\Models\Project; // Импортируем модель Project
+use App\Models\Project; // РРјРїРѕСЂС‚РёСЂСѓРµРј РјРѕРґРµР»СЊ Project
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Validation\ValidationException;
-use App\DTOs\Project\ProjectDTO; // Добавляем импорт DTO
+use App\DTOs\Project\ProjectDTO; // Р”РѕР±Р°РІР»СЏРµРј РёРјРїРѕСЂС‚ DTO
 
 class UpdateProjectRequest extends FormRequest
 {
@@ -19,8 +19,8 @@ class UpdateProjectRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        // Доступ к контроллеру уже проверен middleware стеком авторизации админки
-        // Дополнительно можно проверить, что пользователь аутентифицирован
+        // Р”РѕСЃС‚СѓРї Рє РєРѕРЅС‚СЂРѕР»Р»РµСЂСѓ СѓР¶Рµ РїСЂРѕРІРµСЂРµРЅ middleware СЃС‚РµРєРѕРј Р°РІС‚РѕСЂРёР·Р°С†РёРё Р°РґРјРёРЅРєРё
+        // Р”РѕРїРѕР»РЅРёС‚РµР»СЊРЅРѕ РјРѕР¶РЅРѕ РїСЂРѕРІРµСЂРёС‚СЊ, С‡С‚Рѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ Р°СѓС‚РµРЅС‚РёС„РёС†РёСЂРѕРІР°РЅ
         return Auth::check();
     }
 
@@ -37,15 +37,15 @@ class UpdateProjectRequest extends FormRequest
             'latitude' => 'nullable|numeric|between:-90,90',
             'longitude' => 'nullable|numeric|between:-180,180',
             'description' => 'nullable|string|max:2000',
-            'customer' => 'sometimes|nullable|string|max:255', // Новое правило + sometimes
-            'designer' => 'sometimes|nullable|string|max:255', // Новое правило + sometimes
+            'customer' => 'sometimes|nullable|string|max:255', // РќРѕРІРѕРµ РїСЂР°РІРёР»Рѕ + sometimes
+            'designer' => 'sometimes|nullable|string|max:255', // РќРѕРІРѕРµ РїСЂР°РІРёР»Рѕ + sometimes
             'start_date' => 'nullable|date',
             'end_date' => 'nullable|date|after_or_equal:start_date',
             'status' => 'sometimes|required|string|in:active,completed,paused,cancelled',
             'is_archived' => 'sometimes|boolean',
             'additional_info' => 'sometimes|nullable|array',
             
-            // Новые поля для интеграции с бухгалтерским учетом
+            // РќРѕРІС‹Рµ РїРѕР»СЏ РґР»СЏ РёРЅС‚РµРіСЂР°С†РёРё СЃ Р±СѓС…РіР°Р»С‚РµСЂСЃРєРёРј СѓС‡РµС‚РѕРј
             'external_code' => 'sometimes|nullable|string|max:100',
             'cost_category_id' => 'sometimes|nullable|exists:cost_categories,id',
             'accounting_data' => 'sometimes|nullable|array',
@@ -57,16 +57,16 @@ class UpdateProjectRequest extends FormRequest
     }
 
     /**
-     * Получить пользовательские сообщения об ошибках для правил проверки.
+     * РџРѕР»СѓС‡РёС‚СЊ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊСЃРєРёРµ СЃРѕРѕР±С‰РµРЅРёСЏ РѕР± РѕС€РёР±РєР°С… РґР»СЏ РїСЂР°РІРёР» РїСЂРѕРІРµСЂРєРё.
      *
      * @return array<string, string>
      */
     public function messages(): array
     {
         return [
-            'name.required' => 'Название проекта обязательно для заполнения.',
-            'end_date.after_or_equal' => 'Дата окончания должна быть больше или равна дате начала.',
-            'cost_category_id.exists' => 'Выбранная категория затрат не существует.',
+            'name.required' => 'РќР°Р·РІР°РЅРёРµ РїСЂРѕРµРєС‚Р° РѕР±СЏР·Р°С‚РµР»СЊРЅРѕ РґР»СЏ Р·Р°РїРѕР»РЅРµРЅРёСЏ.',
+            'end_date.after_or_equal' => 'Р”Р°С‚Р° РѕРєРѕРЅС‡Р°РЅРёСЏ РґРѕР»Р¶РЅР° Р±С‹С‚СЊ Р±РѕР»СЊС€Рµ РёР»Рё СЂР°РІРЅР° РґР°С‚Рµ РЅР°С‡Р°Р»Р°.',
+            'cost_category_id.exists' => 'Р’С‹Р±СЂР°РЅРЅР°СЏ РєР°С‚РµРіРѕСЂРёСЏ Р·Р°С‚СЂР°С‚ РЅРµ СЃСѓС‰РµСЃС‚РІСѓРµС‚.',
         ];
     }
 
@@ -75,9 +75,9 @@ class UpdateProjectRequest extends FormRequest
         $errors = (new ValidationException($validator))->errors();
 
         throw new HttpResponseException(
-            response()->json([
+            \App\Http\Responses\AdminResponse::fromPayload([
                 'success' => false,
-                'message' => 'Данные не прошли валидацию.',
+                'message' => 'Р”Р°РЅРЅС‹Рµ РЅРµ РїСЂРѕС€Р»Рё РІР°Р»РёРґР°С†РёСЋ.',
                 'errors' => $errors,
             ], JsonResponse::HTTP_UNPROCESSABLE_ENTITY)
         );
@@ -86,7 +86,7 @@ class UpdateProjectRequest extends FormRequest
     public function toDto(): ProjectDTO
     {
         $validated = $this->validated();
-        // Текущий проект для получения старых значений, если они не переданы
+        // РўРµРєСѓС‰РёР№ РїСЂРѕРµРєС‚ РґР»СЏ РїРѕР»СѓС‡РµРЅРёСЏ СЃС‚Р°СЂС‹С… Р·РЅР°С‡РµРЅРёР№, РµСЃР»Рё РѕРЅРё РЅРµ РїРµСЂРµРґР°РЅС‹
         $projectId = $this->route('project');
         $currentProject = $projectId instanceof \App\Models\Project ? $projectId : Project::find($projectId);
         if (!$currentProject) {

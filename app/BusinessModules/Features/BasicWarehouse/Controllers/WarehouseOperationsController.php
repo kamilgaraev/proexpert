@@ -40,7 +40,7 @@ class WarehouseOperationsController extends Controller
         $movement = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::findOrFail($id);
         
         if ($movement->organization_id !== $request->user()->current_organization_id) {
-            return AdminResponse::error('Доступ запрещен', 403);
+            return AdminResponse::error(trans_message('warehouse_basic.access_denied'), 403);
         }
 
         try {
@@ -55,9 +55,9 @@ class WarehouseOperationsController extends Controller
             $path = $this->exportManager->export('m4', $dataToExport);
             $url = $this->exportManager->getTemporaryUrl($path);
             
-            return AdminResponse::success(['url' => $url], __('warehouse_basic.export_success'));
+            return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
         } catch (\Exception $e) {
-            return AdminResponse::error('Ошибка экспорта М-4: ' . $e->getMessage(), 500);
+            return AdminResponse::error(trans_message('warehouse_basic.m4_export_error') . ': ' . $e->getMessage(), 500);
         }
     }
 
@@ -69,7 +69,7 @@ class WarehouseOperationsController extends Controller
         $movement = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::findOrFail($id);
         
         if ($movement->organization_id !== $request->user()->current_organization_id) {
-            return AdminResponse::error('Доступ запрещен', 403);
+            return AdminResponse::error(trans_message('warehouse_basic.access_denied'), 403);
         }
 
         try {
@@ -84,9 +84,9 @@ class WarehouseOperationsController extends Controller
             $path = $this->exportManager->export('m11', $dataToExport);
             $url = $this->exportManager->getTemporaryUrl($path);
             
-            return AdminResponse::success(['url' => $url], __('warehouse_basic.export_success'));
+            return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
         } catch (\Exception $e) {
-            return AdminResponse::error('Ошибка экспорта М-11: ' . $e->getMessage(), 500);
+            return AdminResponse::error(trans_message('warehouse_basic.m11_export_error') . ': ' . $e->getMessage(), 500);
         }
     }
 
@@ -98,7 +98,7 @@ class WarehouseOperationsController extends Controller
         $movement = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::findOrFail($id);
         
         if ($movement->organization_id !== $request->user()->current_organization_id) {
-            return AdminResponse::error('Доступ запрещен', 403);
+            return AdminResponse::error(trans_message('warehouse_basic.access_denied'), 403);
         }
 
         try {
@@ -113,9 +113,9 @@ class WarehouseOperationsController extends Controller
             $path = $this->exportManager->export('m15', $dataToExport);
             $url = $this->exportManager->getTemporaryUrl($path);
             
-            return AdminResponse::success(['url' => $url], __('warehouse_basic.export_success'));
+            return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
         } catch (\Exception $e) {
-            return AdminResponse::error('Ошибка экспорта М-15: ' . $e->getMessage(), 500);
+            return AdminResponse::error(trans_message('warehouse_basic.m15_export_error') . ': ' . $e->getMessage(), 500);
         }
     }
 
@@ -127,7 +127,7 @@ class WarehouseOperationsController extends Controller
         $movement = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::findOrFail($id);
         
         if ($movement->organization_id !== $request->user()->current_organization_id) {
-            return AdminResponse::error('Доступ запрещен', 403);
+            return AdminResponse::error(trans_message('warehouse_basic.access_denied'), 403);
         }
 
         try {
@@ -142,9 +142,9 @@ class WarehouseOperationsController extends Controller
             $path = $this->exportManager->export('m7', $dataToExport);
             $url = $this->exportManager->getTemporaryUrl($path);
             
-            return AdminResponse::success(['url' => $url], __('warehouse_basic.export_success'));
+            return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
         } catch (\Exception $e) {
-            return AdminResponse::error('Ошибка экспорта М-7: ' . $e->getMessage(), 500);
+            return AdminResponse::error(trans_message('warehouse_basic.m7_export_error') . ': ' . $e->getMessage(), 500);
         }
     }
 
@@ -200,7 +200,7 @@ class WarehouseOperationsController extends Controller
         $reservation = \App\BusinessModules\Features\BasicWarehouse\Models\AssetReservation::findOrFail($reservationId);
         
         if ($reservation->organization_id !== $request->user()->current_organization_id) {
-            return AdminResponse::error('Доступ запрещен', 403);
+            return AdminResponse::error(trans_message('warehouse_basic.access_denied'), 403);
         }
 
         try {
@@ -217,9 +217,9 @@ class WarehouseOperationsController extends Controller
             ]);
             $url = $this->exportManager->getTemporaryUrl($path);
             
-            return AdminResponse::success(['url' => $url], __('warehouse_basic.export_success'));
+            return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
         } catch (\Exception $e) {
-            return AdminResponse::error('Ошибка экспорта М-8: ' . $e->getMessage(), 500);
+            return AdminResponse::error(trans_message('warehouse_basic.m8_export_error') . ': ' . $e->getMessage(), 500);
         }
     }
 
@@ -251,7 +251,7 @@ class WarehouseOperationsController extends Controller
         }
         
         if (!$materialId) {
-            return AdminResponse::error('Необходимо указать material_id или данные для создания нового материала (material)', 422);
+            return AdminResponse::error(trans_message('warehouse_basic.material_required'), 422);
         }
         
         $warehouseId = (int) $validated['warehouse_id'];
@@ -323,12 +323,12 @@ class WarehouseOperationsController extends Controller
                 'movement' => new WarehouseMovementResource($result['movement']),
                 'write_off_details' => $result['write_off_details'],
                 'remaining_total_quantity' => $result['remaining_total_quantity'],
-            ], __('warehouse_basic.write_off_success'));
+            ], trans_message('warehouse_basic.write_off_success'));
 
         } catch (\InvalidArgumentException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
-            return AdminResponse::error(__('warehouse_basic.write_off_error') . ': ' . $e->getMessage(), 500);
+            return AdminResponse::error(trans_message('warehouse_basic.write_off_error') . ': ' . $e->getMessage(), 500);
         }
     }
 
@@ -359,12 +359,12 @@ class WarehouseOperationsController extends Controller
                 'movement_out' => new WarehouseMovementResource($result['movement_out']),
                 'movement_in' => new WarehouseMovementResource($result['movement_in']),
                 'avg_price' => $result['avg_price'],
-            ], __('warehouse_basic.transfer_success'));
+            ], trans_message('warehouse_basic.transfer_success'));
             
         } catch (\InvalidArgumentException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
-            return AdminResponse::error(__('warehouse_basic.transfer_error') . ': ' . $e->getMessage(), 500);
+            return AdminResponse::error(trans_message('warehouse_basic.transfer_error') . ': ' . $e->getMessage(), 500);
         }
     }
 
@@ -385,17 +385,17 @@ class WarehouseOperationsController extends Controller
                 [
                     'project_id' => $validated['project_id'] ?? null,
                     'user_id' => $request->user()->id,
-                    'reason' => $validated['reason'] ?? 'Резервирование по запросу',
+                    'reason' => $validated['reason'] ?? trans_message('warehouse_basic.reserve_default_reason'),
                     'metadata' => $validated['metadata'] ?? [],
                 ]
             );
 
-            return AdminResponse::success(null, __('warehouse_basic.reserve_success'));
+            return AdminResponse::success(null, trans_message('warehouse_basic.reserve_success'));
             
         } catch (\InvalidArgumentException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
-            return AdminResponse::error(__('warehouse_basic.reserve_error') . ': ' . $e->getMessage(), 500);
+            return AdminResponse::error(trans_message('warehouse_basic.reserve_error') . ': ' . $e->getMessage(), 500);
         }
     }
 
@@ -416,17 +416,17 @@ class WarehouseOperationsController extends Controller
                 [
                     'project_id' => $validated['project_id'] ?? null,
                     'user_id' => $request->user()->id,
-                    'reason' => $validated['reason'] ?? 'Снятие резерва по запросу',
+                    'reason' => $validated['reason'] ?? trans_message('warehouse_basic.unreserve_default_reason'),
                     'metadata' => $validated['metadata'] ?? [],
                 ]
             );
 
-            return AdminResponse::success($result, __('warehouse_basic.unreserve_success'));
+            return AdminResponse::success($result, trans_message('warehouse_basic.unreserve_success'));
             
         } catch (\InvalidArgumentException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
-            return AdminResponse::error(__('warehouse_basic.unreserve_error') . ': ' . $e->getMessage(), 500);
+            return AdminResponse::error(trans_message('warehouse_basic.unreserve_error') . ': ' . $e->getMessage(), 500);
         }
     }
 
@@ -448,16 +448,16 @@ class WarehouseOperationsController extends Controller
                 $validated['contractor_id'],
                 $validated['material_id'],
                 $validated['quantity'],
+                $request->user()->id,
                 $validated['project_id'] ?? null,
                 $validated['document_number'] ?? null,
-                $validated['reason'] ?? null,
-                $request->user()->id
+                $validated['reason'] ?? null
             );
 
-            return AdminResponse::success($result, __('warehouse_basic.transfer_to_contractor_success'));
+            return AdminResponse::success($result, trans_message('warehouse_basic.transfer_to_contractor_success'));
 
         } catch (\Exception $e) {
-            return AdminResponse::error(__('warehouse_basic.transfer_to_contractor_error') . ': ' . $e->getMessage(), 500);
+            return AdminResponse::error(trans_message('warehouse_basic.transfer_to_contractor_error') . ': ' . $e->getMessage(), 500);
         }
     }
 }

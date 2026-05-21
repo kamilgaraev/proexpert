@@ -9,9 +9,9 @@ use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response as ResponseAlias;
 
 /**
- * Middleware для проверки ролей пользователя
+ * Middleware РґР»СЏ РїСЂРѕРІРµСЂРєРё СЂРѕР»РµР№ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
  * 
- * Использование:
+ * РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ:
  * Route::middleware('role:organization_admin')->get('/admin', ...);
  * Route::middleware('role:project_manager,organization')->get('/projects', ...);
  * Route::middleware('role:foreman|worker,project,project_id')->get('/mobile', ...);
@@ -30,14 +30,14 @@ class RoleMiddleware
      *
      * @param Request $request
      * @param Closure $next
-     * @param string $roles Роли (разделенные | для OR, , для AND)
-     * @param string|null $contextType Тип контекста
-     * @param string|null $contextParam Параметр роута для контекста
+     * @param string $roles Р РѕР»Рё (СЂР°Р·РґРµР»РµРЅРЅС‹Рµ | РґР»СЏ OR, , РґР»СЏ AND)
+     * @param string|null $contextType РўРёРї РєРѕРЅС‚РµРєСЃС‚Р°
+     * @param string|null $contextParam РџР°СЂР°РјРµС‚СЂ СЂРѕСѓС‚Р° РґР»СЏ РєРѕРЅС‚РµРєСЃС‚Р°
      * @return ResponseAlias
      */
     public function handle(Request $request, Closure $next, string $roles, ?string $contextType = null, ?string $contextParam = null): ResponseAlias
     {
-        // Пропускаем Prometheus мониторинг без проверки ролей
+        // РџСЂРѕРїСѓСЃРєР°РµРј Prometheus РјРѕРЅРёС‚РѕСЂРёРЅРі Р±РµР· РїСЂРѕРІРµСЂРєРё СЂРѕР»РµР№
         $userAgent = $request->userAgent() ?? '';
         if (str_contains($userAgent, 'Prometheus')) {
             return $next($request);
@@ -46,16 +46,16 @@ class RoleMiddleware
         $user = $request->user();
         
         if (!$user) {
-            return response()->json(['error' => 'Unauthorized'], 401);
+            return \App\Http\Responses\AdminResponse::fromPayload(['error' => 'Unauthorized'], 401);
         }
 
-        // Определяем контекст
+        // РћРїСЂРµРґРµР»СЏРµРј РєРѕРЅС‚РµРєСЃС‚
         $contextId = $this->resolveContextId($request, $contextType, $contextParam);
         
-        // Проверяем роли
+        // РџСЂРѕРІРµСЂСЏРµРј СЂРѕР»Рё
         if (!$this->checkRoles($user, $roles, $contextId)) {
-            return response()->json([
-                'error' => 'Недостаточно прав доступа',
+            return \App\Http\Responses\AdminResponse::fromPayload([
+                'error' => 'РќРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ РїСЂР°РІ РґРѕСЃС‚СѓРїР°',
                 'required_roles' => $roles,
                 'context_type' => $contextType,
                 'context_id' => $contextId
@@ -66,19 +66,19 @@ class RoleMiddleware
     }
 
     /**
-     * Проверить роли пользователя
+     * РџСЂРѕРІРµСЂРёС‚СЊ СЂРѕР»Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
      */
     protected function checkRoles($user, string $roles, ?int $contextId): bool
     {
-        // Разбираем роли по | (OR логика)
+        // Р Р°Р·Р±РёСЂР°РµРј СЂРѕР»Рё РїРѕ | (OR Р»РѕРіРёРєР°)
         $roleGroups = explode('|', $roles);
         
         foreach ($roleGroups as $roleGroup) {
-            // Разбираем роли по , (AND логика)
+            // Р Р°Р·Р±РёСЂР°РµРј СЂРѕР»Рё РїРѕ , (AND Р»РѕРіРёРєР°)
             $requiredRoles = array_map('trim', explode(',', $roleGroup));
             
             if ($this->hasAllRoles($user, $requiredRoles, $contextId)) {
-                return true; // Одна из групп ролей подошла
+                return true; // РћРґРЅР° РёР· РіСЂСѓРїРї СЂРѕР»РµР№ РїРѕРґРѕС€Р»Р°
             }
         }
         
@@ -86,7 +86,7 @@ class RoleMiddleware
     }
 
     /**
-     * Проверить, есть ли у пользователя все роли из списка
+     * РџСЂРѕРІРµСЂРёС‚СЊ, РµСЃС‚СЊ Р»Рё Сѓ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ РІСЃРµ СЂРѕР»Рё РёР· СЃРїРёСЃРєР°
      */
     protected function hasAllRoles($user, array $roles, ?int $contextId): bool
     {
@@ -100,7 +100,7 @@ class RoleMiddleware
     }
 
     /**
-     * Определить ID контекста из запроса
+     * РћРїСЂРµРґРµР»РёС‚СЊ ID РєРѕРЅС‚РµРєСЃС‚Р° РёР· Р·Р°РїСЂРѕСЃР°
      */
     protected function resolveContextId(Request $request, ?string $contextType, ?string $contextParam): ?int
     {
@@ -122,7 +122,7 @@ class RoleMiddleware
             case 'project':
                 $projectId = $this->extractParam($request, $contextParam ?? 'project_id');
                 if ($projectId) {
-                    // Получаем organization_id проекта
+                    // РџРѕР»СѓС‡Р°РµРј organization_id РїСЂРѕРµРєС‚Р°
                     $project = \App\Models\Project::find($projectId);
                     $organizationId = $project ? $project->organization_id : null;
                     
@@ -138,7 +138,7 @@ class RoleMiddleware
     }
 
     /**
-     * Извлечь параметр из запроса
+     * РР·РІР»РµС‡СЊ РїР°СЂР°РјРµС‚СЂ РёР· Р·Р°РїСЂРѕСЃР°
      */
     protected function extractParam(Request $request, string $param): mixed
     {

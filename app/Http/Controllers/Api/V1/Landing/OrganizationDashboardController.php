@@ -15,15 +15,15 @@ class OrganizationDashboardController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId) {
-            return response()->json(['error' => 'Организация не определена'], 400);
+            return \App\Http\Responses\LandingResponse::fromPayload(['error' => 'РћСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РѕРїСЂРµРґРµР»РµРЅР°'], 400);
         }
         
         $organization = \App\Models\Organization::find($organizationId);
         if (!$organization) {
-            return response()->json(['error' => 'Организация не найдена'], 404);
+            return \App\Http\Responses\LandingResponse::fromPayload(['error' => 'РћСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°'], 404);
         }
         $dashboardService = app(OrganizationDashboardService::class);
         $data = $dashboardService->getDashboardData($organization);
-        return response()->json($data);
+        return \App\Http\Responses\LandingResponse::fromPayload($data);
     }
 } 

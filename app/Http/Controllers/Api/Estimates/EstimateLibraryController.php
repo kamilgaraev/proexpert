@@ -39,7 +39,7 @@ class EstimateLibraryController extends Controller
             ? $this->repository->getAccessible($organizationId, $filters)
             : $this->repository->getByOrganization($organizationId, $filters);
 
-        return response()->json($libraries);
+        return \App\Http\Responses\AdminResponse::fromPayload($libraries);
     }
 
     public function store(Request $request): JsonResponse
@@ -58,14 +58,14 @@ class EstimateLibraryController extends Controller
             $request->all()
         );
 
-        return response()->json($library, 201);
+        return \App\Http\Responses\AdminResponse::fromPayload($library, 201);
     }
 
     public function show(Request $request, int $id): JsonResponse
     {
         $library = $this->accessibleLibraryOrFail($id, $this->currentOrganizationId($request));
 
-        return response()->json($library);
+        return \App\Http\Responses\AdminResponse::fromPayload($library);
     }
 
     public function update(Request $request, int $id): JsonResponse
@@ -82,7 +82,7 @@ class EstimateLibraryController extends Controller
         $library = $this->ownedLibraryOrFail($id, $this->currentOrganizationId($request));
         $library = $this->libraryService->updateLibrary($library, $request->all());
 
-        return response()->json($library);
+        return \App\Http\Responses\AdminResponse::fromPayload($library);
     }
 
     public function destroy(Request $request, int $id): JsonResponse
@@ -91,7 +91,7 @@ class EstimateLibraryController extends Controller
 
         $this->libraryService->deleteLibrary($library);
 
-        return response()->json(['message' => 'Библиотека удалена'], 200);
+        return \App\Http\Responses\AdminResponse::fromPayload(['message' => 'Р‘РёР±Р»РёРѕС‚РµРєР° СѓРґР°Р»РµРЅР°'], 200);
     }
 
     public function items(Request $request, int $libraryId): JsonResponse
@@ -101,7 +101,7 @@ class EstimateLibraryController extends Controller
             $this->currentOrganizationId($request)
         );
 
-        return response()->json($items);
+        return \App\Http\Responses\AdminResponse::fromPayload($items);
     }
 
     public function storeItem(Request $request, int $libraryId): JsonResponse
@@ -121,7 +121,7 @@ class EstimateLibraryController extends Controller
         $library = $this->ownedLibraryOrFail($libraryId, $this->currentOrganizationId($request));
         $item = $this->libraryService->createLibraryItem($library, $request->all());
 
-        return response()->json($item, 201);
+        return \App\Http\Responses\AdminResponse::fromPayload($item, 201);
     }
 
     public function applyItem(Request $request, int $itemId): JsonResponse
@@ -162,13 +162,13 @@ class EstimateLibraryController extends Controller
                 $request->input('section_id')
             );
 
-            return response()->json([
-                'message' => 'Типовое решение применено успешно',
+            return \App\Http\Responses\AdminResponse::fromPayload([
+                'message' => 'РўРёРїРѕРІРѕРµ СЂРµС€РµРЅРёРµ РїСЂРёРјРµРЅРµРЅРѕ СѓСЃРїРµС€РЅРѕ',
                 'added_items_count' => count($addedItems),
                 'items' => $addedItems,
             ]);
         } catch (\InvalidArgumentException $e) {
-            return response()->json(['error' => $e->getMessage()], 400);
+            return \App\Http\Responses\AdminResponse::fromPayload(['error' => $e->getMessage()], 400);
         }
     }
 
@@ -177,7 +177,7 @@ class EstimateLibraryController extends Controller
         $item = $this->ownedItemOrFail($itemId, $this->currentOrganizationId($request));
         $statistics = $this->libraryService->getUsageStatistics($item, 30);
 
-        return response()->json($statistics);
+        return \App\Http\Responses\AdminResponse::fromPayload($statistics);
     }
 
     public function share(Request $request, int $id): JsonResponse
@@ -194,12 +194,12 @@ class EstimateLibraryController extends Controller
                 $request->input('access_level')
             );
 
-            return response()->json([
-                'message' => 'Уровень доступа изменен',
+            return \App\Http\Responses\AdminResponse::fromPayload([
+                'message' => 'РЈСЂРѕРІРµРЅСЊ РґРѕСЃС‚СѓРїР° РёР·РјРµРЅРµРЅ',
                 'library' => $library,
             ]);
         } catch (\InvalidArgumentException $e) {
-            return response()->json(['error' => $e->getMessage()], 400);
+            return \App\Http\Responses\AdminResponse::fromPayload(['error' => $e->getMessage()], 400);
         }
     }
 
@@ -219,7 +219,7 @@ class EstimateLibraryController extends Controller
             $request->input('name')
         );
 
-        return response()->json($newLibrary, 201);
+        return \App\Http\Responses\AdminResponse::fromPayload($newLibrary, 201);
     }
 
     private function currentOrganizationId(Request $request): int

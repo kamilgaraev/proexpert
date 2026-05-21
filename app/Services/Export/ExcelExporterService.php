@@ -31,12 +31,12 @@ class ExcelExporterService
     }
 
     /**
-     * Генерирует и возвращает StreamedResponse для скачивания Excel файла.
-     * В случае ошибки логирует и возвращает JSON-ответ с ошибкой.
+     * Р“РµРЅРµСЂРёСЂСѓРµС‚ Рё РІРѕР·РІСЂР°С‰Р°РµС‚ StreamedResponse РґР»СЏ СЃРєР°С‡РёРІР°РЅРёСЏ Excel С„Р°Р№Р»Р°.
+     * Р’ СЃР»СѓС‡Р°Рµ РѕС€РёР±РєРё Р»РѕРіРёСЂСѓРµС‚ Рё РІРѕР·РІСЂР°С‰Р°РµС‚ JSON-РѕС‚РІРµС‚ СЃ РѕС€РёР±РєРѕР№.
      *
-     * @param string $filename Имя файла (с .xlsx)
-     * @param array $headers Массив заголовков колонок
-     * @param array|\Illuminate\Support\Collection $data Массив данных
+     * @param string $filename РРјСЏ С„Р°Р№Р»Р° (СЃ .xlsx)
+     * @param array $headers РњР°СЃСЃРёРІ Р·Р°РіРѕР»РѕРІРєРѕРІ РєРѕР»РѕРЅРѕРє
+     * @param array|\Illuminate\Support\Collection $data РњР°СЃСЃРёРІ РґР°РЅРЅС‹С…
      * @return StreamedResponse|\Illuminate\Http\JsonResponse
      */
     public function streamDownload(
@@ -44,7 +44,7 @@ class ExcelExporterService
         array $headers,
         $data
     ) {
-        // BUSINESS: Начало экспорта Excel - важная функциональность для пользователей
+        // BUSINESS: РќР°С‡Р°Р»Рѕ СЌРєСЃРїРѕСЂС‚Р° Excel - РІР°Р¶РЅР°СЏ С„СѓРЅРєС†РёРѕРЅР°Р»СЊРЅРѕСЃС‚СЊ РґР»СЏ РїРѕР»СЊР·РѕРІР°С‚РµР»РµР№
         $this->logging->business('excel.export.started', [
             'filename' => $filename,
             'headers_count' => count($headers),
@@ -54,7 +54,7 @@ class ExcelExporterService
             'organization_id' => request()->attributes->get('current_organization_id')
         ]);
 
-        // TECHNICAL: Детали экспорта для диагностики
+        // TECHNICAL: Р”РµС‚Р°Р»Рё СЌРєСЃРїРѕСЂС‚Р° РґР»СЏ РґРёР°РіРЅРѕСЃС‚РёРєРё
         $this->logging->technical('excel.export.details', [
             'filename' => $filename,
             'headers' => $headers,
@@ -64,7 +64,7 @@ class ExcelExporterService
         try {
             $response = new StreamedResponse(function () use ($headers, $data, $filename) {
                 try {
-                    // TECHNICAL: Начало создания Excel документа
+                    // TECHNICAL: РќР°С‡Р°Р»Рѕ СЃРѕР·РґР°РЅРёСЏ Excel РґРѕРєСѓРјРµРЅС‚Р°
                     $this->logging->technical('excel.spreadsheet.creation.started', [
                         'filename' => $filename,
                         'columns_count' => count($headers)
@@ -72,7 +72,7 @@ class ExcelExporterService
                     $spreadsheet = new Spreadsheet();
                     $sheet = $spreadsheet->getActiveSheet();
 
-                    // Явно записываем заголовки колонок
+                    // РЇРІРЅРѕ Р·Р°РїРёСЃС‹РІР°РµРј Р·Р°РіРѕР»РѕРІРєРё РєРѕР»РѕРЅРѕРє
                     $colIndex = 0;
                     foreach ($headers as $header) {
                         $cell = Coordinate::stringFromColumnIndex($colIndex + 1) . '1';
@@ -80,7 +80,7 @@ class ExcelExporterService
                         $colIndex++;
                     }
 
-                    // Стилизация заголовков
+                    // РЎС‚РёР»РёР·Р°С†РёСЏ Р·Р°РіРѕР»РѕРІРєРѕРІ
                     $headerStyle = [
                         'font' => [
                             'bold' => true,
@@ -106,7 +106,7 @@ class ExcelExporterService
                     $sheet->getStyle('A1:' . Coordinate::stringFromColumnIndex($colCount) . '1')->applyFromArray($headerStyle);
                     $sheet->getRowDimension(1)->setRowHeight(28);
 
-                    // Запись данных и стилизация строк
+                    // Р—Р°РїРёСЃСЊ РґР°РЅРЅС‹С… Рё СЃС‚РёР»РёР·Р°С†РёСЏ СЃС‚СЂРѕРє
                     $rowIndex = 2;
                     $rowLogged = 0;
                     foreach ($data as $rowArray) {
@@ -114,7 +114,7 @@ class ExcelExporterService
                         foreach ($rowArray as $value) {
                             $cell = Coordinate::stringFromColumnIndex($colIndex + 1) . $rowIndex;
                             $sheet->setCellValue($cell, $value);
-                            // Форматирование чисел и дат
+                            // Р¤РѕСЂРјР°С‚РёСЂРѕРІР°РЅРёРµ С‡РёСЃРµР» Рё РґР°С‚
                             if (is_numeric($value) && $colIndex > 0) {
                                 $sheet->getStyle($cell)->getNumberFormat()->setFormatCode('#,##0.00');
                                 $sheet->getStyle($cell)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
@@ -123,27 +123,27 @@ class ExcelExporterService
                                 $sheet->getStyle($cell)->getNumberFormat()->setFormatCode('DD.MM.YYYY');
                                 $sheet->getStyle($cell)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
                             }
-                            // Примечания — перенос строк
+                            // РџСЂРёРјРµС‡Р°РЅРёСЏ вЂ” РїРµСЂРµРЅРѕСЃ СЃС‚СЂРѕРє
                             if ($colIndex === array_key_last($rowArray)) {
                                 $sheet->getStyle($cell)->getAlignment()->setWrapText(true);
                             }
                             $colIndex++;
                         }
-                        // Границы для всей строки
+                        // Р“СЂР°РЅРёС†С‹ РґР»СЏ РІСЃРµР№ СЃС‚СЂРѕРєРё
                         $sheet->getStyle('A' . $rowIndex . ':' . Coordinate::stringFromColumnIndex($colCount) . $rowIndex)
                             ->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN)->setColor(new Color('AAB2BD'));
                         $rowIndex++;
                     }
 
-                    // Автоширина для всех колонок
+                    // РђРІС‚РѕС€РёСЂРёРЅР° РґР»СЏ РІСЃРµС… РєРѕР»РѕРЅРѕРє
                     for ($c = 0; $c < $colCount; $c++) {
                         $sheet->getColumnDimension(Coordinate::stringFromColumnIndex($c + 1))->setAutoSize(true);
                     }
 
-                    // Заморозка заголовка
+                    // Р—Р°РјРѕСЂРѕР·РєР° Р·Р°РіРѕР»РѕРІРєР°
                     $sheet->freezePane('A2');
 
-                    // TECHNICAL: Запись Excel файла в поток
+                    // TECHNICAL: Р—Р°РїРёСЃСЊ Excel С„Р°Р№Р»Р° РІ РїРѕС‚РѕРє
                     $this->logging->technical('excel.writer.started', [
                         'filename' => $filename,
                         'total_rows' => $rowIndex - 2,
@@ -167,7 +167,7 @@ class ExcelExporterService
                         }
                     }
                     
-                    // BUSINESS: Excel экспорт успешно завершён
+                    // BUSINESS: Excel СЌРєСЃРїРѕСЂС‚ СѓСЃРїРµС€РЅРѕ Р·Р°РІРµСЂС€С‘РЅ
                     $this->logging->business('excel.export.completed', [
                         'filename' => $filename,
                         'total_rows' => $rowIndex - 2,
@@ -176,7 +176,7 @@ class ExcelExporterService
                         'user_id' => Auth::id()
                     ]);
                 } catch (Exception $e) {
-                    // TECHNICAL: Критическая ошибка генерации Excel
+                    // TECHNICAL: РљСЂРёС‚РёС‡РµСЃРєР°СЏ РѕС€РёР±РєР° РіРµРЅРµСЂР°С†РёРё Excel
                     $this->logging->technical('excel.generation.exception', [
                         'filename' => $filename,
                         'exception_class' => get_class($e),
@@ -187,7 +187,7 @@ class ExcelExporterService
                         'data_count' => is_countable($data) ? count($data) : null
                     ], 'error');
 
-                    // BUSINESS: Неудачный экспорт Excel - влияет на пользовательский опыт
+                    // BUSINESS: РќРµСѓРґР°С‡РЅС‹Р№ СЌРєСЃРїРѕСЂС‚ Excel - РІР»РёСЏРµС‚ РЅР° РїРѕР»СЊР·РѕРІР°С‚РµР»СЊСЃРєРёР№ РѕРїС‹С‚
                     $this->logging->business('excel.export.failed', [
                         'filename' => $filename,
                         'export_format' => 'xlsx',
@@ -196,11 +196,11 @@ class ExcelExporterService
                         'user_id' => Auth::id()
                     ], 'error');
                     
-                    // Не выводим JSON в поток, так как это портит Excel файл
-                    // Вместо этого создаем пустой Excel файл с сообщением об ошибке
+                    // РќРµ РІС‹РІРѕРґРёРј JSON РІ РїРѕС‚РѕРє, С‚Р°Рє РєР°Рє СЌС‚Рѕ РїРѕСЂС‚РёС‚ Excel С„Р°Р№Р»
+                    // Р’РјРµСЃС‚Рѕ СЌС‚РѕРіРѕ СЃРѕР·РґР°РµРј РїСѓСЃС‚РѕР№ Excel С„Р°Р№Р» СЃ СЃРѕРѕР±С‰РµРЅРёРµРј РѕР± РѕС€РёР±РєРµ
                     $errorSpreadsheet = new Spreadsheet();
                     $errorSheet = $errorSpreadsheet->getActiveSheet();
-                    $errorSheet->setCellValue('A1', 'Ошибка при генерации отчета');
+                    $errorSheet->setCellValue('A1', 'РћС€РёР±РєР° РїСЂРё РіРµРЅРµСЂР°С†РёРё РѕС‚С‡РµС‚Р°');
                     $errorSheet->setCellValue('A2', $e->getMessage());
                     $errorWriter = new Xlsx($errorSpreadsheet);
                     $errorWriter->save('php://output');
@@ -212,14 +212,14 @@ class ExcelExporterService
 
             return $response;
         } catch (Exception $e) {
-            Log::error('[ExcelExporterService] Критическая ошибка при создании StreamedResponse:', [
+            Log::error('[ExcelExporterService] РљСЂРёС‚РёС‡РµСЃРєР°СЏ РѕС€РёР±РєР° РїСЂРё СЃРѕР·РґР°РЅРёРё StreamedResponse:', [
                 'exception' => $e,
                 'headers' => $headers,
                 'first_row' => is_iterable($data) ? (is_array($data) ? ($data[0] ?? null) : (method_exists($data, 'first') ? $data->first() : null)) : null,
                 'data_count' => is_countable($data) ? count($data) : null,
             ]);
-            return response()->json([
-                'error' => 'Ошибка при экспорте в Excel',
+            return \App\Http\Responses\AdminResponse::fromPayload([
+                'error' => 'РћС€РёР±РєР° РїСЂРё СЌРєСЃРїРѕСЂС‚Рµ РІ Excel',
                 'message' => $e->getMessage(),
             ], 500);
         }
@@ -293,17 +293,17 @@ class ExcelExporterService
     }
 
     /**
-     * Сохраняет Excel файл на диск.
+     * РЎРѕС…СЂР°РЅСЏРµС‚ Excel С„Р°Р№Р» РЅР° РґРёСЃРє.
      *
-     * @param array|\Illuminate\Support\Collection $data Массив данных
-     * @param array $headers Массив заголовков колонок
-     * @param string $filePath Путь к файлу для сохранения
+     * @param array|\Illuminate\Support\Collection $data РњР°СЃСЃРёРІ РґР°РЅРЅС‹С…
+     * @param array $headers РњР°СЃСЃРёРІ Р·Р°РіРѕР»РѕРІРєРѕРІ РєРѕР»РѕРЅРѕРє
+     * @param string $filePath РџСѓС‚СЊ Рє С„Р°Р№Р»Сѓ РґР»СЏ СЃРѕС…СЂР°РЅРµРЅРёСЏ
      * @return void
      */
     public function saveToFile($data, array $headers, string $filePath): void
     {
         try {
-            Log::info('[ExcelExporterService] Сохранение Excel файла на диск', [
+            Log::info('[ExcelExporterService] РЎРѕС…СЂР°РЅРµРЅРёРµ Excel С„Р°Р№Р»Р° РЅР° РґРёСЃРє', [
                 'file_path' => $filePath,
                 'headers_count' => count($headers),
                 'data_count' => is_countable($data) ? count($data) : null,
@@ -312,7 +312,7 @@ class ExcelExporterService
             $spreadsheet = new Spreadsheet();
             $sheet = $spreadsheet->getActiveSheet();
 
-            // Записываем заголовки
+            // Р—Р°РїРёСЃС‹РІР°РµРј Р·Р°РіРѕР»РѕРІРєРё
             $colIndex = 0;
             foreach ($headers as $header) {
                 $cell = Coordinate::stringFromColumnIndex($colIndex + 1) . '1';
@@ -320,7 +320,7 @@ class ExcelExporterService
                 $colIndex++;
             }
 
-            // Записываем данные
+            // Р—Р°РїРёСЃС‹РІР°РµРј РґР°РЅРЅС‹Рµ
             $rowIndex = 2;
             $preparedData = $this->prepareDataForExport($data, []);
             foreach ($preparedData['data'] as $rowArray) {
@@ -333,17 +333,17 @@ class ExcelExporterService
                 $rowIndex++;
             }
 
-            // Сохраняем файл
+            // РЎРѕС…СЂР°РЅСЏРµРј С„Р°Р№Р»
             $writer = new Xlsx($spreadsheet);
             $writer->save($filePath);
 
-            Log::info('[ExcelExporterService] Excel файл успешно сохранен', [
+            Log::info('[ExcelExporterService] Excel С„Р°Р№Р» СѓСЃРїРµС€РЅРѕ СЃРѕС…СЂР°РЅРµРЅ', [
                 'file_path' => $filePath,
                 'rows_count' => $rowIndex - 2,
             ]);
 
         } catch (Exception $e) {
-            Log::error('[ExcelExporterService] Ошибка при сохранении Excel файла', [
+            Log::error('[ExcelExporterService] РћС€РёР±РєР° РїСЂРё СЃРѕС…СЂР°РЅРµРЅРёРё Excel С„Р°Р№Р»Р°', [
                 'file_path' => $filePath,
                 'exception' => $e,
             ]);
@@ -352,7 +352,7 @@ class ExcelExporterService
     }
 
     /**
-     * Готовит данные для экспорта в Excel.
+     * Р“РѕС‚РѕРІРёС‚ РґР°РЅРЅС‹Рµ РґР»СЏ СЌРєСЃРїРѕСЂС‚Р° РІ Excel.
      *
      * @param array|\Illuminate\Support\Collection $rawData
      * @param array $columnMapping
@@ -374,7 +374,7 @@ class ExcelExporterService
                     } elseif (is_float($value)) {
                         $value = number_format($value, 2, ',', '');
                     } elseif (is_bool($value)) {
-                        $value = $value ? 'Да' : 'Нет';
+                        $value = $value ? 'Р”Р°' : 'РќРµС‚';
                     }
                     $rowData[] = $value;
                 }
@@ -388,8 +388,8 @@ class ExcelExporterService
     }
 
     /**
-     * Создает многостраничный Excel отчет по активности прорабов.
-     * Каждый прораб получает отдельный лист с детальной информацией.
+     * РЎРѕР·РґР°РµС‚ РјРЅРѕРіРѕСЃС‚СЂР°РЅРёС‡РЅС‹Р№ Excel РѕС‚С‡РµС‚ РїРѕ Р°РєС‚РёРІРЅРѕСЃС‚Рё РїСЂРѕСЂР°Р±РѕРІ.
+     * РљР°Р¶РґС‹Р№ РїСЂРѕСЂР°Р± РїРѕР»СѓС‡Р°РµС‚ РѕС‚РґРµР»СЊРЅС‹Р№ Р»РёСЃС‚ СЃ РґРµС‚Р°Р»СЊРЅРѕР№ РёРЅС„РѕСЂРјР°С†РёРµР№.
      */
     public function streamForemanActivityReport(
         string $filename,
@@ -397,7 +397,7 @@ class ExcelExporterService
         array $materialLogs,
         array $completedWorks
     ) {
-        Log::info('[ExcelExporterService] Начало экспорта отчета по активности прорабов', [
+        Log::info('[ExcelExporterService] РќР°С‡Р°Р»Рѕ СЌРєСЃРїРѕСЂС‚Р° РѕС‚С‡РµС‚Р° РїРѕ Р°РєС‚РёРІРЅРѕСЃС‚Рё РїСЂРѕСЂР°Р±РѕРІ', [
             'filename' => $filename,
             'foreman_count' => count($foremanData),
         ]);
@@ -407,7 +407,7 @@ class ExcelExporterService
                 try {
                     $spreadsheet = new Spreadsheet();
                     
-                    // Удаляем лист по умолчанию, создадим свои
+                    // РЈРґР°Р»СЏРµРј Р»РёСЃС‚ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ, СЃРѕР·РґР°РґРёРј СЃРІРѕРё
                     $spreadsheet->removeSheetByIndex(0);
 
                     foreach ($foremanData as $index => $foreman) {
@@ -415,8 +415,8 @@ class ExcelExporterService
                         $sheet = $spreadsheet->createSheet($index);
                         $sheet->setTitle($sheetName);
 
-                        // Заголовок отчета
-                        $sheet->setCellValue('A1', 'ОТЧЕТ ПО АКТИВНОСТИ ПРОРАБА');
+                        // Р—Р°РіРѕР»РѕРІРѕРє РѕС‚С‡РµС‚Р°
+                        $sheet->setCellValue('A1', 'РћРўР§Р•Рў РџРћ РђРљРўРР’РќРћРЎРўР РџР РћР РђР‘Рђ');
                         $sheet->mergeCells('A1:F1');
                         $sheet->getStyle('A1')->applyFromArray([
                             'font' => ['bold' => true, 'size' => 16],
@@ -424,43 +424,43 @@ class ExcelExporterService
                             'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'B8CCE4']],
                         ]);
 
-                        // Информация о прорабе
-                        $sheet->setCellValue('A3', 'ФИО прораба:');
+                        // РРЅС„РѕСЂРјР°С†РёСЏ Рѕ РїСЂРѕСЂР°Р±Рµ
+                        $sheet->setCellValue('A3', 'Р¤РРћ РїСЂРѕСЂР°Р±Р°:');
                         $sheet->setCellValue('B3', $foreman['user_name']);
                         $sheet->setCellValue('A4', 'Email:');
                         $sheet->setCellValue('B4', $foreman['user_email']);
-                        $sheet->setCellValue('A5', 'Статус:');
-                        $sheet->setCellValue('B5', $foreman['is_active'] ? 'Активен' : 'Неактивен');
-                        $sheet->setCellValue('A6', 'Последняя активность:');
-                        $sheet->setCellValue('B6', $foreman['last_activity_date'] ?? 'Нет данных');
+                        $sheet->setCellValue('A5', 'РЎС‚Р°С‚СѓСЃ:');
+                        $sheet->setCellValue('B5', $foreman['is_active'] ? 'РђРєС‚РёРІРµРЅ' : 'РќРµР°РєС‚РёРІРµРЅ');
+                        $sheet->setCellValue('A6', 'РџРѕСЃР»РµРґРЅСЏСЏ Р°РєС‚РёРІРЅРѕСЃС‚СЊ:');
+                        $sheet->setCellValue('B6', $foreman['last_activity_date'] ?? 'РќРµС‚ РґР°РЅРЅС‹С…');
 
-                        // Стилизация информации о прорабе
+                        // РЎС‚РёР»РёР·Р°С†РёСЏ РёРЅС„РѕСЂРјР°С†РёРё Рѕ РїСЂРѕСЂР°Р±Рµ
                         $sheet->getStyle('A3:A6')->applyFromArray([
                             'font' => ['bold' => true],
                             'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'F2F2F2']],
                         ]);
 
-                        // Сводная таблица
-                        $sheet->setCellValue('A8', 'СВОДНАЯ ИНФОРМАЦИЯ');
+                        // РЎРІРѕРґРЅР°СЏ С‚Р°Р±Р»РёС†Р°
+                        $sheet->setCellValue('A8', 'РЎР’РћР”РќРђРЇ РРќР¤РћР РњРђР¦РРЇ');
                         $sheet->mergeCells('A8:B8');
                         $sheet->getStyle('A8')->applyFromArray([
                             'font' => ['bold' => true, 'size' => 14],
                             'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'D9E1F2']],
                         ]);
 
-                        $sheet->setCellValue('A9', 'Операции с материалами:');
+                        $sheet->setCellValue('A9', 'РћРїРµСЂР°С†РёРё СЃ РјР°С‚РµСЂРёР°Р»Р°РјРё:');
                         $sheet->setCellValue('B9', $foreman['material_usage_operations']);
-                        $sheet->setCellValue('A10', 'Выполненные работы:');
+                        $sheet->setCellValue('A10', 'Р’С‹РїРѕР»РЅРµРЅРЅС‹Рµ СЂР°Р±РѕС‚С‹:');
                         $sheet->setCellValue('B10', $foreman['completed_works_count']);
-                        $sheet->setCellValue('A11', 'Общая сумма работ:');
-                        $sheet->setCellValue('B11', number_format($foreman['completed_works_total_sum'], 2, ',', ' ') . ' ₽');
+                        $sheet->setCellValue('A11', 'РћР±С‰Р°СЏ СЃСѓРјРјР° СЂР°Р±РѕС‚:');
+                        $sheet->setCellValue('B11', number_format($foreman['completed_works_total_sum'], 2, ',', ' ') . ' в‚Ѕ');
 
-                        // Операции с материалами
+                        // РћРїРµСЂР°С†РёРё СЃ РјР°С‚РµСЂРёР°Р»Р°РјРё
                         $materialRow = 13;
                         $foremanMaterials = collect($materialLogs)->where('user_id', $foreman['user_id']);
                         
                         if ($foremanMaterials->isNotEmpty()) {
-                            $sheet->setCellValue('A' . $materialRow, 'ОПЕРАЦИИ С МАТЕРИАЛАМИ');
+                            $sheet->setCellValue('A' . $materialRow, 'РћРџР•Р РђР¦РР РЎ РњРђРўР•Р РРђР›РђРњР');
                             $sheet->mergeCells('A' . $materialRow . ':F' . $materialRow);
                             $sheet->getStyle('A' . $materialRow)->applyFromArray([
                                 'font' => ['bold' => true, 'size' => 14],
@@ -468,8 +468,8 @@ class ExcelExporterService
                             ]);
                             $materialRow++;
 
-                            // Заголовки таблицы материалов
-                            $materialHeaders = ['Дата', 'Проект', 'Материал', 'Количество', 'Тип операции', 'Примечание'];
+                            // Р—Р°РіРѕР»РѕРІРєРё С‚Р°Р±Р»РёС†С‹ РјР°С‚РµСЂРёР°Р»РѕРІ
+                            $materialHeaders = ['Р”Р°С‚Р°', 'РџСЂРѕРµРєС‚', 'РњР°С‚РµСЂРёР°Р»', 'РљРѕР»РёС‡РµСЃС‚РІРѕ', 'РўРёРї РѕРїРµСЂР°С†РёРё', 'РџСЂРёРјРµС‡Р°РЅРёРµ'];
                             $col = 0;
                             foreach ($materialHeaders as $header) {
                                 $sheet->setCellValue(chr(65 + $col) . $materialRow, $header);
@@ -482,7 +482,7 @@ class ExcelExporterService
                             ]);
                             $materialRow++;
 
-                            // Данные по материалам
+                            // Р”Р°РЅРЅС‹Рµ РїРѕ РјР°С‚РµСЂРёР°Р»Р°Рј
                             foreach ($foremanMaterials as $material) {
                                 $sheet->setCellValue('A' . $materialRow, $material['usage_date']);
                                 $sheet->setCellValue('B' . $materialRow, $material['project_name'] ?? '');
@@ -499,12 +499,12 @@ class ExcelExporterService
                             $materialRow += 2;
                         }
 
-                        // Выполненные работы
+                        // Р’С‹РїРѕР»РЅРµРЅРЅС‹Рµ СЂР°Р±РѕС‚С‹
                         $workRow = $materialRow;
                         $foremanWorks = collect($completedWorks)->where('user_id', $foreman['user_id']);
                         
                         if ($foremanWorks->isNotEmpty()) {
-                            $sheet->setCellValue('A' . $workRow, 'ВЫПОЛНЕННЫЕ РАБОТЫ');
+                            $sheet->setCellValue('A' . $workRow, 'Р’Р«РџРћР›РќР•РќРќР«Р• Р РђР‘РћРўР«');
                             $sheet->mergeCells('A' . $workRow . ':F' . $workRow);
                             $sheet->getStyle('A' . $workRow)->applyFromArray([
                                 'font' => ['bold' => true, 'size' => 14],
@@ -512,8 +512,8 @@ class ExcelExporterService
                             ]);
                             $workRow++;
 
-                            // Заголовки таблицы работ
-                            $workHeaders = ['Дата', 'Проект', 'Вид работ', 'Количество', 'Сумма', 'Статус'];
+                            // Р—Р°РіРѕР»РѕРІРєРё С‚Р°Р±Р»РёС†С‹ СЂР°Р±РѕС‚
+                            $workHeaders = ['Р”Р°С‚Р°', 'РџСЂРѕРµРєС‚', 'Р’РёРґ СЂР°Р±РѕС‚', 'РљРѕР»РёС‡РµСЃС‚РІРѕ', 'РЎСѓРјРјР°', 'РЎС‚Р°С‚СѓСЃ'];
                             $col = 0;
                             foreach ($workHeaders as $header) {
                                 $sheet->setCellValue(chr(65 + $col) . $workRow, $header);
@@ -526,13 +526,13 @@ class ExcelExporterService
                             ]);
                             $workRow++;
 
-                            // Данные по работам
+                            // Р”Р°РЅРЅС‹Рµ РїРѕ СЂР°Р±РѕС‚Р°Рј
                             foreach ($foremanWorks as $work) {
                                 $sheet->setCellValue('A' . $workRow, $work['completion_date']);
                                 $sheet->setCellValue('B' . $workRow, $work['project_name'] ?? '');
                                 $sheet->setCellValue('C' . $workRow, $work['work_type_name'] ?? '');
                                 $sheet->setCellValue('D' . $workRow, $work['quantity']);
-                                $sheet->setCellValue('E' . $workRow, number_format($work['total_amount'], 2, ',', ' ') . ' ₽');
+                                $sheet->setCellValue('E' . $workRow, number_format($work['total_amount'], 2, ',', ' ') . ' в‚Ѕ');
                                 $sheet->setCellValue('F' . $workRow, $work['status'] ?? '');
                                 
                                 $sheet->getStyle('A' . $workRow . ':F' . $workRow)->applyFromArray([
@@ -542,24 +542,24 @@ class ExcelExporterService
                             }
                         }
 
-                        // Автоширина колонок
+                        // РђРІС‚РѕС€РёСЂРёРЅР° РєРѕР»РѕРЅРѕРє
                         for ($col = 0; $col < 6; $col++) {
                             $sheet->getColumnDimension(chr(65 + $col))->setAutoSize(true);
                         }
                     }
 
-                    // Делаем первый лист активным
+                    // Р”РµР»Р°РµРј РїРµСЂРІС‹Р№ Р»РёСЃС‚ Р°РєС‚РёРІРЅС‹Рј
                     $spreadsheet->setActiveSheetIndex(0);
 
                     $writer = new Xlsx($spreadsheet);
                     $writer->save('php://output');
                     
-                    Log::info('[ExcelExporterService] Отчет по активности прорабов успешно создан');
+                    Log::info('[ExcelExporterService] РћС‚С‡РµС‚ РїРѕ Р°РєС‚РёРІРЅРѕСЃС‚Рё РїСЂРѕСЂР°Р±РѕРІ СѓСЃРїРµС€РЅРѕ СЃРѕР·РґР°РЅ');
                 } catch (Exception $e) {
-                    Log::error('[ExcelExporterService] Ошибка при создании отчета по прорабам:', [
+                    Log::error('[ExcelExporterService] РћС€РёР±РєР° РїСЂРё СЃРѕР·РґР°РЅРёРё РѕС‚С‡РµС‚Р° РїРѕ РїСЂРѕСЂР°Р±Р°Рј:', [
                         'exception' => $e->getMessage(),
                     ]);
-                    echo json_encode(['error' => 'Ошибка при создании отчета', 'message' => $e->getMessage()]);
+                    echo json_encode(['error' => 'РћС€РёР±РєР° РїСЂРё СЃРѕР·РґР°РЅРёРё РѕС‚С‡РµС‚Р°', 'message' => $e->getMessage()]);
                 }
             });
 
@@ -568,19 +568,19 @@ class ExcelExporterService
 
             return $response;
         } catch (Exception $e) {
-            Log::error('[ExcelExporterService] Критическая ошибка при создании отчета по прорабам:', [
+            Log::error('[ExcelExporterService] РљСЂРёС‚РёС‡РµСЃРєР°СЏ РѕС€РёР±РєР° РїСЂРё СЃРѕР·РґР°РЅРёРё РѕС‚С‡РµС‚Р° РїРѕ РїСЂРѕСЂР°Р±Р°Рј:', [
                 'exception' => $e->getMessage(),
             ]);
-            return response()->json(['error' => 'Ошибка при экспорте отчета', 'message' => $e->getMessage()], 500);
+            return \App\Http\Responses\AdminResponse::fromPayload(['error' => 'РћС€РёР±РєР° РїСЂРё СЌРєСЃРїРѕСЂС‚Рµ РѕС‚С‡РµС‚Р°', 'message' => $e->getMessage()], 500);
         }
     }
 
     /**
-     * Генерирует официальный отчет об использовании материалов в формате Excel.
+     * Р“РµРЅРµСЂРёСЂСѓРµС‚ РѕС„РёС†РёР°Р»СЊРЅС‹Р№ РѕС‚С‡РµС‚ РѕР± РёСЃРїРѕР»СЊР·РѕРІР°РЅРёРё РјР°С‚РµСЂРёР°Р»РѕРІ РІ С„РѕСЂРјР°С‚Рµ Excel.
      */
     public function generateOfficialMaterialReport(array $reportData, string $filename)
     {
-        Log::info('[ExcelExporterService] Генерация официального отчета по материалам', [
+        Log::info('[ExcelExporterService] Р“РµРЅРµСЂР°С†РёСЏ РѕС„РёС†РёР°Р»СЊРЅРѕРіРѕ РѕС‚С‡РµС‚Р° РїРѕ РјР°С‚РµСЂРёР°Р»Р°Рј', [
             'filename' => $filename,
             'materials_count' => count($reportData['materials'] ?? []),
         ]);
@@ -593,15 +593,15 @@ class ExcelExporterService
                     
                     $currentRow = 1;
                     
-                    // Проверяем что все данные присутствуют
+                    // РџСЂРѕРІРµСЂСЏРµРј С‡С‚Рѕ РІСЃРµ РґР°РЅРЅС‹Рµ РїСЂРёСЃСѓС‚СЃС‚РІСѓСЋС‚
                     if (!isset($reportData['header']) || !isset($reportData['organizations'])) {
-                        throw new Exception('Отсутствуют данные заголовка или организаций в отчете');
+                        throw new Exception('РћС‚СЃСѓС‚СЃС‚РІСѓСЋС‚ РґР°РЅРЅС‹Рµ Р·Р°РіРѕР»РѕРІРєР° РёР»Рё РѕСЂРіР°РЅРёР·Р°С†РёР№ РІ РѕС‚С‡РµС‚Рµ');
                     }
                     
-                    // ЗАГОЛОВОК ОТЧЕТА
-                    $reportNumber = $reportData['header']['report_number'] ?? 'Б/Н';
+                    // Р—РђР“РћР›РћР’РћРљ РћРўР§Р•РўРђ
+                    $reportNumber = $reportData['header']['report_number'] ?? 'Р‘/Рќ';
                     $reportDate = $reportData['header']['report_date'] ?? date('d.m.Y');
-                    $sheet->setCellValue("A{$currentRow}", "Отчет №{$reportNumber} от {$reportDate}");
+                    $sheet->setCellValue("A{$currentRow}", "РћС‚С‡РµС‚ в„–{$reportNumber} РѕС‚ {$reportDate}");
                     $sheet->mergeCells("A{$currentRow}:N{$currentRow}");
                     $sheet->getStyle("A{$currentRow}")->applyFromArray([
                         'font' => ['bold' => true, 'size' => 14],
@@ -609,7 +609,7 @@ class ExcelExporterService
                     ]);
                     $currentRow++;
                     
-                    $sheet->setCellValue("A{$currentRow}", "об использовании материалов, переданных Заказчиком");
+                    $sheet->setCellValue("A{$currentRow}", "РѕР± РёСЃРїРѕР»СЊР·РѕРІР°РЅРёРё РјР°С‚РµСЂРёР°Р»РѕРІ, РїРµСЂРµРґР°РЅРЅС‹С… Р—Р°РєР°Р·С‡РёРєРѕРј");
                     $sheet->mergeCells("A{$currentRow}:N{$currentRow}");
                     $sheet->getStyle("A{$currentRow}")->applyFromArray([
                         'font' => ['bold' => true, 'size' => 12],
@@ -617,8 +617,8 @@ class ExcelExporterService
                     ]);
                     $currentRow += 2;
                     
-                    // ИНФОРМАЦИЯ О ПРОЕКТЕ
-                    $projectName = $reportData['header']['project_name'] ?? 'Название проекта не указано';
+                    // РРќР¤РћР РњРђР¦РРЇ Рћ РџР РћР•РљРўР•
+                    $projectName = $reportData['header']['project_name'] ?? 'РќР°Р·РІР°РЅРёРµ РїСЂРѕРµРєС‚Р° РЅРµ СѓРєР°Р·Р°РЅРѕ';
                     $sheet->setCellValue("A{$currentRow}", $projectName);
                     $sheet->mergeCells("A{$currentRow}:F{$currentRow}");
                     $sheet->getStyle("A{$currentRow}")->applyFromArray([
@@ -626,7 +626,7 @@ class ExcelExporterService
                         'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]],
                     ]);
                     
-                    $sheet->setCellValue("L{$currentRow}", "Дата Отчета №");
+                    $sheet->setCellValue("L{$currentRow}", "Р”Р°С‚Р° РћС‚С‡РµС‚Р° в„–");
                     $sheet->mergeCells("L{$currentRow}:N{$currentRow}");
                     $sheet->getStyle("L{$currentRow}:N{$currentRow}")->applyFromArray([
                         'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]],
@@ -634,7 +634,7 @@ class ExcelExporterService
                     ]);
                     $currentRow++;
                     
-                    $projectAddress = $reportData['header']['project_address'] ?? 'Адрес не указан';
+                    $projectAddress = $reportData['header']['project_address'] ?? 'РђРґСЂРµСЃ РЅРµ СѓРєР°Р·Р°РЅ';
                     $sheet->setCellValue("A{$currentRow}", $projectAddress);
                     $sheet->mergeCells("A{$currentRow}:F{$currentRow}");
                     $sheet->getStyle("A{$currentRow}")->applyFromArray([
@@ -642,47 +642,47 @@ class ExcelExporterService
                     ]);
                     $currentRow += 2;
                     
-                    // ОРГАНИЗАЦИИ
-                    $contractor = $reportData['organizations']['contractor'] ?? 'ПроХелпер';
-                    $customer = $reportData['organizations']['customer'] ?? 'Заказчик';
-                    $contractorDirector = $reportData['organizations']['contractor_director'] ?? 'Директор';
-                    $contractNumber = $reportData['organizations']['contract_number'] ?? 'Б/Н';
+                    // РћР Р“РђРќРР—РђР¦РР
+                    $contractor = $reportData['organizations']['contractor'] ?? 'РџСЂРѕРҐРµР»РїРµСЂ';
+                    $customer = $reportData['organizations']['customer'] ?? 'Р—Р°РєР°Р·С‡РёРє';
+                    $contractorDirector = $reportData['organizations']['contractor_director'] ?? 'Р”РёСЂРµРєС‚РѕСЂ';
+                    $contractNumber = $reportData['organizations']['contract_number'] ?? 'Р‘/Рќ';
                     $contractDate = $reportData['organizations']['contract_date'] ?? date('d.m.Y');
                     
-                    $sheet->setCellValue("A{$currentRow}", "ООО \"{$contractor}\", именуемым в дальнейшем \"Подрядчик\", в лице директора {$contractorDirector}, действующей на основании Устава, составлен настоящий отчет об использовании материалов,");
+                    $sheet->setCellValue("A{$currentRow}", "РћРћРћ \"{$contractor}\", РёРјРµРЅСѓРµРјС‹Рј РІ РґР°Р»СЊРЅРµР№С€РµРј \"РџРѕРґСЂСЏРґС‡РёРє\", РІ Р»РёС†Рµ РґРёСЂРµРєС‚РѕСЂР° {$contractorDirector}, РґРµР№СЃС‚РІСѓСЋС‰РµР№ РЅР° РѕСЃРЅРѕРІР°РЅРёРё РЈСЃС‚Р°РІР°, СЃРѕСЃС‚Р°РІР»РµРЅ РЅР°СЃС‚РѕСЏС‰РёР№ РѕС‚С‡РµС‚ РѕР± РёСЃРїРѕР»СЊР·РѕРІР°РЅРёРё РјР°С‚РµСЂРёР°Р»РѕРІ,");
                     $sheet->mergeCells("A{$currentRow}:N{$currentRow}");
                     $currentRow++;
                     
-                    $sheet->setCellValue("A{$currentRow}", "полученных от ООО \"{$customer}\" (далее — «Заказчик») при выполнении работ по договору подряда № {$contractNumber} от {$contractDate} и были использованы в следующем объеме (количестве):");
+                    $sheet->setCellValue("A{$currentRow}", "РїРѕР»СѓС‡РµРЅРЅС‹С… РѕС‚ РћРћРћ \"{$customer}\" (РґР°Р»РµРµ вЂ” В«Р—Р°РєР°Р·С‡РёРєВ») РїСЂРё РІС‹РїРѕР»РЅРµРЅРёРё СЂР°Р±РѕС‚ РїРѕ РґРѕРіРѕРІРѕСЂСѓ РїРѕРґСЂСЏРґР° в„– {$contractNumber} РѕС‚ {$contractDate} Рё Р±С‹Р»Рё РёСЃРїРѕР»СЊР·РѕРІР°РЅС‹ РІ СЃР»РµРґСѓСЋС‰РµРј РѕР±СЉРµРјРµ (РєРѕР»РёС‡РµСЃС‚РІРµ):");
                     $sheet->mergeCells("A{$currentRow}:N{$currentRow}");
                     $currentRow += 2;
                     
-                    // ЗАГОЛОВКИ ТАБЛИЦЫ
+                    // Р—РђР“РћР›РћР’РљР РўРђР‘Р›РР¦Р«
                     $headers = [
-                        'A' => '№',
-                        'B' => 'Наименование работ',
-                        'C' => 'Наименование материала изделий',
-                        'D' => 'Единица измерения',
-                        'E' => 'Получено материалов от Заказчика',
+                        'A' => 'в„–',
+                        'B' => 'РќР°РёРјРµРЅРѕРІР°РЅРёРµ СЂР°Р±РѕС‚',
+                        'C' => 'РќР°РёРјРµРЅРѕРІР°РЅРёРµ РјР°С‚РµСЂРёР°Р»Р° РёР·РґРµР»РёР№',
+                        'D' => 'Р•РґРёРЅРёС†Р° РёР·РјРµСЂРµРЅРёСЏ',
+                        'E' => 'РџРѕР»СѓС‡РµРЅРѕ РјР°С‚РµСЂРёР°Р»РѕРІ РѕС‚ Р—Р°РєР°Р·С‡РёРєР°',
                         'F' => '',
-                        'G' => 'Использование материалов',
+                        'G' => 'РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ РјР°С‚РµСЂРёР°Р»РѕРІ',
                         'H' => '',
                         'I' => '',
                         'J' => '',
-                        'K' => 'Остаток неиспользованного материала',
+                        'K' => 'РћСЃС‚Р°С‚РѕРє РЅРµРёСЃРїРѕР»СЊР·РѕРІР°РЅРЅРѕРіРѕ РјР°С‚РµСЂРёР°Р»Р°',
                         'L' => '',
-                        'M' => 'Процентная доля экономии от производственной нормы (-)',
-                        'N' => 'Экономия (-)/перерасход (+) против производственной нормы (-)'
+                        'M' => 'РџСЂРѕС†РµРЅС‚РЅР°СЏ РґРѕР»СЏ СЌРєРѕРЅРѕРјРёРё РѕС‚ РїСЂРѕРёР·РІРѕРґСЃС‚РІРµРЅРЅРѕР№ РЅРѕСЂРјС‹ (-)',
+                        'N' => 'Р­РєРѕРЅРѕРјРёСЏ (-)/РїРµСЂРµСЂР°СЃС…РѕРґ (+) РїСЂРѕС‚РёРІ РїСЂРѕРёР·РІРѕРґСЃС‚РІРµРЅРЅРѕР№ РЅРѕСЂРјС‹ (-)'
                     ];
                     
                     foreach ($headers as $col => $header) {
                         $sheet->setCellValue("{$col}{$currentRow}", $header);
                     }
                     
-                    // Объединяем ячейки заголовков
-                    $sheet->mergeCells("E{$currentRow}:F{$currentRow}"); // Получено материалов
-                    $sheet->mergeCells("G{$currentRow}:J{$currentRow}"); // Использование материалов
-                    $sheet->mergeCells("K{$currentRow}:L{$currentRow}"); // Остаток
+                    // РћР±СЉРµРґРёРЅСЏРµРј СЏС‡РµР№РєРё Р·Р°РіРѕР»РѕРІРєРѕРІ
+                    $sheet->mergeCells("E{$currentRow}:F{$currentRow}"); // РџРѕР»СѓС‡РµРЅРѕ РјР°С‚РµСЂРёР°Р»РѕРІ
+                    $sheet->mergeCells("G{$currentRow}:J{$currentRow}"); // РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ РјР°С‚РµСЂРёР°Р»РѕРІ
+                    $sheet->mergeCells("K{$currentRow}:L{$currentRow}"); // РћСЃС‚Р°С‚РѕРє
                     
                     $sheet->getStyle("A{$currentRow}:N{$currentRow}")->applyFromArray([
                         'font' => ['bold' => true, 'size' => 9],
@@ -692,20 +692,20 @@ class ExcelExporterService
                     ]);
                     $currentRow++;
                     
-                    // ПОДЗАГОЛОВКИ
+                    // РџРћР”Р—РђР“РћР›РћР’РљР
                     $subHeaders = [
                         'A' => '',
                         'B' => '',
                         'C' => '',
                         'D' => '',
-                        'E' => 'Объем',
-                        'F' => '№ и дата накладной',
-                        'G' => 'По производственным нормам (проект от НЕО СТРОЙ)',
-                        'H' => 'По факту (переданного для работ)',
-                        'I' => 'Количество',
-                        'J' => 'Количество',
-                        'K' => 'Количество',
-                        'L' => 'Количество',
+                        'E' => 'РћР±СЉРµРј',
+                        'F' => 'в„– Рё РґР°С‚Р° РЅР°РєР»Р°РґРЅРѕР№',
+                        'G' => 'РџРѕ РїСЂРѕРёР·РІРѕРґСЃС‚РІРµРЅРЅС‹Рј РЅРѕСЂРјР°Рј (РїСЂРѕРµРєС‚ РѕС‚ РќР•Рћ РЎРўР РћР™)',
+                        'H' => 'РџРѕ С„Р°РєС‚Сѓ (РїРµСЂРµРґР°РЅРЅРѕРіРѕ РґР»СЏ СЂР°Р±РѕС‚)',
+                        'I' => 'РљРѕР»РёС‡РµСЃС‚РІРѕ',
+                        'J' => 'РљРѕР»РёС‡РµСЃС‚РІРѕ',
+                        'K' => 'РљРѕР»РёС‡РµСЃС‚РІРѕ',
+                        'L' => 'РљРѕР»РёС‡РµСЃС‚РІРѕ',
                         'M' => '',
                         'N' => ''
                     ];
@@ -722,7 +722,7 @@ class ExcelExporterService
                     ]);
                     $currentRow++;
                     
-                    // ДАННЫЕ ПО МАТЕРИАЛАМ
+                    // Р”РђРќРќР«Р• РџРћ РњРђРўР•Р РРђР›РђРњ
                     if (isset($reportData['materials']) && is_array($reportData['materials'])) {
                         foreach ($reportData['materials'] as $index => $material) {
                             $sheet->setCellValue("A{$currentRow}", $index + 1);
@@ -756,8 +756,8 @@ class ExcelExporterService
                     
                     $currentRow += 2;
                     
-                    // ИТОГО
-                    $sheet->setCellValue("A{$currentRow}", "ИТОГО");
+                    // РРўРћР“Рћ
+                    $sheet->setCellValue("A{$currentRow}", "РРўРћР“Рћ");
                     $sheet->mergeCells("A{$currentRow}:N{$currentRow}");
                     $sheet->getStyle("A{$currentRow}")->applyFromArray([
                         'font' => ['bold' => true],
@@ -765,56 +765,56 @@ class ExcelExporterService
                     ]);
                     $currentRow += 2;
                     
-                    // ОБОСНОВАНИЕ ОТКЛОНЕНИЙ
-                    $sheet->setCellValue("A{$currentRow}", "Обоснование отклонения от норм (в случае наличия таковых):");
+                    // РћР‘РћРЎРќРћР’РђРќРР• РћРўРљР›РћРќР•РќРР™
+                    $sheet->setCellValue("A{$currentRow}", "РћР±РѕСЃРЅРѕРІР°РЅРёРµ РѕС‚РєР»РѕРЅРµРЅРёСЏ РѕС‚ РЅРѕСЂРј (РІ СЃР»СѓС‡Р°Рµ РЅР°Р»РёС‡РёСЏ С‚Р°РєРѕРІС‹С…):");
                     $sheet->mergeCells("A{$currentRow}:N{$currentRow}");
                     $currentRow += 3;
                     
-                    // ПОДПИСИ
-                    $sheet->setCellValue("A{$currentRow}", "Представитель Заказчика :");
+                    // РџРћР”РџРРЎР
+                    $sheet->setCellValue("A{$currentRow}", "РџСЂРµРґСЃС‚Р°РІРёС‚РµР»СЊ Р—Р°РєР°Р·С‡РёРєР° :");
                     $sheet->mergeCells("A{$currentRow}:G{$currentRow}");
-                    $sheet->setCellValue("I{$currentRow}", "Представитель Подрядчика :");
+                    $sheet->setCellValue("I{$currentRow}", "РџСЂРµРґСЃС‚Р°РІРёС‚РµР»СЊ РџРѕРґСЂСЏРґС‡РёРєР° :");
                     $sheet->mergeCells("I{$currentRow}:N{$currentRow}");
                     $currentRow += 2;
                     
-                    $customerRep = $reportData['organizations']['customer_representative'] ?? 'Представитель заказчика';
-                    $sheet->setCellValue("A{$currentRow}", "Прораб ООО \"{$customer}\"");
+                    $customerRep = $reportData['organizations']['customer_representative'] ?? 'РџСЂРµРґСЃС‚Р°РІРёС‚РµР»СЊ Р·Р°РєР°Р·С‡РёРєР°';
+                    $sheet->setCellValue("A{$currentRow}", "РџСЂРѕСЂР°Р± РћРћРћ \"{$customer}\"");
                     $sheet->setCellValue("G{$currentRow}", $customerRep);
-                    $sheet->setCellValue("J{$currentRow}", "Директор ООО \"{$contractor}\"");
+                    $sheet->setCellValue("J{$currentRow}", "Р”РёСЂРµРєС‚РѕСЂ РћРћРћ \"{$contractor}\"");
                     $sheet->setCellValue("N{$currentRow}", $contractorDirector);
                     $currentRow++;
                     
-                    $sheet->setCellValue("A{$currentRow}", "(должность)");
-                    $sheet->setCellValue("G{$currentRow}", "(подпись)");
-                    $sheet->setCellValue("J{$currentRow}", "(должность)");
-                    $sheet->setCellValue("N{$currentRow}", "(подпись)");
+                    $sheet->setCellValue("A{$currentRow}", "(РґРѕР»Р¶РЅРѕСЃС‚СЊ)");
+                    $sheet->setCellValue("G{$currentRow}", "(РїРѕРґРїРёСЃСЊ)");
+                    $sheet->setCellValue("J{$currentRow}", "(РґРѕР»Р¶РЅРѕСЃС‚СЊ)");
+                    $sheet->setCellValue("N{$currentRow}", "(РїРѕРґРїРёСЃСЊ)");
                     $currentRow += 2;
                     
-                    $sheet->setCellValue("G{$currentRow}", "М.П.");
-                    $sheet->setCellValue("N{$currentRow}", "М.П.");
+                    $sheet->setCellValue("G{$currentRow}", "Рњ.Рџ.");
+                    $sheet->setCellValue("N{$currentRow}", "Рњ.Рџ.");
                     
-                    // Автоширина колонок
+                    // РђРІС‚РѕС€РёСЂРёРЅР° РєРѕР»РѕРЅРѕРє
                     foreach (range('A', 'N') as $col) {
                         $sheet->getColumnDimension($col)->setAutoSize(true);
                     }
                     
-                    // Настройки печати
+                    // РќР°СЃС‚СЂРѕР№РєРё РїРµС‡Р°С‚Рё
                     $sheet->getPageSetup()->setOrientation(\PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::ORIENTATION_LANDSCAPE);
                     $sheet->getPageMargins()->setTop(0.5)->setBottom(0.5)->setLeft(0.3)->setRight(0.3);
                     
                     $writer = new Xlsx($spreadsheet);
                     $writer->save('php://output');
                     
-                    Log::info('[ExcelExporterService] Официальный отчет по материалам успешно создан');
+                    Log::info('[ExcelExporterService] РћС„РёС†РёР°Р»СЊРЅС‹Р№ РѕС‚С‡РµС‚ РїРѕ РјР°С‚РµСЂРёР°Р»Р°Рј СѓСЃРїРµС€РЅРѕ СЃРѕР·РґР°РЅ');
                 } catch (Exception $e) {
-                    Log::error('[ExcelExporterService] Ошибка при создании официального отчета:', [
+                    Log::error('[ExcelExporterService] РћС€РёР±РєР° РїСЂРё СЃРѕР·РґР°РЅРёРё РѕС„РёС†РёР°Р»СЊРЅРѕРіРѕ РѕС‚С‡РµС‚Р°:', [
                         'exception' => $e->getMessage(),
                     ]);
                     
-                    // Создаем простой документ с сообщением для пользователя
+                    // РЎРѕР·РґР°РµРј РїСЂРѕСЃС‚РѕР№ РґРѕРєСѓРјРµРЅС‚ СЃ СЃРѕРѕР±С‰РµРЅРёРµРј РґР»СЏ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
                     $errorSpreadsheet = new Spreadsheet();
                     $errorSheet = $errorSpreadsheet->getActiveSheet();
-                    $errorSheet->setCellValue('A1', 'Файл повреждён');
+                    $errorSheet->setCellValue('A1', 'Р¤Р°Р№Р» РїРѕРІСЂРµР¶РґС‘РЅ');
                     $errorWriter = new Xlsx($errorSpreadsheet);
                     $errorWriter->save('php://output');
                 }
@@ -825,35 +825,35 @@ class ExcelExporterService
 
             return $response;
         } catch (Exception $e) {
-            Log::error('[ExcelExporterService] Критическая ошибка при создании официального отчета:', [
+            Log::error('[ExcelExporterService] РљСЂРёС‚РёС‡РµСЃРєР°СЏ РѕС€РёР±РєР° РїСЂРё СЃРѕР·РґР°РЅРёРё РѕС„РёС†РёР°Р»СЊРЅРѕРіРѕ РѕС‚С‡РµС‚Р°:', [
                 'exception' => $e->getMessage(),
             ]);
-            return response()->json(['error' => 'Файл повреждён'], 500);
+            return \App\Http\Responses\AdminResponse::fromPayload(['error' => 'Р¤Р°Р№Р» РїРѕРІСЂРµР¶РґС‘РЅ'], 500);
         }
     }
 
     /**
-     * Создаёт Spreadsheet для официального отчёта (без сохранения / стрима).
+     * РЎРѕР·РґР°С‘С‚ Spreadsheet РґР»СЏ РѕС„РёС†РёР°Р»СЊРЅРѕРіРѕ РѕС‚С‡С‘С‚Р° (Р±РµР· СЃРѕС…СЂР°РЅРµРЅРёСЏ / СЃС‚СЂРёРјР°).
      */
     private function createOfficialMaterialSpreadsheet(array $reportData): \PhpOffice\PhpSpreadsheet\Spreadsheet
     {
-        // Скопировано из generateOfficialMaterialReport до места, где создаётся $spreadsheet
+        // РЎРєРѕРїРёСЂРѕРІР°РЅРѕ РёР· generateOfficialMaterialReport РґРѕ РјРµСЃС‚Р°, РіРґРµ СЃРѕР·РґР°С‘С‚СЃСЏ $spreadsheet
         $spreadsheet = new Spreadsheet();
         $sheet = $spreadsheet->getActiveSheet();
         $currentRow = 1;
-        // ниже идёт генерация: я вызову существующую логику генерации в виде отдельного closure чтобы не дублировать, но из-за ограничения индексов вставлю небольшой хак - используем output buffering; поэтому оставлю упрощение: вызову generateOfficialMaterialReport но с кастомным writer? Однако проще дубликат. We'll just call the block.
-        // Избежать дубликации сложно в этом edit; поэтому для краткости возвращаем пустой sheet здесь и используем старый метод.
+        // РЅРёР¶Рµ РёРґС‘С‚ РіРµРЅРµСЂР°С†РёСЏ: СЏ РІС‹Р·РѕРІСѓ СЃСѓС‰РµСЃС‚РІСѓСЋС‰СѓСЋ Р»РѕРіРёРєСѓ РіРµРЅРµСЂР°С†РёРё РІ РІРёРґРµ РѕС‚РґРµР»СЊРЅРѕРіРѕ closure С‡С‚РѕР±С‹ РЅРµ РґСѓР±Р»РёСЂРѕРІР°С‚СЊ, РЅРѕ РёР·-Р·Р° РѕРіСЂР°РЅРёС‡РµРЅРёСЏ РёРЅРґРµРєСЃРѕРІ РІСЃС‚Р°РІР»СЋ РЅРµР±РѕР»СЊС€РѕР№ С…Р°Рє - РёСЃРїРѕР»СЊР·СѓРµРј output buffering; РїРѕСЌС‚РѕРјСѓ РѕСЃС‚Р°РІР»СЋ СѓРїСЂРѕС‰РµРЅРёРµ: РІС‹Р·РѕРІСѓ generateOfficialMaterialReport РЅРѕ СЃ РєР°СЃС‚РѕРјРЅС‹Рј writer? РћРґРЅР°РєРѕ РїСЂРѕС‰Рµ РґСѓР±Р»РёРєР°С‚. We'll just call the block.
+        // РР·Р±РµР¶Р°С‚СЊ РґСѓР±Р»РёРєР°С†РёРё СЃР»РѕР¶РЅРѕ РІ СЌС‚РѕРј edit; РїРѕСЌС‚РѕРјСѓ РґР»СЏ РєСЂР°С‚РєРѕСЃС‚Рё РІРѕР·РІСЂР°С‰Р°РµРј РїСѓСЃС‚РѕР№ sheet Р·РґРµСЃСЊ Рё РёСЃРїРѕР»СЊР·СѓРµРј СЃС‚Р°СЂС‹Р№ РјРµС‚РѕРґ.
         return $spreadsheet;
     }
 
     /**
-     * Сохраняет отчёт в указанном S3-диске и возвращает временный URL.
+     * РЎРѕС…СЂР°РЅСЏРµС‚ РѕС‚С‡С‘С‚ РІ СѓРєР°Р·Р°РЅРЅРѕРј S3-РґРёСЃРєРµ Рё РІРѕР·РІСЂР°С‰Р°РµС‚ РІСЂРµРјРµРЅРЅС‹Р№ URL.
      */
     public function uploadOfficialMaterialReport(array $reportData, string $disk = 'reports', int $expiresHours = 2): ?string
     {
         try {
-            // Используем существующую логику генерации через StreamedResponse,
-            // но направляем вывод в переменную
+            // РСЃРїРѕР»СЊР·СѓРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰СѓСЋ Р»РѕРіРёРєСѓ РіРµРЅРµСЂР°С†РёРё С‡РµСЂРµР· StreamedResponse,
+            // РЅРѕ РЅР°РїСЂР°РІР»СЏРµРј РІС‹РІРѕРґ РІ РїРµСЂРµРјРµРЅРЅСѓСЋ
             $filename = 'official_material_report_' . now()->format('d-m-Y_H-i') . '.xlsx';
             $response = $this->generateOfficialMaterialReport($reportData, $filename);
 
@@ -863,10 +863,10 @@ class ExcelExporterService
             }
 
             ob_start();
-            $response->sendContent(); // запустит callback и запишет в output buffer
+            $response->sendContent(); // Р·Р°РїСѓСЃС‚РёС‚ callback Рё Р·Р°РїРёС€РµС‚ РІ output buffer
             $binaryContent = ob_get_clean();
 
-            // Путь теперь включает день для лучшей организаци ̃ии: YYYY/m/d/filename
+            // РџСѓС‚СЊ С‚РµРїРµСЂСЊ РІРєР»СЋС‡Р°РµС‚ РґРµРЅСЊ РґР»СЏ Р»СѓС‡С€РµР№ РѕСЂРіР°РЅРёР·Р°С†Рё МѓРёРё: YYYY/m/d/filename
             /** @var \App\Services\Storage\FileService $fs */
             $fs = app(\App\Services\Storage\FileService::class);
             $org = \App\Services\Organization\OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
@@ -877,7 +877,7 @@ class ExcelExporterService
             $storage = $fs->disk($org);
             $storage->put($path, $binaryContent);
 
-            // Сохраняем запись в БД
+            // РЎРѕС…СЂР°РЅСЏРµРј Р·Р°РїРёСЃСЊ РІ Р‘Р”
             \App\Models\ReportFile::query()->updateOrCreate(
                 ['path' => $path],
                 [

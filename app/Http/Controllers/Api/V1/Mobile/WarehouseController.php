@@ -178,7 +178,7 @@ class WarehouseController extends Controller
             return MobileResponse::success([
                 'movement_id' => $result['movement']->id,
                 'photo_gallery' => $result['movement']->photo_gallery,
-            ], __('warehouse_basic.receipt_success'));
+            ], trans_message('warehouse_basic.receipt_success'));
         } catch (\Throwable $exception) {
             Log::error('mobile.warehouse.receipt.error', [
                 'user_id' => $request->user()?->id,
@@ -270,7 +270,7 @@ class WarehouseController extends Controller
                 $request->user()
             );
 
-            return MobileResponse::success($photos, __('warehouse_basic.photo_upload_success'));
+            return MobileResponse::success($photos, trans_message('warehouse_basic.photo_upload_success'));
         } catch (\Throwable $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         }
@@ -286,7 +286,7 @@ class WarehouseController extends Controller
                 $fileId
             );
 
-            return MobileResponse::success(null, __('warehouse_basic.photo_delete_success'));
+            return MobileResponse::success(null, trans_message('warehouse_basic.photo_delete_success'));
         } catch (\Throwable $exception) {
             return MobileResponse::error($exception->getMessage(), 404);
         }
@@ -316,7 +316,7 @@ class WarehouseController extends Controller
                 $request->user()
             );
 
-            return MobileResponse::success($photos, __('warehouse_basic.photo_upload_success'));
+            return MobileResponse::success($photos, trans_message('warehouse_basic.photo_upload_success'));
         } catch (\Throwable $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         }
@@ -331,7 +331,7 @@ class WarehouseController extends Controller
                 $fileId
             );
 
-            return MobileResponse::success(null, __('warehouse_basic.photo_delete_success'));
+            return MobileResponse::success(null, trans_message('warehouse_basic.photo_delete_success'));
         } catch (\Throwable $exception) {
             return MobileResponse::error($exception->getMessage(), 404);
         }

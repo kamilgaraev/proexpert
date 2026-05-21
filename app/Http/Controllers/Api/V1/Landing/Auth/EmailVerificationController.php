@@ -25,7 +25,7 @@ class EmailVerificationController extends Controller
                 ]);
 
                 return LandingResponse::error(
-                    'Неверная ссылка для подтверждения email',
+                    'РќРµРІРµСЂРЅР°СЏ СЃСЃС‹Р»РєР° РґР»СЏ РїРѕРґС‚РІРµСЂР¶РґРµРЅРёСЏ email',
                     403
                 );
             }
@@ -37,13 +37,13 @@ class EmailVerificationController extends Controller
                 ]);
 
                 return LandingResponse::error(
-                    'Неверная ссылка для подтверждения email',
+                    'РќРµРІРµСЂРЅР°СЏ СЃСЃС‹Р»РєР° РґР»СЏ РїРѕРґС‚РІРµСЂР¶РґРµРЅРёСЏ email',
                     403
                 );
             }
 
             if ($user->hasVerifiedEmail()) {
-                return LandingResponse::success(null, 'Email уже подтвержден');
+                return LandingResponse::success(null, 'Email СѓР¶Рµ РїРѕРґС‚РІРµСЂР¶РґРµРЅ');
             }
 
             if ($user->markEmailAsVerified()) {
@@ -57,7 +57,7 @@ class EmailVerificationController extends Controller
                 ]);
             }
 
-            return LandingResponse::success(null, 'Email успешно подтвержден');
+            return LandingResponse::success(null, 'Email СѓСЃРїРµС€РЅРѕ РїРѕРґС‚РІРµСЂР¶РґРµРЅ');
         } catch (\Throwable $e) {
             Log::error('Email verification failed', [
                 'user_id' => $id,
@@ -65,7 +65,7 @@ class EmailVerificationController extends Controller
             ]);
 
             return LandingResponse::error(
-                'Ошибка при подтверждении email',
+                'РћС€РёР±РєР° РїСЂРё РїРѕРґС‚РІРµСЂР¶РґРµРЅРёРё email',
                 500
             );
         }
@@ -81,16 +81,16 @@ class EmailVerificationController extends Controller
         $user = $request->user();
 
         if (!$user) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
-                'message' => 'Пользователь не авторизован'
+                'message' => 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ Р°РІС‚РѕСЂРёР·РѕРІР°РЅ'
             ], 401);
         }
 
         if ($user->hasVerifiedEmail()) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
-                'message' => 'Email уже подтвержден'
+                'message' => 'Email СѓР¶Рµ РїРѕРґС‚РІРµСЂР¶РґРµРЅ'
             ], 400);
         }
 
@@ -101,9 +101,9 @@ class EmailVerificationController extends Controller
             'email' => $user->email
         ]);
 
-        return response()->json([
+        return \App\Http\Responses\LandingResponse::fromPayload([
             'success' => true,
-            'message' => 'Письмо с подтверждением отправлено повторно'
+            'message' => 'РџРёСЃСЊРјРѕ СЃ РїРѕРґС‚РІРµСЂР¶РґРµРЅРёРµРј РѕС‚РїСЂР°РІР»РµРЅРѕ РїРѕРІС‚РѕСЂРЅРѕ'
         ]);
     }
 
@@ -112,14 +112,14 @@ class EmailVerificationController extends Controller
         $user = $request->user();
 
         if (!$user) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
-                'message' => 'Пользователь не авторизован',
+                'message' => 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ Р°РІС‚РѕСЂРёР·РѕРІР°РЅ',
                 'verified' => false
             ], 401);
         }
 
-        return response()->json([
+        return \App\Http\Responses\LandingResponse::fromPayload([
             'success' => true,
             'verified' => $user->hasVerifiedEmail(),
             'email' => $user->email

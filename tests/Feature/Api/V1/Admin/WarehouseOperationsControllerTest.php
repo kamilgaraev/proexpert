@@ -18,6 +18,7 @@ use App\Models\MeasurementUnit;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -356,6 +357,80 @@ class WarehouseOperationsControllerTest extends TestCase
             'project_id' => $project->id,
             'document_number' => 'M-15-001',
         ]);
+    }
+
+    public function test_cross_organization_transfer_preserves_project_context_for_recipient(): void
+    {
+        $context = AdminApiTestContext::create();
+        $recipientContext = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Cement', 'CEM-CROSS');
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN-CROSS');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $contractor = Contractor::query()->create([
+            'organization_id' => $context->organization->id,
+            'source_organization_id' => $recipientContext->organization->id,
+            'name' => 'Recipient organization',
+            'contractor_type' => ContractorType::INVITED_ORGANIZATION->value,
+        ]);
+        $this->allowAdminAccess();
+
+        DB::table('project_organization')->insert([
+            'project_id' => $project->id,
+            'organization_id' => $recipientContext->organization->id,
+            'role' => 'contractor',
+            'role_new' => 'contractor',
+            'is_active' => true,
+            'invited_at' => now(),
+            'accepted_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/receipt', [
+                'warehouse_id' => $warehouse->id,
+                'material_id' => $material->id,
+                'quantity' => 5,
+                'price' => 100,
+                'reason' => 'Initial cross-organization stock',
+            ])
+            ->assertCreated();
+
+        $transferResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/transfer-to-contractor', [
+                'from_warehouse_id' => $warehouse->id,
+                'contractor_id' => $contractor->id,
+                'material_id' => $material->id,
+                'quantity' => 2,
+                'project_id' => $project->id,
+                'document_number' => 'M-15-CROSS',
+                'reason' => 'Issue to invited organization',
+            ]);
+
+        $transferResponse->assertOk();
+        $transferResponse->assertJsonPath('data.transfer_type', 'cross_organization');
+
+        $targetMaterial = Material::query()
+            ->where('organization_id', $recipientContext->organization->id)
+            ->where('name', $material->name)
+            ->firstOrFail();
+        $targetWarehouseId = (int) $transferResponse->json('data.receipt_warehouse_id');
+
+        $receiptMovement = WarehouseMovement::query()
+            ->where('organization_id', $recipientContext->organization->id)
+            ->where('warehouse_id', $targetWarehouseId)
+            ->where('material_id', $targetMaterial->id)
+            ->where('movement_type', WarehouseMovement::TYPE_RECEIPT)
+            ->firstOrFail();
+
+        $this->assertSame($project->id, $receiptMovement->project_id);
+        $this->assertSame($project->id, $receiptMovement->metadata['source_project_id']);
+        $this->assertSame(2.0, $this->availableQuantity(
+            $recipientContext->organization->id,
+            $targetWarehouseId,
+            $targetMaterial->id
+        ));
     }
 
     public function test_operations_reject_insufficient_available_stock_without_mutating_balances(): void

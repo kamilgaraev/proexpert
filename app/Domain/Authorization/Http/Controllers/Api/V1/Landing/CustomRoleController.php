@@ -13,7 +13,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
 /**
- * Контроллер для управления кастомными ролями организаций
+ * РљРѕРЅС‚СЂРѕР»Р»РµСЂ РґР»СЏ СѓРїСЂР°РІР»РµРЅРёСЏ РєР°СЃС‚РѕРјРЅС‹РјРё СЂРѕР»СЏРјРё РѕСЂРіР°РЅРёР·Р°С†РёР№
  */
 class CustomRoleController extends Controller
 {
@@ -23,14 +23,14 @@ class CustomRoleController extends Controller
     {
         $this->roleService = $roleService;
         
-        // Применяем middleware авторизации
+        // РџСЂРёРјРµРЅСЏРµРј middleware Р°РІС‚РѕСЂРёР·Р°С†РёРё
         $this->middleware('authorize:roles.view_custom,organization')->only(['index', 'show']);
         $this->middleware('authorize:roles.create_custom,organization')->only(['store', 'getAvailablePermissions']);
         $this->middleware('authorize:roles.manage_custom,organization')->only(['update', 'destroy', 'clone']);
     }
 
     /**
-     * Получить список кастомных ролей организации
+     * РџРѕР»СѓС‡РёС‚СЊ СЃРїРёСЃРѕРє РєР°СЃС‚РѕРјРЅС‹С… СЂРѕР»РµР№ РѕСЂРіР°РЅРёР·Р°С†РёРё
      */
     public function index(Request $request): JsonResponse
     {
@@ -38,7 +38,7 @@ class CustomRoleController extends Controller
         
         $roles = $this->roleService->getOrganizationRoles($organizationId);
         
-        return response()->json([
+        return \App\Http\Responses\LandingResponse::fromPayload([
             'data' => CustomRoleResource::collection($roles),
             'meta' => [
                 'total' => $roles->count(),
@@ -48,7 +48,7 @@ class CustomRoleController extends Controller
     }
 
     /**
-     * Создать новую кастомную роль
+     * РЎРѕР·РґР°С‚СЊ РЅРѕРІСѓСЋ РєР°СЃС‚РѕРјРЅСѓСЋ СЂРѕР»СЊ
      */
     public function store(CreateCustomRoleRequest $request): JsonResponse
     {
@@ -65,49 +65,49 @@ class CustomRoleController extends Controller
             $request->user()
         );
 
-        return response()->json([
+        return \App\Http\Responses\LandingResponse::fromPayload([
             'data' => new CustomRoleResource($role),
-            'message' => 'Роль успешно создана'
+            'message' => 'Р РѕР»СЊ СѓСЃРїРµС€РЅРѕ СЃРѕР·РґР°РЅР°'
         ], 201);
     }
 
     /**
-     * Показать детали кастомной роли
+     * РџРѕРєР°Р·Р°С‚СЊ РґРµС‚Р°Р»Рё РєР°СЃС‚РѕРјРЅРѕР№ СЂРѕР»Рё
      */
     public function show(Request $request, OrganizationCustomRole $role): JsonResponse
     {
-        return response()->json([
+        return \App\Http\Responses\LandingResponse::fromPayload([
             'data' => new CustomRoleResource($role->load(['createdBy', 'assignments.user']))
         ]);
     }
 
     /**
-     * Обновить кастомную роль
+     * РћР±РЅРѕРІРёС‚СЊ РєР°СЃС‚РѕРјРЅСѓСЋ СЂРѕР»СЊ
      */
     public function update(UpdateCustomRoleRequest $request, OrganizationCustomRole $role): JsonResponse
     {
         $this->roleService->updateRole($role, $request->validated(), $request->user());
         
-        return response()->json([
+        return \App\Http\Responses\LandingResponse::fromPayload([
             'data' => new CustomRoleResource($role->fresh()),
-            'message' => 'Роль успешно обновлена'
+            'message' => 'Р РѕР»СЊ СѓСЃРїРµС€РЅРѕ РѕР±РЅРѕРІР»РµРЅР°'
         ]);
     }
 
     /**
-     * Удалить кастомную роль
+     * РЈРґР°Р»РёС‚СЊ РєР°СЃС‚РѕРјРЅСѓСЋ СЂРѕР»СЊ
      */
     public function destroy(Request $request, OrganizationCustomRole $role): JsonResponse
     {
         $this->roleService->deleteRole($role);
         
-        return response()->json([
-            'message' => 'Роль успешно удалена'
+        return \App\Http\Responses\LandingResponse::fromPayload([
+            'message' => 'Р РѕР»СЊ СѓСЃРїРµС€РЅРѕ СѓРґР°Р»РµРЅР°'
         ]);
     }
 
     /**
-     * Клонировать роль
+     * РљР»РѕРЅРёСЂРѕРІР°С‚СЊ СЂРѕР»СЊ
      */
     public function clone(Request $request, OrganizationCustomRole $role): JsonResponse
     {
@@ -125,14 +125,14 @@ class CustomRoleController extends Controller
             $request->user()
         );
         
-        return response()->json([
+        return \App\Http\Responses\LandingResponse::fromPayload([
             'data' => new CustomRoleResource($clonedRole),
-            'message' => 'Роль успешно клонирована'
+            'message' => 'Р РѕР»СЊ СѓСЃРїРµС€РЅРѕ РєР»РѕРЅРёСЂРѕРІР°РЅР°'
         ], 201);
     }
 
     /**
-     * Получить доступные права для создания роли
+     * РџРѕР»СѓС‡РёС‚СЊ РґРѕСЃС‚СѓРїРЅС‹Рµ РїСЂР°РІР° РґР»СЏ СЃРѕР·РґР°РЅРёСЏ СЂРѕР»Рё
      */
     public function getAvailablePermissions(Request $request): JsonResponse
     {
@@ -145,28 +145,28 @@ class CustomRoleController extends Controller
             'system_permissions' => $systemPermissions,
             'module_permissions' => $modulePermissions,
             'interface_access' => [
-                'lk' => 'Личный кабинет',
-                'mobile' => 'Мобильное приложение',
-                'admin' => 'Административная панель'
+                'lk' => 'Р›РёС‡РЅС‹Р№ РєР°Р±РёРЅРµС‚',
+                'mobile' => 'РњРѕР±РёР»СЊРЅРѕРµ РїСЂРёР»РѕР¶РµРЅРёРµ',
+                'admin' => 'РђРґРјРёРЅРёСЃС‚СЂР°С‚РёРІРЅР°СЏ РїР°РЅРµР»СЊ'
             ]
         ];
         
         $translatedData = app(PermissionTranslationService::class)
             ->processPermissionsForFrontend($permissionsData);
         
-        return response()->json([
+        return \App\Http\Responses\LandingResponse::fromPayload([
             'data' => $translatedData
         ]);
     }
 
     /**
-     * Получить пользователей с указанной ролью
+     * РџРѕР»СѓС‡РёС‚СЊ РїРѕР»СЊР·РѕРІР°С‚РµР»РµР№ СЃ СѓРєР°Р·Р°РЅРЅРѕР№ СЂРѕР»СЊСЋ
      */
     public function getUsers(Request $request, OrganizationCustomRole $role): JsonResponse
     {
         $users = $this->roleService->getRoleUsers($role);
         
-        return response()->json([
+        return \App\Http\Responses\LandingResponse::fromPayload([
             'data' => $users->map(function ($user) {
                 return [
                     'id' => $user->id,
@@ -181,7 +181,7 @@ class CustomRoleController extends Controller
     }
 
     /**
-     * Назначить роль пользователю
+     * РќР°Р·РЅР°С‡РёС‚СЊ СЂРѕР»СЊ РїРѕР»СЊР·РѕРІР°С‚РµР»СЋ
      */
     public function assignToUser(Request $request, OrganizationCustomRole $role): JsonResponse
     {
@@ -192,16 +192,16 @@ class CustomRoleController extends Controller
             'expires_at' => 'sometimes|nullable|date|after:now'
         ]);
         
-        // Здесь нужна дополнительная логика для назначения роли
-        // Это зависит от контекста и может требовать дополнительной авторизации
+        // Р—РґРµСЃСЊ РЅСѓР¶РЅР° РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅР°СЏ Р»РѕРіРёРєР° РґР»СЏ РЅР°Р·РЅР°С‡РµРЅРёСЏ СЂРѕР»Рё
+        // Р­С‚Рѕ Р·Р°РІРёСЃРёС‚ РѕС‚ РєРѕРЅС‚РµРєСЃС‚Р° Рё РјРѕР¶РµС‚ С‚СЂРµР±РѕРІР°С‚СЊ РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅРѕР№ Р°РІС‚РѕСЂРёР·Р°С†РёРё
         
-        return response()->json([
-            'message' => 'Роль успешно назначена пользователю'
+        return \App\Http\Responses\LandingResponse::fromPayload([
+            'message' => 'Р РѕР»СЊ СѓСЃРїРµС€РЅРѕ РЅР°Р·РЅР°С‡РµРЅР° РїРѕР»СЊР·РѕРІР°С‚РµР»СЋ'
         ]);
     }
 
     /**
-     * Получить ID организации из запроса
+     * РџРѕР»СѓС‡РёС‚СЊ ID РѕСЂРіР°РЅРёР·Р°С†РёРё РёР· Р·Р°РїСЂРѕСЃР°
      */
     protected function getOrganizationId(Request $request): int
     {

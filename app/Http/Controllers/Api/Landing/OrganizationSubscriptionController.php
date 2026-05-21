@@ -15,19 +15,19 @@ class OrganizationSubscriptionController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId || $organizationId != $user->current_organization_id) {
-            return response()->json(['error' => 'Организация не найдена или нет доступа'], 404);
+            return \App\Http\Responses\LandingResponse::fromPayload(['error' => 'РћСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РЅР°Р№РґРµРЅР° РёР»Рё РЅРµС‚ РґРѕСЃС‚СѓРїР°'], 404);
         }
         
         $service = app(OrganizationSubscriptionService::class);
         $subscription = $service->getCurrentSubscription($organizationId);
         
         if (!$subscription || $subscription->status !== 'active' || $subscription->ends_at <= now()) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => true,
                 'data' => [
                     'has_subscription' => false,
                     'subscription' => null,
-                    'message' => 'У организации нет активной подписки'
+                    'message' => 'РЈ РѕСЂРіР°РЅРёР·Р°С†РёРё РЅРµС‚ Р°РєС‚РёРІРЅРѕР№ РїРѕРґРїРёСЃРєРё'
                 ]
             ]);
         }
@@ -67,7 +67,7 @@ class OrganizationSubscriptionController extends Controller
             ];
         });
         
-        return response()->json([
+        return \App\Http\Responses\LandingResponse::fromPayload([
             'success' => true,
             'data' => [
                 'has_subscription' => true,
@@ -111,7 +111,7 @@ class OrganizationSubscriptionController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId || $organizationId != $user->current_organization_id) {
-            return response()->json(['error' => 'Организация не найдена или нет доступа'], 404);
+            return \App\Http\Responses\LandingResponse::fromPayload(['error' => 'РћСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РЅР°Р№РґРµРЅР° РёР»Рё РЅРµС‚ РґРѕСЃС‚СѓРїР°'], 404);
         }
         
         $planSlug = $request->input('plan_slug');
@@ -120,7 +120,7 @@ class OrganizationSubscriptionController extends Controller
         $service = app(OrganizationSubscriptionService::class);
         $subscription = $service->subscribe($organizationId, $planSlug, $isAutoPaymentEnabled, $durationDays);
         
-        return response()->json([
+        return \App\Http\Responses\LandingResponse::fromPayload([
             'success' => true,
             'data' => $subscription
         ]);
@@ -132,7 +132,7 @@ class OrganizationSubscriptionController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId || $organizationId != $user->current_organization_id) {
-            return response()->json(['error' => 'Организация не найдена или нет доступа'], 404);
+            return \App\Http\Responses\LandingResponse::fromPayload(['error' => 'РћСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РЅР°Р№РґРµРЅР° РёР»Рё РЅРµС‚ РґРѕСЃС‚СѓРїР°'], 404);
         }
         
         $planSlug = $request->input('plan_slug');
@@ -140,7 +140,7 @@ class OrganizationSubscriptionController extends Controller
         $service = app(OrganizationSubscriptionService::class);
         $subscription = $service->updateSubscription($organizationId, $planSlug, $isAutoPaymentEnabled);
         
-        return response()->json([
+        return \App\Http\Responses\LandingResponse::fromPayload([
             'success' => true,
             'data' => $subscription
         ]);
@@ -152,23 +152,23 @@ class OrganizationSubscriptionController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId || $organizationId != $user->current_organization_id) {
-            return response()->json(['error' => 'Организация не найдена или нет доступа'], 404);
+            return \App\Http\Responses\LandingResponse::fromPayload(['error' => 'РћСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РЅР°Р№РґРµРЅР° РёР»Рё РЅРµС‚ РґРѕСЃС‚СѓРїР°'], 404);
         }
         
         $service = app(OrganizationSubscriptionService::class);
         $result = $service->cancelSubscription($organizationId);
         
         if (!$result['success']) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
                 'message' => $result['message']
             ], $result['status_code'] ?? 400);
         }
         
-        return response()->json([
+        return \App\Http\Responses\LandingResponse::fromPayload([
             'success' => true,
             'data' => $result['subscription'],
-            'message' => 'Подписка отменена. Доступ сохранится до ' . $result['subscription']->ends_at->format('d.m.Y')
+            'message' => 'РџРѕРґРїРёСЃРєР° РѕС‚РјРµРЅРµРЅР°. Р”РѕСЃС‚СѓРї СЃРѕС…СЂР°РЅРёС‚СЃСЏ РґРѕ ' . $result['subscription']->ends_at->format('d.m.Y')
         ]);
     }
 
@@ -182,20 +182,20 @@ class OrganizationSubscriptionController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId || $organizationId != $user->current_organization_id) {
-            return response()->json(['error' => 'Организация не найдена или нет доступа'], 404);
+            return \App\Http\Responses\LandingResponse::fromPayload(['error' => 'РћСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РЅР°Р№РґРµРЅР° РёР»Рё РЅРµС‚ РґРѕСЃС‚СѓРїР°'], 404);
         }
         
         $service = app(OrganizationSubscriptionService::class);
         $result = $service->previewPlanChange($organizationId, $request->input('plan_slug'));
         
         if (!$result['success']) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
                 'message' => $result['message']
             ], $result['status_code'] ?? 400);
         }
         
-        return response()->json([
+        return \App\Http\Responses\LandingResponse::fromPayload([
             'success' => true,
             'data' => $result['preview'],
             'message' => $result['message']
@@ -212,20 +212,20 @@ class OrganizationSubscriptionController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId || $organizationId != $user->current_organization_id) {
-            return response()->json(['error' => 'Организация не найдена или нет доступа'], 404);
+            return \App\Http\Responses\LandingResponse::fromPayload(['error' => 'РћСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РЅР°Р№РґРµРЅР° РёР»Рё РЅРµС‚ РґРѕСЃС‚СѓРїР°'], 404);
         }
         
         $service = app(OrganizationSubscriptionService::class);
         $result = $service->changePlan($organizationId, $request->input('plan_slug'));
         
         if (!$result['success']) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
                 'message' => $result['message']
             ], $result['status_code'] ?? 400);
         }
         
-        return response()->json([
+        return \App\Http\Responses\LandingResponse::fromPayload([
             'success' => true,
             'data' => $result['subscription'],
             'billing_info' => $result['billing_info'] ?? null,
@@ -243,17 +243,17 @@ class OrganizationSubscriptionController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId || $organizationId != $user->current_organization_id) {
-            return response()->json(['error' => 'Организация не найдена или нет доступа'], 404);
+            return \App\Http\Responses\LandingResponse::fromPayload(['error' => 'РћСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РЅР°Р№РґРµРЅР° РёР»Рё РЅРµС‚ РґРѕСЃС‚СѓРїР°'], 404);
         }
         
         $subscription = (new \App\Repositories\Landing\OrganizationSubscriptionRepository())->getByOrganizationId($organizationId);
         if (!$subscription) {
-            return response()->json(['error' => 'Подписка не найдена'], 404);
+            return \App\Http\Responses\LandingResponse::fromPayload(['error' => 'РџРѕРґРїРёСЃРєР° РЅРµ РЅР°Р№РґРµРЅР°'], 404);
         }
         
         $subscription->update(['is_auto_payment_enabled' => $request->boolean('is_auto_payment_enabled')]);
         
-        return response()->json([
+        return \App\Http\Responses\LandingResponse::fromPayload([
             'success' => true,
             'data' => $subscription
         ]);

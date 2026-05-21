@@ -6,6 +6,7 @@ use App\Models\Estimate;
 use App\BusinessModules\Features\BudgetEstimates\Events\{
     EstimateCreated,
     EstimateApproved,
+    EstimateUpdated,
 };
 
 class EstimateObserver
@@ -23,6 +24,8 @@ class EstimateObserver
      */
     public function updated(Estimate $estimate): void
     {
+        event(new EstimateUpdated($estimate));
+
         // Проверить, изменился ли статус на approved
         if ($estimate->wasChanged('status') && $estimate->status === 'approved') {
             event(new EstimateApproved($estimate));

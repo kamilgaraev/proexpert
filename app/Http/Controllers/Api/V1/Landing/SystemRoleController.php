@@ -48,6 +48,6 @@ class SystemRoleController extends Controller
             ];
         })->values();
 
-        return response()->json(['data' => $formattedRoles]);
+        return \App\Http\Responses\LandingResponse::fromPayload(['data' => $formattedRoles]);
     }
 }

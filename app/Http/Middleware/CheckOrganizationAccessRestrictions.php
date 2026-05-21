@@ -55,9 +55,9 @@ class CheckOrganizationAccessRestrictions
                 'access_level' => $restriction->access_level
             ]);
 
-            return response()->json([
+            return \App\Http\Responses\AdminResponse::fromPayload([
                 'success' => false,
-                'message' => 'Действие ограничено',
+                'message' => 'Р”РµР№СЃС‚РІРёРµ РѕРіСЂР°РЅРёС‡РµРЅРѕ',
                 'error' => 'access_restricted',
                 'details' => [
                     'reason' => $restriction->reason,

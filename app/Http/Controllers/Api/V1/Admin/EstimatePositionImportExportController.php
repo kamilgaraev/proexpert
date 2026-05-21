@@ -52,7 +52,7 @@ class EstimatePositionImportExportController extends Controller
 
             $result = $this->service->importFromExcel($organizationId, $file, $userId);
 
-            $message = __('estimate.positions_import_completed', [
+            $message = trans_message('estimate.positions_import_completed', [
                 'imported' => $result['imported'],
                 'skipped' => $result['skipped']
             ]);

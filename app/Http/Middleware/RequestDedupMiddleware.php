@@ -9,11 +9,11 @@ use Symfony\Component\HttpFoundation\Response;
 
 class RequestDedupMiddleware
 {
-    private const DEDUP_TTL = 5; // 5 секунд
+    private const DEDUP_TTL = 5; // 5 СЃРµРєСѓРЅРґ
 
     public function handle(Request $request, Closure $next): Response
     {
-        // Применяем дедупликацию только для определенных маршрутов
+        // РџСЂРёРјРµРЅСЏРµРј РґРµРґСѓРїР»РёРєР°С†РёСЋ С‚РѕР»СЊРєРѕ РґР»СЏ РѕРїСЂРµРґРµР»РµРЅРЅС‹С… РјР°СЂС€СЂСѓС‚РѕРІ
         $shouldDeduplicate = $this->shouldDeduplicate($request);
         
         if (!$shouldDeduplicate) {
@@ -24,25 +24,25 @@ class RequestDedupMiddleware
         $lockKey = "req_lock_{$requestKey}";
         $cacheKey = "req_cache_{$requestKey}";
 
-        // Проверяем, есть ли кэшированный результат
+        // РџСЂРѕРІРµСЂСЏРµРј, РµСЃС‚СЊ Р»Рё РєСЌС€РёСЂРѕРІР°РЅРЅС‹Р№ СЂРµР·СѓР»СЊС‚Р°С‚
         $cachedResponse = Cache::get($cacheKey);
         if ($cachedResponse !== null) {
-            return response()->json($cachedResponse['data'], $cachedResponse['status'])
+            return \App\Http\Responses\AdminResponse::fromPayload($cachedResponse['data'], $cachedResponse['status'])
                 ->withHeaders($cachedResponse['headers']);
         }
 
-        // Блокируем повторные запросы
+        // Р‘Р»РѕРєРёСЂСѓРµРј РїРѕРІС‚РѕСЂРЅС‹Рµ Р·Р°РїСЂРѕСЃС‹
         if (Cache::has($lockKey)) {
-            return response()->json(['message' => 'Duplicate request ignored'], 429);
+            return \App\Http\Responses\AdminResponse::fromPayload(['message' => 'Duplicate request ignored'], 429);
         }
 
-        // Устанавливаем блокировку
+        // РЈСЃС‚Р°РЅР°РІР»РёРІР°РµРј Р±Р»РѕРєРёСЂРѕРІРєСѓ
         Cache::put($lockKey, true, self::DEDUP_TTL);
 
         try {
             $response = $next($request);
             
-            // Кэшируем успешный ответ
+            // РљСЌС€РёСЂСѓРµРј СѓСЃРїРµС€РЅС‹Р№ РѕС‚РІРµС‚
             if ($response->getStatusCode() < 400) {
                 $responseData = [
                     'data' => json_decode($response->getContent(), true),
@@ -54,14 +54,14 @@ class RequestDedupMiddleware
 
             return $response;
         } finally {
-            // Убираем блокировку
+            // РЈР±РёСЂР°РµРј Р±Р»РѕРєРёСЂРѕРІРєСѓ
             Cache::forget($lockKey);
         }
     }
 
     private function shouldDeduplicate(Request $request): bool
     {
-        // Дедуплицируем только GET запросы для определенных эндпоинтов
+        // Р”РµРґСѓРїР»РёС†РёСЂСѓРµРј С‚РѕР»СЊРєРѕ GET Р·Р°РїСЂРѕСЃС‹ РґР»СЏ РѕРїСЂРµРґРµР»РµРЅРЅС‹С… СЌРЅРґРїРѕРёРЅС‚РѕРІ
         if (!$request->isMethod('GET')) {
             return false;
         }
@@ -88,12 +88,12 @@ class RequestDedupMiddleware
     {
         $key = $request->getPathInfo() . '_' . $request->getQueryString();
         
-        // Добавляем ID пользователя если аутентифицирован
+        // Р”РѕР±Р°РІР»СЏРµРј ID РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ РµСЃР»Рё Р°СѓС‚РµРЅС‚РёС„РёС†РёСЂРѕРІР°РЅ
         if ($user = $request->user()) {
             $key .= '_user_' . $user->id;
         }
 
-        // Добавляем organization_id из заголовков или атрибутов
+        // Р”РѕР±Р°РІР»СЏРµРј organization_id РёР· Р·Р°РіРѕР»РѕРІРєРѕРІ РёР»Рё Р°С‚СЂРёР±СѓС‚РѕРІ
         $orgId = $request->attributes->get('current_organization_id') ?? 
                  $request->header('X-Organization-Id');
         

@@ -20,43 +20,43 @@ class LandingAdminAuthController extends Controller
     }
 
     /**
-     * Авторизация администратора.
+     * РђРІС‚РѕСЂРёР·Р°С†РёСЏ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°.
      */
     public function login(LoginRequest $request)
     {
         $loginDTO = LoginDTO::fromRequest($request->only('email', 'password'));
         $result = $this->authService->authenticate($loginDTO);
         if ($result['success']) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'token' => $result['token'],
                 'landingAdmin' => $result['user'],
             ]);
         }
-        return response()->json(['message' => $result['message'] ?? 'Unauthorized'], 401);
+        return \App\Http\Responses\LandingResponse::fromPayload(['message' => $result['message'] ?? 'Unauthorized'], 401);
     }
 
     /**
-     * Данные текущего администратора.
+     * Р”Р°РЅРЅС‹Рµ С‚РµРєСѓС‰РµРіРѕ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°.
      */
     public function me(Request $request)
     {
         $result = $this->authService->me();
         if ($result['success']) {
-            return response()->json($result['user']);
+            return \App\Http\Responses\LandingResponse::fromPayload($result['user']);
         }
-        return response()->json(['message' => $result['message'] ?? 'Not found'], 404);
+        return \App\Http\Responses\LandingResponse::fromPayload(['message' => $result['message'] ?? 'Not found'], 404);
     }
 
     /**
-     * Обновление JWT.
+     * РћР±РЅРѕРІР»РµРЅРёРµ JWT.
      */
     public function refresh()
     {
         $result = $this->authService->refresh();
         if ($result['success']) {
-            return response()->json(['token' => $result['token']]);
+            return \App\Http\Responses\LandingResponse::fromPayload(['token' => $result['token']]);
         }
-        return response()->json(['message' => $result['message'] ?? 'Token error'], $result['status_code'] ?? 401);
+        return \App\Http\Responses\LandingResponse::fromPayload(['message' => $result['message'] ?? 'Token error'], $result['status_code'] ?? 401);
     }
 
     /**
@@ -65,6 +65,6 @@ class LandingAdminAuthController extends Controller
     public function logout()
     {
         $this->authService->logout();
-        return response()->json(['message' => 'Logged out']);
+        return \App\Http\Responses\LandingResponse::fromPayload(['message' => 'Logged out']);
     }
 } 

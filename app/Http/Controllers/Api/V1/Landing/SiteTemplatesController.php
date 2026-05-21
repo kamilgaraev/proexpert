@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Log;
 class SiteTemplatesController extends Controller
 {
     /**
-     * Получить доступные шаблоны
+     * РџРѕР»СѓС‡РёС‚СЊ РґРѕСЃС‚СѓРїРЅС‹Рµ С€Р°Р±Р»РѕРЅС‹
      */
     public function index(Request $request): JsonResponse
     {
@@ -35,7 +35,7 @@ class SiteTemplatesController extends Controller
                 ];
             });
 
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => true,
                 'data' => $templatesData
             ]);
@@ -46,15 +46,15 @@ class SiteTemplatesController extends Controller
                 'user_id' => Auth::id()
             ]);
 
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
-                'message' => 'Ошибка получения шаблонов'
+                'message' => 'РћС€РёР±РєР° РїРѕР»СѓС‡РµРЅРёСЏ С€Р°Р±Р»РѕРЅРѕРІ'
             ], 500);
         }
     }
 
     /**
-     * Получить детали шаблона
+     * РџРѕР»СѓС‡РёС‚СЊ РґРµС‚Р°Р»Рё С€Р°Р±Р»РѕРЅР°
      */
     public function show(Request $request, string $templateKey): JsonResponse
     {
@@ -76,7 +76,7 @@ class SiteTemplatesController extends Controller
                 'layout_config' => $template->layout_config,
             ];
 
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => true,
                 'data' => $templateData
             ]);
@@ -88,9 +88,9 @@ class SiteTemplatesController extends Controller
                 'user_id' => Auth::id()
             ]);
 
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
-                'message' => 'Шаблон не найден'
+                'message' => 'РЁР°Р±Р»РѕРЅ РЅРµ РЅР°Р№РґРµРЅ'
             ], 404);
         }
     }

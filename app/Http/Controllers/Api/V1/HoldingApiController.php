@@ -23,17 +23,17 @@ class HoldingApiController extends Controller
             $group = OrganizationGroup::where('slug', $slug)->first();
             
             if (!$group) {
-                return response()->json([
+                return \App\Http\Responses\LandingResponse::fromPayload([
                     'success' => false,
-                    'message' => 'Холдинг не найден'
+                    'message' => 'РҐРѕР»РґРёРЅРі РЅРµ РЅР°Р№РґРµРЅ'
                 ], 404);
             }
 
             $parentOrg = $group->parentOrganization;
             if (!$parentOrg) {
-                return response()->json([
+                return \App\Http\Responses\LandingResponse::fromPayload([
                     'success' => false,
-                    'message' => 'Родительская организация не найдена'
+                    'message' => 'Р РѕРґРёС‚РµР»СЊСЃРєР°СЏ РѕСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°'
                 ], 404);
             }
 
@@ -48,7 +48,7 @@ class HoldingApiController extends Controller
                 'active_contracts_count' => $parentOrg->contracts()->where('status', 'active')->count() + $childOrgs->sum(fn($org) => $org->contracts()->where('status', 'active')->count()),
             ];
 
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => true,
                 'data' => [
                     'holding' => [
@@ -77,9 +77,9 @@ class HoldingApiController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
-                'message' => 'Ошибка при получении данных холдинга',
+                'message' => 'РћС€РёР±РєР° РїСЂРё РїРѕР»СѓС‡РµРЅРёРё РґР°РЅРЅС‹С… С…РѕР»РґРёРЅРіР°',
                 'error' => $e->getMessage()
             ], 500);
         }
@@ -91,33 +91,33 @@ class HoldingApiController extends Controller
             $group = OrganizationGroup::where('slug', $slug)->first();
             
             if (!$group) {
-                return response()->json([
+                return \App\Http\Responses\LandingResponse::fromPayload([
                     'success' => false,
-                    'message' => 'Холдинг не найден'
+                    'message' => 'РҐРѕР»РґРёРЅРі РЅРµ РЅР°Р№РґРµРЅ'
                 ], 404);
             }
 
             $user = $request->user();
             if (!$user) {
-                return response()->json([
+                return \App\Http\Responses\LandingResponse::fromPayload([
                     'success' => false,
-                    'message' => 'Необходима авторизация'
+                    'message' => 'РќРµРѕР±С…РѕРґРёРјР° Р°РІС‚РѕСЂРёР·Р°С†РёСЏ'
                 ], 401);
             }
 
             $parentOrg = $group->parentOrganization;
             if (!$parentOrg) {
-                return response()->json([
+                return \App\Http\Responses\LandingResponse::fromPayload([
                     'success' => false,
-                    'message' => 'Родительская организация не найдена'
+                    'message' => 'Р РѕРґРёС‚РµР»СЊСЃРєР°СЏ РѕСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°'
                 ], 404);
             }
 
             $hasAccess = $this->multiOrganizationService->hasAccessToOrganization($user, $parentOrg->id);
             if (!$hasAccess) {
-                return response()->json([
+                return \App\Http\Responses\LandingResponse::fromPayload([
                     'success' => false,
-                    'message' => 'Нет доступа к управлению холдингом'
+                    'message' => 'РќРµС‚ РґРѕСЃС‚СѓРїР° Рє СѓРїСЂР°РІР»РµРЅРёСЋ С…РѕР»РґРёРЅРіРѕРј'
                 ], 403);
             }
 
@@ -134,7 +134,7 @@ class HoldingApiController extends Controller
                     $recentActivity[] = [
                         'type' => 'project_created',
                         'organization_name' => $childOrg->name,
-                        'description' => "Создан проект: {$lastProject->name}",
+                        'description' => "РЎРѕР·РґР°РЅ РїСЂРѕРµРєС‚: {$lastProject->name}",
                         'date' => $lastProject->created_at,
                     ];
                 }
@@ -143,7 +143,7 @@ class HoldingApiController extends Controller
                     $recentActivity[] = [
                         'type' => 'contract_signed',
                         'organization_name' => $childOrg->name,
-                        'description' => "Подписан контракт: {$lastContract->name}",
+                        'description' => "РџРѕРґРїРёСЃР°РЅ РєРѕРЅС‚СЂР°РєС‚: {$lastContract->name}",
                         'date' => $lastContract->created_at,
                     ];
                 }
@@ -167,7 +167,7 @@ class HoldingApiController extends Controller
                 ],
             ];
 
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => true,
                 'data' => [
                     'holding' => [
@@ -189,9 +189,9 @@ class HoldingApiController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
-                'message' => 'Ошибка при получении данных панели управления',
+                'message' => 'РћС€РёР±РєР° РїСЂРё РїРѕР»СѓС‡РµРЅРёРё РґР°РЅРЅС‹С… РїР°РЅРµР»Рё СѓРїСЂР°РІР»РµРЅРёСЏ',
                 'error' => $e->getMessage()
             ], 500);
         }
@@ -203,33 +203,33 @@ class HoldingApiController extends Controller
             $group = OrganizationGroup::where('slug', $slug)->first();
             
             if (!$group) {
-                return response()->json([
+                return \App\Http\Responses\LandingResponse::fromPayload([
                     'success' => false,
-                    'message' => 'Холдинг не найден'
+                    'message' => 'РҐРѕР»РґРёРЅРі РЅРµ РЅР°Р№РґРµРЅ'
                 ], 404);
             }
 
             $user = $request->user();
             if (!$user) {
-                return response()->json([
+                return \App\Http\Responses\LandingResponse::fromPayload([
                     'success' => false,
-                    'message' => 'Необходима авторизация'
+                    'message' => 'РќРµРѕР±С…РѕРґРёРјР° Р°РІС‚РѕСЂРёР·Р°С†РёСЏ'
                 ], 401);
             }
 
             $parentOrg = $group->parentOrganization;
             if (!$parentOrg) {
-                return response()->json([
+                return \App\Http\Responses\LandingResponse::fromPayload([
                     'success' => false,
-                    'message' => 'Родительская организация не найдена'
+                    'message' => 'Р РѕРґРёС‚РµР»СЊСЃРєР°СЏ РѕСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°'
                 ], 404);
             }
 
             $hasAccess = $this->multiOrganizationService->hasAccessToOrganization($user, $parentOrg->id);
             if (!$hasAccess) {
-                return response()->json([
+                return \App\Http\Responses\LandingResponse::fromPayload([
                     'success' => false,
-                    'message' => 'Нет доступа к данным организаций холдинга'
+                    'message' => 'РќРµС‚ РґРѕСЃС‚СѓРїР° Рє РґР°РЅРЅС‹Рј РѕСЂРіР°РЅРёР·Р°С†РёР№ С…РѕР»РґРёРЅРіР°'
                 ], 403);
             }
 
@@ -257,15 +257,15 @@ class HoldingApiController extends Controller
                 ];
             });
 
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => true,
                 'data' => $organizations
             ]);
 
         } catch (\Exception $e) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
-                'message' => 'Ошибка при получении списка организаций',
+                'message' => 'РћС€РёР±РєР° РїСЂРё РїРѕР»СѓС‡РµРЅРёРё СЃРїРёСЃРєР° РѕСЂРіР°РЅРёР·Р°С†РёР№',
                 'error' => $e->getMessage()
             ], 500);
         }
@@ -277,31 +277,31 @@ class HoldingApiController extends Controller
             $group = OrganizationGroup::where('slug', $slug)->first();
             
             if (!$group) {
-                return response()->json([
+                return \App\Http\Responses\LandingResponse::fromPayload([
                     'success' => false,
-                    'message' => 'Холдинг не найден'
+                    'message' => 'РҐРѕР»РґРёРЅРі РЅРµ РЅР°Р№РґРµРЅ'
                 ], 404);
             }
 
             $user = $request->user();
             if (!$user) {
-                return response()->json([
+                return \App\Http\Responses\LandingResponse::fromPayload([
                     'success' => false,
-                    'message' => 'Необходима авторизация'
+                    'message' => 'РќРµРѕР±С…РѕРґРёРјР° Р°РІС‚РѕСЂРёР·Р°С†РёСЏ'
                 ], 401);
             }
 
             $organizationData = $this->multiOrganizationService->getOrganizationData($organizationId, $user);
 
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => true,
                 'data' => $organizationData
             ]);
 
         } catch (\Exception $e) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
-                'message' => 'Ошибка при получении данных организации',
+                'message' => 'РћС€РёР±РєР° РїСЂРё РїРѕР»СѓС‡РµРЅРёРё РґР°РЅРЅС‹С… РѕСЂРіР°РЅРёР·Р°С†РёРё',
                 'error' => $e->getMessage()
             ], 500);
         }

@@ -5,6 +5,7 @@ namespace App\BusinessModules\Features\BasicWarehouse\Services;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\Models\Contractor;
 use App\Models\Material;
+use App\Models\Project;
 use Illuminate\Support\Facades\DB;
 
 class ContractorTransferService
@@ -22,10 +23,10 @@ class ContractorTransferService
         int $contractorId,
         int $materialId,
         float $quantity,
+        int $userId,
         ?int $projectId = null,
         ?string $documentNumber = null,
-        ?string $reason = null,
-        int $userId
+        ?string $reason = null
     ): array
     {
         $contractor = Contractor::findOrFail($contractorId);
@@ -38,10 +39,10 @@ class ContractorTransferService
                 $contractor,
                 $materialId,
                 $quantity,
+                $userId,
                 $projectId,
                 $documentNumber,
-                $reason,
-                $userId
+                $reason
             );
         }
 
@@ -52,10 +53,10 @@ class ContractorTransferService
             $contractor,
             $materialId,
             $quantity,
+            $userId,
             $projectId,
             $documentNumber,
-            $reason,
-            $userId
+            $reason
         );
     }
 
@@ -68,10 +69,10 @@ class ContractorTransferService
         Contractor $contractor,
         int $materialId,
         float $quantity,
+        int $userId,
         ?int $projectId,
         ?string $documentNumber,
-        ?string $reason,
-        int $userId
+        ?string $reason
     ): array
     {
         // 1. Списываем с нашего склада
@@ -85,23 +86,23 @@ class ContractorTransferService
                 'project_id' => $projectId,
                 'document_number' => $documentNumber,
                 'reason' => $reason ?? "Передача материалов подрядчику {$contractor->name} (Орг. ID: {$contractor->source_organization_id})",
-                'metadata' => [
-                    'is_contractor_transfer' => true,
-                    'contractor_id' => $contractor->id,
-                    'target_organization_id' => $contractor->source_organization_id
-                ]
+                'is_contractor_transfer' => true,
+                'contractor_id' => $contractor->id,
+                'target_organization_id' => $contractor->source_organization_id,
             ]
         );
 
         // Получаем среднюю цену списания
-        $totalValue = collect($writeOffResult['movements'])->sum('total_value');
-        $avgPrice = $totalValue / $quantity;
+        $totalValue = collect($writeOffResult['write_off_details'])
+            ->sum(static fn (array $detail): float => (float) $detail['quantity'] * (float) $detail['unit_price']);
+        $avgPrice = $quantity > 0 ? $totalValue / $quantity : 0;
 
         // 2. Находим или создаем склад в целевой организации
         $targetWarehouse = $this->findOrCreateTargetWarehouse($contractor->source_organization_id);
 
         // 3. Синхронизируем материал
         $targetMaterial = $this->syncMaterial($materialId, $contractor->source_organization_id);
+        $targetProjectId = $this->resolveTargetProjectId($projectId, $contractor->source_organization_id);
 
         // 4. Приходуем в целевой организации
         $this->warehouseService->receiveAsset(
@@ -112,14 +113,13 @@ class ContractorTransferService
             $avgPrice,
             [
                 'user_id' => null, // Системная операция
-                'project_id' => null, // TODO: Можно передавать ID проекта, если он синхронизирован
+                'project_id' => $targetProjectId,
                 'document_number' => $documentNumber,
                 'reason' => "Получено от заказчика (Орг. ID: {$sourceOrganizationId})",
-                'metadata' => [
-                    'is_customer_transfer' => true,
-                    'source_organization_id' => $sourceOrganizationId,
-                    'source_movement_ids' => collect($writeOffResult['movements'])->pluck('id')->toArray()
-                ]
+                'is_customer_transfer' => true,
+                'source_organization_id' => $sourceOrganizationId,
+                'source_project_id' => $projectId,
+                'source_movement_ids' => [$writeOffResult['movement']->id],
             ]
         );
 
@@ -139,10 +139,10 @@ class ContractorTransferService
         Contractor $contractor,
         int $materialId,
         float $quantity,
+        int $userId,
         ?int $projectId,
         ?string $documentNumber,
-        ?string $reason,
-        int $userId
+        ?string $reason
     ): array
     {
         // 1. Ищем или создаем склад подрядчика
@@ -172,10 +172,8 @@ class ContractorTransferService
                 'project_id' => $projectId,
                 'document_number' => $documentNumber,
                 'reason' => $reason ?? "Передача материалов подрядчику {$contractor->name}",
-                'metadata' => [
-                    'is_contractor_transfer' => true,
-                    'contractor_id' => $contractor->id
-                ]
+                'is_contractor_transfer' => true,
+                'contractor_id' => $contractor->id,
             ]
         );
 
@@ -210,6 +208,20 @@ class ContractorTransferService
         }
 
         return $warehouse;
+    }
+
+    protected function resolveTargetProjectId(?int $projectId, int $targetOrganizationId): ?int
+    {
+        if ($projectId === null) {
+            return null;
+        }
+
+        $isAccessible = Project::query()
+            ->accessibleByOrganization($targetOrganizationId)
+            ->whereKey($projectId)
+            ->exists();
+
+        return $isAccessible ? $projectId : null;
     }
 
     protected function syncMaterial(int $sourceMaterialId, int $targetOrganizationId): Material

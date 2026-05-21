@@ -27,18 +27,18 @@ class ModulePermissionMiddleware
         $user = Auth::user();
         
         if (!$user) {
-            return response()->json([
+            return \App\Http\Responses\AdminResponse::fromPayload([
                 'success' => false,
-                'message' => 'Необходима авторизация',
+                'message' => 'РќРµРѕР±С…РѕРґРёРјР° Р°РІС‚РѕСЂРёР·Р°С†РёСЏ',
             ], 401);
         }
 
         if (!$this->permissionService->userHasPermission($user, $permission)) {
             $permissionDetails = $this->permissionService->getPermissionDetails($permission);
             
-            return response()->json([
+            return \App\Http\Responses\AdminResponse::fromPayload([
                 'success' => false,
-                'message' => 'Недостаточно прав доступа',
+                'message' => 'РќРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ РїСЂР°РІ РґРѕСЃС‚СѓРїР°',
                 'required_permission' => $permission,
                 'available_in_modules' => $permissionDetails['provided_by_modules'],
                 'error_code' => 'PERMISSION_DENIED'

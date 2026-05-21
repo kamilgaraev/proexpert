@@ -146,21 +146,21 @@ class ModulePermissionService
             $user = auth()->user();
             
             if (!$user) {
-                return response()->json([
+                return \App\Http\Responses\AdminResponse::fromPayload([
                     'success' => false,
-                    'message' => 'Необходима авторизация'
+                    'message' => 'РќРµРѕР±С…РѕРґРёРјР° Р°РІС‚РѕСЂРёР·Р°С†РёСЏ'
                 ], 401);
             }
             
             if (!$this->userHasModuleAccess($user, $moduleSlug)) {
-                return response()->json([
+                return \App\Http\Responses\AdminResponse::fromPayload([
                     'success' => false,
-                    'message' => 'Доступ к модулю запрещен',
+                    'message' => 'Р”РѕСЃС‚СѓРї Рє РјРѕРґСѓР»СЋ Р·Р°РїСЂРµС‰РµРЅ',
                     'required_module' => $moduleSlug
                 ], 403);
             }
             
-            return null; // Доступ разрешен
+            return null; // Р”РѕСЃС‚СѓРї СЂР°Р·СЂРµС€РµРЅ
         };
     }
     
@@ -170,24 +170,24 @@ class ModulePermissionService
             $user = auth()->user();
             
             if (!$user) {
-                return response()->json([
+                return \App\Http\Responses\AdminResponse::fromPayload([
                     'success' => false,
-                    'message' => 'Необходима авторизация'
+                    'message' => 'РќРµРѕР±С…РѕРґРёРјР° Р°РІС‚РѕСЂРёР·Р°С†РёСЏ'
                 ], 401);
             }
             
             if (!$this->userHasPermission($user, $permission)) {
                 $permissionDetails = $this->getPermissionDetails($permission);
                 
-                return response()->json([
+                return \App\Http\Responses\AdminResponse::fromPayload([
                     'success' => false,
-                    'message' => 'Недостаточно прав доступа',
+                    'message' => 'РќРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ РїСЂР°РІ РґРѕСЃС‚СѓРїР°',
                     'required_permission' => $permission,
                     'available_in_modules' => $permissionDetails['provided_by_modules']
                 ], 403);
             }
             
-            return null; // Доступ разрешен
+            return null; // Р”РѕСЃС‚СѓРї СЂР°Р·СЂРµС€РµРЅ
         };
     }
     

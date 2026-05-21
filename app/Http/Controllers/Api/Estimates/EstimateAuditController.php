@@ -29,7 +29,7 @@ class EstimateAuditController extends Controller
 
         $history = $this->auditService->getChangeHistory($estimate, $filters);
 
-        return response()->json($history);
+        return \App\Http\Responses\AdminResponse::fromPayload($history);
     }
 
     public function snapshots(Request $request, int $estimateId): JsonResponse
@@ -39,7 +39,7 @@ class EstimateAuditController extends Controller
 
         $snapshots = $this->auditService->getSnapshots($estimate, $type);
 
-        return response()->json($snapshots);
+        return \App\Http\Responses\AdminResponse::fromPayload($snapshots);
     }
 
     public function createSnapshot(Request $request, int $estimateId): JsonResponse
@@ -58,7 +58,7 @@ class EstimateAuditController extends Controller
             $request->input('description')
         );
 
-        return response()->json($snapshot, 201);
+        return \App\Http\Responses\AdminResponse::fromPayload($snapshot, 201);
     }
 
     public function compare(Request $request): JsonResponse
@@ -73,7 +73,7 @@ class EstimateAuditController extends Controller
 
         $diff = $this->auditService->compareEstimates($estimate1, $estimate2);
 
-        return response()->json($diff);
+        return \App\Http\Responses\AdminResponse::fromPayload($diff);
     }
 
     public function compareSnapshots(Request $request): JsonResponse
@@ -88,7 +88,7 @@ class EstimateAuditController extends Controller
 
         $diff = $this->auditService->compareSnapshots($snapshot1, $snapshot2);
 
-        return response()->json($diff);
+        return \App\Http\Responses\AdminResponse::fromPayload($diff);
     }
 
     public function restore(Request $request, int $estimateId, int $snapshotId): JsonResponse
@@ -97,18 +97,18 @@ class EstimateAuditController extends Controller
         $snapshot = EstimateSnapshot::findOrFail($snapshotId);
 
         if ($snapshot->estimate_id !== $estimate->id) {
-            return response()->json(['error' => 'Снимок не принадлежит этой смете'], 400);
+            return \App\Http\Responses\AdminResponse::fromPayload(['error' => 'РЎРЅРёРјРѕРє РЅРµ РїСЂРёРЅР°РґР»РµР¶РёС‚ СЌС‚РѕР№ СЃРјРµС‚Рµ'], 400);
         }
 
         try {
             $estimate = $this->auditService->restoreFromSnapshot($estimate, $snapshot);
 
-            return response()->json([
-                'message' => 'Смета восстановлена из снимка',
+            return \App\Http\Responses\AdminResponse::fromPayload([
+                'message' => 'РЎРјРµС‚Р° РІРѕСЃСЃС‚Р°РЅРѕРІР»РµРЅР° РёР· СЃРЅРёРјРєР°',
                 'estimate' => $estimate,
             ]);
         } catch (\RuntimeException $e) {
-            return response()->json(['error' => $e->getMessage()], 400);
+            return \App\Http\Responses\AdminResponse::fromPayload(['error' => $e->getMessage()], 400);
         }
     }
 }

@@ -19,19 +19,19 @@ class SubscriptionLimitsController extends Controller
     }
 
     /**
-     * Получить информацию о лимитах текущей подписки пользователя
+     * РџРѕР»СѓС‡РёС‚СЊ РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ Р»РёРјРёС‚Р°С… С‚РµРєСѓС‰РµР№ РїРѕРґРїРёСЃРєРё РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
      */
     public function show(Request $request): JsonResponse
     {
         $user = Auth::user();
         
-        // Кешируем лимиты подписки на 5 минут
+        // РљРµС€РёСЂСѓРµРј Р»РёРјРёС‚С‹ РїРѕРґРїРёСЃРєРё РЅР° 5 РјРёРЅСѓС‚
         $cacheKey = "subscription_limits_{$user->id}_{$user->current_organization_id}";
         $limitsData = \Illuminate\Support\Facades\Cache::remember($cacheKey, 300, function () use ($user) {
             return $this->limitsService->getUserLimitsData($user);
         });
         
-        return response()->json([
+        return \App\Http\Responses\LandingResponse::fromPayload([
             'success' => true,
             'data' => new SubscriptionLimitsResource($limitsData)
         ]);

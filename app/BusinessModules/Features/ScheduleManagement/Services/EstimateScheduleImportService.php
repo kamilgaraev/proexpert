@@ -198,7 +198,7 @@ class EstimateScheduleImportService
      * @param array $options Опции
      * @return ScheduleTask Созданная задача
      */
-    private function createTaskFromSection(
+    public function createTaskFromSection(
         ProjectSchedule $schedule,
         EstimateSection $section,
         Carbon $startDate,
@@ -208,7 +208,7 @@ class EstimateScheduleImportService
         return ScheduleTask::create([
             'schedule_id' => $schedule->id,
             'organization_id' => $schedule->organization_id,
-            'created_by_user_id' => auth()->id(),
+            'created_by_user_id' => auth()->id() ?? $schedule->created_by_user_id,
             'estimate_section_id' => $section->id,
             'name' => $section->name,
             'description' => $section->description,
@@ -240,7 +240,7 @@ class EstimateScheduleImportService
      * @return ScheduleTask Созданная задача
      * @throws \InvalidArgumentException Если передана не работа
      */
-    private function createTaskFromItem(
+    public function createTaskFromItem(
         ProjectSchedule $schedule,
         EstimateItem $item,
         EstimateSection $section,
@@ -275,7 +275,7 @@ class EstimateScheduleImportService
         return ScheduleTask::create(array_merge($taskData, [
             'schedule_id' => $schedule->id,
             'organization_id' => $schedule->organization_id,
-            'created_by_user_id' => auth()->id(),
+            'created_by_user_id' => auth()->id() ?? $schedule->created_by_user_id,
             'parent_task_id' => $parentTask->id,
             'estimate_item_id' => $item->id,
             'estimate_section_id' => $section->id,
@@ -360,7 +360,7 @@ class EstimateScheduleImportService
      * @param ScheduleTask $sectionTask Задача-группа
      * @return void
      */
-    private function updateSectionTaskDates(ScheduleTask $sectionTask): void
+    public function updateSectionTaskDates(ScheduleTask $sectionTask): void
     {
         $childTasks = $sectionTask->childTasks;
 
@@ -389,7 +389,7 @@ class EstimateScheduleImportService
      * @param ProjectSchedule $schedule График
      * @return void
      */
-    private function recalculateScheduleDates(ProjectSchedule $schedule): void
+    public function recalculateScheduleDates(ProjectSchedule $schedule): void
     {
         $tasks = $schedule->tasks()->get();
 

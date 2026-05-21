@@ -16,7 +16,7 @@ use Illuminate\Validation\ValidationException;
 use App\Models\User;
 
 /**
- * Контроллер для управления пользователями с кастомными ролями
+ * РљРѕРЅС‚СЂРѕР»Р»РµСЂ РґР»СЏ СѓРїСЂР°РІР»РµРЅРёСЏ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏРјРё СЃ РєР°СЃС‚РѕРјРЅС‹РјРё СЂРѕР»СЏРјРё
  */
 class CustomUserManagementController extends Controller
 {
@@ -41,7 +41,7 @@ class CustomUserManagementController extends Controller
     }
 
     /**
-     * Создать пользователя с кастомными ролями
+     * РЎРѕР·РґР°С‚СЊ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ СЃ РєР°СЃС‚РѕРјРЅС‹РјРё СЂРѕР»СЏРјРё
      */
     public function createUserWithCustomRoles(Request $request): JsonResponse
     {
@@ -55,30 +55,30 @@ class CustomUserManagementController extends Controller
             'roles.*' => 'string',
             'send_credentials' => 'sometimes|boolean'
         ]);
-        
+
         $organizationId = $request->attributes->get('current_organization_id');
-        
+
         if (!$organizationId) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
-                'message' => 'Контекст организации не определен'
+                'message' => 'РљРѕРЅС‚РµРєСЃС‚ РѕСЂРіР°РЅРёР·Р°С†РёРё РЅРµ РѕРїСЂРµРґРµР»РµРЅ'
             ], 400);
         }
 
         try {
-            // Создаем пользователя
+            // РЎРѕР·РґР°РµРј РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
             $data['password'] = Hash::make($data['password']);
-            // $data['user_type'] = 'custom_role_user'; // Удалена в новой системе авторизации
+            // $data['user_type'] = 'custom_role_user'; // РЈРґР°Р»РµРЅР° РІ РЅРѕРІРѕР№ СЃРёСЃС‚РµРјРµ Р°РІС‚РѕСЂРёР·Р°С†РёРё
             $data['current_organization_id'] = $organizationId;
-            
+
             $user = $this->userRepository->create($data);
-            
-            // Привязываем к организации
+
+            // РџСЂРёРІСЏР·С‹РІР°РµРј Рє РѕСЂРіР°РЅРёР·Р°С†РёРё
             $this->userRepository->attachToOrganization($user->id, $organizationId, false, true);
-            
+
             $authContext = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
 
-            // Назначаем кастомные роли через новую систему
+            // РќР°Р·РЅР°С‡Р°РµРј РєР°СЃС‚РѕРјРЅС‹Рµ СЂРѕР»Рё С‡РµСЂРµР· РЅРѕРІСѓСЋ СЃРёСЃС‚РµРјСѓ
             if (!empty($data['custom_role_ids'])) {
                 foreach ($data['custom_role_ids'] as $roleId) {
                     $role = \App\Domain\Authorization\Models\OrganizationCustomRole::findOrFail($roleId);
@@ -86,18 +86,18 @@ class CustomUserManagementController extends Controller
                 }
             }
 
-            // Назначаем системные роли
+            // РќР°Р·РЅР°С‡Р°РµРј СЃРёСЃС‚РµРјРЅС‹Рµ СЂРѕР»Рё
             if (!empty($data['roles'])) {
                 foreach ($data['roles'] as $roleSlug) {
                     try {
                         $this->authService->assignRole($user, $roleSlug, $authContext);
                     } catch (\InvalidArgumentException $e) {
                         Log::warning("Skipping invalid system role: {$roleSlug}", ['error' => $e->getMessage()]);
-                        // Можно прервать или продолжить. Продолжим.
+                        // РњРѕР¶РЅРѕ РїСЂРµСЂРІР°С‚СЊ РёР»Рё РїСЂРѕРґРѕР»Р¶РёС‚СЊ. РџСЂРѕРґРѕР»Р¶РёРј.
                     }
                 }
             }
-            
+
             if (!$user->hasVerifiedEmail()) {
                 try {
                     $user->sendEmailVerificationNotification();
@@ -112,12 +112,12 @@ class CustomUserManagementController extends Controller
                     ]);
                 }
             }
-            
+
             if ($data['send_credentials'] ?? false) {
                 Log::info('User credentials need to be sent', ['user_id' => $user->id]);
             }
-            
-            return response()->json([
+
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => true,
                 'data' => [
                     'user' => [
@@ -128,13 +128,13 @@ class CustomUserManagementController extends Controller
                         'created_at' => $user->created_at
                     ]
                 ],
-                'message' => 'Пользователь успешно создан с назначенными ролями'
+                'message' => 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ СѓСЃРїРµС€РЅРѕ СЃРѕР·РґР°РЅ СЃ РЅР°Р·РЅР°С‡РµРЅРЅС‹РјРё СЂРѕР»СЏРјРё'
             ], 201);
-            
+
         } catch (ValidationException $e) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
-                'message' => 'Ошибка валидации',
+                'message' => 'РћС€РёР±РєР° РІР°Р»РёРґР°С†РёРё',
                 'errors' => $e->errors()
             ], 422);
         } catch (\Exception $e) {
@@ -142,43 +142,43 @@ class CustomUserManagementController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
-            return response()->json([
+
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
-                'message' => 'Ошибка при создании пользователя: ' . $e->getMessage()
+                'message' => 'РћС€РёР±РєР° РїСЂРё СЃРѕР·РґР°РЅРёРё РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ: ' . $e->getMessage()
             ], 500);
         }
     }
 
     /**
-     * Получить доступные роли для организации
+     * РџРѕР»СѓС‡РёС‚СЊ РґРѕСЃС‚СѓРїРЅС‹Рµ СЂРѕР»Рё РґР»СЏ РѕСЂРіР°РЅРёР·Р°С†РёРё
      */
     public function getAvailableRoles(Request $request): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id');
-        
+
         if (!$organizationId) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
-                'message' => 'Контекст организации не определен'
+                'message' => 'РљРѕРЅС‚РµРєСЃС‚ РѕСЂРіР°РЅРёР·Р°С†РёРё РЅРµ РѕРїСЂРµРґРµР»РµРЅ'
             ], 400);
         }
 
         try {
-            // Системные роли
+            // РЎРёСЃС‚РµРјРЅС‹Рµ СЂРѕР»Рё
             $systemRoles = $this->roleScanner->getAllRoles()->toArray();
-            
-            // Кастомные роли организации
+
+            // РљР°СЃС‚РѕРјРЅС‹Рµ СЂРѕР»Рё РѕСЂРіР°РЅРёР·Р°С†РёРё
             $customRoles = collect([]);
             try {
                 $customRoles = $this->customRoleService->getOrganizationRoles($organizationId);
             } catch (\Exception $e) {
-                // Если таблицы новой системы еще не готовы
+                // Р•СЃР»Рё С‚Р°Р±Р»РёС†С‹ РЅРѕРІРѕР№ СЃРёСЃС‚РµРјС‹ РµС‰Рµ РЅРµ РіРѕС‚РѕРІС‹
                 $customRoles = collect([]);
                 Log::warning('Custom roles not available yet', ['error' => $e->getMessage()]);
             }
-            
-            return response()->json([
+
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => true,
                 'data' => [
                     'system_roles' => array_keys($systemRoles),
@@ -199,16 +199,16 @@ class CustomUserManagementController extends Controller
                 'error' => $e->getMessage(),
                 'organization_id' => $organizationId
             ]);
-            
-            return response()->json([
+
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
-                'message' => 'Ошибка при получении доступных ролей'
+                'message' => 'РћС€РёР±РєР° РїСЂРё РїРѕР»СѓС‡РµРЅРёРё РґРѕСЃС‚СѓРїРЅС‹С… СЂРѕР»РµР№'
             ], 500);
         }
     }
 
     /**
-     * Обновить кастомные роли пользователя
+     * РћР±РЅРѕРІРёС‚СЊ РєР°СЃС‚РѕРјРЅС‹Рµ СЂРѕР»Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
      */
     public function updateUserCustomRoles(Request $request, int $userId): JsonResponse
     {
@@ -218,29 +218,29 @@ class CustomUserManagementController extends Controller
         ]);
 
         $organizationId = $request->attributes->get('current_organization_id');
-        
+
         if (!$organizationId) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
-                'message' => 'Контекст организации не определен'
+                'message' => 'РљРѕРЅС‚РµРєСЃС‚ РѕСЂРіР°РЅРёР·Р°С†РёРё РЅРµ РѕРїСЂРµРґРµР»РµРЅ'
             ], 400);
         }
 
         try {
-            // Получаем пользователя
+            // РџРѕР»СѓС‡Р°РµРј РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
             $user = $this->userRepository->find($userId);
             if (!$user) {
-                return response()->json([
+                return \App\Http\Responses\LandingResponse::fromPayload([
                     'success' => false,
-                    'message' => 'Пользователь не найден'
+                    'message' => 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РЅР°Р№РґРµРЅ'
                 ], 404);
             }
 
-            // Проверяем принадлежность к организации
+            // РџСЂРѕРІРµСЂСЏРµРј РїСЂРёРЅР°РґР»РµР¶РЅРѕСЃС‚СЊ Рє РѕСЂРіР°РЅРёР·Р°С†РёРё
             if (!$user->organizations()->where('organization_user.organization_id', $organizationId)->exists()) {
-                return response()->json([
+                return \App\Http\Responses\LandingResponse::fromPayload([
                     'success' => false,
-                    'message' => 'Пользователь не принадлежит к данной организации'
+                    'message' => 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РїСЂРёРЅР°РґР»РµР¶РёС‚ Рє РґР°РЅРЅРѕР№ РѕСЂРіР°РЅРёР·Р°С†РёРё'
                 ], 403);
             }
 
@@ -253,9 +253,9 @@ class CustomUserManagementController extends Controller
                 $actor instanceof User ? $actor : null
             );
 
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => true,
-                'message' => 'Роли пользователя успешно обновлены'
+                'message' => 'Р РѕР»Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ СѓСЃРїРµС€РЅРѕ РѕР±РЅРѕРІР»РµРЅС‹'
             ]);
 
         } catch (\Exception $e) {
@@ -264,46 +264,46 @@ class CustomUserManagementController extends Controller
                 'error' => $e->getMessage(),
                 'organization_id' => $organizationId
             ]);
-            
-            return response()->json([
+
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
-                'message' => 'Ошибка при обновлении ролей пользователя'
+                'message' => 'РћС€РёР±РєР° РїСЂРё РѕР±РЅРѕРІР»РµРЅРёРё СЂРѕР»РµР№ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ'
             ], 500);
         }
     }
 
     /**
-     * Назначить кастомную роль пользователю
+     * РќР°Р·РЅР°С‡РёС‚СЊ РєР°СЃС‚РѕРјРЅСѓСЋ СЂРѕР»СЊ РїРѕР»СЊР·РѕРІР°С‚РµР»СЋ
      */
     public function assignCustomRole(Request $request, int $userId, int $roleId): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id');
-        
+
         if (!$organizationId) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
-                'message' => 'Контекст организации не определен'
+                'message' => 'РљРѕРЅС‚РµРєСЃС‚ РѕСЂРіР°РЅРёР·Р°С†РёРё РЅРµ РѕРїСЂРµРґРµР»РµРЅ'
             ], 400);
         }
 
         try {
-            // Получаем роль и пользователя для передачи в сервис
+            // РџРѕР»СѓС‡Р°РµРј СЂРѕР»СЊ Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ РґР»СЏ РїРµСЂРµРґР°С‡Рё РІ СЃРµСЂРІРёСЃ
             $role = \App\Domain\Authorization\Models\OrganizationCustomRole::findOrFail($roleId);
             $user = $this->userRepository->find($userId);
-            
+
             if (!$user) {
-                return response()->json([
+                return \App\Http\Responses\LandingResponse::fromPayload([
                     'success' => false,
-                    'message' => 'Пользователь не найден'
+                    'message' => 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РЅР°Р№РґРµРЅ'
                 ], 404);
             }
-            
+
             $authContext = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
             $this->customRoleService->assignRoleToUser($role, $user, $authContext);
 
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => true,
-                'message' => 'Роль успешно назначена пользователю'
+                'message' => 'Р РѕР»СЊ СѓСЃРїРµС€РЅРѕ РЅР°Р·РЅР°С‡РµРЅР° РїРѕР»СЊР·РѕРІР°С‚РµР»СЋ'
             ]);
 
         } catch (\Exception $e) {
@@ -313,40 +313,40 @@ class CustomUserManagementController extends Controller
                 'error' => $e->getMessage(),
                 'organization_id' => $organizationId
             ]);
-            
-            return response()->json([
+
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
-                'message' => 'Ошибка при назначении роли'
+                'message' => 'РћС€РёР±РєР° РїСЂРё РЅР°Р·РЅР°С‡РµРЅРёРё СЂРѕР»Рё'
             ], 500);
         }
     }
 
     /**
-     * Отозвать кастомную роль у пользователя
+     * РћС‚РѕР·РІР°С‚СЊ РєР°СЃС‚РѕРјРЅСѓСЋ СЂРѕР»СЊ Сѓ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
      */
     public function unassignCustomRole(Request $request, int $userId, int $roleId): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id');
-        
+
         if (!$organizationId) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
-                'message' => 'Контекст организации не определен'
+                'message' => 'РљРѕРЅС‚РµРєСЃС‚ РѕСЂРіР°РЅРёР·Р°С†РёРё РЅРµ РѕРїСЂРµРґРµР»РµРЅ'
             ], 400);
         }
 
         try {
-            // Получаем роль и пользователя для передачи в сервис  
+            // РџРѕР»СѓС‡Р°РµРј СЂРѕР»СЊ Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ РґР»СЏ РїРµСЂРµРґР°С‡Рё РІ СЃРµСЂРІРёСЃ
             $role = \App\Domain\Authorization\Models\OrganizationCustomRole::findOrFail($roleId);
             $user = $this->userRepository->find($userId);
-            
+
             if (!$user) {
-                return response()->json([
+                return \App\Http\Responses\LandingResponse::fromPayload([
                     'success' => false,
-                    'message' => 'Пользователь не найден'
+                    'message' => 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РЅР°Р№РґРµРЅ'
                 ], 404);
             }
-            
+
             $authContext = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
             $revokedBy = $request->user();
             $this->authService->revokeRole(
@@ -356,9 +356,9 @@ class CustomUserManagementController extends Controller
                 $revokedBy instanceof User ? $revokedBy : null
             );
 
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => true,
-                'message' => 'Роль успешно отозвана у пользователя'
+                'message' => 'Р РѕР»СЊ СѓСЃРїРµС€РЅРѕ РѕС‚РѕР·РІР°РЅР° Сѓ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ'
             ]);
 
         } catch (\Exception $e) {
@@ -368,24 +368,24 @@ class CustomUserManagementController extends Controller
                 'error' => $e->getMessage(),
                 'organization_id' => $organizationId
             ]);
-            
-            return response()->json([
+
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
-                'message' => 'Ошибка при отзыве роли'
+                'message' => 'РћС€РёР±РєР° РїСЂРё РѕС‚Р·С‹РІРµ СЂРѕР»Рё'
             ], 500);
         }
     }
 
     /**
-     * Получить лимиты пользователя
+     * РџРѕР»СѓС‡РёС‚СЊ Р»РёРјРёС‚С‹ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
      */
     public function getUserLimits(Request $request): JsonResponse
     {
         try {
             $user = $request->user();
             $limits = $this->subscriptionLimitsService->getUserLimitsData($user);
-            
-            return response()->json([
+
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => true,
                 'data' => $limits
             ]);
@@ -394,10 +394,10 @@ class CustomUserManagementController extends Controller
                 'user_id' => $request->user()->id ?? null,
                 'error' => $e->getMessage()
             ]);
-            
-            return response()->json([
+
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
-                'message' => 'Ошибка при получении лимитов пользователя'
+                'message' => 'РћС€РёР±РєР° РїСЂРё РїРѕР»СѓС‡РµРЅРёРё Р»РёРјРёС‚РѕРІ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ'
             ], 500);
         }
     }

@@ -34,7 +34,7 @@ class OrganizationProfileController extends Controller
 
             $profile = $this->profileService->getProfile($organization);
 
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => true,
                 'data' => $this->buildProfilePayload($organization, $profile),
             ]);
@@ -44,7 +44,7 @@ class OrganizationProfileController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
                 'message' => 'Failed to retrieve profile',
             ], 500);
@@ -59,7 +59,7 @@ class OrganizationProfileController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
                 'message' => 'Validation failed',
                 'errors' => $validator->errors(),
@@ -79,9 +79,9 @@ class OrganizationProfileController extends Controller
             );
             $profile = $this->profileService->getProfile($updatedOrganization);
 
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => true,
-                'message' => 'Capabilities успешно обновлены',
+                'message' => 'Capabilities СѓСЃРїРµС€РЅРѕ РѕР±РЅРѕРІР»РµРЅС‹',
                 'data' => $this->buildProfileUpdatePayload($profile),
             ]);
         } catch (\Throwable $e) {
@@ -90,7 +90,7 @@ class OrganizationProfileController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
                 'message' => 'Failed to update capabilities',
             ], 500);
@@ -104,7 +104,7 @@ class OrganizationProfileController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
                 'message' => 'Validation failed',
                 'errors' => $validator->errors(),
@@ -124,13 +124,13 @@ class OrganizationProfileController extends Controller
             );
             $profile = $this->profileService->getProfile($updatedOrganization);
 
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => true,
-                'message' => 'Основной тип деятельности обновлен',
+                'message' => 'РћСЃРЅРѕРІРЅРѕР№ С‚РёРї РґРµСЏС‚РµР»СЊРЅРѕСЃС‚Рё РѕР±РЅРѕРІР»РµРЅ',
                 'data' => $this->buildProfileUpdatePayload($profile),
             ]);
         } catch (\InvalidArgumentException $e) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
                 'message' => $e->getMessage(),
             ], 422);
@@ -140,7 +140,7 @@ class OrganizationProfileController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
                 'message' => 'Failed to update business type',
             ], 500);
@@ -155,7 +155,7 @@ class OrganizationProfileController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
                 'message' => 'Validation failed',
                 'errors' => $validator->errors(),
@@ -175,9 +175,9 @@ class OrganizationProfileController extends Controller
             );
             $profile = $this->profileService->getProfile($updatedOrganization);
 
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => true,
-                'message' => 'Специализации обновлены',
+                'message' => 'РЎРїРµС†РёР°Р»РёР·Р°С†РёРё РѕР±РЅРѕРІР»РµРЅС‹',
                 'data' => $this->buildProfileUpdatePayload($profile),
             ]);
         } catch (\Throwable $e) {
@@ -186,7 +186,7 @@ class OrganizationProfileController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
                 'message' => 'Failed to update specializations',
             ], 500);
@@ -201,7 +201,7 @@ class OrganizationProfileController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
                 'message' => 'Validation failed',
                 'errors' => $validator->errors(),
@@ -221,9 +221,9 @@ class OrganizationProfileController extends Controller
             );
             $profile = $this->profileService->getProfile($updatedOrganization);
 
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => true,
-                'message' => 'Сертификаты обновлены',
+                'message' => 'РЎРµСЂС‚РёС„РёРєР°С‚С‹ РѕР±РЅРѕРІР»РµРЅС‹',
                 'data' => $this->buildProfileUpdatePayload($profile),
             ]);
         } catch (\Throwable $e) {
@@ -232,7 +232,7 @@ class OrganizationProfileController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
                 'message' => 'Failed to update certifications',
             ], 500);
@@ -251,9 +251,9 @@ class OrganizationProfileController extends Controller
             $profile = $this->profileService->getProfile($organization);
 
             if ($profile->getProfileCompleteness() < 50) {
-                return response()->json([
+                return \App\Http\Responses\LandingResponse::fromPayload([
                     'success' => false,
-                    'message' => 'Профиль заполнен менее чем на 50%. Пожалуйста, заполните основную информацию.',
+                    'message' => 'РџСЂРѕС„РёР»СЊ Р·Р°РїРѕР»РЅРµРЅ РјРµРЅРµРµ С‡РµРј РЅР° 50%. РџРѕР¶Р°Р»СѓР№СЃС‚Р°, Р·Р°РїРѕР»РЅРёС‚Рµ РѕСЃРЅРѕРІРЅСѓСЋ РёРЅС„РѕСЂРјР°С†РёСЋ.',
                     'data' => [
                         'completeness' => $profile->getProfileCompleteness(),
                         'required_fields' => [
@@ -267,9 +267,9 @@ class OrganizationProfileController extends Controller
             $updatedOrganization = $this->profileService->completeOnboarding($organization);
             $updatedProfile = $this->profileService->getProfile($updatedOrganization);
 
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => true,
-                'message' => 'Onboarding успешно завершен',
+                'message' => 'Onboarding СѓСЃРїРµС€РЅРѕ Р·Р°РІРµСЂС€РµРЅ',
                 'data' => array_merge(
                     [
                         'onboarding_completed' => $updatedProfile->isOnboardingCompleted(),
@@ -284,7 +284,7 @@ class OrganizationProfileController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
+            return \App\Http\Responses\LandingResponse::fromPayload([
                 'success' => false,
                 'message' => 'Failed to complete onboarding',
             ], 500);
@@ -293,7 +293,7 @@ class OrganizationProfileController extends Controller
 
     public function getAvailableCapabilities(): JsonResponse
     {
-        return response()->json([
+        return \App\Http\Responses\LandingResponse::fromPayload([
             'success' => true,
             'data' => OrganizationCapability::toArray(),
         ]);
@@ -329,9 +329,9 @@ class OrganizationProfileController extends Controller
 
     private function notFoundResponse(): JsonResponse
     {
-        return response()->json([
+        return \App\Http\Responses\LandingResponse::fromPayload([
             'success' => false,
-            'message' => 'Организация не найдена',
+            'message' => 'РћСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°',
         ], 404);
     }
 }

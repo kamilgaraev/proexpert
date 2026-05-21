@@ -16,7 +16,7 @@ class LandingAdminController extends Controller
     public function index()
     {
         $admins = LandingAdmin::query()->paginate();
-        return response()->json($admins);
+        return \App\Http\Responses\LandingResponse::fromPayload($admins);
     }
 
     /**
@@ -37,7 +37,7 @@ class LandingAdminController extends Controller
         }
 
         $admin = LandingAdmin::create($data);
-        return response()->json($admin, 201);
+        return \App\Http\Responses\LandingResponse::fromPayload($admin, 201);
     }
 
     /**
@@ -45,7 +45,7 @@ class LandingAdminController extends Controller
      */
     public function show(LandingAdmin $landingAdmin)
     {
-        return response()->json($landingAdmin);
+        return \App\Http\Responses\LandingResponse::fromPayload($landingAdmin);
     }
 
     /**
@@ -68,7 +68,7 @@ class LandingAdminController extends Controller
         }
 
         $landingAdmin->update($data);
-        return response()->json($landingAdmin);
+        return \App\Http\Responses\LandingResponse::fromPayload($landingAdmin);
     }
 
     /**
@@ -77,6 +77,6 @@ class LandingAdminController extends Controller
     public function destroy(LandingAdmin $landingAdmin)
     {
         $landingAdmin->delete();
-        return response()->json(['message' => 'Deleted'], 204);
+        return \App\Http\Responses\LandingResponse::fromPayload(['message' => 'Deleted'], 204);
     }
 } 

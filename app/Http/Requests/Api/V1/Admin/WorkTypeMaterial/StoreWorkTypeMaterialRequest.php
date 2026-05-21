@@ -15,7 +15,7 @@ class StoreWorkTypeMaterialRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return Auth::check(); // Доступ к админке обычно проверяется middleware группы
+        return Auth::check(); // Р”РѕСЃС‚СѓРї Рє Р°РґРјРёРЅРєРµ РѕР±С‹С‡РЅРѕ РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ middleware РіСЂСѓРїРїС‹
     }
 
     public function rules(): array
@@ -42,9 +42,9 @@ class StoreWorkTypeMaterialRequest extends FormRequest
     {
         $errors = (new ValidationException($validator))->errors();
         throw new HttpResponseException(
-            response()->json([
+            \App\Http\Responses\AdminResponse::fromPayload([
                 'success' => false,
-                'message' => 'Данные не прошли валидацию.',
+                'message' => 'Р”Р°РЅРЅС‹Рµ РЅРµ РїСЂРѕС€Р»Рё РІР°Р»РёРґР°С†РёСЋ.',
                 'errors' => $errors,
             ], JsonResponse::HTTP_UNPROCESSABLE_ENTITY)
         );
@@ -61,7 +61,7 @@ class StoreWorkTypeMaterialRequest extends FormRequest
                 material_id: $materialData['material_id'],
                 default_quantity: (float)$materialData['default_quantity'],
                 notes: $materialData['notes'] ?? null
-                // organization_id и work_type_id будут установлены в сервисе
+                // organization_id Рё work_type_id Р±СѓРґСѓС‚ СѓСЃС‚Р°РЅРѕРІР»РµРЅС‹ РІ СЃРµСЂРІРёСЃРµ
             );
         }
         return $dtos;

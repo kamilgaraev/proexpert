@@ -2,6 +2,7 @@
 
 namespace App\Http\Responses;
 
+use App\Http\Responses\Concerns\NormalizesPayloadResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -9,6 +10,8 @@ use Illuminate\Http\Resources\Json\ResourceCollection;
 
 class LandingResponse
 {
+    use NormalizesPayloadResponse;
+
     /**
      * Return a success response for Landing/LK API.
      *
@@ -17,13 +20,22 @@ class LandingResponse
      * @param int $code
      * @return JsonResponse
      */
-    public static function success(mixed $data = null, string $message = null, int $code = 200): JsonResponse
+    public static function success(
+        mixed $data = null,
+        ?string $message = null,
+        int $code = 200,
+        ?array $meta = null
+    ): JsonResponse
     {
         $response = [
             'success' => true,
             'message' => $message,
             'data'    => self::transformData($data),
         ];
+
+        if ($meta !== null) {
+            $response['meta'] = $meta;
+        }
 
         return response()->json($response, $code);
     }
@@ -46,6 +58,7 @@ class LandingResponse
         $response = [
             'success' => false,
             'message' => $message,
+            'data' => null,
         ];
 
         if (!is_null($errors)) {

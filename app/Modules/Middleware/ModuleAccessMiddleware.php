@@ -22,16 +22,16 @@ class ModuleAccessMiddleware
         $user = Auth::user();
         
         if (!$user) {
-            return response()->json([
+            return \App\Http\Responses\AdminResponse::fromPayload([
                 'success' => false,
-                'message' => 'Необходима авторизация',
+                'message' => 'РќРµРѕР±С…РѕРґРёРјР° Р°РІС‚РѕСЂРёР·Р°С†РёСЏ',
             ], 401);
         }
 
         if (!$this->permissionService->userHasModuleAccess($user, $moduleSlug)) {
-            return response()->json([
+            return \App\Http\Responses\AdminResponse::fromPayload([
                 'success' => false,
-                'message' => 'Доступ к модулю запрещен',
+                'message' => 'Р”РѕСЃС‚СѓРї Рє РјРѕРґСѓР»СЋ Р·Р°РїСЂРµС‰РµРЅ',
                 'required_module' => $moduleSlug,
                 'error_code' => 'MODULE_ACCESS_DENIED'
             ], 403);

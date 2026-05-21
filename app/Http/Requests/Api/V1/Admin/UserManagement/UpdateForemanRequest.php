@@ -35,7 +35,7 @@ class UpdateForemanRequest extends FormRequest
         $errors = (new ValidationException($validator))->errors();
 
         throw new HttpResponseException(
-            response()->json([
+            \App\Http\Responses\AdminResponse::fromPayload([
                 'success' => false,
                 'message' => trans_message('user.validation_failed'),
                 'errors' => $errors,

@@ -34,7 +34,7 @@ class HoldingSummaryController extends Controller
             'is_approved' => $request->input('is_approved'),
         ];
 
-        // Если требуется CSV
+        // Р•СЃР»Рё С‚СЂРµР±СѓРµС‚СЃСЏ CSV
         if ($request->filled('export') && strtolower($request->input('export')) === 'csv') {
             $section = $request->input('section');
             return $this->exportSectionCsv($section, $orgIds, $filters);
@@ -47,7 +47,7 @@ class HoldingSummaryController extends Controller
         $completedWorks = $this->holdingService->getConsolidatedCompletedWorks($orgIds, $filters);
         $stats         = $this->holdingService->getGlobalStats($orgIds, $filters);
 
-        return response()->json([
+        return \App\Http\Responses\LandingResponse::fromPayload([
             'success' => true,
             'data' => [
                 'organizations' => $organizations,
@@ -67,11 +67,11 @@ class HoldingSummaryController extends Controller
                 $data = $this->holdingService->getConsolidatedProjects($orgIds, $filters);
                 $mapping = [
                     'ID' => 'id',
-                    'Организация' => 'organization.name',
-                    'Название' => 'name',
-                    'Статус' => 'status',
-                    'Начало' => 'start_date',
-                    'Окончание' => 'end_date',
+                    'РћСЂРіР°РЅРёР·Р°С†РёСЏ' => 'organization.name',
+                    'РќР°Р·РІР°РЅРёРµ' => 'name',
+                    'РЎС‚Р°С‚СѓСЃ' => 'status',
+                    'РќР°С‡Р°Р»Рѕ' => 'start_date',
+                    'РћРєРѕРЅС‡Р°РЅРёРµ' => 'end_date',
                 ];
                 $filename = 'projects_summary_' . date('Ymd_His');
                 break;
@@ -79,11 +79,11 @@ class HoldingSummaryController extends Controller
                 $data = $this->holdingService->getConsolidatedContracts($orgIds, $filters);
                 $mapping = [
                     'ID' => 'id',
-                    'Организация' => 'organization.name',
-                    'Номер' => 'number',
-                    'Дата' => 'date',
-                    'Сумма' => 'total_amount',
-                    'Статус' => 'status',
+                    'РћСЂРіР°РЅРёР·Р°С†РёСЏ' => 'organization.name',
+                    'РќРѕРјРµСЂ' => 'number',
+                    'Р”Р°С‚Р°' => 'date',
+                    'РЎСѓРјРјР°' => 'total_amount',
+                    'РЎС‚Р°С‚СѓСЃ' => 'status',
                 ];
                 $filename = 'contracts_summary_' . date('Ymd_His');
                 break;
@@ -91,11 +91,11 @@ class HoldingSummaryController extends Controller
                 $data = $this->holdingService->getConsolidatedActs($orgIds, $filters);
                 $mapping = [
                     'ID' => 'id',
-                    'Организация' => 'organization.name',
-                    'Договор' => 'contract.number',
-                    'Сумма' => 'amount',
-                    'Утвержден' => 'is_approved',
-                    'Дата' => 'date',
+                    'РћСЂРіР°РЅРёР·Р°С†РёСЏ' => 'organization.name',
+                    'Р”РѕРіРѕРІРѕСЂ' => 'contract.number',
+                    'РЎСѓРјРјР°' => 'amount',
+                    'РЈС‚РІРµСЂР¶РґРµРЅ' => 'is_approved',
+                    'Р”Р°С‚Р°' => 'date',
                 ];
                 $filename = 'acts_summary_' . date('Ymd_His');
                 break;
@@ -103,20 +103,20 @@ class HoldingSummaryController extends Controller
                 $data = $this->holdingService->getConsolidatedCompletedWorks($orgIds, $filters);
                 $mapping = [
                     'ID' => 'id',
-                    'Организация' => 'organization.name',
-                    'Проект' => 'project.name',
-                    'Договор' => 'contract.number',
-                    'Вид работ' => 'work_type.name',
-                    'Кол-во' => 'quantity',
-                    'Цена' => 'price',
-                    'Сумма' => 'total_amount',
-                    'Дата' => 'completion_date',
-                    'Статус' => 'status',
+                    'РћСЂРіР°РЅРёР·Р°С†РёСЏ' => 'organization.name',
+                    'РџСЂРѕРµРєС‚' => 'project.name',
+                    'Р”РѕРіРѕРІРѕСЂ' => 'contract.number',
+                    'Р’РёРґ СЂР°Р±РѕС‚' => 'work_type.name',
+                    'РљРѕР»-РІРѕ' => 'quantity',
+                    'Р¦РµРЅР°' => 'price',
+                    'РЎСѓРјРјР°' => 'total_amount',
+                    'Р”Р°С‚Р°' => 'completion_date',
+                    'РЎС‚Р°С‚СѓСЃ' => 'status',
                 ];
                 $filename = 'completed_works_' . date('Ymd_His');
                 break;
             default:
-                return response()->json(['message' => 'Invalid section for export'], 400);
+                return \App\Http\Responses\LandingResponse::fromPayload(['message' => 'Invalid section for export'], 400);
         }
 
         $prepared = $this->csvExporterService->prepareDataForExport($data, $mapping);

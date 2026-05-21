@@ -17,7 +17,7 @@ class RolesComparisonController extends Controller
     }
 
     /**
-     * Получить таблицу сравнения всех ролей
+     * РџРѕР»СѓС‡РёС‚СЊ С‚Р°Р±Р»РёС†Сѓ СЃСЂР°РІРЅРµРЅРёСЏ РІСЃРµС… СЂРѕР»РµР№
      * GET /api/v1/landing/roles/comparison
      */
     public function comparison(Request $request): JsonResponse
@@ -30,7 +30,7 @@ class RolesComparisonController extends Controller
             $comparison[] = $this->formatRoleForComparison($roleSlug, $roleData);
         }
         
-        // Сортируем по контексту и названию
+        // РЎРѕСЂС‚РёСЂСѓРµРј РїРѕ РєРѕРЅС‚РµРєСЃС‚Сѓ Рё РЅР°Р·РІР°РЅРёСЋ
         usort($comparison, function($a, $b) {
             $contextOrder = ['system' => 1, 'organization' => 2, 'project' => 3];
             $contextDiff = ($contextOrder[$a['context_slug']] ?? 999) - ($contextOrder[$b['context_slug']] ?? 999);
@@ -40,7 +40,7 @@ class RolesComparisonController extends Controller
             return strcmp($a['name'], $b['name']);
         });
         
-        return response()->json([
+        return \App\Http\Responses\LandingResponse::fromPayload([
             'success' => true,
             'data' => [
                 'roles' => $comparison,
@@ -51,7 +51,7 @@ class RolesComparisonController extends Controller
     }
 
     /**
-     * Форматировать роль для сравнения
+     * Р¤РѕСЂРјР°С‚РёСЂРѕРІР°С‚СЊ СЂРѕР»СЊ РґР»СЏ СЃСЂР°РІРЅРµРЅРёСЏ
      */
     protected function formatRoleForComparison(string $roleSlug, array $roleData): array
     {
@@ -80,18 +80,18 @@ class RolesComparisonController extends Controller
     }
 
     /**
-     * Проверить доступ к биллингу
+     * РџСЂРѕРІРµСЂРёС‚СЊ РґРѕСЃС‚СѓРї Рє Р±РёР»Р»РёРЅРіСѓ
      */
     protected function hasBillingAccess(array $systemPermissions): bool
     {
-        // Проверяем наличие прав биллинга
+        // РџСЂРѕРІРµСЂСЏРµРј РЅР°Р»РёС‡РёРµ РїСЂР°РІ Р±РёР»Р»РёРЅРіР°
         $billingPermissions = [
             'billing.*',
             'billing.manage',
             'billing.view',
             'billing.edit',
             'organization.billing',
-            'modules.billing', // Доступ к модулю биллинга
+            'modules.billing', // Р”РѕСЃС‚СѓРї Рє РјРѕРґСѓР»СЋ Р±РёР»Р»РёРЅРіР°
         ];
         
         if (in_array('*', $systemPermissions)) {
@@ -108,7 +108,7 @@ class RolesComparisonController extends Controller
     }
 
     /**
-     * Получить информацию о том, какие роли может управлять
+     * РџРѕР»СѓС‡РёС‚СЊ РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ С‚РѕРј, РєР°РєРёРµ СЂРѕР»Рё РјРѕР¶РµС‚ СѓРїСЂР°РІР»СЏС‚СЊ
      */
     protected function getCanManageRoles(array $roleData): array
     {
@@ -125,7 +125,7 @@ class RolesComparisonController extends Controller
     }
 
     /**
-     * Получить временные ограничения
+     * РџРѕР»СѓС‡РёС‚СЊ РІСЂРµРјРµРЅРЅС‹Рµ РѕРіСЂР°РЅРёС‡РµРЅРёСЏ
      */
     protected function getTimeRestrictions(array $roleData): array
     {
@@ -148,14 +148,14 @@ class RolesComparisonController extends Controller
     }
 
     /**
-     * Подсчитать количество модульных прав
+     * РџРѕРґСЃС‡РёС‚Р°С‚СЊ РєРѕР»РёС‡РµСЃС‚РІРѕ РјРѕРґСѓР»СЊРЅС‹С… РїСЂР°РІ
      */
     protected function countModulePermissions(array $modulePermissions): int
     {
         $count = 0;
         foreach ($modulePermissions as $module => $permissions) {
             if ($module === '*' && is_array($permissions) && in_array('*', $permissions)) {
-                return 999; // Все модули и все права
+                return 999; // Р’СЃРµ РјРѕРґСѓР»Рё Рё РІСЃРµ РїСЂР°РІР°
             }
             if (is_array($permissions)) {
                 $count += count($permissions);
@@ -165,27 +165,27 @@ class RolesComparisonController extends Controller
     }
 
     /**
-     * Перевести контекст на русский
+     * РџРµСЂРµРІРµСЃС‚Рё РєРѕРЅС‚РµРєСЃС‚ РЅР° СЂСѓСЃСЃРєРёР№
      */
     protected function translateContext(string $context): string
     {
         return match($context) {
-            'system' => 'Система',
-            'organization' => 'Организация',
-            'project' => 'Проект',
+            'system' => 'РЎРёСЃС‚РµРјР°',
+            'organization' => 'РћСЂРіР°РЅРёР·Р°С†РёСЏ',
+            'project' => 'РџСЂРѕРµРєС‚',
             default => $context,
         };
     }
 
     /**
-     * Перевести интерфейсы на русский
+     * РџРµСЂРµРІРµСЃС‚Рё РёРЅС‚РµСЂС„РµР№СЃС‹ РЅР° СЂСѓСЃСЃРєРёР№
      */
     protected function translateInterfaces(array $interfaces): array
     {
         $translations = [
-            'admin' => 'Админ-панель',
-            'lk' => 'Личный кабинет',
-            'mobile' => 'Мобильное приложение',
+            'admin' => 'РђРґРјРёРЅ-РїР°РЅРµР»СЊ',
+            'lk' => 'Р›РёС‡РЅС‹Р№ РєР°Р±РёРЅРµС‚',
+            'mobile' => 'РњРѕР±РёР»СЊРЅРѕРµ РїСЂРёР»РѕР¶РµРЅРёРµ',
         ];
         
         return array_map(function($interface) use ($translations) {
@@ -194,7 +194,7 @@ class RolesComparisonController extends Controller
     }
 
     /**
-     * Перевести слаги ролей в названия
+     * РџРµСЂРµРІРµСЃС‚Рё СЃР»Р°РіРё СЂРѕР»РµР№ РІ РЅР°Р·РІР°РЅРёСЏ
      */
     protected function translateRoleSlugs(array $roleSlugs): array
     {
@@ -203,7 +203,7 @@ class RolesComparisonController extends Controller
         }
         
         if (in_array('*', $roleSlugs)) {
-            return ['Все роли'];
+            return ['Р’СЃРµ СЂРѕР»Рё'];
         }
         
         $allRoles = $this->roleScanner->getAllRoles();
@@ -222,7 +222,7 @@ class RolesComparisonController extends Controller
     }
 
     /**
-     * Перевести рабочие дни на русский
+     * РџРµСЂРµРІРµСЃС‚Рё СЂР°Р±РѕС‡РёРµ РґРЅРё РЅР° СЂСѓСЃСЃРєРёР№
      */
     protected function translateWorkingDays($days): ?array
     {
@@ -232,20 +232,20 @@ class RolesComparisonController extends Controller
         
         if (is_array($days)) {
             $dayNames = [
-                1 => 'Понедельник',
-                2 => 'Вторник',
-                3 => 'Среда',
-                4 => 'Четверг',
-                5 => 'Пятница',
-                6 => 'Суббота',
-                7 => 'Воскресенье',
-                'monday' => 'Понедельник',
-                'tuesday' => 'Вторник',
-                'wednesday' => 'Среда',
-                'thursday' => 'Четверг',
-                'friday' => 'Пятница',
-                'saturday' => 'Суббота',
-                'sunday' => 'Воскресенье',
+                1 => 'РџРѕРЅРµРґРµР»СЊРЅРёРє',
+                2 => 'Р’С‚РѕСЂРЅРёРє',
+                3 => 'РЎСЂРµРґР°',
+                4 => 'Р§РµС‚РІРµСЂРі',
+                5 => 'РџСЏС‚РЅРёС†Р°',
+                6 => 'РЎСѓР±Р±РѕС‚Р°',
+                7 => 'Р’РѕСЃРєСЂРµСЃРµРЅСЊРµ',
+                'monday' => 'РџРѕРЅРµРґРµР»СЊРЅРёРє',
+                'tuesday' => 'Р’С‚РѕСЂРЅРёРє',
+                'wednesday' => 'РЎСЂРµРґР°',
+                'thursday' => 'Р§РµС‚РІРµСЂРі',
+                'friday' => 'РџСЏС‚РЅРёС†Р°',
+                'saturday' => 'РЎСѓР±Р±РѕС‚Р°',
+                'sunday' => 'Р’РѕСЃРєСЂРµСЃРµРЅСЊРµ',
             ];
             
             return array_map(function($day) use ($dayNames) {
