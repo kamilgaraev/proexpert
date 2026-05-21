@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseDashboardService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -17,7 +18,8 @@ use Illuminate\Validation\Rule;
 class WarehouseController extends Controller
 {
     public function __construct(
-        protected WarehouseService $warehouseService
+        protected WarehouseService $warehouseService,
+        protected WarehouseDashboardService $dashboardService
     ) {
     }
 
@@ -236,6 +238,32 @@ class WarehouseController extends Controller
             ]);
 
             return AdminResponse::error(trans_message('basic_warehouse.warehouse.balances_error'), 500);
+        }
+    }
+
+    public function dashboard(Request $request, string|int $id): JsonResponse
+    {
+        $organizationId = (int) $request->user()->current_organization_id;
+        $warehouseId = is_int($id) ? $id : (ctype_digit($id) ? (int) $id : null);
+
+        try {
+            $warehouseId = $this->normalizeWarehouseId($id);
+            $this->findWarehouse($organizationId, $warehouseId);
+
+            return AdminResponse::success(
+                $this->dashboardService->build($organizationId, $warehouseId)
+            );
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('basic_warehouse.warehouse.not_found'), 404);
+        } catch (\Throwable $exception) {
+            Log::error('WarehouseController::dashboard error', [
+                'organization_id' => $organizationId,
+                'user_id' => $request->user()?->id,
+                'warehouse_id' => $warehouseId,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('basic_warehouse.warehouse.dashboard_error'), 500);
         }
     }
 

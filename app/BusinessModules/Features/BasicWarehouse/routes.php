@@ -40,6 +40,9 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
             Route::delete('/{id}', [WarehouseController::class, 'destroy'])->whereNumber('id');
             
             // Остатки и движения
+            Route::get('/{id}/dashboard', [WarehouseController::class, 'dashboard'])
+                ->whereNumber('id')
+                ->name('dashboard');
             Route::get('/{id}/balances', [WarehouseController::class, 'balances'])->whereNumber('id');
             Route::get('/{id}/movements', [WarehouseController::class, 'movements'])->whereNumber('id');
             Route::get('/{warehouseId}/balances/{materialId}/photos', [WarehousePhotoController::class, 'balancePhotos']);
