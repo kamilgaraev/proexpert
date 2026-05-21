@@ -972,9 +972,11 @@ class ReportService
         
         $this->logging->business('report.warehouse_stock.requested', [
             'organization_id' => $organizationId,
-            'filters' => $request->only(['warehouse_id', 'material_id', 'category']),
+            'filters' => $request->only(['warehouse_id', 'material_id', 'category', 'asset_type']),
             'user_id' => $request->user()?->id
         ]);
+
+        $assetType = (string) ($request->query('asset_type') ?: 'material');
 
         $query = DB::table('warehouse_balances')
             ->join('materials', 'warehouse_balances.material_id', '=', 'materials.id')
@@ -998,6 +1000,8 @@ class ReportService
                 DB::raw('(warehouse_balances.available_quantity + warehouse_balances.reserved_quantity) as total_quantity'),
                 DB::raw('(warehouse_balances.available_quantity * warehouse_balances.unit_price) as total_value')
             );
+
+        $this->applyWarehouseStockAssetTypeFilter($query, $assetType);
 
         if ($request->filled('warehouse_id')) {
             $query->where('warehouse_balances.warehouse_id', $request->query('warehouse_id'));
@@ -1092,9 +1096,29 @@ class ReportService
             'title' => 'Отчет по остаткам на складах',
             'data' => $stocks->values(),
             'totals' => $totals,
-            'filters' => $request->only(['warehouse_id', 'material_id', 'category', 'show_critical_only']),
+            'filters' => array_merge(
+                $request->only(['warehouse_id', 'material_id', 'category', 'show_critical_only']),
+                ['asset_type' => $assetType]
+            ),
             'generated_at' => Carbon::now(),
         ];
+    }
+
+    private function applyWarehouseStockAssetTypeFilter(\Illuminate\Database\Query\Builder $query, string $assetType): void
+    {
+        $driver = DB::connection()->getDriverName();
+
+        if ($driver === 'pgsql') {
+            $query->whereRaw("COALESCE(materials.additional_properties->>'asset_type', 'material') = ?", [$assetType]);
+            return;
+        }
+
+        if ($driver === 'sqlite') {
+            $query->whereRaw("COALESCE(json_extract(materials.additional_properties, '$.asset_type'), 'material') = ?", [$assetType]);
+            return;
+        }
+
+        $query->whereRaw("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(materials.additional_properties, '$.asset_type')), 'material') = ?", [$assetType]);
     }
 
     public function getMaterialMovementsReport(Request $request): array | StreamedResponse
