@@ -81,4 +81,19 @@ Route::prefix('api/v1/mobile/handover-acceptance')
         Route::post('/scopes/{scope}/ready-for-reinspection', [MobileHandoverAcceptanceController::class, 'readyForReinspection'])
             ->whereNumber('scope')
             ->middleware('authorize:handover-acceptance.inspect');
+        Route::post('/scopes/{scope}/start', [MobileHandoverAcceptanceController::class, 'start'])
+            ->whereNumber('scope')
+            ->middleware('authorize:handover-acceptance.inspect');
+        Route::post('/scopes/{scope}/accept', [MobileHandoverAcceptanceController::class, 'accept'])
+            ->whereNumber('scope')
+            ->middleware('authorize:handover-acceptance.approve');
+        Route::post('/scopes/{scope}/handover', [MobileHandoverAcceptanceController::class, 'handover'])
+            ->whereNumber('scope')
+            ->middleware('authorize:handover-acceptance.customer-sign');
+        Route::post('/scopes/{scope}/reject', [MobileHandoverAcceptanceController::class, 'reject'])
+            ->whereNumber('scope')
+            ->middleware('authorize:handover-acceptance.reject');
+        Route::post('/scopes/{scope}/reopen', [MobileHandoverAcceptanceController::class, 'reopen'])
+            ->whereNumber('scope')
+            ->middleware('authorize:handover-acceptance.reject');
     });

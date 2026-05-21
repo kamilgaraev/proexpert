@@ -104,6 +104,81 @@ final class HandoverAcceptanceController extends Controller
         return $this->scopeAction($request, $scope, fn ($model) => $this->service->markReadyForReinspection($model), 'ready_for_reinspection');
     }
 
+    public function start(Request $request, int $scope): JsonResponse
+    {
+        return $this->scopeAction($request, $scope, fn ($model) => $this->service->startScope($model), 'start');
+    }
+
+    public function accept(Request $request, int $scope): JsonResponse
+    {
+        try {
+            $validated = $this->validated($request, ['comment' => ['nullable', 'string', 'max:1000']]);
+
+            return $this->scopeAction(
+                $request,
+                $scope,
+                fn ($model) => $this->service->acceptScope($model, (int) $request->user()?->id, $validated['comment'] ?? null),
+                'accept'
+            );
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(
+                trans_message('handover_acceptance.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
+        }
+    }
+
+    public function handover(Request $request, int $scope): JsonResponse
+    {
+        return $this->scopeAction(
+            $request,
+            $scope,
+            fn ($model) => $this->service->handoverScope($model, (int) $request->user()?->id),
+            'handover'
+        );
+    }
+
+    public function reject(Request $request, int $scope): JsonResponse
+    {
+        try {
+            $validated = $this->validated($request, ['reason' => ['required', 'string', 'max:1000']]);
+
+            return $this->scopeAction(
+                $request,
+                $scope,
+                fn ($model) => $this->service->rejectScope($model, (int) $request->user()?->id, $validated['reason']),
+                'reject'
+            );
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(
+                trans_message('handover_acceptance.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
+        }
+    }
+
+    public function reopen(Request $request, int $scope): JsonResponse
+    {
+        try {
+            $validated = $this->validated($request, ['reason' => ['required', 'string', 'max:1000']]);
+
+            return $this->scopeAction(
+                $request,
+                $scope,
+                fn ($model) => $this->service->reopenScope($model, (int) $request->user()?->id, $validated['reason']),
+                'reopen'
+            );
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(
+                trans_message('handover_acceptance.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
+        }
+    }
+
     private function scopeAction(Request $request, int $scope, callable $action, string $logAction): JsonResponse
     {
         try {
@@ -149,6 +224,7 @@ final class HandoverAcceptanceController extends Controller
             'create_quality_defect.required' => trans_message('handover_acceptance.validation.create_quality_defect_required'),
             'quality_defect_inspection_required.required_if' => trans_message('handover_acceptance.validation.quality_defect_inspection_required'),
             'resolution_comment.required' => trans_message('handover_acceptance.validation.resolution_comment_required'),
+            'reason.required' => trans_message('handover_acceptance.validation.reason_required'),
         ];
     }
 }

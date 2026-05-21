@@ -161,6 +161,10 @@
       "handover-acceptance.view",
       "handover-acceptance.create",
       "handover-acceptance.submit",
+      "handover-acceptance.inspect",
+      "handover-acceptance.approve",
+      "handover-acceptance.reject",
+      "handover-acceptance.customer-sign",
       "handover-acceptance.punch-list.create",
       "handover-acceptance.punch-list.resolve"
     ]

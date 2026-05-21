@@ -7,6 +7,7 @@ namespace Tests\Feature\Api\V1\Mobile;
 use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceFinding;
 use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceScope;
 use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceSession;
+use App\BusinessModules\Features\HandoverAcceptance\Models\HandoverPackage;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
@@ -115,23 +116,125 @@ final class HandoverAcceptanceMobileTest extends TestCase
         $this->assertSame('resolved', AcceptanceFinding::query()->findOrFail($findingId)->status);
     }
 
+    public function test_mobile_can_start_accept_handover_and_reopen_scope(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $scope = $this->createScope($context, 'planned');
+        $this->allowAccess();
+
+        $startResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/handover-acceptance/scopes/{$scope->id}/start");
+
+        $startResponse->assertOk()
+            ->assertJsonPath('data.status', 'in_progress');
+
+        $acceptResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/handover-acceptance/scopes/{$scope->id}/accept", [
+                'comment' => 'Осмотр выполнен без замечаний',
+            ]);
+
+        $acceptResponse->assertOk()
+            ->assertJsonPath('data.status', 'accepted');
+        $this->assertDatabaseHas('acceptance_signoffs', [
+            'acceptance_scope_id' => $scope->id,
+            'signed_by_user_id' => $context->user->id,
+            'status' => 'accepted',
+            'comment' => 'Осмотр выполнен без замечаний',
+        ]);
+
+        $package = HandoverPackage::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $scope->project_id,
+            'acceptance_scope_id' => $scope->id,
+            'created_by_user_id' => $context->user->id,
+            'title' => 'Комплект передачи',
+            'status' => 'draft',
+        ]);
+        $package->documents()->create([
+            'title' => 'Исполнительная документация',
+            'document_type' => 'executive_document',
+            'is_required' => true,
+            'status' => 'approved',
+            'approved_at' => now(),
+        ]);
+
+        $handoverResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/handover-acceptance/scopes/{$scope->id}/handover");
+
+        $handoverResponse->assertOk()
+            ->assertJsonPath('data.status', 'handed_over');
+        $this->assertDatabaseHas('acceptance_signoffs', [
+            'acceptance_scope_id' => $scope->id,
+            'signed_by_user_id' => $context->user->id,
+            'status' => 'handed_over',
+        ]);
+
+        $reopenResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/handover-acceptance/scopes/{$scope->id}/reopen", [
+                'reason' => 'Нужно обновить комплект документов',
+            ]);
+
+        $reopenResponse->assertOk()
+            ->assertJsonPath('data.status', 'reopened');
+        $this->assertDatabaseHas('acceptance_signoffs', [
+            'acceptance_scope_id' => $scope->id,
+            'signed_by_user_id' => $context->user->id,
+            'status' => 'reopened',
+            'comment' => 'Нужно обновить комплект документов',
+        ]);
+    }
+
+    public function test_mobile_can_reject_scope_with_required_reason(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $scope = $this->createScope($context, 'in_progress');
+        $this->allowAccess();
+
+        $blockedResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/handover-acceptance/scopes/{$scope->id}/reject");
+
+        $blockedResponse->assertStatus(422)
+            ->assertJsonPath('message', trans_message('handover_acceptance.errors.validation_failed'))
+            ->assertJsonPath('errors.reason.0', trans_message('handover_acceptance.validation.reason_required'));
+
+        $rejectResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/handover-acceptance/scopes/{$scope->id}/reject", [
+                'reason' => 'Есть замечания заказчика',
+            ]);
+
+        $rejectResponse->assertOk()
+            ->assertJsonPath('data.status', 'rejected');
+        $this->assertDatabaseHas('acceptance_signoffs', [
+            'acceptance_scope_id' => $scope->id,
+            'signed_by_user_id' => $context->user->id,
+            'status' => 'rejected',
+            'comment' => 'Есть замечания заказчика',
+        ]);
+    }
+
     private function createSession(AdminApiTestContext $context): AcceptanceSession
     {
+        $scope = $this->createScope($context, 'in_progress');
+
+        return AcceptanceSession::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $scope->project_id,
+            'acceptance_scope_id' => $scope->id,
+            'created_by_user_id' => $context->user->id,
+            'status' => 'in_progress',
+        ]);
+    }
+
+    private function createScope(AdminApiTestContext $context, string $status): AcceptanceScope
+    {
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
-        $scope = AcceptanceScope::query()->create([
+
+        return AcceptanceScope::query()->create([
             'organization_id' => $context->organization->id,
             'project_id' => $project->id,
             'created_by_user_id' => $context->user->id,
             'title' => 'Apartment handover',
-            'status' => 'in_progress',
-        ]);
-
-        return AcceptanceSession::query()->create([
-            'organization_id' => $context->organization->id,
-            'project_id' => $project->id,
-            'acceptance_scope_id' => $scope->id,
-            'created_by_user_id' => $context->user->id,
-            'status' => 'in_progress',
+            'status' => $status,
         ]);
     }
 

@@ -39,5 +39,6 @@ return [
         'create_quality_defect_required' => 'Укажите, нужно ли создать дефект качества',
         'quality_defect_inspection_required' => 'Укажите, нужна ли проверка дефекта качества',
         'resolution_comment_required' => 'Укажите результат устранения',
+        'reason_required' => 'Укажите причину решения',
     ],
 ];

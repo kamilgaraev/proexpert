@@ -224,6 +224,15 @@ final class HandoverAcceptanceService
         return $scope->fresh(self::SCOPE_RELATIONS);
     }
 
+    public function rejectScope(AcceptanceScope $scope, int $userId, string $reason): AcceptanceScope
+    {
+        $this->assertStatus($scope, ['in_progress', 'findings_open', 'ready_for_reinspection']);
+        $scope->update(['status' => 'rejected']);
+        $this->sign($scope, $userId, 'rejected', $reason);
+
+        return $scope->fresh(self::SCOPE_RELATIONS);
+    }
+
     public function createPackage(AcceptanceScope $scope, int $userId, array $data): HandoverPackage
     {
         return DB::transaction(function () use ($scope, $userId, $data): HandoverPackage {
