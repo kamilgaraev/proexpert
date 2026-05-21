@@ -122,7 +122,7 @@ final class ProductionLaborController extends Controller
                 'work_order_line_id' => ['required', 'integer'],
                 'work_date' => ['required', 'date'],
                 'quantity' => ['required', 'numeric', 'min:0.0001'],
-                'hours' => ['nullable', 'numeric', 'min:0'],
+                'hours' => ['required', 'numeric', 'min:0.01', 'max:24'],
                 'comment' => ['nullable', 'string', 'max:2000'],
                 'metadata' => ['nullable', 'array'],
             ]);
@@ -310,7 +310,7 @@ final class ProductionLaborController extends Controller
             'entries.*.employee_id' => ['nullable', 'integer'],
             'entries.*.include_in_payroll' => ['nullable', 'boolean'],
             'entries.*.worker_name' => ['nullable', 'string', 'max:255'],
-            'entries.*.hours' => ['required', 'numeric', 'min:0.01'],
+            'entries.*.hours' => ['required', 'numeric', 'min:0.01', 'max:24'],
             'entries.*.safety_permit_reference' => ['nullable', 'string', 'max:120'],
             'entries.*.metadata' => ['nullable', 'array'],
             'metadata' => ['nullable', 'array'],

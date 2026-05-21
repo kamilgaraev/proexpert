@@ -216,7 +216,7 @@ final class ProductionLaborService
                 'recorded_by_user_id' => $userId,
                 'work_date' => $payload['work_date'],
                 'quantity' => $payload['quantity'],
-                'hours' => $payload['hours'] ?? 0,
+                'hours' => $payload['hours'],
                 'status' => 'accepted',
                 'approved_by_user_id' => $userId,
                 'approved_at' => now(),
@@ -252,9 +252,14 @@ final class ProductionLaborService
             foreach ($payload['entries'] as $entryPayload) {
                 $line = $this->findLine($organizationId, (int) $entryPayload['work_order_line_id']);
                 $includeInPayroll = $entryPayload['include_in_payroll'] ?? true;
+                $workerName = trim((string) ($entryPayload['worker_name'] ?? ''));
 
-                if ((bool) $includeInPayroll && !empty($entryPayload['worker_name'])) {
+                if ((bool) $includeInPayroll && $workerName !== '') {
                     throw new DomainException(trans_message('production_labor.errors.worker_name_not_allowed_for_payroll'));
+                }
+
+                if (!(bool) $includeInPayroll && $workerName === '') {
+                    throw new DomainException(trans_message('production_labor.errors.worker_or_brigade_required'));
                 }
 
                 $employee = $this->resolveTimesheetEmployee(
@@ -289,7 +294,7 @@ final class ProductionLaborService
                     'user_id' => $entryPayload['user_id'] ?? null,
                     'employee_id' => $employee?->id,
                     'include_in_payroll' => (bool) $includeInPayroll,
-                    'worker_name' => $entryPayload['worker_name'] ?? null,
+                    'worker_name' => $workerName !== '' ? $workerName : null,
                     'hours' => $entryPayload['hours'],
                     'safety_permit_reference' => isset($entryPayload['safety_permit_reference'])
                         ? trim((string) $entryPayload['safety_permit_reference'])

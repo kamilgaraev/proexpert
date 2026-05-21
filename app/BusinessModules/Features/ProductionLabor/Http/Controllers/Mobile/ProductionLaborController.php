@@ -14,6 +14,7 @@ use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 
 final class ProductionLaborController extends Controller
@@ -48,11 +49,11 @@ final class ProductionLaborController extends Controller
     public function storeOutput(Request $request): JsonResponse
     {
         try {
-            $validated = $request->validate([
+            $validated = $this->validated($request, [
                 'work_order_line_id' => ['required', 'integer'],
-                'work_date' => ['required', 'date'],
+                'work_date' => ['required', 'date', 'before_or_equal:today'],
                 'quantity' => ['required', 'numeric', 'min:0.0001'],
-                'hours' => ['nullable', 'numeric', 'min:0'],
+                'hours' => ['required', 'numeric', 'min:0.01', 'max:24'],
                 'comment' => ['nullable', 'string', 'max:2000'],
                 'metadata' => ['nullable', 'array'],
             ]);
@@ -68,7 +69,11 @@ final class ProductionLaborController extends Controller
                 201
             );
         } catch (ValidationException $exception) {
-            return MobileResponse::error($exception->getMessage(), 422, $exception->errors());
+            return MobileResponse::error(
+                trans_message('production_labor.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -79,15 +84,19 @@ final class ProductionLaborController extends Controller
     public function storeTimesheet(Request $request): JsonResponse
     {
         try {
-            $validated = $request->validate([
+            $validated = $this->validated($request, [
                 'work_order_id' => ['required', 'integer'],
-                'shift_date' => ['required', 'date'],
+                'shift_date' => ['required', 'date', 'before_or_equal:today'],
                 'entries' => ['required', 'array', 'min:1'],
                 'entries.*.work_order_line_id' => ['required', 'integer'],
                 'entries.*.user_id' => ['nullable', 'integer'],
+                'entries.*.employee_id' => ['nullable', 'integer'],
+                'entries.*.include_in_payroll' => ['nullable', 'boolean'],
                 'entries.*.worker_name' => ['nullable', 'string', 'max:255'],
-                'entries.*.hours' => ['required', 'numeric', 'min:0.01'],
+                'entries.*.hours' => ['required', 'numeric', 'min:0.01', 'max:24'],
                 'entries.*.safety_permit_reference' => ['nullable', 'string', 'max:120'],
+                'entries.*.metadata' => ['nullable', 'array'],
+                'metadata' => ['nullable', 'array'],
             ]);
 
             return MobileResponse::success(
@@ -100,7 +109,11 @@ final class ProductionLaborController extends Controller
                 201
             );
         } catch (ValidationException $exception) {
-            return MobileResponse::error($exception->getMessage(), 422, $exception->errors());
+            return MobileResponse::error(
+                trans_message('production_labor.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -118,5 +131,39 @@ final class ProductionLaborController extends Controller
         ]);
 
         return MobileResponse::error(trans_message('production_labor.errors.unexpected'), 500);
+    }
+
+    private function validated(Request $request, array $rules): array
+    {
+        $validator = Validator::make($request->all(), $rules, $this->validationMessages());
+
+        if ($validator->fails()) {
+            throw new ValidationException($validator);
+        }
+
+        return $validator->validated();
+    }
+
+    private function validationMessages(): array
+    {
+        return [
+            'work_order_line_id.required' => trans_message('production_labor.validation.work_order_line_required'),
+            'work_date.required' => trans_message('production_labor.validation.work_date_required'),
+            'work_date.before_or_equal' => trans_message('production_labor.validation.date_future'),
+            'quantity.required' => trans_message('production_labor.validation.quantity_required'),
+            'quantity.min' => trans_message('production_labor.validation.quantity_positive'),
+            'hours.required' => trans_message('production_labor.validation.hours_required'),
+            'hours.min' => trans_message('production_labor.validation.hours_range'),
+            'hours.max' => trans_message('production_labor.validation.hours_range'),
+            'work_order_id.required' => trans_message('production_labor.validation.work_order_required'),
+            'shift_date.required' => trans_message('production_labor.validation.shift_date_required'),
+            'shift_date.before_or_equal' => trans_message('production_labor.validation.date_future'),
+            'entries.required' => trans_message('production_labor.validation.entries_required'),
+            'entries.min' => trans_message('production_labor.validation.entries_required'),
+            'entries.*.work_order_line_id.required' => trans_message('production_labor.validation.work_order_line_required'),
+            'entries.*.hours.required' => trans_message('production_labor.validation.hours_required'),
+            'entries.*.hours.min' => trans_message('production_labor.validation.hours_range'),
+            'entries.*.hours.max' => trans_message('production_labor.validation.hours_range'),
+        ];
     }
 }
