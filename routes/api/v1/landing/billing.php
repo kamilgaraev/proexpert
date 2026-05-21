@@ -1,11 +1,11 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\Api\Billing\SubscriptionPlanController;
-use App\Http\Controllers\Api\Billing\BalanceController;
-use App\Http\Controllers\Api\Landing\OrganizationSubscriptionController;
+use App\Http\Controllers\Api\V1\Landing\Billing\BalanceController;
 use App\Http\Controllers\Api\V1\Landing\OrganizationDashboardController;
 use App\Http\Controllers\Api\V1\Landing\Billing\EnterpriseConstructorController;
+use App\Http\Controllers\Api\V1\Landing\Billing\OrganizationSubscriptionController;
+use App\Http\Controllers\Api\V1\Landing\Billing\SubscriptionPlanController;
 use App\Http\Controllers\Api\V1\Landing\Billing\SubscriptionLimitsController;
 
 // Маршруты биллинга, предполагается, что они будут доступны

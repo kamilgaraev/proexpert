@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers;
 
 use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\HoldingSite;
@@ -10,6 +12,9 @@ use App\Services\Landing\MultiOrganizationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Symfony\Component\HttpFoundation\Response;
+
+use function trans_message;
 
 class HoldingController extends Controller
 {
@@ -56,20 +61,20 @@ class HoldingController extends Controller
         $holding = $request->attributes->get('holding');
 
         if (!$holding) {
-            abort(404, 'Holding not found');
+            return LandingResponse::error(
+                trans_message('landing.holding_api.not_found'),
+                Response::HTTP_NOT_FOUND
+            );
         }
 
         $data = [
             'holding' => $holding,
             'parent_organization' => $holding->parentOrganization,
             'stats' => $this->getHoldingStats($holding),
+            'view' => 'holding.dashboard',
         ];
 
-        return \App\Http\Responses\LandingResponse::fromPayload([
-            'success' => true,
-            'data' => $data,
-            'view' => 'holding.dashboard',
-        ]);
+        return LandingResponse::success($data);
     }
 
     public function dashboard(Request $request): JsonResponse
@@ -77,31 +82,36 @@ class HoldingController extends Controller
         $user = Auth::user();
         $holding = $request->attributes->get('holding');
 
+        if (!$holding) {
+            return LandingResponse::error(
+                trans_message('landing.holding_api.not_found'),
+                Response::HTTP_NOT_FOUND
+            );
+        }
+
         if (!$user) {
-            return \App\Http\Responses\LandingResponse::fromPayload([
-                'success' => false,
-                'message' => 'Authorization required',
-                'redirect' => '/login',
-            ], 401);
+            return LandingResponse::error(
+                trans_message('landing.not_authenticated'),
+                Response::HTTP_UNAUTHORIZED,
+                null,
+                ['redirect' => '/login']
+            );
         }
 
         if (!$this->multiOrgService->hasAccessToOrganization($user, $holding->parent_organization_id)) {
-            return \App\Http\Responses\LandingResponse::fromPayload([
-                'success' => false,
-                'message' => 'Access denied',
-            ], 403);
+            return LandingResponse::error(
+                trans_message('landing.holding_api.management_access_denied'),
+                Response::HTTP_FORBIDDEN
+            );
         }
 
         $hierarchy = $this->multiOrgService->getOrganizationHierarchy($holding->parent_organization_id);
 
-        return \App\Http\Responses\LandingResponse::fromPayload([
-            'success' => true,
-            'data' => [
-                'holding' => $holding,
-                'hierarchy' => $hierarchy,
-                'user' => $user,
-                'consolidated_stats' => $this->getConsolidatedStats($holding),
-            ],
+        return LandingResponse::success([
+            'holding' => $holding,
+            'hierarchy' => $hierarchy,
+            'user' => $user,
+            'consolidated_stats' => $this->getConsolidatedStats($holding),
         ]);
     }
 
@@ -110,11 +120,25 @@ class HoldingController extends Controller
         $user = Auth::user();
         $holding = $request->attributes->get('holding');
 
+        if (!$holding) {
+            return LandingResponse::error(
+                trans_message('landing.holding_api.not_found'),
+                Response::HTTP_NOT_FOUND
+            );
+        }
+
+        if (!$user) {
+            return LandingResponse::error(
+                trans_message('landing.not_authenticated'),
+                Response::HTTP_UNAUTHORIZED
+            );
+        }
+
         if (!$this->multiOrgService->hasAccessToOrganization($user, $holding->parent_organization_id)) {
-            return \App\Http\Responses\LandingResponse::fromPayload([
-                'success' => false,
-                'message' => 'Access denied',
-            ], 403);
+            return LandingResponse::error(
+                trans_message('landing.holding_api.organizations_access_denied'),
+                Response::HTTP_FORBIDDEN
+            );
         }
 
         $childOrganizations = $holding->parentOrganization->childOrganizations()
@@ -137,10 +161,7 @@ class HoldingController extends Controller
                 ];
             });
 
-        return \App\Http\Responses\LandingResponse::fromPayload([
-            'success' => true,
-            'data' => $childOrganizations,
-        ]);
+        return LandingResponse::success($childOrganizations);
     }
 
     private function getHoldingStats(OrganizationGroup $holding): array

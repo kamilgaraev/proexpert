@@ -63,6 +63,19 @@ return [
         ],
     ],
 
+    'holding_api' => [
+        'not_found' => 'Холдинг не найден.',
+        'parent_not_found' => 'Головная организация холдинга не найдена.',
+        'public_load_error' => 'Не удалось получить данные холдинга.',
+        'dashboard_load_error' => 'Не удалось получить данные панели управления холдингом.',
+        'organizations_load_error' => 'Не удалось получить список организаций холдинга.',
+        'organization_load_error' => 'Не удалось получить данные организации холдинга.',
+        'management_access_denied' => 'Нет доступа к управлению этим холдингом.',
+        'organizations_access_denied' => 'Нет доступа к организациям этого холдинга.',
+        'project_created' => 'Создан проект: :name',
+        'contract_signed' => 'Подписан договор: :name',
+    ],
+
     'projects' => [
         'loaded' => 'Проекты получены.',
         'details_loaded' => 'Данные проекта получены.',

@@ -27,11 +27,15 @@ class LandingResponse
         ?array $meta = null
     ): JsonResponse
     {
+        [$resolvedData, $resourceMeta] = self::transformDataWithMeta($data);
+
         $response = [
             'success' => true,
             'message' => $message,
-            'data'    => self::transformData($data),
+            'data'    => $resolvedData,
         ];
+
+        $meta = self::mergeMeta($resourceMeta, $meta);
 
         if ($meta !== null) {
             $response['meta'] = $meta;
@@ -111,7 +115,9 @@ class LandingResponse
     protected static function transformData(mixed $data): mixed
     {
         if ($data instanceof ResourceCollection) {
-            return $data->response()->getData(true);
+            $resolved = $data->response()->getData(true);
+
+            return $resolved['data'] ?? $resolved;
         }
 
         if ($data instanceof JsonResource) {
@@ -123,5 +129,38 @@ class LandingResponse
         }
 
         return $data;
+    }
+
+    protected static function transformDataWithMeta(mixed $data): array
+    {
+        if (! $data instanceof ResourceCollection) {
+            return [self::transformData($data), null];
+        }
+
+        $resolved = $data->response()->getData(true);
+        $meta = [];
+
+        if (isset($resolved['meta']) && is_array($resolved['meta'])) {
+            $meta = $resolved['meta'];
+        }
+
+        if (isset($resolved['links']) && is_array($resolved['links'])) {
+            $meta['links'] = $resolved['links'];
+        }
+
+        return [$resolved['data'] ?? [], $meta === [] ? null : $meta];
+    }
+
+    protected static function mergeMeta(?array $resourceMeta, ?array $explicitMeta): ?array
+    {
+        if ($resourceMeta === null) {
+            return $explicitMeta;
+        }
+
+        if ($explicitMeta === null) {
+            return $resourceMeta;
+        }
+
+        return array_replace_recursive($resourceMeta, $explicitMeta);
     }
 }

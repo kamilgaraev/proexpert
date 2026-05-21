@@ -1,309 +1,338 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
-use App\Services\Landing\MultiOrganizationService;
+use App\Http\Responses\LandingResponse;
+use App\Models\Organization;
 use App\Models\OrganizationGroup;
-use Illuminate\Http\Request;
+use App\Services\Landing\MultiOrganizationService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\Response;
+use Throwable;
+
+use function trans_message;
 
 class HoldingApiController extends Controller
 {
-    protected MultiOrganizationService $multiOrganizationService;
-
-    public function __construct(MultiOrganizationService $multiOrganizationService)
-    {
-        $this->multiOrganizationService = $multiOrganizationService;
+    public function __construct(
+        protected MultiOrganizationService $multiOrganizationService
+    ) {
     }
 
     public function getPublicData(string $slug): JsonResponse
     {
         try {
-            $group = OrganizationGroup::where('slug', $slug)->first();
-            
-            if (!$group) {
-                return \App\Http\Responses\LandingResponse::fromPayload([
-                    'success' => false,
-                    'message' => 'РҐРѕР»РґРёРЅРі РЅРµ РЅР°Р№РґРµРЅ'
-                ], 404);
+            $group = $this->findHolding($slug);
+
+            if (! $group) {
+                return LandingResponse::error(
+                    trans_message('landing.holding_api.not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
             }
 
             $parentOrg = $group->parentOrganization;
-            if (!$parentOrg) {
-                return \App\Http\Responses\LandingResponse::fromPayload([
-                    'success' => false,
-                    'message' => 'Р РѕРґРёС‚РµР»СЊСЃРєР°СЏ РѕСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°'
-                ], 404);
+
+            if (! $parentOrg) {
+                return LandingResponse::error(
+                    trans_message('landing.holding_api.parent_not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
             }
 
-            $childOrgs = $parentOrg->childOrganizations;
-            
-            $stats = [
-                'total_child_organizations' => $childOrgs->count(),
-                'total_users' => $parentOrg->users()->count() + $childOrgs->sum(fn($org) => $org->users()->count()),
-                'total_projects' => $parentOrg->projects()->count() + $childOrgs->sum(fn($org) => $org->projects()->count()),
-                'total_contracts' => $parentOrg->contracts()->count() + $childOrgs->sum(fn($org) => $org->contracts()->count()),
-                'total_contracts_value' => $parentOrg->contracts()->sum('total_amount') + $childOrgs->sum(fn($org) => $org->contracts()->sum('total_amount')),
-                'active_contracts_count' => $parentOrg->contracts()->where('status', 'active')->count() + $childOrgs->sum(fn($org) => $org->contracts()->where('status', 'active')->count()),
-            ];
-
-            return \App\Http\Responses\LandingResponse::fromPayload([
-                'success' => true,
-                'data' => [
-                    'holding' => [
-                        'id' => $group->id,
-                        'name' => $group->name,
-                        'slug' => $group->slug,
-                        'description' => $group->description,
-                        'parent_organization_id' => $group->parent_organization_id,
-                        'status' => $group->status,
-                        'created_at' => $group->created_at,
-                    ],
-                    'parent_organization' => [
-                        'id' => $parentOrg->id,
-                        'name' => $parentOrg->name,
-                        'legal_name' => $parentOrg->legal_name,
-                        'tax_number' => $parentOrg->tax_number,
-                        'registration_number' => $parentOrg->registration_number,
-                        'address' => $parentOrg->address,
-                        'phone' => $parentOrg->phone,
-                        'email' => $parentOrg->email,
-                        'city' => $parentOrg->city,
-                        'description' => $parentOrg->description,
-                    ],
-                    'stats' => $stats,
-                ]
+            return LandingResponse::success([
+                'holding' => $this->formatHolding($group),
+                'parent_organization' => $this->formatOrganization($parentOrg),
+                'stats' => $this->buildHoldingStats($parentOrg),
+            ]);
+        } catch (Throwable $exception) {
+            $this->logFailure('holding_api.public_data_failed', $exception, [
+                'slug' => $slug,
             ]);
 
-        } catch (\Exception $e) {
-            return \App\Http\Responses\LandingResponse::fromPayload([
-                'success' => false,
-                'message' => 'РћС€РёР±РєР° РїСЂРё РїРѕР»СѓС‡РµРЅРёРё РґР°РЅРЅС‹С… С…РѕР»РґРёРЅРіР°',
-                'error' => $e->getMessage()
-            ], 500);
+            return LandingResponse::error(
+                trans_message('landing.holding_api.public_load_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
     public function getDashboardData(string $slug, Request $request): JsonResponse
     {
         try {
-            $group = OrganizationGroup::where('slug', $slug)->first();
-            
-            if (!$group) {
-                return \App\Http\Responses\LandingResponse::fromPayload([
-                    'success' => false,
-                    'message' => 'РҐРѕР»РґРёРЅРі РЅРµ РЅР°Р№РґРµРЅ'
-                ], 404);
+            $group = $this->findHolding($slug);
+
+            if (! $group) {
+                return LandingResponse::error(
+                    trans_message('landing.holding_api.not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
             }
 
             $user = $request->user();
-            if (!$user) {
-                return \App\Http\Responses\LandingResponse::fromPayload([
-                    'success' => false,
-                    'message' => 'РќРµРѕР±С…РѕРґРёРјР° Р°РІС‚РѕСЂРёР·Р°С†РёСЏ'
-                ], 401);
+
+            if (! $user) {
+                return LandingResponse::error(
+                    trans_message('landing.not_authenticated'),
+                    Response::HTTP_UNAUTHORIZED
+                );
             }
 
             $parentOrg = $group->parentOrganization;
-            if (!$parentOrg) {
-                return \App\Http\Responses\LandingResponse::fromPayload([
-                    'success' => false,
-                    'message' => 'Р РѕРґРёС‚РµР»СЊСЃРєР°СЏ РѕСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°'
-                ], 404);
+
+            if (! $parentOrg) {
+                return LandingResponse::error(
+                    trans_message('landing.holding_api.parent_not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
             }
 
-            $hasAccess = $this->multiOrganizationService->hasAccessToOrganization($user, $parentOrg->id);
-            if (!$hasAccess) {
-                return \App\Http\Responses\LandingResponse::fromPayload([
-                    'success' => false,
-                    'message' => 'РќРµС‚ РґРѕСЃС‚СѓРїР° Рє СѓРїСЂР°РІР»РµРЅРёСЋ С…РѕР»РґРёРЅРіРѕРј'
-                ], 403);
+            if (! $this->multiOrganizationService->hasAccessToOrganization($user, $parentOrg->id)) {
+                return LandingResponse::error(
+                    trans_message('landing.holding_api.management_access_denied'),
+                    Response::HTTP_FORBIDDEN
+                );
             }
 
-            $hierarchy = $this->multiOrganizationService->getOrganizationHierarchy($parentOrg->id);
-            
-            $childOrgs = $parentOrg->childOrganizations;
-            $recentActivity = [];
-
-            foreach ($childOrgs as $childOrg) {
-                $lastProject = $childOrg->projects()->latest()->first();
-                $lastContract = $childOrg->contracts()->latest()->first();
-                
-                if ($lastProject) {
-                    $recentActivity[] = [
-                        'type' => 'project_created',
-                        'organization_name' => $childOrg->name,
-                        'description' => "РЎРѕР·РґР°РЅ РїСЂРѕРµРєС‚: {$lastProject->name}",
-                        'date' => $lastProject->created_at,
-                    ];
-                }
-                
-                if ($lastContract) {
-                    $recentActivity[] = [
-                        'type' => 'contract_signed',
-                        'organization_name' => $childOrg->name,
-                        'description' => "РџРѕРґРїРёСЃР°РЅ РєРѕРЅС‚СЂР°РєС‚: {$lastContract->name}",
-                        'date' => $lastContract->created_at,
-                    ];
-                }
-            }
-
-            usort($recentActivity, fn($a, $b) => $b['date'] <=> $a['date']);
-            $recentActivity = array_slice($recentActivity, 0, 10);
-
-            $consolidatedStats = [
-                'total_child_organizations' => $childOrgs->count(),
-                'total_users' => $parentOrg->users()->count() + $childOrgs->sum(fn($org) => $org->users()->count()),
-                'total_projects' => $parentOrg->projects()->count() + $childOrgs->sum(fn($org) => $org->projects()->count()),
-                'total_contracts' => $parentOrg->contracts()->count() + $childOrgs->sum(fn($org) => $org->contracts()->count()),
-                'total_contracts_value' => $parentOrg->contracts()->sum('total_amount') + $childOrgs->sum(fn($org) => $org->contracts()->sum('total_amount')),
-                'active_contracts_count' => $parentOrg->contracts()->where('status', 'active')->count() + $childOrgs->sum(fn($org) => $org->contracts()->where('status', 'active')->count()),
-                'recent_activity' => $recentActivity,
-                'performance_metrics' => [
-                    'monthly_growth' => 0,
-                    'efficiency_score' => 0,
-                    'satisfaction_index' => 0,
+            return LandingResponse::success([
+                'holding' => $this->formatHolding($group),
+                'hierarchy' => $this->multiOrganizationService->getOrganizationHierarchy($parentOrg->id),
+                'user' => [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
                 ],
-            ];
-
-            return \App\Http\Responses\LandingResponse::fromPayload([
-                'success' => true,
-                'data' => [
-                    'holding' => [
-                        'id' => $group->id,
-                        'name' => $group->name,
-                        'slug' => $group->slug,
-                        'description' => $group->description,
-                        'parent_organization_id' => $group->parent_organization_id,
-                        'status' => $group->status,
-                    ],
-                    'hierarchy' => $hierarchy,
-                    'user' => [
-                        'id' => $user->id,
-                        'name' => $user->name,
-                        'email' => $user->email,
-                    ],
-                    'consolidated_stats' => $consolidatedStats,
-                ]
+                'consolidated_stats' => array_merge(
+                    $this->buildHoldingStats($parentOrg),
+                    [
+                        'recent_activity' => $this->buildRecentActivity($parentOrg),
+                        'performance_metrics' => [
+                            'monthly_growth' => 0,
+                            'efficiency_score' => 0,
+                            'satisfaction_index' => 0,
+                        ],
+                    ]
+                ),
+            ]);
+        } catch (Throwable $exception) {
+            $this->logFailure('holding_api.dashboard_failed', $exception, [
+                'slug' => $slug,
+                'user_id' => $request->user()?->id,
             ]);
 
-        } catch (\Exception $e) {
-            return \App\Http\Responses\LandingResponse::fromPayload([
-                'success' => false,
-                'message' => 'РћС€РёР±РєР° РїСЂРё РїРѕР»СѓС‡РµРЅРёРё РґР°РЅРЅС‹С… РїР°РЅРµР»Рё СѓРїСЂР°РІР»РµРЅРёСЏ',
-                'error' => $e->getMessage()
-            ], 500);
+            return LandingResponse::error(
+                trans_message('landing.holding_api.dashboard_load_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
     public function getOrganizations(string $slug, Request $request): JsonResponse
     {
         try {
-            $group = OrganizationGroup::where('slug', $slug)->first();
-            
-            if (!$group) {
-                return \App\Http\Responses\LandingResponse::fromPayload([
-                    'success' => false,
-                    'message' => 'РҐРѕР»РґРёРЅРі РЅРµ РЅР°Р№РґРµРЅ'
-                ], 404);
+            $group = $this->findHolding($slug);
+
+            if (! $group) {
+                return LandingResponse::error(
+                    trans_message('landing.holding_api.not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
             }
 
             $user = $request->user();
-            if (!$user) {
-                return \App\Http\Responses\LandingResponse::fromPayload([
-                    'success' => false,
-                    'message' => 'РќРµРѕР±С…РѕРґРёРјР° Р°РІС‚РѕСЂРёР·Р°С†РёСЏ'
-                ], 401);
+
+            if (! $user) {
+                return LandingResponse::error(
+                    trans_message('landing.not_authenticated'),
+                    Response::HTTP_UNAUTHORIZED
+                );
             }
 
             $parentOrg = $group->parentOrganization;
-            if (!$parentOrg) {
-                return \App\Http\Responses\LandingResponse::fromPayload([
-                    'success' => false,
-                    'message' => 'Р РѕРґРёС‚РµР»СЊСЃРєР°СЏ РѕСЂРіР°РЅРёР·Р°С†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°'
-                ], 404);
+
+            if (! $parentOrg) {
+                return LandingResponse::error(
+                    trans_message('landing.holding_api.parent_not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
             }
 
-            $hasAccess = $this->multiOrganizationService->hasAccessToOrganization($user, $parentOrg->id);
-            if (!$hasAccess) {
-                return \App\Http\Responses\LandingResponse::fromPayload([
-                    'success' => false,
-                    'message' => 'РќРµС‚ РґРѕСЃС‚СѓРїР° Рє РґР°РЅРЅС‹Рј РѕСЂРіР°РЅРёР·Р°С†РёР№ С…РѕР»РґРёРЅРіР°'
-                ], 403);
+            if (! $this->multiOrganizationService->hasAccessToOrganization($user, $parentOrg->id)) {
+                return LandingResponse::error(
+                    trans_message('landing.holding_api.organizations_access_denied'),
+                    Response::HTTP_FORBIDDEN
+                );
             }
 
-            $childOrgs = $parentOrg->childOrganizations;
-            
-            $organizations = $childOrgs->map(function ($org) {
-                return [
-                    'id' => $org->id,
-                    'name' => $org->name,
-                    'description' => $org->description,
-                    'organization_type' => $org->organization_type,
-                    'hierarchy_level' => $org->hierarchy_level,
-                    'tax_number' => $org->tax_number,
-                    'registration_number' => $org->registration_number,
-                    'address' => $org->address,
-                    'phone' => $org->phone,
-                    'email' => $org->email,
-                    'created_at' => $org->created_at,
-                    'stats' => [
-                        'users_count' => $org->users()->count(),
-                        'projects_count' => $org->projects()->count(),
-                        'contracts_count' => $org->contracts()->count(),
-                        'active_contracts_value' => $org->contracts()->where('status', 'active')->sum('total_amount'),
-                    ],
-                ];
-            });
+            $organizations = $parentOrg->childOrganizations
+                ->map(fn (Organization $organization): array => $this->formatOrganizationWithStats($organization))
+                ->values();
 
-            return \App\Http\Responses\LandingResponse::fromPayload([
-                'success' => true,
-                'data' => $organizations
+            return LandingResponse::success($organizations);
+        } catch (Throwable $exception) {
+            $this->logFailure('holding_api.organizations_failed', $exception, [
+                'slug' => $slug,
+                'user_id' => $request->user()?->id,
             ]);
 
-        } catch (\Exception $e) {
-            return \App\Http\Responses\LandingResponse::fromPayload([
-                'success' => false,
-                'message' => 'РћС€РёР±РєР° РїСЂРё РїРѕР»СѓС‡РµРЅРёРё СЃРїРёСЃРєР° РѕСЂРіР°РЅРёР·Р°С†РёР№',
-                'error' => $e->getMessage()
-            ], 500);
+            return LandingResponse::error(
+                trans_message('landing.holding_api.organizations_load_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
     public function getOrganizationData(string $slug, int $organizationId, Request $request): JsonResponse
     {
         try {
-            $group = OrganizationGroup::where('slug', $slug)->first();
-            
-            if (!$group) {
-                return \App\Http\Responses\LandingResponse::fromPayload([
-                    'success' => false,
-                    'message' => 'РҐРѕР»РґРёРЅРі РЅРµ РЅР°Р№РґРµРЅ'
-                ], 404);
+            $group = $this->findHolding($slug);
+
+            if (! $group) {
+                return LandingResponse::error(
+                    trans_message('landing.holding_api.not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
             }
 
             $user = $request->user();
-            if (!$user) {
-                return \App\Http\Responses\LandingResponse::fromPayload([
-                    'success' => false,
-                    'message' => 'РќРµРѕР±С…РѕРґРёРјР° Р°РІС‚РѕСЂРёР·Р°С†РёСЏ'
-                ], 401);
+
+            if (! $user) {
+                return LandingResponse::error(
+                    trans_message('landing.not_authenticated'),
+                    Response::HTTP_UNAUTHORIZED
+                );
             }
 
-            $organizationData = $this->multiOrganizationService->getOrganizationData($organizationId, $user);
-
-            return \App\Http\Responses\LandingResponse::fromPayload([
-                'success' => true,
-                'data' => $organizationData
+            return LandingResponse::success(
+                $this->multiOrganizationService->getOrganizationData($organizationId, $user)
+            );
+        } catch (Throwable $exception) {
+            $this->logFailure('holding_api.organization_data_failed', $exception, [
+                'slug' => $slug,
+                'organization_id' => $organizationId,
+                'user_id' => $request->user()?->id,
             ]);
 
-        } catch (\Exception $e) {
-            return \App\Http\Responses\LandingResponse::fromPayload([
-                'success' => false,
-                'message' => 'РћС€РёР±РєР° РїСЂРё РїРѕР»СѓС‡РµРЅРёРё РґР°РЅРЅС‹С… РѕСЂРіР°РЅРёР·Р°С†РёРё',
-                'error' => $e->getMessage()
-            ], 500);
+            return LandingResponse::error(
+                trans_message('landing.holding_api.organization_load_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
-} 
+
+    private function findHolding(string $slug): ?OrganizationGroup
+    {
+        return OrganizationGroup::query()
+            ->where('slug', $slug)
+            ->first();
+    }
+
+    private function formatHolding(OrganizationGroup $group): array
+    {
+        return [
+            'id' => $group->id,
+            'name' => $group->name,
+            'slug' => $group->slug,
+            'description' => $group->description,
+            'parent_organization_id' => $group->parent_organization_id,
+            'status' => $group->status,
+            'created_at' => $group->created_at,
+        ];
+    }
+
+    private function formatOrganization(Organization $organization): array
+    {
+        return [
+            'id' => $organization->id,
+            'name' => $organization->name,
+            'legal_name' => $organization->legal_name,
+            'tax_number' => $organization->tax_number,
+            'registration_number' => $organization->registration_number,
+            'address' => $organization->address,
+            'phone' => $organization->phone,
+            'email' => $organization->email,
+            'city' => $organization->city,
+            'description' => $organization->description,
+        ];
+    }
+
+    private function formatOrganizationWithStats(Organization $organization): array
+    {
+        return array_merge($this->formatOrganization($organization), [
+            'organization_type' => $organization->organization_type,
+            'hierarchy_level' => $organization->hierarchy_level,
+            'created_at' => $organization->created_at,
+            'stats' => [
+                'users_count' => $organization->users()->count(),
+                'projects_count' => $organization->projects()->count(),
+                'contracts_count' => $organization->contracts()->count(),
+                'active_contracts_value' => $organization->contracts()
+                    ->where('status', 'active')
+                    ->sum('total_amount'),
+            ],
+        ]);
+    }
+
+    private function buildHoldingStats(Organization $parentOrg): array
+    {
+        $childOrgs = $parentOrg->childOrganizations;
+
+        return [
+            'total_child_organizations' => $childOrgs->count(),
+            'total_users' => $parentOrg->users()->count() + $childOrgs->sum(fn ($org) => $org->users()->count()),
+            'total_projects' => $parentOrg->projects()->count() + $childOrgs->sum(fn ($org) => $org->projects()->count()),
+            'total_contracts' => $parentOrg->contracts()->count() + $childOrgs->sum(fn ($org) => $org->contracts()->count()),
+            'total_contracts_value' => $parentOrg->contracts()->sum('total_amount') + $childOrgs->sum(fn ($org) => $org->contracts()->sum('total_amount')),
+            'active_contracts_count' => $parentOrg->contracts()->where('status', 'active')->count() + $childOrgs->sum(fn ($org) => $org->contracts()->where('status', 'active')->count()),
+        ];
+    }
+
+    private function buildRecentActivity(Organization $parentOrg): array
+    {
+        $activity = [];
+
+        foreach ($parentOrg->childOrganizations as $childOrg) {
+            $lastProject = $childOrg->projects()->latest()->first();
+            $lastContract = $childOrg->contracts()->latest()->first();
+
+            if ($lastProject) {
+                $activity[] = [
+                    'type' => 'project_created',
+                    'organization_name' => $childOrg->name,
+                    'description' => trans_message('landing.holding_api.project_created', [
+                        'name' => $lastProject->name,
+                    ]),
+                    'date' => $lastProject->created_at,
+                ];
+            }
+
+            if ($lastContract) {
+                $activity[] = [
+                    'type' => 'contract_signed',
+                    'organization_name' => $childOrg->name,
+                    'description' => trans_message('landing.holding_api.contract_signed', [
+                        'name' => $lastContract->name,
+                    ]),
+                    'date' => $lastContract->created_at,
+                ];
+            }
+        }
+
+        usort($activity, fn (array $left, array $right): int => $right['date'] <=> $left['date']);
+
+        return array_slice($activity, 0, 10);
+    }
+
+    private function logFailure(string $event, Throwable $exception, array $context = []): void
+    {
+        Log::error($event, array_merge($context, [
+            'exception_class' => $exception::class,
+            'message' => $exception->getMessage(),
+        ]));
+    }
+}
