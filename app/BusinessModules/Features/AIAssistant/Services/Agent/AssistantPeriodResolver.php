@@ -58,6 +58,29 @@ final class AssistantPeriodResolver
         12 => 'Декабрь',
     ];
 
+    /**
+     * @var array<string, int>
+     */
+    private const NUMBER_WORDS = [
+        'один' => 1,
+        'одна' => 1,
+        'одну' => 1,
+        'два' => 2,
+        'две' => 2,
+        'пара' => 2,
+        'пару' => 2,
+        'три' => 3,
+        'четыре' => 4,
+        'пять' => 5,
+        'шесть' => 6,
+        'семь' => 7,
+        'восемь' => 8,
+        'девять' => 9,
+        'десять' => 10,
+        'одиннадцать' => 11,
+        'двенадцать' => 12,
+    ];
+
     public function __construct(
         private readonly ?CarbonImmutable $now = null
     ) {}
@@ -82,6 +105,7 @@ final class AssistantPeriodResolver
         return $this->resolveExplicitDateRange($normalized, $sourceText)
             ?? $this->resolveRelativeMonth($normalized, $sourceText, $now)
             ?? $this->resolveRelativeYear($normalized, $sourceText, $now)
+            ?? $this->resolveRelativeQuantity($normalized, $sourceText, $now)
             ?? $this->resolveLastWeeks($normalized, $sourceText, $now)
             ?? $this->resolveWeeksAgo($normalized, $sourceText, $now)
             ?? $this->resolveNamedMonth($normalized, $sourceText, $now);
@@ -171,6 +195,29 @@ final class AssistantPeriodResolver
         return null;
     }
 
+    private function resolveRelativeQuantity(string $normalized, string $sourceText, CarbonImmutable $now): ?AssistantResolvedPeriod
+    {
+        if (preg_match('/\bза\s+(\d{1,2}|[а-яё]+)\s+(день|дня|дней|неделю|недели|недель|месяц|месяца|месяцев|год|года|лет)\b/u', $normalized, $matches) !== 1) {
+            return null;
+        }
+
+        $quantity = $this->quantityFromToken($matches[1]);
+        $unit = $this->unitFromToken($matches[2]);
+
+        if ($quantity === null || $unit === null || $quantity < 1) {
+            return null;
+        }
+
+        [$dateFrom, $unitLabel] = match ($unit) {
+            'day' => [$now->subDays($quantity), $this->pluralize($quantity, 'день', 'дня', 'дней')],
+            'week' => [$now->subWeeks($quantity), $this->pluralize($quantity, 'неделя', 'недели', 'недель')],
+            'month' => [$now->subMonthsNoOverflow($quantity), $this->pluralize($quantity, 'месяц', 'месяца', 'месяцев')],
+            'year' => [$now->subYears($quantity), $this->pluralize($quantity, 'год', 'года', 'лет')],
+        };
+
+        return $this->period($dateFrom, $now, "За {$quantity} {$unitLabel}", $sourceText);
+    }
+
     private function resolveLastWeeks(string $normalized, string $sourceText, CarbonImmutable $now): ?AssistantResolvedPeriod
     {
         if (preg_match('/\bза\s+(\d{1,2})\s+недел(?:ю|и|ь)\b/u', $normalized, $matches) !== 1) {
@@ -250,6 +297,50 @@ final class AssistantPeriodResolver
     private function normalize(string $value): string
     {
         return preg_replace('/\s+/u', ' ', mb_strtolower(trim($value))) ?? '';
+    }
+
+    private function quantityFromToken(string $token): ?int
+    {
+        if (preg_match('/^\d{1,2}$/', $token) === 1) {
+            return (int) $token;
+        }
+
+        return self::NUMBER_WORDS[$token] ?? null;
+    }
+
+    private function unitFromToken(string $token): ?string
+    {
+        if (preg_match('/^д/u', $token) === 1) {
+            return 'day';
+        }
+
+        if (preg_match('/^недел/u', $token) === 1) {
+            return 'week';
+        }
+
+        if (preg_match('/^месяц/u', $token) === 1) {
+            return 'month';
+        }
+
+        if (preg_match('/^(год|лет)/u', $token) === 1) {
+            return 'year';
+        }
+
+        return null;
+    }
+
+    private function pluralize(int $value, string $one, string $few, string $many): string
+    {
+        $lastTwo = $value % 100;
+        if ($lastTwo >= 11 && $lastTwo <= 14) {
+            return $many;
+        }
+
+        return match ($value % 10) {
+            1 => $one,
+            2, 3, 4 => $few,
+            default => $many,
+        };
     }
 
     private function stringValue(mixed $value): string

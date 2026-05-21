@@ -57,9 +57,35 @@ class AssistantAgentPlannerTest extends TestCase
         return [
             'last month' => ['за последний месяц', '2026-04-04', '2026-05-04'],
             'november' => ['за ноябрь', '2025-11-01', '2025-11-30'],
+            'two months as words' => ['за два месяца', '2026-03-04', '2026-05-04'],
             'two weeks' => ['за 2 недели', '2026-04-20', '2026-05-04'],
             'three weeks ago' => ['3 недели назад', '2026-04-07', '2026-04-14'],
         ];
+    }
+
+    public function test_word_number_period_reply_continues_pending_work_completion_report(): void
+    {
+        $pending = new AssistantTaskState(
+            id: 'report.work_completion',
+            domain: 'reports',
+            capability: 'reports',
+            toolName: 'generate_work_completion_report',
+            status: 'waiting_for_slots',
+            slots: [
+                new AssistantTaskSlot('period', true),
+                new AssistantTaskSlot('project_id', false, 56, 'Строительство склада Литер А'),
+            ],
+            sourceMessage: 'выполнение работ'
+        );
+
+        $decision = $this->planner()->decide('за два месяца', [], $pending);
+
+        $this->assertSame('execute_tool', $decision->type);
+        $this->assertSame('generate_work_completion_report', $decision->toolName);
+        $this->assertSame('за два месяца', $decision->toolArguments['period']);
+        $this->assertSame('2026-03-04', $decision->toolArguments['date_from']);
+        $this->assertSame('2026-05-04', $decision->toolArguments['date_to']);
+        $this->assertSame(56, $decision->toolArguments['project_id']);
     }
 
     public function test_direct_request_with_period_executes_immediately(): void
