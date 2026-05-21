@@ -21,6 +21,9 @@ class SiteRequestResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $equipmentType = $this->resolveEquipmentType();
+        $equipmentTypeValue = $this->resolveEquipmentTypeValue();
+
         return [
             'id' => $this->id,
             'organization_id' => $this->organization_id,
@@ -68,12 +71,8 @@ class SiteRequestResource extends JsonResource
             'estimated_personnel_cost' => $this->estimated_personnel_cost,
 
             // Техника
-            'equipment_type' => $this->equipment_type instanceof EquipmentTypeEnum
-                ? $this->equipment_type->value
-                : $this->equipment_type,
-            'equipment_type_label' => $this->equipment_type instanceof EquipmentTypeEnum
-                ? $this->equipment_type->label()
-                : EquipmentTypeEnum::tryFrom((string) $this->equipment_type)?->label(),
+            'equipment_type' => $equipmentType?->value ?? $equipmentTypeValue,
+            'equipment_type_label' => $equipmentType?->label(),
             'equipment_count' => $this->equipment_count,
             'equipment_specs' => $this->equipment_specs,
             'rental_start_date' => $this->rental_start_date?->format('Y-m-d'),
@@ -266,6 +265,29 @@ class SiteRequestResource extends JsonResource
             'latest_delivery_id' => $latestDelivery->id,
             'can_receive' => $latestDelivery->canReceive(),
         ];
+    }
+
+    private function resolveEquipmentType(): ?EquipmentTypeEnum
+    {
+        $value = $this->resolveEquipmentTypeValue();
+
+        return match ($value) {
+            'crane' => EquipmentTypeEnum::MOBILE_CRANE,
+            default => $value !== null ? EquipmentTypeEnum::tryFrom($value) : null,
+        };
+    }
+
+    private function resolveEquipmentTypeValue(): ?string
+    {
+        $value = $this->resource instanceof SiteRequest
+            ? $this->resource->getRawOriginal('equipment_type')
+            : null;
+
+        if ($value instanceof EquipmentTypeEnum) {
+            return $value->value;
+        }
+
+        return is_string($value) && $value !== '' ? $value : null;
     }
 }
 

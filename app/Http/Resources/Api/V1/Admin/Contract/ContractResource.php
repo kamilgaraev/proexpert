@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources\Api\V1\Admin\Contract;
 
+use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use App\Http\Resources\Api\V1\Admin\Project\ProjectMiniResource;
@@ -24,6 +25,9 @@ class ContractResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $workTypeCategory = $this->resolveWorkTypeCategory();
+        $workTypeCategoryValue = $this->resolveWorkTypeCategoryValue();
+
         // Работаем только с загруженными связями, НЕ используем accessors
         $confirmedWorks = $this->whenLoaded('completedWorks', function() {
             return $this->completedWorks->where('status', 'confirmed');
@@ -181,8 +185,8 @@ class ContractResource extends JsonResource
             'number' => $this->number,
             'date' => $this->date,
             'subject' => $this->subject,
-            'work_type_category' => $this->work_type_category?->value,
-            'work_type_category_label' => $this->work_type_category?->label(),
+            'work_type_category' => $workTypeCategory?->value ?? $workTypeCategoryValue,
+            'work_type_category_label' => $workTypeCategory?->label(),
             'payment_terms' => $this->payment_terms,
             'base_amount' => $modelBaseAmount,
             'total_amount' => $totalAmountCalculated,
@@ -591,6 +595,27 @@ class ContractResource extends JsonResource
     private function resolveCustomer(): ?array
     {
         return app(ContractSideResolverService::class)->resolveCustomerAlias($this->resource);
+    }
+
+    private function resolveWorkTypeCategory(): ?ContractWorkTypeCategoryEnum
+    {
+        $value = $this->resolveWorkTypeCategoryValue();
+
+        return match ($value) {
+            'construction' => ContractWorkTypeCategoryEnum::GENERAL_CONSTRUCTION,
+            default => $value !== null ? ContractWorkTypeCategoryEnum::tryFrom($value) : null,
+        };
+    }
+
+    private function resolveWorkTypeCategoryValue(): ?string
+    {
+        $value = $this->resource->getRawOriginal('work_type_category');
+
+        if ($value instanceof ContractWorkTypeCategoryEnum) {
+            return $value->value;
+        }
+
+        return is_string($value) && $value !== '' ? $value : null;
     }
 
     private function isAdvancePaymentDocument($payment): bool
