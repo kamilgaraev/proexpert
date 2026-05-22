@@ -11,7 +11,9 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
+use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -111,6 +113,75 @@ final class QualityControlMobileTest extends TestCase
             ->getJson('/api/v1/mobile/quality-control/defects?status=unknown')
             ->assertStatus(422)
             ->assertJsonPath('errors.status.0', trans_message('quality_control.validation.status_invalid'));
+    }
+
+    public function test_mobile_quality_defect_can_upload_result_photo_verify_and_reject(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess();
+
+        $this->mock(FileService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('upload')
+                ->once()
+                ->andReturn('https://storage.example/quality/result.jpg');
+        });
+
+        $defect = $this->createDefect($context, $project, 'in_progress', 'critical', [
+            'inspection_required' => true,
+        ]);
+
+        $resolveResponse = $this->withHeaders($context->authHeaders())
+            ->post("/api/v1/mobile/quality-control/defects/{$defect->id}/resolve", [
+                'photos' => [
+                    [
+                        'type' => 'after',
+                        'file' => UploadedFile::fake()->image('result.jpg'),
+                    ],
+                ],
+            ]);
+
+        $resolveResponse->assertOk()
+            ->assertJsonPath('data.status', QualityDefectStatusEnum::READY_FOR_REVIEW->value)
+            ->assertJsonPath('data.photos.0.url', 'https://storage.example/quality/result.jpg');
+        $this->assertDatabaseHas('quality_defect_photos', [
+            'quality_defect_id' => $defect->id,
+            'type' => 'after',
+            'url' => 'https://storage.example/quality/result.jpg',
+        ]);
+
+        $verifyResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/quality-control/defects/{$defect->id}/verify", [
+                'comment' => 'Результат проверен на объекте',
+            ]);
+
+        $verifyResponse->assertOk()
+            ->assertJsonPath('data.status', QualityDefectStatusEnum::RESOLVED->value);
+        $this->assertDatabaseHas('quality_defect_status_history', [
+            'quality_defect_id' => $defect->id,
+            'to_status' => QualityDefectStatusEnum::RESOLVED->value,
+            'comment' => 'Результат проверен на объекте',
+        ]);
+
+        $rejectedDefect = $this->createDefect($context, $project, 'ready_for_review', 'major');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/quality-control/defects/{$rejectedDefect->id}/reject")
+            ->assertStatus(422)
+            ->assertJsonPath('errors.comment.0', trans_message('quality_control.validation.comment_required'));
+
+        $rejectResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/quality-control/defects/{$rejectedDefect->id}/reject", [
+                'comment' => 'Нужно переделать примыкание',
+            ]);
+
+        $rejectResponse->assertOk()
+            ->assertJsonPath('data.status', QualityDefectStatusEnum::REJECTED->value);
+        $this->assertDatabaseHas('quality_defect_status_history', [
+            'quality_defect_id' => $rejectedDefect->id,
+            'to_status' => QualityDefectStatusEnum::REJECTED->value,
+            'comment' => 'Нужно переделать примыкание',
+        ]);
     }
 
     private function allowAccess(): void

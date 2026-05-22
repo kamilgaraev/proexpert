@@ -59,6 +59,12 @@ Route::prefix('api/v1/mobile/quality-control')
             Route::post('/{id}/resolve', [MobileQualityDefectController::class, 'resolve'])
                 ->middleware('authorize:quality-control.defects.resolve')
                 ->name('resolve');
+            Route::post('/{id}/verify', [MobileQualityDefectController::class, 'verify'])
+                ->middleware('authorize:quality-control.defects.verify')
+                ->name('verify');
+            Route::post('/{id}/reject', [MobileQualityDefectController::class, 'reject'])
+                ->middleware('authorize:quality-control.defects.reject')
+                ->name('reject');
         });
     });
 

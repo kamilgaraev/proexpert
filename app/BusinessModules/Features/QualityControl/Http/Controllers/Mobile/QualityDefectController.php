@@ -168,8 +168,9 @@ final class QualityDefectController extends Controller
             $validated = $this->validated($request, [
                 'comment' => ['nullable', 'string', 'max:1000'],
                 'photos' => ['nullable', 'array'],
-                'photos.*.type' => ['required_with:photos', 'string'],
-                'photos.*.url' => ['required_with:photos', 'string', 'max:2000'],
+                'photos.*.type' => ['required_with:photos', 'string', Rule::in(['before', 'after', 'evidence', 'other'])],
+                'photos.*.url' => ['nullable', 'required_without:photos.*.file', 'string', 'max:2000'],
+                'photos.*.file' => ['nullable', 'required_without:photos.*.url', File::image()->max(10 * 1024)],
                 'photos.*.caption' => ['nullable', 'string', 'max:255'],
                 'photos.*.metadata' => ['nullable', 'array'],
             ]);
@@ -186,6 +187,57 @@ final class QualityDefectController extends Controller
             return MobileResponse::error($e->getMessage(), 422);
         } catch (\Throwable $e) {
             return $this->failedAction('resolve', $id, $e);
+        }
+    }
+
+    public function verify(Request $request, int $id): JsonResponse
+    {
+        try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $validated = $this->validated($request, ['comment' => ['nullable', 'string', 'max:1000']]);
+            $defect = $this->findOrFail($id, $organizationId);
+
+            return MobileResponse::success(new QualityDefectResource($this->service->verify(
+                $defect,
+                (int) auth()->id(),
+                true,
+                $validated['comment'] ?? null
+            )));
+        } catch (ValidationException $e) {
+            return MobileResponse::error(
+                trans_message('quality_control.errors.validation_failed'),
+                422,
+                $e->errors()
+            );
+        } catch (DomainException $e) {
+            return MobileResponse::error($e->getMessage(), 422);
+        } catch (\Throwable $e) {
+            return $this->failedAction('verify', $id, $e);
+        }
+    }
+
+    public function reject(Request $request, int $id): JsonResponse
+    {
+        try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $validated = $this->validated($request, ['comment' => ['required', 'string', 'max:1000']]);
+            $defect = $this->findOrFail($id, $organizationId);
+
+            return MobileResponse::success(new QualityDefectResource($this->service->reject(
+                $defect,
+                (int) auth()->id(),
+                $validated['comment']
+            )));
+        } catch (ValidationException $e) {
+            return MobileResponse::error(
+                trans_message('quality_control.errors.validation_failed'),
+                422,
+                $e->errors()
+            );
+        } catch (DomainException $e) {
+            return MobileResponse::error($e->getMessage(), 422);
+        } catch (\Throwable $e) {
+            return $this->failedAction('reject', $id, $e);
         }
     }
 
@@ -236,7 +288,9 @@ final class QualityDefectController extends Controller
             'overdue.boolean' => trans_message('quality_control.validation.overdue_invalid'),
             'sort_by.in' => trans_message('quality_control.validation.sort_invalid'),
             'sort_dir.in' => trans_message('quality_control.validation.sort_invalid'),
+            'comment.required' => trans_message('quality_control.validation.comment_required'),
             'photos.*.type.required_with' => trans_message('quality_control.validation.photo_type_required'),
+            'photos.*.type.in' => trans_message('quality_control.validation.photo_type_required'),
             'photos.*.url.required_without' => trans_message('quality_control.validation.photo_required'),
             'photos.*.file.required_without' => trans_message('quality_control.validation.photo_required'),
         ];
