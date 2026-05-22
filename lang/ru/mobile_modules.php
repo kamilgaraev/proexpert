@@ -20,7 +20,7 @@ return [
             'description' => 'Ближайшие события, блокировки и рабочий календарь по объектам.',
         ],
         'workflow-management' => [
-            'title' => 'Workflow',
+            'title' => 'Согласования',
             'description' => 'Маршруты согласований и статусы бизнес-процессов.',
         ],
         'time-tracking' => [

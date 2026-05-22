@@ -44,8 +44,8 @@ class MobileModulesService
         [
             'slug' => 'workflow-management',
             'icon' => 'hub',
-            'route' => null,
-            'supported_on_mobile' => false,
+            'route' => 'workflow-management',
+            'supported_on_mobile' => true,
             'order' => 40,
         ],
         [
