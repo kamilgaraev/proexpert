@@ -104,6 +104,7 @@ return [
         'severity_required' => 'Укажите тяжесть',
         'severity_invalid' => 'Выберите тяжесть из списка',
         'status_invalid' => 'Выберите статус из списка',
+        'per_page_invalid' => 'Выберите корректное количество записей',
         'occurred_at_required' => 'Укажите время происшествия',
         'resolution_comment_required' => 'Укажите результат устранения',
         'reason_required' => 'Укажите причину',

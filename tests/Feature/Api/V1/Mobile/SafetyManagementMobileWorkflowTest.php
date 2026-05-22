@@ -164,6 +164,17 @@ final class SafetyManagementMobileTest extends TestCase
             ->assertJsonPath('data.status', 'reported')
             ->assertJsonPath('data.project_id', $project->id)
             ->assertJsonPath('data.available_actions.0', 'triage');
+        $incidentId = (int) $incidentResponse->json('data.id');
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/mobile/safety-management/incidents?status=not-a-status')
+            ->assertStatus(422)
+            ->assertJsonPath('errors.status.0', trans_message('safety_management.validation.status_invalid'));
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/mobile/safety-management/incidents?status=reported')
+            ->assertOk()
+            ->assertJsonPath('data.data.0.id', $incidentId);
 
         $violationResponse = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/mobile/safety-management/violations', [
@@ -180,6 +191,16 @@ final class SafetyManagementMobileTest extends TestCase
             ->assertJsonPath('data.status', 'open')
             ->assertJsonPath('data.available_actions.0', 'resolve');
         $violationId = (int) $violationResponse->json('data.id');
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/mobile/safety-management/violations?status=not-a-status')
+            ->assertStatus(422)
+            ->assertJsonPath('errors.status.0', trans_message('safety_management.validation.status_invalid'));
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/mobile/safety-management/violations?status=open')
+            ->assertOk()
+            ->assertJsonPath('data.data.0.id', $violationId);
 
         $resolveResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/mobile/safety-management/violations/{$violationId}/resolve", [

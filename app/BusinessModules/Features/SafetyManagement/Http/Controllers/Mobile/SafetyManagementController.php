@@ -32,6 +32,21 @@ final class SafetyManagementController extends Controller
         'cancelled',
     ];
 
+    private const INCIDENT_STATUSES = [
+        'reported',
+        'triage',
+        'investigation',
+        'corrective_actions',
+        'closed',
+        'cancelled',
+    ];
+
+    private const VIOLATION_STATUSES = [
+        'open',
+        'resolved',
+        'closed',
+    ];
+
     public function __construct(
         private readonly SafetyManagementService $service,
     ) {
@@ -92,17 +107,29 @@ final class SafetyManagementController extends Controller
     public function incidents(Request $request): JsonResponse
     {
         try {
+            $filters = $this->validated($request, [
+                'project_id' => ['nullable', 'integer'],
+                'status' => ['nullable', 'string', Rule::in(self::INCIDENT_STATUSES)],
+                'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+            ]);
+
             $incidents = $this->service->paginateIncidents(
                 (int) $request->attributes->get('current_organization_id'),
-                min((int) $request->input('per_page', 20), 100),
+                (int) ($filters['per_page'] ?? 20),
                 [
-                    'project_id' => $request->input('project_id'),
-                    'status' => $request->input('status'),
+                    'project_id' => $filters['project_id'] ?? null,
+                    'status' => $filters['status'] ?? null,
                     'reported_by_user_id' => (int) $request->user()?->id,
                 ]
             );
 
             return MobileResponse::success(SafetyIncidentResource::collection($incidents->getCollection()));
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(
+                trans_message('safety_management.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
         } catch (\Throwable $exception) {
             Log::error('safety_management.mobile.incidents.index.error', [
                 'user_id' => $request->user()?->id,
@@ -116,17 +143,29 @@ final class SafetyManagementController extends Controller
     public function violations(Request $request): JsonResponse
     {
         try {
+            $filters = $this->validated($request, [
+                'project_id' => ['nullable', 'integer'],
+                'status' => ['nullable', 'string', Rule::in(self::VIOLATION_STATUSES)],
+                'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+            ]);
+
             $violations = $this->service->paginateViolations(
                 (int) $request->attributes->get('current_organization_id'),
-                min((int) $request->input('per_page', 20), 100),
+                (int) ($filters['per_page'] ?? 20),
                 [
-                    'project_id' => $request->input('project_id'),
-                    'status' => $request->input('status'),
+                    'project_id' => $filters['project_id'] ?? null,
+                    'status' => $filters['status'] ?? null,
                     'assigned_to_user_id' => (int) $request->user()?->id,
                 ]
             );
 
             return MobileResponse::success(SafetyViolationResource::collection($violations->getCollection()));
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(
+                trans_message('safety_management.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
         } catch (\Throwable $exception) {
             Log::error('safety_management.mobile.violations.index.error', [
                 'user_id' => $request->user()?->id,
@@ -430,6 +469,9 @@ final class SafetyManagementController extends Controller
             'severity.in' => trans_message('safety_management.validation.severity_invalid'),
             'project_id.integer' => trans_message('safety_management.validation.project_invalid'),
             'status.in' => trans_message('safety_management.validation.status_invalid'),
+            'per_page.integer' => trans_message('safety_management.validation.per_page_invalid'),
+            'per_page.min' => trans_message('safety_management.validation.per_page_invalid'),
+            'per_page.max' => trans_message('safety_management.validation.per_page_invalid'),
             'occurred_at.required' => trans_message('safety_management.validation.occurred_at_required'),
             'resolution_comment.required' => trans_message('safety_management.validation.resolution_comment_required'),
             'reason.required' => trans_message('safety_management.validation.reason_required'),
