@@ -26,12 +26,11 @@ final class MobileModulesTest extends TestCase
             'handover-acceptance' => ['icon' => 'handover', 'route' => 'handover-acceptance'],
             'workflow-management' => ['icon' => 'hub', 'route' => 'workflow-management'],
             'time-tracking' => ['icon' => 'timer', 'route' => 'time-tracking'],
+            'budget-estimates' => ['icon' => 'calculate', 'route' => 'budget-estimates'],
+            'procurement' => ['icon' => 'procurement', 'route' => 'procurement'],
         ];
 
-        $this->mockModulePermissions(array_values(array_unique([
-            ...array_keys($expected),
-            'budget-estimates',
-        ])));
+        $this->mockModulePermissions(array_keys($expected));
 
         $modules = collect($this->service()->build($this->user())['modules'])->keyBy('slug');
 
@@ -46,8 +45,6 @@ final class MobileModulesTest extends TestCase
     public function test_mobile_modules_catalog_marks_unsupported_companion_modules(): void
     {
         $expected = [
-            'budget-estimates' => 'calculate',
-            'procurement' => 'procurement',
             'contract-management' => 'contract',
             'change-management' => 'change',
             'executive-documentation' => 'documents',

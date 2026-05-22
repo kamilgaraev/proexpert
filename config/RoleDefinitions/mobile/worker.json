@@ -73,6 +73,11 @@
       "budget-estimates.view",
       "construction-journal.view"
     ],
+    "procurement": [
+      "procurement.view",
+      "procurement.purchase_requests.view",
+      "procurement.purchase_orders.view"
+    ],
     "workforce-management": [
       "workforce.view",
       "workforce.attendance.qr.self",

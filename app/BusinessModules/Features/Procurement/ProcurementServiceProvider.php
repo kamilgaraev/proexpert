@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\Procurement;
 
 use Illuminate\Support\ServiceProvider;
@@ -100,6 +102,10 @@ class ProcurementServiceProvider extends ServiceProvider
         $this->app->singleton(
             Services\PurchaseOrderPdfService::class
         );
+
+        $this->app->scoped(
+            Services\MobileProcurementService::class
+        );
     }
 
     /**
@@ -123,6 +129,12 @@ class ProcurementServiceProvider extends ServiceProvider
 
         if (file_exists($routesPath)) {
             require $routesPath;
+        }
+
+        $mobileRoutesPath = __DIR__ . '/routes-mobile.php';
+
+        if (file_exists($mobileRoutesPath)) {
+            require $mobileRoutesPath;
         }
     }
 
@@ -195,4 +207,3 @@ class ProcurementServiceProvider extends ServiceProvider
         Models\SupplierProposal::observe(Observers\ProcurementAuditObserver::class);
     }
 }
-

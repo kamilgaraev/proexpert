@@ -46,6 +46,9 @@ return [
         'handover_acceptance' => [
             'title' => 'Приемка',
         ],
+        'procurement' => [
+            'title' => 'Закупки',
+        ],
     ],
     'metrics' => [
         'available_sections' => 'Разделов',
@@ -74,5 +77,7 @@ return [
         'active_employees' => 'В штате',
         'active_scopes' => 'Зон в работе',
         'open_findings' => 'Замечаний',
+        'pending_procurement_approvals' => 'На согласовании',
+        'receivable_purchase_orders' => 'К приемке',
     ],
 ];

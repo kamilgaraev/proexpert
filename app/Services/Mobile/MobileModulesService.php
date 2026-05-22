@@ -116,8 +116,8 @@ class MobileModulesService
         [
             'slug' => 'procurement',
             'icon' => 'procurement',
-            'route' => null,
-            'supported_on_mobile' => false,
+            'route' => 'procurement',
+            'supported_on_mobile' => true,
             'order' => 80,
         ],
         [

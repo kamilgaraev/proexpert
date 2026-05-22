@@ -18,5 +18,6 @@ enum ProcurementAuditEventTypeEnum: string
     case PROCUREMENT_APPROVAL_APPROVED = 'procurement_approval_approved';
     case PROCUREMENT_APPROVAL_REJECTED = 'procurement_approval_rejected';
     case PURCHASE_ORDER_CREATED = 'purchase_order_created';
+    case PURCHASE_ORDER_COMMENTED = 'purchase_order_commented';
     case MATERIALS_RECEIVED = 'materials_received';
 }

@@ -34,6 +34,7 @@ final class MobileDashboardTest extends TestCase
             'production_labor',
             'workforce_management',
             'handover_acceptance',
+            'procurement',
         ], array_column($widgets, 'slug'));
 
         foreach ($widgets as $widget) {
@@ -138,6 +139,7 @@ final class MobileDashboardTest extends TestCase
             'production-labor' => ['production-labor.view'],
             'workforce-management' => ['workforce.view'],
             'handover-acceptance' => ['handover-acceptance.view'],
+            'procurement' => ['procurement.view'],
         ];
     }
 

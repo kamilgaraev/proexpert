@@ -127,6 +127,15 @@
       "construction-journal.delete",
       "construction-journal.export"
     ],
+    "procurement": [
+      "procurement.view",
+      "procurement.purchase_requests.view",
+      "procurement.purchase_orders.view",
+      "procurement.purchase_orders.receive",
+      "procurement.purchase_orders.comment",
+      "procurement.approvals.view",
+      "procurement.approvals.resolve"
+    ],
     "quality-control": [
       "quality-control.view",
       "quality-control.create",

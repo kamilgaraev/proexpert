@@ -39,6 +39,12 @@
       "construction-journal.view",
       "construction-journal.approve",
       "construction-journal.export"
+    ],
+    "procurement": [
+      "procurement.view",
+      "procurement.purchase_requests.view",
+      "procurement.purchase_orders.view",
+      "procurement.approvals.view"
     ]
   },
   

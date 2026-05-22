@@ -13,6 +13,12 @@ use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceScope;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryAsset;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryShiftReport;
 use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborWorkOrder;
+use App\BusinessModules\Features\Procurement\Enums\ProcurementApprovalStatusEnum;
+use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
+use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
+use App\BusinessModules\Features\Procurement\Models\ProcurementApproval;
+use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
+use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\QualityControl\Enums\QualityDefectStatusEnum;
 use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyIncident;
@@ -144,6 +150,15 @@ class MobileDashboardService
             'handover-acceptance.view',
         ])) {
             $widgets[] = $this->buildHandoverAcceptanceWidget($organizationId);
+        }
+
+        if ($this->canShowModule($modules, $organizationId, 'procurement', [
+            'procurement.view',
+            'procurement.purchase_requests.view',
+            'procurement.purchase_orders.view',
+            'procurement.approvals.view',
+        ])) {
+            $widgets[] = $this->buildProcurementWidget($organizationId);
         }
 
         return [
@@ -508,6 +523,41 @@ class MobileDashboardService
             updatedAt: $this->latestIso([
                 (clone $scopesQuery)->max('updated_at'),
                 (clone $findingsQuery)->max('updated_at'),
+            ])
+        );
+    }
+
+    private function buildProcurementWidget(int $organizationId): array
+    {
+        $requestsQuery = PurchaseRequest::query()->forOrganization($organizationId);
+        $ordersQuery = PurchaseOrder::query()->forOrganization($organizationId);
+        $approvalsQuery = ProcurementApproval::query()->forOrganization($organizationId);
+        $pendingRequestsCount = (int) (clone $requestsQuery)
+            ->where('status', PurchaseRequestStatusEnum::PENDING->value)
+            ->count();
+        $receivableOrdersCount = (int) (clone $ordersQuery)
+            ->whereIn('status', [
+                PurchaseOrderStatusEnum::CONFIRMED->value,
+                PurchaseOrderStatusEnum::IN_DELIVERY->value,
+                PurchaseOrderStatusEnum::PARTIALLY_DELIVERED->value,
+            ])
+            ->count();
+        $pendingApprovalsCount = (int) (clone $approvalsQuery)
+            ->where('status', ProcurementApprovalStatusEnum::PENDING->value)
+            ->count();
+
+        return $this->widget(
+            slug: 'procurement',
+            status: $pendingApprovalsCount + $receivableOrdersCount > 0
+                ? self::STATUS_ATTENTION
+                : ($pendingRequestsCount > 0 ? self::STATUS_ACTIVE : self::STATUS_OK),
+            primaryMetric: $this->metric('pending_procurement_approvals', $pendingApprovalsCount),
+            secondaryMetric: $this->metric('receivable_purchase_orders', $receivableOrdersCount),
+            route: 'procurement',
+            updatedAt: $this->latestIso([
+                (clone $requestsQuery)->max('updated_at'),
+                (clone $ordersQuery)->max('updated_at'),
+                (clone $approvalsQuery)->max('updated_at'),
             ])
         );
     }

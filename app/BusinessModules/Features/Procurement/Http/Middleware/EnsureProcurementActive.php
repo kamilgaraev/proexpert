@@ -1,8 +1,11 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\Procurement\Http\Middleware;
 
 use App\Http\Responses\AdminResponse;
+use App\Http\Responses\MobileResponse;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -14,9 +17,10 @@ class EnsureProcurementActive
     public function handle(Request $request, Closure $next): Response
     {
         $organizationId = $request->attributes->get('current_organization_id');
+        $responseClass = $request->is('api/v1/mobile/*') ? MobileResponse::class : AdminResponse::class;
 
         if (!$organizationId) {
-            return AdminResponse::error(
+            return $responseClass::error(
                 trans_message('procurement.organization_missing'),
                 403,
                 null,
@@ -27,7 +31,7 @@ class EnsureProcurementActive
         $accessController = app(\App\Modules\Core\AccessController::class);
 
         if (!$accessController->hasModuleAccess($organizationId, 'procurement')) {
-            return AdminResponse::error(
+            return $responseClass::error(
                 trans_message('procurement.module_not_active'),
                 403,
                 null,
@@ -39,7 +43,7 @@ class EnsureProcurementActive
         }
 
         if (!$accessController->hasModuleAccess($organizationId, 'basic-warehouse')) {
-            return AdminResponse::error(
+            return $responseClass::error(
                 trans_message('procurement.dependency_not_active'),
                 403,
                 null,
