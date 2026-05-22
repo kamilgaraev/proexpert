@@ -1,9 +1,10 @@
-openapi: 3.1.0
+openapi: 3.0.3
 info:
   title: "ProHelper Mobile API"
   description: |
-    Спецификация API мобильного приложения. Используйте для описания эндпоинтов `/api/v1/mobile`.
-  version: "1.0.0"
+    Спецификация активного API мобильного приложения `/api/v1/mobile`.
+    Контракт зафиксирован по фактическому Laravel route-list и использует единый MobileResponse envelope.
+  version: "1.1.0"
 servers:
   - url: "/api/v1/mobile"
     description: "Production server"
@@ -17,6 +18,133 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-  schemas: {}
-  responses: {}
-  parameters: {} 
+  schemas:
+    GenericObject:
+      type: object
+      additionalProperties: true
+    MobileEnvelope:
+      type: object
+      required: [success, message, data]
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          nullable: true
+          example: "Операция выполнена"
+        data:
+          nullable: true
+          oneOf:
+            - $ref: '#/components/schemas/GenericObject'
+            - type: array
+              items:
+                $ref: '#/components/schemas/GenericObject'
+            - type: string
+            - type: integer
+            - type: boolean
+        meta:
+          $ref: '#/components/schemas/GenericObject'
+    MobileListEnvelope:
+      type: object
+      required: [success, message, data]
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          nullable: true
+          example: "Операция выполнена"
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/GenericObject'
+        meta:
+          $ref: '#/components/schemas/MobilePaginationMeta'
+    MobilePaginationMeta:
+      type: object
+      properties:
+        current_page:
+          type: integer
+          example: 1
+        last_page:
+          type: integer
+          example: 3
+        per_page:
+          type: integer
+          example: 20
+        total:
+          type: integer
+          example: 42
+        links:
+          $ref: '#/components/schemas/GenericObject'
+      additionalProperties: true
+    MobileErrorEnvelope:
+      type: object
+      required: [success, message, data]
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: "Действие недоступно."
+        data:
+          type: object
+          nullable: true
+    MobileValidationErrorEnvelope:
+      type: object
+      required: [success, message, data, errors]
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: "Проверьте заполнение полей."
+        data:
+          type: object
+          nullable: true
+        errors:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          example:
+            title:
+              - "Поле обязательно для заполнения."
+  responses:
+    MobileSuccess:
+      description: Успешный ответ MobileResponse.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MobileEnvelope'
+          examples:
+            success:
+              value:
+                success: true
+                message: "Операция выполнена"
+                data: {}
+                meta: {}
+    MobileValidationError:
+      description: Ошибка валидации MobileResponse.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MobileValidationErrorEnvelope'
+    MobileUnauthorized:
+      description: Требуется авторизация.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MobileErrorEnvelope'
+    MobileForbidden:
+      description: Недостаточно прав для действия.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MobileErrorEnvelope'
+  parameters: {}

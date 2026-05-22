@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\Notifications\Http\Controllers;
 use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use App\Http\Responses\MobileResponse;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
@@ -63,26 +64,35 @@ class NotificationController extends Controller
 
             $notifications = $query->paginate((int) ($request->per_page ?? 20));
 
+            $meta = [
+                'current_page' => $notifications->currentPage(),
+                'from' => $notifications->firstItem(),
+                'last_page' => $notifications->lastPage(),
+                'path' => $notifications->path(),
+                'per_page' => $notifications->perPage(),
+                'to' => $notifications->lastItem(),
+                'total' => $notifications->total(),
+            ];
+            $links = [
+                'first' => $notifications->url(1),
+                'last' => $notifications->url($notifications->lastPage()),
+                'prev' => $notifications->previousPageUrl(),
+                'next' => $notifications->nextPageUrl(),
+            ];
+
+            if ($this->isMobileRequest($request)) {
+                return MobileResponse::success($notifications->items(), null, Response::HTTP_OK, array_merge($meta, [
+                    'links' => $links,
+                ]));
+            }
+
             return AdminResponse::paginated(
                 $notifications->items(),
-                [
-                    'current_page' => $notifications->currentPage(),
-                    'from' => $notifications->firstItem(),
-                    'last_page' => $notifications->lastPage(),
-                    'path' => $notifications->path(),
-                    'per_page' => $notifications->perPage(),
-                    'to' => $notifications->lastItem(),
-                    'total' => $notifications->total(),
-                ],
+                $meta,
                 null,
                 Response::HTTP_OK,
                 null,
-                [
-                    'first' => $notifications->url(1),
-                    'last' => $notifications->url($notifications->lastPage()),
-                    'prev' => $notifications->previousPageUrl(),
-                    'next' => $notifications->nextPageUrl(),
-                ]
+                $links
             );
         } catch (\Throwable $e) {
             return $this->handleUnexpectedError('index', $e, $request, trans_message('notifications.load_error'));
@@ -92,9 +102,9 @@ class NotificationController extends Controller
     public function show(Request $request, string $id): JsonResponse
     {
         try {
-            return AdminResponse::success($this->findNotificationForUser($request, $id)->load('analytics'));
+            return $this->success($request, $this->findNotificationForUser($request, $id)->load('analytics'));
         } catch (ModelNotFoundException) {
-            return AdminResponse::error(trans_message('notifications.not_found'), Response::HTTP_NOT_FOUND);
+            return $this->error($request, trans_message('notifications.not_found'), Response::HTTP_NOT_FOUND);
         } catch (\Throwable $e) {
             return $this->handleUnexpectedError('show', $e, $request, trans_message('notifications.load_error'), [
                 'notification_id' => $id,
@@ -115,12 +125,13 @@ class NotificationController extends Controller
             $notification = $this->findNotificationForUser($request, $id);
             $notification->markAsRead();
 
-            return AdminResponse::success(
+            return $this->success(
+                $request,
                 $notification->fresh(),
                 trans_message('notifications.marked_as_read')
             );
         } catch (ModelNotFoundException) {
-            return AdminResponse::error(trans_message('notifications.not_found'), Response::HTTP_NOT_FOUND);
+            return $this->error($request, trans_message('notifications.not_found'), Response::HTTP_NOT_FOUND);
         } catch (\Throwable $e) {
             return $this->handleUnexpectedError('markAsRead', $e, $request, trans_message('notifications.load_error'), [
                 'notification_id' => $id,
@@ -134,12 +145,13 @@ class NotificationController extends Controller
             $notification = $this->findNotificationForUser($request, $id);
             $notification->markAsUnread();
 
-            return AdminResponse::success(
+            return $this->success(
+                $request,
                 $notification->fresh(),
                 trans_message('notifications.marked_as_unread')
             );
         } catch (ModelNotFoundException) {
-            return AdminResponse::error(trans_message('notifications.not_found'), Response::HTTP_NOT_FOUND);
+            return $this->error($request, trans_message('notifications.not_found'), Response::HTTP_NOT_FOUND);
         } catch (\Throwable $e) {
             return $this->handleUnexpectedError('markAsUnread', $e, $request, trans_message('notifications.load_error'), [
                 'notification_id' => $id,
@@ -154,7 +166,8 @@ class NotificationController extends Controller
                 ->unread()
                 ->update(['read_at' => now()]);
 
-            return AdminResponse::success(
+            return $this->success(
+                $request,
                 ['count' => $updated],
                 trans_message('notifications.mark_all_read', ['count' => (string) $updated])
             );
@@ -169,9 +182,9 @@ class NotificationController extends Controller
             $notification = $this->findNotificationForUser($request, $id);
             $notification->delete();
 
-            return AdminResponse::success(null, trans_message('notifications.delete_success'));
+            return $this->success($request, null, trans_message('notifications.delete_success'));
         } catch (ModelNotFoundException) {
-            return AdminResponse::error(trans_message('notifications.not_found'), Response::HTTP_NOT_FOUND);
+            return $this->error($request, trans_message('notifications.not_found'), Response::HTTP_NOT_FOUND);
         } catch (\Throwable $e) {
             return $this->handleUnexpectedError('destroy', $e, $request, trans_message('notifications.delete_error'), [
                 'notification_id' => $id,
@@ -209,7 +222,7 @@ class NotificationController extends Controller
                 ->groupBy(DB::raw("COALESCE(NULLIF(notification_type, ''), NULLIF({$this->jsonDataValueExpression('notification_type')}, ''), NULLIF({$this->jsonDataValueExpression('category')}, ''), 'general')"))
                 ->get();
 
-            return AdminResponse::success([
+            return $this->success($request, [
                 'count' => $count,
                 'by_category' => $byCategoryResults->pluck('count', 'category')->toArray(),
                 'by_notification_type' => $byNotificationTypeResults->pluck('count', 'notification_type')->toArray(),
@@ -277,6 +290,29 @@ class NotificationController extends Controller
             ...$context,
         ]);
 
-        return AdminResponse::error($message, Response::HTTP_INTERNAL_SERVER_ERROR);
+        return $this->error($request, $message, Response::HTTP_INTERNAL_SERVER_ERROR);
+    }
+
+    private function success(Request $request, mixed $data = null, ?string $message = null, int $code = Response::HTTP_OK): JsonResponse
+    {
+        if ($this->isMobileRequest($request)) {
+            return MobileResponse::success($data, $message, $code);
+        }
+
+        return AdminResponse::success($data, $message, $code);
+    }
+
+    private function error(Request $request, string $message, int $code): JsonResponse
+    {
+        if ($this->isMobileRequest($request)) {
+            return MobileResponse::error($message, $code);
+        }
+
+        return AdminResponse::error($message, $code);
+    }
+
+    private function isMobileRequest(Request $request): bool
+    {
+        return str_starts_with(trim($request->path(), '/'), 'api/v1/mobile/notifications');
     }
 }

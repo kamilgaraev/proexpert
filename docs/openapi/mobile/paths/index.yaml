@@ -1,27 +1,5478 @@
-/auth/login:
-  $ref: './auth.yaml#/~1auth~1login'
-/auth/me:
-  $ref: './auth.yaml#/~1auth~1me'
-/auth/refresh:
-  $ref: './auth.yaml#/~1auth~1refresh'
-/auth/logout:
-  $ref: './auth.yaml#/~1auth~1logout'
-/projects:
-  $ref: './projects.yaml#/~1projects'
-/projects/{projectId}/contracts:
-  $ref: './projects.yaml#/~1projects~1{projectId}~1contracts'
-/work-types:
-  $ref: './catalogs.yaml#/~1work-types'
-/materials:
-  $ref: './catalogs.yaml#/~1materials'
-/suppliers:
-  $ref: './catalogs.yaml#/~1suppliers'
+﻿# Generated from `php artisan route:list --path=api/v1/mobile --json`.
+# Keep synchronized with MobileApiContractDocumentationTest.
 
-/completed-works:
-  $ref: './completed_works.yaml#/~1completed-works'
-/completed-works/{completed_work}:
-  $ref: './completed_works.yaml#/~1completed-works~1{completed_work}'
-/completed-works/{completed_work}/sync-materials:
-  $ref: './completed_works.yaml#/~1completed-works~1{completed_work}~1sync-materials'
-/completed-works/work-type-material-defaults:
-  $ref: './completed_works.yaml#/~1completed-works~1work-type-material-defaults' 
+/ai-assistant/actions/execute:
+  post:
+    tags:
+      - AI Assistant
+    summary: "POST /ai-assistant/actions/execute"
+    operationId: mobile_post_ai_assistant_actions_execute
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/ai-assistant/actions/preview:
+  post:
+    tags:
+      - AI Assistant
+    summary: "POST /ai-assistant/actions/preview"
+    operationId: mobile_post_ai_assistant_actions_preview
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/ai-assistant/chat:
+  post:
+    tags:
+      - AI Assistant
+    summary: "POST /ai-assistant/chat"
+    operationId: mobile_post_ai_assistant_chat
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/ai-assistant/conversations:
+  get:
+    tags:
+      - AI Assistant
+    summary: "GET /ai-assistant/conversations"
+    operationId: mobile_get_ai_assistant_conversations
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/ai-assistant/conversations/{conversation}:
+  delete:
+    tags:
+      - AI Assistant
+    summary: "DELETE /ai-assistant/conversations/{conversation}"
+    operationId: mobile_delete_ai_assistant_conversations_conversation
+    parameters:
+      - name: conversation
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+  get:
+    tags:
+      - AI Assistant
+    summary: "GET /ai-assistant/conversations/{conversation}"
+    operationId: mobile_get_ai_assistant_conversations_conversation
+    parameters:
+      - name: conversation
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/ai-assistant/usage:
+  get:
+    tags:
+      - AI Assistant
+    summary: "GET /ai-assistant/usage"
+    operationId: mobile_get_ai_assistant_usage
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/auth/login:
+  post:
+    tags:
+      - Auth
+    summary: "POST /auth/login"
+    operationId: mobile_post_auth_login
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/auth/logout:
+  post:
+    tags:
+      - Auth
+    summary: "POST /auth/logout"
+    operationId: mobile_post_auth_logout
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/auth/me:
+  get:
+    tags:
+      - Auth
+    summary: "GET /auth/me"
+    operationId: mobile_get_auth_me
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/auth/refresh:
+  post:
+    tags:
+      - Auth
+    summary: "POST /auth/refresh"
+    operationId: mobile_post_auth_refresh
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/auth/switch-organization:
+  post:
+    tags:
+      - Auth
+    summary: "POST /auth/switch-organization"
+    operationId: mobile_post_auth_switch_organization
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/budget-estimates/estimates:
+  get:
+    tags:
+      - Budget Estimates
+    summary: "GET /budget-estimates/estimates"
+    operationId: mobile_get_budget_estimates_estimates
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/budget-estimates/estimates/{estimate}:
+  get:
+    tags:
+      - Budget Estimates
+    summary: "GET /budget-estimates/estimates/{estimate}"
+    operationId: mobile_get_budget_estimates_estimates_estimate
+    parameters:
+      - name: estimate
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/budget-estimates/estimates/{estimate}/approve:
+  post:
+    tags:
+      - Budget Estimates
+    summary: "POST /budget-estimates/estimates/{estimate}/approve"
+    operationId: mobile_post_budget_estimates_estimates_estimate_approve
+    parameters:
+      - name: estimate
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/budget-estimates/estimates/{estimate}/request-changes:
+  post:
+    tags:
+      - Budget Estimates
+    summary: "POST /budget-estimates/estimates/{estimate}/request-changes"
+    operationId: mobile_post_budget_estimates_estimates_estimate_request_changes
+    parameters:
+      - name: estimate
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/budget-estimates/summary:
+  get:
+    tags:
+      - Budget Estimates
+    summary: "GET /budget-estimates/summary"
+    operationId: mobile_get_budget_estimates_summary
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/companions/{module}:
+  get:
+    tags:
+      - Companion Modules
+    summary: "GET /companions/{module}"
+    operationId: mobile_get_companions_module
+    parameters:
+      - name: module
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/companions/{module}/{id}:
+  get:
+    tags:
+      - Companion Modules
+    summary: "GET /companions/{module}/{id}"
+    operationId: mobile_get_companions_module_id
+    parameters:
+      - name: module
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/companions/{module}/{id}/actions/{action}:
+  post:
+    tags:
+      - Companion Modules
+    summary: "POST /companions/{module}/{id}/actions/{action}"
+    operationId: mobile_post_companions_module_id_actions_action
+    parameters:
+      - name: module
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: action
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/construction-journals:
+  get:
+    tags:
+      - Construction Journal
+    summary: "GET /construction-journals"
+    operationId: mobile_get_construction_journals
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+  post:
+    tags:
+      - Construction Journal
+    summary: "POST /construction-journals"
+    operationId: mobile_post_construction_journals
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/construction-journals/{journal}:
+  get:
+    tags:
+      - Construction Journal
+    summary: "GET /construction-journals/{journal}"
+    operationId: mobile_get_construction_journals_journal
+    parameters:
+      - name: journal
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+  put:
+    tags:
+      - Construction Journal
+    summary: "PUT /construction-journals/{journal}"
+    operationId: mobile_put_construction_journals_journal
+    parameters:
+      - name: journal
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/construction-journals/{journal}/entries:
+  get:
+    tags:
+      - Construction Journal
+    summary: "GET /construction-journals/{journal}/entries"
+    operationId: mobile_get_construction_journals_journal_entries
+    parameters:
+      - name: journal
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+  post:
+    tags:
+      - Construction Journal
+    summary: "POST /construction-journals/{journal}/entries"
+    operationId: mobile_post_construction_journals_journal_entries
+    parameters:
+      - name: journal
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/construction-journals/{journal}/entry-form-options:
+  get:
+    tags:
+      - Construction Journal
+    summary: "GET /construction-journals/{journal}/entry-form-options"
+    operationId: mobile_get_construction_journals_journal_entry_form_options
+    parameters:
+      - name: journal
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/construction-journals/{journal}/export/extended:
+  post:
+    tags:
+      - Construction Journal
+    summary: "POST /construction-journals/{journal}/export/extended"
+    operationId: mobile_post_construction_journals_journal_export_extended
+    parameters:
+      - name: journal
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/construction-journals/{journal}/export/ks6:
+  post:
+    tags:
+      - Construction Journal
+    summary: "POST /construction-journals/{journal}/export/ks6"
+    operationId: mobile_post_construction_journals_journal_export_ks6
+    parameters:
+      - name: journal
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/dashboard:
+  get:
+    tags:
+      - Dashboard
+    summary: "GET /dashboard"
+    operationId: mobile_get_dashboard
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/handover-acceptance/checklist-items/{item}/review:
+  post:
+    tags:
+      - Handover Acceptance
+    summary: "POST /handover-acceptance/checklist-items/{item}/review"
+    operationId: mobile_post_handover_acceptance_checklist_items_item_review
+    parameters:
+      - name: item
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/handover-acceptance/findings/{finding}/resolve:
+  post:
+    tags:
+      - Handover Acceptance
+    summary: "POST /handover-acceptance/findings/{finding}/resolve"
+    operationId: mobile_post_handover_acceptance_findings_finding_resolve
+    parameters:
+      - name: finding
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/handover-acceptance/package-documents/{document}/upload:
+  post:
+    tags:
+      - Handover Acceptance
+    summary: "POST /handover-acceptance/package-documents/{document}/upload"
+    operationId: mobile_post_handover_acceptance_package_documents_document_upload
+    parameters:
+      - name: document
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+        multipart/form-data:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/handover-acceptance/scopes:
+  get:
+    tags:
+      - Handover Acceptance
+    summary: "GET /handover-acceptance/scopes"
+    operationId: mobile_get_handover_acceptance_scopes
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/handover-acceptance/scopes/{scope}:
+  get:
+    tags:
+      - Handover Acceptance
+    summary: "GET /handover-acceptance/scopes/{scope}"
+    operationId: mobile_get_handover_acceptance_scopes_scope
+    parameters:
+      - name: scope
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/handover-acceptance/scopes/{scope}/accept:
+  post:
+    tags:
+      - Handover Acceptance
+    summary: "POST /handover-acceptance/scopes/{scope}/accept"
+    operationId: mobile_post_handover_acceptance_scopes_scope_accept
+    parameters:
+      - name: scope
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/handover-acceptance/scopes/{scope}/handover:
+  post:
+    tags:
+      - Handover Acceptance
+    summary: "POST /handover-acceptance/scopes/{scope}/handover"
+    operationId: mobile_post_handover_acceptance_scopes_scope_handover
+    parameters:
+      - name: scope
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/handover-acceptance/scopes/{scope}/ready-for-reinspection:
+  post:
+    tags:
+      - Handover Acceptance
+    summary: "POST /handover-acceptance/scopes/{scope}/ready-for-reinspection"
+    operationId: mobile_post_handover_acceptance_scopes_scope_ready_for_reinspection
+    parameters:
+      - name: scope
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/handover-acceptance/scopes/{scope}/reject:
+  post:
+    tags:
+      - Handover Acceptance
+    summary: "POST /handover-acceptance/scopes/{scope}/reject"
+    operationId: mobile_post_handover_acceptance_scopes_scope_reject
+    parameters:
+      - name: scope
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/handover-acceptance/scopes/{scope}/reopen:
+  post:
+    tags:
+      - Handover Acceptance
+    summary: "POST /handover-acceptance/scopes/{scope}/reopen"
+    operationId: mobile_post_handover_acceptance_scopes_scope_reopen
+    parameters:
+      - name: scope
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/handover-acceptance/scopes/{scope}/start:
+  post:
+    tags:
+      - Handover Acceptance
+    summary: "POST /handover-acceptance/scopes/{scope}/start"
+    operationId: mobile_post_handover_acceptance_scopes_scope_start
+    parameters:
+      - name: scope
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/handover-acceptance/sessions/{session}/findings:
+  post:
+    tags:
+      - Handover Acceptance
+    summary: "POST /handover-acceptance/sessions/{session}/findings"
+    operationId: mobile_post_handover_acceptance_sessions_session_findings
+    parameters:
+      - name: session
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/journal-entries/{entry}:
+  delete:
+    tags:
+      - Construction Journal
+    summary: "DELETE /journal-entries/{entry}"
+    operationId: mobile_delete_journal_entries_entry
+    parameters:
+      - name: entry
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+  get:
+    tags:
+      - Construction Journal
+    summary: "GET /journal-entries/{entry}"
+    operationId: mobile_get_journal_entries_entry
+    parameters:
+      - name: entry
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+  put:
+    tags:
+      - Construction Journal
+    summary: "PUT /journal-entries/{entry}"
+    operationId: mobile_put_journal_entries_entry
+    parameters:
+      - name: entry
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/journal-entries/{entry}/approve:
+  post:
+    tags:
+      - Construction Journal
+    summary: "POST /journal-entries/{entry}/approve"
+    operationId: mobile_post_journal_entries_entry_approve
+    parameters:
+      - name: entry
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/journal-entries/{entry}/export/daily-report:
+  post:
+    tags:
+      - Construction Journal
+    summary: "POST /journal-entries/{entry}/export/daily-report"
+    operationId: mobile_post_journal_entries_entry_export_daily_report
+    parameters:
+      - name: entry
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/journal-entries/{entry}/reject:
+  post:
+    tags:
+      - Construction Journal
+    summary: "POST /journal-entries/{entry}/reject"
+    operationId: mobile_post_journal_entries_entry_reject
+    parameters:
+      - name: entry
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/journal-entries/{entry}/submit:
+  post:
+    tags:
+      - Construction Journal
+    summary: "POST /journal-entries/{entry}/submit"
+    operationId: mobile_post_journal_entries_entry_submit
+    parameters:
+      - name: entry
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/machinery-operations/assets:
+  get:
+    tags:
+      - Machinery Operations
+    summary: "GET /machinery-operations/assets"
+    operationId: mobile_get_machinery_operations_assets
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/machinery-operations/downtimes:
+  post:
+    tags:
+      - Machinery Operations
+    summary: "POST /machinery-operations/downtimes"
+    operationId: mobile_post_machinery_operations_downtimes
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/machinery-operations/fuel-issues:
+  post:
+    tags:
+      - Machinery Operations
+    summary: "POST /machinery-operations/fuel-issues"
+    operationId: mobile_post_machinery_operations_fuel_issues
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/machinery-operations/production-records:
+  post:
+    tags:
+      - Machinery Operations
+    summary: "POST /machinery-operations/production-records"
+    operationId: mobile_post_machinery_operations_production_records
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/machinery-operations/shift-reports:
+  get:
+    tags:
+      - Machinery Operations
+    summary: "GET /machinery-operations/shift-reports"
+    operationId: mobile_get_machinery_operations_shift_reports
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+  post:
+    tags:
+      - Machinery Operations
+    summary: "POST /machinery-operations/shift-reports"
+    operationId: mobile_post_machinery_operations_shift_reports
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/machinery-operations/shift-reports/{id}/submit:
+  post:
+    tags:
+      - Machinery Operations
+    summary: "POST /machinery-operations/shift-reports/{id}/submit"
+    operationId: mobile_post_machinery_operations_shift_reports_id_submit
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/modules:
+  get:
+    tags:
+      - Modules
+    summary: "GET /modules"
+    operationId: mobile_get_modules
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/notifications:
+  get:
+    tags:
+      - Notifications
+    summary: "GET /notifications"
+    operationId: mobile_get_notifications
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/notifications/{id}:
+  delete:
+    tags:
+      - Notifications
+    summary: "DELETE /notifications/{id}"
+    operationId: mobile_delete_notifications_id
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+  get:
+    tags:
+      - Notifications
+    summary: "GET /notifications/{id}"
+    operationId: mobile_get_notifications_id
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/notifications/{id}/mark-read:
+  post:
+    tags:
+      - Notifications
+    summary: "POST /notifications/{id}/mark-read"
+    operationId: mobile_post_notifications_id_mark_read
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/notifications/{id}/mark-unread:
+  post:
+    tags:
+      - Notifications
+    summary: "POST /notifications/{id}/mark-unread"
+    operationId: mobile_post_notifications_id_mark_unread
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/notifications/mark-all-read:
+  post:
+    tags:
+      - Notifications
+    summary: "POST /notifications/mark-all-read"
+    operationId: mobile_post_notifications_mark_all_read
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/notifications/unread:
+  get:
+    tags:
+      - Notifications
+    summary: "GET /notifications/unread"
+    operationId: mobile_get_notifications_unread
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/notifications/unread-count:
+  get:
+    tags:
+      - Notifications
+    summary: "GET /notifications/unread-count"
+    operationId: mobile_get_notifications_unread_count
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/procurement/approvals:
+  get:
+    tags:
+      - Procurement
+    summary: "GET /procurement/approvals"
+    operationId: mobile_get_procurement_approvals
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/procurement/approvals/{approval}/approve:
+  post:
+    tags:
+      - Procurement
+    summary: "POST /procurement/approvals/{approval}/approve"
+    operationId: mobile_post_procurement_approvals_approval_approve
+    parameters:
+      - name: approval
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/procurement/approvals/{approval}/reject:
+  post:
+    tags:
+      - Procurement
+    summary: "POST /procurement/approvals/{approval}/reject"
+    operationId: mobile_post_procurement_approvals_approval_reject
+    parameters:
+      - name: approval
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/procurement/purchase-orders:
+  get:
+    tags:
+      - Procurement
+    summary: "GET /procurement/purchase-orders"
+    operationId: mobile_get_procurement_purchase_orders
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/procurement/purchase-orders/{purchaseOrder}:
+  get:
+    tags:
+      - Procurement
+    summary: "GET /procurement/purchase-orders/{purchaseOrder}"
+    operationId: mobile_get_procurement_purchase_orders_purchaseOrder
+    parameters:
+      - name: purchaseOrder
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/procurement/purchase-orders/{purchaseOrder}/comments:
+  post:
+    tags:
+      - Procurement
+    summary: "POST /procurement/purchase-orders/{purchaseOrder}/comments"
+    operationId: mobile_post_procurement_purchase_orders_purchaseOrder_comments
+    parameters:
+      - name: purchaseOrder
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/procurement/purchase-orders/{purchaseOrder}/receive-materials:
+  post:
+    tags:
+      - Procurement
+    summary: "POST /procurement/purchase-orders/{purchaseOrder}/receive-materials"
+    operationId: mobile_post_procurement_purchase_orders_purchaseOrder_receive_materials
+    parameters:
+      - name: purchaseOrder
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/procurement/purchase-requests:
+  get:
+    tags:
+      - Procurement
+    summary: "GET /procurement/purchase-requests"
+    operationId: mobile_get_procurement_purchase_requests
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/procurement/purchase-requests/{purchaseRequest}:
+  get:
+    tags:
+      - Procurement
+    summary: "GET /procurement/purchase-requests/{purchaseRequest}"
+    operationId: mobile_get_procurement_purchase_requests_purchaseRequest
+    parameters:
+      - name: purchaseRequest
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/procurement/summary:
+  get:
+    tags:
+      - Procurement
+    summary: "GET /procurement/summary"
+    operationId: mobile_get_procurement_summary
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/production-labor/output-entries:
+  post:
+    tags:
+      - Production Labor
+    summary: "POST /production-labor/output-entries"
+    operationId: mobile_post_production_labor_output_entries
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/production-labor/timesheets:
+  post:
+    tags:
+      - Production Labor
+    summary: "POST /production-labor/timesheets"
+    operationId: mobile_post_production_labor_timesheets
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/production-labor/work-orders:
+  get:
+    tags:
+      - Production Labor
+    summary: "GET /production-labor/work-orders"
+    operationId: mobile_get_production_labor_work_orders
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/projects:
+  get:
+    tags:
+      - Projects
+    summary: "GET /projects"
+    operationId: mobile_get_projects
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/quality-control/defects:
+  get:
+    tags:
+      - Quality Control
+    summary: "GET /quality-control/defects"
+    operationId: mobile_get_quality_control_defects
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+  post:
+    tags:
+      - Quality Control
+    summary: "POST /quality-control/defects"
+    operationId: mobile_post_quality_control_defects
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/quality-control/defects/{id}:
+  get:
+    tags:
+      - Quality Control
+    summary: "GET /quality-control/defects/{id}"
+    operationId: mobile_get_quality_control_defects_id
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/quality-control/defects/{id}/reject:
+  post:
+    tags:
+      - Quality Control
+    summary: "POST /quality-control/defects/{id}/reject"
+    operationId: mobile_post_quality_control_defects_id_reject
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/quality-control/defects/{id}/resolve:
+  post:
+    tags:
+      - Quality Control
+    summary: "POST /quality-control/defects/{id}/resolve"
+    operationId: mobile_post_quality_control_defects_id_resolve
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/quality-control/defects/{id}/start:
+  post:
+    tags:
+      - Quality Control
+    summary: "POST /quality-control/defects/{id}/start"
+    operationId: mobile_post_quality_control_defects_id_start
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/quality-control/defects/{id}/verify:
+  post:
+    tags:
+      - Quality Control
+    summary: "POST /quality-control/defects/{id}/verify"
+    operationId: mobile_post_quality_control_defects_id_verify
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/safety-management/incidents:
+  get:
+    tags:
+      - Safety Management
+    summary: "GET /safety-management/incidents"
+    operationId: mobile_get_safety_management_incidents
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+  post:
+    tags:
+      - Safety Management
+    summary: "POST /safety-management/incidents"
+    operationId: mobile_post_safety_management_incidents
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/safety-management/violations:
+  get:
+    tags:
+      - Safety Management
+    summary: "GET /safety-management/violations"
+    operationId: mobile_get_safety_management_violations
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+  post:
+    tags:
+      - Safety Management
+    summary: "POST /safety-management/violations"
+    operationId: mobile_post_safety_management_violations
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/safety-management/violations/{id}/resolve:
+  post:
+    tags:
+      - Safety Management
+    summary: "POST /safety-management/violations/{id}/resolve"
+    operationId: mobile_post_safety_management_violations_id_resolve
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/safety-management/work-permits:
+  get:
+    tags:
+      - Safety Management
+    summary: "GET /safety-management/work-permits"
+    operationId: mobile_get_safety_management_work_permits
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/safety-management/work-permits/{id}:
+  get:
+    tags:
+      - Safety Management
+    summary: "GET /safety-management/work-permits/{id}"
+    operationId: mobile_get_safety_management_work_permits_id
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/safety-management/work-permits/{id}/activate:
+  post:
+    tags:
+      - Safety Management
+    summary: "POST /safety-management/work-permits/{id}/activate"
+    operationId: mobile_post_safety_management_work_permits_id_activate
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/safety-management/work-permits/{id}/approve:
+  post:
+    tags:
+      - Safety Management
+    summary: "POST /safety-management/work-permits/{id}/approve"
+    operationId: mobile_post_safety_management_work_permits_id_approve
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/safety-management/work-permits/{id}/close:
+  post:
+    tags:
+      - Safety Management
+    summary: "POST /safety-management/work-permits/{id}/close"
+    operationId: mobile_post_safety_management_work_permits_id_close
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/safety-management/work-permits/{id}/reject:
+  post:
+    tags:
+      - Safety Management
+    summary: "POST /safety-management/work-permits/{id}/reject"
+    operationId: mobile_post_safety_management_work_permits_id_reject
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/safety-management/work-permits/{id}/resume:
+  post:
+    tags:
+      - Safety Management
+    summary: "POST /safety-management/work-permits/{id}/resume"
+    operationId: mobile_post_safety_management_work_permits_id_resume
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/safety-management/work-permits/{id}/submit:
+  post:
+    tags:
+      - Safety Management
+    summary: "POST /safety-management/work-permits/{id}/submit"
+    operationId: mobile_post_safety_management_work_permits_id_submit
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/safety-management/work-permits/{id}/suspend:
+  post:
+    tags:
+      - Safety Management
+    summary: "POST /safety-management/work-permits/{id}/suspend"
+    operationId: mobile_post_safety_management_work_permits_id_suspend
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/schedule:
+  get:
+    tags:
+      - Schedule
+    summary: "GET /schedule"
+    operationId: mobile_get_schedule
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/schedule/{scheduleId}:
+  get:
+    tags:
+      - Schedule
+    summary: "GET /schedule/{scheduleId}"
+    operationId: mobile_get_schedule_scheduleId
+    parameters:
+      - name: scheduleId
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/schedule/daily-plan-assignments/{assignment}/fact:
+  patch:
+    tags:
+      - Schedule
+    summary: "PATCH /schedule/daily-plan-assignments/{assignment}/fact"
+    operationId: mobile_patch_schedule_daily_plan_assignments_assignment_fact
+    parameters:
+      - name: assignment
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/schedule/daily-plans:
+  get:
+    tags:
+      - Schedule
+    summary: "GET /schedule/daily-plans"
+    operationId: mobile_get_schedule_daily_plans
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/schedule/daily-plans/{dailyPlan}/submit:
+  post:
+    tags:
+      - Schedule
+    summary: "POST /schedule/daily-plans/{dailyPlan}/submit"
+    operationId: mobile_post_schedule_daily_plans_dailyPlan_submit
+    parameters:
+      - name: dailyPlan
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/schedule/work-constraints/{constraint}/linked-action:
+  post:
+    tags:
+      - Schedule
+    summary: "POST /schedule/work-constraints/{constraint}/linked-action"
+    operationId: mobile_post_schedule_work_constraints_constraint_linked_action
+    parameters:
+      - name: constraint
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/site-requests:
+  get:
+    tags:
+      - Site Requests
+    summary: "GET /site-requests"
+    operationId: mobile_get_site_requests
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+  post:
+    tags:
+      - Site Requests
+    summary: "POST /site-requests"
+    operationId: mobile_post_site_requests
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/site-requests/{id}:
+  get:
+    tags:
+      - Site Requests
+    summary: "GET /site-requests/{id}"
+    operationId: mobile_get_site_requests_id
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+  put:
+    tags:
+      - Site Requests
+    summary: "PUT /site-requests/{id}"
+    operationId: mobile_put_site_requests_id
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/site-requests/{id}/cancel:
+  post:
+    tags:
+      - Site Requests
+    summary: "POST /site-requests/{id}/cancel"
+    operationId: mobile_post_site_requests_id_cancel
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/site-requests/{id}/complete:
+  post:
+    tags:
+      - Site Requests
+    summary: "POST /site-requests/{id}/complete"
+    operationId: mobile_post_site_requests_id_complete
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/site-requests/{id}/status:
+  post:
+    tags:
+      - Site Requests
+    summary: "POST /site-requests/{id}/status"
+    operationId: mobile_post_site_requests_id_status
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/site-requests/{id}/submit:
+  post:
+    tags:
+      - Site Requests
+    summary: "POST /site-requests/{id}/submit"
+    operationId: mobile_post_site_requests_id_submit
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/site-requests/calendar:
+  get:
+    tags:
+      - Site Requests
+    summary: "GET /site-requests/calendar"
+    operationId: mobile_get_site_requests_calendar
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/site-requests/from-template/{templateId}:
+  post:
+    tags:
+      - Site Requests
+    summary: "POST /site-requests/from-template/{templateId}"
+    operationId: mobile_post_site_requests_from_template_templateId
+    parameters:
+      - name: templateId
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/site-requests/groups/{id}:
+  put:
+    tags:
+      - Site Requests
+    summary: "PUT /site-requests/groups/{id}"
+    operationId: mobile_put_site_requests_groups_id
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/site-requests/meta:
+  get:
+    tags:
+      - Site Requests
+    summary: "GET /site-requests/meta"
+    operationId: mobile_get_site_requests_meta
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/site-requests/templates:
+  get:
+    tags:
+      - Site Requests
+    summary: "GET /site-requests/templates"
+    operationId: mobile_get_site_requests_templates
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/time-tracking/daily-summary:
+  get:
+    tags:
+      - Time Tracking
+    summary: "GET /time-tracking/daily-summary"
+    operationId: mobile_get_time_tracking_daily_summary
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/time-tracking/entries:
+  get:
+    tags:
+      - Time Tracking
+    summary: "GET /time-tracking/entries"
+    operationId: mobile_get_time_tracking_entries
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+  post:
+    tags:
+      - Time Tracking
+    summary: "POST /time-tracking/entries"
+    operationId: mobile_post_time_tracking_entries
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/time-tracking/entries/{entry}:
+  get:
+    tags:
+      - Time Tracking
+    summary: "GET /time-tracking/entries/{entry}"
+    operationId: mobile_get_time_tracking_entries_entry
+    parameters:
+      - name: entry
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/time-tracking/entries/{entry}/correction:
+  post:
+    tags:
+      - Time Tracking
+    summary: "POST /time-tracking/entries/{entry}/correction"
+    operationId: mobile_post_time_tracking_entries_entry_correction
+    parameters:
+      - name: entry
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/time-tracking/entries/{entry}/stop:
+  post:
+    tags:
+      - Time Tracking
+    summary: "POST /time-tracking/entries/{entry}/stop"
+    operationId: mobile_post_time_tracking_entries_entry_stop
+    parameters:
+      - name: entry
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/time-tracking/entries/{entry}/submit:
+  post:
+    tags:
+      - Time Tracking
+    summary: "POST /time-tracking/entries/{entry}/submit"
+    operationId: mobile_post_time_tracking_entries_entry_submit
+    parameters:
+      - name: entry
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/time-tracking/timer/start:
+  post:
+    tags:
+      - Time Tracking
+    summary: "POST /time-tracking/timer/start"
+    operationId: mobile_post_time_tracking_timer_start
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/warehouse:
+  get:
+    tags:
+      - Warehouse
+    summary: "GET /warehouse"
+    operationId: mobile_get_warehouse
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/warehouse/balances/{warehouseId}/{materialId}/photos:
+  get:
+    tags:
+      - Warehouse
+    summary: "GET /warehouse/balances/{warehouseId}/{materialId}/photos"
+    operationId: mobile_get_warehouse_balances_warehouseId_materialId_photos
+    parameters:
+      - name: warehouseId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: materialId
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+  post:
+    tags:
+      - Warehouse
+    summary: "POST /warehouse/balances/{warehouseId}/{materialId}/photos"
+    operationId: mobile_post_warehouse_balances_warehouseId_materialId_photos
+    parameters:
+      - name: warehouseId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: materialId
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+        multipart/form-data:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/warehouse/balances/{warehouseId}/{materialId}/photos/{fileId}:
+  delete:
+    tags:
+      - Warehouse
+    summary: "DELETE /warehouse/balances/{warehouseId}/{materialId}/photos/{fileId}"
+    operationId: mobile_delete_warehouse_balances_warehouseId_materialId_photos_fileId
+    parameters:
+      - name: warehouseId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: materialId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: fileId
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/warehouse/materials/autocomplete:
+  get:
+    tags:
+      - Warehouse
+    summary: "GET /warehouse/materials/autocomplete"
+    operationId: mobile_get_warehouse_materials_autocomplete
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/warehouse/movements/{movementId}/photos:
+  get:
+    tags:
+      - Warehouse
+    summary: "GET /warehouse/movements/{movementId}/photos"
+    operationId: mobile_get_warehouse_movements_movementId_photos
+    parameters:
+      - name: movementId
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+  post:
+    tags:
+      - Warehouse
+    summary: "POST /warehouse/movements/{movementId}/photos"
+    operationId: mobile_post_warehouse_movements_movementId_photos
+    parameters:
+      - name: movementId
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+        multipart/form-data:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/warehouse/movements/{movementId}/photos/{fileId}:
+  delete:
+    tags:
+      - Warehouse
+    summary: "DELETE /warehouse/movements/{movementId}/photos/{fileId}"
+    operationId: mobile_delete_warehouse_movements_movementId_photos_fileId
+    parameters:
+      - name: movementId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: fileId
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/warehouse/operations/receipt:
+  post:
+    tags:
+      - Warehouse
+    summary: "POST /warehouse/operations/receipt"
+    operationId: mobile_post_warehouse_operations_receipt
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/warehouse/operations/transfer:
+  post:
+    tags:
+      - Warehouse
+    summary: "POST /warehouse/operations/transfer"
+    operationId: mobile_post_warehouse_operations_transfer
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/warehouse/project-material-deliveries:
+  get:
+    tags:
+      - Warehouse
+    summary: "GET /warehouse/project-material-deliveries"
+    operationId: mobile_get_warehouse_project_material_deliveries
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/warehouse/project-material-deliveries/{deliveryId}:
+  get:
+    tags:
+      - Warehouse
+    summary: "GET /warehouse/project-material-deliveries/{deliveryId}"
+    operationId: mobile_get_warehouse_project_material_deliveries_deliveryId
+    parameters:
+      - name: deliveryId
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/warehouse/project-material-deliveries/{deliveryId}/receive:
+  post:
+    tags:
+      - Warehouse
+    summary: "POST /warehouse/project-material-deliveries/{deliveryId}/receive"
+    operationId: mobile_post_warehouse_project_material_deliveries_deliveryId_receive
+    parameters:
+      - name: deliveryId
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/warehouse/project-material-deliveries/project-stock:
+  get:
+    tags:
+      - Warehouse
+    summary: "GET /warehouse/project-material-deliveries/project-stock"
+    operationId: mobile_get_warehouse_project_material_deliveries_project_stock
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/warehouse/scan/resolve:
+  post:
+    tags:
+      - Warehouse
+    summary: "POST /warehouse/scan/resolve"
+    operationId: mobile_post_warehouse_scan_resolve
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/warehouse/warehouses/{warehouseId}/balances:
+  get:
+    tags:
+      - Warehouse
+    summary: "GET /warehouse/warehouses/{warehouseId}/balances"
+    operationId: mobile_get_warehouse_warehouses_warehouseId_balances
+    parameters:
+      - name: warehouseId
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/warehouse/warehouses/{warehouseId}/tasks:
+  get:
+    tags:
+      - Warehouse
+    summary: "GET /warehouse/warehouses/{warehouseId}/tasks"
+    operationId: mobile_get_warehouse_warehouses_warehouseId_tasks
+    parameters:
+      - name: warehouseId
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/warehouse/warehouses/{warehouseId}/tasks/{taskId}:
+  get:
+    tags:
+      - Warehouse
+    summary: "GET /warehouse/warehouses/{warehouseId}/tasks/{taskId}"
+    operationId: mobile_get_warehouse_warehouses_warehouseId_tasks_taskId
+    parameters:
+      - name: warehouseId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: taskId
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/warehouse/warehouses/{warehouseId}/tasks/{taskId}/status:
+  post:
+    tags:
+      - Warehouse
+    summary: "POST /warehouse/warehouses/{warehouseId}/tasks/{taskId}/status"
+    operationId: mobile_post_warehouse_warehouses_warehouseId_tasks_taskId_status
+    parameters:
+      - name: warehouseId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: taskId
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/workflow-management/tasks:
+  get:
+    tags:
+      - Workflow Management
+    summary: "GET /workflow-management/tasks"
+    operationId: mobile_get_workflow_management_tasks
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/workflow-management/tasks/{task}:
+  get:
+    tags:
+      - Workflow Management
+    summary: "GET /workflow-management/tasks/{task}"
+    operationId: mobile_get_workflow_management_tasks_task
+    parameters:
+      - name: task
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/workflow-management/tasks/{task}/approve:
+  post:
+    tags:
+      - Workflow Management
+    summary: "POST /workflow-management/tasks/{task}/approve"
+    operationId: mobile_post_workflow_management_tasks_task_approve
+    parameters:
+      - name: task
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/workflow-management/tasks/{task}/comments:
+  post:
+    tags:
+      - Workflow Management
+    summary: "POST /workflow-management/tasks/{task}/comments"
+    operationId: mobile_post_workflow_management_tasks_task_comments
+    parameters:
+      - name: task
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/workflow-management/tasks/{task}/reject:
+  post:
+    tags:
+      - Workflow Management
+    summary: "POST /workflow-management/tasks/{task}/reject"
+    operationId: mobile_post_workflow_management_tasks_task_reject
+    parameters:
+      - name: task
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/workflow-management/tasks/{task}/request-changes:
+  post:
+    tags:
+      - Workflow Management
+    summary: "POST /workflow-management/tasks/{task}/request-changes"
+    operationId: mobile_post_workflow_management_tasks_task_request_changes
+    parameters:
+      - name: task
+        in: path
+        required: true
+        schema:
+          type: string
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/workforce/attendance/history:
+  get:
+    tags:
+      - Workforce
+    summary: "GET /workforce/attendance/history"
+    operationId: mobile_get_workforce_attendance_history
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/workforce/attendance/qr:
+  post:
+    tags:
+      - Workforce
+    summary: "POST /workforce/attendance/qr"
+    operationId: mobile_post_workforce_attendance_qr
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/workforce/attendance/qr/scan:
+  post:
+    tags:
+      - Workforce
+    summary: "POST /workforce/attendance/qr/scan"
+    operationId: mobile_post_workforce_attendance_qr_scan
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/workforce/attendance/self:
+  post:
+    tags:
+      - Workforce
+    summary: "POST /workforce/attendance/self"
+    operationId: mobile_post_workforce_attendance_self
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/GenericObject'
+    responses:
+      '200':
+        description: Успешный ответ MobileResponse.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: Операция выполнена
+                  data: {}
+                  meta: {}
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
