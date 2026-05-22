@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Mobile;
 
 use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Services\ModulePermissionChecker;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Domain\Authorization\Services\PermissionResolver;
 use App\Models\CompletedWork;
 use App\Models\Project;
 use App\Models\User;
@@ -130,6 +132,25 @@ final class WorkflowManagementMobileTest extends TestCase
         ]);
     }
 
+    public function test_organization_owner_loads_workflow_tasks_with_full_module_access(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $workType = $this->workType($context);
+        $task = $this->completedWork($context, $project, $workType, ['status' => 'pending']);
+
+        $this->mock(AccessController::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('hasModuleAccess')->andReturn(true);
+        });
+        $this->refreshAuthorizationServices();
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/mobile/workflow-management/tasks?assigned_to_me=1&project_id=' . $project->id)
+            ->assertOk()
+            ->assertJsonPath('data.items.0.id', $task->id)
+            ->assertJsonPath('data.items.0.status', 'pending');
+    }
+
     private function workType(AdminApiTestContext $context): WorkType
     {
         return WorkType::query()->create([
@@ -185,5 +206,12 @@ final class WorkflowManagementMobileTest extends TestCase
                 }
             );
         });
+    }
+
+    private function refreshAuthorizationServices(): void
+    {
+        $this->app->forgetInstance(ModulePermissionChecker::class);
+        $this->app->forgetInstance(PermissionResolver::class);
+        $this->app->forgetInstance(AuthorizationService::class);
     }
 }

@@ -531,6 +531,8 @@ class PermissionResolver
             'report_templates' => 'report-templates',
             'warehouse' => 'basic-warehouse',
             'mdm' => 'catalog-management',
+            'completed_works' => 'workflow-management',
+            'completed-works' => 'workflow-management',
             'workforce' => 'workforce-management',
             'one_c_exchange' => 'one-c-basic-exchange',
             'one-c-exchange' => 'one-c-basic-exchange',
@@ -545,6 +547,7 @@ class PermissionResolver
             'report-templates' => 'report_templates',
             'basic-warehouse' => 'warehouse',
             'catalog-management' => 'mdm',
+            'workflow-management' => 'completed_works',
             'workforce-management' => 'workforce',
             'one-c-basic-exchange' => 'one_c_exchange',
         ];
