@@ -518,8 +518,15 @@ class SiteRequestController extends Controller
                 $validated['project_id']
             );
 
+            /** @var User|null $user */
+            $user = auth()->user();
+
+            if (!$user) {
+                return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
+            }
+
             return MobileResponse::success(
-                new SiteRequestResource($siteRequest),
+                $this->makeSiteRequestPayload($siteRequest, $request, $user, $organizationId),
                 trans_message('site_requests::mobile.from_template_success'),
                 201
             );
@@ -613,7 +620,7 @@ class SiteRequestController extends Controller
             'group.requests.user',
             'group.requests.assignedUser',
         ]);
-        $payload = (new SiteRequestResource($siteRequest))->resolve($request);
+        $payload = $this->makeMobileResourcePayload($siteRequest, $request);
         $payload['available_transitions'] = $this->getAvailableTransitionsForUser($siteRequest, $user, $organizationId);
         $payload['history'] = $this->makeHistoryPayload($siteRequest);
         $payload['group_context'] = $this->makeGroupPayload($siteRequest);
@@ -634,8 +641,20 @@ class SiteRequestController extends Controller
             'group',
         ]);
 
-        $payload = (new SiteRequestResource($siteRequest))->resolve($request);
+        $payload = $this->makeMobileResourcePayload($siteRequest, $request);
         $payload['available_transitions'] = $this->getAvailableTransitionsForUser($siteRequest, $user, $organizationId);
+
+        return $payload;
+    }
+
+    private function makeMobileResourcePayload(SiteRequest $siteRequest, Request $request): array
+    {
+        $payload = (new SiteRequestResource($siteRequest))->resolve($request);
+
+        unset(
+            $payload['purchaseRequests'],
+            $payload['purchaseOrders']
+        );
 
         return $payload;
     }
