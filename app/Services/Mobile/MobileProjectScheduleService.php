@@ -14,8 +14,6 @@ use App\BusinessModules\Features\ScheduleManagement\Services\LookaheadPlanningSe
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyIncidentResource;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyIncident;
 use App\BusinessModules\Features\SafetyManagement\Services\SafetyManagementService;
-use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
-use App\BusinessModules\Features\SiteRequests\Enums\PersonnelTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestResource;
@@ -529,13 +527,14 @@ class MobileProjectScheduleService
         }
 
         $count = (int) ($personnel['count'] ?? 0);
+        $type = trim((string) ($personnel['type'] ?? ''));
 
-        if ($count <= 0) {
+        if ($count <= 0 || $type === '') {
             throw new DomainException(trans_message('mobile_schedule.errors.constraint_personnel_data_required'));
         }
 
         return [
-            'personnel_type' => (string) ($personnel['type'] ?? PersonnelTypeEnum::OTHER->value),
+            'personnel_type' => $type,
             'personnel_count' => $count,
             'work_start_date' => $constraint->due_date?->format('Y-m-d'),
             'work_location' => (string) ($personnel['location'] ?? ''),
@@ -551,15 +550,20 @@ class MobileProjectScheduleService
         }
 
         $count = (int) ($equipment['count'] ?? 0);
+        $type = trim((string) ($equipment['type'] ?? ''));
 
-        if ($count <= 0) {
+        if ($count <= 0 || $type === '') {
             throw new DomainException(trans_message('mobile_schedule.errors.constraint_equipment_data_required'));
         }
 
+        if ($constraint->due_date === null) {
+            throw new DomainException(trans_message('mobile_schedule.errors.constraint_equipment_due_date_required'));
+        }
+
         return [
-            'equipment_type' => (string) ($equipment['type'] ?? EquipmentTypeEnum::OTHER->value),
+            'equipment_type' => $type,
             'equipment_count' => $count,
-            'rental_start_date' => $constraint->due_date?->format('Y-m-d') ?? now()->toDateString(),
+            'rental_start_date' => $constraint->due_date->format('Y-m-d'),
             'equipment_location' => (string) ($equipment['location'] ?? ''),
         ];
     }
@@ -646,11 +650,7 @@ class MobileProjectScheduleService
             'work_date' => $dailyPlan->work_date?->format('Y-m-d'),
             'status' => $dailyPlan->status,
             'status_label' => trans_message("schedule_management.daily_plan_statuses.{$dailyPlan->status}"),
-            'available_actions' => match ($dailyPlan->status) {
-                'published', 'in_progress' => ['record_fact', 'submit'],
-                'submitted' => [],
-                default => [],
-            },
+            'available_actions' => $this->dailyPlanActions((string) $dailyPlan->status),
             'assignments' => $dailyPlan->assignments
                 ->map(fn (DailyWorkPlanAssignment $assignment): array => $this->mapDailyAssignment($assignment))
                 ->values()
@@ -667,6 +667,8 @@ class MobileProjectScheduleService
             'schedule_task_id' => $assignment->schedule_task_id,
             'journal_entry_id' => $assignment->journal_entry_id,
             'status' => $assignment->status,
+            'status_label' => $this->dailyAssignmentStatusLabel((string) $assignment->status),
+            'fact_status_options' => $this->dailyAssignmentFactStatusOptions(),
             'planned_quantity' => $assignment->planned_quantity !== null ? (float) $assignment->planned_quantity : null,
             'completed_quantity' => $assignment->completed_quantity !== null ? (float) $assignment->completed_quantity : null,
             'planned_work_hours' => $assignment->planned_work_hours !== null ? (float) $assignment->planned_work_hours : null,
@@ -684,20 +686,80 @@ class MobileProjectScheduleService
                         'id' => $constraint->id,
                         'title' => $constraint->title,
                         'constraint_type' => $constraint->constraint_type,
+                        'constraint_type_label' => $this->constraintTypeLabel((string) $constraint->constraint_type),
                         'severity' => $constraint->severity,
+                        'severity_label' => $this->constraintSeverityLabel((string) $constraint->severity),
                         'status' => $constraint->status,
+                        'status_label' => $this->constraintStatusLabel((string) $constraint->status),
                         'due_date' => $constraint->due_date?->format('Y-m-d'),
                         'linked_action' => $constraint->metadata['linked_action'] ?? null,
                         'linked_entity' => $constraint->metadata['linked_action'] ?? $constraint->metadata['linked_entity'] ?? null,
                         'available_actions' => $constraint->status === 'open'
                             && (($constraint->metadata['linked_action'] ?? null) === null)
-                            ? ['create_linked_action']
+                            ? [$this->scheduleAction('create_linked_action', trans_message('schedule_management.constraint_actions.create_linked_action'))]
                             : [],
                     ])
                     ->values()
                     ->all()
                 : [],
         ];
+    }
+
+    private function dailyPlanActions(string $status): array
+    {
+        return match ($status) {
+            'published', 'in_progress', 'returned' => [
+                $this->scheduleAction('record_fact', trans_message('schedule_management.daily_plan_actions.record_fact')),
+                $this->scheduleAction('submit', trans_message('schedule_management.daily_plan_actions.submit')),
+            ],
+            default => [],
+        };
+    }
+
+    private function scheduleAction(string $action, string $label): array
+    {
+        return [
+            'action' => $action,
+            'label' => $label,
+        ];
+    }
+
+    private function dailyAssignmentFactStatusOptions(): array
+    {
+        return [
+            [
+                'status' => 'done',
+                'label' => trans_message('schedule_management.daily_plan_fact_statuses.done'),
+            ],
+            [
+                'status' => 'partially_done',
+                'label' => trans_message('schedule_management.daily_plan_fact_statuses.partially_done'),
+            ],
+            [
+                'status' => 'not_done',
+                'label' => trans_message('schedule_management.daily_plan_fact_statuses.not_done'),
+            ],
+        ];
+    }
+
+    private function dailyAssignmentStatusLabel(string $status): string
+    {
+        return trans_message("schedule_management.daily_plan_assignment_statuses.{$status}");
+    }
+
+    private function constraintTypeLabel(string $type): string
+    {
+        return trans_message("schedule_management.constraint_types.{$type}");
+    }
+
+    private function constraintSeverityLabel(string $severity): string
+    {
+        return trans_message("schedule_management.constraint_severities.{$severity}");
+    }
+
+    private function constraintStatusLabel(string $status): string
+    {
+        return trans_message("schedule_management.constraint_statuses.{$status}");
     }
 
     private function resolveStatusValue(mixed $status): string

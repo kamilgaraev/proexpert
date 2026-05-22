@@ -82,18 +82,22 @@ class MobileScheduleService
     private function mapEvents(Collection $events): array
     {
         return $events->map(function (ProjectEvent $event): array {
+            $eventType = (string) $event->event_type;
+            $status = (string) $event->status;
+            $priority = (string) $event->priority;
+
             return [
                 'id' => $event->id,
                 'title' => $event->title,
                 'description' => $event->description,
                 'project_id' => $event->project_id,
                 'project_name' => $event->project?->name,
-                'event_type' => $event->event_type,
-                'event_type_label' => $this->translateEventType($event->event_type),
-                'status' => $event->status,
-                'status_label' => $this->translateStatus($event->status),
-                'priority' => $event->priority,
-                'priority_label' => $this->translatePriority($event->priority),
+                'event_type' => $eventType,
+                'event_type_label' => $this->translateEventType($eventType),
+                'status' => $status,
+                'status_label' => $this->translateStatus($status),
+                'priority' => $priority,
+                'priority_label' => $this->translatePriority($priority),
                 'event_date' => $event->event_date?->toDateString(),
                 'event_time' => $event->event_time,
                 'location' => $event->location,
@@ -103,28 +107,28 @@ class MobileScheduleService
         })->values()->all();
     }
 
-    private function translateEventType(?string $type): string
+    private function translateEventType(string $type): string
     {
-        if (!$type) {
-            return trans_message('mobile_schedule.event_types.other');
+        if (!in_array($type, ['inspection', 'delivery', 'meeting', 'maintenance', 'weather', 'other'], true)) {
+            throw new DomainException(trans_message('mobile_schedule.errors.load_failed'));
         }
 
         return trans_message('mobile_schedule.event_types.' . $type);
     }
 
-    private function translateStatus(?string $status): string
+    private function translateStatus(string $status): string
     {
-        if (!$status) {
-            return trans_message('mobile_schedule.statuses.scheduled');
+        if (!in_array($status, ['scheduled', 'in_progress', 'completed', 'cancelled'], true)) {
+            throw new DomainException(trans_message('mobile_schedule.errors.load_failed'));
         }
 
         return trans_message('mobile_schedule.statuses.' . $status);
     }
 
-    private function translatePriority(?string $priority): string
+    private function translatePriority(string $priority): string
     {
-        if (!$priority) {
-            return trans_message('mobile_schedule.priorities.normal');
+        if (!in_array($priority, ['low', 'normal', 'high', 'critical'], true)) {
+            throw new DomainException(trans_message('mobile_schedule.errors.load_failed'));
         }
 
         return trans_message('mobile_schedule.priorities.' . $priority);

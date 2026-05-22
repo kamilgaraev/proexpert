@@ -117,6 +117,46 @@ return [
         'revised' => 'Пересмотрен',
         'returned' => 'Возвращен',
     ],
+    'daily_plan_actions' => [
+        'record_fact' => 'Зафиксировать факт',
+        'submit' => 'Передать на приемку',
+    ],
+    'daily_plan_assignment_statuses' => [
+        'planned' => 'Запланировано',
+        'done' => 'Выполнено',
+        'partially_done' => 'Выполнено частично',
+        'not_done' => 'Не выполнено',
+    ],
+    'daily_plan_fact_statuses' => [
+        'done' => 'Выполнено',
+        'partially_done' => 'Выполнено частично',
+        'not_done' => 'Не выполнено',
+    ],
+    'constraint_actions' => [
+        'create_linked_action' => 'Создать связанную задачу',
+    ],
+    'constraint_types' => [
+        'material_missing' => 'Не хватает материала',
+        'labor_missing' => 'Не хватает исполнителей',
+        'machinery_missing' => 'Не хватает техники',
+        'design_question' => 'Вопрос по проектным решениям',
+        'executive_doc_missing' => 'Не хватает исполнительной документации',
+        'safety_permit_missing' => 'Нет допуска по охране труда',
+        'quality_blocker' => 'Блокер качества',
+        'access_blocked' => 'Нет доступа',
+        'weather_risk' => 'Погодный риск',
+        'customer_decision' => 'Ожидается решение заказчика',
+        'other' => 'Другое ограничение',
+    ],
+    'constraint_severities' => [
+        'soft' => 'Мягкое',
+        'hard' => 'Жесткое',
+    ],
+    'constraint_statuses' => [
+        'open' => 'Открыто',
+        'resolved' => 'Решено',
+        'cancelled' => 'Отменено',
+    ],
     'problem_flags' => [
         'hard_constraint_overridden' => 'Дневной план опубликован с ручным обходом жесткого ограничения.',
     ],

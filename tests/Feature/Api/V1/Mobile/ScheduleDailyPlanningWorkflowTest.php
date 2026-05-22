@@ -160,10 +160,15 @@ class ScheduleDailyPlanningWorkflowTest extends TestCase
 
         $listResponse->assertOk()
             ->assertJsonPath('data.0.id', $dailyPlan->id)
+            ->assertJsonPath('data.0.available_actions.0.action', 'record_fact')
+            ->assertJsonPath('data.0.available_actions.0.label', 'Зафиксировать факт')
             ->assertJsonPath('data.0.assignments.0.id', $assignment->id)
+            ->assertJsonPath('data.0.assignments.0.status_label', 'Запланировано')
+            ->assertJsonPath('data.0.assignments.0.fact_status_options.0.status', 'done')
             ->assertJsonPath('data.0.assignments.0.schedule_task.name', 'Foundation reinforcement')
             ->assertJsonPath('data.0.assignments.0.constraints.0.constraint_type', 'material_missing')
-            ->assertJsonPath('data.0.assignments.0.constraints.0.available_actions.0', 'create_linked_action');
+            ->assertJsonPath('data.0.assignments.0.constraints.0.constraint_type_label', 'Не хватает материала')
+            ->assertJsonPath('data.0.assignments.0.constraints.0.available_actions.0.action', 'create_linked_action');
 
         $factResponse = $this->actingAs($user, 'api_mobile')
             ->patchJson("/api/v1/mobile/schedule/daily-plan-assignments/{$assignment->id}/fact", [
