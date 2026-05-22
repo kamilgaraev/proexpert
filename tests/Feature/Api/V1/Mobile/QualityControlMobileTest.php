@@ -66,6 +66,19 @@ final class QualityControlMobileTest extends TestCase
 
         $defectId = (int) $createResponse->json('data.id');
 
+        $startResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/quality-control/defects/{$defectId}/start", [
+                'comment' => 'Работы начаты на объекте',
+            ]);
+
+        $startResponse->assertOk()
+            ->assertJsonPath('data.status', QualityDefectStatusEnum::IN_PROGRESS->value);
+        $this->assertDatabaseHas('quality_defect_status_history', [
+            'quality_defect_id' => $defectId,
+            'to_status' => QualityDefectStatusEnum::IN_PROGRESS->value,
+            'comment' => 'Работы начаты на объекте',
+        ]);
+
         $resolveResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/mobile/quality-control/defects/{$defectId}/resolve");
 
