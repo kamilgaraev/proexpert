@@ -2,13 +2,16 @@
 
 namespace App\Http\Resources\Api\V1\Admin\Estimate;
 
+use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportResultDTO;
+use App\Http\Resources\ModelJsonResource;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\JsonResource;
 
-class EstimateImportResultResource extends JsonResource
+class EstimateImportResultResource extends ModelJsonResource
 {
     public function toArray(Request $request): array
     {
+        $result = $this->typedResource(EstimateImportResultDTO::class);
+
         return [
             'estimate_id' => $this->estimateId,
             'status' => $this->status,
@@ -16,7 +19,7 @@ class EstimateImportResultResource extends JsonResource
                 'total' => $this->itemsTotal,
                 'imported' => $this->itemsImported,
                 'skipped' => $this->itemsSkipped,
-                'success_rate' => $this->getSuccessRate(),
+                'success_rate' => $result->getSuccessRate(),
             ],
             'sections_created' => $this->sectionsCreated,
             'new_work_types' => [

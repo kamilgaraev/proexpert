@@ -2,10 +2,10 @@
 
 namespace App\Http\Resources\Api\V1\Admin\AdvanceTransaction;
 
+use App\Http\Resources\PaginatedResourceCollection;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\ResourceCollection;
 
-class AdvanceTransactionCollection extends ResourceCollection
+class AdvanceTransactionCollection extends PaginatedResourceCollection
 {
     // Указываем, какой ресурс использовать для отдельных элементов коллекции
     public $collects = AdvanceTransactionResource::class;
@@ -37,4 +37,4 @@ class AdvanceTransactionCollection extends ResourceCollection
             ],
         ];
     }
-} 
+}

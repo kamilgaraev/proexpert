@@ -2,10 +2,11 @@
 
 namespace App\Http\Resources\Api\V1\Landing;
 
+use App\Http\Resources\ModelJsonResource;
+use App\Models\UserInvitation;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\JsonResource;
 
-class UserInvitationResource extends JsonResource
+class UserInvitationResource extends ModelJsonResource
 {
     /**
      * Transform the resource into an array.
@@ -14,6 +15,8 @@ class UserInvitationResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $invitation = $this->typedResource(UserInvitation::class);
+
         return [
             'id' => $this->id,
             'email' => $this->email,
@@ -33,8 +36,8 @@ class UserInvitationResource extends JsonResource
             ),
             'expires_at' => $this->expires_at?->toISOString(),
             'accepted_at' => $this->accepted_at?->toISOString(),
-            'is_expired' => $this->isExpired(),
-            'can_be_accepted' => $this->canBeAccepted(),
+            'is_expired' => $invitation->isExpired(),
+            'can_be_accepted' => $invitation->canBeAccepted(),
             'metadata' => $this->metadata,
             'invited_by' => $this->whenLoaded('invitedBy', function () {
                 return [

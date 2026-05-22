@@ -2,9 +2,9 @@
 
 namespace App\Http\Resources\Api\V1\Admin\EstimatePosition;
 
-use Illuminate\Http\Resources\Json\ResourceCollection;
+use App\Http\Resources\PaginatedResourceCollection;
 
-class EstimatePositionCollection extends ResourceCollection
+class EstimatePositionCollection extends PaginatedResourceCollection
 {
     /**
      * Transform the resource collection into an array.

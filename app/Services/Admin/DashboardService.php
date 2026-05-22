@@ -68,7 +68,7 @@ class DashboardService
 
             // Получаем ВСЕ данные проекта (без фильтра по периоду)
             $projectSummary = $this->getProjectSummary($organizationId, $projectId);
-            
+
             // Получаем данные за периоды для сравнения
             $currentPeriodData = $this->calculateSummaryForPeriod($organizationId, $projectId, $currentPeriod, Carbon::now());
             $previousPeriodData = $this->calculateSummaryForPeriod($organizationId, $projectId, $previousPeriod, $previousPeriod->copy()->endOfMonth());
@@ -177,8 +177,8 @@ class DashboardService
             ->count();
 
         // Процент выполнения контрактов
-        $completionPercentage = $contractsAmount > 0 
-            ? round(($completedWorksAmount / $contractsAmount) * 100, 2) 
+        $completionPercentage = $contractsAmount > 0
+            ? round(($completedWorksAmount / $contractsAmount) * 100, 2)
             : 0.0;
 
         // Участники проекта
@@ -321,7 +321,7 @@ class DashboardService
             })
             ->whereNull('deleted_at')
             ->get();
-        
+
         $contractsAmount = $this->calculateTotalContractAmountForProject($contracts, $projectId);
 
         // Выполненные работы = Акты выполненных работ (КС-2)
@@ -340,8 +340,8 @@ class DashboardService
             'total_contracts_amount' => (float) $contractsAmount,
             'completed_works_amount' => (float) $completedWorksAmount,
             'remaining_amount' => max(0, (float) $contractsAmount - (float) $completedWorksAmount),
-            'average_contract_amount' => $contractsCount > 0 
-                ? round((float) $contractsAmount / $contractsCount, 2) 
+            'average_contract_amount' => $contractsCount > 0
+                ? round((float) $contractsAmount / $contractsCount, 2)
                 : 0.0,
         ];
     }
@@ -515,19 +515,19 @@ class DashboardService
 
         while ($current <= $end) {
             $periodEnd = $this->getPeriodEnd($current, $period);
-            
+
             // Текущий период
             $query = DB::table('contract_performance_acts')
                 ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
                 ->whereBetween('contract_performance_acts.created_at', [$current, $periodEnd]);
-            
+
             if ($organizationId) {
                 $query->where('contracts.organization_id', $organizationId);
             }
             if ($projectId) {
                 $query->where('contract_performance_acts.project_id', $projectId);
             }
-            
+
             $count = $query->count();
 
             // Предыдущий период для сравнения
@@ -535,14 +535,14 @@ class DashboardService
             $previousQuery = DB::table('contract_performance_acts')
                 ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
                 ->whereBetween('contract_performance_acts.created_at', [$previousStart, $previousPeriodEnd]);
-            
+
             if ($organizationId) {
                 $previousQuery->where('contracts.organization_id', $organizationId);
             }
             if ($projectId) {
                 $previousQuery->where('contract_performance_acts.project_id', $projectId);
             }
-            
+
             $previousCount = $previousQuery->count();
 
             $labels[] = $this->formatPeriodLabel($current, $period);
@@ -576,7 +576,7 @@ class DashboardService
 
         while ($current <= $end) {
             $periodEnd = $this->getPeriodEnd($current, $period);
-            
+
             // Текущий период
             $currentAmount = Contract::where('organization_id', $organizationId)
                 ->when($projectId, fn($q) => $q->where('project_id', $projectId))
@@ -619,7 +619,7 @@ class DashboardService
 
         while ($current <= $end) {
             $periodEnd = $this->getPeriodEnd($current, $period);
-            
+
             // Текущий период
             $count = (clone $query)
                 ->whereBetween($dateField, [$current, $periodEnd])
@@ -710,7 +710,7 @@ class DashboardService
         $cacheKey = "dashboard_top_{$entity}_{$period}_{$organizationId}_{$projectId}_{$limit}_{$sortBy}";
         $tags = $this->getCacheTags($organizationId, $projectId);
 
-        return $this->remember($cacheKey, $tags, self::CACHE_TTL_MEDIUM, function () use ($entity, $period, $organizationId, $projectId, $limit, $sortBy) {
+        return $this->remember($cacheKey, $tags, self::CACHE_TTL_MEDIUM, function () use ($entity, $organizationId, $projectId, $limit, $sortBy) {
             return match ($entity) {
                 'projects' => $this->getTopProjects($organizationId, $limit, $sortBy),
                 'contracts' => $this->getTopContracts($organizationId, $projectId, $limit, $sortBy),
@@ -737,10 +737,10 @@ class DashboardService
         $query->withCount('contracts');
 
         // Подсчет материалов через подзапрос
-        $query->selectRaw('projects.*, 
-            (SELECT COUNT(DISTINCT completed_work_materials.material_id) 
-             FROM completed_works 
-             JOIN completed_work_materials ON completed_work_materials.completed_work_id = completed_works.id 
+        $query->selectRaw('projects.*,
+            (SELECT COUNT(DISTINCT completed_work_materials.material_id)
+             FROM completed_works
+             JOIN completed_work_materials ON completed_work_materials.completed_work_id = completed_works.id
              WHERE completed_works.project_id = projects.id) as materials_count');
 
         $query->orderByDesc(match ($sortBy) {
@@ -1086,7 +1086,7 @@ class DashboardService
             $worksQuery = DB::table('contract_performance_acts')
                 ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
                 ->where('contracts.organization_id', $organizationId);
-            
+
             if ($projectId) {
                 $worksQuery->where('contract_performance_acts.project_id', $projectId);
             }
@@ -1099,8 +1099,8 @@ class DashboardService
                 'completed_contracts_amount' => (float) $completedContractsAmount,
                 'completed_works_amount' => (float) $completedWorksAmount,
                 'remaining_amount' => max(0, (float) $totalContractsAmount - (float) $completedWorksAmount),
-                'completion_percentage' => $totalContractsAmount > 0 
-                    ? round(($completedWorksAmount / $totalContractsAmount) * 100, 2) 
+                'completion_percentage' => $totalContractsAmount > 0
+                    ? round(($completedWorksAmount / $totalContractsAmount) * 100, 2)
                     : 0.0,
             ];
         });
@@ -1116,7 +1116,7 @@ class DashboardService
 
         return $this->remember($cacheKey, $tags, self::CACHE_TTL_MEDIUM, function () use ($organizationId, $projectId, $filters) {
             $query = Contract::where('organization_id', $organizationId);
-            
+
             if ($projectId) {
                 $query->where(function($q) use ($projectId) {
                     $q->where('project_id', $projectId)
@@ -1148,10 +1148,10 @@ class DashboardService
 
             $contracts = $query->get();
             $total = $contracts->count();
-            
+
             $byStatus = $contracts->groupBy(function($contract) {
-                return $contract->status instanceof ContractStatusEnum 
-                    ? $contract->status->value 
+                return $contract->status instanceof ContractStatusEnum
+                    ? $contract->status->value
                     : (string)$contract->status;
             })->map(fn($group) => $group->count());
 
@@ -1177,8 +1177,8 @@ class DashboardService
                 'total_amount' => (float) $totalAmount,
                 'average_amount' => round((float) $avgAmount, 2),
                 'completed_works_amount' => (float) $completedWorksAmount,
-                'completion_percentage' => $totalAmount > 0 
-                    ? round(($completedWorksAmount / $totalAmount) * 100, 2) 
+                'completion_percentage' => $totalAmount > 0
+                    ? round(($completedWorksAmount / $totalAmount) * 100, 2)
                     : 0.0,
             ];
         });
@@ -1277,17 +1277,17 @@ class DashboardService
             $query = DB::table('contract_performance_acts')
                 ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
                 ->where('contracts.organization_id', $organizationId);
-            
+
             if ($projectId) {
                 $query->where('contract_performance_acts.project_id', $projectId);
             }
 
             $total = (clone $query)->count();
-            
+
             // Подсчет по статусам (is_approved: true = confirmed, false/null = pending)
             $confirmedCount = (clone $query)->where('contract_performance_acts.is_approved', true)->count();
             $confirmedAmount = (clone $query)->where('contract_performance_acts.is_approved', true)->sum('contract_performance_acts.amount');
-            
+
             $pendingCount = (clone $query)->where(function($q) {
                 $q->where('contract_performance_acts.is_approved', false)
                   ->orWhereNull('contract_performance_acts.is_approved');
@@ -1367,7 +1367,7 @@ class DashboardService
         $cacheKey = "dashboard_comparison_{$organizationId}_{$projectId}_{$period}";
         $tags = $this->getCacheTags($organizationId, $projectId);
 
-        return $this->remember($cacheKey, $tags, self::CACHE_TTL_MEDIUM, function () use ($organizationId, $projectId, $period) {
+        return $this->remember($cacheKey, $tags, self::CACHE_TTL_MEDIUM, function () use ($organizationId, $projectId) {
             $currentStart = Carbon::now()->startOfMonth();
             $currentEnd = Carbon::now();
             $previousStart = $currentStart->copy()->subMonth();
@@ -1423,11 +1423,11 @@ class DashboardService
 
             $statusValues = [];
             foreach ($byStatus as $item) {
-                $statusValue = $item->status instanceof ContractStatusEnum 
-                    ? $item->status->value 
+                $statusValue = $item->status instanceof ContractStatusEnum
+                    ? $item->status->value
                     : (string)$item->status;
                 $statusValues[] = $statusValue;
-                
+
                 $statusLabel = match ($statusValue) {
                     ContractStatusEnum::DRAFT->value => 'Черновики',
                     ContractStatusEnum::ACTIVE->value => 'Активные',
@@ -1494,9 +1494,9 @@ class DashboardService
      */
     public function getFinancialFlow(int $organizationId, ?int $projectId = null, string $period = 'month'): array
     {
-        return $this->getFinancialTimeseries($organizationId, $projectId, 
-            $this->getStartDateForPeriod($period), 
-            Carbon::now(), 
+        return $this->getFinancialTimeseries($organizationId, $projectId,
+            $this->getStartDateForPeriod($period),
+            Carbon::now(),
             $period
         );
     }
@@ -1526,7 +1526,7 @@ class DashboardService
             }
 
             $contracts = $query->get();
-            
+
             // Группируем контракты по подрядчикам
             $byContractor = $contracts->groupBy('contractor_id')->map(function($contractorContracts) use ($projectId) {
                 return [
@@ -1789,7 +1789,7 @@ class DashboardService
             $query = DB::table('contract_performance_acts')
                 ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
                 ->where('contracts.organization_id', $organizationId);
-            
+
             if ($projectId) {
                 $query->where('contract_performance_acts.project_id', $projectId);
             }
@@ -1912,7 +1912,7 @@ class DashboardService
     public function clearDashboardCache(int $organizationId, ?int $projectId = null): void
     {
         $tags = $this->getCacheTags($organizationId, $projectId);
-        
+
         if ($this->supportsTaggedCache()) {
             Cache::tags($tags)->flush();
         } else {
@@ -1924,7 +1924,7 @@ class DashboardService
                 "dashboard_history_*_{$organizationId}_{$projectId}",
                 "dashboard_financial_metrics_{$organizationId}_{$projectId}",
             ];
-            
+
             foreach ($patterns as $pattern) {
                 // В реальном приложении здесь нужна более сложная логика для удаления по паттерну
                 // Для простоты просто очищаем весь кеш
@@ -2063,7 +2063,7 @@ class DashboardService
     /**
      * Рассчитать сумму одного контракта для проекта с учетом allocations.
      * Для мультипроектных контрактов возвращает часть суммы относящуюся к проекту.
-     * 
+     *
      * Логика:
      * 1. Если контракт не мультипроектный, возвращаем полную сумму
      * 2. Если есть явное распределение (allocation), используем его
@@ -2073,54 +2073,54 @@ class DashboardService
     private function calculateSingleContractAmountForProject(Contract $contract, ?int $projectId = null): float
     {
         $fullAmount = (float) ($contract->total_amount ?? 0);
-        
+
         // Если контракт не мультипроектный, возвращаем полную сумму
         if (!$contract->is_multi_project || $projectId === null) {
             return $fullAmount;
         }
-        
+
         // Проверяем наличие явного распределения через таблицу allocations
         try {
             $allocation = $contract->allocationForProject($projectId);
-            
+
             if ($allocation) {
                 return $allocation->calculateAllocatedAmount();
             }
         } catch (\Exception $e) {
             // Если метод не существует или произошла ошибка, продолжаем с fallback логикой
         }
-        
+
         // FALLBACK: Если распределения нет, используем пропорциональное распределение на основе актов
         // Получаем общую сумму всех актов по контракту
         $totalActsAmount = DB::table('contract_performance_acts')
             ->where('contract_id', $contract->id)
             ->where('is_approved', true)
             ->sum('amount');
-        
+
         // Если актов нет, распределяем поровну между проектами
         if ($totalActsAmount == 0) {
             $projectsCount = DB::table('contract_project')
                 ->where('contract_id', $contract->id)
                 ->count();
-            
+
             // Если нет связей через pivot, но is_multi_project = true, считаем 1 проект
             if ($projectsCount == 0) {
                 $projectsCount = 1;
             }
-            
+
             return $projectsCount > 0 ? $fullAmount / $projectsCount : $fullAmount;
         }
-        
+
         // Получаем сумму актов по конкретному проекту
         $projectActsAmount = DB::table('contract_performance_acts')
             ->where('contract_id', $contract->id)
             ->where('project_id', $projectId)
             ->where('is_approved', true)
             ->sum('amount');
-        
+
         // Рассчитываем пропорциональную долю
         $proportion = $projectActsAmount / $totalActsAmount;
-        
+
         return $fullAmount * $proportion;
     }
-} 
+}

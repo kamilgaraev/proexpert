@@ -2,13 +2,16 @@
 
 namespace App\BusinessModules\Addons\AIEstimates\Http\Resources;
 
+use App\BusinessModules\Addons\AIEstimates\Models\AIGenerationHistory;
+use App\Http\Resources\ModelJsonResource;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\JsonResource;
 
-class AIGenerationHistoryResource extends JsonResource
+class AIGenerationHistoryResource extends ModelJsonResource
 {
     public function toArray(Request $request): array
     {
+        $history = $this->typedResource(AIGenerationHistory::class);
+
         return [
             'id' => $this->id,
             'project_id' => $this->project_id,
@@ -32,10 +35,10 @@ class AIGenerationHistoryResource extends JsonResource
             'metadata' => [
                 'tokens_used' => $this->tokens_used,
                 'cost_rub' => $this->cost,
-                'processing_time_seconds' => $this->getProcessingTimeSeconds(),
+                'processing_time_seconds' => $history->getProcessingTimeSeconds(),
             ],
             'error_message' => $this->error_message,
-            'has_feedback' => $this->hasFeedback(),
+            'has_feedback' => $history->hasFeedback(),
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
         ];

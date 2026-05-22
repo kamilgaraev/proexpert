@@ -155,7 +155,7 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
         
         $cacheKey = "user_usage_{$user->id}_{$organizationId}";
         
-        return Cache::remember($cacheKey, 300, function () use ($user, $organizationId) {
+        return Cache::remember($cacheKey, 300, function () use ($organizationId) {
             return [
                 'foremen' => $this->getForemenCount($organizationId),
                 'projects' => $this->getProjectsCount($organizationId),

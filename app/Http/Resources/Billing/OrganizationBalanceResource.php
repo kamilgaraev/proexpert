@@ -2,8 +2,9 @@
 
 namespace App\Http\Resources\Billing;
 
+use App\Http\Resources\ModelJsonResource;
+use App\Models\OrganizationBalance;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\JsonResource;
 
 /**
  * @OA\Schema(
@@ -16,7 +17,7 @@ use Illuminate\Http\Resources\Json\JsonResource;
  *     @OA\Property(property="currency", type="string", example="RUB")
  * )
  */
-class OrganizationBalanceResource extends JsonResource
+class OrganizationBalanceResource extends ModelJsonResource
 {
     /**
      * Transform the resource into an array.
@@ -25,12 +26,14 @@ class OrganizationBalanceResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $balance = $this->typedResource(OrganizationBalance::class);
+
         return [
             'organization_id' => $this->organization_id,
             'balance_cents' => (int) $this->balance, // Уже integer, но для ясности
-            'balance_formatted' => $this->getFormattedBalanceAttribute(), // Используем аксессор
+            'balance_formatted' => $balance->getFormattedBalanceAttribute(), // Используем аксессор
             'currency' => $this->currency,
             'updated_at' => $this->updated_at?->toIso8601String(),
         ];
     }
-} 
+}

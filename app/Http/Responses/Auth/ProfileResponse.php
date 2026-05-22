@@ -15,13 +15,13 @@ class ProfileResponse extends ApiResponse
      * @param string|null $message Сообщение (может быть null)
      * @return static
      */
-    public static function userProfile(User $user, ?string $message = null): static
+    public static function userProfile(User $user, ?string $message = null): self
     {
         // Возможно, пользователя нужно обернуть в UserResource?
         // $data = new \App\Http\Resources\UserResource($user);
         $data = ['user' => $user]; // Пока оставляем так
-        
-        return new static(
+
+        return new self(
             data: $data,
             statusCode: Response::HTTP_OK,
             message: $message
@@ -34,9 +34,9 @@ class ProfileResponse extends ApiResponse
      * @param string $message Сообщение об ошибке
      * @return static
      */
-    public static function notFound(string $message = 'Пользователь не найден'): static
+    public static function notFound(string $message = 'Пользователь не найден'): self
     {
-        return new static(
+        return new self(
             data: null,
             statusCode: Response::HTTP_NOT_FOUND,
             message: $message
@@ -44,4 +44,4 @@ class ProfileResponse extends ApiResponse
     }
 
     // Конструктор родителя используется, свой не нужен.
-} 
+}

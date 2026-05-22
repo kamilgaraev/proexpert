@@ -2,13 +2,16 @@
 
 namespace App\Http\Resources\Api\V1\Admin\Estimate;
 
+use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportDTO;
+use App\Http\Resources\ModelJsonResource;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\JsonResource;
 
-class EstimateImportPreviewResource extends JsonResource
+class EstimateImportPreviewResource extends ModelJsonResource
 {
     public function toArray(Request $request): array
     {
+        $preview = $this->typedResource(EstimateImportDTO::class);
+
         return [
             'file_name' => $this->fileName,
             'file_size' => $this->fileSize,
@@ -62,9 +65,9 @@ class EstimateImportPreviewResource extends JsonResource
                 'items_count' => $this->totals['items_count'] ?? $this->totals['total_items'] ?? count($this->items),
             ],
             'summary' => [
-                'items_count' => $this->getItemsCount(),
-                'sections_count' => $this->getSectionsCount(),
-                'total_amount' => $this->getTotalAmount(),
+                'items_count' => $preview->getItemsCount(),
+                'sections_count' => $preview->getSectionsCount(),
+                'total_amount' => $preview->getTotalAmount(),
             ],
             'metadata' => $this->metadata,
         ];

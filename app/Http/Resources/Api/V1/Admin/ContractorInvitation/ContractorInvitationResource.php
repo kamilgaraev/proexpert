@@ -2,24 +2,27 @@
 
 namespace App\Http\Resources\Api\V1\Admin\ContractorInvitation;
 
+use App\Http\Resources\ModelJsonResource;
+use App\Models\ContractorInvitation;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\JsonResource;
 
-class ContractorInvitationResource extends JsonResource
+class ContractorInvitationResource extends ModelJsonResource
 {
     public function toArray(Request $request): array
     {
+        $invitation = $this->typedResource(ContractorInvitation::class);
+
         return [
             'id' => $this->id,
-            'token' => $this->when($this->canBeAccepted(), $this->token),
+            'token' => $this->when($invitation->canBeAccepted(), $this->token),
             'status' => $this->status,
             'invitation_message' => $this->invitation_message,
             'expires_at' => $this->expires_at?->toISOString(),
             'created_at' => $this->created_at?->toISOString(),
             'accepted_at' => $this->accepted_at?->toISOString(),
-            'is_expired' => $this->isExpired(),
-            'can_be_accepted' => $this->canBeAccepted(),
-            'invitation_url' => $this->when($this->canBeAccepted(), $this->getInvitationUrl()),
+            'is_expired' => $invitation->isExpired(),
+            'can_be_accepted' => $invitation->canBeAccepted(),
+            'invitation_url' => $this->when($invitation->canBeAccepted(), $invitation->getInvitationUrl()),
             
             'organization' => $this->whenLoaded('organization', function () {
                 return [

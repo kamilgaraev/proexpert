@@ -2,10 +2,11 @@
 
 namespace App\Http\Resources\Api\V1\Landing\Organization;
 
+use App\Http\Resources\ModelJsonResource;
+use App\Models\Organization;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\JsonResource;
 
-class OrganizationResource extends JsonResource
+class OrganizationResource extends ModelJsonResource
 {
     /**
      * Transform the resource into an array.
@@ -14,6 +15,8 @@ class OrganizationResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $organization = $this->typedResource(Organization::class);
+
         return [
             'id' => $this->id,
             'name' => $this->name,
@@ -39,7 +42,7 @@ class OrganizationResource extends JsonResource
                 'verification_score' => $this->verification_score,
                 'verification_data' => $this->verification_data,
                 'verification_notes' => $this->verification_notes,
-                'can_be_verified' => $this->canBeVerified(),
+                'can_be_verified' => $organization->canBeVerified(),
             ],
             
             'created_at' => $this->created_at?->toISOString(),

@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use App\Enums\Contract\ContractStateEventTypeEnum;
 
 class ContractStateEvent extends Model
@@ -70,7 +71,7 @@ class ContractStateEvent extends Model
     /**
      * События, которые аннулируют это событие
      */
-    public function supersededByEvents()
+    public function supersededByEvents(): HasMany
     {
         return $this->hasMany(ContractStateEvent::class, 'supersedes_event_id');
     }

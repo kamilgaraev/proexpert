@@ -2,8 +2,9 @@
 
 namespace App\Http\Resources\Billing;
 
+use App\Http\Resources\ModelJsonResource;
+use App\Models\BalanceTransaction;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\JsonResource;
 
 /**
  * @OA\Schema(
@@ -23,7 +24,7 @@ use Illuminate\Http\Resources\Json\JsonResource;
  *     @OA\Property(property="created_at", type="string", format="date-time", example="2025-07-21T15:03:01Z")
  * )
  */
-class BalanceTransactionResource extends JsonResource
+class BalanceTransactionResource extends ModelJsonResource
 {
     /**
      * Transform the resource into an array.
@@ -32,11 +33,13 @@ class BalanceTransactionResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $transaction = $this->typedResource(BalanceTransaction::class);
+
         return [
             'id' => $this->id,
             'type' => $this->type,
             'amount_cents' => (int) $this->amount,
-            'amount_formatted' => $this->getFormattedAmountAttribute(),
+            'amount_formatted' => $transaction->getFormattedAmountAttribute(),
             'balance_before_cents' => (int) $this->balance_before,
             'balance_after_cents' => (int) $this->balance_after,
             'description' => $this->description,
@@ -46,4 +49,4 @@ class BalanceTransactionResource extends JsonResource
             'created_at' => $this->created_at?->toIso8601String(),
         ];
     }
-} 
+}

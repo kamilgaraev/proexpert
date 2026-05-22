@@ -2,10 +2,10 @@
 
 namespace App\Http\Resources\Api\V1\Landing\ContractorInvitation;
 
+use App\Http\Resources\PaginatedResourceCollection;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\ResourceCollection;
 
-class ContractorInvitationCollection extends ResourceCollection
+class ContractorInvitationCollection extends PaginatedResourceCollection
 {
     public $collects = ContractorInvitationResource::class;
 

@@ -37,7 +37,7 @@ class OrganizationModuleService
         return Module::with(['activations' => function ($query) use ($organizationId) {
             $query->where('organization_id', $organizationId)
                   ->where('is_active', true);
-        }])->get()->map(function ($module) use ($organizationId) {
+        }])->get()->map(function ($module) {
             $activation = $module->activations->first();
             
             return [

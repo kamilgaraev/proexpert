@@ -83,18 +83,9 @@ abstract class ApiResponse implements Responsable
         if (is_array($data) || is_object($data)) {
             return (array) $data; // Может потребоваться обернуть в 'data' ключ
         }
-        
+
         // Если простое значение, можно обернуть
         return ['data' => $data];
     }
 
-    public static function success(string $message = 'Операция выполнена успешно', array $data = [], int $statusCode = 200): self
-    {
-        return new static($data, $statusCode, $message);
-    }
-
-    public static function error(string $message = 'Произошла ошибка', int $statusCode = 400, array $data = []): self
-    {
-        return new static($data, $statusCode, $message);
-    }
-} 
+}

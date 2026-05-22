@@ -2,6 +2,7 @@
 
 namespace App\BusinessModules\Features\Procurement\Http\Resources;
 
+use App\Models\Contract;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -9,33 +10,37 @@ class PurchaseContractResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        assert($this->resource instanceof Contract);
+
+        $contract = $this->resource;
+
         return [
-            'id' => $this->id,
-            'organization_id' => $this->organization_id,
-            'project_id' => $this->project_id,
-            'supplier_id' => $this->supplier_id,
-            'contract_category' => $this->contract_category,
-            'number' => $this->number,
-            'date' => $this->date->format('Y-m-d'),
-            'subject' => $this->subject,
-            'work_type_category' => $this->work_type_category?->value,
-            'total_amount' => (float) $this->total_amount,
-            'status' => $this->status->value,
-            'start_date' => $this->start_date?->format('Y-m-d'),
-            'end_date' => $this->end_date?->format('Y-m-d'),
-            'notes' => $this->notes,
-            'is_procurement_contract' => $this->isProcurementContract(),
+            'id' => $contract->id,
+            'organization_id' => $contract->organization_id,
+            'project_id' => $contract->project_id,
+            'supplier_id' => $contract->supplier_id,
+            'contract_category' => $contract->contract_category,
+            'number' => $contract->number,
+            'date' => $contract->date->format('Y-m-d'),
+            'subject' => $contract->subject,
+            'work_type_category' => $contract->work_type_category?->value,
+            'total_amount' => (float) $contract->total_amount,
+            'status' => $contract->status->value,
+            'start_date' => $contract->start_date?->format('Y-m-d'),
+            'end_date' => $contract->end_date?->format('Y-m-d'),
+            'notes' => $contract->notes,
+            'is_procurement_contract' => $contract->isProcurementContract(),
             'supplier' => $this->whenLoaded('supplier', fn() => [
-                'id' => $this->supplier->id,
-                'name' => $this->supplier->name,
-                'inn' => $this->supplier->inn,
+                'id' => $contract->supplier->id,
+                'name' => $contract->supplier->name,
+                'inn' => $contract->supplier->inn,
             ]),
-            'project' => $this->whenLoaded('project', fn() => $this->project ? [
-                'id' => $this->project->id,
-                'name' => $this->project->name,
+            'project' => $this->whenLoaded('project', fn() => $contract->project ? [
+                'id' => $contract->project->id,
+                'name' => $contract->project->name,
             ] : null),
-            'created_at' => $this->created_at->toIso8601String(),
-            'updated_at' => $this->updated_at->toIso8601String(),
+            'created_at' => $contract->created_at->toIso8601String(),
+            'updated_at' => $contract->updated_at->toIso8601String(),
         ];
     }
 }

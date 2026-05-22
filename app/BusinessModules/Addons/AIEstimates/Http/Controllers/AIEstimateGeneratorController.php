@@ -42,7 +42,6 @@ class AIEstimateGeneratorController extends Controller
             // Создаем DTO из запроса
             /** @var array<string, mixed> $validated */
             $validated = $request->validated();
-            /** @phpstan-ignore-next-line */
             $requestDTO = AIEstimateRequestDTO::fromRequest(
                 $validated,
                 $project->id,
@@ -76,7 +75,6 @@ class AIEstimateGeneratorController extends Controller
             $user = Auth::user();
 
             /** @var \Illuminate\Contracts\Pagination\LengthAwarePaginator<AIGenerationHistory> $history */
-            /** @phpstan-ignore-next-line */
             $history = AIGenerationHistory::forOrganization($user->current_organization_id)
                 ->forProject($project->id)
                 ->with(['user', 'feedback'])
@@ -111,13 +109,11 @@ class AIEstimateGeneratorController extends Controller
             $user = Auth::user();
             
             // Проверка доступа
-            /** @phpstan-ignore-next-line */
             if ($generation->organization_id !== $user->current_organization_id) {
                 return AdminResponse::error(trans_message('ai_estimates.access_denied'), 403);
             }
 
             /** @var AIGenerationHistory $generation */
-            /** @phpstan-ignore-next-line */
             $generation->load(['user', 'feedback']);
 
             return AdminResponse::success(new AIGenerationHistoryResource($generation));

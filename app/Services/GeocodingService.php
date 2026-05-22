@@ -172,9 +172,9 @@ class GeocodingService
                 $address
             ]);
 
-        if ($response->successful() && $response->json()) {
+        if ($response->successful()) {
             $data = $response->json();
-            if (!empty($data) && isset($data[0]['geo_lat'], $data[0]['geo_lon'])) {
+            if (is_array($data) && isset($data[0]['geo_lat'], $data[0]['geo_lon'])) {
                 return [
                     'latitude' => (float) $data[0]['geo_lat'],
                     'longitude' => (float) $data[0]['geo_lon'],
@@ -280,4 +280,3 @@ class GeocodingService
         return 15;
     }
 }
-

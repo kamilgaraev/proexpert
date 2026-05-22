@@ -2,12 +2,13 @@
 
 namespace App\Http\Resources\File;
 
-use Illuminate\Http\Resources\Json\JsonResource;
+use App\Http\Resources\ModelJsonResource;
+use App\Models\File;
 use App\Services\Storage\FileService;
 use Illuminate\Support\Facades\App as AppFacade;
 // Storage не используется напрямую, если модель сама генерирует URL
 
-class FileResource extends JsonResource
+class FileResource extends ModelJsonResource
 {
     /**
      * Преобразовать ресурс в массив.
@@ -17,6 +18,7 @@ class FileResource extends JsonResource
      */
     public function toArray($request): array
     {
+        $file = $this->typedResource(File::class);
         $thumbnails = [];
         // Доступ к "raw" данным миниатюр через аксессор getThumbnailsAttribute (->thumbnails)
         foreach ($this->thumbnails as $suffix => $thumbData) {
@@ -24,7 +26,7 @@ class FileResource extends JsonResource
                 $thumbnails[$suffix] = $thumbData['url'];
             } elseif (isset($thumbData['path']) && isset($thumbData['disk'])) {
                 // Если URL не был сохранен напрямую, генерируем его
-                $thumbnails[$suffix] = $this->getThumbnailUrl($suffix);
+                $thumbnails[$suffix] = $file->getThumbnailUrl($suffix);
             }
         }
 
@@ -39,9 +41,9 @@ class FileResource extends JsonResource
             'thumbnails' => $thumbnails, // Массив URL-ов миниатюр ['suffix' => 'url']
             // Показываем additional_info только админам для отладки или если есть специальный запрос
             'additional_info' => $this->when(
-                $this->additional_info && $request->user() && method_exists($request->user(), 'isAdmin') && $request->user()->isAdmin(), 
+                $this->additional_info && $request->user() && method_exists($request->user(), 'isAdmin') && $request->user()->isAdmin(),
                 $this->additional_info
-            ), 
+            ),
             'uploaded_at' => $this->created_at->format('Y-m-d H:i:s'),
             'user_id' => $this->user_id, // Оставляем для информации, кто загрузил
             // Можно добавить ресурс пользователя, если нужно больше деталей о нем
@@ -64,4 +66,4 @@ class FileResource extends JsonResource
 
         return asset('storage/' . $this->filepath);
     }
-} 
+}

@@ -2,10 +2,10 @@
 
 namespace App\Http\Resources\Api\V1\Schedule;
 
+use App\Http\Resources\PaginatedResourceCollection;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\ResourceCollection;
 
-class ProjectScheduleCollection extends ResourceCollection
+class ProjectScheduleCollection extends PaginatedResourceCollection
 {
     public function toArray(Request $request): array
     {

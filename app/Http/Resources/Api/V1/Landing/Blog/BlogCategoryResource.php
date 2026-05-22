@@ -2,13 +2,16 @@
 
 namespace App\Http\Resources\Api\V1\Landing\Blog;
 
+use App\Http\Resources\ModelJsonResource;
+use App\Models\Blog\BlogCategory;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\JsonResource;
 
-class BlogCategoryResource extends JsonResource
+class BlogCategoryResource extends ModelJsonResource
 {
     public function toArray(Request $request): array
     {
+        $category = $this->typedResource(BlogCategory::class);
+
         return [
             'id' => $this->id,
             'name' => $this->name,
@@ -21,7 +24,7 @@ class BlogCategoryResource extends JsonResource
             'sort_order' => $this->sort_order,
             'is_active' => $this->is_active,
             'articles_count' => $this->when(
-                $this->relationLoaded('articles') || isset($this->articles_count),
+                $category->relationLoaded('articles') || isset($this->articles_count),
                 $this->articles_count ?? $this->published_articles_count
             ),
             'published_articles_count' => $this->when(
@@ -32,4 +35,4 @@ class BlogCategoryResource extends JsonResource
             'updated_at' => $this->updated_at?->toISOString(),
         ];
     }
-} 
+}

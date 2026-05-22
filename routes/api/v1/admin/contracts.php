@@ -31,7 +31,7 @@ Route::group(['prefix' => 'contracts'], function () {
 // Доступ: admin/contracts/{contract}/performance-acts
 //         admin/performance-acts/{performance_act} (благодаря shallow)
 Route::apiResource('contracts.performance-acts', ContractPerformanceActController::class)
-    ->shallow() 
+    ->shallow()
     ->parameters(['performance-acts' => 'performance_act']);
 
 // Дополнительные маршруты для экспорта актов и файлов
@@ -59,4 +59,4 @@ Route::get('performance-acts/{performance_act}/files', [ContractPerformanceActCo
 // Маршруты для распределения контрактов по проектам (allocations)
 require __DIR__ . '/contract_allocations.php';
 
-?> 
+?>

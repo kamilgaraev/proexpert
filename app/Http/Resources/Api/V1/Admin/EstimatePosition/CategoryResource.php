@@ -2,22 +2,25 @@
 
 namespace App\Http\Resources\Api\V1\Admin\EstimatePosition;
 
-use Illuminate\Http\Resources\Json\JsonResource;
+use App\Http\Resources\ModelJsonResource;
+use App\Models\EstimatePositionCatalogCategory;
 
-class CategoryResource extends JsonResource
+class CategoryResource extends ModelJsonResource
 {
     /**
      * Transform the resource into an array.
      */
     public function toArray($request): array
     {
+        $category = $this->typedResource(EstimatePositionCatalogCategory::class);
+
         return [
             'id' => $this->id,
             'organization_id' => $this->organization_id,
             'parent_id' => $this->parent_id,
             'name' => $this->name,
             'description' => $this->description,
-            'full_path' => $this->getFullPath(),
+            'full_path' => $category->getFullPath(),
             'sort_order' => $this->sort_order,
             'is_active' => $this->is_active,
             'metadata' => $this->metadata,

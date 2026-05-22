@@ -23,7 +23,7 @@ class ProjectController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        return PerformanceMonitor::measure('mobile.projects.index', function() use ($request) {
+        return PerformanceMonitor::measure('mobile.projects.index', function () {
             /** @var \App\Models\User $user */
             $user = auth()->user();
             $organizationId = $user->current_organization_id;

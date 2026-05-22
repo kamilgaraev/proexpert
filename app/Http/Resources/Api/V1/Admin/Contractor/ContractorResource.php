@@ -2,15 +2,18 @@
 
 namespace App\Http\Resources\Api\V1\Admin\Contractor;
 
+use App\Http\Resources\ModelJsonResource;
+use App\Models\Contractor;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\JsonResource;
 // Если будем использовать ContractMiniResource, нужно будет его импортировать
 // use App\Http\Resources\Api\V1\Admin\Contract\ContractMiniResource;
 
-class ContractorResource extends JsonResource
+class ContractorResource extends ModelJsonResource
 {
     public function toArray(Request $request): array
     {
+        $contractor = $this->typedResource(Contractor::class);
+
         return [
             'id' => $this->id,
             'organization_id' => $this->organization_id,
@@ -25,13 +28,13 @@ class ContractorResource extends JsonResource
             'notes' => $this->notes,
             'contractor_type' => $this->contractor_type?->value,
             'contractor_type_label' => $this->contractor_type?->label(),
-            'is_self_execution' => $this->isSelfExecution(),
-            'is_editable' => $this->isEditable(),
-            'is_deletable' => $this->isDeletable(),
+            'is_self_execution' => $contractor->isSelfExecution(),
+            'is_editable' => $contractor->isEditable(),
+            'is_deletable' => $contractor->isDeletable(),
             'created_at' => $this->created_at->toIso8601String(),
             'updated_at' => $this->updated_at->toIso8601String(),
             // 'contracts' => ContractMiniResource::collection($this->whenLoaded('contracts')),
             // 'contracts_count' => $this->when(isset($this->contracts_count), $this->contracts_count),
         ];
     }
-} 
+}

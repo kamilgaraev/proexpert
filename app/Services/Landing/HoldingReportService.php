@@ -98,8 +98,10 @@ class HoldingReportService
     public function getMoneyMovements(array $organizationIds, array $filters = []): Collection
     {
         $query = BalanceTransaction::query()
-            ->whereIn('organization_id', $organizationIds)
-            ->with('organization');
+            ->whereHas('organizationBalance', function ($query) use ($organizationIds) {
+                $query->whereIn('organization_id', $organizationIds);
+            })
+            ->with('organizationBalance.organization');
 
         if (isset($filters['date_from'])) {
             $query->whereDate('created_at', '>=', $filters['date_from']);
@@ -200,4 +202,4 @@ class HoldingReportService
 
         return $query->get();
     }
-} 
+}

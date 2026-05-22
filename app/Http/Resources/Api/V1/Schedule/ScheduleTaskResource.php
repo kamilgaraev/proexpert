@@ -2,16 +2,19 @@
 
 namespace App\Http\Resources\Api\V1\Schedule;
 
+use App\Http\Resources\ModelJsonResource;
+use App\Models\ScheduleTask;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\JsonResource;
 
-class ScheduleTaskResource extends JsonResource
+class ScheduleTaskResource extends ModelJsonResource
 {
     /**
      * Стандартный ресурс для задачи графика
      */
     public function toArray(Request $request): array
     {
+        $task = $this->typedResource(ScheduleTask::class);
+
         return [
             'id' => $this->id,
             'schedule_id' => $this->schedule_id,
@@ -66,20 +69,20 @@ class ScheduleTaskResource extends JsonResource
             // Связи
             'estimate_item_id' => $this->estimate_item_id,
             'estimate_section_id' => $this->estimate_section_id,
-            'assigned_user' => $this->when($this->relationLoaded('assignedUser'), [
+            'assigned_user' => $this->when($task->relationLoaded('assignedUser'), [
                 'id' => $this->assignedUser?->id,
                 'name' => $this->assignedUser?->name,
             ]),
-            'work_type' => $this->when($this->relationLoaded('workType'), [
+            'work_type' => $this->when($task->relationLoaded('workType'), [
                 'id' => $this->workType?->id,
                 'name' => $this->workType?->name,
             ]),
-            'measurement_unit' => $this->when($this->relationLoaded('measurementUnit'), [
+            'measurement_unit' => $this->when($task->relationLoaded('measurementUnit'), [
                 'id' => $this->measurementUnit?->id,
                 'name' => $this->measurementUnit?->name,
                 'short_name' => $this->measurementUnit?->short_name,
             ]),
-            'parent_task' => $this->when($this->relationLoaded('parentTask'), [
+            'parent_task' => $this->when($task->relationLoaded('parentTask'), [
                 'id' => $this->parentTask?->id,
                 'name' => $this->parentTask?->name,
             ]),

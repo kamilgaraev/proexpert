@@ -7,4 +7,4 @@ use App\Http\Controllers\Api\V1\Admin\ContractorController;
 // Префикс 'admin' и middleware применяются в главном файле routes/api.php
 Route::apiResource('contractors', ContractorController::class);
 
-?> 
+?>

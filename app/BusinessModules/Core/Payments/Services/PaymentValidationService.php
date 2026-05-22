@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Core\Payments\Services;
 
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\Organization;
@@ -734,9 +735,12 @@ class PaymentValidationService
     ): void {
         try {
             // Получаем администраторов и владельцев организации
-            $users = User::whereHas('organizationUsers', function($query) use ($organizationId) {
-                $query->where('organization_id', $organizationId)
-                      ->whereIn('role_slug', ['organization_owner', 'admin', 'accountant']);
+            $context = AuthorizationContext::getOrganizationContext($organizationId);
+
+            $users = User::whereHas('roleAssignments', function ($query) use ($context) {
+                $query->where('context_id', $context->id)
+                    ->where('is_active', true)
+                    ->whereIn('role_slug', ['organization_owner', 'admin', 'accountant']);
             })->get();
             
             if ($users->isEmpty()) {

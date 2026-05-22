@@ -8,6 +8,7 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Redis;
 
 class DataAggregator
 {
@@ -323,11 +324,11 @@ class DataAggregator
     private function clearCacheByPattern(string $pattern): void
     {
         try {
-            $redis = Cache::getRedis();
-            $keys = $redis->keys($pattern);
+            $connection = config('cache.stores.redis.connection', 'cache');
+            $keys = Redis::connection((string) $connection)->command('keys', [$pattern]);
             
-            if (!empty($keys)) {
-                $redis->del($keys);
+            if (is_array($keys) && $keys !== []) {
+                Redis::connection((string) $connection)->command('del', $keys);
             }
         } catch (\Exception $e) {
             // Логируем ошибку, но не прерываем выполнение

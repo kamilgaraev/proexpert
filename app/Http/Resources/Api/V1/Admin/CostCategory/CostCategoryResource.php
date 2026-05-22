@@ -2,10 +2,11 @@
 
 namespace App\Http\Resources\Api\V1\Admin\CostCategory;
 
+use App\Http\Resources\ModelJsonResource;
+use App\Models\CostCategory;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\JsonResource;
 
-class CostCategoryResource extends JsonResource
+class CostCategoryResource extends ModelJsonResource
 {
     /**
      * Преобразовать ресурс в массив.
@@ -14,6 +15,8 @@ class CostCategoryResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $category = $this->typedResource(CostCategory::class);
+
         return [
             'id' => $this->id,
             'name' => $this->name,
@@ -29,7 +32,7 @@ class CostCategoryResource extends JsonResource
             'updated_at' => $this->updated_at,
             
             // Включаем связанные данные, если они загружены
-            'parent' => $this->when($this->relationLoaded('parent'), function () {
+            'parent' => $this->when($category->relationLoaded('parent'), function () {
                 return [
                     'id' => $this->parent->id ?? null,
                     'name' => $this->parent->name ?? null,
@@ -37,20 +40,20 @@ class CostCategoryResource extends JsonResource
                 ];
             }),
             
-            'children' => $this->when($this->relationLoaded('children'), function () {
+            'children' => $this->when($category->relationLoaded('children'), function () {
                 return self::collection($this->children);
             }),
             
             // Количество проектов, связанных с категорией
-            'projects_count' => $this->when($this->relationLoaded('projects'), function () {
+            'projects_count' => $this->when($category->relationLoaded('projects'), function () use ($category) {
                  // Добавим проверку на существование связи перед вызовом count()
-                 return $this->relationLoaded('projects') ? $this->projects->count() : 0;
+                 return $category->projects->count();
             }),
             
             // Путь категории (для иерархических отображений)
-            'path' => $this->when($this->relationLoaded('parent'), function () {
+            'path' => $this->when($category->relationLoaded('parent'), function () use ($category) {
                 $path = [];
-                $currentCategory = $this;
+                $currentCategory = $category;
 
                 while ($currentCategory && $currentCategory->relationLoaded('parent') && $currentCategory->parent) {
                     if (!$currentCategory->parent->id) {

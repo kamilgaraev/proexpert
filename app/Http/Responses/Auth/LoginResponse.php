@@ -10,34 +10,34 @@ class LoginResponse extends ApiResponse
 {
     /**
      * Метод для создания успешного ответа при входе.
-     * 
+     *
      * @param User $user Аутентифицированный пользователь
      * @param string $token JWT-токен
      * @param string $message Сообщение
      * @return static
      */
-    public static function loginSuccess(User $user, string $token, string $message = 'Вход выполнен успешно'): static
+    public static function loginSuccess(User $user, string $token, string $message = 'Вход выполнен успешно'): self
     {
         $data = [
             'token' => $token,
             'user' => $user,
         ];
-        return new static(
+        return new self(
             data: $data,
             statusCode: Response::HTTP_OK,
             message: $message
         );
     }
-    
+
     /**
      * Метод для создания ответа при неудачной авторизации.
-     * 
+     *
      * @param string $message Сообщение об ошибке
      * @return static
      */
-    public static function unauthorized(string $message = 'Неверный email или пароль'): static
+    public static function unauthorized(string $message = 'Неверный email или пароль'): self
     {
-        return new static(
+        return new self(
             data: null,
             statusCode: Response::HTTP_UNAUTHORIZED,
             message: $message
@@ -46,16 +46,16 @@ class LoginResponse extends ApiResponse
 
     /**
      * Метод для создания ответа при отсутствии прав доступа.
-     * 
+     *
      * @param string $message Сообщение об ошибке
      * @return static
      */
-    public static function forbidden(string $message = 'У вас нет доступа к данному ресурсу'): static
+    public static function forbidden(string $message = 'У вас нет доступа к данному ресурсу'): self
     {
-        return new static(
+        return new self(
             data: null,
             statusCode: Response::HTTP_FORBIDDEN,
             message: $message
         );
     }
-} 
+}

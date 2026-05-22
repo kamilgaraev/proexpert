@@ -40,14 +40,14 @@ class ContractPerformanceActService
         if (!$contract) {
             throw new Exception('Contract not found or does not belong to the organization.');
         }
-        
+
         // Если указан projectId, проверяем, что контракт принадлежит этому проекту
         if ($projectId !== null) {
             if ($contract->is_multi_project) {
                 // Для мультипроектных контрактов проверяем наличие проекта в списке связанных
                 // Используем exists() для оптимизации запроса
                 $isLinked = $contract->projects()->where('projects.id', $projectId)->exists();
-                
+
                 if (!$isLinked) {
                     throw new Exception('Multi-project contract is not linked to the specified project.');
                 }
@@ -55,24 +55,24 @@ class ContractPerformanceActService
                 throw new Exception('Contract does not belong to the specified project.');
             }
         }
-        
+
         return $contract;
     }
 
     public function getAllActsForContract(int $contractId, int $organizationId, array $filters = [], ?int $projectId = null): Collection
     {
         $this->getContractOrFail($contractId, $organizationId, $projectId); // Проверка, что контракт существует и принадлежит организации
-        
+
         // Добавляем фильтр по project_id если он передан
         if ($projectId !== null) {
             $filters['project_id'] = $projectId;
         }
-        
+
         $acts = $this->actRepository->getActsForContract($contractId, $filters);
-        
+
         // Загружаем связи для каждого акта
         $acts->load(['completedWorks.workType', 'completedWorks.user', 'files.user']);
-        
+
         return $acts;
     }
 
@@ -84,7 +84,7 @@ class ContractPerformanceActService
                 'contract_id' => $contractId,
                 'project_id' => $projectId,
             ], 'error');
-            
+
             throw new \InvalidArgumentException('Organization ID is required to create performance act.');
         }
 
@@ -100,21 +100,21 @@ class ContractPerformanceActService
         $contract = $this->getContractOrFail($contractId, $organizationId, $projectId);
 
         // Выполняем создание акта в транзакции для безопасности
-        $act = DB::transaction(function () use ($contract, $actDTO, $organizationId, $projectId) {
+        $act = DB::transaction(function () use ($contract, $actDTO, $projectId) {
             // Создаем акт
             $actData = $actDTO->toArray();
             $actData['contract_id'] = $contract->id;
-            
+
             // Если project_id не был передан в DTO, но передан в метод - используем его
             if (!isset($actData['project_id']) || $actData['project_id'] === null) {
                 $actData['project_id'] = $projectId;
             }
-            
+
             // Если всё ещё нет project_id - используем из контракта (для обычных контрактов)
             if (!isset($actData['project_id']) || $actData['project_id'] === null) {
                 $actData['project_id'] = $contract->project_id;
             }
-            
+
             // ИСПРАВЛЕНИЕ: Если нет работ, используем amount из DTO, иначе пересчитаем из работ
             if (empty($actDTO->completed_works)) {
                 // Если работ нет - используем переданную сумму (или 0 по умолчанию)
@@ -184,14 +184,14 @@ class ContractPerformanceActService
     {
         $this->getContractOrFail($contractId, $organizationId, $projectId);
         $act = $this->actRepository->find($actId);
-        
+
         // Убедимся, что акт принадлежит указанному контракту и проекту
         if ($act && $act->contract_id === $contractId) {
             // Если указан projectId, проверяем что акт относится к этому проекту
             if ($projectId !== null && $act->project_id !== $projectId) {
                 return null;
             }
-            
+
             // Загружаем связи для возврата полных данных
             $act->load(['completedWorks.workType', 'completedWorks.user', 'files.user']);
             return $act;
@@ -312,7 +312,7 @@ class ContractPerformanceActService
             ->toArray();
 
         $invalidWorks = array_diff($workIds, $validWorks);
-        
+
         if (!empty($invalidWorks)) {
             // TECHNICAL: Обнаружены невалидные работы
             $this->logging->technical('performance_act.works.sync.invalid_works', [
@@ -359,7 +359,7 @@ class ContractPerformanceActService
                 ],
                 'performed_by' => request()->user()?->id
             ]);
-            
+
             // Инвалидируем кэш EVM метрик при изменении состава работ в акте
             $this->invalidateEVMCache($act);
         }
@@ -371,7 +371,7 @@ class ContractPerformanceActService
     public function getAvailableWorksForAct(int $contractId, int $organizationId, ?int $projectId = null): array
     {
         $this->getContractOrFail($contractId, $organizationId, $projectId);
-        
+
         // Получаем подтвержденные работы которые еще не включены в утвержденные акты
         $works = \App\Models\CompletedWork::where('contract_id', $contractId)
             ->where('status', 'confirmed')
@@ -420,7 +420,7 @@ class ContractPerformanceActService
                 'user_id' => request()->user()?->id,
                 'attempted_by_ip' => request()->ip()
             ], 'warning');
-            
+
             throw new Exception('Performance act not found or does not belong to the specified contract or project.');
         }
 
@@ -445,7 +445,7 @@ class ContractPerformanceActService
         ], 'warning');
 
         $result = $this->actRepository->delete($actId);
-        
+
         if ($result) {
             // BUSINESS: Акт успешно удален
             $this->logging->business('performance_act.deleted', [
@@ -475,7 +475,7 @@ class ContractPerformanceActService
 
         return $result;
     }
-    
+
     public function getTotalPerformedAmountForContract(int $contractId, int $organizationId, ?int $projectId = null): float
     {
         $this->getContractOrFail($contractId, $organizationId, $projectId);
@@ -490,7 +490,7 @@ class ContractPerformanceActService
         try {
             // Загружаем файл в S3
             $organization = \App\Models\Organization::find($organizationId);
-            
+
             if (!$organization) {
                 $this->logging->technical('performance_act.pdf_upload.failed', [
                     'act_id' => $act->id,
@@ -505,11 +505,11 @@ class ContractPerformanceActService
             }
 
             $directory = "acts/{$act->id}/documents";
-            
+
             // Проверяем размер файла перед загрузкой
             $fileSizeMb = round($pdfFile->getSize() / 1024 / 1024, 2);
             $maxFileSizeMb = config('file-uploads.max_sizes.pdf_documents', 100);
-            
+
             if ($fileSizeMb > $maxFileSizeMb) {
                 $this->logging->technical('performance_act.pdf_upload.failed', [
                     'act_id' => $act->id,
@@ -546,7 +546,7 @@ class ContractPerformanceActService
                     'directory' => $directory,
                     'original_filename' => $pdfFile->getClientOriginalName()
                 ], 'error');
-                
+
                 \Illuminate\Support\Facades\Log::error('[ContractPerformanceActService] FileService upload returned false', [
                     'act_id' => $act->id,
                     'organization_id' => $organizationId,
@@ -554,7 +554,7 @@ class ContractPerformanceActService
                     'file_size_mb' => $fileSizeMb,
                     'original_filename' => $pdfFile->getClientOriginalName()
                 ]);
-                
+
                 // Не блокируем создание акта - файл можно загрузить позже
                 return null;
             }
@@ -624,14 +624,14 @@ class ContractPerformanceActService
     {
         try {
             $contract = $act->contract;
-            
+
             if (!$contract || !$contract->project_id) {
                 return;
             }
 
             $evmService = app(\App\Services\Analytics\EVMService::class);
             $evmService->invalidateCache($contract->project_id);
-            
+
             $this->logging->technical('evm.cache.invalidated', [
                 'project_id' => $contract->project_id,
                 'contract_id' => $contract->id,
@@ -646,4 +646,4 @@ class ContractPerformanceActService
             ], 'warning');
         }
     }
-} 
+}

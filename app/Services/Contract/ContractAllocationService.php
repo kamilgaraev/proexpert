@@ -9,6 +9,7 @@ use App\Enums\Contract\ContractAllocationTypeEnum;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Collection;
+use App\Models\ContractAllocationHistory;
 
 class ContractAllocationService
 {
@@ -106,7 +107,7 @@ class ContractAllocationService
             return collect();
         }
 
-        $allocationsData = $projects->map(function ($project) use ($projectsCount) {
+        $allocationsData = $projects->map(function ($project) {
             return [
                 'project_id' => $project->id,
                 'allocation_type' => ContractAllocationTypeEnum::AUTO->value,

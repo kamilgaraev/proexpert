@@ -4,7 +4,7 @@ namespace App\Services\Organization;
 
 use App\Models\User;
 use App\Models\Organization;
-use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Redis;
 use Tymon\JWTAuth\Facades\JWTAuth;
 
 class OrganizationCacheService
@@ -57,10 +57,11 @@ class OrganizationCacheService
     {
         // Для Redis можно использовать SCAN или KEYS
         if (config('cache.default') === 'redis') {
-            $redis = Cache::getRedis();
-            $keys = $redis->keys($pattern);
-            if (!empty($keys)) {
-                $redis->del($keys);
+            $connection = config('cache.stores.redis.connection', 'cache');
+            $keys = Redis::connection((string) $connection)->command('keys', [$pattern]);
+
+            if (is_array($keys) && $keys !== []) {
+                Redis::connection((string) $connection)->command('del', $keys);
             }
         }
     }

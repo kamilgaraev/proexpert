@@ -7,3 +7,11 @@ parameters:
         - routes
     level: 1
     tmpDir: .phpstan
+    databaseMigrationsPath:
+        - database/migrations
+        - app/BusinessModules/*/*/migrations
+    configDirectories:
+        - config
+        - app/BusinessModules/*/*/config
+    universalObjectCratesClasses:
+        - Illuminate\Http\Resources\Json\JsonResource

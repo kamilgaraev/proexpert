@@ -4,7 +4,7 @@ namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
 use App\Services\Landing\OrganizationModuleService;
-use App\Services\Landing\ModulePermissionService;
+use App\Modules\Services\ModulePermissionService;
 
 class ModuleServiceProvider extends ServiceProvider
 {
@@ -18,4 +18,4 @@ class ModuleServiceProvider extends ServiceProvider
     {
         //
     }
-} 
+}

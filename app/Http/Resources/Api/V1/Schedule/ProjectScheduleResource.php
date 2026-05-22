@@ -2,14 +2,16 @@
 
 namespace App\Http\Resources\Api\V1\Schedule;
 
+use App\Http\Resources\ModelJsonResource;
+use App\Models\ProjectSchedule;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\JsonResource;
 
-class ProjectScheduleResource extends JsonResource
+class ProjectScheduleResource extends ModelJsonResource
 {
     public function toArray(Request $request): array
     {
-        $overallProgressPercent = $this->calculateOverallProgressPercent();
+        $schedule = $this->typedResource(ProjectSchedule::class);
+        $overallProgressPercent = $schedule->calculateOverallProgressPercent();
 
         return [
             'id' => $this->id,
@@ -65,14 +67,14 @@ class ProjectScheduleResource extends JsonResource
             'display_settings' => $this->display_settings ?? [],
             
             // Связанные данные
-            'project' => $this->when($this->relationLoaded('project'), [
+            'project' => $this->when($schedule->relationLoaded('project'), [
                 'id' => $this->project?->id,
                 'name' => $this->project?->name,
                 'description' => $this->project?->description,
                 'status' => $this->project?->status,
             ]),
             
-            'created_by' => $this->when($this->relationLoaded('createdBy'), [
+            'created_by' => $this->when($schedule->relationLoaded('createdBy'), [
                 'id' => $this->createdBy?->id,
                 'name' => $this->createdBy?->name,
                 'email' => $this->createdBy?->email,
@@ -85,7 +87,7 @@ class ProjectScheduleResource extends JsonResource
             
             // Задачи (если загружены)
             'tasks' => $this->when(
-                $this->relationLoaded('tasks'),
+                $schedule->relationLoaded('tasks'),
                 $this->tasks->map(function ($task) {
                     return [
                         'id' => $task->id,
@@ -133,7 +135,7 @@ class ProjectScheduleResource extends JsonResource
             
             // Зависимости (если загружены)
             'dependencies' => $this->when(
-                $this->relationLoaded('dependencies'),
+                $schedule->relationLoaded('dependencies'),
                 $this->dependencies->map(function ($dependency) {
                     return [
                         'id' => $dependency->id,
@@ -147,7 +149,7 @@ class ProjectScheduleResource extends JsonResource
             
             // Ресурсы (если загружены)
             'resources' => $this->when(
-                $this->relationLoaded('resources'),
+                $schedule->relationLoaded('resources'),
                 $this->resources->map(function ($resource) {
                     return [
                         'id' => $resource->id,
@@ -161,7 +163,7 @@ class ProjectScheduleResource extends JsonResource
             
             // Вехи (если загружены)
             'milestones' => $this->when(
-                $this->relationLoaded('milestones'),
+                $schedule->relationLoaded('milestones'),
                 $this->milestones->map(function ($milestone) {
                     return [
                         'id' => $milestone->id,
@@ -186,7 +188,7 @@ class ProjectScheduleResource extends JsonResource
                 'can_complete' => $this->status === 'active' && $overallProgressPercent >= 100,
                 'can_save_baseline' => $this->status === 'active' && !$this->baseline_saved_at,
                 'can_clear_baseline' => (bool) $this->baseline_saved_at,
-                'needs_critical_path_calculation' => !$this->critical_path_calculated || $this->needsCriticalPathRecalculation(),
+                'needs_critical_path_calculation' => !$this->critical_path_calculated || $schedule->needsCriticalPathRecalculation(),
                 'progress_color' => $this->getProgressColor($overallProgressPercent),
                 'status_color' => $this->getStatusColor(),
             ],

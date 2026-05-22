@@ -2,25 +2,28 @@
 
 namespace App\BusinessModules\Core\Payments\Http\Resources;
 
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\Http\Resources\ModelJsonResource;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\JsonResource;
 
 /**
  * API Resource для платежного документа
  */
-class PaymentDocumentResource extends JsonResource
+class PaymentDocumentResource extends ModelJsonResource
 {
     /**
      * Transform the resource into an array.
      */
     public function toArray(Request $request): array
     {
+        $document = $this->typedResource(PaymentDocument::class);
+
         // Владелец организации может отменять документы в любом статусе
-        $canBeCancelled = $this->canBeCancelled();
+        $canBeCancelled = $document->canBeCancelled();
         $user = $request->user();
         if ($user && !$canBeCancelled) {
             // Если по статусу нельзя отменить, но пользователь владелец - разрешаем
-            $canBeCancelled = $user->isOrganizationOwner($this->organization_id);
+            $canBeCancelled = $user->isOrganizationOwner($document->organization_id);
         }
 
         return [
@@ -51,13 +54,13 @@ class PaymentDocumentResource extends JsonResource
             'payment_purpose' => $this->payment_purpose,
             'notes' => $this->notes,
             'formatted_amount' => $this->formatted_amount,
-            'payment_percentage' => $this->getPaymentPercentage(),
-            'days_until_due' => $this->getDaysUntilDue(),
-            'is_overdue' => $this->isOverdue(),
-            'can_be_paid' => $this->canBePaid(),
+            'payment_percentage' => $document->getPaymentPercentage(),
+            'days_until_due' => $document->getDaysUntilDue(),
+            'is_overdue' => $document->isOverdue(),
+            'can_be_paid' => $document->canBePaid(),
             'can_be_cancelled' => $canBeCancelled,
-            'can_be_edited' => $this->canBeEdited(),
-            'requires_approval' => $this->requiresApproval(),
+            'can_be_edited' => $document->canBeEdited(),
+            'requires_approval' => $document->requiresApproval(),
             'site_requests' => $this->whenLoaded('siteRequests', fn() => $this->siteRequests->map(fn($request) => [
                 'id' => $request->id,
                 'title' => $request->title,
@@ -67,9 +70,9 @@ class PaymentDocumentResource extends JsonResource
                 'status_label' => $request->status->label(),
                 'pivot_amount' => $request->pivot->amount ? (float) $request->pivot->amount : null,
             ])),
-            'site_requests_count' => $this->when($this->relationLoaded('siteRequests'), fn() => $this->siteRequests->count()),
-            'payer_name' => $this->getPayerName(),
-            'payee_name' => $this->getPayeeName(),
+            'site_requests_count' => $this->when($document->relationLoaded('siteRequests'), fn() => $document->siteRequests->count()),
+            'payer_name' => $document->getPayerName(),
+            'payee_name' => $document->getPayeeName(),
             'created_at' => $this->created_at->toIso8601String(),
             'updated_at' => $this->updated_at->toIso8601String(),
         ];
