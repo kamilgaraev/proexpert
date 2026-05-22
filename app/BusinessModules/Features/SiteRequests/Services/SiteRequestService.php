@@ -598,9 +598,9 @@ class SiteRequestService
         if (!empty($filters['search'])) {
             $search = $filters['search'];
             $query->where(function ($q) use ($search) {
-                $q->where('title', 'ilike', "%{$search}%")
-                  ->orWhere('description', 'ilike', "%{$search}%")
-                  ->orWhere('material_name', 'ilike', "%{$search}%");
+                $q->whereLike('title', "%{$search}%")
+                    ->orWhereLike('description', "%{$search}%")
+                    ->orWhereLike('material_name', "%{$search}%");
             });
         }
 
