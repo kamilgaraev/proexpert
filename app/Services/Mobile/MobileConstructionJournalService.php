@@ -7,6 +7,8 @@ namespace App\Services\Mobile;
 use App\BusinessModules\Features\BasicWarehouse\Enums\ProjectMaterialDeliveryStatusEnum;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalPayloadService;
+use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
+use App\Enums\ConstructionJournal\JournalStatusEnum;
 use App\Enums\EstimatePositionItemType;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
@@ -19,6 +21,19 @@ use DomainException;
 
 class MobileConstructionJournalService
 {
+    private const ACTIONS = [
+        'view',
+        'create',
+        'update',
+        'delete',
+        'export',
+        'create_entry',
+        'submit',
+        'approve',
+        'reject',
+        'export_daily_report',
+    ];
+
     public function __construct(
         private readonly ConstructionJournalPayloadService $payloadService
     ) {
@@ -32,7 +47,7 @@ class MobileConstructionJournalService
             throw new DomainException(trans_message('mobile_construction_journal.errors.no_organization'));
         }
 
-        if (($projectId ?? 0) <= 0) {
+        if ($projectId === null || $projectId <= 0) {
             throw new DomainException(trans_message('mobile_construction_journal.errors.project_not_found'));
         }
 
@@ -83,7 +98,7 @@ class MobileConstructionJournalService
                 'name' => $project->name,
             ],
             'items' => collect($journals->items())
-                ->map(fn (ConstructionJournal $journal): array => $this->payloadService->mapJournal($journal, $user))
+                ->map(fn (ConstructionJournal $journal): array => $this->mapMobileJournal($journal, $user))
                 ->values()
                 ->all(),
             'meta' => $this->payloadService->paginationMeta($journals),
@@ -93,7 +108,7 @@ class MobileConstructionJournalService
                 'archived_journals' => $project->journals()->where('status', 'archived')->count(),
                 'closed_journals' => $project->journals()->where('status', 'closed')->count(),
             ],
-            'available_actions' => $this->payloadService->buildJournalActions($project, $user),
+            'available_actions' => $this->mapActionList($this->payloadService->buildJournalActions($project, $user)),
         ];
     }
 
@@ -136,12 +151,12 @@ class MobileConstructionJournalService
 
         return [
             'items' => collect($entries->items())
-                ->map(fn (ConstructionJournalEntry $entry): array => $this->payloadService->mapEntry($entry, $user))
+                ->map(fn (ConstructionJournalEntry $entry): array => $this->mapMobileEntry($entry, $user))
                 ->values()
                 ->all(),
             'meta' => $this->payloadService->paginationMeta($entries),
             'summary' => $this->payloadService->buildEntrySummary($journal),
-            'available_actions' => $this->payloadService->buildJournalActions($journal, $user),
+            'available_actions' => $this->mapActionList($this->payloadService->buildJournalActions($journal, $user)),
         ];
     }
 
@@ -194,6 +209,16 @@ class MobileConstructionJournalService
         ];
     }
 
+    public function mapMobileJournal(ConstructionJournal $journal, User $user, bool $includeEntries = false): array
+    {
+        return $this->transformJournalPayload($this->payloadService->mapJournal($journal, $user, $includeEntries));
+    }
+
+    public function mapMobileEntry(ConstructionJournalEntry $entry, User $user, bool $includeJournal = true): array
+    {
+        return $this->transformEntryPayload($this->payloadService->mapEntry($entry, $user, $includeJournal));
+    }
+
     private function buildAcceptedProjectMaterials(int $organizationId, int $projectId): array
     {
         return ProjectMaterialDelivery::query()
@@ -205,23 +230,7 @@ class MobileConstructionJournalService
             ->orderByDesc('accepted_at')
             ->get()
             ->filter(static fn (ProjectMaterialDelivery $delivery): bool => $delivery->availableQuantity() > 0)
-            ->map(static fn (ProjectMaterialDelivery $delivery): array => [
-                'material_id' => $delivery->material_id,
-                'delivery_id' => $delivery->id,
-                'project_material_delivery_id' => $delivery->id,
-                'warehouse_project_allocation_id' => $delivery->warehouse_project_allocation_id,
-                'name' => $delivery->material?->name,
-                'code' => $delivery->material?->code,
-                'accepted_quantity' => (float) $delivery->accepted_quantity,
-                'used_quantity' => $delivery->usedQuantity(),
-                'available_quantity' => $delivery->availableQuantity(),
-                'measurement_unit' => $delivery->material?->measurementUnit ? [
-                    'id' => $delivery->material->measurementUnit->id,
-                    'name' => $delivery->material->measurementUnit->name,
-                    'short_name' => $delivery->material->measurementUnit->short_name,
-                ] : null,
-                'accepted_at' => $delivery->accepted_at?->toDateTimeString(),
-            ])
+            ->map(fn (ProjectMaterialDelivery $delivery): array => $this->mapProjectMaterialOption($delivery))
             ->values()
             ->all();
     }
@@ -239,14 +248,19 @@ class MobileConstructionJournalService
                     'position_number' => $item->position_number,
                     'name' => $item->name,
                     'item_type' => $item->item_type?->value,
-                    'quantity' => (float) ($item->quantity ?? $item->quantity_total ?? 0),
-                    'quantity_total' => (float) ($item->quantity_total ?? $item->quantity ?? 0),
+                    'quantity' => $this->requiredEstimateQuantity($item, 'quantity'),
+                    'quantity_total' => $this->requiredEstimateQuantity($item, 'quantity_total'),
                     'work_type_id' => $item->work_type_id,
                     'measurement_unit_id' => $item->measurement_unit_id,
                     'workType' => $item->workType ? [
                         'id' => $item->workType->id,
                         'name' => $item->workType->name,
                         'measurement_unit_id' => $item->workType->measurement_unit_id,
+                        'measurementUnit' => $item->workType->measurementUnit ? [
+                            'id' => $item->workType->measurementUnit->id,
+                            'name' => $item->workType->measurementUnit->name,
+                            'short_name' => $item->workType->measurementUnit->short_name,
+                        ] : null,
                     ] : null,
                     'measurementUnit' => $item->measurementUnit ? [
                         'id' => $item->measurementUnit->id,
@@ -265,5 +279,158 @@ class MobileConstructionJournalService
                 ->values()
                 ->all(),
         ];
+    }
+
+    private function transformJournalPayload(array $payload): array
+    {
+        $status = JournalStatusEnum::tryFrom($this->requiredPayloadString($payload, 'status'));
+
+        if (!$status) {
+            throw new DomainException(trans_message('mobile_construction_journal.errors.invalid_status'));
+        }
+
+        $payload['status'] = $status->value;
+        $payload['status_label'] = trans_message('mobile_construction_journal.statuses.journal.' . $status->value);
+        $payload['available_actions'] = $this->mapActionList($this->requiredPayloadArray($payload, 'available_actions'));
+
+        if (isset($payload['entries']) && is_array($payload['entries'])) {
+            $payload['entries'] = collect($payload['entries'])
+                ->map(fn (array $entry): array => $this->transformEntryPayload($entry))
+                ->values()
+                ->all();
+        }
+
+        return $payload;
+    }
+
+    private function transformEntryPayload(array $payload): array
+    {
+        $status = JournalEntryStatusEnum::tryFrom($this->requiredPayloadString($payload, 'status'));
+
+        if (!$status) {
+            throw new DomainException(trans_message('mobile_construction_journal.errors.invalid_status'));
+        }
+
+        $payload['status'] = $status->value;
+        $payload['status_label'] = trans_message('mobile_construction_journal.statuses.entry.' . $status->value);
+        $payload['available_actions'] = $this->mapActionList($this->requiredPayloadArray($payload, 'available_actions'));
+
+        if (isset($payload['journal']) && is_array($payload['journal'])) {
+            $payload['journal'] = $this->transformJournalPayload($payload['journal']);
+        }
+
+        $payload['workVolumes'] = collect($this->requiredPayloadArray($payload, 'workVolumes'))
+            ->map(fn (array $volume): array => $this->transformWorkVolumePayload($volume))
+            ->values()
+            ->all();
+
+        return $payload;
+    }
+
+    private function transformWorkVolumePayload(array $volume): array
+    {
+        $title = trim((string) ($volume['estimateItem']['name'] ?? $volume['workType']['name'] ?? ''));
+        $measurementUnitName = trim((string) (
+            $volume['measurementUnit']['short_name']
+            ?? $volume['measurementUnit']['name']
+            ?? ''
+        ));
+
+        if ($title === '') {
+            throw new DomainException(trans_message('mobile_construction_journal.errors.work_volume_title_missing'));
+        }
+
+        if ($measurementUnitName === '') {
+            throw new DomainException(trans_message('mobile_construction_journal.errors.work_volume_measurement_unit_missing'));
+        }
+
+        $volume['title'] = $title;
+        $volume['measurement_unit_name'] = $measurementUnitName;
+
+        return $volume;
+    }
+
+    private function mapActionList(array $actions): array
+    {
+        return collect($actions)
+            ->map(function (mixed $action): array {
+                $key = (string) $action;
+
+                if (!in_array($key, self::ACTIONS, true)) {
+                    throw new DomainException(trans_message('mobile_construction_journal.errors.invalid_action'));
+                }
+
+                return [
+                    'action' => $key,
+                    'label' => trans_message('mobile_construction_journal.actions.' . $key),
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    private function mapProjectMaterialOption(ProjectMaterialDelivery $delivery): array
+    {
+        $material = $delivery->material;
+        $measurementUnit = $material?->measurementUnit;
+
+        if (!$material) {
+            throw new DomainException(trans_message('mobile_construction_journal.errors.material_missing'));
+        }
+
+        if (!$measurementUnit) {
+            throw new DomainException(trans_message('mobile_construction_journal.errors.material_measurement_unit_missing'));
+        }
+
+        return [
+            'material_id' => $delivery->material_id,
+            'delivery_id' => $delivery->id,
+            'project_material_delivery_id' => $delivery->id,
+            'warehouse_project_allocation_id' => $delivery->warehouse_project_allocation_id,
+            'name' => $material->name,
+            'code' => $material->code,
+            'accepted_quantity' => (float) $delivery->accepted_quantity,
+            'used_quantity' => $delivery->usedQuantity(),
+            'available_quantity' => $delivery->availableQuantity(),
+            'measurement_unit' => [
+                'id' => $measurementUnit->id,
+                'name' => $measurementUnit->name,
+                'short_name' => $measurementUnit->short_name,
+            ],
+            'accepted_at' => $delivery->accepted_at?->toDateTimeString(),
+        ];
+    }
+
+    private function requiredEstimateQuantity(EstimateItem $item, string $attribute): float
+    {
+        $value = $item->getAttribute($attribute);
+
+        if ($value === null) {
+            throw new DomainException(trans_message('mobile_construction_journal.errors.estimate_quantity_missing'));
+        }
+
+        return (float) $value;
+    }
+
+    private function requiredPayloadString(array $payload, string $key): string
+    {
+        $value = trim((string) ($payload[$key] ?? ''));
+
+        if ($value === '') {
+            throw new DomainException(trans_message('mobile_construction_journal.errors.invalid_status'));
+        }
+
+        return $value;
+    }
+
+    private function requiredPayloadArray(array $payload, string $key): array
+    {
+        $value = $payload[$key] ?? null;
+
+        if (!is_array($value)) {
+            throw new DomainException(trans_message('mobile_construction_journal.errors.incomplete_payload'));
+        }
+
+        return $value;
     }
 }

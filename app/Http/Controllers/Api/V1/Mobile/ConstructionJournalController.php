@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Mobile;
 
-use App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalPayloadService;
 use App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
@@ -15,13 +14,13 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 class ConstructionJournalController extends Controller
 {
     public function __construct(
         private readonly MobileConstructionJournalService $mobileJournalService,
-        private readonly ConstructionJournalService $journalService,
-        private readonly ConstructionJournalPayloadService $payloadService
+        private readonly ConstructionJournalService $journalService
     ) {
     }
 
@@ -46,6 +45,8 @@ class ConstructionJournalController extends Controller
             );
         } catch (AuthorizationException $exception) {
             return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(trans_message('project.validation_failed'), 422, $exception->errors());
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -78,18 +79,20 @@ class ConstructionJournalController extends Controller
                 'contract_id' => 'nullable|integer',
                 'start_date' => 'required|date',
                 'end_date' => 'nullable|date|after_or_equal:start_date',
-                'status' => 'nullable|in:active,archived,closed',
+                'status' => 'required|in:active,archived,closed',
             ]);
 
             $journal = $this->journalService->createJournal($project, $validated, $user);
 
             return MobileResponse::success(
-                $this->payloadService->mapJournal($journal, $user),
+                $this->mobileJournalService->mapMobileJournal($journal, $user),
                 trans_message('construction_journal.messages.created'),
                 201
             );
         } catch (AuthorizationException $exception) {
             return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(trans_message('project.validation_failed'), 422, $exception->errors());
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -143,7 +146,7 @@ class ConstructionJournalController extends Controller
                 'entries as rejected_entries_count' => fn ($query) => $query->rejected(),
             ]);
 
-            return MobileResponse::success($this->payloadService->mapJournal($journal, $user, true));
+            return MobileResponse::success($this->mobileJournalService->mapMobileJournal($journal, $user, true));
         } catch (AuthorizationException $exception) {
             return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
         } catch (DomainException $exception) {
@@ -175,6 +178,7 @@ class ConstructionJournalController extends Controller
                 'name' => 'sometimes|string|max:255',
                 'journal_number' => 'nullable|string|max:50',
                 'contract_id' => 'nullable|integer',
+                'start_date' => 'sometimes|date',
                 'end_date' => 'nullable|date',
                 'status' => 'nullable|in:active,archived,closed',
             ]);
@@ -182,7 +186,7 @@ class ConstructionJournalController extends Controller
             $journal = $this->journalService->updateJournal($journal, $validated);
 
             return MobileResponse::success(
-                $this->payloadService->mapJournal($journal, $user),
+                $this->mobileJournalService->mapMobileJournal($journal, $user),
                 trans_message('construction_journal.messages.updated')
             );
         } catch (AuthorizationException $exception) {

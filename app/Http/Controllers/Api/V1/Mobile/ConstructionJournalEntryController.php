@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Mobile;
 
-use App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalPayloadService;
 use App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalService;
 use App\BusinessModules\Features\BudgetEstimates\Services\JournalApprovalService;
 use App\Http\Controllers\Controller;
@@ -24,8 +23,7 @@ class ConstructionJournalEntryController extends Controller
     public function __construct(
         private readonly MobileConstructionJournalService $mobileJournalService,
         private readonly ConstructionJournalService $journalService,
-        private readonly JournalApprovalService $approvalService,
-        private readonly ConstructionJournalPayloadService $payloadService
+        private readonly JournalApprovalService $approvalService
     ) {
     }
 
@@ -44,7 +42,7 @@ class ConstructionJournalEntryController extends Controller
             $entry = $this->journalService->createEntry($journal, $validated, $user);
 
             return MobileResponse::success(
-                $this->payloadService->mapEntry($entry, $user),
+                $this->mobileJournalService->mapMobileEntry($entry, $user),
                 trans_message('construction_journal.messages.entry_created'),
                 201
             );
@@ -94,9 +92,11 @@ class ConstructionJournalEntryController extends Controller
                 'materials.material',
             ]);
 
-            return MobileResponse::success($this->payloadService->mapEntry($entry, $user));
+            return MobileResponse::success($this->mobileJournalService->mapMobileEntry($entry, $user));
         } catch (AuthorizationException $exception) {
             return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(trans_message('project.validation_failed'), 422, $exception->errors());
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -130,11 +130,13 @@ class ConstructionJournalEntryController extends Controller
             $entry = $this->journalService->updateEntry($entry, $validated);
 
             return MobileResponse::success(
-                $this->payloadService->mapEntry($entry, $user),
+                $this->mobileJournalService->mapMobileEntry($entry, $user),
                 trans_message('construction_journal.messages.entry_updated')
             );
         } catch (AuthorizationException $exception) {
             return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(trans_message('project.validation_failed'), 422, $exception->errors());
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -170,6 +172,8 @@ class ConstructionJournalEntryController extends Controller
             return MobileResponse::success(null, trans_message('construction_journal.messages.entry_deleted'));
         } catch (AuthorizationException $exception) {
             return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(trans_message('project.validation_failed'), 422, $exception->errors());
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -198,7 +202,7 @@ class ConstructionJournalEntryController extends Controller
             $entry = $this->approvalService->submitForApproval($entry->load(['journal', 'createdBy', 'workVolumes']));
 
             return MobileResponse::success(
-                $this->payloadService->mapEntry($entry->load([
+                $this->mobileJournalService->mapMobileEntry($entry->load([
                     'journal',
                     'scheduleTask',
                     'estimate',
@@ -215,6 +219,8 @@ class ConstructionJournalEntryController extends Controller
             );
         } catch (AuthorizationException $exception) {
             return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(trans_message('project.validation_failed'), 422, $exception->errors());
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -248,7 +254,7 @@ class ConstructionJournalEntryController extends Controller
             );
 
             return MobileResponse::success(
-                $this->payloadService->mapEntry($entry->load([
+                $this->mobileJournalService->mapMobileEntry($entry->load([
                     'journal',
                     'scheduleTask',
                     'estimate',
@@ -265,6 +271,8 @@ class ConstructionJournalEntryController extends Controller
             );
         } catch (AuthorizationException $exception) {
             return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(trans_message('project.validation_failed'), 422, $exception->errors());
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -297,7 +305,7 @@ class ConstructionJournalEntryController extends Controller
             $entry = $this->approvalService->reject($entry->load(['journal', 'createdBy']), $user, $validated['reason']);
 
             return MobileResponse::success(
-                $this->payloadService->mapEntry($entry->load([
+                $this->mobileJournalService->mapMobileEntry($entry->load([
                     'journal',
                     'scheduleTask',
                     'estimate',
@@ -339,6 +347,7 @@ class ConstructionJournalEntryController extends Controller
             'entry_date' => $partial ? 'sometimes|date' : 'required|date',
             'entry_number' => $prefix . 'nullable|integer|min:1',
             'work_description' => $partial ? 'sometimes|string' : 'required|string',
+            'status' => $partial ? 'sometimes|in:draft' : 'required|in:draft',
             'weather_conditions' => $prefix . 'nullable|array',
             'weather_conditions.temperature' => 'nullable|numeric',
             'weather_conditions.precipitation' => 'nullable|string',

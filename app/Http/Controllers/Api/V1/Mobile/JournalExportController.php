@@ -16,6 +16,7 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 class JournalExportController extends Controller
 {
@@ -55,6 +56,8 @@ class JournalExportController extends Controller
             );
         } catch (AuthorizationException $exception) {
             return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(trans_message('project.validation_failed'), 422, $exception->errors());
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -82,19 +85,19 @@ class JournalExportController extends Controller
             $this->authorize('export', $journal);
 
             $validated = $request->validate([
-                'date_from' => 'nullable|date',
-                'date_to' => 'nullable|date|after_or_equal:date_from',
-                'include_materials' => 'boolean',
-                'include_equipment' => 'boolean',
-                'include_workers' => 'boolean',
+                'date_from' => 'required|date',
+                'date_to' => 'required|date|after_or_equal:date_from',
+                'include_materials' => 'required|boolean',
+                'include_equipment' => 'required|boolean',
+                'include_workers' => 'required|boolean',
             ]);
 
             $options = [
-                'date_from' => $validated['date_from'] ?? $journal->start_date,
-                'date_to' => $validated['date_to'] ?? ($journal->end_date ?? now()),
-                'include_materials' => $validated['include_materials'] ?? true,
-                'include_equipment' => $validated['include_equipment'] ?? true,
-                'include_workers' => $validated['include_workers'] ?? true,
+                'date_from' => $validated['date_from'],
+                'date_to' => $validated['date_to'],
+                'include_materials' => $validated['include_materials'],
+                'include_equipment' => $validated['include_equipment'],
+                'include_workers' => $validated['include_workers'],
             ];
 
             $path = $this->exportService->exportExtendedReportToExcel($journal, $options);
@@ -105,6 +108,8 @@ class JournalExportController extends Controller
             );
         } catch (AuthorizationException $exception) {
             return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(trans_message('project.validation_failed'), 422, $exception->errors());
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
