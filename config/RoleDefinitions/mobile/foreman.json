@@ -136,6 +136,33 @@
       "procurement.approvals.view",
       "procurement.approvals.resolve"
     ],
+    "change-management": [
+      "change-management.view",
+      "change-management.create",
+      "change-management.edit",
+      "change-management.rfi.create",
+      "change-management.rfi.answer",
+      "change-management.change-orders.create",
+      "change-management.claims.create"
+    ],
+    "executive-documentation": [
+      "executive-documentation.view",
+      "executive-documentation.create",
+      "executive-documentation.edit",
+      "executive-documentation.submit",
+      "executive-documentation.export"
+    ],
+    "brigades": [
+      "brigades.view",
+      "brigades.catalog.view",
+      "brigades.requests.view",
+      "brigades.invitations.view",
+      "brigades.assignments.view"
+    ],
+    "video-monitoring": [
+      "video-monitoring.view",
+      "video-monitoring.watch_live"
+    ],
     "quality-control": [
       "quality-control.view",
       "quality-control.create",

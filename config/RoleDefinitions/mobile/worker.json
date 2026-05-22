@@ -78,6 +78,19 @@
       "procurement.purchase_requests.view",
       "procurement.purchase_orders.view"
     ],
+    "change-management": [
+      "change-management.view"
+    ],
+    "executive-documentation": [
+      "executive-documentation.view"
+    ],
+    "brigades": [
+      "brigades.view",
+      "brigades.assignments.view"
+    ],
+    "video-monitoring": [
+      "video-monitoring.view"
+    ],
     "workforce-management": [
       "workforce.view",
       "workforce.attendance.qr.self",

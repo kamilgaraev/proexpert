@@ -28,6 +28,13 @@ final class MobileModulesTest extends TestCase
             'time-tracking' => ['icon' => 'timer', 'route' => 'time-tracking'],
             'budget-estimates' => ['icon' => 'calculate', 'route' => 'budget-estimates'],
             'procurement' => ['icon' => 'procurement', 'route' => 'procurement'],
+            'contract-management' => ['icon' => 'contract', 'route' => 'contract-management'],
+            'change-management' => ['icon' => 'change', 'route' => 'change-management'],
+            'executive-documentation' => ['icon' => 'documents', 'route' => 'executive-documentation'],
+            'project-management' => ['icon' => 'project', 'route' => 'project-management'],
+            'catalog-management' => ['icon' => 'catalog', 'route' => 'catalog-management'],
+            'brigades' => ['icon' => 'brigades', 'route' => 'brigades'],
+            'video-monitoring' => ['icon' => 'video', 'route' => 'video-monitoring'],
         ];
 
         $this->mockModulePermissions(array_keys($expected));
@@ -39,30 +46,6 @@ final class MobileModulesTest extends TestCase
             $this->assertTrue($modules[$slug]['supported_on_mobile']);
             $this->assertSame($contract['icon'], $modules[$slug]['icon']);
             $this->assertSame($contract['route'], $modules[$slug]['route']);
-        }
-    }
-
-    public function test_mobile_modules_catalog_marks_unsupported_companion_modules(): void
-    {
-        $expected = [
-            'contract-management' => 'contract',
-            'change-management' => 'change',
-            'executive-documentation' => 'documents',
-            'project-management' => 'project',
-            'catalog-management' => 'catalog',
-            'brigades' => 'brigades',
-            'video-monitoring' => 'video',
-        ];
-
-        $this->mockModulePermissions(array_keys($expected));
-
-        $modules = collect($this->service()->build($this->user())['modules'])->keyBy('slug');
-
-        foreach ($expected as $slug => $icon) {
-            $this->assertTrue($modules->has($slug), "Mobile catalog does not contain {$slug}");
-            $this->assertFalse($modules[$slug]['supported_on_mobile']);
-            $this->assertNull($modules[$slug]['route']);
-            $this->assertSame($icon, $modules[$slug]['icon']);
         }
     }
 
