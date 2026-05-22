@@ -263,6 +263,12 @@ class AIAssistantController extends Controller
                 $organizationId,
                 $user
             );
+            $previewToken = $this->makeActionPreviewToken(
+                is_array($result['action'] ?? null) ? $result['action'] : [],
+                $organizationId,
+                (int) $user->id
+            );
+            $result['preview_token'] = $previewToken;
 
             return $this->successResponse($request, $result);
         } catch (AuthorizationException $exception) {
@@ -284,7 +290,8 @@ class AIAssistantController extends Controller
     {
         $request->validate([
             'conversation_id' => 'nullable|integer|exists:ai_conversations,id',
-            'confirmed' => 'nullable|boolean',
+            'confirmed' => 'required|accepted',
+            'preview_token' => 'required|string|max:128',
             'action' => 'required|array',
             'action.id' => 'nullable|string|max:120',
             'action.type' => 'required|string|max:60',
@@ -318,8 +325,18 @@ class AIAssistantController extends Controller
                 }
             }
 
+            $action = $request->input('action', []);
+            if (!is_array($action) || !$this->isValidActionPreviewToken(
+                (string) $request->input('preview_token', ''),
+                $action,
+                $organizationId,
+                (int) $user->id
+            )) {
+                return $this->errorResponse($request, $this->assistantMessage('ai_assistant.action_preview_required', 'Сначала подтвердите предварительный просмотр действия.'), 422);
+            }
+
             $result = $this->assistantActionService->execute(
-                array_merge($request->input('action', []), [
+                array_merge($action, [
                     'confirmed' => $request->boolean('confirmed', false),
                 ]),
                 $organizationId,
@@ -363,6 +380,57 @@ class AIAssistantController extends Controller
         if (!$this->permissionChecker->canAccessConversation($user, $conversation, $organizationId)) {
             throw new AuthorizationException($this->assistantMessage('ai_assistant.conversation_not_found', 'Диалог не найден или недоступен.'));
         }
+    }
+
+    private function makeActionPreviewToken(array $action, int $organizationId, int $userId): string
+    {
+        return hash_hmac('sha256', $this->actionPreviewPayload($action, $organizationId, $userId), $this->actionPreviewSecret());
+    }
+
+    private function isValidActionPreviewToken(string $token, array $action, int $organizationId, int $userId): bool
+    {
+        if ($token === '') {
+            return false;
+        }
+
+        return hash_equals($this->makeActionPreviewToken($action, $organizationId, $userId), $token);
+    }
+
+    private function actionPreviewPayload(array $action, int $organizationId, int $userId): string
+    {
+        return json_encode([
+            'organization_id' => $organizationId,
+            'user_id' => $userId,
+            'action' => $this->normalizePreviewTokenValue($action),
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '';
+    }
+
+    private function normalizePreviewTokenValue(mixed $value): mixed
+    {
+        if (!is_array($value)) {
+            return $value;
+        }
+
+        $normalized = [];
+        foreach ($value as $key => $item) {
+            $normalized[$key] = $this->normalizePreviewTokenValue($item);
+        }
+
+        if (!array_is_list($normalized)) {
+            ksort($normalized);
+        }
+
+        return $normalized;
+    }
+
+    private function actionPreviewSecret(): string
+    {
+        $key = (string) config('app.key');
+        if ($key === '') {
+            throw new RuntimeException('AI assistant preview signing key is not configured.');
+        }
+
+        return $key;
     }
 
     private function findConversationForRequest(Request $request, int $conversationId, User $user, int $organizationId): ?Conversation
