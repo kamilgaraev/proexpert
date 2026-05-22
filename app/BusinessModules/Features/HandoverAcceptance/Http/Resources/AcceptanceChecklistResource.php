@@ -30,6 +30,7 @@ final class AcceptanceChecklistResource extends JsonResource
                 'is_required' => $item->is_required,
                 'status' => $item->status,
                 'comment' => $item->comment,
+                'available_actions' => $item->status === 'pending' ? ['accept', 'reject'] : [],
             ])->values()->all() : [],
         ];
     }

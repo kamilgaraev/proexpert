@@ -212,6 +212,137 @@ final class HandoverAcceptanceMobileTest extends TestCase
         ]);
     }
 
+    public function test_mobile_can_filter_scopes_and_load_detail_contract(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $scope = $this->createScope($context, 'planned');
+        $scope->update(['planned_acceptance_date' => '2026-06-10']);
+        $otherScope = $this->createScope($context, 'accepted');
+        $otherScope->update(['planned_acceptance_date' => '2026-06-11']);
+        $this->allowAccess();
+
+        $checklist = $scope->checklists()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $scope->project_id,
+            'title' => 'Чек-лист квартиры',
+            'status' => 'active',
+        ]);
+        $checklist->items()->create([
+            'title' => 'Окна проверены',
+            'is_required' => true,
+            'status' => 'pending',
+        ]);
+        $package = HandoverPackage::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $scope->project_id,
+            'acceptance_scope_id' => $scope->id,
+            'created_by_user_id' => $context->user->id,
+            'title' => 'Комплект передачи',
+            'status' => 'draft',
+        ]);
+        $package->documents()->create([
+            'title' => 'Фотофиксация',
+            'document_type' => 'photo_report',
+            'is_required' => true,
+            'status' => 'approved',
+            'external_url' => 'https://storage.example/report.pdf',
+            'approved_at' => now(),
+        ]);
+
+        $listResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/mobile/handover-acceptance/scopes?status=planned&planned_from=2026-06-01&planned_to=2026-06-30');
+
+        $listResponse->assertOk()
+            ->assertJsonPath('data.meta.total', 1)
+            ->assertJsonPath('data.items.0.id', $scope->id)
+            ->assertJsonPath('data.meta.status', 'planned')
+            ->assertJsonPath('data.meta.planned_from', '2026-06-01')
+            ->assertJsonPath('data.meta.planned_to', '2026-06-30');
+
+        $this->assertNotSame($otherScope->id, (int) $listResponse->json('data.items.0.id'));
+
+        $detailResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/mobile/handover-acceptance/scopes/{$scope->id}");
+
+        $detailResponse->assertOk()
+            ->assertJsonPath('data.id', $scope->id)
+            ->assertJsonPath('data.planned_acceptance_date', '2026-06-10')
+            ->assertJsonPath('data.checklists.0.title', 'Чек-лист квартиры')
+            ->assertJsonPath('data.checklists.0.items.0.available_actions.0', 'accept')
+            ->assertJsonPath('data.handover_package.documents.0.external_url', 'https://storage.example/report.pdf');
+    }
+
+    public function test_mobile_can_review_checklist_items_with_explicit_status(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $scope = $this->createScope($context, 'in_progress');
+        $this->allowAccess();
+
+        $checklist = $scope->checklists()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $scope->project_id,
+            'title' => 'Чек-лист квартиры',
+            'status' => 'active',
+        ]);
+        $acceptedItem = $checklist->items()->create([
+            'title' => 'Окна проверены',
+            'is_required' => true,
+            'status' => 'pending',
+        ]);
+        $rejectedItem = $checklist->items()->create([
+            'title' => 'Двери проверены',
+            'is_required' => true,
+            'status' => 'pending',
+        ]);
+
+        $missingStatusResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/handover-acceptance/checklist-items/{$acceptedItem->id}/review");
+
+        $missingStatusResponse->assertStatus(422)
+            ->assertJsonPath('message', trans_message('handover_acceptance.errors.validation_failed'))
+            ->assertJsonPath('errors.status.0', trans_message('handover_acceptance.validation.checklist_status_required'));
+
+        $missingCommentResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/handover-acceptance/checklist-items/{$rejectedItem->id}/review", [
+                'status' => 'rejected',
+            ]);
+
+        $missingCommentResponse->assertStatus(422)
+            ->assertJsonPath('errors.comment.0', trans_message('handover_acceptance.validation.checklist_rejection_comment_required'));
+
+        $acceptedResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/handover-acceptance/checklist-items/{$acceptedItem->id}/review", [
+                'status' => 'accepted',
+            ]);
+
+        $acceptedResponse->assertOk()
+            ->assertJsonPath('data.items.0.status', 'accepted');
+        $this->assertDatabaseHas('acceptance_checklist_items', [
+            'id' => $acceptedItem->id,
+            'status' => 'accepted',
+        ]);
+
+        $rejectedResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/handover-acceptance/checklist-items/{$rejectedItem->id}/review", [
+                'status' => 'rejected',
+                'comment' => 'Нужно заменить уплотнитель',
+            ]);
+
+        $rejectedResponse->assertOk()
+            ->assertJsonPath('data.status', 'findings_open')
+            ->assertJsonPath('data.items.1.status', 'rejected')
+            ->assertJsonPath('data.items.1.comment', 'Нужно заменить уплотнитель');
+        $this->assertDatabaseHas('acceptance_checklist_items', [
+            'id' => $rejectedItem->id,
+            'status' => 'rejected',
+            'comment' => 'Нужно заменить уплотнитель',
+        ]);
+        $this->assertDatabaseHas('acceptance_checklists', [
+            'id' => $checklist->id,
+            'status' => 'findings_open',
+        ]);
+    }
+
     private function createSession(AdminApiTestContext $context): AcceptanceSession
     {
         $scope = $this->createScope($context, 'in_progress');

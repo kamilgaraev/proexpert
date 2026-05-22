@@ -72,6 +72,12 @@ Route::prefix('api/v1/mobile/handover-acceptance')
     ->group(function (): void {
         Route::get('/scopes', [MobileHandoverAcceptanceController::class, 'index'])
             ->middleware('authorize:handover-acceptance.view');
+        Route::get('/scopes/{scope}', [MobileHandoverAcceptanceController::class, 'show'])
+            ->whereNumber('scope')
+            ->middleware('authorize:handover-acceptance.view');
+        Route::post('/checklist-items/{item}/review', [MobileHandoverAcceptanceController::class, 'reviewChecklistItem'])
+            ->whereNumber('item')
+            ->middleware('authorize:handover-acceptance.inspect');
         Route::post('/sessions/{session}/findings', [MobileHandoverAcceptanceController::class, 'storeFinding'])
             ->whereNumber('session')
             ->middleware('authorize:handover-acceptance.punch-list.create');

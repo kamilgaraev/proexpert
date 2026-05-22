@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\HandoverAcceptance\Services;
 
 use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceChecklist;
+use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceChecklistItem;
 use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceFinding;
 use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceScope;
 use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceSession;
@@ -35,6 +36,9 @@ final class HandoverAcceptanceService
         return AcceptanceScope::query()
             ->where('organization_id', $organizationId)
             ->when(!empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
+            ->when(!empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
+            ->when(!empty($filters['planned_from']), fn ($query) => $query->whereDate('planned_acceptance_date', '>=', (string) $filters['planned_from']))
+            ->when(!empty($filters['planned_to']), fn ($query) => $query->whereDate('planned_acceptance_date', '<=', (string) $filters['planned_to']))
             ->with(self::SCOPE_RELATIONS)
             ->orderByDesc('id')
             ->get();
@@ -198,6 +202,18 @@ final class HandoverAcceptanceService
         return $finding->fresh(['qualityDefect']);
     }
 
+    public function reviewChecklistItem(AcceptanceChecklistItem $item, array $data): AcceptanceChecklistItem
+    {
+        $item->update([
+            'status' => $data['status'],
+            'comment' => $data['comment'] ?? null,
+        ]);
+
+        $this->refreshChecklistStatus($item->checklist()->firstOrFail());
+
+        return $item->fresh(['checklist.items']);
+    }
+
     public function markReadyForReinspection(AcceptanceScope $scope): AcceptanceScope
     {
         if ($this->openFindingsCount($scope) > 0) {
@@ -330,6 +346,15 @@ final class HandoverAcceptanceService
             ?? throw new DomainException(trans_message('handover_acceptance.errors.finding_not_found'));
     }
 
+    public function findChecklistItem(int $organizationId, int $id): AcceptanceChecklistItem
+    {
+        return AcceptanceChecklistItem::query()
+            ->whereHas('checklist', fn ($query) => $query->where('organization_id', $organizationId))
+            ->with(['checklist.items'])
+            ->find($id)
+            ?? throw new DomainException(trans_message('handover_acceptance.errors.checklist_item_not_found'));
+    }
+
     public function findPackageDocument(int $organizationId, int $id): HandoverPackageDocument
     {
         return HandoverPackageDocument::query()
@@ -367,6 +392,23 @@ final class HandoverAcceptanceService
             ->where('acceptance_scope_id', $scope->id)
             ->where('status', 'open')
             ->count();
+    }
+
+    private function refreshChecklistStatus(AcceptanceChecklist $checklist): void
+    {
+        $items = $checklist->items()->get(['status']);
+
+        if ($items->contains(fn (AcceptanceChecklistItem $item): bool => $item->status === 'rejected')) {
+            $checklist->update(['status' => 'findings_open']);
+            return;
+        }
+
+        if ($items->isNotEmpty() && $items->every(fn (AcceptanceChecklistItem $item): bool => $item->status === 'accepted')) {
+            $checklist->update(['status' => 'completed']);
+            return;
+        }
+
+        $checklist->update(['status' => 'active']);
     }
 
     private function sign(AcceptanceScope $scope, int $userId, string $status, ?string $comment): void

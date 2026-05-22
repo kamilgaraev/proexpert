@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\HandoverAcceptance\Http\Controllers\Mobile;
 
+use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\AcceptanceChecklistResource;
 use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\AcceptanceFindingResource;
 use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\AcceptanceScopeResource;
 use App\BusinessModules\Features\HandoverAcceptance\Services\HandoverAcceptanceService;
@@ -19,6 +20,17 @@ use Illuminate\Validation\ValidationException;
 
 final class HandoverAcceptanceController extends Controller
 {
+    private const SCOPE_STATUSES = [
+        'planned',
+        'in_progress',
+        'findings_open',
+        'ready_for_reinspection',
+        'accepted',
+        'handed_over',
+        'reopened',
+        'rejected',
+    ];
+
     public function __construct(private readonly HandoverAcceptanceService $service)
     {
     }
@@ -26,9 +38,16 @@ final class HandoverAcceptanceController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
+            $validated = $this->validated($request, [
+                'project_id' => ['nullable', 'integer'],
+                'status' => ['nullable', 'string', Rule::in(self::SCOPE_STATUSES)],
+                'planned_from' => ['nullable', 'date'],
+                'planned_to' => ['nullable', 'date', 'after_or_equal:planned_from'],
+            ]);
+
             $scopes = $this->service->listScopes(
                 (int) $request->attributes->get('current_organization_id'),
-                $request->only(['project_id'])
+                $validated
             );
 
             return MobileResponse::success([
@@ -36,10 +55,63 @@ final class HandoverAcceptanceController extends Controller
                 'meta' => [
                     'total' => $scopes->count(),
                     'project_id' => $request->integer('project_id') ?: null,
+                    'status' => $validated['status'] ?? null,
+                    'planned_from' => $validated['planned_from'] ?? null,
+                    'planned_to' => $validated['planned_to'] ?? null,
                 ],
             ]);
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(
+                trans_message('handover_acceptance.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'index');
+        }
+    }
+
+    public function show(Request $request, int $scope): JsonResponse
+    {
+        try {
+            return MobileResponse::success(new AcceptanceScopeResource($this->service->findScope(
+                (int) $request->attributes->get('current_organization_id'),
+                $scope
+            )));
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 404);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'show');
+        }
+    }
+
+    public function reviewChecklistItem(Request $request, int $item): JsonResponse
+    {
+        try {
+            $validated = $this->validated($request, [
+                'status' => ['required', 'string', Rule::in(['accepted', 'rejected'])],
+                'comment' => ['required_if:status,rejected', 'nullable', 'string', 'max:1000'],
+            ]);
+
+            $reviewed = $this->service->reviewChecklistItem(
+                $this->service->findChecklistItem((int) $request->attributes->get('current_organization_id'), $item),
+                $validated
+            );
+
+            return MobileResponse::success(
+                new AcceptanceChecklistResource($reviewed->checklist),
+                trans_message('handover_acceptance.messages.checklist_item_reviewed')
+            );
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(
+                trans_message('handover_acceptance.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'checklist_item.review');
         }
     }
 
@@ -225,6 +297,10 @@ final class HandoverAcceptanceController extends Controller
             'quality_defect_inspection_required.required_if' => trans_message('handover_acceptance.validation.quality_defect_inspection_required'),
             'resolution_comment.required' => trans_message('handover_acceptance.validation.resolution_comment_required'),
             'reason.required' => trans_message('handover_acceptance.validation.reason_required'),
+            'status.required' => trans_message('handover_acceptance.validation.checklist_status_required'),
+            'status.in' => trans_message('handover_acceptance.validation.checklist_status_invalid'),
+            'comment.required_if' => trans_message('handover_acceptance.validation.checklist_rejection_comment_required'),
+            'planned_to.after_or_equal' => trans_message('handover_acceptance.validation.planned_to_before_from'),
         ];
     }
 }
