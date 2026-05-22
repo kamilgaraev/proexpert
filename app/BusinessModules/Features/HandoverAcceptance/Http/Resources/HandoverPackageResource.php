@@ -32,6 +32,7 @@ final class HandoverPackageResource extends JsonResource
                 'status' => $document->status,
                 'external_url' => $document->external_url,
                 'approved_at' => $document->approved_at?->toIso8601String(),
+                'available_actions' => $document->status === 'approved' ? [] : ['upload'],
             ])->values()->all() : [],
         ];
     }

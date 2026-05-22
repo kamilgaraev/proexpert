@@ -14,9 +14,12 @@ use App\BusinessModules\Features\HandoverAcceptance\Models\HandoverPackage;
 use App\BusinessModules\Features\HandoverAcceptance\Models\HandoverPackageDocument;
 use App\BusinessModules\Features\HandoverAcceptance\Models\ProjectLocation;
 use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
+use App\Models\Organization;
 use App\Models\Project;
+use App\Services\Storage\FileService;
 use DomainException;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 
 final class HandoverAcceptanceService
@@ -30,6 +33,10 @@ final class HandoverAcceptanceService
         'signoffs',
         'handoverPackage.documents',
     ];
+
+    public function __construct(private readonly FileService $fileService)
+    {
+    }
 
     public function listScopes(int $organizationId, array $filters = []): Collection
     {
@@ -268,11 +275,11 @@ final class HandoverAcceptanceService
             foreach ($data['documents'] as $document) {
                 $package->documents()->create([
                     'title' => $document['title'],
-                    'document_type' => $document['document_type'] ?? 'executive_document',
-                    'is_required' => $document['is_required'] ?? true,
-                    'status' => $document['status'] ?? 'missing',
+                    'document_type' => $document['document_type'],
+                    'is_required' => (bool) $document['is_required'],
+                    'status' => $document['status'],
                     'external_url' => $document['external_url'] ?? null,
-                    'approved_at' => ($document['status'] ?? null) === 'approved' ? now() : null,
+                    'approved_at' => $document['status'] === 'approved' ? now() : null,
                 ]);
             }
 
@@ -289,6 +296,36 @@ final class HandoverAcceptanceService
         ]);
 
         return $document->fresh();
+    }
+
+    public function uploadDocument(HandoverPackageDocument $document, UploadedFile $file): HandoverPackageDocument
+    {
+        $package = $document->package()->firstOrFail();
+        $organization = Organization::query()->find((int) $package->organization_id);
+
+        if (!$organization instanceof Organization) {
+            throw new DomainException(trans_message('handover_acceptance.errors.organization_not_found'));
+        }
+
+        $url = $this->fileService->upload(
+            $file,
+            "handover-acceptance/package-documents/{$document->id}",
+            null,
+            'private',
+            $organization
+        );
+
+        if ($url === false) {
+            throw new DomainException(trans_message('handover_acceptance.errors.document_upload_failed'));
+        }
+
+        $document->update([
+            'status' => 'approved',
+            'external_url' => $url,
+            'approved_at' => now(),
+        ]);
+
+        return $document->fresh(['package.documents']);
     }
 
     public function handoverScope(AcceptanceScope $scope, int $userId): AcceptanceScope

@@ -13,7 +13,9 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
+use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -340,6 +342,57 @@ final class HandoverAcceptanceMobileTest extends TestCase
         $this->assertDatabaseHas('acceptance_checklists', [
             'id' => $checklist->id,
             'status' => 'findings_open',
+        ]);
+    }
+
+    public function test_mobile_can_upload_package_document_file(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $scope = $this->createScope($context, 'accepted');
+        $this->allowAccess();
+
+        $package = HandoverPackage::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $scope->project_id,
+            'acceptance_scope_id' => $scope->id,
+            'created_by_user_id' => $context->user->id,
+            'title' => 'Комплект передачи',
+            'status' => 'draft',
+        ]);
+        $document = $package->documents()->create([
+            'title' => 'Фотофиксация',
+            'document_type' => 'photo_report',
+            'is_required' => true,
+            'status' => 'missing',
+        ]);
+        $storedPath = "org-{$context->organization->id}/handover-acceptance/package-documents/{$document->id}/photo.jpg";
+
+        $this->mock(FileService::class, function (MockInterface $mock) use ($storedPath): void {
+            $mock->shouldReceive('upload')->once()->andReturn($storedPath);
+        });
+
+        $missingFileResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/handover-acceptance/package-documents/{$document->id}/upload");
+
+        $missingFileResponse->assertStatus(422)
+            ->assertJsonPath('message', trans_message('handover_acceptance.errors.validation_failed'))
+            ->assertJsonPath('errors.file.0', trans_message('handover_acceptance.validation.document_file_required'));
+
+        $uploadResponse = $this->withHeaders($context->authHeaders())
+            ->post("/api/v1/mobile/handover-acceptance/package-documents/{$document->id}/upload", [
+                'file' => UploadedFile::fake()->image('photo.jpg'),
+            ]);
+
+        $uploadResponse->assertOk()
+            ->assertJsonPath('message', trans_message('handover_acceptance.messages.document_uploaded'))
+            ->assertJsonPath('data.documents.0.status', 'approved')
+            ->assertJsonPath('data.documents.0.external_url', $storedPath)
+            ->assertJsonPath('data.documents.0.available_actions', []);
+
+        $this->assertDatabaseHas('handover_package_documents', [
+            'id' => $document->id,
+            'status' => 'approved',
+            'external_url' => $storedPath,
         ]);
     }
 

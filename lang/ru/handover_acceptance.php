@@ -11,6 +11,7 @@ return [
         'finding_created' => 'Замечание приемки создано.',
         'package_created' => 'Комплект передачи создан.',
         'checklist_item_reviewed' => 'Пункт чек-листа приемки обновлен.',
+        'document_uploaded' => 'Документ комплекта передачи загружен.',
     ],
     'errors' => [
         'module_inactive' => 'Модуль приемки зон недоступен для организации.',
@@ -21,6 +22,8 @@ return [
         'finding_not_found' => 'Замечание приемки не найдено.',
         'checklist_item_not_found' => 'Пункт чек-листа приемки не найден.',
         'package_document_not_found' => 'Документ комплекта передачи не найден.',
+        'organization_not_found' => 'Организация не найдена.',
+        'document_upload_failed' => 'Не удалось загрузить документ комплекта передачи.',
         'location_parent_invalid' => 'Родительская локация относится к другому проекту.',
         'invalid_status' => 'Действие недоступно для текущего статуса приемки.',
         'open_findings_block_accept' => 'Нельзя принять зону, пока есть открытые замечания.',
@@ -46,5 +49,8 @@ return [
         'checklist_status_invalid' => 'Выберите значение из списка',
         'checklist_rejection_comment_required' => 'Укажите причину отклонения пункта чек-листа',
         'planned_to_before_from' => 'Дата окончания не может быть раньше даты начала',
+        'document_file_required' => 'Приложите файл документа',
+        'document_file_invalid' => 'Можно загрузить PDF, JPG, JPEG или PNG',
+        'document_file_too_large' => 'Размер файла не должен превышать 20 МБ',
     ],
 ];

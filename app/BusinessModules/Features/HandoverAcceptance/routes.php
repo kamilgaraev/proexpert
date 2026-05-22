@@ -102,4 +102,7 @@ Route::prefix('api/v1/mobile/handover-acceptance')
         Route::post('/scopes/{scope}/reopen', [MobileHandoverAcceptanceController::class, 'reopen'])
             ->whereNumber('scope')
             ->middleware('authorize:handover-acceptance.reject');
+        Route::post('/package-documents/{document}/upload', [MobileHandoverAcceptanceController::class, 'uploadPackageDocument'])
+            ->whereNumber('document')
+            ->middleware('authorize:handover-acceptance.submit');
     });

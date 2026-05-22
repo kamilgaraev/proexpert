@@ -220,9 +220,9 @@ final class HandoverAcceptanceController extends Controller
                 'title' => ['required', 'string', 'max:255'],
                 'documents' => ['required', 'array', 'min:1'],
                 'documents.*.title' => ['required', 'string', 'max:255'],
-                'documents.*.document_type' => ['nullable', 'string', 'max:80'],
-                'documents.*.is_required' => ['nullable', 'boolean'],
-                'documents.*.status' => ['nullable', 'string', Rule::in(['missing', 'draft', 'approved'])],
+                'documents.*.document_type' => ['required', 'string', 'max:80'],
+                'documents.*.is_required' => ['required', 'boolean'],
+                'documents.*.status' => ['required', 'string', Rule::in(['missing', 'draft', 'approved'])],
                 'documents.*.external_url' => ['nullable', 'string', 'max:1000'],
             ]);
 
@@ -243,7 +243,7 @@ final class HandoverAcceptanceController extends Controller
     public function approvePackageDocument(Request $request, int $document): JsonResponse
     {
         try {
-            $validated = $request->validate(['external_url' => ['nullable', 'string', 'max:1000']]);
+            $validated = $request->validate(['external_url' => ['required', 'string', 'max:1000']]);
 
             return AdminResponse::success($this->service->approveDocument($this->service->findPackageDocument($this->organizationId($request), $document), $validated));
         } catch (ValidationException $e) {

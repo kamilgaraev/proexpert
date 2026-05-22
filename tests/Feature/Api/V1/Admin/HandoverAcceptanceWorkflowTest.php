@@ -95,6 +95,7 @@ final class HandoverAcceptanceWorkflowTest extends TestCase
                 'description' => 'Repair before customer handover',
                 'severity' => 'major',
                 'create_quality_defect' => true,
+                'quality_defect_inspection_required' => false,
             ]);
 
         $findingResponse->assertCreated();

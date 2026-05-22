@@ -7,14 +7,17 @@ namespace App\BusinessModules\Features\HandoverAcceptance\Http\Controllers\Mobil
 use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\AcceptanceChecklistResource;
 use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\AcceptanceFindingResource;
 use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\AcceptanceScopeResource;
+use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\HandoverPackageResource;
 use App\BusinessModules\Features\HandoverAcceptance\Services\HandoverAcceptanceService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rules\File;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -251,6 +254,42 @@ final class HandoverAcceptanceController extends Controller
         }
     }
 
+    public function uploadPackageDocument(Request $request, int $document): JsonResponse
+    {
+        try {
+            $this->validated($request, [
+                'file' => ['required', File::types(['pdf', 'jpg', 'jpeg', 'png'])->max(20 * 1024)],
+            ]);
+            $file = $request->file('file');
+
+            if (!$file instanceof UploadedFile) {
+                throw ValidationException::withMessages([
+                    'file' => [trans_message('handover_acceptance.validation.document_file_required')],
+                ]);
+            }
+
+            $uploaded = $this->service->uploadDocument(
+                $this->service->findPackageDocument((int) $request->attributes->get('current_organization_id'), $document),
+                $file
+            );
+
+            return MobileResponse::success(
+                new HandoverPackageResource($uploaded->package),
+                trans_message('handover_acceptance.messages.document_uploaded')
+            );
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(
+                trans_message('handover_acceptance.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'package_document.upload');
+        }
+    }
+
     private function scopeAction(Request $request, int $scope, callable $action, string $logAction): JsonResponse
     {
         try {
@@ -301,6 +340,9 @@ final class HandoverAcceptanceController extends Controller
             'status.in' => trans_message('handover_acceptance.validation.checklist_status_invalid'),
             'comment.required_if' => trans_message('handover_acceptance.validation.checklist_rejection_comment_required'),
             'planned_to.after_or_equal' => trans_message('handover_acceptance.validation.planned_to_before_from'),
+            'file.required' => trans_message('handover_acceptance.validation.document_file_required'),
+            'file.mimes' => trans_message('handover_acceptance.validation.document_file_invalid'),
+            'file.max' => trans_message('handover_acceptance.validation.document_file_too_large'),
         ];
     }
 }
