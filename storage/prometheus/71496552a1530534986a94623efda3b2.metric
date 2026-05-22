@@ -1,1 +1,0 @@
-http_requests_total{method="GET",route="api.v1.admin.materials.index",status="401"}
