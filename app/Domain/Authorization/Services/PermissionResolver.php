@@ -191,37 +191,6 @@ class PermissionResolver
 
         [$module, $action] = $parts;
         
-        // Маппинг модулей: schedule.* -> schedule-management.*
-        // construction-journal.* -> budget-estimates.* (права ОЖР находятся в модуле сметного дела)
-        // estimates.* -> budget-estimates.* (права смет находятся в модуле budget-estimates)
-        $moduleMapping = [
-            'schedule' => 'schedule-management',
-            'construction-journal' => 'budget-estimates',
-            'estimates' => 'budget-estimates',
-            'act_reports' => 'act-reporting',
-            'ai_estimates' => 'ai-estimates',
-            'time_tracking' => 'time-tracking',
-            'warehouse' => 'basic-warehouse',
-            'mdm' => 'catalog-management',
-        ];
-        
-        // Обратный маппинг: budget-estimates.* -> estimates.* (для обратной совместимости)
-        $reverseMapping = [
-            'budget-estimates' => 'estimates',
-            'schedule-management' => 'schedule',
-            'act-reporting' => 'act_reports',
-            'basic-warehouse' => 'warehouse',
-            'catalog-management' => 'mdm',
-        ];
-        
-        $modulesToCheck = [$module];
-        if (isset($moduleMapping[$module])) {
-            $modulesToCheck[] = $moduleMapping[$module];
-        }
-        if (isset($reverseMapping[$module])) {
-            $modulesToCheck[] = $reverseMapping[$module];
-        }
-
         $modulesToCheck = $this->expandModuleVariants($module);
         
         $this->logging->technical('permission.module.parsed', [
@@ -549,6 +518,7 @@ class PermissionResolver
         $normalizedUnderscore = str_replace('-', '_', $module);
 
         $moduleMapping = [
+            'projects' => 'project-management',
             'schedule' => 'schedule-management',
             'schedule_management' => 'schedule-management',
             'construction-journal' => 'budget-estimates',
@@ -567,6 +537,7 @@ class PermissionResolver
         ];
 
         $reverseMapping = [
+            'project-management' => 'projects',
             'budget-estimates' => 'estimates',
             'schedule-management' => 'schedule',
             'act-reporting' => 'act_reports',

@@ -5,10 +5,14 @@ declare(strict_types=1);
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Domain\Authorization\Services\ModulePermissionChecker;
+use App\Domain\Authorization\Services\PermissionResolver;
 use App\Models\Organization;
 use App\Models\User;
+use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
+use Mockery\MockInterface;
 
 uses(RefreshDatabase::class);
 
@@ -33,6 +37,37 @@ it('organization_owner role grants organization view permission', function () {
     $authService = app(AuthorizationService::class);
 
     $canView = $authService->can($user, 'organization.view', [
+        'organization_id' => $org->id,
+    ]);
+
+    expect($canView)->toBeTrue();
+});
+
+it('organization_owner role grants projects view through project management module', function () {
+    $this->mock(AccessController::class, function (MockInterface $mock): void {
+        $mock->shouldReceive('hasModuleAccess')
+            ->andReturnUsing(static fn (int $organizationId, string $moduleSlug): bool => $moduleSlug === 'project-management');
+    });
+    app()->forgetInstance(ModulePermissionChecker::class);
+    app()->forgetInstance(PermissionResolver::class);
+    app()->forgetInstance(AuthorizationService::class);
+
+    $org = Organization::factory()->create();
+    $user = User::factory()->create(['current_organization_id' => $org->id]);
+
+    $context = AuthorizationContext::getOrganizationContext($org->id);
+
+    UserRoleAssignment::create([
+        'user_id' => $user->id,
+        'context_id' => $context->id,
+        'role_slug' => 'organization_owner',
+        'role_type' => UserRoleAssignment::TYPE_SYSTEM,
+        'is_active' => true,
+    ]);
+
+    $authService = app(AuthorizationService::class);
+
+    $canView = $authService->can($user, 'projects.view', [
         'organization_id' => $org->id,
     ]);
 
