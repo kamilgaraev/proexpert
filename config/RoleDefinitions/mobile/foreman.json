@@ -120,6 +120,7 @@
       "site_requests.calendar.view"
     ],
     "budget-estimates": [
+      "budget-estimates.view",
       "construction-journal.view",
       "construction-journal.create",
       "construction-journal.edit",

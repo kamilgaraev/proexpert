@@ -17,6 +17,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\{
     EstimateSectionNumberingService,
     EstimateItemNumberingService,
     EstimateCacheService,
+    MobileBudgetEstimateService,
 };
 use App\BusinessModules\Features\BudgetEstimates\Services\Integration\{
     EstimateProjectIntegrationService,
@@ -157,6 +158,7 @@ class BudgetEstimatesServiceProvider extends ServiceProvider
         $this->app->singleton(GenericFormatHandler::class);
         $this->app->singleton(GrandSmetaHandler::class);
         $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\SignatureGenerator::class);
+        $this->app->scoped(MobileBudgetEstimateService::class);
     }
 
     /**
@@ -291,6 +293,11 @@ class BudgetEstimatesServiceProvider extends ServiceProvider
         }
 
         // Маршруты СПРАВОЧНИКОВ РЕСУРСОВ (механизмы, трудозатраты)
+        $routesMobilePath = __DIR__ . '/routes-mobile.php';
+        if (file_exists($routesMobilePath)) {
+            require $routesMobilePath;
+        }
+
         $catalogsRoutesPath = __DIR__ . '/routes-catalogs.php';
         if (file_exists($catalogsRoutesPath)) {
             require $catalogsRoutesPath;

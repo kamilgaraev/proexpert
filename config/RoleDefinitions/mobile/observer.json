@@ -35,6 +35,7 @@
     "dashboard-widgets": ["dashboard.view"],
     "schedule-management": ["schedule.view"],
     "budget-estimates": [
+      "budget-estimates.view",
       "construction-journal.view",
       "construction-journal.approve",
       "construction-journal.export"
