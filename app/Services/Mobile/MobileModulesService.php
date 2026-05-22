@@ -51,8 +51,8 @@ class MobileModulesService
         [
             'slug' => 'time-tracking',
             'icon' => 'timer',
-            'route' => null,
-            'supported_on_mobile' => false,
+            'route' => 'time-tracking',
+            'supported_on_mobile' => true,
             'order' => 50,
         ],
         [

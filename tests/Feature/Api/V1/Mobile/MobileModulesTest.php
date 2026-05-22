@@ -24,6 +24,8 @@ final class MobileModulesTest extends TestCase
             'production-labor' => ['icon' => 'engineer', 'route' => 'production-labor'],
             'workforce-management' => ['icon' => 'workforce', 'route' => 'workforce-management'],
             'handover-acceptance' => ['icon' => 'handover', 'route' => 'handover-acceptance'],
+            'workflow-management' => ['icon' => 'hub', 'route' => 'workflow-management'],
+            'time-tracking' => ['icon' => 'timer', 'route' => 'time-tracking'],
         ];
 
         $this->mockModulePermissions(array_values(array_unique([
@@ -44,8 +46,6 @@ final class MobileModulesTest extends TestCase
     public function test_mobile_modules_catalog_marks_unsupported_companion_modules(): void
     {
         $expected = [
-            'workflow-management' => 'hub',
-            'time-tracking' => 'timer',
             'budget-estimates' => 'calculate',
             'procurement' => 'procurement',
             'contract-management' => 'contract',

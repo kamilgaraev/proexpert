@@ -44,7 +44,7 @@
       "act_reports.view"
     ],
     "time-tracking": [
-      "time_tracking.view", "time_tracking.create", "time_tracking.edit"
+      "time_tracking.view", "time_tracking.create", "time_tracking.edit", "time_tracking.submit"
     ],
     "material-analytics": [],
     "contractor-portal": [],

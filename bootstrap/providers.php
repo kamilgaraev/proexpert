@@ -7,6 +7,7 @@ return [
     App\BusinessModules\Core\Payments\PaymentsServiceProvider::class,
     App\BusinessModules\Features\AIAssistant\AIAssistantServiceProvider::class,
     App\BusinessModules\Features\WorkflowManagement\WorkflowManagementServiceProvider::class,
+    App\BusinessModules\Features\TimeTracking\TimeTrackingServiceProvider::class,
     App\BusinessModules\Features\ContractManagement\ContractManagementServiceProvider::class,
     App\BusinessModules\Features\AdvancedDashboard\AdvancedDashboardServiceProvider::class,
     App\BusinessModules\Features\BudgetEstimates\BudgetEstimatesServiceProvider::class,
