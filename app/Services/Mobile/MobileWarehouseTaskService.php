@@ -148,8 +148,11 @@ class MobileWarehouseTaskService
             'task_number' => $task->task_number,
             'title' => $task->title,
             'task_type' => $task->task_type,
+            'task_type_label' => $this->taskTypeLabel($task->task_type),
             'status' => $task->status,
+            'status_label' => $this->statusLabel($task->status),
             'priority' => $task->priority,
+            'priority_label' => $this->priorityLabel($task->priority),
             'planned_quantity' => $plannedQuantity,
             'completed_quantity' => $completedQuantity,
             'progress_percent' => $progressPercent,
@@ -218,9 +221,21 @@ class MobileWarehouseTaskService
                 'name' => $task->completedBy->name,
                 'email' => $task->completedBy->email,
             ] : null,
+            'available_transitions' => $this->availableTransitions($task->status),
             'created_at' => optional($task->created_at)?->toDateTimeString(),
             'updated_at' => optional($task->updated_at)?->toDateTimeString(),
         ];
+    }
+
+    private function availableTransitions(string $currentStatus): array
+    {
+        return array_map(
+            fn (string $status): array => [
+                'status' => $status,
+                'name' => $this->actionLabel($status),
+            ],
+            $this->allowedTransitions($currentStatus)
+        );
     }
 
     private function findWarehouse(int $organizationId, int $warehouseId): OrganizationWarehouse
@@ -280,7 +295,10 @@ class MobileWarehouseTaskService
     ): WarehouseTask {
         $currentStatus = $task->status;
 
-        if (! $this->isAllowedTransition($currentStatus, $nextStatus)) {
+        if (
+            ! in_array($nextStatus, $this->allowedTransitions($currentStatus), true)
+            && $currentStatus !== $nextStatus
+        ) {
             throw new \InvalidArgumentException(trans_message('basic_warehouse.task.status_invalid_transition'));
         }
 
@@ -311,13 +329,9 @@ class MobileWarehouseTaskService
         return $task->fresh();
     }
 
-    private function isAllowedTransition(string $currentStatus, string $nextStatus): bool
+    private function allowedTransitions(string $currentStatus): array
     {
-        if ($currentStatus === $nextStatus) {
-            return true;
-        }
-
-        $map = [
+        return [
             WarehouseTask::STATUS_DRAFT => [
                 WarehouseTask::STATUS_QUEUED,
                 WarehouseTask::STATUS_CANCELLED,
@@ -342,8 +356,26 @@ class MobileWarehouseTaskService
             WarehouseTask::STATUS_CANCELLED => [
                 WarehouseTask::STATUS_QUEUED,
             ],
-        ];
+        ][$currentStatus] ?? [];
+    }
 
-        return in_array($nextStatus, $map[$currentStatus] ?? [], true);
+    private function taskTypeLabel(string $taskType): string
+    {
+        return trans_message('basic_warehouse.task.types.' . $taskType);
+    }
+
+    private function statusLabel(string $status): string
+    {
+        return trans_message('basic_warehouse.task.statuses.' . $status);
+    }
+
+    private function priorityLabel(string $priority): string
+    {
+        return trans_message('basic_warehouse.task.priorities.' . $priority);
+    }
+
+    private function actionLabel(string $status): string
+    {
+        return trans_message('basic_warehouse.task.actions.' . $status);
     }
 }
