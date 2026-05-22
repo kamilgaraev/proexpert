@@ -48,6 +48,7 @@
     "workflow-management": [
       "completed_works.view",
       "completed_works.create",
+      "completed_works.edit",
       "completed_works.materials.sync"
     ],
     "advance-accounting": [
