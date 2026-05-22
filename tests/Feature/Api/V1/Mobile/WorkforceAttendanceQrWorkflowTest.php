@@ -40,6 +40,7 @@ final class WorkforceAttendanceQrWorkflowTest extends TestCase
         $issue->assertOk()
             ->assertJsonPath('data.employee_label', 'Иванов Иван')
             ->assertJsonPath('data.project_label', $project->name)
+            ->assertJsonPath('data.status', 'active')
             ->assertJsonPath('data.status_label', trans_message('workforce.attendance.qr_status_ready'));
 
         $token = (string) $issue->json('data.qr_token');
@@ -56,13 +57,16 @@ final class WorkforceAttendanceQrWorkflowTest extends TestCase
         $scan->assertOk()
             ->assertJsonPath('data.employee_label', $employee->full_name)
             ->assertJsonPath('data.project_label', $project->name)
+            ->assertJsonPath('data.status', 'at_work')
+            ->assertJsonPath('data.source', 'qr_scan')
             ->assertJsonPath('data.status_label', trans_message('workforce.attendance.qr_status_confirmed'))
             ->assertJsonPath('data.source_label', trans_message('workforce.attendance.qr_source_label'));
 
         $this->withHeaders($scannerContext->authHeaders())
             ->postJson('/api/v1/mobile/workforce/attendance/qr/scan', ['qr_token' => $token])
-            ->assertStatus(422)
-            ->assertJsonPath('message', trans_message('workforce.errors.qr_token_already_used'));
+            ->assertStatus(409)
+            ->assertJsonPath('message', trans_message('workforce.errors.qr_token_already_used'))
+            ->assertJsonPath('errors.code', 'duplicate_scan');
 
         $this->assertDatabaseHas('workforce_attendance_scan_events', [
             'organization_id' => $employeeContext->organization->id,
@@ -70,6 +74,58 @@ final class WorkforceAttendanceQrWorkflowTest extends TestCase
             'project_id' => $project->id,
             'result' => 'confirmed',
         ]);
+    }
+
+    public function test_qr_issue_requires_explicit_work_date(): void
+    {
+        $employeeContext = AdminApiTestContext::create(roleSlug: 'worker');
+        $this->employee($employeeContext, $employeeContext->user->id);
+        $this->allowAccess();
+
+        $this->withHeaders($employeeContext->authHeaders())
+            ->postJson('/api/v1/mobile/workforce/attendance/qr', [])
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('errors.validation_failed'));
+
+        $this->assertDatabaseCount('workforce_attendance_qr_tokens', 0);
+    }
+
+    public function test_employee_records_self_attendance_and_loads_history(): void
+    {
+        $employeeContext = AdminApiTestContext::create(roleSlug: 'worker');
+        $project = Project::factory()->create(['organization_id' => $employeeContext->organization->id]);
+        $employee = $this->employee($employeeContext, $employeeContext->user->id);
+        $this->allowAccess();
+
+        $self = $this->withHeaders($employeeContext->authHeaders())
+            ->postJson('/api/v1/mobile/workforce/attendance/self', [
+                'project_id' => $project->id,
+                'work_date' => '2026-05-16',
+                'device_id' => 'worker-phone',
+            ]);
+
+        $self->assertOk()
+            ->assertJsonPath('data.employee_label', $employee->full_name)
+            ->assertJsonPath('data.project_label', $project->name)
+            ->assertJsonPath('data.status', 'at_work')
+            ->assertJsonPath('data.source', 'self_attendance')
+            ->assertJsonPath('data.source_label', trans_message('workforce.attendance.self_source_label'));
+
+        $this->withHeaders($employeeContext->authHeaders())
+            ->postJson('/api/v1/mobile/workforce/attendance/self', [
+                'project_id' => $project->id,
+                'work_date' => '2026-05-16',
+            ])
+            ->assertStatus(409)
+            ->assertJsonPath('errors.code', 'duplicate_attendance');
+
+        $history = $this->withHeaders($employeeContext->authHeaders())
+            ->getJson('/api/v1/mobile/workforce/attendance/history?date_from=2026-05-01&date_to=2026-05-31&project_id=' . $project->id);
+
+        $history->assertOk()
+            ->assertJsonPath('data.items.0.employee_label', $employee->full_name)
+            ->assertJsonPath('data.items.0.source', 'self_attendance')
+            ->assertJsonPath('data.items.0.project_label', $project->name);
     }
 
     public function test_expired_qr_is_rejected_with_business_message(): void

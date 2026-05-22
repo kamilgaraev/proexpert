@@ -174,4 +174,8 @@ Route::prefix('api/v1/mobile/workforce/attendance')
             ->middleware('authorize:workforce.attendance.qr.self');
         Route::post('/qr/scan', [WorkforceMobileAttendanceController::class, 'scanQr'])
             ->middleware('authorize:workforce.attendance.scan-confirm');
+        Route::post('/self', [WorkforceMobileAttendanceController::class, 'selfAttendance'])
+            ->middleware('authorize:workforce.attendance.self');
+        Route::get('/history', [WorkforceMobileAttendanceController::class, 'history'])
+            ->middleware('authorize:workforce.attendance.self');
     });

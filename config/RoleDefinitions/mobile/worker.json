@@ -74,7 +74,8 @@
     ],
     "workforce-management": [
       "workforce.view",
-      "workforce.attendance.qr.self"
+      "workforce.attendance.qr.self",
+      "workforce.attendance.self"
     ]
   },
   

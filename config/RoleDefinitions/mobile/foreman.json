@@ -156,6 +156,7 @@
     "workforce-management": [
       "workforce.view",
       "workforce.attendance.qr.self",
+      "workforce.attendance.self",
       "workforce.attendance.scan-confirm"
     ],
     "handover-acceptance": [

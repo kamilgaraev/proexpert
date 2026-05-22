@@ -240,7 +240,12 @@ final class WorkforceAttendanceService
             ?? $qrScans->get($assignment->employee_id . ':' . $date . ':all');
 
         if ($qrScan !== null) {
-            return $this->presence('at_work', $date, $this->hours($assignment->hours_per_day ?? 8), 'qr_scan');
+            return $this->presence(
+                'at_work',
+                $date,
+                $this->hours($assignment->hours_per_day ?? 8),
+                $this->scanSource($qrScan->metadata ?? null)
+            );
         }
 
         if ($date < (string) $assignment->valid_from || ($assignment->valid_to !== null && $date > (string) $assignment->valid_to)) {
@@ -292,13 +297,13 @@ final class WorkforceAttendanceService
     private function days(CarbonImmutable $start, CarbonImmutable $end): array
     {
         $weekdays = [
-            1 => 'Пн',
-            2 => 'Вт',
-            3 => 'Ср',
-            4 => 'Чт',
-            5 => 'Пт',
-            6 => 'Сб',
-            7 => 'Вс',
+            1 => 'РџРЅ',
+            2 => 'Р’С‚',
+            3 => 'РЎСЂ',
+            4 => 'Р§С‚',
+            5 => 'РџС‚',
+            6 => 'РЎР±',
+            7 => 'Р’СЃ',
         ];
 
         $days = [];
@@ -374,5 +379,16 @@ final class WorkforceAttendanceService
             ->whereDate('start_date', '<=', $workDate)
             ->whereDate('end_date', '>=', $workDate)
             ->exists();
+    }
+
+    private function scanSource(mixed $metadata): string
+    {
+        $decoded = is_string($metadata) ? json_decode($metadata, true) : $metadata;
+
+        if (is_array($decoded) && ($decoded['source'] ?? null) === 'self_attendance') {
+            return 'self_attendance';
+        }
+
+        return 'qr_scan';
     }
 }

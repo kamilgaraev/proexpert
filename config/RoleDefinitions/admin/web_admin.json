@@ -397,6 +397,7 @@
       "workforce.structure.manage",
       "workforce.attendance.manage",
       "workforce.attendance.qr.self",
+      "workforce.attendance.self",
       "workforce.attendance.scan-confirm",
       "workforce.payroll-source.manage",
       "workforce.payroll-source.validate",

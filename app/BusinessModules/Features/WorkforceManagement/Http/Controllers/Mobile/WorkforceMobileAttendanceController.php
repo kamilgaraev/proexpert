@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\WorkforceManagement\Http\Controllers\Mobile;
 
+use App\BusinessModules\Features\WorkforceManagement\Exceptions\WorkforceAttendanceException;
 use App\BusinessModules\Features\WorkforceManagement\Services\WorkforceAttendanceQrService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
@@ -24,7 +25,7 @@ final class WorkforceMobileAttendanceController extends Controller
         try {
             $payload = $request->validate([
                 'project_id' => ['nullable', 'integer'],
-                'work_date' => ['nullable', 'date'],
+                'work_date' => ['required', 'date'],
             ]);
 
             $user = $request->user();
@@ -35,7 +36,7 @@ final class WorkforceMobileAttendanceController extends Controller
 
             return MobileResponse::success($this->service->issue($this->organizationId($request), $user, $payload));
         } catch (ValidationException $exception) {
-            return MobileResponse::error($exception->getMessage(), 422, $exception->errors());
+            return MobileResponse::error(trans_message('errors.validation_failed'), 422, $exception->errors());
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -59,11 +60,73 @@ final class WorkforceMobileAttendanceController extends Controller
 
             return MobileResponse::success($this->service->scan($this->organizationId($request), $user, $payload));
         } catch (ValidationException $exception) {
-            return MobileResponse::error($exception->getMessage(), 422, $exception->errors());
+            return MobileResponse::error(trans_message('errors.validation_failed'), 422, $exception->errors());
+        } catch (WorkforceAttendanceException $exception) {
+            return MobileResponse::error(
+                $exception->getMessage(),
+                $exception->statusCode(),
+                ['code' => $exception->errorCode()]
+            );
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'attendance.qr.scan');
+        }
+    }
+
+    public function selfAttendance(Request $request): JsonResponse
+    {
+        try {
+            $payload = $request->validate([
+                'project_id' => ['nullable', 'integer'],
+                'work_date' => ['required', 'date'],
+                'device_id' => ['nullable', 'string', 'max:120'],
+            ]);
+
+            $user = $request->user();
+
+            if ($user === null) {
+                return MobileResponse::error(trans_message('workforce.errors.self_attendance_forbidden'), 403);
+            }
+
+            return MobileResponse::success($this->service->selfAttendance($this->organizationId($request), $user, $payload));
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(trans_message('errors.validation_failed'), 422, $exception->errors());
+        } catch (WorkforceAttendanceException $exception) {
+            return MobileResponse::error(
+                $exception->getMessage(),
+                $exception->statusCode(),
+                ['code' => $exception->errorCode()]
+            );
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'attendance.self');
+        }
+    }
+
+    public function history(Request $request): JsonResponse
+    {
+        try {
+            $payload = $request->validate([
+                'date_from' => ['required', 'date'],
+                'date_to' => ['required', 'date', 'after_or_equal:date_from'],
+                'project_id' => ['nullable', 'integer'],
+            ]);
+
+            $user = $request->user();
+
+            if ($user === null) {
+                return MobileResponse::error(trans_message('workforce.errors.self_attendance_forbidden'), 403);
+            }
+
+            return MobileResponse::success($this->service->history($this->organizationId($request), $user, $payload));
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(trans_message('errors.validation_failed'), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'attendance.history');
         }
     }
 
