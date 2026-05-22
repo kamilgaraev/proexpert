@@ -297,13 +297,13 @@ final class WorkforceAttendanceService
     private function days(CarbonImmutable $start, CarbonImmutable $end): array
     {
         $weekdays = [
-            1 => 'РџРЅ',
-            2 => 'Р’С‚',
-            3 => 'РЎСЂ',
-            4 => 'Р§С‚',
-            5 => 'РџС‚',
-            6 => 'РЎР±',
-            7 => 'Р’СЃ',
+            1 => 'Пн',
+            2 => 'Вт',
+            3 => 'Ср',
+            4 => 'Чт',
+            5 => 'Пт',
+            6 => 'Сб',
+            7 => 'Вс',
         ];
 
         $days = [];

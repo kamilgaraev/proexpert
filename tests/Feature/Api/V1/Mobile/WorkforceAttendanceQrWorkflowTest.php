@@ -90,6 +90,33 @@ final class WorkforceAttendanceQrWorkflowTest extends TestCase
         $this->assertDatabaseCount('workforce_attendance_qr_tokens', 0);
     }
 
+    public function test_owner_generates_personal_qr_without_precreated_employee_profile(): void
+    {
+        $ownerContext = AdminApiTestContext::create(
+            userAttributes: ['name' => 'Иван Иванов'],
+            roleSlug: 'organization_owner'
+        );
+        $project = Project::factory()->create(['organization_id' => $ownerContext->organization->id]);
+        $this->allowAccess();
+
+        $this->withHeaders($ownerContext->authHeaders())
+            ->postJson('/api/v1/mobile/workforce/attendance/qr', [
+                'project_id' => $project->id,
+                'work_date' => '2026-05-16',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.employee_label', 'Иван Иванов')
+            ->assertJsonPath('data.project_label', $project->name)
+            ->assertJsonPath('data.status', 'active');
+
+        $this->assertDatabaseHas('workforce_employees', [
+            'organization_id' => $ownerContext->organization->id,
+            'user_id' => $ownerContext->user->id,
+            'personnel_number' => 'USER-' . $ownerContext->user->id,
+            'employment_status' => 'active',
+        ]);
+    }
+
     public function test_employee_records_self_attendance_and_loads_history(): void
     {
         $employeeContext = AdminApiTestContext::create(roleSlug: 'worker');

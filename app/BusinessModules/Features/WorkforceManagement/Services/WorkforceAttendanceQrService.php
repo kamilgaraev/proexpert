@@ -21,7 +21,7 @@ final class WorkforceAttendanceQrService
     {
         $workDate = CarbonImmutable::parse((string) $payload['work_date'])->toDateString();
         $projectId = isset($payload['project_id']) ? (int) $payload['project_id'] : null;
-        $employee = $this->linkedEmployee($organizationId, (int) $user->id, $workDate);
+        $employee = $this->employeeForSelfAttendance($organizationId, $user, $workDate);
 
         if ($projectId !== null) {
             $this->assertProject($organizationId, $projectId);
@@ -167,7 +167,7 @@ final class WorkforceAttendanceQrService
         $workDate = CarbonImmutable::parse((string) $payload['work_date'])->toDateString();
         $projectId = isset($payload['project_id']) ? (int) $payload['project_id'] : null;
         $deviceId = isset($payload['device_id']) ? trim((string) $payload['device_id']) : null;
-        $employee = $this->linkedEmployee($organizationId, (int) $user->id, $workDate);
+        $employee = $this->employeeForSelfAttendance($organizationId, $user, $workDate);
 
         if ($projectId !== null) {
             $this->assertProject($organizationId, $projectId);
@@ -293,13 +293,26 @@ final class WorkforceAttendanceQrService
             ->all();
     }
 
+    private function employeeForSelfAttendance(int $organizationId, User $user, string $workDate): WorkforceEmployee
+    {
+        $userId = (int) $user->id;
+        $employee = $this->linkedEmployeeOrNull($organizationId, $userId);
+
+        if ($employee === null) {
+            $this->assertUserBelongsToOrganization($organizationId, $user);
+            $employee = $this->createLinkedEmployee($organizationId, $user, $workDate);
+        }
+
+        if (! $this->employeeActiveOnDate($employee, $workDate)) {
+            throw new DomainException(trans_message('workforce.errors.qr_employee_inactive'));
+        }
+
+        return $employee;
+    }
+
     private function linkedEmployee(int $organizationId, int $userId, string $workDate): WorkforceEmployee
     {
-        $employee = WorkforceEmployee::query()
-            ->where('organization_id', $organizationId)
-            ->where('user_id', $userId)
-            ->whereNull('deleted_at')
-            ->first();
+        $employee = $this->linkedEmployeeOrNull($organizationId, $userId);
 
         if ($employee === null) {
             throw new DomainException(trans_message('workforce.errors.qr_employee_not_linked'));
@@ -310,6 +323,87 @@ final class WorkforceAttendanceQrService
         }
 
         return $employee;
+    }
+
+    private function linkedEmployeeOrNull(int $organizationId, int $userId): ?WorkforceEmployee
+    {
+        return WorkforceEmployee::query()
+            ->where('organization_id', $organizationId)
+            ->where('user_id', $userId)
+            ->whereNull('deleted_at')
+            ->first();
+    }
+
+    private function createLinkedEmployee(int $organizationId, User $user, string $workDate): WorkforceEmployee
+    {
+        [$lastName, $firstName, $middleName] = $this->employeeNameParts($user);
+
+        return WorkforceEmployee::query()->create([
+            'organization_id' => $organizationId,
+            'user_id' => (int) $user->id,
+            'personnel_number' => $this->nextPersonnelNumber($organizationId, (int) $user->id),
+            'last_name' => $lastName,
+            'first_name' => $firstName,
+            'middle_name' => $middleName,
+            'employment_status' => 'active',
+            'hire_date' => $workDate,
+            'phone' => $user->phone,
+            'email' => $user->email,
+        ]);
+    }
+
+    private function assertUserBelongsToOrganization(int $organizationId, User $user): void
+    {
+        $belongsToOrganization = (int) $user->current_organization_id === $organizationId
+            || DB::table('organization_user')
+                ->where('organization_id', $organizationId)
+                ->where('user_id', $user->id)
+                ->where('is_active', true)
+                ->exists();
+
+        if (! $belongsToOrganization) {
+            throw new DomainException(trans_message('workforce.errors.user_not_found'));
+        }
+    }
+
+    private function employeeNameParts(User $user): array
+    {
+        $name = trim((string) $user->name);
+
+        if ($name === '') {
+            $name = trim((string) $user->email);
+        }
+
+        $parts = preg_split('/\s+/u', $name) ?: [];
+
+        if ($parts === []) {
+            return ['Пользователь', '', null];
+        }
+
+        return [
+            (string) ($parts[0] ?? 'Пользователь'),
+            (string) ($parts[1] ?? ''),
+            isset($parts[2]) ? implode(' ', array_slice($parts, 2)) : null,
+        ];
+    }
+
+    private function nextPersonnelNumber(int $organizationId, int $userId): string
+    {
+        $base = 'USER-' . $userId;
+        $candidate = $base;
+        $suffix = 2;
+
+        while (
+            WorkforceEmployee::withTrashed()
+                ->where('organization_id', $organizationId)
+                ->where('personnel_number', $candidate)
+                ->exists()
+        ) {
+            $candidate = $base . '-' . $suffix;
+            $suffix++;
+        }
+
+        return $candidate;
     }
 
     private function employee(int $organizationId, int $employeeId): WorkforceEmployee
