@@ -89,8 +89,12 @@ cd ..\prohelper
 
 - Backend: `.github/workflows/deploy-backend.yml`, `Deploy Backend to Production`, `prod-backend-deploy`, host `89.169.44.117`.
 - Admin: `../prohelper_admin/.github/workflows/deploy.yml`, production build с `VITE_API_URL=https://api.prohelper.pro`.
+- Marketing/LK: `../prohelper_land/.github/workflows/deploy.yml`, production paths `/var/www/prohelper_marketing`, `/var/www/prohelper_lk`, API `https://api.prohelper.pro`.
+- Customer portal: `../prohelper_customers/.github/workflows/deploy.yml`, `environment: production`, concurrency `prohelper-customers-production`.
 
 Эти workflow не являются доказательством staging-проверки и не должны использоваться для закрытия manual staging checklist без отдельного deployment-процесса.
+
+Поиск по всему workspace нашел `https://dev.prohelper.pro` только в старой документации по сметам/frontend, без связанного deploy workflow или RAG runbook. Публичные проверки `2026-05-23 22:48 +03:00` завершились таймаутом для `https://dev.prohelper.pro`, `https://api.prohelper.pro/up` и `https://admin.prohelper.pro`; runtime evidence не собран.
 
 Попытка read-only runtime-диагностики:
 

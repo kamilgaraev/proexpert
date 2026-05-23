@@ -11,6 +11,7 @@
 - Environment: `staging`
 
 Не использовать production deploy workflow как замену этой проверке. Для backend найден `.github/workflows/deploy-backend.yml`, для admin найден `../prohelper_admin/.github/workflows/deploy.yml`; оба workflow ориентированы на production.
+Также production-oriented workflow найдены в `../prohelper_land/.github/workflows/deploy.yml` и `../prohelper_customers/.github/workflows/deploy.yml`.
 
 ## Конфигурация
 
