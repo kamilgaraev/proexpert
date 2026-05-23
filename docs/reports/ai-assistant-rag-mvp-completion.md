@@ -17,16 +17,18 @@
 - Metadata ответа ассистента включает `rag_context`.
 - `AssistantResponseVerifier` защищает ответы от недоказанных claims по проектному контексту и чистит отсутствующие source refs.
 - Админка нормализует `rag_context` и показывает источники только для grounded answers.
+- Backend feature-тест проверяет оба режима: RAG включен с источниками и RAG выключен без попадания контекста в prompt.
+- Admin unit-тест проверяет, что блок источников видим только при `rag_context.used === true` и наличии sources.
 
 ## Автоматическая валидация
 
-Последняя локальная валидация после backend-контрактного фикса:
+Последняя локальная валидация после backend/admin test-коммитов:
 
 ```powershell
 vendor\bin\phpunit tests\Unit\AIAssistant tests\Feature\Api\V1\Admin\AIAssistantRagContextTest.php
 ```
 
-Результат: `OK (183 tests, 966 assertions)`.
+Результат: `OK (184 tests, 973 assertions)`.
 
 ```powershell
 vendor\bin\phpstan analyse app/BusinessModules/Features/AIAssistant tests/Unit/AIAssistant tests/Feature/Api/V1/Admin/AIAssistantRagContextTest.php --memory-limit=1G
@@ -46,18 +48,18 @@ php -l tests\Feature\Api\V1\Admin\AIAssistantRagContextTest.php
 
 ```powershell
 cd ..\prohelper_admin
-npx vitest run src/services/aiAssistantService.test.ts
+npx vitest run src/pages/AIAssistant/ragSources.test.ts src/services/aiAssistantService.test.ts
 npx tsc --noEmit
 cd ..\prohelper
 ```
 
-Результат: Vitest `4 passed`, TypeScript `exit code 0`.
+Результат: Vitest `7 passed`, TypeScript `exit code 0`.
 
 ## Staging Checklist
 
 Выполнять только на staging после деплоя соответствующих backend/admin коммитов и после явного разрешения на миграции/backfill.
 
-1. Убедиться, что staging содержит backend-коммиты до `82a34299` включительно и admin-коммит `e311351a`.
+1. Убедиться, что staging содержит backend-коммиты до `700909ca` включительно и admin-коммиты до `68d01983` включительно.
 2. Применить миграции staging штатным deployment-процессом.
 3. Включить RAG:
 
