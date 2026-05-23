@@ -23,6 +23,7 @@
 - `AssistantResponseVerifier` защищает ответы от недоказанных claims по проектному контексту и чистит отсутствующие source refs.
 - Админка нормализует `rag_context` и показывает источники только для grounded answers.
 - Backend feature-тест проверяет RAG в admin chat flow: grounded answer с источниками, RAG выключен конфигом, недоступные project chunks не попадают в sources/prompt, включенный RAG без доступного контекста возвращает `used=false`.
+- Mobile feature-тест проверяет, что `POST /api/v1/mobile/ai-assistant/chat` сохраняет `metadata.rag_context` в стандартном `MobileResponse`.
 - Container-тест проверяет, что Laravel service container внедряет `RagRetriever` и `RagPromptContextBuilder` в `AIAssistantService`.
 - Feature-тест backfill-команды проверяет sync-индексацию и async-dispatch job в очередь `ai-rag`.
 - Admin unit-тест проверяет, что блок источников видим только при `rag_context.used === true` и наличии sources.
@@ -33,10 +34,10 @@
 Последняя локальная валидация после backend/admin test-коммитов:
 
 ```powershell
-vendor\bin\phpunit tests\Unit\AIAssistant tests\Feature\Api\V1\Admin\AIAssistantRagContextTest.php tests\Feature\Console\AIAssistantRagBackfillCommandTest.php
+vendor\bin\phpunit tests\Unit\AIAssistant tests\Feature\Api\V1\Admin\AIAssistantRagContextTest.php tests\Feature\Api\V1\Mobile\AIAssistantMobileTest.php tests\Feature\Console\AIAssistantRagBackfillCommandTest.php
 ```
 
-Результат: `OK (193 tests, 1003 assertions)`.
+Результат: `OK (196 tests, 1024 assertions)`.
 
 ```powershell
 vendor\bin\phpunit tests\Unit\AIAssistant\AIAssistantSourceEncodingTest.php
@@ -45,10 +46,10 @@ vendor\bin\phpunit tests\Unit\AIAssistant\AIAssistantSourceEncodingTest.php
 Результат: `OK (13 tests, 27 assertions)`.
 
 ```powershell
-vendor\bin\phpstan analyse app/BusinessModules/Features/AIAssistant tests/Unit/AIAssistant tests/Feature/Api/V1/Admin/AIAssistantRagContextTest.php tests/Feature/Console/AIAssistantRagBackfillCommandTest.php --memory-limit=1G
+vendor\bin\phpstan analyse app/BusinessModules/Features/AIAssistant tests/Unit/AIAssistant tests/Feature/Api/V1/Admin/AIAssistantRagContextTest.php tests/Feature/Api/V1/Mobile/AIAssistantMobileTest.php tests/Feature/Console/AIAssistantRagBackfillCommandTest.php --memory-limit=1G
 ```
 
-Результат: `No errors`, `182/182`.
+Результат: `No errors`, `183/183`.
 
 ```powershell
 php -l app\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever.php
@@ -56,6 +57,7 @@ php -l app\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer.php
 php -l app\BusinessModules\Features\AIAssistant\Services\AIAssistantService.php
 php -l app\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator.php
 php -l tests\Feature\Api\V1\Admin\AIAssistantRagContextTest.php
+php -l tests\Feature\Api\V1\Mobile\AIAssistantMobileTest.php
 php -l tests\Feature\Console\AIAssistantRagBackfillCommandTest.php
 ```
 
@@ -75,7 +77,7 @@ cd ..\prohelper
 - RAG отключается конфигом без изменения поведения ассистента: `AIAssistantRagContextTest` проверяет `rag_context.enabled=false`, пустые sources и отсутствие RAG-контекста в prompt.
 - Indexed chunks ограничены организацией и проектом: `RagIndexerTest` и `RagRetrieverTest` покрывают `organization_id`, `project_id`, source metadata и выборку chunks.
 - Retrieval применяет авторизацию до попадания контекста в prompt: `RagRetrieverTest` покрывает фильтрацию доступных проектов, а `AIAssistantRagContextTest` проверяет, что недоступные project chunks не попадают в `sources` и prompt.
-- Metadata ассистента возвращает `rag_context` без поломки клиентов: `AIAssistantRagContextTest`, `aiAssistantService.test.ts` и нормализация admin service проверяют форму ответа.
+- Metadata ассистента возвращает `rag_context` без поломки клиентов: `AIAssistantRagContextTest`, `AIAssistantMobileTest`, `aiAssistantService.test.ts` и нормализация admin service проверяют форму ответа.
 - UI показывает источники только для grounded answers: `ragSources.test.ts` проверяет `rag_context.used === true` и наличие sources; backend feature-flow проверяет `used=false` при отсутствии доступного контекста.
 - Пользовательские backend-сообщения используют `trans_message('ai_assistant.*')`: `OpenAIRagEmbeddingProviderTest` проверяет перевод RAG fallback-сообщения, остальные затронутые AI assistant файлы прошли backend syntax/static checks и код-аудит.
 - Mojibake в затронутых backend/admin файлах не найден: `AIAssistantSourceEncodingTest` и отдельная UTF-8 проверка отчета/плана.

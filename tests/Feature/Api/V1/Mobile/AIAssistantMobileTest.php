@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Mobile;
 
+use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantActionService;
+use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
@@ -18,6 +20,87 @@ use Tests\TestCase;
 final class AIAssistantMobileTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_mobile_chat_preserves_rag_context_metadata(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $this->allowAccess();
+
+        $ragContext = [
+            'enabled' => true,
+            'used' => true,
+            'sources' => [
+                [
+                    'id' => 'project:77:summary',
+                    'title' => 'Project risk memo',
+                    'entity_type' => 'project',
+                    'entity_id' => 77,
+                    'project_id' => 77,
+                    'score' => 0.91,
+                ],
+            ],
+            'limits' => [
+                'max_sources' => 6,
+            ],
+        ];
+
+        $this->mock(UsageTracker::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('canMakeRequest')
+                ->once()
+                ->with(Mockery::type('int'))
+                ->andReturn(true);
+        });
+
+        $this->mock(AIAssistantService::class, function (MockInterface $mock) use ($ragContext): void {
+            $mock->shouldReceive('ask')
+                ->once()
+                ->with(
+                    'Какие есть риски по проекту?',
+                    Mockery::type('int'),
+                    Mockery::type(User::class),
+                    null,
+                    Mockery::on(static function (array $payload): bool {
+                        return ($payload['goal'] ?? null) === null
+                            && ($payload['desired_mode'] ?? null) === null
+                            && ($payload['allow_actions'] ?? null) === false
+                            && ($payload['context'] ?? null) === [];
+                    })
+                )
+                ->andReturn([
+                    'conversation_id' => 123,
+                    'message' => [
+                        'id' => 456,
+                        'role' => 'assistant',
+                        'content' => 'Есть риск задержки поставки.',
+                        'tokens_used' => 42,
+                        'metadata' => [
+                            'rag_context' => $ragContext,
+                        ],
+                        'created_at' => '2026-05-23T19:00:00+00:00',
+                    ],
+                    'tokens_used' => 42,
+                    'usage' => [
+                        'monthly_limit' => 5000,
+                        'used' => 1,
+                        'remaining' => 4999,
+                        'percentage_used' => 0.1,
+                        'tokens_used' => 42,
+                        'cost_rub' => 0.01,
+                    ],
+                ]);
+        });
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/mobile/ai-assistant/chat', [
+                'message' => 'Какие есть риски по проекту?',
+            ]);
+
+        $response->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.message.metadata.rag_context.used', true)
+            ->assertJsonPath('data.message.metadata.rag_context.sources.0.title', 'Project risk memo')
+            ->assertJsonPath('data.message.metadata.rag_context.sources.0.project_id', 77);
+    }
 
     public function test_mobile_ai_action_preview_requires_permission(): void
     {

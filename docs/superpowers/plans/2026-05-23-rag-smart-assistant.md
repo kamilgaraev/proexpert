@@ -903,9 +903,9 @@ php -l app\BusinessModules\Features\AIAssistant\Services\AIAssistantService.php
 - [x] **Step 2: Backend tests**
 
 ```powershell
-vendor\bin\phpunit tests\Unit\AIAssistant tests\Feature\Api\V1\Admin\AIAssistantRagContextTest.php
+vendor\bin\phpunit tests\Unit\AIAssistant tests\Feature\Api\V1\Admin\AIAssistantRagContextTest.php tests\Feature\Api\V1\Mobile\AIAssistantMobileTest.php
 vendor\bin\phpunit tests\Feature\Console\AIAssistantRagBackfillCommandTest.php
-vendor\bin\phpstan analyse app/BusinessModules/Features/AIAssistant tests/Unit/AIAssistant tests/Feature/Api/V1/Admin/AIAssistantRagContextTest.php tests/Feature/Console/AIAssistantRagBackfillCommandTest.php --memory-limit=1G
+vendor\bin\phpstan analyse app/BusinessModules/Features/AIAssistant tests/Unit/AIAssistant tests/Feature/Api/V1/Admin/AIAssistantRagContextTest.php tests/Feature/Api/V1/Mobile/AIAssistantMobileTest.php tests/Feature/Console/AIAssistantRagBackfillCommandTest.php --memory-limit=1G
 ```
 
 - [x] **Step 3: Admin tests**
