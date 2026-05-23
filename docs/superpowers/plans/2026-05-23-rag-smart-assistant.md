@@ -922,6 +922,8 @@ Do not run migrations locally unless explicitly requested. On staging after migr
 - Confirm inaccessible project chunks are not returned.
 - Confirm no source block appears when no context is used.
 
+Staging evidence template and final local report: `docs/reports/ai-assistant-rag-mvp-completion.md`.
+
 - [x] **Step 5: Final commit if verification fixes were needed**
 
 ```powershell
