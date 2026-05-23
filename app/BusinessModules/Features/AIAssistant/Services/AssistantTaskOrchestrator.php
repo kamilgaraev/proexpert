@@ -81,6 +81,7 @@ class AssistantTaskOrchestrator
                 static fn (mixed $artifact): bool => is_array($artifact)
             )),
             'tool_result' => is_array($options['tool_result'] ?? null) ? $options['tool_result'] : null,
+            'rag_context' => is_array($options['rag_context'] ?? null) ? $options['rag_context'] : null,
             'requires_confirmation' => $this->requiresConfirmation($nextActions),
             'access_limits' => array_values(array_unique(array_merge(
                 $plan['access_limits'] ?? [],
