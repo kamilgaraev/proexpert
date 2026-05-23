@@ -18,6 +18,7 @@
 - `AssistantResponseVerifier` защищает ответы от недоказанных claims по проектному контексту и чистит отсутствующие source refs.
 - Админка нормализует `rag_context` и показывает источники только для grounded answers.
 - Backend feature-тест проверяет оба режима: RAG включен с источниками и RAG выключен без попадания контекста в prompt.
+- Container-тест проверяет, что Laravel service container внедряет `RagRetriever` и `RagPromptContextBuilder` в `AIAssistantService`.
 - Admin unit-тест проверяет, что блок источников видим только при `rag_context.used === true` и наличии sources.
 - Encoding-test покрывает ключевые backend/admin файлы RAG-интеграции, включая admin page/helper и feature-тест RAG-контракта.
 
@@ -29,7 +30,7 @@
 vendor\bin\phpunit tests\Unit\AIAssistant tests\Feature\Api\V1\Admin\AIAssistantRagContextTest.php
 ```
 
-Результат: `OK (188 tests, 981 assertions)`.
+Результат: `OK (189 tests, 983 assertions)`.
 
 ```powershell
 vendor\bin\phpunit tests\Unit\AIAssistant\AIAssistantSourceEncodingTest.php
@@ -41,7 +42,7 @@ vendor\bin\phpunit tests\Unit\AIAssistant\AIAssistantSourceEncodingTest.php
 vendor\bin\phpstan analyse app/BusinessModules/Features/AIAssistant tests/Unit/AIAssistant tests/Feature/Api/V1/Admin/AIAssistantRagContextTest.php --memory-limit=1G
 ```
 
-Результат: `No errors`, `180/180`.
+Результат: `No errors`, `181/181`.
 
 ```powershell
 php -l app\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever.php
