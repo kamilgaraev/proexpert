@@ -22,7 +22,7 @@
 - Metadata ответа ассистента включает `rag_context`.
 - `AssistantResponseVerifier` защищает ответы от недоказанных claims по проектному контексту и чистит отсутствующие source refs.
 - Админка нормализует `rag_context` и показывает источники только для grounded answers.
-- Backend feature-тест проверяет оба режима: RAG включен с источниками и RAG выключен без попадания контекста в prompt.
+- Backend feature-тест проверяет RAG в admin chat flow: grounded answer с источниками, RAG выключен конфигом, недоступные project chunks не попадают в sources/prompt, включенный RAG без доступного контекста возвращает `used=false`.
 - Container-тест проверяет, что Laravel service container внедряет `RagRetriever` и `RagPromptContextBuilder` в `AIAssistantService`.
 - Feature-тест backfill-команды проверяет sync-индексацию и async-dispatch job в очередь `ai-rag`.
 - Admin unit-тест проверяет, что блок источников видим только при `rag_context.used === true` и наличии sources.
@@ -36,7 +36,7 @@
 vendor\bin\phpunit tests\Unit\AIAssistant tests\Feature\Api\V1\Admin\AIAssistantRagContextTest.php tests\Feature\Console\AIAssistantRagBackfillCommandTest.php
 ```
 
-Результат: `OK (191 tests, 990 assertions)`.
+Результат: `OK (193 tests, 1003 assertions)`.
 
 ```powershell
 vendor\bin\phpunit tests\Unit\AIAssistant\AIAssistantSourceEncodingTest.php
@@ -74,9 +74,9 @@ cd ..\prohelper
 
 - RAG отключается конфигом без изменения поведения ассистента: `AIAssistantRagContextTest` проверяет `rag_context.enabled=false`, пустые sources и отсутствие RAG-контекста в prompt.
 - Indexed chunks ограничены организацией и проектом: `RagIndexerTest` и `RagRetrieverTest` покрывают `organization_id`, `project_id`, source metadata и выборку chunks.
-- Retrieval применяет авторизацию до попадания контекста в prompt: `RagRetrieverTest` покрывает фильтрацию доступных проектов, а staging checklist требует отдельной проверки на реальных данных.
+- Retrieval применяет авторизацию до попадания контекста в prompt: `RagRetrieverTest` покрывает фильтрацию доступных проектов, а `AIAssistantRagContextTest` проверяет, что недоступные project chunks не попадают в `sources` и prompt.
 - Metadata ассистента возвращает `rag_context` без поломки клиентов: `AIAssistantRagContextTest`, `aiAssistantService.test.ts` и нормализация admin service проверяют форму ответа.
-- UI показывает источники только для grounded answers: `ragSources.test.ts` проверяет `rag_context.used === true` и наличие sources.
+- UI показывает источники только для grounded answers: `ragSources.test.ts` проверяет `rag_context.used === true` и наличие sources; backend feature-flow проверяет `used=false` при отсутствии доступного контекста.
 - Пользовательские backend-сообщения используют `trans_message('ai_assistant.*')`: `OpenAIRagEmbeddingProviderTest` проверяет перевод RAG fallback-сообщения, остальные затронутые AI assistant файлы прошли backend syntax/static checks и код-аудит.
 - Mojibake в затронутых backend/admin файлах не найден: `AIAssistantSourceEncodingTest` и отдельная UTF-8 проверка отчета/плана.
 - Запрещенные операции не выполнялись: локально не запускались миграции, dev servers и `npm run build` для `prohelper_admin`/`prohelper_land`.

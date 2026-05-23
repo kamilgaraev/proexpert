@@ -12,6 +12,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderIn
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
+use App\Enums\UserProjectAccessMode;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
@@ -135,7 +136,135 @@ final class AIAssistantRagContextTest extends TestCase
         self::assertStringNotContainsString('Delayed materials block facade works.', $prompt);
     }
 
-    private function indexRagChunk(int $organizationId, int $projectId): void
+    public function test_admin_chat_excludes_inaccessible_project_chunks_from_sources_and_prompt(): void
+    {
+        config()->set('ai-assistant.rag.enabled', true);
+        config()->set('ai-assistant.rag.max_chunks', 8);
+        config()->set('ai-assistant.rag.min_similarity', 0.1);
+
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->setProjectAccessMode($context, UserProjectAccessMode::ASSIGNED_PROJECTS);
+
+        $allowedProject = Project::factory()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Allowed project',
+            'is_archived' => false,
+        ]);
+        $blockedProject = Project::factory()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Blocked project',
+            'is_archived' => false,
+        ]);
+
+        $context->user->assignedProjects()->attach($allowedProject->id, [
+            'role' => 'member',
+            'is_active' => true,
+            'assigned_at' => now(),
+        ]);
+
+        $this->indexRagChunk(
+            $context->organization->id,
+            $allowedProject->id,
+            'Allowed project memo',
+            'Allowed project crane delay is confirmed.'
+        );
+        $this->indexRagChunk(
+            $context->organization->id,
+            $blockedProject->id,
+            'Blocked project memo',
+            'Blocked project hidden budget issue must not leak.'
+        );
+
+        $llmProvider = new FeatureRagLlmProvider('Allowed project has a crane delay. [1]');
+        $this->app->instance(LLMProviderInterface::class, $llmProvider);
+        $this->app->instance(RagEmbeddingProviderInterface::class, new FeatureRagEmbeddingProvider);
+        $this->mockAssistantDependencies();
+
+        $response = $this
+            ->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/ai-assistant/chat', [
+                'message' => 'Which project risk needs attention?',
+                'context' => [
+                    'source_module' => 'projects',
+                ],
+            ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('data.message.metadata.rag_context.used', true);
+        $response->assertJsonPath('data.message.metadata.rag_context.sources.0.title', 'Allowed project memo');
+
+        $metadata = (string) json_encode(
+            $response->json('data.message.metadata.rag_context'),
+            JSON_UNESCAPED_UNICODE
+        );
+        $prompt = $this->promptFromProvider($llmProvider);
+
+        self::assertStringContainsString('Allowed project crane delay is confirmed.', $prompt);
+        self::assertStringNotContainsString('Blocked project memo', $metadata);
+        self::assertStringNotContainsString('Blocked project hidden budget issue must not leak.', $prompt);
+    }
+
+    public function test_admin_chat_keeps_rag_unused_when_enabled_but_no_accessible_context_exists(): void
+    {
+        config()->set('ai-assistant.rag.enabled', true);
+        config()->set('ai-assistant.rag.max_chunks', 8);
+        config()->set('ai-assistant.rag.min_similarity', 0.1);
+
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->setProjectAccessMode($context, UserProjectAccessMode::ASSIGNED_PROJECTS);
+
+        $blockedProject = Project::factory()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Blocked project',
+            'is_archived' => false,
+        ]);
+
+        $this->indexRagChunk(
+            $context->organization->id,
+            $blockedProject->id,
+            'Blocked project memo',
+            'Blocked project hidden schedule issue must not leak.'
+        );
+
+        $llmProvider = new FeatureRagLlmProvider('General project answer without RAG sources.');
+        $this->app->instance(LLMProviderInterface::class, $llmProvider);
+        $this->app->instance(RagEmbeddingProviderInterface::class, new FeatureRagEmbeddingProvider);
+        $this->mockAssistantDependencies();
+
+        $response = $this
+            ->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/ai-assistant/chat', [
+                'message' => 'What blocks the inaccessible project?',
+                'context' => [
+                    'source_module' => 'projects',
+                    'entity_refs' => [
+                        [
+                            'type' => 'project',
+                            'id' => $blockedProject->id,
+                            'label' => 'Blocked project',
+                        ],
+                    ],
+                ],
+            ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('data.message.content', 'General project answer without RAG sources.');
+        $response->assertJsonPath('data.message.metadata.rag_context.enabled', true);
+        $response->assertJsonPath('data.message.metadata.rag_context.used', false);
+        $response->assertJsonPath('data.message.metadata.rag_context.sources', []);
+
+        $prompt = $this->promptFromProvider($llmProvider);
+
+        self::assertStringNotContainsString('ProHelper context:', $prompt);
+        self::assertStringNotContainsString('Blocked project hidden schedule issue must not leak.', $prompt);
+    }
+
+    private function indexRagChunk(
+        int $organizationId,
+        int $projectId,
+        string $title = 'Letter A risk memo',
+        string $content = 'Delayed materials block facade works.'
+    ): void
     {
         $indexer = new RagIndexer(
             new FeatureRagEmbeddingProvider,
@@ -148,11 +277,28 @@ final class AIAssistantRagContextTest extends TestCase
             sourceType: 'project',
             entityType: 'project',
             entityId: $projectId,
-            title: 'Letter A risk memo',
-            content: 'Delayed materials block facade works.',
+            title: $title,
+            content: $content,
             metadata: ['source' => 'feature-test'],
             updatedAt: now()
         ));
+    }
+
+    private function setProjectAccessMode(AdminApiTestContext $context, UserProjectAccessMode $mode): void
+    {
+        $context->organization->users()->updateExistingPivot($context->user->id, [
+            'is_owner' => false,
+            'is_active' => true,
+            'project_access_mode' => $mode->value,
+        ]);
+    }
+
+    private function promptFromProvider(FeatureRagLlmProvider $llmProvider): string
+    {
+        return collect($llmProvider->lastMessages)
+            ->pluck('content')
+            ->filter(static fn (mixed $content): bool => is_string($content))
+            ->implode("\n");
     }
 
     private function mockAssistantDependencies(): void
