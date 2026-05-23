@@ -10,6 +10,8 @@
 - Admin commit/version: `git log -1 --oneline`
 - Environment: `staging`
 
+Не использовать production deploy workflow как замену этой проверке. Для backend найден `.github/workflows/deploy-backend.yml`, для admin найден `../prohelper_admin/.github/workflows/deploy.yml`; оба workflow ориентированы на production.
+
 ## Конфигурация
 
 Подтверждено без раскрытия секретов:

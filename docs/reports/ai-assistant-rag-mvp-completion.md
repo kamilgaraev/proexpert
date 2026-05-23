@@ -85,6 +85,13 @@ cd ..\prohelper
 
 Выполнять только на staging после деплоя соответствующих backend/admin коммитов и после явного разрешения на миграции/backfill.
 
+Важно: в текущем репозитории не найден отдельный staging deploy workflow. Найденные workflow являются production-oriented:
+
+- Backend: `.github/workflows/deploy-backend.yml`, `Deploy Backend to Production`, `prod-backend-deploy`, host `89.169.44.117`.
+- Admin: `../prohelper_admin/.github/workflows/deploy.yml`, production build с `VITE_API_URL=https://api.prohelper.pro`.
+
+Эти workflow не являются доказательством staging-проверки и не должны использоваться для закрытия manual staging checklist без отдельного deployment-процесса.
+
 1. Убедиться, что staging содержит backend runtime-коммиты до `700909ca` включительно, актуальную backend-голову локальной ветки `main` и admin-коммиты до `68d01983` включительно.
 2. Применить миграции staging штатным deployment-процессом.
 3. Включить RAG:
