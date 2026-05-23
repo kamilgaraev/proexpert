@@ -44,6 +44,10 @@ class AIAssistantSourceEncodingTest extends TestCase
             'assistant config' => ['app/BusinessModules/Features/AIAssistant/config/ai-assistant.php'],
             'agent executor' => ['app/BusinessModules/Features/AIAssistant/Services/Agent/AssistantAgentExecutor.php'],
             'response verifier' => ['app/BusinessModules/Features/AIAssistant/Services/Agent/AssistantResponseVerifier.php'],
+            'rag admin feature test' => ['tests/Feature/Api/V1/Admin/AIAssistantRagContextTest.php'],
+            'admin assistant page' => ['../prohelper_admin/src/pages/AIAssistant/AIAssistantChatPage.tsx'],
+            'admin rag source helper' => ['../prohelper_admin/src/pages/AIAssistant/ragSources.ts'],
+            'admin rag source helper test' => ['../prohelper_admin/src/pages/AIAssistant/ragSources.test.ts'],
             'admin assistant service' => ['../prohelper_admin/src/services/aiAssistantService.ts'],
             'admin assistant types' => ['../prohelper_admin/src/types/aiAssistant.ts'],
         ];

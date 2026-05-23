@@ -19,6 +19,7 @@
 - Админка нормализует `rag_context` и показывает источники только для grounded answers.
 - Backend feature-тест проверяет оба режима: RAG включен с источниками и RAG выключен без попадания контекста в prompt.
 - Admin unit-тест проверяет, что блок источников видим только при `rag_context.used === true` и наличии sources.
+- Encoding-test покрывает ключевые backend/admin файлы RAG-интеграции, включая admin page/helper и feature-тест RAG-контракта.
 
 ## Автоматическая валидация
 
@@ -28,7 +29,13 @@
 vendor\bin\phpunit tests\Unit\AIAssistant tests\Feature\Api\V1\Admin\AIAssistantRagContextTest.php
 ```
 
-Результат: `OK (184 tests, 973 assertions)`.
+Результат: `OK (188 tests, 981 assertions)`.
+
+```powershell
+vendor\bin\phpunit tests\Unit\AIAssistant\AIAssistantSourceEncodingTest.php
+```
+
+Результат: `OK (13 tests, 27 assertions)`.
 
 ```powershell
 vendor\bin\phpstan analyse app/BusinessModules/Features/AIAssistant tests/Unit/AIAssistant tests/Feature/Api/V1/Admin/AIAssistantRagContextTest.php --memory-limit=1G
