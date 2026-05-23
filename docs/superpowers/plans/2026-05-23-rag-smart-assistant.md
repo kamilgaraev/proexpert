@@ -539,6 +539,7 @@ git commit -m "feat[backend]: добавлены источники RAG для �
 - Modify: `app/BusinessModules/Features/AIAssistant/AIAssistantServiceProvider.php`
 - Test: `tests/Unit/AIAssistant/Rag/RagIndexerTest.php`
 - Test: `tests/Unit/AIAssistant/Rag/IndexRagSourceJobTest.php`
+- Test: `tests/Feature/Console/AIAssistantRagBackfillCommandTest.php`
 
 - [x] **Step 1: Write indexer tests**
 
@@ -598,6 +599,7 @@ Behavior:
 
 ```powershell
 vendor\bin\phpunit tests\Unit\AIAssistant\Rag\RagIndexerTest.php tests\Unit\AIAssistant\Rag\IndexRagSourceJobTest.php
+vendor\bin\phpunit tests\Feature\Console\AIAssistantRagBackfillCommandTest.php
 php -l app\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer.php
 php -l app\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob.php
 php -l app\BusinessModules\Features\AIAssistant\Console\Commands\BackfillRagIndexCommand.php
@@ -902,7 +904,8 @@ php -l app\BusinessModules\Features\AIAssistant\Services\AIAssistantService.php
 
 ```powershell
 vendor\bin\phpunit tests\Unit\AIAssistant tests\Feature\Api\V1\Admin\AIAssistantRagContextTest.php
-vendor\bin\phpstan analyse app/BusinessModules/Features/AIAssistant tests/Unit/AIAssistant tests/Feature/Api/V1/Admin/AIAssistantRagContextTest.php --memory-limit=1G
+vendor\bin\phpunit tests\Feature\Console\AIAssistantRagBackfillCommandTest.php
+vendor\bin\phpstan analyse app/BusinessModules/Features/AIAssistant tests/Unit/AIAssistant tests/Feature/Api/V1/Admin/AIAssistantRagContextTest.php tests/Feature/Console/AIAssistantRagBackfillCommandTest.php --memory-limit=1G
 ```
 
 - [x] **Step 3: Admin tests**
