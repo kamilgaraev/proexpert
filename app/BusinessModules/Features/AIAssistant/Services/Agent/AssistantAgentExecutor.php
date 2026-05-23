@@ -29,14 +29,14 @@ final class AssistantAgentExecutor
         if ($tool === null) {
             return $this->errorResult($toolName, $arguments, [
                 'status' => 'error',
-                'message' => 'Инструмент недоступен для выполнения.',
+                'message' => $this->assistantMessage('ai_assistant.tool_unavailable', 'Инструмент недоступен для выполнения.'),
             ]);
         }
 
         if ($user === null || ! $this->permissionChecker->canExecuteTool($user, $toolName, $arguments)) {
             return $this->errorResult($toolName, $arguments, [
                 'status' => 'error',
-                'message' => 'Недостаточно прав для выполнения инструмента.',
+                'message' => $this->assistantMessage('ai_assistant.tool_access_denied_generic', 'Недостаточно прав для выполнения инструмента.'),
             ]);
         }
 
@@ -47,7 +47,7 @@ final class AssistantAgentExecutor
 
             return $this->errorResult($toolName, $arguments, [
                 'status' => 'error',
-                'message' => 'Не удалось выполнить инструмент.',
+                'message' => $this->assistantMessage('ai_assistant.tool_execute_failed', 'Не удалось выполнить инструмент.'),
             ]);
         }
 
@@ -132,8 +132,17 @@ final class AssistantAgentExecutor
 
         return [
             'status' => $status,
-            'message' => 'Не удалось выполнить инструмент.',
+            'message' => $this->assistantMessage('ai_assistant.tool_execute_failed', 'Не удалось выполнить инструмент.'),
         ];
+    }
+
+    private function assistantMessage(string $key, string $fallback): string
+    {
+        try {
+            return trans_message($key);
+        } catch (Throwable) {
+            return $fallback;
+        }
     }
 
     private function buildEvidence(array $artifacts): array

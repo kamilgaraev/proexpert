@@ -6,18 +6,28 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Agent;
 
 final class AssistantResponseVerifier
 {
-    private const REPORT_FAILURE_MESSAGE = 'Не удалось сформировать файл отчета по текущему запросу.';
-
     public function verify(string $answer, array $agentResult): string
     {
         $trustedUrls = $this->trustedArtifactUrls($agentResult);
         $verifiedAnswer = $this->stripUntrustedLinks($answer, $trustedUrls);
 
         if ($this->isReportTask($agentResult) && $this->claimsReportCompletion($verifiedAnswer) && $trustedUrls === []) {
-            return self::REPORT_FAILURE_MESSAGE;
+            return $this->assistantMessage(
+                'ai_assistant.report_download_missing_short',
+                'Не удалось сформировать файл отчета по текущему запросу.'
+            );
         }
 
         return $verifiedAnswer;
+    }
+
+    private function assistantMessage(string $key, string $fallback): string
+    {
+        try {
+            return trans_message($key);
+        } catch (\Throwable) {
+            return $fallback;
+        }
     }
 
     private function stripUntrustedLinks(string $answer, array $trustedUrls): string

@@ -41,6 +41,11 @@ class AIAssistantSourceEncodingTest extends TestCase
             'controller fallbacks' => ['app/BusinessModules/Features/AIAssistant/Http/Controllers/AIAssistantController.php'],
             'orchestrator routing and payload strings' => ['app/BusinessModules/Features/AIAssistant/Services/AssistantTaskOrchestrator.php'],
             'assistant service fallbacks and policy' => ['app/BusinessModules/Features/AIAssistant/Services/AIAssistantService.php'],
+            'assistant config' => ['app/BusinessModules/Features/AIAssistant/config/ai-assistant.php'],
+            'agent executor' => ['app/BusinessModules/Features/AIAssistant/Services/Agent/AssistantAgentExecutor.php'],
+            'response verifier' => ['app/BusinessModules/Features/AIAssistant/Services/Agent/AssistantResponseVerifier.php'],
+            'admin assistant service' => ['../prohelper_admin/src/services/aiAssistantService.ts'],
+            'admin assistant types' => ['../prohelper_admin/src/types/aiAssistant.ts'],
         ];
     }
 }
