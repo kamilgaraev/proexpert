@@ -46,6 +46,8 @@ use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\Proje
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseSiteRequestFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseWarehouseFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseWorkFactSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\OpenAIRagEmbeddingProvider;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
 use Illuminate\Support\ServiceProvider;
 
 class AIAssistantServiceProvider extends ServiceProvider
@@ -62,6 +64,14 @@ class AIAssistantServiceProvider extends ServiceProvider
         $this->app->singleton(AssistantAgentPlanner::class);
         $this->app->singleton(AssistantAgentExecutor::class);
         $this->app->singleton(AssistantResponseVerifier::class);
+        $this->app->singleton(RagEmbeddingProviderInterface::class, function ($app): RagEmbeddingProviderInterface {
+            $provider = config('ai-assistant.rag.embedding_provider', 'openai');
+
+            return match ($provider) {
+                'openai' => $app->make(OpenAIRagEmbeddingProvider::class),
+                default => $app->make(OpenAIRagEmbeddingProvider::class),
+            };
+        });
 
         $this->app->singleton(LLMProviderInterface::class, function ($app) {
             $provider = config('ai-assistant.llm.provider', 'yandex');
