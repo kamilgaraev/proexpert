@@ -774,7 +774,9 @@ git commit -m "feat[backend]: подключен RAG-контекст к AI-ас
 - Modify: `../prohelper_admin/src/types/aiAssistant.ts`
 - Modify: `../prohelper_admin/src/services/aiAssistantService.ts`
 - Modify: `../prohelper_admin/src/pages/AIAssistant/AIAssistantChatPage.tsx`
+- Create: `../prohelper_admin/src/pages/AIAssistant/ragSources.ts`
 - Test: `../prohelper_admin/src/services/aiAssistantService.test.ts`
+- Test: `../prohelper_admin/src/pages/AIAssistant/ragSources.test.ts`
 
 - [x] **Step 1: Extend TypeScript types**
 
@@ -817,6 +819,7 @@ In `normalizeMetadata`, map `rag_context.sources` to safe arrays and keep unknow
 - [x] **Step 4: Render compact source block**
 
 In chat page, show source list below assistant answer only when `metadata.rag_context.used === true` and sources exist.
+The visibility rule is covered by `src/pages/AIAssistant/ragSources.test.ts`.
 
 UI text:
 
@@ -830,13 +833,13 @@ Do not run `npm run build`.
 
 ```powershell
 npx tsc --noEmit
-npx vitest run src/services/aiAssistantService.test.ts
+npx vitest run src/pages/AIAssistant/ragSources.test.ts src/services/aiAssistantService.test.ts
 ```
 
 - [x] **Step 6: Commit**
 
 ```powershell
-git -C ..\prohelper_admin add src/types/aiAssistant.ts src/services/aiAssistantService.ts src/pages/AIAssistant/AIAssistantChatPage.tsx src/services/aiAssistantService.test.ts
+git -C ..\prohelper_admin add src/types/aiAssistant.ts src/services/aiAssistantService.ts src/pages/AIAssistant/AIAssistantChatPage.tsx src/pages/AIAssistant/ragSources.ts src/pages/AIAssistant/ragSources.test.ts src/services/aiAssistantService.test.ts
 git -C ..\prohelper_admin commit -m "feat[lk]: показаны источники RAG в AI-ассистенте"
 ```
 
