@@ -16,7 +16,6 @@ use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use App\Services\Logging\LoggingService;
-use Illuminate\Support\Facades\DB;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -78,6 +77,62 @@ final class AIAssistantRagContextTest extends TestCase
         self::assertStringContainsString('ProHelper context:', $prompt);
         self::assertStringContainsString('Delayed materials block facade works.', $prompt);
         self::assertStringContainsString('[1] Letter A risk memo', $prompt);
+    }
+
+    public function test_admin_chat_keeps_rag_unused_when_disabled_by_config(): void
+    {
+        config()->set('ai-assistant.rag.enabled', false);
+        config()->set('ai-assistant.rag.max_chunks', 8);
+        config()->set('ai-assistant.rag.min_similarity', 0.1);
+
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $project = Project::factory()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Letter A',
+            'is_archived' => false,
+        ]);
+        $context->user->assignedProjects()->attach($project->id, [
+            'role' => 'member',
+            'is_active' => true,
+            'assigned_at' => now(),
+        ]);
+
+        $this->indexRagChunk($context->organization->id, $project->id);
+
+        $llmProvider = new FeatureRagLlmProvider('General project answer without RAG sources.');
+        $this->app->instance(LLMProviderInterface::class, $llmProvider);
+        $this->app->instance(RagEmbeddingProviderInterface::class, new FeatureRagEmbeddingProvider);
+        $this->mockAssistantDependencies();
+
+        $response = $this
+            ->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/ai-assistant/chat', [
+                'message' => 'What blocks project Letter A?',
+                'context' => [
+                    'source_module' => 'projects',
+                    'entity_refs' => [
+                        [
+                            'type' => 'project',
+                            'id' => $project->id,
+                            'label' => 'Letter A',
+                        ],
+                    ],
+                ],
+            ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('data.message.content', 'General project answer without RAG sources.');
+        $response->assertJsonPath('data.message.metadata.rag_context.enabled', false);
+        $response->assertJsonPath('data.message.metadata.rag_context.used', false);
+        $response->assertJsonPath('data.message.metadata.rag_context.sources', []);
+
+        $prompt = collect($llmProvider->lastMessages)
+            ->pluck('content')
+            ->filter(static fn (mixed $content): bool => is_string($content))
+            ->implode("\n");
+
+        self::assertStringNotContainsString('ProHelper context:', $prompt);
+        self::assertStringNotContainsString('Delayed materials block facade works.', $prompt);
     }
 
     private function indexRagChunk(int $organizationId, int $projectId): void
@@ -147,13 +202,18 @@ final class FeatureRagLlmProvider implements LLMProviderInterface
      */
     public array $lastMessages = [];
 
+    public function __construct(
+        private readonly string $answer = 'Project Letter A is blocked by delayed materials. [1]'
+    ) {
+    }
+
     public function chat(array $messages, array $options = []): array
     {
         $this->lastMessages = $messages;
 
         return [
             'role' => 'assistant',
-            'content' => 'Project Letter A is blocked by delayed materials. [1]',
+            'content' => $this->answer,
             'tokens_used' => 42,
             'model' => 'feature-rag-llm',
         ];
