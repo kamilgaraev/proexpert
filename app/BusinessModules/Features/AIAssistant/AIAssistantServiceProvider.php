@@ -48,6 +48,10 @@ use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\Proje
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseWorkFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\OpenAIRagEmbeddingProvider;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ContractRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ProjectRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ScheduleRagSource;
 use Illuminate\Support\ServiceProvider;
 
 class AIAssistantServiceProvider extends ServiceProvider
@@ -71,6 +75,13 @@ class AIAssistantServiceProvider extends ServiceProvider
                 'openai' => $app->make(OpenAIRagEmbeddingProvider::class),
                 default => $app->make(OpenAIRagEmbeddingProvider::class),
             };
+        });
+        $this->app->singleton(RagSourceRegistry::class, function ($app): RagSourceRegistry {
+            return new RagSourceRegistry([
+                $app->make(ProjectRagSource::class),
+                $app->make(ScheduleRagSource::class),
+                $app->make(ContractRagSource::class),
+            ]);
         });
 
         $this->app->singleton(LLMProviderInterface::class, function ($app) {
