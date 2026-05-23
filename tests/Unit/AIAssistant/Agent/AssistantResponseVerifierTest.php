@@ -88,4 +88,34 @@ final class AssistantResponseVerifierTest extends TestCase
 
         $this->assertSame("Файл: поддельный {$trustedUrl}", $answer);
     }
+
+    public function test_replaces_project_context_claim_when_rag_was_not_used(): void
+    {
+        $verifier = new AssistantResponseVerifier;
+
+        $answer = $verifier->verify('Я использовал проектный контекст и вижу риск по графику.', [
+            'rag_context' => [
+                'used' => false,
+                'sources' => [],
+            ],
+        ]);
+
+        $this->assertSame('Не нашел достаточно надежного контекста по этому вопросу.', $answer);
+    }
+
+    public function test_strips_rag_source_numbers_that_are_not_present_in_metadata(): void
+    {
+        $verifier = new AssistantResponseVerifier;
+
+        $answer = $verifier->verify('Риск подтвержден источником [1], а ссылка [3] не должна остаться.', [
+            'rag_context' => [
+                'used' => true,
+                'sources' => [
+                    ['title' => 'График'],
+                ],
+            ],
+        ]);
+
+        $this->assertSame('Риск подтвержден источником [1], а ссылка не должна остаться.', $answer);
+    }
 }

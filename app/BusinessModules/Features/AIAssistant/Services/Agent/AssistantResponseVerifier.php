@@ -10,6 +10,7 @@ final class AssistantResponseVerifier
     {
         $trustedUrls = $this->trustedArtifactUrls($agentResult);
         $verifiedAnswer = $this->stripUntrustedLinks($answer, $trustedUrls);
+        $verifiedAnswer = $this->guardRagSourceClaims($verifiedAnswer, $agentResult);
 
         if ($this->isReportTask($agentResult) && $this->claimsReportCompletion($verifiedAnswer) && $trustedUrls === []) {
             return $this->assistantMessage(
@@ -19,6 +20,47 @@ final class AssistantResponseVerifier
         }
 
         return $verifiedAnswer;
+    }
+
+    private function guardRagSourceClaims(string $answer, array $agentResult): string
+    {
+        $ragContext = $agentResult['rag_context'] ?? null;
+        $sources = is_array($ragContext) && is_array($ragContext['sources'] ?? null)
+            ? array_values($ragContext['sources'])
+            : [];
+        $used = is_array($ragContext) && ($ragContext['used'] ?? false) === true && $sources !== [];
+
+        if (! $used && $this->claimsProjectContextUsage($answer)) {
+            return $this->assistantMessage(
+                'ai_assistant.rag_no_relevant_context',
+                'Не нашел достаточно надежного контекста по этому вопросу.'
+            );
+        }
+
+        return $this->stripMissingSourceReferences($answer, count($sources));
+    }
+
+    private function claimsProjectContextUsage(string $answer): bool
+    {
+        $normalized = mb_strtolower($answer);
+
+        return preg_match(
+            '/(использовал\w*|опира[а-я]*|согласно|по данным|на основе).{0,48}(проектн[а-я]* контекст[а-я]*|rag|источник[а-я]*|данн[а-я]* проекта)/u',
+            $normalized
+        ) === 1;
+    }
+
+    private function stripMissingSourceReferences(string $answer, int $sourceCount): string
+    {
+        $result = preg_replace_callback(
+            '/\s*\[(\d+)\]/u',
+            static fn (array $matches): string => (int) $matches[1] >= 1 && (int) $matches[1] <= $sourceCount
+                ? $matches[0]
+                : '',
+            $answer
+        );
+
+        return is_string($result) ? trim(preg_replace('/[ \t]{2,}/u', ' ', $result) ?? $result) : $answer;
     }
 
     private function assistantMessage(string $key, string $fallback): string

@@ -11,6 +11,8 @@ use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentPlanne
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentStateStore;
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantResponseVerifier;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagPromptContextBuilder;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Logging\LoggingService;
@@ -80,6 +82,10 @@ class AIAssistantService
 
     protected AssistantResponseVerifier $responseVerifier;
 
+    protected ?RagRetriever $ragRetriever;
+
+    protected RagPromptContextBuilder $ragPromptContextBuilder;
+
     public function __construct(
         LLMProviderInterface $llmProvider,
         ConversationManager $conversationManager,
@@ -94,7 +100,9 @@ class AIAssistantService
         AssistantAgentStateStore $agentStateStore,
         AssistantAgentPlanner $agentPlanner,
         AssistantAgentExecutor $agentExecutor,
-        AssistantResponseVerifier $responseVerifier
+        AssistantResponseVerifier $responseVerifier,
+        ?RagRetriever $ragRetriever = null,
+        ?RagPromptContextBuilder $ragPromptContextBuilder = null
     ) {
         $this->llmProvider = $llmProvider;
         $this->conversationManager = $conversationManager;
@@ -110,6 +118,8 @@ class AIAssistantService
         $this->agentPlanner = $agentPlanner;
         $this->agentExecutor = $agentExecutor;
         $this->responseVerifier = $responseVerifier;
+        $this->ragRetriever = $ragRetriever;
+        $this->ragPromptContextBuilder = $ragPromptContextBuilder ?? new RagPromptContextBuilder;
     }
 
     public function ask(
@@ -195,7 +205,14 @@ class AIAssistantService
             return $agentResult;
         }
 
-        $messages = $this->buildMessages($conversation, $legacyContext, $taskPlan);
+        $ragContext = $this->buildRagContext($query, $organizationId, $user, $taskPlan, $requestPayload);
+        $ragMetadata = is_array($ragContext['metadata'] ?? null) ? $ragContext['metadata'] : [];
+        $messages = $this->buildMessages(
+            $conversation,
+            $legacyContext,
+            $taskPlan,
+            is_string($ragContext['prompt'] ?? null) ? $ragContext['prompt'] : ''
+        );
 
         try {
             $options = [];
@@ -281,6 +298,9 @@ class AIAssistantService
             }
             $assistantContent = $this->stripUntrustedMarkdownLinks($assistantContent, $trustedDownloadUrls);
             $assistantContent = $this->guardUnconfirmedReportCompletion($assistantContent, $taskPlan, $trustedDownloadUrls);
+            $assistantContent = $this->responseVerifier->verify($assistantContent, [
+                'rag_context' => $ragMetadata,
+            ]);
 
             $assistantPayload = $this->taskOrchestrator->buildPayload($taskPlan, $assistantContent, [
                 'degraded_mode' => $degradedMode,
@@ -289,6 +309,7 @@ class AIAssistantService
                 'proposed_actions' => $proposedActions,
                 'missing_data' => $toolFailures,
                 'executed_action' => $executedAction,
+                'rag_context' => $ragMetadata,
             ]);
 
             $assistantMessage = $this->conversationManager->addMessage(
@@ -1088,13 +1109,90 @@ class AIAssistantService
         return $message;
     }
 
-    protected function buildMessages(Conversation $conversation, array $context, array $taskPlan): array
+    protected function buildRagContext(
+        string $query,
+        int $organizationId,
+        User $user,
+        array $taskPlan,
+        array $requestPayload
+    ): array {
+        try {
+            $results = $this->ragRetriever instanceof RagRetriever
+                ? $this->ragRetriever->search(
+                    $query,
+                    $organizationId,
+                    $user,
+                    $this->buildRagRequestContext($taskPlan, $requestPayload)
+                )
+                : [];
+
+            return $this->ragPromptContextBuilder->build($query, $results);
+        } catch (Throwable $exception) {
+            $this->logging->technical('ai.rag.context_failed', [
+                'organization_id' => $organizationId,
+                'user_id' => $user->id,
+                'exception_class' => $exception::class,
+            ], 'warning');
+
+            return $this->ragPromptContextBuilder->build($query, []);
+        }
+    }
+
+    private function buildRagRequestContext(array $taskPlan, array $requestPayload): array
+    {
+        $request = is_array($taskPlan['request'] ?? null) ? $taskPlan['request'] : [];
+        $planContext = is_array($request['context'] ?? null) ? $request['context'] : [];
+        $payloadContext = is_array($requestPayload['context'] ?? null) ? $requestPayload['context'] : [];
+        $context = array_merge($payloadContext, $planContext);
+        $projectId = $this->resolveRagProjectId($planContext)
+            ?? $this->resolveRagProjectId($payloadContext)
+            ?? $this->resolveRagProjectId($context);
+
+        if ($projectId !== null) {
+            $context['project_id'] = $projectId;
+        }
+
+        return $context;
+    }
+
+    private function resolveRagProjectId(array $context): ?int
+    {
+        $projectId = $context['project_id'] ?? null;
+        if (is_numeric($projectId)) {
+            return (int) $projectId;
+        }
+
+        $filters = is_array($context['filters'] ?? null) ? $context['filters'] : [];
+        $filterProjectId = $filters['project_id'] ?? null;
+        if (is_numeric($filterProjectId)) {
+            return (int) $filterProjectId;
+        }
+
+        foreach (($context['entity_refs'] ?? []) as $entityRef) {
+            if (! is_array($entityRef) || ($entityRef['type'] ?? null) !== 'project') {
+                continue;
+            }
+
+            $entityId = $entityRef['id'] ?? null;
+            if (is_numeric($entityId)) {
+                return (int) $entityId;
+            }
+        }
+
+        return null;
+    }
+
+    protected function buildMessages(Conversation $conversation, array $context, array $taskPlan, string $ragPrompt = ''): array
     {
         $messages = [];
         $systemSections = [$this->contextBuilder->buildSystemPrompt()];
 
         if (! empty($context)) {
             $systemSections[] = $this->formatContextForLLM($context);
+        }
+
+        if (trim($ragPrompt) !== '') {
+            $systemSections[] = $ragPrompt;
         }
 
         $systemSections[] = $this->formatStructuredContextForLLM($taskPlan);

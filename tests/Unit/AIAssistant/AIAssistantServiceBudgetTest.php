@@ -426,6 +426,41 @@ class AIAssistantServiceBudgetTest extends TestCase
         $this->assertStringNotContainsString("\u{0420}\u{045F}", $context);
     }
 
+    public function test_rag_context_is_safely_unused_without_retriever(): void
+    {
+        $service = $this->makeService(new AIToolRegistry);
+        $user = new User;
+        $user->id = 7;
+        $user->current_organization_id = 15;
+
+        $context = $service->exposeBuildRagContext(
+            'Что тормозит проект?',
+            15,
+            $user,
+            [
+                'request' => [
+                    'context' => [
+                        'entity_refs' => [
+                            [
+                                'type' => 'project',
+                                'id' => 56,
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+            [
+                'context' => [
+                    'source_module' => 'projects',
+                ],
+            ]
+        );
+
+        $this->assertSame('', $context['prompt']);
+        $this->assertFalse($context['metadata']['used']);
+        $this->assertSame([], $context['metadata']['sources']);
+    }
+
     private function makeService(AIToolRegistry $toolRegistry): TestableAIAssistantService
     {
         $llmProvider = $this->createMock(LLMProviderInterface::class);
@@ -535,5 +570,15 @@ class TestableAIAssistantService extends AIAssistantService
         array $trustedUrls = []
     ): string {
         return $this->guardUnconfirmedReportCompletion($content, $taskPlan, $trustedUrls);
+    }
+
+    public function exposeBuildRagContext(
+        string $query,
+        int $organizationId,
+        User $user,
+        array $taskPlan,
+        array $requestPayload
+    ): array {
+        return $this->buildRagContext($query, $organizationId, $user, $taskPlan, $requestPayload);
     }
 }
