@@ -6,8 +6,8 @@
 
 ## Версии
 
-- Backend commit/version: `commit`
-- Admin commit/version: `commit`
+- Backend commit/version: `git log -1 --oneline`
+- Admin commit/version: `git log -1 --oneline`
 - Environment: `staging`
 
 ## Конфигурация

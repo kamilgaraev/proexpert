@@ -6,8 +6,9 @@ namespace Tests\Unit\AIAssistant\Rag;
 
 use App\BusinessModules\Features\AIAssistant\Services\Rag\OpenAIRagEmbeddingProvider;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
-use PHPUnit\Framework\TestCase;
+use Illuminate\Support\Facades\Lang;
 use RuntimeException;
+use Tests\TestCase;
 
 class OpenAIRagEmbeddingProviderTest extends TestCase
 {
@@ -43,6 +44,10 @@ class OpenAIRagEmbeddingProviderTest extends TestCase
 
     public function test_openai_provider_rejects_unavailable_client(): void
     {
+        Lang::addLines([
+            'ai_assistant.rag_embedding_unavailable' => 'Переведенное сообщение о недоступности подготовки контекста.',
+        ], 'ru');
+
         $provider = new OpenAIRagEmbeddingProvider(
             client: null,
             apiKey: null,
@@ -51,6 +56,8 @@ class OpenAIRagEmbeddingProviderTest extends TestCase
         );
 
         $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Переведенное сообщение о недоступности подготовки контекста.');
+
         $provider->embed('Контекст проекта');
     }
 }
