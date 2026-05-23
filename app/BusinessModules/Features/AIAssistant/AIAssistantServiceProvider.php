@@ -54,8 +54,13 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\RagPromptContextBuilde
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ContractRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ProcurementRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ProjectRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ProjectPulseRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ScheduleRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\SiteRequestRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\WarehouseRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\WorkCompletionRagSource;
 use Illuminate\Support\ServiceProvider;
 
 class AIAssistantServiceProvider extends ServiceProvider
@@ -85,6 +90,11 @@ class AIAssistantServiceProvider extends ServiceProvider
                 $app->make(ProjectRagSource::class),
                 $app->make(ScheduleRagSource::class),
                 $app->make(ContractRagSource::class),
+                $app->make(ProcurementRagSource::class),
+                $app->make(WarehouseRagSource::class),
+                $app->make(SiteRequestRagSource::class),
+                $app->make(WorkCompletionRagSource::class),
+                $app->make(ProjectPulseRagSource::class),
             ]);
         });
         $this->app->singleton(RagIndexer::class);
