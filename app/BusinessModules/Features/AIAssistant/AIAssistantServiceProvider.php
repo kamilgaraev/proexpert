@@ -50,6 +50,8 @@ use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\Proje
 use App\BusinessModules\Features\AIAssistant\Services\Rag\OpenAIRagEmbeddingProvider;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagPromptContextBuilder;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ContractRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ProjectRagSource;
@@ -86,6 +88,8 @@ class AIAssistantServiceProvider extends ServiceProvider
             ]);
         });
         $this->app->singleton(RagIndexer::class);
+        $this->app->singleton(RagRetriever::class);
+        $this->app->singleton(RagPromptContextBuilder::class);
 
         $this->app->singleton(LLMProviderInterface::class, function ($app) {
             $provider = config('ai-assistant.llm.provider', 'yandex');
