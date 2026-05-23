@@ -183,7 +183,7 @@
 - Modify: `tests/Unit/AIAssistant/AIAssistantSourceEncodingTest.php`
 - Modify: existing touched AI assistant files that contain mojibake strings
 
-- [ ] **Step 1: Expand failing encoding test**
+- [x] **Step 1: Expand failing encoding test**
 
 Add these paths to `criticalSourceProvider()`:
 
@@ -195,7 +195,7 @@ Add these paths to `criticalSourceProvider()`:
 'admin assistant types' => ['../prohelper_admin/src/types/aiAssistant.ts'],
 ```
 
-- [ ] **Step 2: Run the focused test**
+- [x] **Step 2: Run the focused test**
 
 Run:
 
@@ -205,7 +205,7 @@ vendor\bin\phpunit tests\Unit\AIAssistant\AIAssistantSourceEncodingTest.php
 
 Expected: FAIL if touched files contain mojibake markers.
 
-- [ ] **Step 3: Replace user-facing fallback strings with translations**
+- [x] **Step 3: Replace user-facing fallback strings with translations**
 
 Use `trans_message('ai_assistant.*')` in backend files that return user-facing strings. Keep technical log event names in English.
 
@@ -218,7 +218,7 @@ Required keys in `lang/ru/ai_assistant.php`:
 'rag_sources_title' => 'Источники ответа',
 ```
 
-- [ ] **Step 4: Re-run encoding test**
+- [x] **Step 4: Re-run encoding test**
 
 Run:
 
@@ -228,7 +228,7 @@ vendor\bin\phpunit tests\Unit\AIAssistant\AIAssistantSourceEncodingTest.php
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add app/BusinessModules/Features/AIAssistant lang/ru tests/Unit/AIAssistant/AIAssistantSourceEncodingTest.php
@@ -243,7 +243,7 @@ git commit -m "test[backend]: зафиксирована кодировка ст
 - Create: `app/BusinessModules/Features/AIAssistant/Models/RagChunk.php`
 - Test: `tests/Unit/AIAssistant/Rag/RagModelTest.php`
 
-- [ ] **Step 1: Write model tests**
+- [x] **Step 1: Write model tests**
 
 Create `tests/Unit/AIAssistant/Rag/RagModelTest.php` with assertions for table names, casts and relations:
 
@@ -280,7 +280,7 @@ class RagModelTest extends TestCase
 }
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 ```powershell
 vendor\bin\phpunit tests\Unit\AIAssistant\Rag\RagModelTest.php
@@ -288,7 +288,7 @@ vendor\bin\phpunit tests\Unit\AIAssistant\Rag\RagModelTest.php
 
 Expected: FAIL because models do not exist.
 
-- [ ] **Step 3: Create migration**
+- [x] **Step 3: Create migration**
 
 Migration structure:
 
@@ -334,13 +334,13 @@ DB::statement('CREATE INDEX ai_rag_chunks_embedding_hnsw_idx ON ai_rag_chunks US
 
 Do not run `artisan migrate`.
 
-- [ ] **Step 4: Create models**
+- [x] **Step 4: Create models**
 
 `RagSource` fillable: `organization_id`, `project_id`, `source_type`, `entity_type`, `entity_id`, `title`, `checksum`, `metadata`, `indexed_at`.
 
 `RagChunk` fillable: `source_id`, `organization_id`, `project_id`, `chunk_index`, `content`, `content_hash`, `metadata`, `embedding_provider`, `embedding_model`, `embedding_created_at`.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 ```powershell
 vendor\bin\phpunit tests\Unit\AIAssistant\Rag\RagModelTest.php
@@ -351,7 +351,7 @@ php -l app\BusinessModules\Features\AIAssistant\migrations\2026_05_23_000001_cre
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add app/BusinessModules/Features/AIAssistant/migrations app/BusinessModules/Features/AIAssistant/Models tests/Unit/AIAssistant/Rag/RagModelTest.php
@@ -366,7 +366,7 @@ git commit -m "feat[backend]: добавлены таблицы RAG для AI-а
 - Modify: `app/BusinessModules/Features/AIAssistant/config/ai-assistant.php`
 - Test: `tests/Unit/AIAssistant/Rag/OpenAIRagEmbeddingProviderTest.php`
 
-- [ ] **Step 1: Write provider contract test**
+- [x] **Step 1: Write provider contract test**
 
 Test expectations:
 
@@ -379,7 +379,7 @@ $this->assertSame('fake-model', $provider->model());
 $this->assertSame(3, $provider->dimensions());
 ```
 
-- [ ] **Step 2: Define interface**
+- [x] **Step 2: Define interface**
 
 ```php
 interface RagEmbeddingProviderInterface
@@ -397,7 +397,7 @@ interface RagEmbeddingProviderInterface
 }
 ```
 
-- [ ] **Step 3: Implement OpenAI provider**
+- [x] **Step 3: Implement OpenAI provider**
 
 Behavior:
 
@@ -407,7 +407,7 @@ Behavior:
 - Return the first embedding as `array<int, float>`.
 - Throw `RuntimeException` with translated message when provider is unavailable.
 
-- [ ] **Step 4: Add config**
+- [x] **Step 4: Add config**
 
 ```php
 'rag' => [
@@ -422,11 +422,11 @@ Behavior:
 ],
 ```
 
-- [ ] **Step 5: Register provider**
+- [x] **Step 5: Register provider**
 
 In `AIAssistantServiceProvider`, bind `RagEmbeddingProviderInterface` to `OpenAIRagEmbeddingProvider` when provider is `openai`.
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 ```powershell
 vendor\bin\phpunit tests\Unit\AIAssistant\Rag\OpenAIRagEmbeddingProviderTest.php
@@ -434,7 +434,7 @@ php -l app\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProvide
 php -l app\BusinessModules\Features\AIAssistant\Services\Rag\OpenAIRagEmbeddingProvider.php
 ```
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add app/BusinessModules/Features/AIAssistant/config app/BusinessModules/Features/AIAssistant/Services/Rag tests/Unit/AIAssistant/Rag
@@ -452,7 +452,7 @@ git commit -m "feat[backend]: добавлен провайдер embeddings д�
 - Create: `app/BusinessModules/Features/AIAssistant/Services/Rag/Sources/ContractRagSource.php`
 - Test: `tests/Unit/AIAssistant/Rag/RagSourceRegistryTest.php`
 
-- [ ] **Step 1: Write registry test**
+- [x] **Step 1: Write registry test**
 
 Assert that registry returns collectors by source type and ignores disabled sources:
 
@@ -467,7 +467,7 @@ $this->assertSame('project', $registry->collector('project')->sourceType());
 $this->assertNull($registry->collector('missing'));
 ```
 
-- [ ] **Step 2: Define chunk DTO**
+- [x] **Step 2: Define chunk DTO**
 
 Fields:
 
@@ -481,7 +481,7 @@ Fields:
 - `metadata`
 - `updatedAt`
 
-- [ ] **Step 3: Define collector interface**
+- [x] **Step 3: Define collector interface**
 
 ```php
 interface RagSourceCollectorInterface
@@ -502,7 +502,7 @@ interface RagSourceCollectorInterface
 }
 ```
 
-- [ ] **Step 4: Implement first collectors**
+- [x] **Step 4: Implement first collectors**
 
 Project collector content must include project name, status, dates, address, budget and customer-facing summary if present.
 
@@ -512,18 +512,18 @@ Contract collector content must include contract number, contractor, status, amo
 
 Every collector must scope by `organization_id` and optional `project_id`.
 
-- [ ] **Step 5: Register collectors**
+- [x] **Step 5: Register collectors**
 
 Register collectors in `AIAssistantServiceProvider` through `RagSourceRegistry`.
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 ```powershell
 vendor\bin\phpunit tests\Unit\AIAssistant\Rag\RagSourceRegistryTest.php
 vendor\bin\phpunit tests\Unit\AIAssistant\AIAssistantSourceEncodingTest.php
 ```
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add app/BusinessModules/Features/AIAssistant/DTOs/Rag app/BusinessModules/Features/AIAssistant/Services/Rag tests/Unit/AIAssistant/Rag
@@ -540,7 +540,7 @@ git commit -m "feat[backend]: добавлены источники RAG для �
 - Test: `tests/Unit/AIAssistant/Rag/RagIndexerTest.php`
 - Test: `tests/Unit/AIAssistant/Rag/IndexRagSourceJobTest.php`
 
-- [ ] **Step 1: Write indexer tests**
+- [x] **Step 1: Write indexer tests**
 
 Cover:
 
@@ -550,7 +550,7 @@ Cover:
 - embedding provider is called once per chunk
 - vector is stored via parameterized DB update, not string concatenation
 
-- [ ] **Step 2: Implement `RagIndexer`**
+- [x] **Step 2: Implement `RagIndexer`**
 
 Public methods:
 
@@ -568,7 +568,7 @@ Rules:
 - Store vector through bound parameter compatible with pgvector string format.
 - Log provider failures without exposing API keys.
 
-- [ ] **Step 3: Implement queue job**
+- [x] **Step 3: Implement queue job**
 
 `IndexRagSourceJob`:
 
@@ -579,7 +579,7 @@ Rules:
 - sets queue from `config('ai-assistant.rag.queue', 'ai-rag')`
 - has `failed(?Throwable $exception): void` with `Log::warning('ai.rag.index.failed', ['organization_id' => $this->organizationId, 'project_id' => $this->projectId, 'source_type' => $this->sourceType, 'exception_class' => $exception?::class])`
 
-- [ ] **Step 4: Implement backfill command**
+- [x] **Step 4: Implement backfill command**
 
 Command signature:
 
@@ -594,7 +594,7 @@ Behavior:
 - Never runs migrations.
 - Output count of dispatched or indexed sources.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 ```powershell
 vendor\bin\phpunit tests\Unit\AIAssistant\Rag\RagIndexerTest.php tests\Unit\AIAssistant\Rag\IndexRagSourceJobTest.php
@@ -603,7 +603,7 @@ php -l app\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob.php
 php -l app\BusinessModules\Features\AIAssistant\Console\Commands\BackfillRagIndexCommand.php
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add app/BusinessModules/Features/AIAssistant/Services/Rag app/BusinessModules/Features/AIAssistant/Jobs app/BusinessModules/Features/AIAssistant/Console tests/Unit/AIAssistant/Rag
@@ -619,7 +619,7 @@ git commit -m "feat[backend]: добавлена индексация RAG-кон
 - Test: `tests/Unit/AIAssistant/Rag/RagRetrieverTest.php`
 - Test: `tests/Unit/AIAssistant/Rag/RagPromptContextBuilderTest.php`
 
-- [ ] **Step 1: Write retriever tests**
+- [x] **Step 1: Write retriever tests**
 
 Cover:
 
@@ -629,7 +629,7 @@ Cover:
 - orders by cosine distance
 - returns evidence-safe excerpts
 
-- [ ] **Step 2: Implement `RagSearchResult`**
+- [x] **Step 2: Implement `RagSearchResult`**
 
 Fields:
 
@@ -643,7 +643,7 @@ Fields:
 - `metadata`
 - `updatedAt`
 
-- [ ] **Step 3: Implement `RagRetriever`**
+- [x] **Step 3: Implement `RagRetriever`**
 
 Method:
 
@@ -669,7 +669,7 @@ LIMIT ?
 
 Then apply permission and project filters before returning results.
 
-- [ ] **Step 4: Implement prompt context builder**
+- [x] **Step 4: Implement prompt context builder**
 
 Output:
 
@@ -694,13 +694,13 @@ Output:
 ]
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 ```powershell
 vendor\bin\phpunit tests\Unit\AIAssistant\Rag\RagRetrieverTest.php tests\Unit\AIAssistant\Rag\RagPromptContextBuilderTest.php
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add app/BusinessModules/Features/AIAssistant/DTOs/Rag app/BusinessModules/Features/AIAssistant/Services/Rag tests/Unit/AIAssistant/Rag
@@ -716,7 +716,7 @@ git commit -m "feat[backend]: добавлен поиск RAG-контекста
 - Test: `tests/Unit/AIAssistant/AIAssistantServiceBudgetTest.php`
 - Test: `tests/Feature/Api/V1/Admin/AIAssistantRagContextTest.php`
 
-- [ ] **Step 1: Write feature test**
+- [x] **Step 1: Write feature test**
 
 Scenario:
 
@@ -726,7 +726,7 @@ Scenario:
 - Prompt sent to fake LLM includes source excerpt.
 - Response metadata includes source title and entity reference.
 
-- [ ] **Step 2: Add RAG dependency to `AIAssistantService`**
+- [x] **Step 2: Add RAG dependency to `AIAssistantService`**
 
 Constructor dependency:
 
@@ -736,7 +736,7 @@ private readonly RagPromptContextBuilder $ragPromptContextBuilder
 
 Use it before the `buildMessages` call and append compact RAG context to the system or tool-context section, staying inside `MESSAGE_CHAR_BUDGET`.
 
-- [ ] **Step 3: Persist RAG metadata**
+- [x] **Step 3: Persist RAG metadata**
 
 When storing assistant message, add:
 
@@ -746,7 +746,7 @@ When storing assistant message, add:
 
 Do not remove existing `structured_payload`, `artifacts`, `agent_state`, or `tool_result`.
 
-- [ ] **Step 4: Add verifier guard**
+- [x] **Step 4: Add verifier guard**
 
 Rules:
 
@@ -754,14 +754,14 @@ Rules:
 - If answer cites source numbers not present in metadata, strip those source claims.
 - Report artifacts remain governed by existing artifact verifier.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 ```powershell
 vendor\bin\phpunit tests\Unit\AIAssistant tests\Feature\Api\V1\Admin\AIAssistantRagContextTest.php
 vendor\bin\phpunit tests\Unit\AIAssistant\AIAssistantSourceEncodingTest.php
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add app/BusinessModules/Features/AIAssistant tests/Feature/Api/V1/Admin/AIAssistantRagContextTest.php tests/Unit/AIAssistant
@@ -776,7 +776,7 @@ git commit -m "feat[backend]: подключен RAG-контекст к AI-ас
 - Modify: `../prohelper_admin/src/pages/AIAssistant/AIAssistantChatPage.tsx`
 - Test: `../prohelper_admin/src/services/aiAssistantService.test.ts`
 
-- [ ] **Step 1: Extend TypeScript types**
+- [x] **Step 1: Extend TypeScript types**
 
 Add:
 
@@ -806,15 +806,15 @@ export interface AssistantRagContext {
 
 Add `rag_context?: AssistantRagContext | null` to `AssistantStructuredPayload`.
 
-- [ ] **Step 2: Add service normalization test**
+- [x] **Step 2: Add service normalization test**
 
 Input metadata with `rag_context.sources` must normalize missing optional fields without throwing.
 
-- [ ] **Step 3: Normalize RAG context in service**
+- [x] **Step 3: Normalize RAG context in service**
 
 In `normalizeMetadata`, map `rag_context.sources` to safe arrays and keep unknown fields.
 
-- [ ] **Step 4: Render compact source block**
+- [x] **Step 4: Render compact source block**
 
 In chat page, show source list below assistant answer only when `metadata.rag_context.used === true` and sources exist.
 
@@ -824,7 +824,7 @@ UI text:
 - empty hidden state: do not show a block
 - source row: title, source type label, optional updated date
 
-- [ ] **Step 5: Run frontend checks**
+- [x] **Step 5: Run frontend checks**
 
 Do not run `npm run build`.
 
@@ -833,7 +833,7 @@ npx tsc --noEmit
 npx vitest run src/services/aiAssistantService.test.ts
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git -C ..\prohelper_admin add src/types/aiAssistant.ts src/services/aiAssistantService.ts src/pages/AIAssistant/AIAssistantChatPage.tsx src/services/aiAssistantService.test.ts
@@ -851,7 +851,7 @@ git -C ..\prohelper_admin commit -m "feat[lk]: показаны источник
 - Modify: `app/BusinessModules/Features/AIAssistant/AIAssistantServiceProvider.php`
 - Test: `tests/Unit/AIAssistant/Rag/RagSourceCollectorsTest.php`
 
-- [ ] **Step 1: Write collector tests**
+- [x] **Step 1: Write collector tests**
 
 For each collector, assert:
 
@@ -860,22 +860,22 @@ For each collector, assert:
 - collector returns human-readable content
 - metadata contains source type and entity refs
 
-- [ ] **Step 2: Implement collectors**
+- [x] **Step 2: Implement collectors**
 
 Keep each collector read-only. Use existing models/services where available. Avoid raw SQL unless local module already uses it.
 
-- [ ] **Step 3: Register collectors**
+- [x] **Step 3: Register collectors**
 
 Add all new collectors to `RagSourceRegistry`.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 ```powershell
 vendor\bin\phpunit tests\Unit\AIAssistant\Rag\RagSourceCollectorsTest.php
 vendor\bin\phpunit tests\Unit\AIAssistant\Rag
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add app/BusinessModules/Features/AIAssistant/Services/Rag tests/Unit/AIAssistant/Rag
@@ -887,7 +887,7 @@ git commit -m "feat[backend]: расширены источники RAG для �
 **Files:**
 - No new files expected.
 
-- [ ] **Step 1: Backend syntax**
+- [x] **Step 1: Backend syntax**
 
 ```powershell
 php -l app\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever.php
@@ -895,14 +895,14 @@ php -l app\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer.php
 php -l app\BusinessModules\Features\AIAssistant\Services\AIAssistantService.php
 ```
 
-- [ ] **Step 2: Backend tests**
+- [x] **Step 2: Backend tests**
 
 ```powershell
 vendor\bin\phpunit tests\Unit\AIAssistant tests\Feature\Api\V1\Admin\AIAssistantRagContextTest.php
 vendor\bin\phpstan analyse app/BusinessModules/Features/AIAssistant tests/Unit/AIAssistant tests/Feature/Api/V1/Admin/AIAssistantRagContextTest.php --memory-limit=1G
 ```
 
-- [ ] **Step 3: Admin tests**
+- [x] **Step 3: Admin tests**
 
 ```powershell
 cd ..\prohelper_admin
@@ -922,7 +922,7 @@ Do not run migrations locally unless explicitly requested. On staging after migr
 - Confirm inaccessible project chunks are not returned.
 - Confirm no source block appears when no context is used.
 
-- [ ] **Step 5: Final commit if verification fixes were needed**
+- [x] **Step 5: Final commit if verification fixes were needed**
 
 ```powershell
 git status --short
