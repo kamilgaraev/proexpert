@@ -92,6 +92,13 @@ cd ..\prohelper
 
 Эти workflow не являются доказательством staging-проверки и не должны использоваться для закрытия manual staging checklist без отдельного deployment-процесса.
 
+Попытка read-only runtime-диагностики:
+
+- Дата: `2026-05-23 22:41:29 +03:00`.
+- Цель: production read-only SSH `codex-ro@89.169.44.117`.
+- Результат: соединение завершилось до выполнения команды с ошибкой `Connection timed out during banner exchange`.
+- Влияние: runtime evidence не собран; эта попытка не заменяет обязательный staging checklist.
+
 1. Убедиться, что staging содержит backend runtime-коммиты до `700909ca` включительно, актуальную backend-голову локальной ветки `main` и admin-коммиты до `68d01983` включительно.
 2. Применить миграции staging штатным deployment-процессом.
 3. Включить RAG:
