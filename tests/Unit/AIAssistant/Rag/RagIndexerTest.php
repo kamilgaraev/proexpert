@@ -1,0 +1,211 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Unit\AIAssistant\Rag;
+
+use App\BusinessModules\Features\AIAssistant\DTOs\Rag\RagChunkData;
+use App\BusinessModules\Features\AIAssistant\Models\RagChunk;
+use App\BusinessModules\Features\AIAssistant\Models\RagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceCollectorInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
+use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Support\Facades\DB;
+use Tests\TestCase;
+
+class RagIndexerTest extends TestCase
+{
+    public function test_indexes_new_source_skips_unchanged_source_and_replaces_changed_chunks(): void
+    {
+        [$organizationId, $projectId] = $this->seedScope();
+        $provider = new RecordingEmbeddingProvider([0.1, 0.2, 0.3]);
+        $indexer = new RagIndexer($provider, new RagSourceRegistry([]));
+
+        $indexer->indexChunk($this->chunk($organizationId, $projectId, 'Первый контекст'));
+
+        $this->assertSame(1, RagSource::query()->count());
+        $this->assertSame(1, RagChunk::query()->count());
+        $this->assertSame(1, $provider->calls);
+        $firstChunkId = RagChunk::query()->value('id');
+
+        $indexer->indexChunk($this->chunk($organizationId, $projectId, 'Первый контекст'));
+
+        $this->assertSame(1, RagSource::query()->count());
+        $this->assertSame(1, RagChunk::query()->count());
+        $this->assertSame(1, $provider->calls);
+        $this->assertSame($firstChunkId, RagChunk::query()->value('id'));
+
+        $indexer->indexChunk($this->chunk($organizationId, $projectId, 'Обновленный контекст'));
+
+        $this->assertSame(1, RagSource::query()->count());
+        $this->assertSame(1, RagChunk::query()->count());
+        $this->assertSame(2, $provider->calls);
+        $this->assertNotSame($firstChunkId, RagChunk::query()->value('id'));
+        $this->assertSame('Обновленный контекст', RagChunk::query()->value('content'));
+    }
+
+    public function test_vector_is_stored_with_bound_parameters(): void
+    {
+        [$organizationId, $projectId] = $this->seedScope();
+        $provider = new RecordingEmbeddingProvider([0.1, 0.2, 0.3]);
+        $indexer = new RagIndexer($provider, new RagSourceRegistry([]));
+        $queries = [];
+
+        DB::listen(static function (QueryExecuted $query) use (&$queries): void {
+            if (str_contains($query->sql, 'ai_rag_chunks SET embedding')) {
+                $queries[] = [$query->sql, $query->bindings];
+            }
+        });
+
+        $indexer->indexChunk($this->chunk($organizationId, $projectId, 'Контекст для вектора'));
+
+        $this->assertNotEmpty($queries);
+        [$sql, $bindings] = $queries[0];
+        $this->assertStringContainsString('embedding = ?', $sql);
+        $this->assertStringNotContainsString('[0.1,0.2,0.3]', $sql);
+        $this->assertSame('[0.1,0.2,0.3]', $bindings[0]);
+    }
+
+    public function test_indexes_selected_enabled_source_type_for_organization(): void
+    {
+        [$organizationId, $projectId] = $this->seedScope();
+        $provider = new RecordingEmbeddingProvider([0.1, 0.2, 0.3]);
+        $projectCollector = new RecordingRagCollector('project', true, [
+            $this->chunk($organizationId, $projectId, 'project context'),
+        ]);
+        $scheduleCollector = new RecordingRagCollector('schedule', true, [
+            $this->chunk($organizationId, $projectId, 'schedule context', 'schedule', 'schedule', 200),
+        ]);
+        $indexer = new RagIndexer($provider, new RagSourceRegistry([
+            $projectCollector,
+            $scheduleCollector,
+        ]));
+
+        $indexed = $indexer->indexOrganization($organizationId, $projectId, 'schedule');
+
+        $this->assertSame(1, $indexed);
+        $this->assertSame([], $projectCollector->calls);
+        $this->assertSame([[$organizationId, $projectId]], $scheduleCollector->calls);
+        $this->assertSame(1, RagSource::query()->where('source_type', 'schedule')->count());
+        $this->assertSame(1, $provider->calls);
+    }
+
+    /**
+     * @return array{0: int, 1: int}
+     */
+    private function seedScope(): array
+    {
+        $organizationId = (int) DB::table('organizations')->insertGetId([
+            'name' => 'Тестовая организация',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $projectId = (int) DB::table('projects')->insertGetId([
+            'organization_id' => $organizationId,
+            'name' => 'Литер А',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return [$organizationId, $projectId];
+    }
+
+    private function chunk(
+        int $organizationId,
+        int $projectId,
+        string $content,
+        string $sourceType = 'project',
+        string $entityType = 'project',
+        string|int|null $entityId = null
+    ): RagChunkData {
+        $entityId ??= $projectId;
+
+        return new RagChunkData(
+            organizationId: $organizationId,
+            projectId: $projectId,
+            sourceType: $sourceType,
+            entityType: $entityType,
+            entityId: $entityId,
+            title: 'Проект Литер А',
+            content: $content,
+            metadata: ['status' => 'active'],
+            updatedAt: now()
+        );
+    }
+}
+
+final class RecordingRagCollector implements RagSourceCollectorInterface
+{
+    /**
+     * @var array<int, array{0: int, 1: int|null}>
+     */
+    public array $calls = [];
+
+    /**
+     * @param  array<int, RagChunkData>  $chunks
+     */
+    public function __construct(
+        private readonly string $sourceType,
+        private readonly bool $enabled,
+        private readonly array $chunks
+    ) {
+    }
+
+    public function sourceType(): string
+    {
+        return $this->sourceType;
+    }
+
+    public function enabled(): bool
+    {
+        return $this->enabled;
+    }
+
+    public function collectForOrganization(int $organizationId, ?int $projectId = null): iterable
+    {
+        $this->calls[] = [$organizationId, $projectId];
+
+        return $this->chunks;
+    }
+
+    public function collectEntity(int $organizationId, string $entityType, string|int $entityId): iterable
+    {
+        return [];
+    }
+}
+
+final class RecordingEmbeddingProvider implements RagEmbeddingProviderInterface
+{
+    public int $calls = 0;
+
+    /**
+     * @param  array<int, float>  $embedding
+     */
+    public function __construct(private readonly array $embedding)
+    {
+    }
+
+    public function embed(string $text): array
+    {
+        $this->calls++;
+
+        return $this->embedding;
+    }
+
+    public function provider(): string
+    {
+        return 'fake';
+    }
+
+    public function model(): string
+    {
+        return 'fake-model';
+    }
+
+    public function dimensions(): int
+    {
+        return count($this->embedding);
+    }
+}

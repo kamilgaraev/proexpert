@@ -11,7 +11,11 @@ return new class extends Migration
 {
     public function up(): void
     {
-        DB::statement('CREATE EXTENSION IF NOT EXISTS vector');
+        $isPostgres = Schema::getConnection()->getDriverName() === 'pgsql';
+
+        if ($isPostgres) {
+            DB::statement('CREATE EXTENSION IF NOT EXISTS vector');
+        }
 
         Schema::create('ai_rag_sources', function (Blueprint $table): void {
             $table->id();
@@ -33,7 +37,7 @@ return new class extends Migration
             $table->index(['organization_id', 'project_id', 'source_type'], 'ai_rag_sources_scope_idx');
         });
 
-        Schema::create('ai_rag_chunks', function (Blueprint $table): void {
+        Schema::create('ai_rag_chunks', function (Blueprint $table) use ($isPostgres): void {
             $table->id();
             $table->foreignId('source_id')->constrained('ai_rag_sources')->cascadeOnDelete();
             $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
@@ -45,16 +49,21 @@ return new class extends Migration
             $table->string('embedding_provider', 40)->nullable();
             $table->string('embedding_model', 120)->nullable();
             $table->timestampTz('embedding_created_at')->nullable();
+            if (! $isPostgres) {
+                $table->text('embedding')->nullable();
+            }
             $table->timestampsTz();
 
             $table->unique(['source_id', 'chunk_index'], 'ai_rag_chunks_source_index_unique');
             $table->index(['organization_id', 'project_id'], 'ai_rag_chunks_scope_idx');
         });
 
-        DB::statement('ALTER TABLE ai_rag_chunks ADD COLUMN embedding vector(1536)');
-        DB::statement(
-            'CREATE INDEX ai_rag_chunks_embedding_hnsw_idx ON ai_rag_chunks USING hnsw (embedding vector_cosine_ops)'
-        );
+        if ($isPostgres) {
+            DB::statement('ALTER TABLE ai_rag_chunks ADD COLUMN embedding vector(1536)');
+            DB::statement(
+                'CREATE INDEX ai_rag_chunks_embedding_hnsw_idx ON ai_rag_chunks USING hnsw (embedding vector_cosine_ops)'
+            );
+        }
     }
 
     public function down(): void

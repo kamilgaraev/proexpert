@@ -2,6 +2,7 @@
 
 namespace App\BusinessModules\Features\AIAssistant;
 
+use App\BusinessModules\Features\AIAssistant\Console\Commands\BackfillRagIndexCommand;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\ApprovePaymentRequestTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\CreateScheduleTaskTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateContractorSettlementsReportTool;
@@ -48,6 +49,7 @@ use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\Proje
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseWorkFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\OpenAIRagEmbeddingProvider;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ContractRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ProjectRagSource;
@@ -83,6 +85,7 @@ class AIAssistantServiceProvider extends ServiceProvider
                 $app->make(ContractRagSource::class),
             ]);
         });
+        $this->app->singleton(RagIndexer::class);
 
         $this->app->singleton(LLMProviderInterface::class, function ($app) {
             $provider = config('ai-assistant.llm.provider', 'yandex');
@@ -152,6 +155,10 @@ class AIAssistantServiceProvider extends ServiceProvider
         $this->loadRoutesFrom(__DIR__.'/routes.php');
 
         if ($this->app->runningInConsole()) {
+            $this->commands([
+                BackfillRagIndexCommand::class,
+            ]);
+
             $this->publishes([
                 __DIR__.'/config/ai-assistant.php' => config_path('ai-assistant.php'),
             ], 'ai-assistant-config');
