@@ -49,7 +49,7 @@ final class RagRetriever
                 'exception_class' => $throwable::class,
             ]);
 
-            return [];
+            return $this->lexicalFallback($query, $organizationId, $allowedProjectIds, $requestProjectId, $limit);
         }
 
         $results = [];
@@ -86,7 +86,92 @@ final class RagRetriever
             }
         }
 
+        if ($results === []) {
+            return $this->lexicalFallback($query, $organizationId, $allowedProjectIds, $requestProjectId, $limit);
+        }
+
         return $results;
+    }
+
+    /**
+     * @param  array<int, int>  $allowedProjectIds
+     * @return array<int, RagSearchResult>
+     */
+    private function lexicalFallback(
+        string $query,
+        int $organizationId,
+        array $allowedProjectIds,
+        ?int $requestProjectId,
+        int $limit
+    ): array {
+        $terms = $this->lexicalTerms($query);
+        if ($terms === []) {
+            return [];
+        }
+
+        $rows = DB::table('ai_rag_chunks as c')
+            ->join('ai_rag_sources as s', 's.id', '=', 'c.source_id')
+            ->where('c.organization_id', $organizationId)
+            ->whereNotNull('c.embedding')
+            ->when(
+                $requestProjectId !== null,
+                static fn ($builder) => $builder->where('c.project_id', $requestProjectId),
+                static fn ($builder) => $builder->where(static function ($query) use ($allowedProjectIds): void {
+                    $query->whereNull('c.project_id');
+
+                    if ($allowedProjectIds !== []) {
+                        $query->orWhereIn('c.project_id', $allowedProjectIds);
+                    }
+                })
+            )
+            ->where(static function ($builder) use ($terms): void {
+                foreach ($terms as $term) {
+                    $lowerPattern = '%'.$term.'%';
+                    $titlePattern = '%'.mb_convert_case($term, MB_CASE_TITLE, 'UTF-8').'%';
+
+                    $builder
+                        ->orWhereRaw('lower(c.content) like ?', [$lowerPattern])
+                        ->orWhereRaw('lower(s.title) like ?', [$lowerPattern])
+                        ->orWhere('c.content', 'like', $titlePattern)
+                        ->orWhere('s.title', 'like', $titlePattern);
+                }
+            })
+            ->select([
+                'c.id',
+                'c.project_id',
+                'c.content',
+                'c.metadata as chunk_metadata',
+                's.source_type',
+                's.entity_type',
+                's.entity_id',
+                's.title',
+                's.indexed_at as source_indexed_at',
+            ])
+            ->limit(max($limit * 12, 48))
+            ->get();
+
+        return $rows
+            ->map(function (object $row) use ($terms): object {
+                $row->lexical_score = $this->lexicalScore($row, $terms);
+
+                return $row;
+            })
+            ->filter(static fn (object $row): bool => (int) $row->lexical_score > 0)
+            ->sortByDesc(static fn (object $row): int => (int) $row->lexical_score)
+            ->take($limit)
+            ->values()
+            ->map(fn (object $row): RagSearchResult => new RagSearchResult(
+                sourceType: (string) $row->source_type,
+                entityType: (string) $row->entity_type,
+                entityId: (string) $row->entity_id,
+                projectId: $row->project_id !== null ? (int) $row->project_id : null,
+                title: (string) $row->title,
+                excerpt: $this->excerpt((string) $row->content),
+                similarity: min(0.69, 0.5 + ((int) $row->lexical_score * 0.03)),
+                metadata: $this->metadata($row->chunk_metadata),
+                updatedAt: $this->date($row->source_indexed_at)
+            ))
+            ->all();
     }
 
     /**
@@ -162,6 +247,118 @@ SQL,
             ->sortByDesc(static fn (object $row): float => (float) $row->similarity)
             ->take($limit)
             ->values();
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function lexicalTerms(string $query): array
+    {
+        $normalized = str_replace('ё', 'е', mb_strtolower($query));
+        $tokens = preg_split('/[^\p{L}\p{N}]+/u', $normalized) ?: [];
+        $stopWords = [
+            'база',
+            'базе',
+            'базы',
+            'в',
+            'дай',
+            'данным',
+            'для',
+            'есть',
+            'знаний',
+            'знаешь',
+            'из',
+            'или',
+            'какие',
+            'какой',
+            'контекст',
+            'контекста',
+            'контексте',
+            'краткую',
+            'на',
+            'по',
+            'сводку',
+            'текущим',
+            'текущих',
+            'текущие',
+            'ты',
+            'укажи',
+            'что',
+        ];
+        $terms = [];
+
+        foreach ($tokens as $token) {
+            $token = trim($token);
+            if (mb_strlen($token) < 4 || in_array($token, $stopWords, true)) {
+                continue;
+            }
+
+            $term = $this->stemLexicalTerm($token);
+            if (mb_strlen($term) < 4 || in_array($term, $stopWords, true)) {
+                continue;
+            }
+
+            $terms[] = $term;
+        }
+
+        return array_values(array_unique($terms));
+    }
+
+    private function stemLexicalTerm(string $term): string
+    {
+        foreach ([
+            'иями',
+            'ями',
+            'ами',
+            'ого',
+            'ему',
+            'ому',
+            'ыми',
+            'ими',
+            'ая',
+            'ую',
+            'ые',
+            'ий',
+            'ый',
+            'ой',
+            'ей',
+            'ам',
+            'ах',
+            'ов',
+            'ев',
+            'ия',
+            'ие',
+            'ы',
+            'и',
+            'а',
+            'у',
+            'е',
+            'я',
+            'ю',
+        ] as $ending) {
+            if (str_ends_with($term, $ending) && mb_strlen($term) - mb_strlen($ending) >= 4) {
+                return mb_substr($term, 0, -mb_strlen($ending));
+            }
+        }
+
+        return $term;
+    }
+
+    /**
+     * @param  array<int, string>  $terms
+     */
+    private function lexicalScore(object $row, array $terms): int
+    {
+        $haystack = str_replace('ё', 'е', mb_strtolower((string) $row->title.' '.(string) $row->content));
+        $score = 0;
+
+        foreach ($terms as $term) {
+            if (str_contains($haystack, $term)) {
+                $score++;
+            }
+        }
+
+        return $score;
     }
 
     /**

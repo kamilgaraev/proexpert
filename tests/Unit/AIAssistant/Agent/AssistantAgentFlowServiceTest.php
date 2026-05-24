@@ -194,6 +194,28 @@ final class AssistantAgentFlowServiceTest extends TestCase
         $this->assertSame('completed', $metadata['agent_state']['status']);
     }
 
+    public function test_grounded_request_bypasses_report_agent_flow(): void
+    {
+        $conversation = new AgentFlowConversation(606);
+        $conversationManager = new AgentFlowConversationManager($conversation);
+        $service = $this->makeService($conversationManager, new AIToolRegistry);
+        $taskPlan = $this->taskPlan();
+        $taskPlan['request']['desired_mode'] = 'grounded';
+        $taskPlan['request']['context']['source_module'] = 'ai-assistant';
+        $taskPlan['request']['context']['source_route'] = null;
+
+        $result = $service->exposedHandleAgentFlow(
+            'Сформируй отчет по проектам из базы знаний и укажи источники.',
+            15,
+            $this->makeUser(),
+            $conversation,
+            $taskPlan
+        );
+
+        $this->assertNull($result);
+        $this->assertSame([], $conversationManager->assistantMessages());
+    }
+
     private function makeService(
         AgentFlowConversationManager $conversationManager,
         AIToolRegistry $toolRegistry
@@ -329,6 +351,16 @@ final class AssistantAgentFlowServiceTest extends TestCase
 
 final class AgentFlowAIAssistantService extends AIAssistantService
 {
+    public function exposedHandleAgentFlow(
+        string $query,
+        int $organizationId,
+        User $user,
+        Conversation $conversation,
+        array $taskPlan
+    ): ?array {
+        return $this->handleAgentFlow($query, $organizationId, $user, $conversation, $taskPlan);
+    }
+
     protected function resolveOrganization(int $organizationId): Organization
     {
         $organization = new Organization;

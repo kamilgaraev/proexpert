@@ -382,6 +382,10 @@ class AIAssistantService
         Conversation $conversation,
         array $taskPlan
     ): ?array {
+        if ($this->isGroundedRequest($taskPlan)) {
+            return null;
+        }
+
         $pendingState = $this->agentStateStore->load($conversation);
         $context = is_array($taskPlan['request']['context'] ?? null) ? $taskPlan['request']['context'] : [];
         $decision = $this->agentPlanner->decide($query, $context, $pendingState);
@@ -408,6 +412,14 @@ class AIAssistantService
         }
 
         return null;
+    }
+
+    private function isGroundedRequest(array $taskPlan): bool
+    {
+        $request = is_array($taskPlan['request'] ?? null) ? $taskPlan['request'] : [];
+        $desiredMode = mb_strtolower(trim((string) ($request['desired_mode'] ?? '')));
+
+        return $desiredMode === 'grounded';
     }
 
     protected function answerAgentClarification(

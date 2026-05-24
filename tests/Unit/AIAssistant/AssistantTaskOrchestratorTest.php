@@ -101,6 +101,29 @@ class AssistantTaskOrchestratorTest extends TestCase
         $this->assertSame('high', $withToolEvidence['confidence']);
     }
 
+    public function test_rag_payload_does_not_mark_domain_missing_when_sources_exist(): void
+    {
+        $orchestrator = $this->makeOrchestrator();
+        $plan = $orchestrator->plan('Что известно из базы знаний?', [], [
+            'organization_id' => 15,
+            'permissions_flat' => [],
+        ]);
+
+        $payload = $orchestrator->buildPayload($plan, 'Ответ по базе знаний.', [
+            'rag_context' => [
+                'enabled' => true,
+                'used' => true,
+                'sources' => [
+                    [
+                        'title' => 'Project memo',
+                    ],
+                ],
+            ],
+        ]);
+
+        $this->assertSame([], $payload['missing_data']);
+    }
+
     public static function russianIntentProvider(): array
     {
         return [

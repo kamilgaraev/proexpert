@@ -36,6 +36,8 @@ class AssistantTaskOrchestrator
         string $answer,
         array $options = []
     ): array {
+        $ragContext = is_array($options['rag_context'] ?? null) ? $options['rag_context'] : null;
+        $defaultMissingData = $this->hasRagContextEvidence($ragContext) ? [] : $this->defaultMissingData($plan);
         $nextActions = array_values(array_merge(
             $plan['next_actions'] ?? [],
             array_values(array_filter(
@@ -45,7 +47,7 @@ class AssistantTaskOrchestrator
         ));
 
         $missingData = array_values(array_unique(array_filter(array_merge(
-            $this->defaultMissingData($plan),
+            $defaultMissingData,
             $options['missing_data'] ?? []
         ), static fn (mixed $item): bool => is_string($item) && trim($item) !== '')));
 
@@ -81,7 +83,7 @@ class AssistantTaskOrchestrator
                 static fn (mixed $artifact): bool => is_array($artifact)
             )),
             'tool_result' => is_array($options['tool_result'] ?? null) ? $options['tool_result'] : null,
-            'rag_context' => is_array($options['rag_context'] ?? null) ? $options['rag_context'] : null,
+            'rag_context' => $ragContext,
             'requires_confirmation' => $this->requiresConfirmation($nextActions),
             'access_limits' => array_values(array_unique(array_merge(
                 $plan['access_limits'] ?? [],
@@ -351,6 +353,13 @@ class AssistantTaskOrchestrator
         }
 
         return $missingData;
+    }
+
+    private function hasRagContextEvidence(?array $ragContext): bool
+    {
+        return ($ragContext['used'] ?? false) === true
+            && is_array($ragContext['sources'] ?? null)
+            && $ragContext['sources'] !== [];
     }
 
     private function buildWizard(array $plan): ?array

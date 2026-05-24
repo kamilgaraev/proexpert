@@ -19,6 +19,20 @@ final readonly class AssistantReportIntentResolver
         'podgotov',
     ];
 
+    private const KNOWLEDGE_CONTEXT_MARKERS = [
+        'baza znaniy',
+        'bazy znaniy',
+        'baze znaniy',
+        'iz bazy',
+        'po dannym',
+        'v kontekste',
+        'iz konteksta',
+        'kontekst',
+        'istochnik',
+        'istochniki',
+        'rag',
+    ];
+
     private const STOP_WORDS = [
         'dlya',
         'i',
@@ -70,8 +84,17 @@ final readonly class AssistantReportIntentResolver
         $normalized = $this->normalize($message);
         $scores = $this->scoreDefinitions($normalized);
         $contextDefinition = $this->definitionFromContext($context);
+        $isReportLike = $this->isReportLike($normalized);
+        $hasExplicitReportIntent = $isReportLike || $contextDefinition instanceof AssistantReportDefinition;
 
-        if ($scores === [] && $contextDefinition instanceof AssistantReportDefinition && $this->isReportLike($normalized)) {
+        if ($this->isKnowledgeContextQuestion($normalized) && ! $isReportLike) {
+            return [
+                'status' => 'not_report',
+                'candidates' => [],
+            ];
+        }
+
+        if ($scores === [] && $contextDefinition instanceof AssistantReportDefinition && $isReportLike) {
             return [
                 'status' => 'matched',
                 'definition' => $contextDefinition,
@@ -81,7 +104,7 @@ final readonly class AssistantReportIntentResolver
 
         if ($scores === []) {
             return [
-                'status' => $this->isReportLike($normalized) ? 'missing_type' : 'not_report',
+                'status' => $isReportLike ? 'missing_type' : 'not_report',
                 'candidates' => $this->catalog->all(),
             ];
         }
@@ -96,6 +119,13 @@ final readonly class AssistantReportIntentResolver
         }
 
         if (count($topDefinitions) === 1) {
+            if ($this->requiresExplicitReportIntent($topDefinitions[0]) && ! $hasExplicitReportIntent) {
+                return [
+                    'status' => 'not_report',
+                    'candidates' => [],
+                ];
+            }
+
             return [
                 'status' => 'matched',
                 'definition' => $topDefinitions[0],
@@ -107,6 +137,11 @@ final readonly class AssistantReportIntentResolver
             'status' => 'ambiguous',
             'candidates' => $topDefinitions,
         ];
+    }
+
+    private function requiresExplicitReportIntent(AssistantReportDefinition $definition): bool
+    {
+        return $definition->toolName === 'generate_operational_pdf_report';
     }
 
     /**
@@ -173,6 +208,17 @@ final readonly class AssistantReportIntentResolver
     private function isReportLike(string $normalized): bool
     {
         foreach (self::REPORT_MARKERS as $marker) {
+            if (str_contains($normalized, $marker)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function isKnowledgeContextQuestion(string $normalized): bool
+    {
+        foreach (self::KNOWLEDGE_CONTEXT_MARKERS as $marker) {
             if (str_contains($normalized, $marker)) {
                 return true;
             }

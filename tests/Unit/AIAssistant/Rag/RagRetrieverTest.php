@@ -14,6 +14,7 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use App\Services\Project\UserProjectAccessService;
+use RuntimeException;
 use Tests\TestCase;
 
 class RagRetrieverTest extends TestCase
@@ -102,6 +103,68 @@ class RagRetrieverTest extends TestCase
         $this->assertSame([], $blocked);
     }
 
+    public function test_search_uses_lexical_fallback_when_vector_matches_are_below_threshold(): void
+    {
+        [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(
+            UserProjectAccessMode::ALL_PROJECTS->value
+        );
+        config()->set('ai-assistant.rag.min_similarity', 0.95);
+
+        $this->indexChunk(
+            $organization->id,
+            $project->id,
+            'Договор: Тестовый-1',
+            'Договор: Тестовый-1 Сумма: 10 500 000.00 Проект: Строительство склада Литер А',
+            [0.0, 1.0, 0.0],
+            'contract',
+            'contract'
+        );
+
+        $results = $this->retriever([1.0, 0.0, 0.0])->search(
+            'Какие договоры и суммы есть в контексте?',
+            $organization->id,
+            $user,
+            ['project_id' => $project->id]
+        );
+
+        $this->assertCount(1, $results);
+        $this->assertSame('Договор: Тестовый-1', $results[0]->title);
+        $this->assertSame('contract', $results[0]->sourceType);
+    }
+
+    public function test_search_uses_lexical_fallback_when_query_embedding_fails(): void
+    {
+        [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(
+            UserProjectAccessMode::ALL_PROJECTS->value
+        );
+
+        $this->indexChunk(
+            $organization->id,
+            $project->id,
+            'Заявка: Срочная поставка бетона',
+            'Заявка требует внимания: нужна срочная поставка бетона на площадку.',
+            [1.0, 0.0, 0.0],
+            'site_request',
+            'site_request'
+        );
+
+        $retriever = new RagRetriever(
+            new FailingRetrieverEmbeddingProvider,
+            app(UserProjectAccessService::class)
+        );
+
+        $results = $retriever->search(
+            'Какие заявки требуют внимания по данным из базы знаний?',
+            $organization->id,
+            $user,
+            ['project_id' => $project->id]
+        );
+
+        $this->assertCount(1, $results);
+        $this->assertSame('Заявка: Срочная поставка бетона', $results[0]->title);
+        $this->assertSame('site_request', $results[0]->sourceType);
+    }
+
     public function test_search_returns_compact_evidence_safe_excerpt(): void
     {
         [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(
@@ -136,7 +199,9 @@ class RagRetrieverTest extends TestCase
         int $projectId,
         string $title,
         string $content,
-        array $embedding
+        array $embedding,
+        string $sourceType = 'project',
+        string $entityType = 'project'
     ): void {
         $indexer = new RagIndexer(
             new RetrieverEmbeddingProvider($embedding),
@@ -146,8 +211,8 @@ class RagRetrieverTest extends TestCase
         $indexer->indexChunk(new RagChunkData(
             organizationId: $organizationId,
             projectId: $projectId,
-            sourceType: 'project',
-            entityType: 'project',
+            sourceType: $sourceType,
+            entityType: $entityType,
             entityId: $projectId.'-'.$title,
             title: $title,
             content: $content,
@@ -227,5 +292,28 @@ final class RetrieverEmbeddingProvider implements RagEmbeddingProviderInterface
     public function dimensions(): int
     {
         return count($this->embedding);
+    }
+}
+
+final class FailingRetrieverEmbeddingProvider implements RagEmbeddingProviderInterface
+{
+    public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array
+    {
+        throw new RuntimeException('Embedding service unavailable');
+    }
+
+    public function provider(): string
+    {
+        return 'fake';
+    }
+
+    public function model(): string
+    {
+        return 'fake-model';
+    }
+
+    public function dimensions(): int
+    {
+        return 3;
     }
 }

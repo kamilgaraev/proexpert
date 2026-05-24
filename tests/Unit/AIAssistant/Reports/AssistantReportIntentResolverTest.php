@@ -75,6 +75,42 @@ final class AssistantReportIntentResolverTest extends TestCase
         $this->assertSame('not_report', $result['status']);
     }
 
+    public function test_operational_report_term_without_report_marker_is_left_for_generic_flow(): void
+    {
+        $result = (new AssistantReportIntentResolver)->resolve('покажи потребность в закупках по объектам');
+
+        $this->assertSame('not_report', $result['status']);
+    }
+
+    public function test_operational_report_term_with_report_marker_still_matches(): void
+    {
+        $result = (new AssistantReportIntentResolver)->resolve('сформируй отчет по потребности в закупках по объектам');
+
+        $this->assertSame('matched', $result['status']);
+        $this->assertSame('procurement_requests', $result['definition']->id);
+    }
+
+    #[DataProvider('knowledgeContextQuestionProvider')]
+    public function test_knowledge_context_questions_are_left_for_rag_flow(string $message): void
+    {
+        $result = (new AssistantReportIntentResolver)->resolve($message);
+
+        $this->assertSame('not_report', $result['status']);
+        $this->assertArrayNotHasKey('definition', $result);
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function knowledgeContextQuestionProvider(): array
+    {
+        return [
+            'project knowledge summary' => ['Что ты знаешь из базы знаний по текущим проектам? Дай краткую сводку и укажи источники'],
+            'requests needing attention' => ['Какие заявки или проблемы требуют внимания по данным из базы знаний?'],
+            'contracts in context' => ['Какие договоры и суммы есть в контексте?'],
+        ];
+    }
+
     public function test_context_report_type_can_select_definition_for_report_like_request(): void
     {
         $result = (new AssistantReportIntentResolver)->resolve('сформируй за прошлый месяц', [

@@ -155,6 +155,28 @@ class AssistantAgentPlannerTest extends TestCase
         $this->assertNotSame('', $decision->clarificationQuestion);
     }
 
+    public function test_operational_data_question_does_not_generate_pdf_report(): void
+    {
+        $decision = $this->planner()->decide('Покажи потребность в закупках по объектам', [], null);
+
+        $this->assertSame('answer', $decision->type);
+        $this->assertNull($decision->toolName);
+        $this->assertSame([], $decision->toolArguments);
+    }
+
+    public function test_knowledge_base_summary_uses_answer_flow_instead_of_report_tool(): void
+    {
+        $decision = $this->planner()->decide(
+            'Что ты знаешь из базы знаний по текущим проектам? Дай краткую сводку и укажи источники',
+            ['source_module' => 'ai-assistant'],
+            null
+        );
+
+        $this->assertSame('answer', $decision->type);
+        $this->assertNull($decision->state);
+        $this->assertNull($decision->toolName);
+    }
+
     public function test_project_id_is_optional_for_schedule_report(): void
     {
         $decision = $this->planner()->decide(
