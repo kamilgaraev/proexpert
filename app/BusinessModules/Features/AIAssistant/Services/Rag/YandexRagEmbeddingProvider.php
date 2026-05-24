@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\Rag;
 
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -13,6 +15,9 @@ use Throwable;
 final class YandexRagEmbeddingProvider implements RagEmbeddingProviderInterface
 {
     private const DEFAULT_ENDPOINT = 'https://ai.api.cloud.yandex.net/foundationModels/v1/textEmbedding';
+    private const RETRY_ATTEMPTS = 5;
+    private const RETRY_BASE_DELAY_MS = 1000;
+    private const RETRY_MAX_DELAY_MS = 10000;
 
     private ?string $apiKey;
 
@@ -72,7 +77,15 @@ final class YandexRagEmbeddingProvider implements RagEmbeddingProviderInterface
             $headers['x-folder-id'] = $this->folderId;
         }
 
-        $response = Http::withHeaders($headers)->timeout(60)->post($this->endpoint, $payload);
+        $response = Http::withHeaders($headers)
+            ->timeout(60)
+            ->retry(
+                self::RETRY_ATTEMPTS,
+                static fn (int $attempt, Throwable $exception): int => self::retryDelayMs($attempt, $exception),
+                static fn (Throwable $exception): bool => self::shouldRetry($exception),
+                false
+            )
+            ->post($this->endpoint, $payload);
 
         if ($response->failed()) {
             $endpointHost = parse_url($this->endpoint, PHP_URL_HOST);
@@ -124,6 +137,36 @@ final class YandexRagEmbeddingProvider implements RagEmbeddingProviderInterface
         $model = $purpose === self::PURPOSE_QUERY ? 'text-search-query' : 'text-search-doc';
 
         return sprintf('emb://%s/%s/latest', $this->folderId, $model);
+    }
+
+    private static function retryDelayMs(int $attempt, Throwable $exception): int
+    {
+        if ($exception instanceof RequestException) {
+            $retryAfter = $exception->response->header('Retry-After');
+
+            if (is_numeric($retryAfter) && (int) $retryAfter > 0) {
+                return min((int) $retryAfter * 1000, self::RETRY_MAX_DELAY_MS);
+            }
+        }
+
+        $delay = self::RETRY_BASE_DELAY_MS * (2 ** max(0, $attempt - 1));
+
+        return min($delay, self::RETRY_MAX_DELAY_MS);
+    }
+
+    private static function shouldRetry(Throwable $exception): bool
+    {
+        if ($exception instanceof ConnectionException) {
+            return true;
+        }
+
+        if (! $exception instanceof RequestException) {
+            return false;
+        }
+
+        $status = $exception->response->status();
+
+        return $status === 429 || $status >= 500;
     }
 
     private function configString(string $key, ?string $default = null): ?string

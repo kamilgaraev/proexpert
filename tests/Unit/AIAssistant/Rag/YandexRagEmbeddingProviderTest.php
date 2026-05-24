@@ -77,6 +77,29 @@ class YandexRagEmbeddingProviderTest extends TestCase
         $provider->embed('Контекст проекта');
     }
 
+    public function test_yandex_provider_retries_rate_limited_response(): void
+    {
+        Http::fake([
+            'https://ai.api.cloud.yandex.net/*' => Http::sequence()
+                ->push(['error' => 'too many requests'], 429)
+                ->push(['embedding' => ['0.1', '0.2', '0.3']], 200),
+        ]);
+
+        $log = Log::spy();
+
+        $provider = new YandexRagEmbeddingProvider(
+            apiKey: 'test-key',
+            folderId: 'folder-id',
+            dimensions: 256
+        );
+
+        $embedding = $provider->embed('Контекст проекта');
+
+        $this->assertSame([0.1, 0.2, 0.3], $embedding);
+        Http::assertSentCount(2);
+        $log->shouldNotHaveReceived('warning');
+    }
+
     public function test_yandex_provider_logs_failed_response_without_sensitive_request_data(): void
     {
         Http::fake([
