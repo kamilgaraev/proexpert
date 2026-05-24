@@ -46,7 +46,7 @@ class YandexRagEmbeddingProviderTest extends TestCase
                 && $request->hasHeader('x-folder-id', 'folder-id')
                 && $request['modelUri'] === 'emb://folder-id/text-search-doc/latest'
                 && $request['text'] === 'Контекст проекта'
-                && $request['dim'] === '256';
+                && ! isset($request['dim']);
         });
 
         Http::assertSent(function ($request): bool {
@@ -55,7 +55,7 @@ class YandexRagEmbeddingProviderTest extends TestCase
                 && $request->hasHeader('x-folder-id', 'folder-id')
                 && $request['modelUri'] === 'emb://folder-id/text-search-query/latest'
                 && $request['text'] === 'Риски проекта'
-                && $request['dim'] === '256';
+                && ! isset($request['dim']);
         });
     }
 

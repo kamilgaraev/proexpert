@@ -63,10 +63,6 @@ final class YandexRagEmbeddingProvider implements RagEmbeddingProviderInterface
             'text' => $text,
         ];
 
-        if ($this->dimensions > 0) {
-            $payload['dim'] = (string) $this->dimensions;
-        }
-
         $headers = [
             'Authorization' => 'Api-Key '.$this->apiKey,
             'Content-Type' => 'application/json',
