@@ -51,6 +51,7 @@ final class RagPromptContextBuilder
             'excerpt' => $result->excerpt,
             'score' => round($result->similarity, 4),
             'updated_at' => $result->updatedAt?->format(DateTimeInterface::ATOM),
+            'navigation_target' => self::navigationTarget($result),
         ], $results));
     }
 
@@ -59,7 +60,13 @@ final class RagPromptContextBuilder
      */
     private function prompt(array $sources): string
     {
-        $lines = ['ProHelper context:'];
+        $lines = [
+            'ProHelper context:',
+            'Answer guidance:',
+            '- Отвечай на русском и опирайся только на источники ниже.',
+            '- Если запрос о проблемах, рисках, заявках или внимании, дай компактный рабочий список в формате: Проблема — что не так — что сделать.',
+            '- Не называй проект или ситуацию критической без явной метки critical/urgent/high или прямого критического факта в источниках; при косвенных признаках пиши мягче: "есть признаки проблемы".',
+        ];
 
         foreach ($sources as $index => $source) {
             $lines[] = sprintf(
@@ -71,6 +78,44 @@ final class RagPromptContextBuilder
         }
 
         return implode("\n", $lines);
+    }
+
+    /**
+     * @return array{route: string, anchor?: string, state?: array<string, mixed>}|null
+     */
+    private static function navigationTarget(RagSearchResult $result): ?array
+    {
+        $entityId = is_numeric($result->entityId) ? (int) $result->entityId : null;
+
+        $route = match ($result->entityType) {
+            'project' => $entityId !== null ? "/projects/{$entityId}" : null,
+            'schedule' => $entityId !== null && $result->projectId !== null
+                ? "/projects/{$result->projectId}/schedules/{$entityId}"
+                : ($result->projectId !== null ? "/projects/{$result->projectId}/schedules" : '/schedules'),
+            'contract' => $entityId !== null ? "/contracts/{$entityId}" : null,
+            'purchase_request' => $entityId !== null ? "/procurement/purchase-requests/{$entityId}" : null,
+            'site_request' => $entityId !== null ? "/site-requests/{$entityId}" : null,
+            'completed_work' => $entityId !== null ? "/completed-works/{$entityId}" : null,
+            'project_pulse_report' => $entityId !== null ? "/project-pulse/reports/{$entityId}" : '/project-pulse',
+            'project_material_delivery' => '/warehouse',
+            default => $result->projectId !== null ? "/projects/{$result->projectId}" : null,
+        };
+
+        if (! is_string($route) || trim($route) === '') {
+            return null;
+        }
+
+        return [
+            'route' => $route,
+            'state' => [
+                'assistant_source' => [
+                    'title' => $result->title,
+                    'source_type' => $result->sourceType,
+                    'entity_type' => $result->entityType,
+                    'entity_id' => $result->entityId,
+                ],
+            ],
+        ];
     }
 
     private function configInt(string $key, int $default): int

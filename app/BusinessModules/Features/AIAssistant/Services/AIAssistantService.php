@@ -301,6 +301,7 @@ class AIAssistantService
             $assistantContent = $this->responseVerifier->verify($assistantContent, [
                 'rag_context' => $ragMetadata,
             ]);
+            $assistantContent = $this->softenUnsupportedCriticalClaims($assistantContent, $ragMetadata);
 
             $assistantPayload = $this->taskOrchestrator->buildPayload($taskPlan, $assistantContent, [
                 'degraded_mode' => $degradedMode,
@@ -1119,6 +1120,56 @@ class AIAssistantService
         }
 
         return $message;
+    }
+
+    private function softenUnsupportedCriticalClaims(string $content, array $ragMetadata): string
+    {
+        if ($content === '' || $this->ragEvidenceHasCriticalMarker($ragMetadata)) {
+            return $content;
+        }
+
+        return str_replace(
+            [
+                'Проект находится в критическом статусе',
+                'проект находится в критическом статусе',
+                'находится в критическом статусе',
+                'критический статус',
+                'критическом статусе',
+            ],
+            [
+                'По найденным данным есть признаки проблемного статуса проекта',
+                'по найденным данным есть признаки проблемного статуса проекта',
+                'имеет признаки проблемного статуса',
+                'проблемный статус',
+                'проблемном статусе',
+            ],
+            $content
+        );
+    }
+
+    private function ragEvidenceHasCriticalMarker(array $ragMetadata): bool
+    {
+        $sources = is_array($ragMetadata['sources'] ?? null) ? $ragMetadata['sources'] : [];
+
+        foreach ($sources as $source) {
+            if (! is_array($source)) {
+                continue;
+            }
+
+            $haystack = mb_strtolower(implode(' ', array_filter([
+                (string) ($source['title'] ?? ''),
+                (string) ($source['excerpt'] ?? ''),
+                json_encode($source['metadata'] ?? [], JSON_UNESCAPED_UNICODE),
+            ])));
+
+            foreach (['critical', 'urgent', 'hard', 'критич', 'срочн', 'аварийн'] as $marker) {
+                if (str_contains($haystack, $marker)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     protected function buildRagContext(

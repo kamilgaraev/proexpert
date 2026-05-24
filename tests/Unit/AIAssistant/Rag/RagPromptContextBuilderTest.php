@@ -23,7 +23,7 @@ class RagPromptContextBuilderTest extends TestCase
         $builder = new RagPromptContextBuilder();
         $result = new RagSearchResult(
             sourceType: 'schedule',
-            entityType: 'project',
+            entityType: 'schedule',
             entityId: '56',
             projectId: 10,
             title: 'Schedule source',
@@ -36,6 +36,8 @@ class RagPromptContextBuilderTest extends TestCase
         $context = $builder->build('what is blocked', [$result]);
 
         $this->assertStringContainsString('ProHelper', $context['prompt']);
+        $this->assertStringContainsString('Проблема — что не так — что сделать', $context['prompt']);
+        $this->assertStringContainsString('есть признаки проблемы', $context['prompt']);
         $this->assertStringContainsString('[1] Schedule source: Concrete evidence from schedule.', $context['prompt']);
         $this->assertTrue($context['metadata']['enabled']);
         $this->assertTrue($context['metadata']['used']);
@@ -45,6 +47,8 @@ class RagPromptContextBuilderTest extends TestCase
         $this->assertSame('schedule', $context['metadata']['sources'][0]['source_type']);
         $this->assertSame(0.8432, $context['metadata']['sources'][0]['score']);
         $this->assertSame('2026-05-23T10:00:00+03:00', $context['metadata']['sources'][0]['updated_at']);
+        $this->assertSame('/projects/10/schedules/56', $context['metadata']['sources'][0]['navigation_target']['route']);
+        $this->assertSame('Schedule source', $context['metadata']['sources'][0]['navigation_target']['state']['assistant_source']['title']);
     }
 
     public function test_empty_results_mark_context_unused_without_sources(): void
