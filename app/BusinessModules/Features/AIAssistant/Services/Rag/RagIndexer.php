@@ -37,7 +37,10 @@ class RagIndexer
         }
 
         try {
-            $embedding = $this->embeddingProvider->embed($chunk->content);
+            $embedding = $this->embeddingProvider->embed(
+                $chunk->content,
+                RagEmbeddingProviderInterface::PURPOSE_DOCUMENT
+            );
         } catch (Throwable $throwable) {
             Log::warning('ai_assistant.rag.embedding_failed', [
                 'organization_id' => $chunk->organizationId,

@@ -53,6 +53,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagPromptContextBuilder;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\YandexRagEmbeddingProvider;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ContractRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ProcurementRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ProjectRagSource;
@@ -78,11 +79,12 @@ class AIAssistantServiceProvider extends ServiceProvider
         $this->app->singleton(AssistantAgentExecutor::class);
         $this->app->singleton(AssistantResponseVerifier::class);
         $this->app->singleton(RagEmbeddingProviderInterface::class, function ($app): RagEmbeddingProviderInterface {
-            $provider = config('ai-assistant.rag.embedding_provider', 'openai');
+            $provider = config('ai-assistant.rag.embedding_provider', 'yandex');
 
             return match ($provider) {
+                'yandex' => $app->make(YandexRagEmbeddingProvider::class),
                 'openai' => $app->make(OpenAIRagEmbeddingProvider::class),
-                default => $app->make(OpenAIRagEmbeddingProvider::class),
+                default => $app->make(YandexRagEmbeddingProvider::class),
             };
         });
         $this->app->singleton(RagSourceRegistry::class, function ($app): RagSourceRegistry {

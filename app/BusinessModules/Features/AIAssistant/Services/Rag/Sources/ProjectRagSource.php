@@ -9,7 +9,6 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceCollectorInte
 use App\Models\Project;
 use BackedEnum;
 use DateTimeInterface;
-use Throwable;
 
 final class ProjectRagSource implements RagSourceCollectorInterface
 {
@@ -20,11 +19,7 @@ final class ProjectRagSource implements RagSourceCollectorInterface
 
     public function enabled(): bool
     {
-        try {
-            return (bool) config('ai-assistant.rag.enabled', false);
-        } catch (Throwable) {
-            return false;
-        }
+        return true;
     }
 
     public function collectForOrganization(int $organizationId, ?int $projectId = null): iterable

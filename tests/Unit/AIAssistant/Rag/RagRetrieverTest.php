@@ -22,7 +22,6 @@ class RagRetrieverTest extends TestCase
     {
         parent::setUp();
 
-        config()->set('ai-assistant.rag.enabled', true);
         config()->set('ai-assistant.rag.max_chunks', 8);
         config()->set('ai-assistant.rag.min_similarity', 0.1);
     }
@@ -45,12 +44,14 @@ class RagRetrieverTest extends TestCase
         $this->indexChunk($organization->id, $projectB->id, 'Blocked project', 'blocked content', [1.0, 0.0, 0.0]);
         $this->indexChunk($foreignOrganization->id, $foreignProject->id, 'Foreign org', 'foreign content', [1.0, 0.0, 0.0]);
 
-        $results = $this->retriever([1.0, 0.0, 0.0])->search('risk on project', $organization->id, $user);
+        $provider = new RetrieverEmbeddingProvider([1.0, 0.0, 0.0]);
+        $results = $this->retriever($provider)->search('risk on project', $organization->id, $user);
 
         $this->assertCount(2, $results);
         $this->assertSame('Allowed close', $results[0]->title);
         $this->assertSame('Allowed second', $results[1]->title);
         $this->assertGreaterThanOrEqual($results[1]->similarity, $results[0]->similarity);
+        $this->assertSame(RagEmbeddingProviderInterface::PURPOSE_QUERY, $provider->lastPurpose);
     }
 
     public function test_search_excludes_chunks_below_similarity_threshold(): void
@@ -118,10 +119,14 @@ class RagRetrieverTest extends TestCase
         $this->assertStringContainsString('Long line with useful evidence.', $results[0]->excerpt);
     }
 
-    private function retriever(array $queryEmbedding): RagRetriever
+    private function retriever(array|RetrieverEmbeddingProvider $queryEmbedding): RagRetriever
     {
+        $provider = $queryEmbedding instanceof RetrieverEmbeddingProvider
+            ? $queryEmbedding
+            : new RetrieverEmbeddingProvider($queryEmbedding);
+
         return new RagRetriever(
-            new RetrieverEmbeddingProvider($queryEmbedding),
+            $provider,
             app(UserProjectAccessService::class)
         );
     }
@@ -193,6 +198,8 @@ class RagRetrieverTest extends TestCase
 
 final class RetrieverEmbeddingProvider implements RagEmbeddingProviderInterface
 {
+    public ?string $lastPurpose = null;
+
     /**
      * @param  array<int, float>  $embedding
      */
@@ -200,8 +207,10 @@ final class RetrieverEmbeddingProvider implements RagEmbeddingProviderInterface
     {
     }
 
-    public function embed(string $text): array
+    public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array
     {
+        $this->lastPurpose = $purpose;
+
         return $this->embedding;
     }
 

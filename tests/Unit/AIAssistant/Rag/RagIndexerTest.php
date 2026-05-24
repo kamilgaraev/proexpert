@@ -28,6 +28,7 @@ class RagIndexerTest extends TestCase
         $this->assertSame(1, RagSource::query()->count());
         $this->assertSame(1, RagChunk::query()->count());
         $this->assertSame(1, $provider->calls);
+        $this->assertSame(RagEmbeddingProviderInterface::PURPOSE_DOCUMENT, $provider->lastPurpose);
         $firstChunkId = RagChunk::query()->value('id');
 
         $indexer->indexChunk($this->chunk($organizationId, $projectId, 'Первый контекст'));
@@ -180,6 +181,8 @@ final class RecordingEmbeddingProvider implements RagEmbeddingProviderInterface
 {
     public int $calls = 0;
 
+    public ?string $lastPurpose = null;
+
     /**
      * @param  array<int, float>  $embedding
      */
@@ -187,9 +190,10 @@ final class RecordingEmbeddingProvider implements RagEmbeddingProviderInterface
     {
     }
 
-    public function embed(string $text): array
+    public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array
     {
         $this->calls++;
+        $this->lastPurpose = $purpose;
 
         return $this->embedding;
     }

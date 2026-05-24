@@ -96,11 +96,10 @@ class AIAssistantRagController extends Controller
         $latestRun = $this->latestRun($organizationId);
         $lastSuccessfulRun = $this->latestRun($organizationId, RagIndexRun::STATUS_SUCCEEDED);
         $lastFailedRun = $this->latestRun($organizationId, RagIndexRun::STATUS_FAILED);
-        $enabled = (bool) config('ai-assistant.rag.enabled', false);
 
         return [
-            'enabled' => $enabled,
-            'ready' => $enabled && $counts['source_count'] > 0 && $counts['chunk_count'] > 0,
+            'enabled' => true,
+            'ready' => $counts['source_count'] > 0 && $counts['chunk_count'] > 0,
             'source_count' => $counts['source_count'],
             'chunk_count' => $counts['chunk_count'],
             'latest_run' => $latestRun,

@@ -30,7 +30,7 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
         $this->client = $client ?? $this->makeClient($this->apiKey);
     }
 
-    public function embed(string $text): array
+    public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array
     {
         $client = $this->client;
 

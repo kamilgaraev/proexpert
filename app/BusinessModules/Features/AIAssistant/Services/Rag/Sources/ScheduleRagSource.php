@@ -12,7 +12,6 @@ use App\Models\ScheduleTask;
 use BackedEnum;
 use Carbon\CarbonImmutable;
 use DateTimeInterface;
-use Throwable;
 
 final class ScheduleRagSource implements RagSourceCollectorInterface
 {
@@ -23,11 +22,7 @@ final class ScheduleRagSource implements RagSourceCollectorInterface
 
     public function enabled(): bool
     {
-        try {
-            return (bool) config('ai-assistant.rag.enabled', false);
-        } catch (Throwable) {
-            return false;
-        }
+        return true;
     }
 
     public function collectForOrganization(int $organizationId, ?int $projectId = null): iterable

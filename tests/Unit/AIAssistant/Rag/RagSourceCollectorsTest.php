@@ -30,11 +30,13 @@ class RagSourceCollectorsTest extends TestCase
 {
     public function test_remaining_collectors_scope_by_organization_and_project(): void
     {
-        config()->set('ai-assistant.rag.enabled', true);
+        config()->set('ai-assistant.rag.enabled', false);
 
         [$organization, $projectA, $projectB, $user] = $this->seedRagDomainRecords();
 
         foreach ($this->collectors() as [$collector, $sourceType]) {
+            $this->assertTrue($collector->enabled(), "{$sourceType} collector must ignore legacy enabled config");
+
             $allChunks = iterator_to_array($collector->collectForOrganization($organization->id));
             $projectChunks = iterator_to_array($collector->collectForOrganization($organization->id, $projectA->id));
 

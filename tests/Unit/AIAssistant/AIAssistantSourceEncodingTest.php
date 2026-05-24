@@ -50,6 +50,8 @@ class AIAssistantSourceEncodingTest extends TestCase
             'admin rag source helper test' => ['../prohelper_admin/src/pages/AIAssistant/ragSources.test.ts'],
             'admin assistant service' => ['../prohelper_admin/src/services/aiAssistantService.ts'],
             'admin assistant types' => ['../prohelper_admin/src/types/aiAssistant.ts'],
+            'yandex rag embedding provider' => ['app/BusinessModules/Features/AIAssistant/Services/Rag/YandexRagEmbeddingProvider.php'],
+            'yandex rag embedding provider test' => ['tests/Unit/AIAssistant/Rag/YandexRagEmbeddingProviderTest.php'],
         ];
     }
 }

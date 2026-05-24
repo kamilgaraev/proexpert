@@ -15,7 +15,6 @@ class RagPromptContextBuilderTest extends TestCase
     {
         parent::setUp();
 
-        config()->set('ai-assistant.rag.enabled', true);
         config()->set('ai-assistant.rag.max_chunks', 8);
     }
 

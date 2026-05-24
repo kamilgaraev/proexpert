@@ -25,7 +25,6 @@ final class AIAssistantRagContextTest extends TestCase
 {
     public function test_admin_chat_uses_rag_context_and_returns_sources_metadata(): void
     {
-        config()->set('ai-assistant.rag.enabled', true);
         config()->set('ai-assistant.rag.max_chunks', 8);
         config()->set('ai-assistant.rag.min_similarity', 0.1);
 
@@ -80,7 +79,7 @@ final class AIAssistantRagContextTest extends TestCase
         self::assertStringContainsString('[1] Letter A risk memo', $prompt);
     }
 
-    public function test_admin_chat_keeps_rag_unused_when_disabled_by_config(): void
+    public function test_admin_chat_ignores_legacy_disabled_config_and_uses_rag(): void
     {
         config()->set('ai-assistant.rag.enabled', false);
         config()->set('ai-assistant.rag.max_chunks', 8);
@@ -100,7 +99,7 @@ final class AIAssistantRagContextTest extends TestCase
 
         $this->indexRagChunk($context->organization->id, $project->id);
 
-        $llmProvider = new FeatureRagLlmProvider('General project answer without RAG sources.');
+        $llmProvider = new FeatureRagLlmProvider('General project answer with RAG sources.');
         $this->app->instance(LLMProviderInterface::class, $llmProvider);
         $this->app->instance(RagEmbeddingProviderInterface::class, new FeatureRagEmbeddingProvider);
         $this->mockAssistantDependencies();
@@ -122,23 +121,22 @@ final class AIAssistantRagContextTest extends TestCase
             ]);
 
         $response->assertOk();
-        $response->assertJsonPath('data.message.content', 'General project answer without RAG sources.');
-        $response->assertJsonPath('data.message.metadata.rag_context.enabled', false);
-        $response->assertJsonPath('data.message.metadata.rag_context.used', false);
-        $response->assertJsonPath('data.message.metadata.rag_context.sources', []);
+        $response->assertJsonPath('data.message.content', 'General project answer with RAG sources.');
+        $response->assertJsonPath('data.message.metadata.rag_context.enabled', true);
+        $response->assertJsonPath('data.message.metadata.rag_context.used', true);
+        $response->assertJsonPath('data.message.metadata.rag_context.sources.0.title', 'Letter A risk memo');
 
         $prompt = collect($llmProvider->lastMessages)
             ->pluck('content')
             ->filter(static fn (mixed $content): bool => is_string($content))
             ->implode("\n");
 
-        self::assertStringNotContainsString('ProHelper context:', $prompt);
-        self::assertStringNotContainsString('Delayed materials block facade works.', $prompt);
+        self::assertStringContainsString('ProHelper context:', $prompt);
+        self::assertStringContainsString('Delayed materials block facade works.', $prompt);
     }
 
     public function test_admin_chat_excludes_inaccessible_project_chunks_from_sources_and_prompt(): void
     {
-        config()->set('ai-assistant.rag.enabled', true);
         config()->set('ai-assistant.rag.max_chunks', 8);
         config()->set('ai-assistant.rag.min_similarity', 0.1);
 
@@ -206,7 +204,6 @@ final class AIAssistantRagContextTest extends TestCase
 
     public function test_admin_chat_keeps_rag_unused_when_enabled_but_no_accessible_context_exists(): void
     {
-        config()->set('ai-assistant.rag.enabled', true);
         config()->set('ai-assistant.rag.max_chunks', 8);
         config()->set('ai-assistant.rag.min_similarity', 0.1);
 
@@ -383,7 +380,7 @@ final class FeatureRagLlmProvider implements LLMProviderInterface
 
 final class FeatureRagEmbeddingProvider implements RagEmbeddingProviderInterface
 {
-    public function embed(string $text): array
+    public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array
     {
         return [1.0, 0.0, 0.0];
     }

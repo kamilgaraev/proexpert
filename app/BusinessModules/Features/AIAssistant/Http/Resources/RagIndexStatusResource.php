@@ -18,7 +18,7 @@ class RagIndexStatusResource extends JsonResource
         $payload = is_array($this->resource) ? $this->resource : [];
 
         return [
-            'enabled' => (bool) ($payload['enabled'] ?? false),
+            'enabled' => (bool) ($payload['enabled'] ?? true),
             'ready' => (bool) ($payload['ready'] ?? false),
             'source_count' => (int) ($payload['source_count'] ?? 0),
             'chunk_count' => (int) ($payload['chunk_count'] ?? 0),

@@ -27,7 +27,7 @@ final class RagRetriever
      */
     public function search(string $query, int $organizationId, User $user, array $requestContext = []): array
     {
-        if (! $this->configBool('ai-assistant.rag.enabled', false) || ! $this->belongsToOrganization($user, $organizationId)) {
+        if (! $this->belongsToOrganization($user, $organizationId)) {
             return [];
         }
 
@@ -41,7 +41,7 @@ final class RagRetriever
         }
 
         try {
-            $embedding = $this->embeddingProvider->embed($query);
+            $embedding = $this->embeddingProvider->embed($query, RagEmbeddingProviderInterface::PURPOSE_QUERY);
         } catch (Throwable $throwable) {
             Log::warning('ai_assistant.rag.query_embedding_failed', [
                 'organization_id' => $organizationId,
@@ -294,15 +294,6 @@ SQL,
         }
 
         return $dot / (sqrt($leftNorm) * sqrt($rightNorm));
-    }
-
-    private function configBool(string $key, bool $default): bool
-    {
-        try {
-            return (bool) config($key, $default);
-        } catch (Throwable) {
-            return $default;
-        }
     }
 
     private function configInt(string $key, int $default): int

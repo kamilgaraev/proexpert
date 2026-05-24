@@ -59,7 +59,7 @@ return new class extends Migration
         });
 
         if ($isPostgres) {
-            DB::statement('ALTER TABLE ai_rag_chunks ADD COLUMN embedding vector(1536)');
+            DB::statement('ALTER TABLE ai_rag_chunks ADD COLUMN embedding vector(256)');
             DB::statement(
                 'CREATE INDEX ai_rag_chunks_embedding_hnsw_idx ON ai_rag_chunks USING hnsw (embedding vector_cosine_ops)'
             );

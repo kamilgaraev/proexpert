@@ -63,10 +63,16 @@ return [
     'max_tokens' => $configEnv('OPENAI_MAX_TOKENS', 2000),
 
     'rag' => [
-        'enabled' => $configEnv('AI_RAG_ENABLED', false),
-        'embedding_provider' => $configEnv('AI_RAG_EMBEDDING_PROVIDER', 'openai'),
+        'enabled' => true,
+        'embedding_provider' => $configEnv('AI_RAG_EMBEDDING_PROVIDER', 'yandex'),
         'embedding_model' => $configEnv('AI_RAG_EMBEDDING_MODEL', 'text-embedding-3-small'),
-        'embedding_dimensions' => $configEnv('AI_RAG_EMBEDDING_DIMENSIONS', 1536),
+        'embedding_document_model_uri' => $configEnv('AI_RAG_EMBEDDING_DOCUMENT_MODEL_URI'),
+        'embedding_query_model_uri' => $configEnv('AI_RAG_EMBEDDING_QUERY_MODEL_URI'),
+        'embedding_endpoint' => $configEnv(
+            'AI_RAG_EMBEDDING_ENDPOINT',
+            'https://llm.api.cloud.yandex.net/foundationModels/v1/textEmbedding'
+        ),
+        'embedding_dimensions' => $configEnv('AI_RAG_EMBEDDING_DIMENSIONS', 256),
         'queue' => $configEnv('AI_RAG_QUEUE', 'ai-rag'),
         'scheduled_limit' => $configEnv('AI_RAG_SCHEDULED_LIMIT', 50),
         'stale_after_hours' => $configEnv('AI_RAG_STALE_AFTER_HOURS', 24),

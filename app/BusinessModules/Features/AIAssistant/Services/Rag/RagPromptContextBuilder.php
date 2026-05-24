@@ -16,16 +16,15 @@ final class RagPromptContextBuilder
      */
     public function build(string $query, array $results): array
     {
-        $enabled = $this->configBool('ai-assistant.rag.enabled', false);
         $requested = $this->configInt('ai-assistant.rag.max_chunks', 8);
         $results = array_slice($results, 0, $requested);
-        $sources = $enabled ? $this->sources($results) : [];
-        $used = $enabled && $sources !== [];
+        $sources = $this->sources($results);
+        $used = $sources !== [];
 
         return [
             'prompt' => $used ? $this->prompt($sources) : '',
             'metadata' => [
-                'enabled' => $enabled,
+                'enabled' => true,
                 'used' => $used,
                 'query' => $query,
                 'sources' => $used ? $sources : [],
@@ -72,15 +71,6 @@ final class RagPromptContextBuilder
         }
 
         return implode("\n", $lines);
-    }
-
-    private function configBool(string $key, bool $default): bool
-    {
-        try {
-            return (bool) config($key, $default);
-        } catch (Throwable) {
-            return $default;
-        }
     }
 
     private function configInt(string $key, int $default): int

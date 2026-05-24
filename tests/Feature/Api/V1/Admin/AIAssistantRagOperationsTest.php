@@ -19,7 +19,6 @@ class AIAssistantRagOperationsTest extends TestCase
 {
     public function test_status_returns_current_organization_counts_and_latest_runs(): void
     {
-        config(['ai-assistant.rag.enabled' => true]);
         $this->withoutMiddleware();
         $context = AdminApiTestContext::create(roleSlug: 'organization_admin');
         $foreignOrganization = Organization::factory()->create();

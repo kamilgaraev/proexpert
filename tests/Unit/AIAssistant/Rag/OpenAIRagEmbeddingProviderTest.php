@@ -71,7 +71,7 @@ final class FakeRagEmbeddingProvider implements RagEmbeddingProviderInterface
     {
     }
 
-    public function embed(string $text): array
+    public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array
     {
         return $this->embedding;
     }
