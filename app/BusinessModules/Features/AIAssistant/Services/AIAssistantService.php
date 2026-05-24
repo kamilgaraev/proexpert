@@ -382,13 +382,13 @@ class AIAssistantService
         Conversation $conversation,
         array $taskPlan
     ): ?array {
-        if ($this->isGroundedRequest($taskPlan)) {
-            return null;
-        }
-
         $pendingState = $this->agentStateStore->load($conversation);
         $context = is_array($taskPlan['request']['context'] ?? null) ? $taskPlan['request']['context'] : [];
         $decision = $this->agentPlanner->decide($query, $context, $pendingState);
+
+        if ($this->isGroundedRequest($taskPlan) && $decision->type === 'answer') {
+            return null;
+        }
 
         if ($decision->type === 'answer') {
             return null;

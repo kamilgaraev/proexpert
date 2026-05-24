@@ -205,7 +205,7 @@ final class AssistantAgentFlowServiceTest extends TestCase
         $taskPlan['request']['context']['source_route'] = null;
 
         $result = $service->exposedHandleAgentFlow(
-            'Сформируй отчет по проектам из базы знаний и укажи источники.',
+            'Что ты знаешь из базы знаний по текущим проектам? Дай краткую сводку и укажи источники.',
             15,
             $this->makeUser(),
             $conversation,
@@ -214,6 +214,39 @@ final class AssistantAgentFlowServiceTest extends TestCase
 
         $this->assertNull($result);
         $this->assertSame([], $conversationManager->assistantMessages());
+    }
+
+    public function test_grounded_explicit_report_request_still_uses_agent_flow(): void
+    {
+        $conversation = new AgentFlowConversation(707);
+        $conversationManager = new AgentFlowConversationManager($conversation);
+        $toolRegistry = new AIToolRegistry;
+        $toolRegistry->registerTool(new AgentFlowTool('generate_operational_pdf_report', [
+            'status' => 'success',
+            'pdf_url' => 'https://storage.example.test/org-15/reports/projects-summary.pdf',
+            'filename' => 'projects-summary.pdf',
+            'storage_disk' => 's3',
+            'storage_path' => 'org-15/reports/projects-summary.pdf',
+        ]));
+        $service = $this->makeService($conversationManager, $toolRegistry);
+        $taskPlan = $this->taskPlan();
+        $taskPlan['request']['desired_mode'] = 'grounded';
+        $taskPlan['request']['context']['source_module'] = 'ai-assistant';
+        $taskPlan['request']['context']['source_route'] = null;
+
+        $result = $service->exposedHandleAgentFlow(
+            'Сформируй отчет по проектам',
+            15,
+            $this->makeUser(),
+            $conversation,
+            $taskPlan
+        );
+
+        $metadata = $conversationManager->assistantMessages()[0]->metadata;
+
+        $this->assertNotNull($result);
+        $this->assertSame('generate_operational_pdf_report', $metadata['tool_result']['tool_name']);
+        $this->assertSame('https://storage.example.test/org-15/reports/projects-summary.pdf', $metadata['artifacts'][0]['url']);
     }
 
     private function makeService(
