@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AIAssistantController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AiReportsDownloadController;
+use App\BusinessModules\Features\AIAssistant\Http\Controllers\AIAssistantRagController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\ProjectPulseController;
 
 // ==========================================
@@ -36,6 +37,12 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
         Route::get('/conversations/{conversation}', [AIAssistantController::class, 'conversation'])->name('conversation');
         Route::delete('/conversations/{conversation}', [AIAssistantController::class, 'deleteConversation'])->name('deleteConversation');
         Route::get('/usage', [AIAssistantController::class, 'usage'])->name('usage');
+        Route::get('/rag/status', [AIAssistantRagController::class, 'status'])
+            ->middleware('authorize:admin.ai_assistant.rag.view')
+            ->name('rag.status');
+        Route::post('/rag/reindex', [AIAssistantRagController::class, 'reindex'])
+            ->middleware('authorize:admin.ai_assistant.rag.manage')
+            ->name('rag.reindex');
     });
 
 // ==========================================
