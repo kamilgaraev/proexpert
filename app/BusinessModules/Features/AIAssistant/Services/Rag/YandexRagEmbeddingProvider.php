@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\Rag;
 
+use App\BusinessModules\Features\AIAssistant\Exceptions\RagEmbeddingUnavailableException;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
-use RuntimeException;
 use Throwable;
 
 final class YandexRagEmbeddingProvider implements RagEmbeddingProviderInterface
@@ -60,7 +60,7 @@ final class YandexRagEmbeddingProvider implements RagEmbeddingProviderInterface
         $modelUri = $this->modelUri($purpose);
 
         if ($this->apiKey === null || trim($this->apiKey) === '' || $modelUri === null || trim($modelUri) === '') {
-            throw new RuntimeException($this->assistantMessage());
+            throw new RagEmbeddingUnavailableException($this->assistantMessage());
         }
 
         $payload = [
@@ -97,12 +97,12 @@ final class YandexRagEmbeddingProvider implements RagEmbeddingProviderInterface
                 'response_body' => Str::limit((string) $response->body(), 500, ''),
             ]);
 
-            throw new RuntimeException($this->assistantMessage());
+            throw new RagEmbeddingUnavailableException($this->assistantMessage());
         }
 
         $embedding = $response->json('embedding');
         if (! is_array($embedding)) {
-            throw new RuntimeException($this->assistantMessage());
+            throw new RagEmbeddingUnavailableException($this->assistantMessage());
         }
 
         return array_map(static fn (mixed $value): float => (float) $value, array_values($embedding));

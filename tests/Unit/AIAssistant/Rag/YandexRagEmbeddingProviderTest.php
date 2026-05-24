@@ -4,13 +4,14 @@ declare(strict_types=1);
 
 namespace Tests\Unit\AIAssistant\Rag;
 
+use App\BusinessModules\Features\AIAssistant\Exceptions\RagEmbeddingUnavailableException;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\YandexRagEmbeddingProvider;
+use Illuminate\Contracts\Debug\ShouldntReport;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Lang;
 use Illuminate\Support\Facades\Log;
 use Mockery;
-use RuntimeException;
 use Tests\TestCase;
 
 class YandexRagEmbeddingProviderTest extends TestCase
@@ -71,10 +72,17 @@ class YandexRagEmbeddingProviderTest extends TestCase
             dimensions: 256
         );
 
-        $this->expectException(RuntimeException::class);
+        $this->expectException(RagEmbeddingUnavailableException::class);
         $this->expectExceptionMessage('Сервис подготовки контекста временно недоступен.');
 
         $provider->embed('Контекст проекта');
+    }
+
+    public function test_yandex_provider_embedding_unavailable_exception_is_not_reported(): void
+    {
+        $exception = new RagEmbeddingUnavailableException('unavailable');
+
+        $this->assertInstanceOf(ShouldntReport::class, $exception);
     }
 
     public function test_yandex_provider_retries_rate_limited_response(): void
@@ -117,7 +125,7 @@ class YandexRagEmbeddingProviderTest extends TestCase
         try {
             $provider->embed('sensitive project context');
             $this->fail('Expected Yandex embedding failure.');
-        } catch (RuntimeException) {
+        } catch (RagEmbeddingUnavailableException) {
             $this->assertTrue(true);
         }
 
