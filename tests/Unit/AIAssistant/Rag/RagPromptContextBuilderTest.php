@@ -61,4 +61,44 @@ class RagPromptContextBuilderTest extends TestCase
         $this->assertSame([], $context['metadata']['sources']);
         $this->assertSame(0, $context['metadata']['limits']['returned']);
     }
+
+    public function test_builds_navigation_targets_for_expanded_sources(): void
+    {
+        config()->set('ai-assistant.rag.max_chunks', 20);
+
+        $cases = [
+            ['estimate', '55', 10, [], '/projects/10/estimates/55'],
+            ['estimate_template', '7', null, [], '/templates/library'],
+            ['estimate_library_item', '8', null, [], '/libraries'],
+            ['normative_rate', '9', null, [], '/catalogs/estimate-positions'],
+            ['estimate_catalog_item', '11', null, [], '/catalogs/estimate-positions'],
+            ['construction_journal_entry', '21', 10, ['journal_id' => 3], '/journals/3/entries/21'],
+            ['performance_act', '31', 10, [], '/acts/31'],
+            ['payment_document', '41', 10, [], '/payments/documents/41'],
+            ['quality_defect', '51', 10, [], '/quality-control/defects/51'],
+            ['executive_document_set', '61', 10, [], '/executive-documentation/sets/61'],
+            ['executive_document', '71', 10, ['document_set_id' => 6], '/executive-documentation/sets/6'],
+        ];
+
+        $results = array_map(
+            static fn (array $case): RagSearchResult => new RagSearchResult(
+                sourceType: 'test',
+                entityType: $case[0],
+                entityId: $case[1],
+                projectId: $case[2],
+                title: "Source {$case[0]}",
+                excerpt: 'Evidence',
+                similarity: 0.8,
+                metadata: $case[3],
+                updatedAt: null
+            ),
+            $cases
+        );
+
+        $context = (new RagPromptContextBuilder())->build('open source', $results);
+
+        foreach ($cases as $index => $case) {
+            $this->assertSame($case[4], $context['metadata']['sources'][$index]['navigation_target']['route']);
+        }
+    }
 }

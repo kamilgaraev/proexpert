@@ -54,10 +54,16 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\RagPromptContextBuilde
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\YandexRagEmbeddingProvider;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ConstructionJournalRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ContractRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\EstimateRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\EstimateReferenceRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\PaymentRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\PerformanceActRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ProcurementRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ProjectRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ProjectPulseRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\QualityAndExecutiveDocsRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ScheduleRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\SiteRequestRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\WarehouseRagSource;
@@ -92,10 +98,16 @@ class AIAssistantServiceProvider extends ServiceProvider
                 $app->make(ProjectRagSource::class),
                 $app->make(ScheduleRagSource::class),
                 $app->make(ContractRagSource::class),
+                $app->make(EstimateRagSource::class),
+                $app->make(EstimateReferenceRagSource::class),
                 $app->make(ProcurementRagSource::class),
                 $app->make(WarehouseRagSource::class),
                 $app->make(SiteRequestRagSource::class),
                 $app->make(WorkCompletionRagSource::class),
+                $app->make(ConstructionJournalRagSource::class),
+                $app->make(PerformanceActRagSource::class),
+                $app->make(PaymentRagSource::class),
+                $app->make(QualityAndExecutiveDocsRagSource::class),
                 $app->make(ProjectPulseRagSource::class),
             ]);
         });

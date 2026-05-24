@@ -86,6 +86,8 @@ final class RagPromptContextBuilder
     private static function navigationTarget(RagSearchResult $result): ?array
     {
         $entityId = is_numeric($result->entityId) ? (int) $result->entityId : null;
+        $journalId = self::metadataInt($result, 'journal_id');
+        $documentSetId = self::metadataInt($result, 'document_set_id');
 
         $route = match ($result->entityType) {
             'project' => $entityId !== null ? "/projects/{$entityId}" : null,
@@ -93,9 +95,23 @@ final class RagPromptContextBuilder
                 ? "/projects/{$result->projectId}/schedules/{$entityId}"
                 : ($result->projectId !== null ? "/projects/{$result->projectId}/schedules" : '/schedules'),
             'contract' => $entityId !== null ? "/contracts/{$entityId}" : null,
+            'estimate' => $entityId !== null && $result->projectId !== null
+                ? "/projects/{$result->projectId}/estimates/{$entityId}"
+                : ($result->projectId !== null ? "/projects/{$result->projectId}/estimates" : null),
+            'estimate_template' => '/templates/library',
+            'estimate_library_item' => '/libraries',
+            'normative_rate', 'estimate_catalog_item' => '/catalogs/estimate-positions',
             'purchase_request' => $entityId !== null ? "/procurement/purchase-requests/{$entityId}" : null,
             'site_request' => $entityId !== null ? "/site-requests/{$entityId}" : null,
             'completed_work' => $entityId !== null ? "/completed-works/{$entityId}" : null,
+            'construction_journal_entry' => $entityId !== null && $journalId !== null
+                ? "/journals/{$journalId}/entries/{$entityId}"
+                : ($result->projectId !== null ? "/projects/{$result->projectId}/journals" : null),
+            'performance_act' => $entityId !== null ? "/acts/{$entityId}" : '/acts',
+            'payment_document' => $entityId !== null ? "/payments/documents/{$entityId}" : '/payments/documents',
+            'quality_defect' => $entityId !== null ? "/quality-control/defects/{$entityId}" : '/quality-control/defects',
+            'executive_document_set' => $entityId !== null ? "/executive-documentation/sets/{$entityId}" : '/executive-documentation/sets',
+            'executive_document' => $documentSetId !== null ? "/executive-documentation/sets/{$documentSetId}" : '/executive-documentation/sets',
             'project_pulse_report' => $entityId !== null ? "/project-pulse/reports/{$entityId}" : '/project-pulse',
             'project_material_delivery' => '/warehouse',
             default => $result->projectId !== null ? "/projects/{$result->projectId}" : null,
@@ -116,6 +132,13 @@ final class RagPromptContextBuilder
                 ],
             ],
         ];
+    }
+
+    private static function metadataInt(RagSearchResult $result, string $key): ?int
+    {
+        $value = $result->metadata[$key] ?? null;
+
+        return is_numeric($value) ? (int) $value : null;
     }
 
     private function configInt(string $key, int $default): int

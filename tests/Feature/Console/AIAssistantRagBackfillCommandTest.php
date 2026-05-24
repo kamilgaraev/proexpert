@@ -37,6 +37,39 @@ class AIAssistantRagBackfillCommandTest extends TestCase
         $this->assertSame([[10, 20, 'project']], $indexer->calls);
     }
 
+    public function test_sync_backfill_accepts_expanded_source_type(): void
+    {
+        $organization = Organization::factory()->create(['id' => 12]);
+        Project::factory()->create(['id' => 24, 'organization_id' => $organization->id]);
+        $indexer = new BackfillCommandRecordingRagIndexer(5);
+        $this->app->instance(RagIndexer::class, $indexer);
+
+        $this->artisan('ai-assistant:rag-backfill', [
+            'organization_id' => 12,
+            '--project_id' => 24,
+            '--source_type' => 'estimate',
+            '--sync' => true,
+        ])
+            ->expectsOutput('Indexed RAG chunks: 5')
+            ->expectsOutput('RAG index run: 1')
+            ->assertExitCode(0);
+
+        $this->assertSame([[12, 24, 'estimate']], $indexer->calls);
+    }
+
+    public function test_backfill_rejects_unknown_source_type(): void
+    {
+        $organization = Organization::factory()->create(['id' => 13]);
+
+        $this->artisan('ai-assistant:rag-backfill', [
+            'organization_id' => $organization->id,
+            '--source_type' => 'missing_source',
+            '--sync' => true,
+        ])
+            ->expectsOutput('Unknown or disabled RAG source type: missing_source.')
+            ->assertExitCode(1);
+    }
+
     public function test_async_backfill_dispatches_index_job_with_requested_scope(): void
     {
         Queue::fake();

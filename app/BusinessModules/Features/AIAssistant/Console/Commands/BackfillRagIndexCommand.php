@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\AIAssistant\Console\Commands;
 
 use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use Illuminate\Console\Command;
 
 class BackfillRagIndexCommand extends Command
@@ -24,7 +25,7 @@ class BackfillRagIndexCommand extends Command
 
     protected $description = 'Backfill AI assistant RAG index for an organization.';
 
-    public function handle(RagIndexingCoordinator $coordinator): int
+    public function handle(RagIndexingCoordinator $coordinator, RagSourceRegistry $sourceRegistry): int
     {
         $organizationId = $this->nullableIntArgument('organization_id');
         $projectId = $this->nullableIntOption('project_id');
@@ -54,6 +55,13 @@ class BackfillRagIndexCommand extends Command
 
         if ($sync && $all && ! (bool) $this->option('force')) {
             $this->error('Synchronous --all indexing requires --force.');
+
+            return self::FAILURE;
+        }
+
+        if ($sourceType !== null && ! $this->sourceTypeAvailable($sourceRegistry, $sourceType)) {
+            $this->error("Unknown or disabled RAG source type: {$sourceType}.");
+            $this->line('Available RAG source types: '.implode(', ', array_keys($sourceRegistry->enabledCollectors())));
 
             return self::FAILURE;
         }
@@ -140,6 +148,11 @@ class BackfillRagIndexCommand extends Command
             ?? (int) config('ai-assistant.rag.stale_after_hours', 24);
 
         return max(1, $value);
+    }
+
+    private function sourceTypeAvailable(RagSourceRegistry $sourceRegistry, string $sourceType): bool
+    {
+        return array_key_exists($sourceType, $sourceRegistry->enabledCollectors());
     }
 
     private function syncAll(
