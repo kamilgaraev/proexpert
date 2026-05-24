@@ -226,6 +226,17 @@ Schedule::command('contracts:sync-event-sourcing')
     })
     ->appendOutputTo(storage_path('logs/schedule-contracts-sync.log'));
 
+$ragScheduledLimit = max(1, (int) config('ai-assistant.rag.scheduled_limit', 50));
+
+Schedule::command("ai-assistant:rag-backfill --all --limit={$ragScheduledLimit}")
+    ->hourly()
+    ->withoutOverlapping(55)
+    ->runInBackground()
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled ai-assistant:rag-backfill command failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-ai-rag-backfill.log'));
+
 Schedule::command('estimates:regional-prices:sync-fgiscs --region=RU-TA --latest-only')
     ->dailyAt('03:30')
     ->withoutOverlapping(180)

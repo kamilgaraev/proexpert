@@ -68,6 +68,8 @@ return [
         'embedding_model' => $configEnv('AI_RAG_EMBEDDING_MODEL', 'text-embedding-3-small'),
         'embedding_dimensions' => $configEnv('AI_RAG_EMBEDDING_DIMENSIONS', 1536),
         'queue' => $configEnv('AI_RAG_QUEUE', 'ai-rag'),
+        'scheduled_limit' => $configEnv('AI_RAG_SCHEDULED_LIMIT', 50),
+        'stale_after_hours' => $configEnv('AI_RAG_STALE_AFTER_HOURS', 24),
         'max_chunks' => $configEnv('AI_RAG_MAX_CHUNKS', 8),
         'min_similarity' => $configEnv('AI_RAG_MIN_SIMILARITY', 0.72),
         'chunk_chars' => $configEnv('AI_RAG_CHUNK_CHARS', 1200),

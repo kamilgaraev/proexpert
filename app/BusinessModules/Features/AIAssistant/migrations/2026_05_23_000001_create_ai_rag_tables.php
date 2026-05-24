@@ -14,7 +14,7 @@ return new class extends Migration
         $isPostgres = Schema::getConnection()->getDriverName() === 'pgsql';
 
         if ($isPostgres) {
-            DB::statement('CREATE EXTENSION IF NOT EXISTS vector');
+            $this->ensureVectorExtensionExists();
         }
 
         Schema::create('ai_rag_sources', function (Blueprint $table): void {
@@ -70,5 +70,22 @@ return new class extends Migration
     {
         Schema::dropIfExists('ai_rag_chunks');
         Schema::dropIfExists('ai_rag_sources');
+    }
+
+    private function ensureVectorExtensionExists(): void
+    {
+        $extension = DB::selectOne(
+            'SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = ?) AS installed',
+            ['vector']
+        );
+
+        if ((bool) ($extension->installed ?? false)) {
+            return;
+        }
+
+        throw new \RuntimeException(
+            'PostgreSQL extension "vector" is required for AI assistant knowledge search. '
+            .'Enable pgvector on the database server before running this migration.'
+        );
     }
 };

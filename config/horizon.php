@@ -17,6 +17,7 @@ return [
         'redis:notifications-high' => 60,
         'redis:notifications' => 120,
         'redis:notifications-low' => 300,
+        'redis:ai-rag' => 600,
     ],
     
     'trim' => [
@@ -114,6 +115,18 @@ return [
                 'timeout' => 1800,
                 'memory' => 512,
             ],
+            'supervisor-ai-rag' => [
+                'connection' => 'redis',
+                'queue' => [env('AI_RAG_QUEUE', 'ai-rag')],
+                'balance' => 'auto',
+                'autoScalingStrategy' => 'time',
+                'minProcesses' => 1,
+                'maxProcesses' => (int) env('AI_RAG_HORIZON_MAX_PROCESSES', 2),
+                'tries' => 3,
+                'timeout' => (int) env('AI_RAG_JOB_TIMEOUT', 1800),
+                'memory' => 512,
+                'nice' => 5,
+            ],
         ],
 
         'local' => [
@@ -124,6 +137,15 @@ return [
                 'processes' => 1,
                 'tries' => 3,
                 'timeout' => 1800,
+                'memory' => 512,
+            ],
+            'supervisor-ai-rag' => [
+                'connection' => 'redis',
+                'queue' => [env('AI_RAG_QUEUE', 'ai-rag')],
+                'balance' => 'simple',
+                'processes' => 1,
+                'tries' => 3,
+                'timeout' => (int) env('AI_RAG_JOB_TIMEOUT', 1800),
                 'memory' => 512,
             ],
             'supervisor-1' => [
