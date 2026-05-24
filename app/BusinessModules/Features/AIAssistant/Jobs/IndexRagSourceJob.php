@@ -24,15 +24,17 @@ class IndexRagSourceJob implements ShouldQueue
         $this->onQueue($this->queueName());
     }
 
-    public function handle(RagIndexer $indexer, RagIndexingCoordinator $coordinator): void
+    public function handle(RagIndexer $indexer, ?RagIndexingCoordinator $coordinator = null): void
     {
         if ($this->runId !== null) {
+            $coordinator ??= app(RagIndexingCoordinator::class);
             $coordinator->markRunning($this->runId);
         }
 
         $indexed = $indexer->indexOrganization($this->organizationId, $this->projectId, $this->sourceType);
 
         if ($this->runId !== null) {
+            $coordinator ??= app(RagIndexingCoordinator::class);
             $coordinator->markSucceeded($this->runId, $indexed);
         }
     }
