@@ -5,11 +5,15 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services\Rag;
 
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use RuntimeException;
 use Throwable;
 
 final class YandexRagEmbeddingProvider implements RagEmbeddingProviderInterface
 {
+    private const DEFAULT_ENDPOINT = 'https://ai.api.cloud.yandex.net/foundationModels/v1/textEmbedding';
+
     private ?string $apiKey;
 
     private ?string $folderId;
@@ -42,7 +46,7 @@ final class YandexRagEmbeddingProvider implements RagEmbeddingProviderInterface
         $this->endpoint = $endpoint
             ?? $this->configString(
                 'ai-assistant.rag.embedding_endpoint',
-                'https://llm.api.cloud.yandex.net/foundationModels/v1/textEmbedding'
+                self::DEFAULT_ENDPOINT
             );
     }
 
@@ -75,6 +79,15 @@ final class YandexRagEmbeddingProvider implements RagEmbeddingProviderInterface
         $response = Http::withHeaders($headers)->timeout(60)->post($this->endpoint, $payload);
 
         if ($response->failed()) {
+            $endpointHost = parse_url($this->endpoint, PHP_URL_HOST);
+
+            Log::warning('ai_assistant.rag.yandex_embedding_failed', [
+                'status' => $response->status(),
+                'endpoint_host' => is_string($endpointHost) ? $endpointHost : null,
+                'model_uri' => $modelUri,
+                'response_body' => Str::limit((string) $response->body(), 500, ''),
+            ]);
+
             throw new RuntimeException($this->assistantMessage());
         }
 

@@ -70,7 +70,7 @@ return [
         'embedding_query_model_uri' => $configEnv('AI_RAG_EMBEDDING_QUERY_MODEL_URI'),
         'embedding_endpoint' => $configEnv(
             'AI_RAG_EMBEDDING_ENDPOINT',
-            'https://llm.api.cloud.yandex.net/foundationModels/v1/textEmbedding'
+            'https://ai.api.cloud.yandex.net/foundationModels/v1/textEmbedding'
         ),
         'embedding_dimensions' => $configEnv('AI_RAG_EMBEDDING_DIMENSIONS', 256),
         'queue' => $configEnv('AI_RAG_QUEUE', 'ai-rag'),

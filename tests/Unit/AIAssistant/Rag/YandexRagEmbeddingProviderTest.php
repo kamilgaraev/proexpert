@@ -8,6 +8,8 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderIn
 use App\BusinessModules\Features\AIAssistant\Services\Rag\YandexRagEmbeddingProvider;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Lang;
+use Illuminate\Support\Facades\Log;
+use Mockery;
 use RuntimeException;
 use Tests\TestCase;
 
@@ -16,7 +18,7 @@ class YandexRagEmbeddingProviderTest extends TestCase
     public function test_yandex_provider_uses_document_and_query_models(): void
     {
         Http::fake([
-            'https://llm.api.cloud.yandex.net/*' => Http::response([
+            'https://ai.api.cloud.yandex.net/*' => Http::response([
                 'embedding' => ['0.4', '0.5', '0.6'],
                 'numTokens' => '12',
                 'modelVersion' => 'latest',
@@ -39,7 +41,7 @@ class YandexRagEmbeddingProviderTest extends TestCase
         $this->assertSame(256, $provider->dimensions());
 
         Http::assertSent(function ($request): bool {
-            return $request->url() === 'https://llm.api.cloud.yandex.net/foundationModels/v1/textEmbedding'
+            return $request->url() === 'https://ai.api.cloud.yandex.net/foundationModels/v1/textEmbedding'
                 && $request->hasHeader('Authorization', 'Api-Key test-key')
                 && $request->hasHeader('x-folder-id', 'folder-id')
                 && $request['modelUri'] === 'emb://folder-id/text-search-doc/latest'
@@ -48,7 +50,7 @@ class YandexRagEmbeddingProviderTest extends TestCase
         });
 
         Http::assertSent(function ($request): bool {
-            return $request->url() === 'https://llm.api.cloud.yandex.net/foundationModels/v1/textEmbedding'
+            return $request->url() === 'https://ai.api.cloud.yandex.net/foundationModels/v1/textEmbedding'
                 && $request->hasHeader('Authorization', 'Api-Key test-key')
                 && $request->hasHeader('x-folder-id', 'folder-id')
                 && $request['modelUri'] === 'emb://folder-id/text-search-query/latest'
@@ -73,5 +75,40 @@ class YandexRagEmbeddingProviderTest extends TestCase
         $this->expectExceptionMessage('Сервис подготовки контекста временно недоступен.');
 
         $provider->embed('Контекст проекта');
+    }
+
+    public function test_yandex_provider_logs_failed_response_without_sensitive_request_data(): void
+    {
+        Http::fake([
+            'https://ai.api.cloud.yandex.net/*' => Http::response(['message' => 'forbidden'], 403),
+        ]);
+
+        $log = Log::spy();
+
+        $provider = new YandexRagEmbeddingProvider(
+            apiKey: 'secret-key',
+            folderId: 'folder-id',
+            dimensions: 256
+        );
+
+        try {
+            $provider->embed('sensitive project context');
+            $this->fail('Expected Yandex embedding failure.');
+        } catch (RuntimeException) {
+            $this->assertTrue(true);
+        }
+
+        $log->shouldHaveReceived('warning')
+            ->once()
+            ->with('ai_assistant.rag.yandex_embedding_failed', Mockery::on(static function (array $context): bool {
+                $encodedContext = json_encode($context, JSON_THROW_ON_ERROR);
+
+                return $context['status'] === 403
+                    && $context['endpoint_host'] === 'ai.api.cloud.yandex.net'
+                    && $context['model_uri'] === 'emb://folder-id/text-search-doc/latest'
+                    && $context['response_body'] === '{"message":"forbidden"}'
+                    && ! str_contains($encodedContext, 'secret-key')
+                    && ! str_contains($encodedContext, 'sensitive project context');
+            }));
     }
 }
