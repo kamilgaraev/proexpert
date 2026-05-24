@@ -10,6 +10,7 @@ use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\Models\Organization;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
@@ -31,9 +32,18 @@ class RagIndexingCoordinator
         ?int $limit = null,
         ?int $projectId = null,
         ?string $sourceType = null,
-        string $mode = RagIndexRun::MODE_SCHEDULED
+        string $mode = RagIndexRun::MODE_SCHEDULED,
+        bool $staleOnly = false,
+        ?int $staleAfterHours = null
     ): array {
-        $organizations = $this->organizationsForBulkIndex($includeInactive, $limit);
+        $organizations = $this->organizationsForBulkIndex(
+            $includeInactive,
+            $limit,
+            $staleOnly,
+            $staleAfterHours,
+            $projectId,
+            $sourceType
+        );
         $runIds = [];
         $organizationIds = [];
 
@@ -57,9 +67,18 @@ class RagIndexingCoordinator
         bool $includeInactive = false,
         ?int $limit = null,
         ?int $projectId = null,
-        ?string $sourceType = null
+        ?string $sourceType = null,
+        bool $staleOnly = false,
+        ?int $staleAfterHours = null
     ): array {
-        $organizations = $this->organizationsForBulkIndex($includeInactive, $limit);
+        $organizations = $this->organizationsForBulkIndex(
+            $includeInactive,
+            $limit,
+            $staleOnly,
+            $staleAfterHours,
+            $projectId,
+            $sourceType
+        );
         $runIds = [];
         $organizationIds = [];
 
@@ -226,13 +245,107 @@ class RagIndexingCoordinator
     /**
      * @return Collection<int, Organization>
      */
-    private function organizationsForBulkIndex(bool $includeInactive, ?int $limit): Collection
+    private function organizationsForBulkIndex(
+        bool $includeInactive,
+        ?int $limit,
+        bool $staleOnly = false,
+        ?int $staleAfterHours = null,
+        ?int $projectId = null,
+        ?string $sourceType = null
+    ): Collection
     {
-        return Organization::query()
+        $query = Organization::query()
             ->select(['id'])
-            ->when(! $includeInactive, static fn (Builder $query): Builder => $query->where('is_active', true))
-            ->orderBy('id')
+            ->when(! $includeInactive, static fn (Builder $query): Builder => $query->where('is_active', true));
+
+        if ($staleOnly) {
+            $freshnessWindow = max(1, $staleAfterHours ?? (int) config('ai-assistant.rag.stale_after_hours', 24));
+            $cutoff = now()->subHours($freshnessWindow);
+            $this->applyStaleOnlyConstraint($query, $cutoff, $projectId, $sourceType);
+            $this->orderByOldestRagAttempt($query);
+        } else {
+            $query->orderBy('id');
+        }
+
+        return $query
             ->when($limit !== null && $limit > 0, static fn (Builder $query): Builder => $query->limit($limit))
             ->get();
+    }
+
+    private function applyStaleOnlyConstraint(
+        Builder $query,
+        Carbon $cutoff,
+        ?int $projectId,
+        ?string $sourceType
+    ): void {
+        $organizationTable = (new Organization())->getTable();
+        $runTable = (new RagIndexRun())->getTable();
+
+        $query
+            ->whereNotExists(function (QueryBuilder $subQuery) use ($organizationTable, $runTable): void {
+                $subQuery
+                    ->selectRaw('1')
+                    ->from($runTable)
+                    ->whereColumn("{$runTable}.organization_id", "{$organizationTable}.id")
+                    ->whereIn("{$runTable}.status", [
+                        RagIndexRun::STATUS_QUEUED,
+                        RagIndexRun::STATUS_RUNNING,
+                    ]);
+            })
+            ->whereNotExists(
+                function (QueryBuilder $subQuery) use (
+                    $cutoff,
+                    $organizationTable,
+                    $projectId,
+                    $runTable,
+                    $sourceType
+                ): void {
+                    $subQuery
+                        ->selectRaw('1')
+                        ->from($runTable)
+                        ->whereColumn("{$runTable}.organization_id", "{$organizationTable}.id")
+                        ->where("{$runTable}.status", RagIndexRun::STATUS_SUCCEEDED)
+                        ->where("{$runTable}.finished_at", '>', $cutoff);
+
+                    $this->applyRunScope($subQuery, $runTable, $projectId, $sourceType);
+                }
+            );
+    }
+
+    private function applyRunScope(
+        QueryBuilder $query,
+        string $runTable,
+        ?int $projectId,
+        ?string $sourceType
+    ): void {
+        if ($projectId === null) {
+            $query->whereNull("{$runTable}.project_id");
+        } else {
+            $query->where("{$runTable}.project_id", $projectId);
+        }
+
+        if ($sourceType === null) {
+            $query->whereNull("{$runTable}.source_type");
+        } else {
+            $query->where("{$runTable}.source_type", $sourceType);
+        }
+    }
+
+    private function orderByOldestRagAttempt(Builder $query): void
+    {
+        $organizationTable = (new Organization())->getTable();
+        $runTable = (new RagIndexRun())->getTable();
+        $latestAttemptSql = sprintf(
+            '(select max(%s.created_at) from %s where %s.organization_id = %s.id)',
+            $runTable,
+            $runTable,
+            $runTable,
+            $organizationTable
+        );
+
+        $query
+            ->orderByRaw("{$latestAttemptSql} is not null")
+            ->orderByRaw("{$latestAttemptSql} asc")
+            ->orderBy("{$organizationTable}.id");
     }
 }

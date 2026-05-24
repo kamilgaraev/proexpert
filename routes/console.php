@@ -227,8 +227,16 @@ Schedule::command('contracts:sync-event-sourcing')
     ->appendOutputTo(storage_path('logs/schedule-contracts-sync.log'));
 
 $ragScheduledLimit = max(1, (int) config('ai-assistant.rag.scheduled_limit', 50));
+$ragStaleAfterHours = max(1, (int) config('ai-assistant.rag.stale_after_hours', 24));
+$ragBackfillCommand = implode(' ', [
+    'ai-assistant:rag-backfill',
+    '--all',
+    '--stale',
+    "--limit={$ragScheduledLimit}",
+    "--stale-after-hours={$ragStaleAfterHours}",
+]);
 
-Schedule::command("ai-assistant:rag-backfill --all --limit={$ragScheduledLimit}")
+Schedule::command($ragBackfillCommand)
     ->hourly()
     ->withoutOverlapping(55)
     ->runInBackground()

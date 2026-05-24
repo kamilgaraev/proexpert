@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Console\Commands;
 
+use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
 use Illuminate\Console\Command;
 
@@ -14,6 +15,8 @@ class BackfillRagIndexCommand extends Command
         {--all : Queue indexing for all organizations}
         {--include-inactive : Include inactive organizations with --all}
         {--limit= : Limit organization count for --all}
+        {--stale : With --all, queue only organizations without a fresh successful run}
+        {--stale-after-hours= : Freshness window for --stale}
         {--project_id= : Scope indexing to one project}
         {--source_type= : Scope indexing to one RAG source type}
         {--sync : Run synchronously}
@@ -28,6 +31,8 @@ class BackfillRagIndexCommand extends Command
         $sourceType = $this->nullableStringOption('source_type');
         $all = (bool) $this->option('all');
         $sync = (bool) $this->option('sync');
+        $staleOnly = (bool) $this->option('stale');
+        $staleAfterHours = $this->staleAfterHours();
 
         if ($organizationId === null && ! $all) {
             $this->error('Provide organization_id or use --all.');
@@ -41,6 +46,12 @@ class BackfillRagIndexCommand extends Command
             return self::FAILURE;
         }
 
+        if ($staleOnly && ! $all) {
+            $this->error('--stale can be used only with --all.');
+
+            return self::FAILURE;
+        }
+
         if ($sync && $all && ! (bool) $this->option('force')) {
             $this->error('Synchronous --all indexing requires --force.');
 
@@ -49,14 +60,17 @@ class BackfillRagIndexCommand extends Command
 
         if ($all) {
             if ($sync) {
-                return $this->syncAll($coordinator, $projectId, $sourceType);
+                return $this->syncAll($coordinator, $projectId, $sourceType, $staleOnly, $staleAfterHours);
             }
 
             $result = $coordinator->queueAllActiveOrganizations(
                 (bool) $this->option('include-inactive'),
                 $this->nullableIntOption('limit'),
                 $projectId,
-                $sourceType
+                $sourceType,
+                RagIndexRun::MODE_SCHEDULED,
+                $staleOnly,
+                $staleAfterHours
             );
 
             $this->info("Queued RAG indexing jobs: {$result['queued']}");
@@ -120,13 +134,29 @@ class BackfillRagIndexCommand extends Command
         return $value !== '' ? $value : null;
     }
 
-    private function syncAll(RagIndexingCoordinator $coordinator, ?int $projectId, ?string $sourceType): int
+    private function staleAfterHours(): int
+    {
+        $value = $this->nullableIntOption('stale-after-hours')
+            ?? (int) config('ai-assistant.rag.stale_after_hours', 24);
+
+        return max(1, $value);
+    }
+
+    private function syncAll(
+        RagIndexingCoordinator $coordinator,
+        ?int $projectId,
+        ?string $sourceType,
+        bool $staleOnly,
+        int $staleAfterHours
+    ): int
     {
         $result = $coordinator->indexAllActiveOrganizationsSync(
             (bool) $this->option('include-inactive'),
             $this->nullableIntOption('limit'),
             $projectId,
-            $sourceType
+            $sourceType,
+            $staleOnly,
+            $staleAfterHours
         );
 
         $this->info("Synchronously indexed organizations: {$result['processed']}");
