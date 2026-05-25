@@ -254,6 +254,7 @@ return [
         'actions' => [
             'approve_request' => 'Одобрить заявку',
             'create_supplier_request' => 'Создать заявку поставщику',
+            'request_new_proposal' => 'Запросить новое КП',
             'send_supplier_request' => 'Отправить заявку поставщику',
             'wait_for_proposals' => 'Дождаться КП',
             'select_proposal' => 'Выбрать поставщика',

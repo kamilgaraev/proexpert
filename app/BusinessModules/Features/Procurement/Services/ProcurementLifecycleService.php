@@ -323,6 +323,7 @@ class ProcurementLifecycleService
         if ($selectedProposal instanceof SupplierProposal && $this->proposalCannotProceed($selectedProposal)) {
             return $this->summary('proposal_expired', 'create_supplier_request', [
                 'canCreateSupplierRequest' => true,
+                'nextActionLabelKey' => 'procurement.lifecycle.actions.request_new_proposal',
                 'blockers' => [$this->blocker('proposal_expired')],
             ]);
         }
@@ -353,6 +354,7 @@ class ProcurementLifecycleService
 
         return $this->summary('proposal_expired', 'create_supplier_request', [
             'canCreateSupplierRequest' => true,
+            'nextActionLabelKey' => 'procurement.lifecycle.actions.request_new_proposal',
             'blockers' => [$this->blocker('proposal_expired')],
         ]);
     }
@@ -451,6 +453,7 @@ class ProcurementLifecycleService
      *     canAcceptProposal?: bool,
      *     canCreateOrder?: bool,
      *     canReceiveMaterials?: bool,
+     *     nextActionLabelKey?: string,
      *     blockers?: array<int, string>,
      *     warnings?: array<int, string>
      * } $options
@@ -461,7 +464,9 @@ class ProcurementLifecycleService
             stage: $stage,
             stageLabel: trans_message("procurement.lifecycle.stages.{$stage}"),
             nextAction: $nextAction,
-            nextActionLabel: $nextAction === null ? null : trans_message("procurement.lifecycle.actions.{$nextAction}"),
+            nextActionLabel: $nextAction === null
+                ? null
+                : trans_message($options['nextActionLabelKey'] ?? "procurement.lifecycle.actions.{$nextAction}"),
             canCreateSupplierRequest: (bool) ($options['canCreateSupplierRequest'] ?? false),
             canSendSupplierRequest: (bool) ($options['canSendSupplierRequest'] ?? false),
             canSubmitProposal: (bool) ($options['canSubmitProposal'] ?? false),

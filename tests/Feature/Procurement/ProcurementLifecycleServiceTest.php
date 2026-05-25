@@ -27,6 +27,7 @@ class ProcurementLifecycleServiceTest extends TestCase
 
         $this->assertSame('approved_without_supplier_requests', $summary->stage);
         $this->assertSame('create_supplier_request', $summary->nextAction);
+        $this->assertSame(trans_message('procurement.lifecycle.actions.create_supplier_request'), $summary->nextActionLabel);
         $this->assertTrue($summary->canCreateSupplierRequest);
         $this->assertFalse($summary->canAcceptProposal);
     }
@@ -80,6 +81,7 @@ class ProcurementLifecycleServiceTest extends TestCase
 
         $this->assertSame('proposal_expired', $summary->stage);
         $this->assertSame('create_supplier_request', $summary->nextAction);
+        $this->assertSame(trans_message('procurement.lifecycle.actions.request_new_proposal'), $summary->nextActionLabel);
         $this->assertTrue($summary->canCreateSupplierRequest);
         $this->assertFalse($summary->canAcceptProposal);
         $this->assertNotEmpty($summary->blockers);
@@ -95,6 +97,7 @@ class ProcurementLifecycleServiceTest extends TestCase
 
         $this->assertSame('proposal_expired', $summary->stage);
         $this->assertSame('create_supplier_request', $summary->nextAction);
+        $this->assertSame(trans_message('procurement.lifecycle.actions.request_new_proposal'), $summary->nextActionLabel);
         $this->assertTrue($summary->canCreateSupplierRequest);
     }
 
