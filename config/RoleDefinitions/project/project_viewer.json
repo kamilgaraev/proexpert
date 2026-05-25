@@ -93,7 +93,9 @@
       "construction-journal.view"
     ],
     "site-requests": [
-      "site_requests.view"
+      "site_requests.view",
+      "site_requests.templates.view",
+      "site_requests.calendar.view"
     ]
   },
   
@@ -110,4 +112,3 @@
     }
   }
 }
-

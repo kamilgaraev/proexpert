@@ -25,7 +25,6 @@
     "reports": ["reports.view"],
     "personnel": ["personnel.view"],
     "time-tracking": ["time-tracking.view"],
-    "site-requests": ["site-requests.view"],
     "procurement": [
       "procurement.view",
       "procurement.audit.view",
@@ -77,7 +76,9 @@
       "production-labor.view"
     ],
     "site-requests": [
-      "site_requests.view"
+      "site_requests.view",
+      "site_requests.templates.view",
+      "site_requests.calendar.view"
     ]
   },
   

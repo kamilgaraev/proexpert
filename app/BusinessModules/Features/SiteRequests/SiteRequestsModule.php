@@ -145,14 +145,17 @@ class SiteRequestsModule implements ModuleInterface, BillableInterface, Configur
             'site_requests.edit',
             'site_requests.delete',
             'site_requests.approve',
+            'site_requests.reject',
             'site_requests.assign',
             'site_requests.change_status',
             'site_requests.files.upload',
             'site_requests.files.delete',
             'site_requests.statistics',
             'site_requests.export',
+            'site_requests.templates.view',
             'site_requests.templates.manage',
             'site_requests.calendar.view',
+            'site_requests.calendar.export',
         ];
     }
 
@@ -436,4 +439,3 @@ class SiteRequestsModule implements ModuleInterface, BillableInterface, Configur
         return $accessController->hasModuleAccess($organizationId, 'ai-assistant');
     }
 }
-
