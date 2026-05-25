@@ -4,13 +4,12 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Services;
 
+use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDeliveryService;
-use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
-use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\Models\Contract;
@@ -20,6 +19,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+
 use function trans_message;
 
 class PurchaseOrderService
@@ -30,8 +30,7 @@ class PurchaseOrderService
         private readonly ProcurementAuditService $auditService,
         private readonly ProcurementLifecycleService $lifecycleService,
         private readonly ProjectMaterialDeliveryService $deliveryService
-    ) {
-    }
+    ) {}
 
     public function create(PurchaseRequest $request, int $supplierId, array $data, ?int $actorId = null): PurchaseOrder
     {
@@ -47,7 +46,7 @@ class PurchaseOrderService
             ->where('is_active', true)
             ->first();
 
-        if (!$supplier) {
+        if (! $supplier) {
             throw new \DomainException(trans_message('procurement.purchase_orders.supplier_not_found'));
         }
 
@@ -57,7 +56,7 @@ class PurchaseOrderService
         DB::beginTransaction();
 
         try {
-            $orderNumber = $this->generateOrderNumber($request->organization_id);
+            $orderNumber = $this->generateOrderNumber();
 
             $order = PurchaseOrder::create([
                 'organization_id' => $request->organization_id,
@@ -122,11 +121,11 @@ class PurchaseOrderService
 
     public function sendToSupplier(PurchaseOrder $order): PurchaseOrder
     {
-        if (!$order->canBeSent()) {
+        if (! $order->canBeSent()) {
             throw new \DomainException(trans_message('procurement.purchase_orders.invalid_status_for_send'));
         }
 
-        if (!$order->supplier || !$order->supplier->email) {
+        if (! $order->supplier || ! $order->supplier->email) {
             throw new \DomainException(trans_message('procurement.purchase_orders.supplier_email_missing'));
         }
 
@@ -165,7 +164,7 @@ class PurchaseOrderService
 
     public function confirm(PurchaseOrder $order, array $proposalData): PurchaseOrder
     {
-        if (!$order->canBeConfirmed()) {
+        if (! $order->canBeConfirmed()) {
             throw new \DomainException(trans_message('procurement.purchase_orders.invalid_status_for_confirm'));
         }
 
@@ -210,7 +209,7 @@ class PurchaseOrderService
             ->where('is_active', true)
             ->first();
 
-        if (!$warehouse) {
+        if (! $warehouse) {
             throw new \DomainException(trans_message('procurement.purchase_orders.warehouse_not_found'));
         }
 
@@ -388,23 +387,28 @@ class PurchaseOrderService
         return sprintf('PR-%s%s-%04d', $year, $month, $nextNumber);
     }
 
-    private function generateOrderNumber(int $organizationId): string
+    private function generateOrderNumber(): string
     {
         $year = date('Y');
         $month = date('m');
+        $prefix = "ЗП-{$year}{$month}";
 
-        $lastOrder = PurchaseOrder::where('organization_id', $organizationId)
-            ->whereYear('created_at', $year)
-            ->whereMonth('created_at', $month)
-            ->orderByDesc('id')
-            ->first();
+        $lastNumber = PurchaseOrder::query()
+            ->where('order_number', 'like', $prefix.'-%')
+            ->orderByDesc('order_number')
+            ->value('order_number');
 
         $nextNumber = 1;
-        if ($lastOrder && preg_match('/(\d+)$/', $lastOrder->order_number, $matches)) {
+        if (is_string($lastNumber) && preg_match('/-(\d+)$/', $lastNumber, $matches) === 1) {
             $nextNumber = ((int) $matches[1]) + 1;
         }
 
-        return sprintf('ЗП-%s%s-%04d', $year, $month, $nextNumber);
+        do {
+            $orderNumber = sprintf('%s-%04d', $prefix, $nextNumber);
+            $nextNumber++;
+        } while (PurchaseOrder::query()->where('order_number', $orderNumber)->exists());
+
+        return $orderNumber;
     }
 
     private function invalidateCache(int $organizationId): void
@@ -442,7 +446,7 @@ class PurchaseOrderService
 
     private function syncDeliveryFromOrder(PurchaseOrder $order, PurchaseRequest $request, ?int $actorId = null): void
     {
-        if (!$request->site_request_id) {
+        if (! $request->site_request_id) {
             return;
         }
 
@@ -456,7 +460,7 @@ class PurchaseOrderService
 
         $actor = $this->resolveDeliveryActor($request, $actorId);
 
-        if (!$delivery || !$actor) {
+        if (! $delivery || ! $actor) {
             return;
         }
 
@@ -467,7 +471,7 @@ class PurchaseOrderService
     {
         $request = $order->purchaseRequest;
 
-        if (!$request || !$request->site_request_id) {
+        if (! $request || ! $request->site_request_id) {
             return;
         }
 
@@ -478,7 +482,7 @@ class PurchaseOrderService
 
         $actor = $this->resolveDeliveryActor($request);
 
-        if (!$delivery || !$actor || $delivery->status?->canBeReceived()) {
+        if (! $delivery || ! $actor || $delivery->status?->canBeReceived()) {
             return;
         }
 

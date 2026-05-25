@@ -150,6 +150,16 @@ class SupplierProposalDecisionTest extends TestCase
     public function test_accept_proposal_requires_valid_decision_and_selected_proposal_matches(): void
     {
         $organization = Organization::factory()->create();
+        $otherOrganization = Organization::factory()->create();
+        PurchaseOrder::query()->create([
+            'organization_id' => $otherOrganization->id,
+            'order_number' => 'ЗП-'.now()->format('Ym').'-0001',
+            'order_date' => now()->toDateString(),
+            'status' => 'confirmed',
+            'total_amount' => 100,
+            'currency' => 'RUB',
+        ]);
+
         $supplierRequest = $this->createSupplierRequest($organization);
         $winner = $this->createProposal($organization, $supplierRequest, 'KP-DEC-009', 100);
         $otherProposal = $this->createProposal($organization, $supplierRequest, 'KP-DEC-010', 150);
@@ -174,6 +184,7 @@ class SupplierProposalDecisionTest extends TestCase
 
         $this->assertSame('accepted', $accepted->status->value);
         $this->assertNotNull($accepted->purchase_order_id);
+        $this->assertSame('ЗП-'.now()->format('Ym').'-0002', $accepted->purchaseOrder?->order_number);
     }
 
     public function test_cannot_change_winner_after_selected_proposal_accepted_and_order_created(): void

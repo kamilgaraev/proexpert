@@ -50,7 +50,9 @@ class PublicSupplierRequestControllerTest extends TestCase
         $submitResponse->assertJsonPath('success', true);
         $submitResponse->assertJsonPath('data.status', SupplierProposalStatusEnum::SUBMITTED->value);
 
-        $proposal = SupplierProposal::query()->firstOrFail();
+        $proposal = SupplierProposal::query()
+            ->where('supplier_request_id', $supplierRequest->id)
+            ->firstOrFail();
         $proposal->load('intake', 'lines');
         $this->assertSame($supplierRequest->id, $proposal->supplier_request_id);
         $this->assertSame($supplier->id, $proposal->supplier_id);
@@ -71,6 +73,20 @@ class PublicSupplierRequestControllerTest extends TestCase
     public function test_external_public_supplier_can_submit_proposal(): void
     {
         $organization = Organization::factory()->create(['name' => 'Buyer Org']);
+        $otherOrganization = Organization::factory()->create(['name' => 'Other Buyer Org']);
+        SupplierProposal::query()->create([
+            'organization_id' => $otherOrganization->id,
+            'proposal_number' => 'КП-'.now()->format('Ym').'-0001',
+            'proposal_date' => now()->toDateString(),
+            'status' => SupplierProposalStatusEnum::SUBMITTED,
+            'subtotal_amount' => 100,
+            'delivery_amount' => 0,
+            'vat_amount' => 0,
+            'total_amount' => 100,
+            'currency' => 'RUB',
+            'vat_mode' => 'included',
+        ]);
+
         $purchaseRequest = $this->createPurchaseRequest($organization->id);
         $supplierRequest = app(SupplierRequestService::class)->create($organization->id, [
             'purchase_request_id' => $purchaseRequest->id,
@@ -95,7 +111,10 @@ class PublicSupplierRequestControllerTest extends TestCase
         $submitResponse->assertJsonPath('success', true);
         $submitResponse->assertJsonPath('data.status', SupplierProposalStatusEnum::SUBMITTED->value);
 
-        $proposal = SupplierProposal::query()->firstOrFail();
+        $proposal = SupplierProposal::query()
+            ->where('supplier_request_id', $supplierRequest->id)
+            ->firstOrFail();
+        $this->assertSame('КП-'.now()->format('Ym').'-0002', $proposal->proposal_number);
         $this->assertNull($proposal->supplier_id);
         $this->assertSame($supplierRequest->external_supplier_contact_id, $proposal->external_supplier_contact_id);
         $this->assertSame($supplierRequest->supplier_party_id, $proposal->supplier_party_id);

@@ -64,7 +64,7 @@ class SupplierProposalService
                     'external_supplier_contact_id' => $supplierRequest->external_supplier_contact_id,
                     'supplier_party_id' => $supplierRequest->supplier_party_id,
                     'supplier_snapshot' => $supplierRequest->supplier_snapshot ?? [],
-                    'proposal_number' => $this->generateProposalNumber($supplierRequest->organization_id),
+                    'proposal_number' => $this->generateProposalNumber(),
                     'proposal_date' => $data['proposal_date'] ?? now(),
                     'status' => SupplierProposalStatusEnum::SUBMITTED,
                     'subtotal_amount' => $amounts['subtotal_amount'],
@@ -277,7 +277,7 @@ class SupplierProposalService
                 'external_supplier_contact_id' => $lockedProposal->external_supplier_contact_id,
                 'supplier_party_id' => $lockedProposal->supplier_party_id,
                 'supplier_snapshot' => $lockedProposal->supplier_snapshot ?? [],
-                'order_number' => $this->generateOrderNumber($lockedProposal->organization_id),
+                'order_number' => $this->generateOrderNumber(),
                 'order_date' => now(),
                 'status' => PurchaseOrderStatusEnum::CONFIRMED,
                 'total_amount' => $this->snapshotFloat($acceptedSnapshot, 'total_amount', (float) $lockedProposal->total_amount),
@@ -387,26 +387,39 @@ class SupplierProposalService
             ?->material_id;
     }
 
-    private function generateProposalNumber(int $organizationId): string
+    private function generateProposalNumber(): string
     {
         $prefix = 'КП-'.now()->format('Ym');
-        $lastNumber = SupplierProposal::query()
-            ->where('organization_id', $organizationId)
-            ->where('proposal_number', 'like', $prefix.'-%')
-            ->count() + 1;
 
-        return sprintf('%s-%04d', $prefix, $lastNumber);
+        return $this->nextDocumentNumber(SupplierProposal::query(), 'proposal_number', $prefix);
     }
 
-    private function generateOrderNumber(int $organizationId): string
+    private function generateOrderNumber(): string
     {
         $prefix = 'ЗП-'.now()->format('Ym');
-        $lastNumber = PurchaseOrder::query()
-            ->where('organization_id', $organizationId)
-            ->where('order_number', 'like', $prefix.'-%')
-            ->count() + 1;
 
-        return sprintf('%s-%04d', $prefix, $lastNumber);
+        return $this->nextDocumentNumber(PurchaseOrder::query(), 'order_number', $prefix);
+    }
+
+    private function nextDocumentNumber(\Illuminate\Database\Eloquent\Builder $query, string $column, string $prefix): string
+    {
+        $lastNumber = (clone $query)
+            ->where($column, 'like', $prefix.'-%')
+            ->orderByDesc($column)
+            ->value($column);
+
+        $nextNumber = 1;
+
+        if (is_string($lastNumber) && preg_match('/-(\d+)$/', $lastNumber, $matches) === 1) {
+            $nextNumber = ((int) $matches[1]) + 1;
+        }
+
+        do {
+            $documentNumber = sprintf('%s-%04d', $prefix, $nextNumber);
+            $nextNumber++;
+        } while ((clone $query)->where($column, $documentNumber)->exists());
+
+        return $documentNumber;
     }
 
     /**
