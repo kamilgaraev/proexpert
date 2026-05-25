@@ -271,10 +271,7 @@ class SiteRequestResource extends JsonResource
     {
         $value = $this->resolveEquipmentTypeValue();
 
-        return match ($value) {
-            'crane' => EquipmentTypeEnum::MOBILE_CRANE,
-            default => $value !== null ? EquipmentTypeEnum::tryFrom($value) : null,
-        };
+        return EquipmentTypeEnum::fromLegacyValue($value);
     }
 
     private function resolveEquipmentTypeValue(): ?string
@@ -290,4 +287,3 @@ class SiteRequestResource extends JsonResource
         return is_string($value) && $value !== '' ? $value : null;
     }
 }
-

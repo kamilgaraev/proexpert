@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
 
 $adminController = \App\BusinessModules\Features\ProductionLabor\Http\Controllers\ProductionLaborController::class;
@@ -9,7 +10,7 @@ $mobileController = \App\BusinessModules\Features\ProductionLabor\Http\Controlle
 
 Route::prefix('api/v1/admin/production-labor')
     ->name('admin.production_labor.')
-    ->middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'production-labor.active'])
+    ->middleware(AdminRouteStack::middleware(['production-labor.active']))
     ->group(function () use ($adminController): void {
         Route::get('/work-orders', [$adminController, 'workOrders'])->middleware('authorize:production-labor.view');
         Route::post('/work-orders', [$adminController, 'storeWorkOrder'])->middleware('authorize:production-labor.work-orders.create');

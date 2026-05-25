@@ -14,6 +14,7 @@ use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseTaskControl
 use App\BusinessModules\Features\BasicWarehouse\Controllers\AdvancedWarehouseController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseStorageCellController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseZoneController;
+use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -25,7 +26,7 @@ use Illuminate\Support\Facades\Route;
 // ==========================================
 // Admin Panel Routes
 // ==========================================
-Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'authorize:admin.access', 'interface:admin'])
+Route::middleware(AdminRouteStack::middleware())
     ->prefix('api/v1/admin')
     ->name('admin.')
     ->group(function () {
@@ -240,4 +241,3 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
                 ->name('cancel');
         });
     });
-

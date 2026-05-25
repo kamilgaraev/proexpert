@@ -19,11 +19,12 @@ use App\BusinessModules\Core\Payments\Http\Controllers\ReportController;
 use App\BusinessModules\Core\Payments\Http\Controllers\ScheduleController;
 use App\BusinessModules\Core\Payments\Http\Controllers\SettingsController;
 use App\BusinessModules\Core\Payments\Http\Controllers\TransactionController;
+use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('api/v1/admin/payments')
     ->name('admin.payments.')
-    ->middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context'])
+    ->middleware(AdminRouteStack::middleware())
     ->group(function () {
         Route::get('/dashboard', [DashboardController::class, 'index'])
             ->middleware('authorize:payments.dashboard.view')

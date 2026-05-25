@@ -66,7 +66,7 @@ class SiteRequestPaymentService
     public function validateRequestsForPayment(array $requestIds, int $organizationId): void
     {
         if (empty($requestIds)) {
-            throw new \InvalidArgumentException('Необходимо выбрать хотя бы одну заявку');
+            throw new \InvalidArgumentException(trans_message('site_requests.errors.payment_empty_requests'));
         }
 
         // Получаем заявки
@@ -79,7 +79,9 @@ class SiteRequestPaymentService
             $foundIds = $requests->pluck('id')->toArray();
             $missingIds = array_diff($requestIds, $foundIds);
             throw new \InvalidArgumentException(
-                "Заявки с ID " . implode(', ', $missingIds) . " не найдены или не принадлежат организации"
+                trans_message('site_requests.errors.payment_requests_not_found', [
+                    'ids' => implode(', ', $missingIds),
+                ])
             );
         }
 
@@ -91,7 +93,9 @@ class SiteRequestPaymentService
         if ($invalidStatusRequests->isNotEmpty()) {
             $invalidIds = $invalidStatusRequests->pluck('id')->toArray();
             throw new \DomainException(
-                "Заявки с ID " . implode(', ', $invalidIds) . " не находятся в статусе 'Одобрена'"
+                trans_message('site_requests.errors.payment_requires_approved_requests', [
+                    'ids' => implode(', ', $invalidIds),
+                ])
             );
         }
 
@@ -103,7 +107,9 @@ class SiteRequestPaymentService
         if ($alreadyLinkedRequests->isNotEmpty()) {
             $linkedIds = $alreadyLinkedRequests->pluck('id')->toArray();
             throw new \DomainException(
-                "Заявки с ID " . implode(', ', $linkedIds) . " уже связаны с платежами"
+                trans_message('site_requests.errors.payment_requests_already_linked', [
+                    'ids' => implode(', ', $linkedIds),
+                ])
             );
         }
 
@@ -113,7 +119,7 @@ class SiteRequestPaymentService
         });
 
         if ($differentOrgRequests->isNotEmpty()) {
-            throw new \DomainException('Все заявки должны принадлежать одной организации');
+            throw new \DomainException(trans_message('site_requests.errors.single_organization_payment'));
         }
     }
 
@@ -138,7 +144,7 @@ class SiteRequestPaymentService
 
         // Валидация подрядчика
         if (empty($paymentData['payee_contractor_id'])) {
-            throw new \InvalidArgumentException('Необходимо указать подрядчика-получателя');
+            throw new \InvalidArgumentException(trans_message('site_requests.errors.payment_payee_required'));
         }
 
         $contractor = Contractor::where('id', $paymentData['payee_contractor_id'])
@@ -146,7 +152,7 @@ class SiteRequestPaymentService
             ->first();
 
         if (!$contractor) {
-            throw new \InvalidArgumentException('Подрядчик не найден или не принадлежит организации');
+            throw new \InvalidArgumentException(trans_message('site_requests.errors.payment_payee_not_found'));
         }
 
         // Определяем проект (если все заявки из одного проекта)
@@ -279,4 +285,3 @@ class SiteRequestPaymentService
         return implode('; ', $purposes);
     }
 }
-

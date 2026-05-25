@@ -7,11 +7,12 @@ use App\BusinessModules\Features\WorkforceManagement\Http\Controllers\Mobile\Wor
 use App\BusinessModules\Features\WorkforceManagement\Http\Controllers\WorkforceAttendanceQrController;
 use App\BusinessModules\Features\WorkforceManagement\Http\Controllers\WorkforceCorporateController;
 use App\BusinessModules\Features\WorkforceManagement\Http\Controllers\WorkforceProController;
+use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('api/v1/admin/workforce')
     ->name('admin.workforce.')
-    ->middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context'])
+    ->middleware(AdminRouteStack::middleware())
     ->group(function (): void {
         Route::get('/employees', [WorkforceEmployeeController::class, 'index'])
             ->middleware('authorize:workforce.view');

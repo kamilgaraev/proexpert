@@ -169,11 +169,11 @@ class SiteRequestTemplateService
         $template = $this->find($templateId, $organizationId);
 
         if (!$template) {
-            throw new \InvalidArgumentException('Шаблон не найден');
+            throw new \InvalidArgumentException(trans_message('site_requests.errors.template_not_found'));
         }
 
         if (!$template->is_active) {
-            throw new \DomainException('Шаблон неактивен');
+            throw new \DomainException(trans_message('site_requests.errors.template_inactive'));
         }
 
         // Получаем данные из шаблона
@@ -256,8 +256,7 @@ class SiteRequestTemplateService
         $currentCount = SiteRequestTemplate::forOrganization($organizationId)->count();
 
         if ($currentCount >= $maxTemplates) {
-            throw new \DomainException("Достигнут лимит шаблонов: {$maxTemplates}");
+            throw new \DomainException(trans_message('site_requests.errors.template_limit_reached', ['limit' => $maxTemplates]));
         }
     }
 }
-

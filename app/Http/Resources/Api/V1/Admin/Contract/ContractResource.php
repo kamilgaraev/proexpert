@@ -601,10 +601,7 @@ class ContractResource extends JsonResource
     {
         $value = $this->resolveWorkTypeCategoryValue();
 
-        return match ($value) {
-            'construction' => ContractWorkTypeCategoryEnum::GENERAL_CONSTRUCTION,
-            default => $value !== null ? ContractWorkTypeCategoryEnum::tryFrom($value) : null,
-        };
+        return ContractWorkTypeCategoryEnum::fromLegacyValue($value);
     }
 
     private function resolveWorkTypeCategoryValue(): ?string

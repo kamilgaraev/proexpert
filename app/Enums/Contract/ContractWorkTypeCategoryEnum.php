@@ -17,6 +17,15 @@ enum ContractWorkTypeCategoryEnum: string
     case RENT = 'rent'; // Аренда
     case OTHER = 'other'; // Прочие
 
+    public static function fromLegacyValue(?string $value): ?self
+    {
+        return match ($value) {
+            null, '' => null,
+            'construction' => self::GENERAL_CONSTRUCTION,
+            default => self::tryFrom($value),
+        };
+    }
+
     public function label(): string
     {
         return __('contract.work_type_category.' . $this->value, [], 'ru');

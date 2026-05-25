@@ -89,7 +89,7 @@ class SiteRequestWorkflowService
 
         if ($customTransition) {
             if (!$customTransition->is_active) {
-                throw new \DomainException("Переход '{$fromStatus}' → '{$toStatus}' отключен");
+                throw new \DomainException(trans_message('site_requests.errors.disabled_status_transition'));
             }
             return;
         }
@@ -99,7 +99,7 @@ class SiteRequestWorkflowService
 
         if (!isset($defaultTransitions[$fromStatus]) ||
             !in_array($toStatus, $defaultTransitions[$fromStatus])) {
-            throw new \DomainException("Недопустимый переход статуса '{$fromStatus}' → '{$toStatus}'");
+            throw new \DomainException(trans_message('site_requests.errors.invalid_status_transition'));
         }
     }
 
@@ -113,7 +113,11 @@ class SiteRequestWorkflowService
     ): ?string {
         $transition = $this->getCustomTransition($organizationId, $fromStatus, $toStatus);
 
-        return $transition?->required_permission;
+        if ($transition !== null) {
+            return $transition->required_permission;
+        }
+
+        return $this->getDefaultPermissionForTransition($fromStatus, $toStatus);
     }
 
     /**
@@ -159,10 +163,11 @@ class SiteRequestWorkflowService
             ['from' => 'draft', 'to' => 'pending', 'permission' => null],
             ['from' => 'draft', 'to' => 'cancelled', 'permission' => null],
             ['from' => 'pending', 'to' => 'in_review', 'permission' => 'site_requests.change_status'],
-            ['from' => 'pending', 'to' => 'rejected', 'permission' => 'site_requests.change_status'],
+            ['from' => 'pending', 'to' => 'approved', 'permission' => 'site_requests.approve'],
+            ['from' => 'pending', 'to' => 'rejected', 'permission' => 'site_requests.reject'],
             ['from' => 'pending', 'to' => 'cancelled', 'permission' => null],
             ['from' => 'in_review', 'to' => 'approved', 'permission' => 'site_requests.approve'],
-            ['from' => 'in_review', 'to' => 'rejected', 'permission' => 'site_requests.approve'],
+            ['from' => 'in_review', 'to' => 'rejected', 'permission' => 'site_requests.reject'],
             ['from' => 'in_review', 'to' => 'pending', 'permission' => 'site_requests.change_status'],
             ['from' => 'approved', 'to' => 'in_progress', 'permission' => 'site_requests.change_status'],
             ['from' => 'approved', 'to' => 'cancelled', 'permission' => 'site_requests.change_status'],
@@ -240,5 +245,28 @@ class SiteRequestWorkflowService
             ->with('toStatus')
             ->get();
     }
-}
 
+    private function getDefaultPermissionForTransition(string $fromStatus, string $toStatus): string
+    {
+        if ($toStatus === SiteRequestStatusEnum::APPROVED->value) {
+            return 'site_requests.approve';
+        }
+
+        if ($toStatus === SiteRequestStatusEnum::REJECTED->value) {
+            return 'site_requests.reject';
+        }
+
+        if (
+            $fromStatus === SiteRequestStatusEnum::DRAFT->value
+            && $toStatus === SiteRequestStatusEnum::PENDING->value
+        ) {
+            return 'site_requests.edit';
+        }
+
+        if ($toStatus === SiteRequestStatusEnum::CANCELLED->value) {
+            return 'site_requests.change_status';
+        }
+
+        return 'site_requests.change_status';
+    }
+}

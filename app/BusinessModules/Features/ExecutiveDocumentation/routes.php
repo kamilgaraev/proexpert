@@ -4,11 +4,12 @@ declare(strict_types=1);
 
 use App\BusinessModules\Features\ExecutiveDocumentation\Http\Controllers\Customer\ExecutiveDocumentationController as CustomerExecutiveDocumentationController;
 use App\BusinessModules\Features\ExecutiveDocumentation\Http\Controllers\ExecutiveDocumentationController;
+use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('api/v1/admin/executive-documentation')
     ->name('admin.executive_documentation.')
-    ->middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'executive-documentation.active'])
+    ->middleware(AdminRouteStack::middleware(['executive-documentation.active']))
     ->group(function (): void {
         Route::get('/sets', [ExecutiveDocumentationController::class, 'index'])
             ->middleware('authorize:executive-documentation.view')

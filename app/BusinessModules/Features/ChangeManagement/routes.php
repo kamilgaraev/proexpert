@@ -4,11 +4,12 @@ declare(strict_types=1);
 
 use App\BusinessModules\Features\ChangeManagement\Http\Controllers\ChangeManagementController;
 use App\BusinessModules\Features\ChangeManagement\Http\Controllers\Customer\ChangeManagementController as CustomerChangeManagementController;
+use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('api/v1/admin/change-management')
     ->name('admin.change_management.')
-    ->middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'change-management.active'])
+    ->middleware(AdminRouteStack::middleware(['change-management.active']))
     ->group(function (): void {
         Route::get('/rfis', [ChangeManagementController::class, 'rfis'])
             ->middleware('authorize:change-management.view');

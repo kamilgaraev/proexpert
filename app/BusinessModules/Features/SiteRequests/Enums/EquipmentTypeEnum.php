@@ -25,6 +25,15 @@ enum EquipmentTypeEnum: string
     case ROLLER = 'roller';
     case OTHER = 'other';
 
+    public static function fromLegacyValue(?string $value): ?self
+    {
+        return match ($value) {
+            null, '' => null,
+            'crane' => self::MOBILE_CRANE,
+            default => self::tryFrom($value),
+        };
+    }
+
     /**
      * Получить человекочитаемое название
      */
@@ -169,4 +178,3 @@ enum EquipmentTypeEnum: string
         );
     }
 }
-

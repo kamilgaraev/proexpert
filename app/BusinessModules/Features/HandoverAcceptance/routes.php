@@ -5,11 +5,12 @@ declare(strict_types=1);
 use App\BusinessModules\Features\HandoverAcceptance\Http\Controllers\Customer\HandoverAcceptanceController as CustomerHandoverAcceptanceController;
 use App\BusinessModules\Features\HandoverAcceptance\Http\Controllers\HandoverAcceptanceController;
 use App\BusinessModules\Features\HandoverAcceptance\Http\Controllers\Mobile\HandoverAcceptanceController as MobileHandoverAcceptanceController;
+use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('api/v1/admin/handover-acceptance')
     ->name('admin.handover_acceptance.')
-    ->middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'handover-acceptance.active'])
+    ->middleware(AdminRouteStack::middleware(['handover-acceptance.active']))
     ->group(function (): void {
         Route::get('/scopes', [HandoverAcceptanceController::class, 'index'])
             ->middleware('authorize:handover-acceptance.view');

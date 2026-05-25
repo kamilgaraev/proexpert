@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\V1\Admin\EstimateVersionController;
 use App\Http\Controllers\Api\V1\Admin\EstimateTemplateController;
 use App\BusinessModules\Features\BudgetEstimates\Http\Controllers\BudgetEstimatesSettingsController;
 use App\BusinessModules\Features\BudgetEstimates\Http\Controllers\EstimateRegionalPriceController;
+use App\Support\Routing\AdminRouteStack;
 
 /*
 |--------------------------------------------------------------------------
@@ -29,12 +30,7 @@ use App\BusinessModules\Features\BudgetEstimates\Http\Controllers\EstimateRegion
 // ============================================
 Route::prefix('api/v1/admin')
     ->name('admin.')
-    ->middleware([
-        'auth:api_admin',
-        'auth.jwt:api_admin',
-        'organization.context',
-        'budget-estimates.active'
-    ])
+    ->middleware(AdminRouteStack::middleware(['budget-estimates.active']))
     ->group(function () {
         
         // ============================================
