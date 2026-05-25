@@ -231,7 +231,11 @@ class SupplierProposalService
                 throw new \DomainException(trans_message('procurement.proposal_decisions.accepted_decision_required'));
             }
 
-            $acceptedVersion = $lockedProposal->currentVersion()->lockForUpdate()->first();
+            $acceptedVersion = $lockedProposal->versions()
+                ->orderByDesc('version_number')
+                ->orderByDesc('id')
+                ->lockForUpdate()
+                ->first();
 
             if ($acceptedVersion === null) {
                 throw ValidationException::withMessages([

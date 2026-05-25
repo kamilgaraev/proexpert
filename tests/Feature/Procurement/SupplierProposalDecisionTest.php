@@ -14,6 +14,7 @@ use App\BusinessModules\Features\Procurement\Services\SupplierProposalVersionSer
 use App\Models\Organization;
 use App\Models\Supplier;
 use DomainException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
@@ -205,6 +206,44 @@ class SupplierProposalDecisionTest extends TestCase
             'Selected supplier cannot deliver on time.',
             null
         );
+    }
+
+    public function test_accept_proposal_locks_latest_version_without_aggregate_relation_query(): void
+    {
+        $organization = Organization::factory()->create();
+        $supplierRequest = $this->createSupplierRequest($organization);
+        $winner = $this->createProposal($organization, $supplierRequest, 'KP-DEC-LOCK', 100);
+
+        $winner->versions()->create([
+            'organization_id' => $organization->id,
+            'version_number' => 2,
+            'commercial_snapshot' => [
+                'total_amount' => 125,
+                'currency' => 'RUB',
+                'lines' => [],
+            ],
+            'attachment_snapshot' => [],
+        ]);
+
+        app(SupplierProposalComparisonService::class)->selectWinner($supplierRequest, $winner->id, null, null);
+
+        $versionQueries = [];
+
+        DB::listen(static function ($query) use (&$versionQueries): void {
+            $sql = strtolower($query->sql);
+
+            if (str_contains($sql, 'supplier_proposal_versions')) {
+                $versionQueries[] = $sql;
+            }
+        });
+
+        $accepted = app(SupplierProposalService::class)->accept($winner);
+
+        $this->assertSame(2, $accepted->purchaseOrder?->acceptedSupplierProposalVersion?->version_number);
+        $this->assertTrue(collect($versionQueries)->contains(
+            static fn (string $sql): bool => str_contains($sql, 'order by')
+                && ! str_contains($sql, 'group by')
+        ));
     }
 
     public function test_second_accept_with_stale_proposal_does_not_create_duplicate_order(): void
