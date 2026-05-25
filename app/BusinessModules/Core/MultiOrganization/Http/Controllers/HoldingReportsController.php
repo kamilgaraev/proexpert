@@ -7,11 +7,13 @@ namespace App\BusinessModules\Core\MultiOrganization\Http\Controllers;
 use App\BusinessModules\Core\MultiOrganization\Requests\HoldingReportRequest;
 use App\BusinessModules\Core\MultiOrganization\Services\HoldingReportService;
 use App\Http\Controllers\Controller;
-use App\Http\Responses\AdminResponse;
+use App\Http\Responses\LandingResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
+
 use function trans_message;
 
 class HoldingReportsController extends Controller
@@ -85,7 +87,12 @@ class HoldingReportsController extends Controller
                 return $result;
             }
 
-            return AdminResponse::success($result);
+            return LandingResponse::success($result);
+        } catch (HttpExceptionInterface $e) {
+            return LandingResponse::error(
+                $this->messageForHttpException($e, $errorMessage),
+                $e->getStatusCode()
+            );
         } catch (\Throwable $e) {
             Log::error("[HoldingReportsController.{$action}] Unexpected error", [
                 'message' => $e->getMessage(),
@@ -93,7 +100,16 @@ class HoldingReportsController extends Controller
                 'user_id' => $request->user()?->id,
             ]);
 
-            return AdminResponse::error($errorMessage, Response::HTTP_INTERNAL_SERVER_ERROR);
+            return LandingResponse::error($errorMessage, Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    private function messageForHttpException(HttpExceptionInterface $exception, string $fallback): string
+    {
+        if ($exception->getStatusCode() === Response::HTTP_FORBIDDEN) {
+            return trans_message('holding.access_denied');
+        }
+
+        return $exception->getMessage() !== '' ? $exception->getMessage() : $fallback;
     }
 }

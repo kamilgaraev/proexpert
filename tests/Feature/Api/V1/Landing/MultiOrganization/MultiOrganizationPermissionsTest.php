@@ -8,6 +8,7 @@ use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingContracts
 use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingDashboardController;
 use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingFilterController;
 use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingProjectsController;
+use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingReportsController;
 use Illuminate\Routing\Route as IlluminateRoute;
 use Illuminate\Support\Facades\Route;
 use ReflectionClass;
@@ -76,6 +77,7 @@ class MultiOrganizationPermissionsTest extends TestCase
             HoldingDashboardController::class,
             HoldingFilterController::class,
             HoldingProjectsController::class,
+            HoldingReportsController::class,
             HoldingContractsController::class,
         ] as $controllerClass) {
             $source = file_get_contents((new ReflectionClass($controllerClass))->getFileName());
