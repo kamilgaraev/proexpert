@@ -286,4 +286,23 @@ final class MdmCoreWorkflowTest extends TestCase
             'inn' => '7701000008',
         ]);
     }
+
+    public function test_import_validation_errors_are_not_masked_as_server_errors(): void
+    {
+        $context = AdminApiTestContext::create();
+
+        foreach ([
+            '/api/v1/admin/mdm/imports/preview',
+            '/api/v1/admin/mdm/imports/apply',
+        ] as $endpoint) {
+            $response = $this->withHeaders($context->authHeaders())
+                ->postJson($endpoint, []);
+
+            $response->assertUnprocessable()
+                ->assertJsonPath('success', false)
+                ->assertJsonPath('message', 'Заполните поле «тип справочника».')
+                ->assertJsonPath('errors.entity_type.0', 'Заполните поле «тип справочника».')
+                ->assertJsonPath('errors.rows.0', 'Заполните поле «строки импорта».');
+        }
+    }
 }

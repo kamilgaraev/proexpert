@@ -157,6 +157,48 @@ final class OneCExchangeControllerWorkflowTest extends TestCase
         ]);
     }
 
+    public function test_manual_exchange_validation_errors_are_human_readable(): void
+    {
+        $context = AdminApiTestContext::create();
+        $module = $this->createOneCModule();
+        $this->activateModule($context->organization->id, $module->id);
+
+        $tokenResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/one-c-exchange/tokens', []);
+
+        $tokenResponse->assertUnprocessable()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'Заполните поле «название токена».')
+            ->assertJsonPath('errors.label.0', 'Заполните поле «название токена».');
+
+        $mappingResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/one-c-exchange/mappings', []);
+
+        $mappingResponse->assertUnprocessable()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'Заполните поле «раздел обмена».')
+            ->assertJsonPath('errors.scope.0', 'Заполните поле «раздел обмена».')
+            ->assertJsonPath('errors.external_id.0', 'Заполните поле «внешний идентификатор».')
+            ->assertJsonPath('errors.local_type.0', 'Заполните поле «тип локальной записи».')
+            ->assertJsonPath('errors.local_id.0', 'Заполните поле «локальная запись».');
+
+        $importResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/one-c-exchange/import', []);
+
+        $importResponse->assertUnprocessable()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'Заполните поле «раздел обмена».')
+            ->assertJsonPath('errors.scope.0', 'Заполните поле «раздел обмена».');
+
+        $exportResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/one-c-exchange/export', []);
+
+        $exportResponse->assertUnprocessable()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'Заполните поле «раздел обмена».')
+            ->assertJsonPath('errors.scope.0', 'Заполните поле «раздел обмена».');
+    }
+
     private function createOneCModule(): Module
     {
         return Module::query()->create([

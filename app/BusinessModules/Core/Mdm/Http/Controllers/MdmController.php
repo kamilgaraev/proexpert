@@ -23,8 +23,10 @@ use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Throwable;
 
 class MdmController extends Controller
@@ -47,6 +49,10 @@ class MdmController extends Controller
         try {
             return AdminResponse::success($this->registry->all());
         } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
             Log::error('MDM entities failed', ['error' => $e->getMessage()]);
 
             return AdminResponse::error(trans_message('mdm.errors.entities_failed'), 500);
@@ -74,6 +80,10 @@ class MdmController extends Controller
                     ->get(),
             ]);
         } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
             Log::error('MDM dashboard failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.dashboard_failed'), 500);
@@ -111,6 +121,10 @@ class MdmController extends Controller
                 ]
             );
         } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
             Log::error('MDM records failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.records_failed'), 500);
@@ -126,6 +140,10 @@ class MdmController extends Controller
 
             return AdminResponse::success($record);
         } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
             Log::error('MDM record show failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.records_failed'), 500);
@@ -146,6 +164,10 @@ class MdmController extends Controller
 
             return AdminResponse::success($result, trans_message('mdm.messages.synced'));
         } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
             Log::error('MDM sync failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.sync_failed'), 500);
@@ -166,6 +188,10 @@ class MdmController extends Controller
 
             return AdminResponse::success($result, trans_message('mdm.messages.duplicates_scanned'));
         } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
             Log::error('MDM duplicate scan failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.duplicates_failed'), 500);
@@ -191,6 +217,10 @@ class MdmController extends Controller
                 'last_page' => $groups->lastPage(),
             ]);
         } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
             Log::error('MDM duplicate list failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.duplicates_failed'), 500);
@@ -220,6 +250,10 @@ class MdmController extends Controller
 
             return AdminResponse::success($resolved->load('members'), trans_message('mdm.messages.duplicate_resolved'));
         } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
             Log::error('MDM duplicate resolve failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.duplicate_resolve_failed'), 500);
@@ -243,6 +277,10 @@ class MdmController extends Controller
 
             return AdminResponse::success($record, trans_message('mdm.messages.archived'));
         } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
             Log::error('MDM archive failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.archive_failed'), 500);
@@ -269,6 +307,10 @@ class MdmController extends Controller
                 'last_page' => $relationships->lastPage(),
             ]);
         } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
             Log::error('MDM relationships failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.relationships_failed'), 500);
@@ -282,6 +324,10 @@ class MdmController extends Controller
 
             return AdminResponse::success($result, trans_message('mdm.messages.relationships_synced'));
         } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
             Log::error('MDM relationship sync failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.relationships_failed'), 500);
@@ -306,6 +352,10 @@ class MdmController extends Controller
                 'last_page' => $history->lastPage(),
             ]);
         } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
             Log::error('MDM history failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.history_failed'), 500);
@@ -331,6 +381,10 @@ class MdmController extends Controller
 
             return AdminResponse::success($batch, trans_message('mdm.messages.import_preview_ready'));
         } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
             Log::error('MDM import preview failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.import_failed'), 500);
@@ -356,6 +410,10 @@ class MdmController extends Controller
 
             return AdminResponse::success($batch, trans_message('mdm.messages.import_applied'));
         } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
             Log::error('MDM import apply failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.import_failed'), 500);
@@ -380,6 +438,10 @@ class MdmController extends Controller
                 'last_page' => $requests->lastPage(),
             ]);
         } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
             Log::error('MDM change requests failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.change_requests_failed'), 500);
@@ -407,6 +469,10 @@ class MdmController extends Controller
 
             return AdminResponse::success($changeRequest, trans_message('mdm.messages.change_request_submitted'), 201);
         } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
             Log::error('MDM change request submit failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.change_request_submit_failed'), 500);
@@ -431,6 +497,10 @@ class MdmController extends Controller
 
             return AdminResponse::success($reviewed, trans_message('mdm.messages.change_request_reviewed'));
         } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
             Log::error('MDM change request review failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.change_request_review_failed'), 500);
@@ -456,6 +526,10 @@ class MdmController extends Controller
 
             return AdminResponse::success($updated, trans_message('mdm.messages.owner_assigned'));
         } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
             Log::error('MDM owner assign failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.owner_assign_failed'), 500);
@@ -477,6 +551,10 @@ class MdmController extends Controller
 
             return AdminResponse::success($run, trans_message('mdm.messages.merge_plan_ready'));
         } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
             Log::error('MDM merge plan failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.merge_failed'), 500);
@@ -498,6 +576,10 @@ class MdmController extends Controller
 
             return AdminResponse::success($run, trans_message('mdm.messages.merge_applied'));
         } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
             Log::error('MDM merge apply failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.merge_failed'), 500);
@@ -518,6 +600,10 @@ class MdmController extends Controller
 
             return AdminResponse::success($policies);
         } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
             Log::error('MDM quality policies failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.quality_policies_failed'), 500);
@@ -541,6 +627,10 @@ class MdmController extends Controller
 
             return AdminResponse::success($policy, trans_message('mdm.messages.quality_policy_saved'));
         } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
             Log::error('MDM quality policy update failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.quality_policy_save_failed'), 500);
@@ -567,6 +657,10 @@ class MdmController extends Controller
 
             return AdminResponse::success($batch, trans_message('mdm.messages.import_preview_ready'));
         } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
             Log::error('MDM file import preview failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.import_failed'), 500);
@@ -593,6 +687,10 @@ class MdmController extends Controller
 
             return AdminResponse::success($batch, trans_message('mdm.messages.import_applied'));
         } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
             Log::error('MDM file import apply failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.import_failed'), 500);
@@ -602,5 +700,17 @@ class MdmController extends Controller
     private function organizationId(Request $request): int
     {
         return (int) ($request->attributes->get('current_organization_id') ?? $request->user()?->current_organization_id);
+    }
+
+    private function validationError(ValidationException $exception): JsonResponse
+    {
+        $errors = $exception->errors();
+        $message = collect($errors)->flatten()->first() ?: trans_message('user.validation_failed');
+
+        return AdminResponse::error(
+            (string) $message,
+            Response::HTTP_UNPROCESSABLE_ENTITY,
+            $errors
+        );
     }
 }
