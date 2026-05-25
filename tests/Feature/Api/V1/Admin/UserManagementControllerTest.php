@@ -18,6 +18,22 @@ class UserManagementControllerTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_organization_admin_can_open_admin_user_list(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'organization_admin');
+        $ownForeman = $this->createOrganizationUser($context->organization, 'foreman', [
+            'name' => 'Org Admin Foreman',
+            'email' => 'org-admin-foreman@example.test',
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/users?per_page=10');
+
+        $response->assertOk();
+        $response->assertJsonPath('success', true);
+        $response->assertJsonPath('data.0.id', $ownForeman->id);
+    }
+
     public function test_index_returns_only_current_organization_foremen_by_default(): void
     {
         $context = AdminApiTestContext::create();
