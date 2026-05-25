@@ -30,7 +30,7 @@ class ProcurementLifecycleService
         $purchaseRequest->loadMissing([
             'lines',
             'supplierRequests.proposals',
-            'supplierRequests.proposalDecision',
+            'supplierRequests.proposalDecision.winningProposal',
             'purchaseOrders.items',
         ]);
 
@@ -76,6 +76,12 @@ class ProcurementLifecycleService
 
         if ($respondedRequest instanceof SupplierRequest) {
             $decision = $respondedRequest->proposalDecision;
+            $expiredProposalSummary = $this->expiredProposalSummary($respondedRequest, $decision);
+
+            if ($expiredProposalSummary instanceof ProcurementLifecycleSummary) {
+                return $expiredProposalSummary;
+            }
+
             if ($this->decisionAllowsAcceptance($decision)) {
                 return $this->summary('proposal_selected', 'accept_proposal', [
                     'canAcceptProposal' => true,
@@ -287,6 +293,12 @@ class ProcurementLifecycleService
     private function supplierRequestRespondedSummary(SupplierRequest $supplierRequest): ProcurementLifecycleSummary
     {
         $decision = $supplierRequest->proposalDecision;
+        $expiredProposalSummary = $this->expiredProposalSummary($supplierRequest, $decision);
+
+        if ($expiredProposalSummary instanceof ProcurementLifecycleSummary) {
+            return $expiredProposalSummary;
+        }
+
         if ($this->decisionAllowsAcceptance($decision)) {
             return $this->summary('proposal_selected', 'accept_proposal', [
                 'canAcceptProposal' => true,
@@ -300,6 +312,54 @@ class ProcurementLifecycleService
         return $this->summary('proposals_received', 'select_proposal', [
             'canSelectProposal' => true,
         ]);
+    }
+
+    private function expiredProposalSummary(
+        SupplierRequest $supplierRequest,
+        ?SupplierProposalDecision $decision
+    ): ?ProcurementLifecycleSummary {
+        $selectedProposal = $decision?->winningProposal;
+
+        if ($selectedProposal instanceof SupplierProposal && $this->proposalCannotProceed($selectedProposal)) {
+            return $this->summary('proposal_expired', 'create_supplier_request', [
+                'canCreateSupplierRequest' => true,
+                'blockers' => [$this->blocker('proposal_expired')],
+            ]);
+        }
+
+        $proposals = $supplierRequest->proposals;
+
+        if ($proposals->isEmpty()) {
+            return null;
+        }
+
+        $hasActiveSubmittedProposal = $proposals->contains(
+            static fn (SupplierProposal $proposal): bool => $proposal->status === SupplierProposalStatusEnum::SUBMITTED
+                && !$proposal->isExpired()
+        );
+
+        if ($hasActiveSubmittedProposal) {
+            return null;
+        }
+
+        $hasExpiredSubmittedProposal = $proposals->contains(
+            static fn (SupplierProposal $proposal): bool => $proposal->status === SupplierProposalStatusEnum::SUBMITTED
+                && $proposal->isExpired()
+        );
+
+        if (!$hasExpiredSubmittedProposal) {
+            return null;
+        }
+
+        return $this->summary('proposal_expired', 'create_supplier_request', [
+            'canCreateSupplierRequest' => true,
+            'blockers' => [$this->blocker('proposal_expired')],
+        ]);
+    }
+
+    private function proposalCannotProceed(SupplierProposal $proposal): bool
+    {
+        return $proposal->status === SupplierProposalStatusEnum::EXPIRED || $proposal->isExpired();
     }
 
     private function canAcceptProposal(SupplierProposal $proposal): bool

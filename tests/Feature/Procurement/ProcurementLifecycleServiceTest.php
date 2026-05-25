@@ -69,6 +69,35 @@ class ProcurementLifecycleServiceTest extends TestCase
         $this->assertTrue($summary->canAcceptProposal);
     }
 
+    public function test_request_with_selected_expired_proposal_requires_new_supplier_request(): void
+    {
+        $purchaseRequest = $this->createPurchaseRequest('approved');
+        $supplierRequest = $this->createSupplierRequest($purchaseRequest, 'responded');
+        $proposal = $this->createProposal($supplierRequest, ['valid_until' => now()->subDay()->toDateString()]);
+        $this->createDecision($supplierRequest, $proposal, 'selected');
+
+        $summary = app(ProcurementLifecycleService::class)->forPurchaseRequest($purchaseRequest->fresh());
+
+        $this->assertSame('proposal_expired', $summary->stage);
+        $this->assertSame('create_supplier_request', $summary->nextAction);
+        $this->assertTrue($summary->canCreateSupplierRequest);
+        $this->assertFalse($summary->canAcceptProposal);
+        $this->assertNotEmpty($summary->blockers);
+    }
+
+    public function test_request_with_only_expired_proposals_requires_new_supplier_request(): void
+    {
+        $purchaseRequest = $this->createPurchaseRequest('approved');
+        $supplierRequest = $this->createSupplierRequest($purchaseRequest, 'responded');
+        $this->createProposal($supplierRequest, ['valid_until' => now()->subDay()->toDateString()]);
+
+        $summary = app(ProcurementLifecycleService::class)->forPurchaseRequest($purchaseRequest->fresh());
+
+        $this->assertSame('proposal_expired', $summary->stage);
+        $this->assertSame('create_supplier_request', $summary->nextAction);
+        $this->assertTrue($summary->canCreateSupplierRequest);
+    }
+
     public function test_expired_selected_proposal_cannot_be_accepted(): void
     {
         $purchaseRequest = $this->createPurchaseRequest('approved');
