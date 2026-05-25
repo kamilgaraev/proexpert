@@ -284,6 +284,80 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         ]);
     }
 
+    public function test_purchase_order_receipt_materializes_free_text_material_before_warehouse_posting(): void
+    {
+        $context = AdminApiTestContext::create();
+        $supplier = $this->createSupplier($context->organization->id, 'Free Text Supplier', 'free-text@example.test');
+        $warehouse = $this->createWarehouse($context->organization->id);
+        $purchaseRequest = $this->createFreeTextPurchaseRequest($context->organization->id);
+        $this->createUnit($context->organization->id);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $bulkResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/procurement/supplier-requests/bulk', [
+                'purchase_request_id' => $purchaseRequest->id,
+                'send_immediately' => true,
+                'suppliers' => [
+                    ['supplier_id' => $supplier->id],
+                ],
+            ]);
+
+        $bulkResponse->assertCreated();
+
+        $supplierRequest = SupplierRequest::query()
+            ->where('purchase_request_id', $purchaseRequest->id)
+            ->firstOrFail();
+        $proposal = $this->createProposalThroughApi($context, $supplierRequest, 700.0);
+
+        $decisionResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-requests/{$purchaseRequest->id}/proposal-decision", [
+                'supplier_proposal_id' => $proposal->id,
+            ]);
+
+        $decisionResponse->assertOk();
+
+        $acceptResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/proposals/{$proposal->id}/accept");
+
+        $acceptResponse->assertOk();
+
+        $purchaseOrder = PurchaseOrder::query()
+            ->where('accepted_supplier_proposal_id', $proposal->id)
+            ->with('items')
+            ->firstOrFail();
+        $item = $purchaseOrder->items()->firstOrFail();
+        $this->assertNull($item->material_id);
+
+        $receiveResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receive-materials", [
+                'warehouse_id' => $warehouse->id,
+                'items' => [
+                    [
+                        'item_id' => $item->id,
+                        'quantity_received' => 5,
+                        'price' => 140,
+                    ],
+                ],
+            ]);
+
+        $receiveResponse->assertOk();
+        $receiveResponse->assertJsonPath('data.status', PurchaseOrderStatusEnum::DELIVERED->value);
+
+        $item->refresh();
+        $this->assertNotNull($item->material_id);
+        $this->assertDatabaseHas('materials', [
+            'id' => $item->material_id,
+            'organization_id' => $context->organization->id,
+            'name' => 'Custom free-text material',
+        ]);
+        $this->assertDatabaseHas('warehouse_balances', [
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $item->material_id,
+        ]);
+    }
+
     private function createProposalThroughApi(
         AdminApiTestContext $context,
         SupplierRequest $supplierRequest,
@@ -342,6 +416,26 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
             'purchase_request_id' => $purchaseRequest->id,
             'material_id' => $materialId,
             'name' => 'Rebar A500',
+            'quantity' => 5,
+            'unit' => 'pcs',
+        ]);
+
+        return $purchaseRequest;
+    }
+
+    private function createFreeTextPurchaseRequest(int $organizationId): PurchaseRequest
+    {
+        $purchaseRequest = PurchaseRequest::query()->create([
+            'organization_id' => $organizationId,
+            'request_number' => 'PR-FREE-' . $organizationId . '-' . uniqid(),
+            'status' => PurchaseRequestStatusEnum::APPROVED,
+            'budget_currency' => 'RUB',
+        ]);
+
+        PurchaseRequestLine::query()->create([
+            'purchase_request_id' => $purchaseRequest->id,
+            'material_id' => null,
+            'name' => 'Custom free-text material',
             'quantity' => 5,
             'unit' => 'pcs',
         ]);
