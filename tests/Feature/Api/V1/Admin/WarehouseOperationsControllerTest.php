@@ -22,6 +22,7 @@ use Illuminate\Support\Facades\DB;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
+use function trans_message;
 
 class WarehouseOperationsControllerTest extends TestCase
 {
@@ -460,7 +461,12 @@ class WarehouseOperationsControllerTest extends TestCase
                 'reason' => 'Too much write off',
             ]);
 
-        $writeOffResponse->assertStatus(422);
+        $writeOffResponse
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('warehouse_basic.validation.insufficient_stock', [
+                'available' => 3,
+                'requested' => 4,
+            ]));
         $this->assertSame(3.0, $this->availableQuantity($context->organization->id, $sourceWarehouse->id, $material->id));
         $this->assertDatabaseMissing('warehouse_movements', [
             'organization_id' => $context->organization->id,
@@ -477,7 +483,12 @@ class WarehouseOperationsControllerTest extends TestCase
                 'reason' => 'Too much transfer',
             ]);
 
-        $transferResponse->assertStatus(422);
+        $transferResponse
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('warehouse_basic.validation.insufficient_transfer_stock', [
+                'available' => 3,
+                'requested' => 4,
+            ]));
         $this->assertSame(3.0, $this->availableQuantity($context->organization->id, $sourceWarehouse->id, $material->id));
         $this->assertSame(0.0, $this->availableQuantity($context->organization->id, $targetWarehouse->id, $material->id));
         $this->assertDatabaseMissing('warehouse_movements', [
@@ -493,13 +504,73 @@ class WarehouseOperationsControllerTest extends TestCase
                 'reason' => 'Too much reserve',
             ]);
 
-        $reserveResponse->assertStatus(422);
+        $reserveResponse
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('warehouse_basic.validation.insufficient_reserve_stock', [
+                'available' => 3,
+                'requested' => 4,
+            ]));
         $this->assertSame(3.0, $this->availableQuantity($context->organization->id, $sourceWarehouse->id, $material->id));
         $this->assertSame(0.0, $this->reservedQuantity($context->organization->id, $sourceWarehouse->id, $material->id));
         $this->assertDatabaseMissing('asset_reservations', [
             'organization_id' => $context->organization->id,
             'warehouse_id' => $sourceWarehouse->id,
             'material_id' => $material->id,
+        ]);
+
+        $unreserveResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/unreserve', [
+                'warehouse_id' => $sourceWarehouse->id,
+                'material_id' => $material->id,
+                'quantity' => 1,
+                'reason' => 'Nothing to release',
+            ]);
+
+        $unreserveResponse
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('warehouse_basic.validation.insufficient_reserved_stock', [
+                'reserved' => 0,
+                'requested' => 1,
+            ]));
+        $this->assertSame(3.0, $this->availableQuantity($context->organization->id, $sourceWarehouse->id, $material->id));
+        $this->assertSame(0.0, $this->reservedQuantity($context->organization->id, $sourceWarehouse->id, $material->id));
+    }
+
+    public function test_transfer_rejects_same_source_and_target_warehouse_with_business_message(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Cement', 'CEM-SAME');
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN');
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/receipt', [
+                'warehouse_id' => $warehouse->id,
+                'material_id' => $material->id,
+                'quantity' => 3,
+                'price' => 100,
+                'reason' => 'Initial stock',
+            ])
+            ->assertCreated();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/transfer', [
+                'from_warehouse_id' => $warehouse->id,
+                'to_warehouse_id' => $warehouse->id,
+                'material_id' => $material->id,
+                'quantity' => 1,
+                'reason' => 'Same warehouse transfer',
+            ]);
+
+        $response
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('warehouse_basic.validation.transfer_same_warehouse'));
+
+        $this->assertSame(3.0, $this->availableQuantity($context->organization->id, $warehouse->id, $material->id));
+        $this->assertDatabaseMissing('warehouse_movements', [
+            'organization_id' => $context->organization->id,
+            'movement_type' => WarehouseMovement::TYPE_TRANSFER_OUT,
         ]);
     }
 

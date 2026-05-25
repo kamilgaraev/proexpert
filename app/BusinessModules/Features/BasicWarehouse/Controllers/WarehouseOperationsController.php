@@ -492,7 +492,11 @@ class WarehouseOperationsController extends Controller
             'exception' => $exception,
         ]));
 
-        return AdminResponse::error(trans_message($messageKey), $status);
+        $message = $status === 422 && $exception instanceof InvalidArgumentException && $exception->getMessage() !== ''
+            ? $exception->getMessage()
+            : trans_message($messageKey);
+
+        return AdminResponse::error($message, $status);
     }
 }
 

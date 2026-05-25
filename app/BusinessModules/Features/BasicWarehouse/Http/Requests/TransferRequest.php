@@ -4,6 +4,7 @@ namespace App\BusinessModules\Features\BasicWarehouse\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use function trans_message;
 
 class TransferRequest extends FormRequest
 {
@@ -40,6 +41,13 @@ class TransferRequest extends FormRequest
             'document_number' => 'nullable|string|max:100',
             'reason' => 'nullable|string|max:255',
             'metadata' => 'nullable|array',
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'to_warehouse_id.different' => trans_message('warehouse_basic.validation.transfer_same_warehouse'),
         ];
     }
 }

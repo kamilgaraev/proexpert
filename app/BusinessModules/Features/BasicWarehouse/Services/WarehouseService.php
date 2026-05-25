@@ -19,6 +19,7 @@ use chillerlan\QRCode\QROptions;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use function trans_message;
 
 /**
  * Сервис управления складом
@@ -224,7 +225,10 @@ class WarehouseService implements WarehouseReportDataProvider
 
             if ($totalAvailable < $quantity) {
                 throw new \InvalidArgumentException(
-                    "Недостаточно активов на складе. Доступно: {$totalAvailable}, запрошено: {$quantity}"
+                    trans_message('warehouse_basic.validation.insufficient_stock', [
+                        'available' => (float) $totalAvailable,
+                        'requested' => (float) $quantity,
+                    ])
                 );
             }
 
@@ -323,7 +327,10 @@ class WarehouseService implements WarehouseReportDataProvider
 
             if ($totalAvailable < $quantity) {
                 throw new \InvalidArgumentException(
-                    "Недостаточно активов для перемещения. Доступно: {$totalAvailable}, запрошено: {$quantity}"
+                    trans_message('warehouse_basic.validation.insufficient_transfer_stock', [
+                        'available' => (float) $totalAvailable,
+                        'requested' => (float) $quantity,
+                    ])
                 );
             }
 
@@ -1257,7 +1264,10 @@ class WarehouseService implements WarehouseReportDataProvider
 
         if ($totalAvailable < $quantity) {
             throw new \InvalidArgumentException(
-                "Недостаточно активов для резервирования. Доступно: {$totalAvailable}, запрошено: {$quantity}"
+                trans_message('warehouse_basic.validation.insufficient_reserve_stock', [
+                    'available' => (float) $totalAvailable,
+                    'requested' => (float) $quantity,
+                ])
             );
         }
 
@@ -1298,7 +1308,10 @@ class WarehouseService implements WarehouseReportDataProvider
 
         if ($totalReserved < $quantity) {
             throw new \InvalidArgumentException(
-                "Недостаточно зарезервированных активов. Зарезервировано: {$totalReserved}, запрошено: {$quantity}"
+                trans_message('warehouse_basic.validation.insufficient_reserved_stock', [
+                    'reserved' => (float) $totalReserved,
+                    'requested' => (float) $quantity,
+                ])
             );
         }
 
@@ -1450,7 +1463,10 @@ class WarehouseService implements WarehouseReportDataProvider
 
             if ($totalReserved < $quantity) {
                 throw new \InvalidArgumentException(
-                    "Недостаточно зарезервированных активов. Зарезервировано: {$totalReserved}, запрошено: {$quantity}"
+                    trans_message('warehouse_basic.validation.insufficient_reserved_stock', [
+                        'reserved' => (float) $totalReserved,
+                        'requested' => (float) $quantity,
+                    ])
                 );
             }
 

@@ -16,6 +16,13 @@ return [
     'transfer_to_contractor_success' => 'Материалы успешно переданы подрядчику.',
     'transfer_to_contractor_error' => 'Не удалось передать материалы подрядчику.',
     'operation_validation_error' => 'Операцию нельзя выполнить с указанными параметрами.',
+    'validation' => [
+        'insufficient_stock' => 'Недостаточно активов на складе. Доступно: :available, запрошено: :requested.',
+        'insufficient_transfer_stock' => 'Недостаточно активов для перемещения. Доступно: :available, запрошено: :requested.',
+        'insufficient_reserve_stock' => 'Недостаточно активов для резервирования. Доступно: :available, запрошено: :requested.',
+        'insufficient_reserved_stock' => 'Недостаточно зарезервированных активов. Зарезервировано: :reserved, запрошено: :requested.',
+        'transfer_same_warehouse' => 'Склад назначения должен отличаться от склада-источника.',
+    ],
     'access_denied' => 'Доступ запрещен.',
     'export_success' => 'Файл успешно сформирован.',
     'm4_export_error' => 'Не удалось выгрузить приходный ордер М-4.',
