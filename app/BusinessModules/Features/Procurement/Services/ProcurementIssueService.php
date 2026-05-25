@@ -128,7 +128,8 @@ final class ProcurementIssueService
                         createdAt: $purchaseRequest->created_at?->toIso8601String(),
                         createdTimestamp: $purchaseRequest->created_at?->getTimestamp() ?? 0,
                         actionHref: "/procurement/supplier-requests?purchase_request_id={$purchaseRequest->id}",
-                        actionLabel: trans_message('procurement.issues.actions.create_supplier_request'),
+                        actionLabel: $lifecycleSummary->nextActionLabel
+                            ?? trans_message('procurement.issues.actions.create_supplier_request'),
                     );
                 }
 

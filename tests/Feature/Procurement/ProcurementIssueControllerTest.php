@@ -7,7 +7,10 @@ namespace Tests\Feature\Procurement;
 use App\BusinessModules\Features\Procurement\Http\Middleware\EnsureProcurementActive;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
+use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
+use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
+use App\BusinessModules\Features\Procurement\Services\ProcurementIssueService;
 use App\Domain\Authorization\Http\Middleware\AuthorizeMiddleware;
 use App\Http\Middleware\JwtMiddleware;
 use App\Models\Organization;
@@ -98,6 +101,44 @@ final class ProcurementIssueControllerTest extends TestCase
             ->assertJsonPath('data.0.type', 'purchase_order_draft');
     }
 
+    public function test_purchase_request_issue_action_label_matches_expired_proposal_next_action(): void
+    {
+        $organization = Organization::factory()->create();
+
+        $purchaseRequest = $this->createPurchaseRequest($organization, 'EXPIRED', 'approved');
+        $supplierRequest = $this->createSupplierRequest($organization, $purchaseRequest);
+        $supplierRequest->forceFill(['status' => 'responded'])->save();
+        $proposal = $this->createExpiredProposal($organization, $supplierRequest);
+
+        SupplierProposalDecision::query()->create([
+            'organization_id' => $organization->id,
+            'supplier_request_id' => $supplierRequest->id,
+            'winning_supplier_proposal_id' => $proposal->id,
+            'cheapest_supplier_proposal_id' => $proposal->id,
+            'status' => 'approval_required',
+            'is_lowest_price_selected' => true,
+            'selected_at' => now(),
+        ]);
+
+        $result = app(ProcurementIssueService::class)->paginate(
+            $organization->id,
+            'purchase_requests',
+            1,
+            10
+        );
+
+        $this->assertSame(1, $result['meta']['total']);
+        $this->assertSame("pr-without-order-{$purchaseRequest->id}", $result['items'][0]['id']);
+        $this->assertSame(
+            trans_message('procurement.lifecycle.actions.request_new_proposal'),
+            $result['items'][0]['next_action']
+        );
+        $this->assertSame(
+            trans_message('procurement.lifecycle.actions.request_new_proposal'),
+            $result['items'][0]['action_label']
+        );
+    }
+
     public function test_issues_route_is_guarded_by_procurement_view_permission(): void
     {
         $route = Route::getRoutes()->getByName('admin.procurement.issues.index');
@@ -152,6 +193,36 @@ final class ProcurementIssueControllerTest extends TestCase
             'request_number' => "SR-ISSUE-{$purchaseRequest->id}",
             'status' => 'sent',
             'sent_at' => now(),
+        ]);
+    }
+
+    private function createExpiredProposal(Organization $organization, SupplierRequest $supplierRequest): SupplierProposal
+    {
+        $supplier = Supplier::query()->create([
+            'organization_id' => $organization->id,
+            'name' => 'Expired Proposal Supplier',
+            'tax_number' => "7702000{$organization->id}",
+            'is_active' => true,
+        ]);
+
+        return SupplierProposal::query()->create([
+            'organization_id' => $organization->id,
+            'supplier_request_id' => $supplierRequest->id,
+            'supplier_id' => $supplier->id,
+            'supplier_snapshot' => [
+                'type' => 'registered',
+                'display_name' => $supplier->name,
+                'tax_id' => $supplier->tax_number,
+            ],
+            'proposal_number' => "KP-ISSUE-{$supplierRequest->id}",
+            'proposal_date' => now()->subDays(3)->toDateString(),
+            'status' => 'submitted',
+            'valid_until' => now()->subDay()->toDateString(),
+            'subtotal_amount' => 1000,
+            'delivery_amount' => 0,
+            'vat_amount' => 0,
+            'total_amount' => 1000,
+            'currency' => 'RUB',
         ]);
     }
 }

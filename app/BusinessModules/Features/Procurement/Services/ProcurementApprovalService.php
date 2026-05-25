@@ -8,6 +8,7 @@ use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum
 use App\BusinessModules\Features\Procurement\Enums\ProcurementApprovalStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierPartyTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalDecisionEnum;
+use App\BusinessModules\Features\Procurement\Enums\SupplierProposalStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\ProcurementApproval;
 use App\BusinessModules\Features\Procurement\Models\ProcurementApprovalPolicy;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
@@ -215,6 +216,7 @@ class ProcurementApprovalService
 
             $decision = $this->lockDecisionForApproval($lockedApproval);
             $this->ensurePending($lockedApproval);
+            $this->ensureWinningProposalIsActual($decision);
             $policy = $this->policyService->resolveForOrganization((int) $lockedApproval->organization_id);
             $this->ensurePolicyPermission($policy, $actorId, (int) $lockedApproval->organization_id);
             $this->dutySeparationService->ensureCanResolve(
@@ -285,6 +287,7 @@ class ProcurementApprovalService
 
             $decision = $this->lockDecisionForApproval($lockedApproval);
             $this->ensurePending($lockedApproval);
+            $this->ensureWinningProposalIsActual($decision);
             $policy = $this->policyService->resolveForOrganization((int) $lockedApproval->organization_id);
             $this->ensurePolicyPermission($policy, $actorId, (int) $lockedApproval->organization_id);
             $this->dutySeparationService->ensureCanResolve(
@@ -343,12 +346,22 @@ class ProcurementApprovalService
             return [];
         }
 
-        return $this->dutySeparationService->resolutionBlockers(
-            $approval,
-            $decision,
-            $this->policyService->resolveForOrganization((int) $approval->organization_id),
-            $actorId
-        );
+        $blockers = [];
+        $proposalBlocker = $this->expiredWinningProposalBlocker($decision);
+
+        if ($proposalBlocker !== null) {
+            $blockers[] = $proposalBlocker;
+        }
+
+        return [
+            ...$blockers,
+            ...$this->dutySeparationService->resolutionBlockers(
+                $approval,
+                $decision,
+                $this->policyService->resolveForOrganization((int) $approval->organization_id),
+                $actorId
+            ),
+        ];
     }
 
     public function canResolveByPolicy(ProcurementApproval $approval, int $actorId): bool
@@ -384,6 +397,32 @@ class ProcurementApprovalService
         if ($approval->status !== ProcurementApprovalStatusEnum::PENDING) {
             throw new \DomainException(trans_message('procurement.approvals.invalid_status'));
         }
+    }
+
+    private function ensureWinningProposalIsActual(SupplierProposalDecision $decision): void
+    {
+        if ($this->expiredWinningProposalBlocker($decision) !== null) {
+            throw new \DomainException(trans_message('procurement.approvals.proposal_expired'));
+        }
+    }
+
+    private function expiredWinningProposalBlocker(SupplierProposalDecision $decision): ?array
+    {
+        $decision->loadMissing('winningProposal');
+        $proposal = $decision->winningProposal;
+
+        if (!$proposal instanceof SupplierProposal) {
+            return null;
+        }
+
+        if ($proposal->status !== SupplierProposalStatusEnum::EXPIRED && !$proposal->isExpired()) {
+            return null;
+        }
+
+        return [
+            'code' => 'proposal_expired',
+            'message' => trans_message('procurement.approvals.proposal_expired'),
+        ];
     }
 
     private function selectedComparisonTotal(SupplierProposal $selectedProposal, array $comparison): float

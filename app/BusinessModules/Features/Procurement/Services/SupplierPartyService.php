@@ -33,22 +33,6 @@ class SupplierPartyService
                 return $this->refreshExternalPartyFromContact($existingByContact, $contact, $normalizedEmail);
             }
 
-            if ($normalizedEmail !== null) {
-                $existingByEmail = SupplierParty::query()
-                    ->forOrganization($organizationId)
-                    ->external()
-                    ->where('normalized_email', $normalizedEmail)
-                    ->whereNotIn('status', [
-                        SupplierPartyStatusEnum::LINKED->value,
-                        SupplierPartyStatusEnum::REJECTED->value,
-                    ])
-                    ->first();
-
-                if ($existingByEmail instanceof SupplierParty) {
-                    return $this->refreshExternalPartyFromContact($existingByEmail, $contact, $normalizedEmail);
-                }
-            }
-
             $attributes = [
                 'organization_id' => $organizationId,
                 'type' => SupplierPartyTypeEnum::EXTERNAL,

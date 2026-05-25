@@ -2,6 +2,8 @@
 
 namespace App\BusinessModules\Features\SiteRequests\Services;
 
+use App\BusinessModules\Features\BasicWarehouse\Enums\ProjectMaterialDeliveryStatusEnum;
+use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequestGroup;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequestHistory;
@@ -361,11 +363,18 @@ class SiteRequestService
             throw new \DomainException(trans_message('site_requests.errors.invalid_status_transition'));
         }
 
+        $this->ensureCompletionAllowed($request, $newStatus);
+
         DB::transaction(function () use ($request, $userId, $oldStatus, $newStatus, $notes) {
             $request->update(['status' => $newStatus]);
 
             // Записываем в историю
             SiteRequestHistory::logStatusChanged($request, $userId, $oldStatus, $newStatus, $notes);
+            $freshRequest = $request->fresh();
+
+            if ($freshRequest instanceof SiteRequest) {
+                $this->syncGroupStatus($freshRequest);
+            }
         });
 
         // Инвалидируем кеш
@@ -490,6 +499,116 @@ class SiteRequestService
         }
 
         return $this->changeStatus($request, $userId, SiteRequestStatusEnum::CANCELLED->value, $notes);
+    }
+
+    private function ensureCompletionAllowed(SiteRequest $request, string $newStatus): void
+    {
+        if ($newStatus !== SiteRequestStatusEnum::COMPLETED->value) {
+            return;
+        }
+
+        if ($request->status === SiteRequestStatusEnum::FULFILLED) {
+            return;
+        }
+
+        if ($request->request_type !== SiteRequestTypeEnum::MATERIAL_REQUEST) {
+            return;
+        }
+
+        if ($this->hasAcceptedMaterialDelivery($request) || $this->hasDeliveredPurchaseOrder($request)) {
+            return;
+        }
+
+        throw new DomainException(trans_message('site_requests.errors.material_completion_requires_delivery'));
+    }
+
+    private function hasAcceptedMaterialDelivery(SiteRequest $request): bool
+    {
+        $requiredQuantity = (float) ($request->material_quantity ?? 0);
+        $query = $request->materialDeliveries()
+            ->where('status', ProjectMaterialDeliveryStatusEnum::ACCEPTED->value);
+
+        if ($requiredQuantity <= 0.0) {
+            return $query->exists();
+        }
+
+        return (float) $query->sum('accepted_quantity') + 0.0001 >= $requiredQuantity;
+    }
+
+    private function hasDeliveredPurchaseOrder(SiteRequest $request): bool
+    {
+        return $request->purchaseOrders()
+            ->where('purchase_orders.status', PurchaseOrderStatusEnum::DELIVERED->value)
+            ->exists();
+    }
+
+    private function syncGroupStatus(SiteRequest $request): void
+    {
+        $groupId = $request->site_request_group_id;
+
+        if ($groupId === null) {
+            return;
+        }
+
+        $group = SiteRequestGroup::query()
+            ->whereKey($groupId)
+            ->with(['requests' => static fn ($query) => $query->select('id', 'site_request_group_id', 'status')])
+            ->first();
+
+        if (!$group instanceof SiteRequestGroup || $group->requests->isEmpty()) {
+            return;
+        }
+
+        $nextStatus = $this->aggregateGroupStatus(
+            $group->requests
+                ->map(static fn (SiteRequest $item): string => $item->status instanceof SiteRequestStatusEnum
+                    ? $item->status->value
+                    : (string) $item->status)
+                ->all()
+        );
+        $currentStatus = $group->status instanceof SiteRequestStatusEnum
+            ? $group->status->value
+            : (string) $group->status;
+
+        if ($currentStatus !== $nextStatus) {
+            $group->update(['status' => $nextStatus]);
+        }
+    }
+
+    private function aggregateGroupStatus(array $statuses): string
+    {
+        $statuses = array_values(array_unique($statuses));
+
+        if (count($statuses) === 1) {
+            return $statuses[0];
+        }
+
+        if (in_array(SiteRequestStatusEnum::COMPLETED->value, $statuses, true)) {
+            return SiteRequestStatusEnum::IN_PROGRESS->value;
+        }
+
+        foreach ([
+            SiteRequestStatusEnum::FULFILLED,
+            SiteRequestStatusEnum::IN_PROGRESS,
+            SiteRequestStatusEnum::ON_HOLD,
+            SiteRequestStatusEnum::APPROVED,
+            SiteRequestStatusEnum::IN_REVIEW,
+            SiteRequestStatusEnum::PENDING,
+        ] as $status) {
+            if (in_array($status->value, $statuses, true)) {
+                return $status->value;
+            }
+        }
+
+        if (in_array(SiteRequestStatusEnum::CANCELLED->value, $statuses, true)) {
+            return SiteRequestStatusEnum::CANCELLED->value;
+        }
+
+        if (in_array(SiteRequestStatusEnum::REJECTED->value, $statuses, true)) {
+            return SiteRequestStatusEnum::REJECTED->value;
+        }
+
+        return SiteRequestStatusEnum::DRAFT->value;
     }
 
     /**

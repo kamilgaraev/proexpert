@@ -133,7 +133,7 @@ class SupplierPartyWorkflowTest extends TestCase
         ], $snapshot);
     }
 
-    public function test_external_party_is_reused_by_contact_and_normalized_email_inside_organization(): void
+    public function test_external_party_is_reused_by_contact_only_inside_organization(): void
     {
         $organization = Organization::factory()->create();
         $otherOrganization = Organization::factory()->create();
@@ -164,12 +164,14 @@ class SupplierPartyWorkflowTest extends TestCase
         $otherOrganizationParty = $service->resolveExternalParty($otherOrganization->id, $otherContact);
 
         $this->assertSame($firstParty->id, $sameContactParty->id);
-        $this->assertSame($firstParty->id, $sameEmailParty->id);
+        $this->assertNotSame($firstParty->id, $sameEmailParty->id);
         $this->assertNotSame($firstParty->id, $otherOrganizationParty->id);
-        $this->assertSame(2, SupplierParty::query()->count());
+        $this->assertSame($firstContact->id, $firstParty->refresh()->external_supplier_contact_id);
+        $this->assertSame($secondContact->id, $sameEmailParty->external_supplier_contact_id);
+        $this->assertSame(3, SupplierParty::query()->count());
     }
 
-    public function test_reused_external_party_updates_identity_from_new_contact(): void
+    public function test_external_party_identity_is_not_reassigned_from_new_contact_with_same_email(): void
     {
         $organization = Organization::factory()->create();
 
@@ -189,13 +191,15 @@ class SupplierPartyWorkflowTest extends TestCase
         $service = app(SupplierPartyService::class);
 
         $firstParty = $service->resolveExternalParty($organization->id, $firstContact);
-        $updatedParty = $service->resolveExternalParty($organization->id, $secondContact);
-        $snapshot = $service->snapshotForDocument($updatedParty);
+        $secondParty = $service->resolveExternalParty($organization->id, $secondContact);
+        $snapshot = $service->snapshotForDocument($secondParty);
 
-        $this->assertSame($firstParty->id, $updatedParty->id);
-        $this->assertSame('7711998877', $updatedParty->tax_id);
+        $this->assertNotSame($firstParty->id, $secondParty->id);
+        $this->assertNull($firstParty->refresh()->tax_id);
+        $this->assertSame($firstContact->id, $firstParty->external_supplier_contact_id);
+        $this->assertSame('7711998877', $secondParty->tax_id);
         $this->assertSame('7711998877', $snapshot['tax_id']);
-        $this->assertSame($secondContact->id, $updatedParty->external_supplier_contact_id);
+        $this->assertSame($secondContact->id, $secondParty->external_supplier_contact_id);
         $this->assertSame($secondContact->id, $snapshot['external_supplier_contact_id']);
     }
 

@@ -192,6 +192,36 @@ class ProcurementApprovalTest extends TestCase
         app(SupplierProposalService::class)->accept($proposal);
     }
 
+    public function test_expired_winning_proposal_blocks_pending_approval_resolution(): void
+    {
+        $organization = Organization::factory()->create();
+        $actor = User::factory()->create();
+        $approver = User::factory()->create();
+        $supplierRequest = $this->createSupplierRequest($organization, budgetAmount: 1000);
+        $proposal = $this->createProposal($organization, $supplierRequest, 'KP-APR-008', 1200);
+
+        $decision = app(SupplierProposalComparisonService::class)->selectWinner(
+            $supplierRequest,
+            $proposal->id,
+            null,
+            $actor->id
+        );
+
+        $proposal->forceFill(['valid_until' => now()->subDay()->toDateString()])->save();
+
+        $approval = ProcurementApproval::query()
+            ->where('approvable_type', $decision->getMorphClass())
+            ->where('approvable_id', $decision->id)
+            ->firstOrFail();
+
+        $blockers = app(ProcurementApprovalService::class)->resolutionBlockers($approval->load('approvable'), $approver->id);
+
+        $this->assertContains('proposal_expired', collect($blockers)->pluck('code')->all());
+        $this->expectException(DomainException::class);
+
+        app(ProcurementApprovalService::class)->approve($approval, $approver->id, 'Approve expired offer.');
+    }
+
     private function createSupplierRequest(
         Organization $organization,
         ?float $budgetAmount = null,

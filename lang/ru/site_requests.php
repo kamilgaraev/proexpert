@@ -32,6 +32,7 @@ return [
         'disabled_status_transition' => 'Переход в выбранный статус отключен.',
         'draft_only_submit' => 'На обработку можно отправить только черновик.',
         'completed_only_confirm' => 'Подтвердить можно только выполненную заявку.',
+        'material_completion_requires_delivery' => 'Материальную заявку можно закрыть только после фактической поставки или приемки.',
         'not_cancellable_status' => 'Заявку нельзя отменить в текущем статусе.',
         'template_not_found' => 'Шаблон не найден.',
         'template_inactive' => 'Шаблон неактивен.',
