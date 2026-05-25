@@ -4,11 +4,12 @@ declare(strict_types=1);
 
 use App\BusinessModules\Features\MachineryOperations\Http\Controllers\MachineryOperationsController;
 use App\BusinessModules\Features\MachineryOperations\Http\Controllers\Mobile\MachineryOperationsController as MobileMachineryOperationsController;
+use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('api/v1/admin/machinery-operations')
     ->name('admin.machinery_operations.')
-    ->middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'machinery-operations.active'])
+    ->middleware(AdminRouteStack::middleware(['machinery-operations.active']))
     ->group(function (): void {
         Route::get('/assets', [MachineryOperationsController::class, 'assets'])
             ->middleware('authorize:machinery-operations.view')

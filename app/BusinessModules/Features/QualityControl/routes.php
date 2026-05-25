@@ -5,11 +5,12 @@ declare(strict_types=1);
 use App\BusinessModules\Features\QualityControl\Http\Controllers\QualityDefectController;
 use App\BusinessModules\Features\QualityControl\Http\Controllers\Customer\QualityDefectController as CustomerQualityDefectController;
 use App\BusinessModules\Features\QualityControl\Http\Controllers\Mobile\QualityDefectController as MobileQualityDefectController;
+use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('api/v1/admin/quality-control')
     ->name('admin.quality_control.')
-    ->middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'quality-control.active'])
+    ->middleware(AdminRouteStack::middleware(['quality-control.active']))
     ->group(function (): void {
         Route::prefix('defects')->name('defects.')->group(function (): void {
             Route::get('/', [QualityDefectController::class, 'index'])

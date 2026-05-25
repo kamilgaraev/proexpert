@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use Illuminate\Routing\Middleware\SubstituteBindings;
+use App\Support\Routing\AdminRouteStack;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AIAssistantController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AiReportsDownloadController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AIAssistantRagController;
@@ -26,7 +27,7 @@ Route::middleware(['auth:api', 'organization.context', SubstituteBindings::class
 // ==========================================
 // Роуты для Админ-панели
 // ==========================================
-Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'authorize:admin.access', 'interface:admin', SubstituteBindings::class])
+Route::middleware(AdminRouteStack::middleware([SubstituteBindings::class]))
     ->prefix('api/v1/admin/ai-assistant')
     ->name('admin.ai-assistant.')
     ->group(function () {
@@ -64,7 +65,7 @@ Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.conte
 // ==========================================
 // Роуты для скачивания AI отчетов
 // ==========================================
-Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'authorize:admin.access', SubstituteBindings::class])
+Route::middleware(AdminRouteStack::middleware([SubstituteBindings::class]))
     ->prefix('api/v1/admin/ai-reports')
     ->name('admin.ai-reports.')
     ->group(function () {
@@ -74,7 +75,7 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
 // ==========================================
 // Роуты для пульса проектов
 // ==========================================
-Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'authorize:admin.access', 'interface:admin', SubstituteBindings::class])
+Route::middleware(AdminRouteStack::middleware([SubstituteBindings::class]))
     ->prefix('api/v1/admin/ai-assistant/project-pulse')
     ->name('admin.project-pulse.')
     ->group(function () {

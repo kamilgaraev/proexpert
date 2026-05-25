@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\BusinessModules\Features\BudgetEstimates\Http\Controllers\MachineryController;
 use App\BusinessModules\Features\BudgetEstimates\Http\Controllers\LaborResourceController;
+use App\Support\Routing\AdminRouteStack;
 
 /*
 |--------------------------------------------------------------------------
@@ -17,12 +18,7 @@ use App\BusinessModules\Features\BudgetEstimates\Http\Controllers\LaborResourceC
 
 Route::prefix('api/v1/admin')
     ->name('admin.')
-    ->middleware([
-        'auth:api_admin',
-        'auth.jwt:api_admin',
-        'organization.context',
-        'budget-estimates.active'
-    ])
+    ->middleware(AdminRouteStack::middleware(['budget-estimates.active']))
     ->group(function () {
         
         // ============================================
@@ -54,4 +50,3 @@ Route::prefix('api/v1/admin')
             Route::delete('/{id}', [LaborResourceController::class, 'destroy'])->name('destroy');
         });
     });
-

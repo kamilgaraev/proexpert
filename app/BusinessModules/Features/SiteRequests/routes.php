@@ -7,6 +7,7 @@ use App\BusinessModules\Features\SiteRequests\Http\Controllers\SiteRequestCalend
 use App\BusinessModules\Features\SiteRequests\Http\Controllers\SiteRequestTemplateController;
 use App\BusinessModules\Features\SiteRequests\Http\Controllers\SiteRequestPaymentController;
 use App\BusinessModules\Features\SiteRequests\Http\Controllers\Mobile\SiteRequestController as MobileSiteRequestController;
+use App\Support\Routing\AdminRouteStack;
 
 /*
 |--------------------------------------------------------------------------
@@ -23,7 +24,7 @@ use App\BusinessModules\Features\SiteRequests\Http\Controllers\Mobile\SiteReques
 // ============================================
 Route::prefix('api/v1/admin/site-requests')
     ->name('admin.site_requests.')
-    ->middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'site_requests.active'])
+    ->middleware(AdminRouteStack::middleware(['site_requests.active']))
     ->group(function () {
 
         // ============================================

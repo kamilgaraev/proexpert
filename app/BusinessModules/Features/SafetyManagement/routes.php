@@ -4,11 +4,12 @@ declare(strict_types=1);
 
 use App\BusinessModules\Features\SafetyManagement\Http\Controllers\SafetyManagementController;
 use App\BusinessModules\Features\SafetyManagement\Http\Controllers\Mobile\SafetyManagementController as MobileSafetyManagementController;
+use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('api/v1/admin/safety-management')
     ->name('admin.safety_management.')
-    ->middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'safety-management.active'])
+    ->middleware(AdminRouteStack::middleware(['safety-management.active']))
     ->group(function (): void {
         Route::get('/work-permits', [SafetyManagementController::class, 'permits'])
             ->middleware('authorize:safety-management.view')

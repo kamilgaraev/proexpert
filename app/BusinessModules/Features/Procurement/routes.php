@@ -13,6 +13,7 @@ use App\BusinessModules\Features\Procurement\Http\Controllers\SupplierProposalDe
 use App\BusinessModules\Features\Procurement\Http\Controllers\SupplierProposalController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\SupplierRequestController;
 use App\Http\Responses\AdminResponse;
+use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('api/v1/procurement/supplier-requests')
@@ -25,7 +26,7 @@ Route::prefix('api/v1/procurement/supplier-requests')
 
 Route::prefix('api/v1/admin/procurement')
     ->name('admin.procurement.')
-    ->middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'procurement.active'])
+    ->middleware(AdminRouteStack::middleware(['procurement.active']))
     ->group(function () {
         Route::prefix('purchase-requests')->name('purchase_requests.')->group(function () {
             Route::get('/', [PurchaseRequestController::class, 'index'])
