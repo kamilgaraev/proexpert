@@ -103,6 +103,44 @@ class RagRetrieverTest extends TestCase
         $this->assertSame([], $blocked);
     }
 
+    public function test_search_uses_reference_sources_for_estimate_reference_question_in_project_context(): void
+    {
+        [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(
+            UserProjectAccessMode::ALL_PROJECTS->value
+        );
+
+        $this->indexChunk(
+            $organization->id,
+            $project->id,
+            'Смета: Бетонные работы',
+            'Смета проекта содержит бетонные работы и позиции по фундаменту.',
+            [1.0, 0.0, 0.0],
+            'estimate',
+            'estimate'
+        );
+
+        $this->indexChunk(
+            $organization->id,
+            null,
+            'Позиция каталога: Укладка бетонной смеси',
+            'Позиция сметного каталога: укладка бетонной смеси в фундаменты. Код: ФЕР06-01-001. Цена: 1250.00.',
+            [1.0, 0.0, 0.0],
+            'estimate_reference',
+            'estimate_catalog_item'
+        );
+
+        $results = $this->retriever([1.0, 0.0, 0.0])->search(
+            'Какие позиции или расценки из справочников можно использовать для бетонных работ?',
+            $organization->id,
+            $user,
+            ['project_id' => $project->id]
+        );
+
+        $this->assertNotEmpty($results);
+        $this->assertSame('estimate_reference', $results[0]->sourceType);
+        $this->assertNotContains('estimate', array_map(static fn ($result): string => $result->sourceType, $results));
+    }
+
     public function test_search_uses_lexical_fallback_when_vector_matches_are_below_threshold(): void
     {
         [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(
@@ -196,7 +234,7 @@ class RagRetrieverTest extends TestCase
 
     private function indexChunk(
         int $organizationId,
-        int $projectId,
+        ?int $projectId,
         string $title,
         string $content,
         array $embedding,
@@ -213,7 +251,7 @@ class RagRetrieverTest extends TestCase
             projectId: $projectId,
             sourceType: $sourceType,
             entityType: $entityType,
-            entityId: $projectId.'-'.$title,
+            entityId: ($projectId ?? 'org').'-'.$title,
             title: $title,
             content: $content,
             metadata: ['title' => $title],
@@ -268,9 +306,7 @@ final class RetrieverEmbeddingProvider implements RagEmbeddingProviderInterface
     /**
      * @param  array<int, float>  $embedding
      */
-    public function __construct(private readonly array $embedding)
-    {
-    }
+    public function __construct(private readonly array $embedding) {}
 
     public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array
     {

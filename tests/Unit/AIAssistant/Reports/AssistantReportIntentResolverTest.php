@@ -82,6 +82,14 @@ final class AssistantReportIntentResolverTest extends TestCase
         $this->assertSame('not_report', $result['status']);
     }
 
+    public function test_multi_domain_reconciliation_question_without_report_marker_is_left_for_rag_flow(): void
+    {
+        $result = (new AssistantReportIntentResolver)->resolve('Сравни договоры, сметы, работы и платежи: где есть расхождения или риски?');
+
+        $this->assertSame('not_report', $result['status']);
+        $this->assertArrayNotHasKey('definition', $result);
+    }
+
     public function test_operational_report_term_with_report_marker_still_matches(): void
     {
         $result = (new AssistantReportIntentResolver)->resolve('сформируй отчет по потребности в закупках по объектам');

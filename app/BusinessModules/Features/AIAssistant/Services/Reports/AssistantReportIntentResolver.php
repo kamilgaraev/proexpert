@@ -33,6 +33,20 @@ final readonly class AssistantReportIntentResolver
         'rag',
     ];
 
+    private const ANALYTICAL_CONTEXT_MARKERS = [
+        'analiz',
+        'proanaliziruy',
+        'sravni',
+        'sravnen',
+        'sopostav',
+        'rashozhden',
+        'risk',
+        'riski',
+        'problemy',
+        'nesootvetstv',
+        'gde est',
+    ];
+
     private const STOP_WORDS = [
         'dlya',
         'i',
@@ -86,6 +100,13 @@ final readonly class AssistantReportIntentResolver
         $contextDefinition = $this->definitionFromContext($context);
         $isReportLike = $this->isReportLike($normalized);
         $hasExplicitReportIntent = $isReportLike || $contextDefinition instanceof AssistantReportDefinition;
+
+        if (! $hasExplicitReportIntent && $this->isAnalyticalContextQuestion($normalized)) {
+            return [
+                'status' => 'not_report',
+                'candidates' => [],
+            ];
+        }
 
         if ($this->isKnowledgeContextQuestion($normalized) && ! $isReportLike) {
             return [
@@ -219,6 +240,17 @@ final readonly class AssistantReportIntentResolver
     private function isKnowledgeContextQuestion(string $normalized): bool
     {
         foreach (self::KNOWLEDGE_CONTEXT_MARKERS as $marker) {
+            if (str_contains($normalized, $marker)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function isAnalyticalContextQuestion(string $normalized): bool
+    {
+        foreach (self::ANALYTICAL_CONTEXT_MARKERS as $marker) {
             if (str_contains($normalized, $marker)) {
                 return true;
             }

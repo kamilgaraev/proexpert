@@ -35,6 +35,8 @@ final class RagRetriever
         $threshold = $this->configFloat('ai-assistant.rag.min_similarity', 0.72);
         $requestProjectId = $this->requestProjectId($requestContext);
         $allowedProjectIds = $this->allowedProjectIds($user, $organizationId);
+        $preferredSourceTypes = $this->preferredSourceTypes($query);
+        $includeOrganizationWideSources = $this->includeOrganizationWideSources($preferredSourceTypes);
 
         if ($requestProjectId !== null && ! in_array($requestProjectId, $allowedProjectIds, true)) {
             return [];
@@ -49,18 +51,30 @@ final class RagRetriever
                 'exception_class' => $throwable::class,
             ]);
 
-            return $this->lexicalFallback($query, $organizationId, $allowedProjectIds, $requestProjectId, $limit);
+            return $this->lexicalFallback(
+                $query,
+                $organizationId,
+                $allowedProjectIds,
+                $requestProjectId,
+                $limit,
+                $preferredSourceTypes,
+                $includeOrganizationWideSources
+            );
         }
 
         $results = [];
-        foreach ($this->candidateRows($embedding, $organizationId, max($limit * 4, $limit)) as $row) {
+        foreach ($this->candidateRows($embedding, $organizationId, max($limit * 4, $limit), $preferredSourceTypes) as $row) {
             $projectId = $row->project_id !== null ? (int) $row->project_id : null;
 
             if ($projectId !== null && ! in_array($projectId, $allowedProjectIds, true)) {
                 continue;
             }
 
-            if ($requestProjectId !== null && $projectId !== $requestProjectId) {
+            if (
+                $requestProjectId !== null
+                && $projectId !== $requestProjectId
+                && ! ($includeOrganizationWideSources && $projectId === null)
+            ) {
                 continue;
             }
 
@@ -87,7 +101,15 @@ final class RagRetriever
         }
 
         if ($results === []) {
-            return $this->lexicalFallback($query, $organizationId, $allowedProjectIds, $requestProjectId, $limit);
+            return $this->lexicalFallback(
+                $query,
+                $organizationId,
+                $allowedProjectIds,
+                $requestProjectId,
+                $limit,
+                $preferredSourceTypes,
+                $includeOrganizationWideSources
+            );
         }
 
         return $results;
@@ -95,6 +117,7 @@ final class RagRetriever
 
     /**
      * @param  array<int, int>  $allowedProjectIds
+     * @param  array<int, string>  $sourceTypes
      * @return array<int, RagSearchResult>
      */
     private function lexicalFallback(
@@ -102,7 +125,9 @@ final class RagRetriever
         int $organizationId,
         array $allowedProjectIds,
         ?int $requestProjectId,
-        int $limit
+        int $limit,
+        array $sourceTypes,
+        bool $includeOrganizationWideSources
     ): array {
         $terms = $this->lexicalTerms($query);
         if ($terms === []) {
@@ -114,8 +139,18 @@ final class RagRetriever
             ->where('c.organization_id', $organizationId)
             ->whereNotNull('c.embedding')
             ->when(
+                $sourceTypes !== [],
+                static fn ($builder) => $builder->whereIn('s.source_type', $sourceTypes)
+            )
+            ->when(
                 $requestProjectId !== null,
-                static fn ($builder) => $builder->where('c.project_id', $requestProjectId),
+                static fn ($builder) => $builder->where(static function ($query) use ($requestProjectId, $includeOrganizationWideSources): void {
+                    $query->where('c.project_id', $requestProjectId);
+
+                    if ($includeOrganizationWideSources) {
+                        $query->orWhereNull('c.project_id');
+                    }
+                }),
                 static fn ($builder) => $builder->where(static function ($query) use ($allowedProjectIds): void {
                     $query->whereNull('c.project_id');
 
@@ -176,25 +211,36 @@ final class RagRetriever
 
     /**
      * @param  array<int, float>  $embedding
+     * @param  array<int, string>  $sourceTypes
      * @return iterable<object>
      */
-    private function candidateRows(array $embedding, int $organizationId, int $limit): iterable
+    private function candidateRows(array $embedding, int $organizationId, int $limit, array $sourceTypes): iterable
     {
         return DB::connection()->getDriverName() === 'pgsql'
-            ? $this->postgresRows($embedding, $organizationId, $limit)
-            : $this->fallbackRows($embedding, $organizationId, $limit);
+            ? $this->postgresRows($embedding, $organizationId, $limit, $sourceTypes)
+            : $this->fallbackRows($embedding, $organizationId, $limit, $sourceTypes);
     }
 
     /**
      * @param  array<int, float>  $embedding
+     * @param  array<int, string>  $sourceTypes
      * @return array<int, object>
      */
-    private function postgresRows(array $embedding, int $organizationId, int $limit): array
+    private function postgresRows(array $embedding, int $organizationId, int $limit, array $sourceTypes): array
     {
         $vector = $this->vectorLiteral($embedding);
+        $sourceFilter = '';
+        $bindings = [$vector, $organizationId];
 
-        return DB::select(
-            <<<'SQL'
+        if ($sourceTypes !== []) {
+            $sourceFilter = '  AND s.source_type IN ('.implode(',', array_fill(0, count($sourceTypes), '?')).')'."\n";
+            array_push($bindings, ...$sourceTypes);
+        }
+
+        $bindings[] = $vector;
+        $bindings[] = $limit;
+
+        $sql = <<<SQL
 SELECT c.id,
        c.project_id,
        c.content,
@@ -209,23 +255,31 @@ FROM ai_rag_chunks c
 JOIN ai_rag_sources s ON s.id = c.source_id
 WHERE c.organization_id = ?
   AND c.embedding IS NOT NULL
-ORDER BY c.embedding <=> ?::vector
+{$sourceFilter}ORDER BY c.embedding <=> ?::vector
 LIMIT ?
-SQL,
-            [$vector, $organizationId, $vector, $limit]
+SQL;
+
+        return DB::select(
+            $sql,
+            $bindings
         );
     }
 
     /**
      * @param  array<int, float>  $embedding
+     * @param  array<int, string>  $sourceTypes
      * @return Collection<int, object>
      */
-    private function fallbackRows(array $embedding, int $organizationId, int $limit): Collection
+    private function fallbackRows(array $embedding, int $organizationId, int $limit, array $sourceTypes): Collection
     {
         return DB::table('ai_rag_chunks as c')
             ->join('ai_rag_sources as s', 's.id', '=', 'c.source_id')
             ->where('c.organization_id', $organizationId)
             ->whereNotNull('c.embedding')
+            ->when(
+                $sourceTypes !== [],
+                static fn ($builder) => $builder->whereIn('s.source_type', $sourceTypes)
+            )
             ->select([
                 'c.id',
                 'c.project_id',
@@ -247,6 +301,30 @@ SQL,
             ->sortByDesc(static fn (object $row): float => (float) $row->similarity)
             ->take($limit)
             ->values();
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function preferredSourceTypes(string $query): array
+    {
+        $normalized = str_replace('ё', 'е', mb_strtolower($query));
+
+        foreach (['справочник', 'справочн', 'норматив', 'расценк', 'каталог'] as $marker) {
+            if (str_contains($normalized, $marker)) {
+                return ['estimate_reference'];
+            }
+        }
+
+        return [];
+    }
+
+    /**
+     * @param  array<int, string>  $sourceTypes
+     */
+    private function includeOrganizationWideSources(array $sourceTypes): bool
+    {
+        return in_array('estimate_reference', $sourceTypes, true);
     }
 
     /**

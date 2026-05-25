@@ -164,6 +164,20 @@ class AssistantAgentPlannerTest extends TestCase
         $this->assertSame([], $decision->toolArguments);
     }
 
+    public function test_multi_domain_reconciliation_question_uses_answer_flow_instead_of_payment_report(): void
+    {
+        $decision = $this->planner()->decide(
+            'Сравни договоры, сметы, работы и платежи: где есть расхождения или риски?',
+            $this->projectContext(),
+            null
+        );
+
+        $this->assertSame('answer', $decision->type);
+        $this->assertNull($decision->state);
+        $this->assertNull($decision->toolName);
+        $this->assertSame([], $decision->toolArguments);
+    }
+
     public function test_knowledge_base_summary_uses_answer_flow_instead_of_report_tool(): void
     {
         $decision = $this->planner()->decide(
