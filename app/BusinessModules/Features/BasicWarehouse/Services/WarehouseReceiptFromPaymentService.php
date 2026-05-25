@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BasicWarehouse\Services;
 
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
@@ -13,6 +14,10 @@ class WarehouseReceiptFromPaymentService
 {
     public function createFromPaymentDocument(PaymentDocument $document): void
     {
+        if ($document->status !== PaymentDocumentStatus::PAID) {
+            return;
+        }
+
         $document->load(['estimateSplits.estimateItem']);
 
         if ($document->estimateSplits->isEmpty()) {
@@ -38,6 +43,19 @@ class WarehouseReceiptFromPaymentService
         foreach ($document->estimateSplits as $split) {
             $estimateItem = $split->estimateItem;
             if (!$estimateItem || !$estimateItem->isMaterial()) {
+                continue;
+            }
+
+            if (!$estimateItem->material_id) {
+                Log::warning('warehouse_receipt.payment_material_missing', [
+                    'document_id' => $document->id,
+                    'estimate_item_id' => $estimateItem->id,
+                ]);
+                continue;
+            }
+
+            if ($this->receiptExistsForSplit($document, (int) $split->id, (int) $estimateItem->material_id)) {
+                $estimateItem->update(['procurement_status' => 'delivered']);
                 continue;
             }
 
@@ -67,5 +85,21 @@ class WarehouseReceiptFromPaymentService
             'document_number' => $document->document_number,
             'splits_processed' => $document->estimateSplits->count(),
         ]);
+    }
+
+    private function receiptExistsForSplit(PaymentDocument $document, int $splitId, int $materialId): bool
+    {
+        return WarehouseMovement::query()
+            ->where('movement_type', WarehouseMovement::TYPE_RECEIPT)
+            ->where('document_number', $document->document_number)
+            ->where('material_id', $materialId)
+            ->where('project_id', $document->project_id)
+            ->get()
+            ->contains(static function (WarehouseMovement $movement) use ($document, $splitId): bool {
+                $metadata = $movement->metadata ?? [];
+
+                return (int) ($metadata['payment_document_id'] ?? 0) === (int) $document->id
+                    && (int) ($metadata['split_id'] ?? 0) === $splitId;
+            });
     }
 }

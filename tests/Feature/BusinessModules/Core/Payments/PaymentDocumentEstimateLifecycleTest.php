@@ -8,12 +8,26 @@ use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
 use App\BusinessModules\Core\Payments\Enums\InvoiceType;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
+use App\BusinessModules\Core\Payments\Events\PaymentDocumentPaid;
+use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseReceiptFromPaymentService;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
+use App\BusinessModules\Features\SiteRequests\Events\SiteRequestStatusChanged;
+use App\BusinessModules\Features\SiteRequests\Listeners\CompleteSiteRequestsOnPaymentPaid;
+use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
+use App\Enums\EstimatePositionItemType;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
+use App\Models\Material;
+use App\Models\MeasurementUnit;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Models\User;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
@@ -115,6 +129,130 @@ class PaymentDocumentEstimateLifecycleTest extends TestCase
         $this->assertSame('paid', $item->procurement_status);
     }
 
+    public function test_partial_payment_does_not_dispatch_paid_lifecycle_event(): void
+    {
+        $item = $this->createEstimateItem([
+            'quantity' => 10,
+            'unit_price' => 100,
+            'total_amount' => 1000,
+        ]);
+
+        $document = $this->createDocumentWithSplit($item, [
+            'document_number' => 'PAY-EST-006',
+            'status' => PaymentDocumentStatus::SCHEDULED->value,
+        ]);
+
+        Event::fake([PaymentDocumentPaid::class]);
+
+        $this->service->registerPayment($document, 400, [
+            'payment_method' => 'bank_transfer',
+            'transaction_date' => now(),
+        ]);
+
+        Event::assertNotDispatched(PaymentDocumentPaid::class);
+
+        $this->service->registerPayment($document->fresh(), 600, [
+            'payment_method' => 'bank_transfer',
+            'transaction_date' => now(),
+        ]);
+
+        Event::assertDispatched(
+            PaymentDocumentPaid::class,
+            fn (PaymentDocumentPaid $event): bool => $event->document->id === $document->id
+                && abs($event->amount - 1000.0) < 0.001
+                && $event->transactionId !== null
+        );
+    }
+
+    public function test_payment_paid_event_does_not_complete_material_site_request_without_delivery(): void
+    {
+        Event::fake([SiteRequestStatusChanged::class]);
+
+        $user = User::factory()->create([
+            'current_organization_id' => $this->organization->id,
+        ]);
+
+        $siteRequest = SiteRequest::query()->create([
+            'organization_id' => $this->organization->id,
+            'project_id' => $this->project->id,
+            'user_id' => $user->id,
+            'title' => 'Material request awaiting delivery',
+            'request_type' => SiteRequestTypeEnum::MATERIAL_REQUEST->value,
+            'status' => SiteRequestStatusEnum::APPROVED->value,
+            'priority' => 'medium',
+            'material_name' => 'Concrete B25',
+            'material_quantity' => 5,
+            'material_unit' => 'm3',
+        ]);
+
+        $item = $this->createEstimateItem([
+            'quantity' => 5,
+            'unit_price' => 200,
+            'total_amount' => 1000,
+        ]);
+
+        $document = $this->createDocumentWithSplit($item, [
+            'document_number' => 'PAY-EST-007',
+            'status' => PaymentDocumentStatus::PAID->value,
+            'paid_amount' => 1000,
+            'created_by_user_id' => $user->id,
+        ]);
+
+        $document->siteRequests()->attach($siteRequest->id, ['amount' => 1000]);
+
+        app(CompleteSiteRequestsOnPaymentPaid::class)->handle(
+            new PaymentDocumentPaid($document->fresh('siteRequests'), 1000, 1)
+        );
+
+        $this->assertSame(
+            SiteRequestStatusEnum::APPROVED,
+            $siteRequest->fresh()->status
+        );
+    }
+
+    public function test_warehouse_receipt_from_payment_is_idempotent_per_estimate_split(): void
+    {
+        $material = $this->createMaterial();
+
+        OrganizationWarehouse::query()->create([
+            'organization_id' => $this->organization->id,
+            'name' => 'Main warehouse',
+            'code' => 'WH-MAIN',
+            'warehouse_type' => OrganizationWarehouse::TYPE_CENTRAL,
+            'is_main' => true,
+            'is_active' => true,
+        ]);
+
+        $item = $this->createEstimateItem([
+            'item_type' => EstimatePositionItemType::MATERIAL->value,
+            'material_id' => $material->id,
+            'measurement_unit_id' => $material->measurement_unit_id,
+            'quantity' => 10,
+            'unit_price' => 100,
+            'total_amount' => 1000,
+        ]);
+
+        $document = $this->createDocumentWithSplit($item, [
+            'document_number' => 'PAY-EST-008',
+            'status' => PaymentDocumentStatus::PAID->value,
+            'paid_amount' => 1000,
+            'paid_at' => now(),
+        ]);
+
+        $service = app(WarehouseReceiptFromPaymentService::class);
+        $service->createFromPaymentDocument($document);
+        $service->createFromPaymentDocument($document->fresh());
+
+        $this->assertSame(
+            1,
+            WarehouseMovement::query()
+                ->where('movement_type', WarehouseMovement::TYPE_RECEIPT)
+                ->where('document_number', $document->document_number)
+                ->where('material_id', $material->id)
+                ->count()
+        );
+    }
+
     public function test_documents_can_be_filtered_by_estimate_splits(): void
     {
         $targetItem = $this->createEstimateItem([
@@ -202,12 +340,34 @@ class PaymentDocumentEstimateLifecycleTest extends TestCase
     {
         return EstimateItem::query()->create(array_merge([
             'estimate_id' => $this->estimate->id,
+            'item_type' => EstimatePositionItemType::WORK->value,
             'position_number' => '1',
             'name' => 'Test work',
             'quantity' => 1,
             'unit_price' => 100,
             'total_amount' => 100,
         ], $overrides));
+    }
+
+    private function createMaterial(): Material
+    {
+        $unit = MeasurementUnit::query()->create([
+            'organization_id' => $this->organization->id,
+            'name' => 'Pieces',
+            'short_name' => 'pcs',
+            'type' => 'material',
+            'is_default' => true,
+            'is_system' => false,
+        ]);
+
+        return Material::query()->create([
+            'organization_id' => $this->organization->id,
+            'name' => 'Test material',
+            'code' => 'MAT-TEST',
+            'measurement_unit_id' => $unit->id,
+            'default_price' => 100,
+            'is_active' => true,
+        ]);
     }
 
     private function createDocumentWithSplit(EstimateItem $item, array $overrides = []): PaymentDocument

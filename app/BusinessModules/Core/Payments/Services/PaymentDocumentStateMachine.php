@@ -183,16 +183,36 @@ class PaymentDocumentStateMachine
      */
     public function markPartiallyPaid(PaymentDocument $document, float $amount, ?int $transactionId = null): PaymentDocument
     {
+        if ($amount <= 0) {
+            throw new \InvalidArgumentException(trans_message('payments.validation.payment_amount_positive'));
+        }
+
+        if ($amount > (float) $document->remaining_amount + 0.001) {
+            throw new \DomainException(trans_message('payments.validation.payment_amount_exceeds_remaining'));
+        }
+
         $document->paid_amount += $amount;
         $document->remaining_amount = $document->calculateRemainingAmount();
-        $document->save();
+
+        if ($document->remaining_amount <= 0.001) {
+            $document->remaining_amount = 0;
+            return $this->markPaid($document, (float) $document->paid_amount, $transactionId);
+        }
+
+        if ($document->status === PaymentDocumentStatus::PARTIALLY_PAID) {
+            $document->save();
+
+            Log::info('payment_document.payment_registered', [
+                'document_id' => $document->id,
+                'amount' => $amount,
+                'remaining' => $document->remaining_amount,
+            ]);
+
+            return $document;
+        }
 
         $result = $this->transition($document, PaymentDocumentStatus::PARTIALLY_PAID, "Частичная оплата: {$amount}");
-        
-        if ($transactionId) {
-            event(new PaymentDocumentPaid($document, $amount, $transactionId));
-        }
-        
+
         return $result;
     }
 
