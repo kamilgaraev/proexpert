@@ -29,6 +29,10 @@ class ContractorVerificationController extends Controller
                 return AdminResponse::error(trans_message('contract.verification_expired'), 400);
             }
 
+            if (! $verification->isPending()) {
+                return AdminResponse::error(trans_message('contract.verification_not_available'), 400);
+            }
+
             DB::transaction(function () use ($verification) {
                 $verification->update([
                     'status' => 'confirmed',
@@ -76,6 +80,14 @@ class ContractorVerificationController extends Controller
 
             if ($verification->isRejected()) {
                 return AdminResponse::error(trans_message('contract.contractor_already_rejected'), 400);
+            }
+
+            if ($verification->isExpired()) {
+                return AdminResponse::error(trans_message('contract.verification_expired'), 400);
+            }
+
+            if (! $verification->isPending()) {
+                return AdminResponse::error(trans_message('contract.verification_not_available'), 400);
             }
 
             $reason = $request->input('reason', 'Заказчик указал, что это не его подрядчик');
@@ -128,6 +140,14 @@ class ContractorVerificationController extends Controller
             $verification = ContractorVerification::where('verification_token', $token)
                 ->with(['contractor', 'registeredOrganization', 'customerOrganization'])
                 ->firstOrFail();
+
+            if ($verification->isExpired()) {
+                return AdminResponse::error(trans_message('contract.verification_expired'), 400);
+            }
+
+            if (! $verification->isPending()) {
+                return AdminResponse::error(trans_message('contract.verification_not_available'), 400);
+            }
 
             $reason = $request->input('reason', 'Заказчик сообщил о проблеме с подрядчиком');
 

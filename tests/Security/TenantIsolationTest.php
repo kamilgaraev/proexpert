@@ -6,6 +6,8 @@ use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Http\Controllers\Api\V1\ContractorVerificationController;
+use App\Models\Contractor;
+use App\Models\ContractorVerification;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\EstimateLibrary;
@@ -13,6 +15,8 @@ use App\Models\EstimateLibraryItem;
 use App\Models\EstimateLibraryItemPosition;
 use App\Models\EstimateSection;
 use App\Models\Organization;
+use App\Models\OrganizationAccessRestriction;
+use App\Models\OrganizationDispute;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -241,6 +245,75 @@ it('contractor verification stores rejection reason without interpolating raw sq
     expect($metadata['suspended_reason'] ?? null)->toBe($reason);
 });
 
+it('contractor verification token actions only accept pending unexpired verifications', function () {
+    /** @var Tests\TestCase $this */
+    [$customerOrganization] = createOrganizationUser();
+    $registeredOrganization = Organization::factory()->create();
+    $contractor = Contractor::create([
+        'organization_id' => $customerOrganization->id,
+        'source_organization_id' => $registeredOrganization->id,
+        'name' => 'Security Test Contractor',
+        'inn' => '770000000001',
+    ]);
+
+    $expiredVerification = createContractorVerification(
+        $contractor,
+        $registeredOrganization,
+        $customerOrganization,
+        'pending_customer_confirmation',
+        now()->subMinute()
+    );
+
+    $this->postJson("/api/v1/contractor-verifications/{$expiredVerification->verification_token}/reject", [
+        'reason' => 'expired token replay',
+    ])->assertStatus(400);
+
+    expect($expiredVerification->fresh()->status)->toBe('pending_customer_confirmation')
+        ->and(OrganizationAccessRestriction::count())->toBe(0)
+        ->and(OrganizationDispute::count())->toBe(0);
+
+    $rejectedVerification = createContractorVerification(
+        $contractor,
+        $registeredOrganization,
+        $customerOrganization,
+        'rejected',
+        now()->addDay()
+    );
+
+    $this->postJson("/api/v1/contractor-verifications/{$rejectedVerification->verification_token}/confirm")
+        ->assertStatus(400);
+
+    expect($rejectedVerification->fresh()->status)->toBe('rejected');
+
+    $confirmedVerification = createContractorVerification(
+        $contractor,
+        $registeredOrganization,
+        $customerOrganization,
+        'confirmed',
+        now()->addDay()
+    );
+
+    $this->postJson("/api/v1/contractor-verifications/{$confirmedVerification->verification_token}/dispute", [
+        'reason' => 'confirmed token replay',
+    ])->assertStatus(400);
+
+    expect($confirmedVerification->fresh()->status)->toBe('confirmed')
+        ->and(OrganizationDispute::count())->toBe(0);
+
+    $pendingVerification = createContractorVerification(
+        $contractor,
+        $registeredOrganization,
+        $customerOrganization,
+        'pending_customer_confirmation',
+        now()->addDay()
+    );
+
+    $this->postJson("/api/v1/contractor-verifications/{$pendingVerification->verification_token}/confirm")
+        ->assertOk();
+
+    expect($pendingVerification->fresh()->status)->toBe('confirmed');
+});
+
 it('public auth entry points use strict auth throttle', function (string $method, string $uri) {
     $route = Route::getRoutes()->match(HttpRequest::create($uri, $method));
 
@@ -265,6 +338,25 @@ function createOrganizationUser(): array
     ]);
 
     return [$organization, $user];
+}
+
+function createContractorVerification(
+    Contractor $contractor,
+    Organization $registeredOrganization,
+    Organization $customerOrganization,
+    string $status,
+    \DateTimeInterface $expiresAt
+): ContractorVerification {
+    return ContractorVerification::create([
+        'contractor_id' => $contractor->id,
+        'registered_organization_id' => $registeredOrganization->id,
+        'customer_organization_id' => $customerOrganization->id,
+        'status' => $status,
+        'verification_score' => 10,
+        'verification_data' => [],
+        'verified_at' => now(),
+        'expires_at' => $expiresAt,
+    ]);
 }
 
 function createEstimate(int $organizationId, int $projectId, string $number): Estimate
