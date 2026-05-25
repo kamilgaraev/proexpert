@@ -1,72 +1,68 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Requests\Api\V1\Admin\Project;
 
-use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Support\Facades\Auth;
-use App\Models\Role;
-use App\Models\Project; // РРјРїРѕСЂС‚РёСЂСѓРµРј РјРѕРґРµР»СЊ Project
+use App\DTOs\Project\ProjectDTO;
+use App\Http\Responses\AdminResponse;
+use App\Models\Project;
 use Illuminate\Contracts\Validation\Validator;
+use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
-use App\DTOs\Project\ProjectDTO; // Р”РѕР±Р°РІР»СЏРµРј РёРјРїРѕСЂС‚ DTO
+use RuntimeException;
 
 class UpdateProjectRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     */
+    private const ALLOWED_STATUSES = [
+        'draft',
+        'active',
+        'completed',
+        'paused',
+        'cancelled',
+    ];
+
     public function authorize(): bool
     {
-        // Р”РѕСЃС‚СѓРї Рє РєРѕРЅС‚СЂРѕР»Р»РµСЂСѓ СѓР¶Рµ РїСЂРѕРІРµСЂРµРЅ middleware СЃС‚РµРєРѕРј Р°РІС‚РѕСЂРёР·Р°С†РёРё Р°РґРјРёРЅРєРё
-        // Р”РѕРїРѕР»РЅРёС‚РµР»СЊРЅРѕ РјРѕР¶РЅРѕ РїСЂРѕРІРµСЂРёС‚СЊ, С‡С‚Рѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ Р°СѓС‚РµРЅС‚РёС„РёС†РёСЂРѕРІР°РЅ
         return Auth::check();
     }
 
-    /**
-     * Get the validation rules that apply to the request.
-     *
-     * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array<mixed>|string>
-     */
     public function rules(): array
     {
         return [
-            'name' => 'sometimes|required|string|max:255',
-            'address' => 'nullable|string|max:1000',
-            'latitude' => 'nullable|numeric|between:-90,90',
-            'longitude' => 'nullable|numeric|between:-180,180',
-            'description' => 'nullable|string|max:2000',
-            'customer' => 'sometimes|nullable|string|max:255', // РќРѕРІРѕРµ РїСЂР°РІРёР»Рѕ + sometimes
-            'designer' => 'sometimes|nullable|string|max:255', // РќРѕРІРѕРµ РїСЂР°РІРёР»Рѕ + sometimes
-            'start_date' => 'nullable|date',
-            'end_date' => 'nullable|date|after_or_equal:start_date',
-            'status' => 'sometimes|required|string|in:active,completed,paused,cancelled',
-            'is_archived' => 'sometimes|boolean',
-            'additional_info' => 'sometimes|nullable|array',
-            
-            // РќРѕРІС‹Рµ РїРѕР»СЏ РґР»СЏ РёРЅС‚РµРіСЂР°С†РёРё СЃ Р±СѓС…РіР°Р»С‚РµСЂСЃРєРёРј СѓС‡РµС‚РѕРј
-            'external_code' => 'sometimes|nullable|string|max:100',
-            'cost_category_id' => 'sometimes|nullable|exists:cost_categories,id',
-            'accounting_data' => 'sometimes|nullable|array',
-            'use_in_accounting_reports' => 'sometimes|nullable|boolean',
-            'budget_amount' => 'sometimes|nullable|numeric|min:0',
-            'site_area_m2' => 'sometimes|nullable|numeric|min:0',
-            'contract_number' => 'sometimes|nullable|string|max:100',
+            'name' => ['sometimes', 'required', 'string', 'max:255'],
+            'address' => ['nullable', 'string', 'max:1000'],
+            'latitude' => ['nullable', 'numeric', 'between:-90,90'],
+            'longitude' => ['nullable', 'numeric', 'between:-180,180'],
+            'description' => ['nullable', 'string', 'max:2000'],
+            'customer' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'designer' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'start_date' => ['nullable', 'date'],
+            'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
+            'status' => ['sometimes', 'required', 'string', Rule::in(self::ALLOWED_STATUSES)],
+            'is_archived' => ['sometimes', 'boolean'],
+            'additional_info' => ['sometimes', 'nullable', 'array'],
+            'external_code' => ['sometimes', 'nullable', 'string', 'max:100'],
+            'cost_category_id' => ['sometimes', 'nullable', 'exists:cost_categories,id'],
+            'accounting_data' => ['sometimes', 'nullable', 'array'],
+            'use_in_accounting_reports' => ['sometimes', 'nullable', 'boolean'],
+            'budget_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'site_area_m2' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'contract_number' => ['sometimes', 'nullable', 'string', 'max:100'],
         ];
     }
 
-    /**
-     * РџРѕР»СѓС‡РёС‚СЊ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊСЃРєРёРµ СЃРѕРѕР±С‰РµРЅРёСЏ РѕР± РѕС€РёР±РєР°С… РґР»СЏ РїСЂР°РІРёР» РїСЂРѕРІРµСЂРєРё.
-     *
-     * @return array<string, string>
-     */
     public function messages(): array
     {
         return [
-            'name.required' => 'РќР°Р·РІР°РЅРёРµ РїСЂРѕРµРєС‚Р° РѕР±СЏР·Р°С‚РµР»СЊРЅРѕ РґР»СЏ Р·Р°РїРѕР»РЅРµРЅРёСЏ.',
-            'end_date.after_or_equal' => 'Р”Р°С‚Р° РѕРєРѕРЅС‡Р°РЅРёСЏ РґРѕР»Р¶РЅР° Р±С‹С‚СЊ Р±РѕР»СЊС€Рµ РёР»Рё СЂР°РІРЅР° РґР°С‚Рµ РЅР°С‡Р°Р»Р°.',
-            'cost_category_id.exists' => 'Р’С‹Р±СЂР°РЅРЅР°СЏ РєР°С‚РµРіРѕСЂРёСЏ Р·Р°С‚СЂР°С‚ РЅРµ СЃСѓС‰РµСЃС‚РІСѓРµС‚.',
+            'name.required' => trans_message('project.validation.name_required'),
+            'end_date.after_or_equal' => trans_message('project.validation.end_date_after_or_equal'),
+            'status.in' => trans_message('project.validation.status_invalid'),
+            'cost_category_id.exists' => trans_message('project.validation.cost_category_not_found'),
         ];
     }
 
@@ -75,22 +71,22 @@ class UpdateProjectRequest extends FormRequest
         $errors = (new ValidationException($validator))->errors();
 
         throw new HttpResponseException(
-            \App\Http\Responses\AdminResponse::fromPayload([
-                'success' => false,
-                'message' => 'Р”Р°РЅРЅС‹Рµ РЅРµ РїСЂРѕС€Р»Рё РІР°Р»РёРґР°С†РёСЋ.',
-                'errors' => $errors,
-            ], JsonResponse::HTTP_UNPROCESSABLE_ENTITY)
+            AdminResponse::error(
+                trans_message('errors.validation_failed'),
+                JsonResponse::HTTP_UNPROCESSABLE_ENTITY,
+                $errors
+            )
         );
     }
 
     public function toDto(): ProjectDTO
     {
         $validated = $this->validated();
-        // РўРµРєСѓС‰РёР№ РїСЂРѕРµРєС‚ РґР»СЏ РїРѕР»СѓС‡РµРЅРёСЏ СЃС‚Р°СЂС‹С… Р·РЅР°С‡РµРЅРёР№, РµСЃР»Рё РѕРЅРё РЅРµ РїРµСЂРµРґР°РЅС‹
         $projectId = $this->route('project');
-        $currentProject = $projectId instanceof \App\Models\Project ? $projectId : Project::find($projectId);
+        $currentProject = $projectId instanceof Project ? $projectId : Project::find($projectId);
+
         if (!$currentProject) {
-            throw new \RuntimeException('Project not found for DTO conversion.');
+            throw new RuntimeException('Project not found for DTO conversion.');
         }
 
         return new ProjectDTO(
@@ -119,8 +115,8 @@ class UpdateProjectRequest extends FormRequest
             additional_info: $validated['additional_info'] ?? $currentProject->additional_info,
             external_code: $validated['external_code'] ?? $currentProject->external_code,
             cost_category_id: array_key_exists('cost_category_id', $validated)
-                                ? ($validated['cost_category_id'] !== null ? (int) $validated['cost_category_id'] : null)
-                                : $currentProject->cost_category_id,
+                ? ($validated['cost_category_id'] !== null ? (int) $validated['cost_category_id'] : null)
+                : $currentProject->cost_category_id,
             accounting_data: $validated['accounting_data'] ?? $currentProject->accounting_data,
             use_in_accounting_reports: $validated['use_in_accounting_reports'] ?? $currentProject->use_in_accounting_reports
         );

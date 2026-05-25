@@ -1,69 +1,66 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Requests\Api\V1\Admin\Project;
 
-use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Support\Facades\Auth;
-use App\Models\Role;
+use App\DTOs\Project\ProjectDTO;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Contracts\Validation\Validator;
+use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
-use App\DTOs\Project\ProjectDTO;
 
 class StoreProjectRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     */
+    private const ALLOWED_STATUSES = [
+        'draft',
+        'active',
+        'completed',
+        'paused',
+        'cancelled',
+    ];
+
     public function authorize(): bool
     {
-        return Auth::check(); 
+        return Auth::check();
     }
 
-    /**
-     * Get the validation rules that apply to the request.
-     *
-     * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array<mixed>|string>
-     */
     public function rules(): array
     {
         return [
-            'name' => 'required|string|max:255',
-            'address' => 'nullable|string|max:1000',
-            'latitude' => 'nullable|numeric|between:-90,90',
-            'longitude' => 'nullable|numeric|between:-180,180',
-            'description' => 'nullable|string|max:2000',
-            'customer' => 'nullable|string|max:255',
-            'designer' => 'nullable|string|max:255',
-            'start_date' => 'nullable|date',
-            'end_date' => 'nullable|date|after_or_equal:start_date',
-            'status' => 'required|string|in:active,completed,paused,cancelled',
-            'is_archived' => 'sometimes|boolean',
-            'additional_info' => 'nullable|array',
-            
-            // РќРѕРІС‹Рµ РїРѕР»СЏ РґР»СЏ РёРЅС‚РµРіСЂР°С†РёРё СЃ Р±СѓС…РіР°Р»С‚РµСЂСЃРєРёРј СѓС‡РµС‚РѕРј
-            'external_code' => 'nullable|string|max:100',
-            'cost_category_id' => 'nullable|exists:cost_categories,id',
-            'accounting_data' => 'nullable|array',
-            'use_in_accounting_reports' => 'nullable|boolean',
-            'budget_amount' => 'nullable|numeric|min:0',
-            'site_area_m2' => 'nullable|numeric|min:0',
-            'contract_number' => 'nullable|string|max:100',
+            'name' => ['required', 'string', 'max:255'],
+            'address' => ['nullable', 'string', 'max:1000'],
+            'latitude' => ['nullable', 'numeric', 'between:-90,90'],
+            'longitude' => ['nullable', 'numeric', 'between:-180,180'],
+            'description' => ['nullable', 'string', 'max:2000'],
+            'customer' => ['nullable', 'string', 'max:255'],
+            'designer' => ['nullable', 'string', 'max:255'],
+            'start_date' => ['nullable', 'date'],
+            'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
+            'status' => ['required', 'string', Rule::in(self::ALLOWED_STATUSES)],
+            'is_archived' => ['sometimes', 'boolean'],
+            'additional_info' => ['nullable', 'array'],
+            'external_code' => ['nullable', 'string', 'max:100'],
+            'cost_category_id' => ['nullable', 'exists:cost_categories,id'],
+            'accounting_data' => ['nullable', 'array'],
+            'use_in_accounting_reports' => ['nullable', 'boolean'],
+            'budget_amount' => ['nullable', 'numeric', 'min:0'],
+            'site_area_m2' => ['nullable', 'numeric', 'min:0'],
+            'contract_number' => ['nullable', 'string', 'max:100'],
         ];
     }
 
-    /**
-     * РџРѕР»СѓС‡РёС‚СЊ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊСЃРєРёРµ СЃРѕРѕР±С‰РµРЅРёСЏ РѕР± РѕС€РёР±РєР°С… РґР»СЏ РїСЂР°РІРёР» РїСЂРѕРІРµСЂРєРё.
-     *
-     * @return array<string, string>
-     */
     public function messages(): array
     {
         return [
-            'name.required' => 'РќР°Р·РІР°РЅРёРµ РїСЂРѕРµРєС‚Р° РѕР±СЏР·Р°С‚РµР»СЊРЅРѕ РґР»СЏ Р·Р°РїРѕР»РЅРµРЅРёСЏ.',
-            'end_date.after_or_equal' => 'Р”Р°С‚Р° РѕРєРѕРЅС‡Р°РЅРёСЏ РґРѕР»Р¶РЅР° Р±С‹С‚СЊ Р±РѕР»СЊС€Рµ РёР»Рё СЂР°РІРЅР° РґР°С‚Рµ РЅР°С‡Р°Р»Р°.',
-            'cost_category_id.exists' => 'Р’С‹Р±СЂР°РЅРЅР°СЏ РєР°С‚РµРіРѕСЂРёСЏ Р·Р°С‚СЂР°С‚ РЅРµ СЃСѓС‰РµСЃС‚РІСѓРµС‚.',
+            'name.required' => trans_message('project.validation.name_required'),
+            'end_date.after_or_equal' => trans_message('project.validation.end_date_after_or_equal'),
+            'status.in' => trans_message('project.validation.status_invalid'),
+            'cost_category_id.exists' => trans_message('project.validation.cost_category_not_found'),
         ];
     }
 
@@ -72,17 +69,18 @@ class StoreProjectRequest extends FormRequest
         $errors = (new ValidationException($validator))->errors();
 
         throw new HttpResponseException(
-            \App\Http\Responses\AdminResponse::fromPayload([
-                'success' => false,
-                'message' => 'Р”Р°РЅРЅС‹Рµ РЅРµ РїСЂРѕС€Р»Рё РІР°Р»РёРґР°С†РёСЋ.',
-                'errors' => $errors,
-            ], JsonResponse::HTTP_UNPROCESSABLE_ENTITY)
+            AdminResponse::error(
+                trans_message('errors.validation_failed'),
+                JsonResponse::HTTP_UNPROCESSABLE_ENTITY,
+                $errors
+            )
         );
     }
 
     public function toDto(): ProjectDTO
     {
         $validated = $this->validated();
+
         return new ProjectDTO(
             name: $validated['name'],
             address: $validated['address'] ?? null,
