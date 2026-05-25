@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Payments\Enums\InvoiceType;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Events\PaymentDocumentPaid;
+use App\BusinessModules\Core\Payments\Http\Controllers\PaymentDocumentController;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseReceiptFromPaymentService;
@@ -251,6 +252,37 @@ class PaymentDocumentEstimateLifecycleTest extends TestCase
                 ->where('material_id', $material->id)
                 ->count()
         );
+    }
+
+    public function test_paid_payment_document_workflow_is_not_blocked_by_missing_bank_details(): void
+    {
+        $item = $this->createEstimateItem([
+            'quantity' => 10,
+            'unit_price' => 100,
+            'total_amount' => 1000,
+        ]);
+
+        $document = $this->createDocumentWithSplit($item, [
+            'document_number' => 'PAY-EST-009',
+            'document_type' => PaymentDocumentType::PAYMENT_ORDER->value,
+            'status' => PaymentDocumentStatus::PAID->value,
+            'paid_amount' => 1000,
+            'remaining_amount' => 0,
+            'bank_account' => null,
+            'bank_bik' => null,
+        ]);
+
+        $controller = app(PaymentDocumentController::class);
+        $flagsMethod = new \ReflectionMethod($controller, 'buildProblemFlags');
+        $summaryMethod = new \ReflectionMethod($controller, 'buildWorkflowSummary');
+
+        $flags = $flagsMethod->invoke($controller, $document->fresh());
+        $summary = $summaryMethod->invoke($controller, $document->fresh(), $flags, []);
+
+        $this->assertSame([], $flags);
+        $this->assertSame('paid', $summary['current_stage']);
+        $this->assertNull($summary['next_action']);
+        $this->assertFalse($summary['is_blocked']);
     }
 
     public function test_documents_can_be_filtered_by_estimate_splits(): void

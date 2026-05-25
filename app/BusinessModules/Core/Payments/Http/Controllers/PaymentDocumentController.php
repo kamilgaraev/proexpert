@@ -999,6 +999,14 @@ class PaymentDocumentController extends Controller
 
     private function buildProblemFlags(PaymentDocument $document): array
     {
+        if (in_array($document->status, [
+            PaymentDocumentStatus::PAID,
+            PaymentDocumentStatus::REJECTED,
+            PaymentDocumentStatus::CANCELLED,
+        ], true)) {
+            return [];
+        }
+
         $flags = [];
 
         if ($document->document_type->isOutgoing() && (!$document->bank_account || !$document->bank_bik)) {
