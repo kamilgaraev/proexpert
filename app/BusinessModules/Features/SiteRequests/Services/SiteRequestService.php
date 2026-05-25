@@ -284,7 +284,7 @@ class SiteRequestService
     {
         // Проверяем возможность редактирования
         if (!$request->canBeEdited()) {
-            throw new \DomainException('Заявку нельзя редактировать в текущем статусе');
+            throw new \DomainException(trans_message('site_requests.errors.not_editable_status'));
         }
 
         $data = $this->prepareEstimateResourceData($request->organization_id, $data, $request);
@@ -358,7 +358,7 @@ class SiteRequestService
 
         // Проверяем возможность перехода
         if (!$this->workflowService->canTransition($request, $newStatus)) {
-            throw new \DomainException("Невозможен переход из статуса '{$oldStatus}' в '{$newStatus}'");
+            throw new \DomainException(trans_message('site_requests.errors.invalid_status_transition'));
         }
 
         DB::transaction(function () use ($request, $userId, $oldStatus, $newStatus, $notes) {
@@ -462,7 +462,7 @@ class SiteRequestService
     public function submit(SiteRequest $request, int $userId): SiteRequest
     {
         if ($request->status !== SiteRequestStatusEnum::DRAFT) {
-            throw new \DomainException('Только черновики можно отправить на обработку');
+            throw new \DomainException(trans_message('site_requests.errors.draft_only_submit'));
         }
 
         return $this->changeStatus($request, $userId, SiteRequestStatusEnum::PENDING->value);
@@ -474,7 +474,7 @@ class SiteRequestService
     public function complete(SiteRequest $request, int $userId, ?string $notes = null): SiteRequest
     {
         if ($request->status !== SiteRequestStatusEnum::FULFILLED) {
-            throw new \DomainException('Подтвердить можно только выполненную заявку');
+            throw new \DomainException(trans_message('site_requests.errors.completed_only_confirm'));
         }
 
         return $this->changeStatus($request, $userId, SiteRequestStatusEnum::COMPLETED->value, $notes);
@@ -486,7 +486,7 @@ class SiteRequestService
     public function cancel(SiteRequest $request, int $userId, ?string $notes = null): SiteRequest
     {
         if (!$request->canBeCancelled()) {
-            throw new \DomainException('Заявку нельзя отменить в текущем статусе');
+            throw new \DomainException(trans_message('site_requests.errors.not_cancellable_status'));
         }
 
         return $this->changeStatus($request, $userId, SiteRequestStatusEnum::CANCELLED->value, $notes);

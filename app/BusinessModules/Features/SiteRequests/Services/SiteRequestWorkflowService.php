@@ -89,7 +89,7 @@ class SiteRequestWorkflowService
 
         if ($customTransition) {
             if (!$customTransition->is_active) {
-                throw new \DomainException("Переход '{$fromStatus}' → '{$toStatus}' отключен");
+                throw new \DomainException(trans_message('site_requests.errors.disabled_status_transition'));
             }
             return;
         }
@@ -99,7 +99,7 @@ class SiteRequestWorkflowService
 
         if (!isset($defaultTransitions[$fromStatus]) ||
             !in_array($toStatus, $defaultTransitions[$fromStatus])) {
-            throw new \DomainException("Недопустимый переход статуса '{$fromStatus}' → '{$toStatus}'");
+            throw new \DomainException(trans_message('site_requests.errors.invalid_status_transition'));
         }
     }
 

@@ -72,7 +72,7 @@ class SiteRequestController extends Controller
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            return AdminResponse::error(trans('site_requests.list_error'), 500);
+            return AdminResponse::error(trans_message('site_requests.list_error'), 500);
         }
     }
 
@@ -87,7 +87,7 @@ class SiteRequestController extends Controller
             $siteRequest = $this->service->find($id, $organizationId);
 
             if (!$siteRequest) {
-                return AdminResponse::error(trans('site_requests.not_found'), 404);
+                return AdminResponse::error(trans_message('site_requests.not_found'), 404);
             }
 
             // Загружаем историю
@@ -103,7 +103,7 @@ class SiteRequestController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return AdminResponse::error(trans('site_requests.show_error'), 500);
+            return AdminResponse::error(trans_message('site_requests.show_error'), 500);
         }
     }
 
@@ -221,7 +221,7 @@ class SiteRequestController extends Controller
             $group = $this->service->findGroup($id, $organizationId);
 
             if (!$group) {
-                return AdminResponse::error(trans('site_requests.group_not_found'), 404);
+                return AdminResponse::error(trans_message('site_requests.group_not_found'), 404);
             }
 
             return AdminResponse::success(new SiteRequestGroupResource($group));
@@ -231,7 +231,7 @@ class SiteRequestController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return AdminResponse::error(trans('site_requests.group_show_error'), 500);
+            return AdminResponse::error(trans_message('site_requests.group_show_error'), 500);
         }
     }
 
@@ -247,18 +247,18 @@ class SiteRequestController extends Controller
             $group = $this->service->findGroup($id, $organizationId);
 
             if (!$group) {
-                return AdminResponse::error(trans('site_requests.group_not_found'), 404);
+                return AdminResponse::error(trans_message('site_requests.group_not_found'), 404);
             }
 
             if ($group->status !== \App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum::DRAFT) {
-                return AdminResponse::error(trans('site_requests.group_not_editable'), 422);
+                return AdminResponse::error(trans_message('site_requests.group_not_editable'), 422);
             }
 
             $updatedGroup = $this->service->updateGroup($group, $userId, $request->validated());
 
             return AdminResponse::success(
                 new SiteRequestGroupResource($updatedGroup),
-                trans('site_requests.group_updated_success')
+                trans_message('site_requests.group_updated_success')
             );
         } catch (\DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
@@ -268,7 +268,7 @@ class SiteRequestController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return AdminResponse::error(trans('site_requests.group_update_error'), 500);
+            return AdminResponse::error(trans_message('site_requests.group_update_error'), 500);
         }
     }
 
@@ -308,7 +308,7 @@ class SiteRequestController extends Controller
                 
                 return AdminResponse::success(
                     new SiteRequestGroupResource($group),
-                    trans('site_requests.batch_created_success', ['count' => $group->requests->count()]),
+                    trans_message('site_requests.batch_created_success', ['count' => $group->requests->count()]),
                     201
                 );
             }
@@ -322,7 +322,7 @@ class SiteRequestController extends Controller
 
             return AdminResponse::success(
                 new SiteRequestResource($siteRequest),
-                trans('site_requests.created_success'),
+                trans_message('site_requests.created_success'),
                 201
             );
 
@@ -334,7 +334,7 @@ class SiteRequestController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return AdminResponse::error(trans('site_requests.store_error'), 500);
+            return AdminResponse::error(trans_message('site_requests.store_error'), 500);
         }
     }
 
@@ -350,14 +350,14 @@ class SiteRequestController extends Controller
             $siteRequest = $this->service->find($id, $organizationId);
 
             if (!$siteRequest) {
-                return AdminResponse::error(trans('site_requests.not_found'), 404);
+                return AdminResponse::error(trans_message('site_requests.not_found'), 404);
             }
 
             $updated = $this->service->update($siteRequest, $userId, $request->validated());
 
             return AdminResponse::success(
                 new SiteRequestResource($updated),
-                trans('site_requests.updated_success')
+                trans_message('site_requests.updated_success')
             );
         } catch (\DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
@@ -367,7 +367,7 @@ class SiteRequestController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return AdminResponse::error(trans('site_requests.update_error'), 500);
+            return AdminResponse::error(trans_message('site_requests.update_error'), 500);
         }
     }
 
@@ -383,14 +383,14 @@ class SiteRequestController extends Controller
             $siteRequest = $this->service->find($id, $organizationId);
 
             if (!$siteRequest) {
-                return AdminResponse::error(trans('site_requests.not_found'), 404);
+                return AdminResponse::error(trans_message('site_requests.not_found'), 404);
             }
 
             $this->service->delete($siteRequest, $userId);
 
             return AdminResponse::success(
                 null,
-                trans('site_requests.deleted_success')
+                trans_message('site_requests.deleted_success')
             );
         } catch (\Exception $e) {
             Log::error('site_requests.destroy.error', [
@@ -398,7 +398,7 @@ class SiteRequestController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return AdminResponse::error(trans('site_requests.destroy_error'), 500);
+            return AdminResponse::error(trans_message('site_requests.destroy_error'), 500);
         }
     }
 
@@ -414,7 +414,7 @@ class SiteRequestController extends Controller
             $siteRequest = $this->service->find($id, $organizationId);
 
             if (!$siteRequest) {
-                return AdminResponse::error(trans('site_requests.not_found'), 404);
+                return AdminResponse::error(trans_message('site_requests.not_found'), 404);
             }
 
             if (!$this->canChangeStatus($request, $siteRequest, (string) $request->input('status'))) {
@@ -430,7 +430,7 @@ class SiteRequestController extends Controller
 
             return AdminResponse::success(
                 new SiteRequestResource($updated),
-                trans('site_requests.change_status_success')
+                trans_message('site_requests.change_status_success')
             );
         } catch (\DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
@@ -440,7 +440,7 @@ class SiteRequestController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return AdminResponse::error(trans('site_requests.change_status_error'), 500);
+            return AdminResponse::error(trans_message('site_requests.change_status_error'), 500);
         }
     }
 
@@ -460,14 +460,14 @@ class SiteRequestController extends Controller
             $siteRequest = $this->service->find($id, $organizationId);
 
             if (!$siteRequest) {
-                return AdminResponse::error(trans('site_requests.not_found'), 404);
+                return AdminResponse::error(trans_message('site_requests.not_found'), 404);
             }
 
             $updated = $this->service->assign($siteRequest, $userId, $request->input('user_id'));
 
             return AdminResponse::success(
                 new SiteRequestResource($updated),
-                trans('site_requests.assigned_success')
+                trans_message('site_requests.assigned_success')
             );
         } catch (\Exception $e) {
             Log::error('site_requests.assign.error', [
@@ -475,7 +475,7 @@ class SiteRequestController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return AdminResponse::error(trans('site_requests.assign_error'), 500);
+            return AdminResponse::error(trans_message('site_requests.assign_error'), 500);
         }
     }
 
@@ -491,14 +491,14 @@ class SiteRequestController extends Controller
             $siteRequest = $this->service->find($id, $organizationId);
 
             if (!$siteRequest) {
-                return AdminResponse::error(trans('site_requests.not_found'), 404);
+                return AdminResponse::error(trans_message('site_requests.not_found'), 404);
             }
 
             $updated = $this->service->submit($siteRequest, $userId);
 
             return AdminResponse::success(
                 new SiteRequestResource($updated),
-                trans('site_requests.submitted_success')
+                trans_message('site_requests.submitted_success')
             );
         } catch (\DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
@@ -508,7 +508,7 @@ class SiteRequestController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return AdminResponse::error(trans('site_requests.submit_error'), 500);
+            return AdminResponse::error(trans_message('site_requests.submit_error'), 500);
         }
     }
 
@@ -524,14 +524,14 @@ class SiteRequestController extends Controller
             $group = $this->service->findGroup($groupId, $organizationId);
 
             if (!$group) {
-                return AdminResponse::error(trans('site_requests.group_not_found'), 404);
+                return AdminResponse::error(trans_message('site_requests.group_not_found'), 404);
             }
 
             $updatedGroup = $this->service->submitGroup($group, $userId);
 
             return AdminResponse::success(
                 new SiteRequestGroupResource($updatedGroup),
-                trans('site_requests.group_submitted_success')
+                trans_message('site_requests.group_submitted_success')
             );
         } catch (\DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
@@ -541,7 +541,7 @@ class SiteRequestController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return AdminResponse::error(trans('site_requests.group_submit_error'), 500);
+            return AdminResponse::error(trans_message('site_requests.group_submit_error'), 500);
         }
     }
 
