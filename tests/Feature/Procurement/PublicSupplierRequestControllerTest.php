@@ -9,7 +9,6 @@ use App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequestLine;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
-use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Services\SupplierRequestService;
 use App\Models\Organization;
 use App\Models\Supplier;
@@ -69,6 +68,40 @@ class PublicSupplierRequestControllerTest extends TestCase
         $this->assertSame(1, SupplierProposal::query()->where('supplier_request_id', $supplierRequest->id)->count());
     }
 
+    public function test_external_public_supplier_can_submit_proposal(): void
+    {
+        $organization = Organization::factory()->create(['name' => 'Buyer Org']);
+        $purchaseRequest = $this->createPurchaseRequest($organization->id);
+        $supplierRequest = app(SupplierRequestService::class)->create($organization->id, [
+            'purchase_request_id' => $purchaseRequest->id,
+            'external_supplier' => [
+                'name' => 'External Supplier',
+                'contact_person' => 'External Owner',
+                'phone' => '+7 900 000-00-00',
+                'email' => 'external-supplier@example.test',
+                'tax_number' => '9901000003',
+            ],
+            'comment' => 'Please submit your offer.',
+        ]);
+        $supplierRequest = app(SupplierRequestService::class)->send($supplierRequest);
+        $line = $supplierRequest->lines()->firstOrFail();
+
+        $submitResponse = $this->postJson(
+            "/api/v1/procurement/supplier-requests/{$supplierRequest->public_token}/proposals",
+            $this->publicFormProposalPayload($line->id)
+        );
+
+        $submitResponse->assertCreated();
+        $submitResponse->assertJsonPath('success', true);
+        $submitResponse->assertJsonPath('data.status', SupplierProposalStatusEnum::SUBMITTED->value);
+
+        $proposal = SupplierProposal::query()->firstOrFail();
+        $this->assertNull($proposal->supplier_id);
+        $this->assertSame($supplierRequest->external_supplier_contact_id, $proposal->external_supplier_contact_id);
+        $this->assertSame($supplierRequest->supplier_party_id, $proposal->supplier_party_id);
+        $this->assertSame(SupplierRequestStatusEnum::RESPONDED, $supplierRequest->fresh()->status);
+    }
+
     public function test_public_submission_rejects_expired_token_and_foreign_supplier_request_line_without_mutation(): void
     {
         $organization = Organization::factory()->create();
@@ -114,9 +147,9 @@ class PublicSupplierRequestControllerTest extends TestCase
         $this->getJson('/api/v1/procurement/supplier-requests/short-token')->assertNotFound();
     }
 
-    private function proposalPayload(int $supplierRequestLineId): array
+    private function proposalPayload(int $supplierRequestLineId, array $overrides = []): array
     {
-        return [
+        $payload = [
             'proposal_date' => now()->toDateString(),
             'subtotal_amount' => 500,
             'delivery_amount' => 50,
@@ -139,13 +172,52 @@ class PublicSupplierRequestControllerTest extends TestCase
                 ],
             ],
         ];
+
+        foreach ($overrides as $key => $value) {
+            if ($value === null) {
+                unset($payload[$key]);
+
+                continue;
+            }
+
+            $payload[$key] = $value;
+        }
+
+        return $payload;
+    }
+
+    private function publicFormProposalPayload(int $supplierRequestLineId): array
+    {
+        return $this->proposalPayload($supplierRequestLineId, [
+            'proposal_date' => null,
+            'delivery_amount' => 500,
+            'lead_time_days' => 3,
+            'delivery_due_date' => now()->addDays(3)->toDateString(),
+            'payment_terms' => 'Оплата после поставки',
+            'delivery_terms' => 'Доставка на объект',
+            'warranty_terms' => 'Гарантия поставщика',
+            'notes' => 'Ответ из публичной формы',
+            'items' => [
+                [
+                    'supplier_request_line_id' => $supplierRequestLineId,
+                    'name' => 'Concrete B25',
+                    'quantity' => 10,
+                    'unit' => 'm3',
+                    'unit_price' => 1100,
+                    'total_amount' => 11000,
+                    'comment' => 'Позиция из публичной формы',
+                ],
+            ],
+            'subtotal_amount' => 11000,
+            'total_amount' => 11500,
+        ]);
     }
 
     private function createPurchaseRequest(int $organizationId): PurchaseRequest
     {
         $purchaseRequest = PurchaseRequest::query()->create([
             'organization_id' => $organizationId,
-            'request_number' => 'PR-PUBLIC-' . uniqid(),
+            'request_number' => 'PR-PUBLIC-'.uniqid(),
             'status' => 'approved',
         ]);
 
@@ -163,7 +235,7 @@ class PublicSupplierRequestControllerTest extends TestCase
     {
         return Supplier::query()->create([
             'organization_id' => $organizationId,
-            'name' => 'Supplier ' . uniqid(),
+            'name' => 'Supplier '.uniqid(),
             'email' => $email,
             'is_active' => true,
         ]);

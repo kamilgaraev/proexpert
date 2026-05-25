@@ -27,15 +27,14 @@ class PublicSupplierRequestController extends Controller
     public function __construct(
         private readonly SupplierProposalService $proposalService,
         private readonly ProcurementLifecycleService $lifecycleService
-    ) {
-    }
+    ) {}
 
     public function show(Request $request, string $token): JsonResponse
     {
         try {
             $supplierRequest = $this->findByToken($token);
 
-            if (!$supplierRequest instanceof SupplierRequest) {
+            if (! $supplierRequest instanceof SupplierRequest) {
                 return LandingResponse::error(trans_message('procurement.public_supplier_requests.not_found'), 404);
             }
 
@@ -55,7 +54,9 @@ class PublicSupplierRequestController extends Controller
         } catch (Throwable $exception) {
             Log::error('procurement.public_supplier_requests.show.error', [
                 'token_hash' => hash('sha256', $token),
-                'exception' => $exception->getMessage(),
+                'exception_class' => $exception::class,
+                'exception_file' => $exception->getFile(),
+                'exception_line' => $exception->getLine(),
             ]);
 
             return LandingResponse::error(trans_message('procurement.public_supplier_requests.show_error'), 500);
@@ -67,7 +68,7 @@ class PublicSupplierRequestController extends Controller
         try {
             $supplierRequest = $this->findByToken($token);
 
-            if (!$supplierRequest instanceof SupplierRequest) {
+            if (! $supplierRequest instanceof SupplierRequest) {
                 return LandingResponse::error(trans_message('procurement.public_supplier_requests.not_found'), 404);
             }
 
@@ -104,7 +105,9 @@ class PublicSupplierRequestController extends Controller
         } catch (Throwable $exception) {
             Log::error('procurement.public_supplier_requests.submit.error', [
                 'token_hash' => hash('sha256', $token),
-                'exception' => $exception->getMessage(),
+                'exception_class' => $exception::class,
+                'exception_file' => $exception->getFile(),
+                'exception_line' => $exception->getLine(),
             ]);
 
             return LandingResponse::error(trans_message('procurement.public_supplier_requests.submit_error'), 500);
@@ -146,7 +149,7 @@ class PublicSupplierRequestController extends Controller
             );
         }
 
-        if ($forSubmit && !$supplierRequest->canReceivePublicProposal()) {
+        if ($forSubmit && ! $supplierRequest->canReceivePublicProposal()) {
             return LandingResponse::error(
                 trans_message('procurement.public_supplier_requests.not_accepting_responses'),
                 Response::HTTP_CONFLICT

@@ -7,15 +7,17 @@ namespace App\BusinessModules\Features\Procurement\Services;
 use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalDecisionEnum;
-use App\BusinessModules\Features\Procurement\Enums\SupplierProposalVatModeEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalStatusEnum;
+use App\BusinessModules\Features\Procurement\Enums\SupplierProposalVatModeEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
+use Throwable;
 
 use function trans_message;
 
@@ -34,121 +36,148 @@ class SupplierProposalService
         SupplierRequest $supplierRequest,
         array $data,
         ?int $actorId = null
-    ): SupplierProposal
-    {
-        return DB::transaction(function () use ($supplierRequest, $data, $actorId): SupplierProposal {
-            $supplierRequest = $this->lifecycleService->syncSupplierRequestExpiry($supplierRequest);
+    ): SupplierProposal {
+        $stage = 'start';
 
-            if (!$supplierRequest->canReceivePublicProposal()) {
-                throw ValidationException::withMessages([
-                    'supplier_request_id' => trans_message('procurement.supplier_requests.cannot_receive_proposal'),
-                ]);
-            }
+        try {
+            return DB::transaction(function () use ($supplierRequest, $data, $actorId, &$stage): SupplierProposal {
+                $stage = 'sync_expiry';
+                $supplierRequest = $this->lifecycleService->syncSupplierRequestExpiry($supplierRequest);
 
-            $supplierRequest->loadMissing(['lines', 'supplierParty']);
-            $supplierRequestVersion = $this->requestVersionService->resolveForProposal($supplierRequest, $actorId);
-            $amounts = $this->commercialAmounts($data);
+                if (! $supplierRequest->canReceivePublicProposal()) {
+                    throw ValidationException::withMessages([
+                        'supplier_request_id' => trans_message('procurement.supplier_requests.cannot_receive_proposal'),
+                    ]);
+                }
 
-            $proposal = SupplierProposal::query()->create([
-                'organization_id' => $supplierRequest->organization_id,
-                'supplier_request_id' => $supplierRequest->id,
-                'supplier_request_version_id' => $supplierRequestVersion->id,
-                'supplier_id' => $supplierRequest->supplier_id,
-                'external_supplier_contact_id' => $supplierRequest->external_supplier_contact_id,
-                'supplier_party_id' => $supplierRequest->supplier_party_id,
-                'supplier_snapshot' => $supplierRequest->supplier_snapshot ?? [],
-                'proposal_number' => $this->generateProposalNumber($supplierRequest->organization_id),
-                'proposal_date' => $data['proposal_date'] ?? now(),
-                'status' => SupplierProposalStatusEnum::SUBMITTED,
-                'subtotal_amount' => $amounts['subtotal_amount'],
-                'delivery_amount' => $amounts['delivery_amount'],
-                'vat_amount' => $amounts['vat_amount'],
-                'total_amount' => $amounts['total_amount'],
-                'currency' => $data['currency'] ?? 'RUB',
-                'vat_mode' => $data['vat_mode'] ?? SupplierProposalVatModeEnum::INCLUDED->value,
-                'vat_rate' => $data['vat_rate'] ?? null,
-                'valid_until' => $data['valid_until'] ?? null,
-                'delivery_due_date' => $data['delivery_due_date'] ?? null,
-                'lead_time_days' => $data['lead_time_days'] ?? null,
-                'payment_terms' => $data['payment_terms'] ?? null,
-                'delivery_terms' => $data['delivery_terms'] ?? null,
-                'warranty_terms' => $data['warranty_terms'] ?? null,
-                'items' => $data['items'] ?? null,
-                'notes' => $data['notes'] ?? null,
-                'metadata' => $data['metadata'] ?? null,
-            ]);
+                $stage = 'resolve_request_version';
+                $supplierRequest->loadMissing(['lines', 'supplierParty']);
+                $supplierRequestVersion = $this->requestVersionService->resolveForProposal($supplierRequest, $actorId);
+                $amounts = $this->commercialAmounts($data);
 
-            foreach ($data['items'] ?? [] as $item) {
-                $quantity = (float) $item['quantity'];
-                $unitPrice = (float) $item['unit_price'];
-
-                $proposal->lines()->create([
-                    'supplier_request_line_id' => $item['supplier_request_line_id'] ?? null,
-                    'material_id' => $this->resolveLineMaterialId($supplierRequest, $item['supplier_request_line_id'] ?? null),
-                    'name' => $item['name'],
-                    'quantity' => $quantity,
-                    'unit' => $item['unit'],
-                    'unit_price' => $unitPrice,
-                    'total_amount' => $item['total_amount'] ?? round($quantity * $unitPrice, 2),
-                    'comment' => $item['comment'] ?? null,
-                    'metadata' => $item['metadata'] ?? null,
-                ]);
-            }
-
-            $proposal->load(['supplierParty', 'lines']);
-            $this->intakeService->recordForProposal($proposal, $data, $actorId);
-            $proposal->load('intake');
-            $this->versionService->createInitialVersion($proposal, $actorId);
-
-            $supplierRequest->update([
-                'status' => SupplierRequestStatusEnum::RESPONDED,
-                'responded_at' => now(),
-            ]);
-
-            $respondedParty = $this->supplierPartyService->markResponded($supplierRequest->supplier_party_id);
-
-            if ($respondedParty !== null) {
-                $respondedSnapshot = $this->supplierPartyService->snapshotForDocument($respondedParty);
-                $supplierRequest->update(['supplier_snapshot' => $respondedSnapshot]);
-                $proposal->update(['supplier_snapshot' => $respondedSnapshot]);
-            }
-
-            event(new \App\BusinessModules\Features\Procurement\Events\SupplierProposalReceived($proposal));
-
-            $snapshot = is_array($proposal->supplier_snapshot) ? $proposal->supplier_snapshot : [];
-
-            $this->auditService->record(
-                ProcurementAuditEventTypeEnum::SUPPLIER_PROPOSAL_CREATED->value,
-                $proposal,
-                (int) $proposal->organization_id,
-                $actorId,
-                $proposal->supplier_party_id,
-                [
-                    'proposal_number' => $proposal->proposal_number,
-                    'status' => $proposal->status->value,
-                    'supplier_request_number' => $supplierRequest->request_number,
+                $stage = 'create_proposal';
+                $proposal = SupplierProposal::query()->create([
+                    'organization_id' => $supplierRequest->organization_id,
+                    'supplier_request_id' => $supplierRequest->id,
                     'supplier_request_version_id' => $supplierRequestVersion->id,
-                    'supplier_request_version_number' => $supplierRequestVersion->version_number,
-                    'supplier_name' => $this->supplierName($proposal, $snapshot),
-                    'supplier_snapshot' => $snapshot,
-                    'total_amount' => (float) $proposal->total_amount,
-                    'currency' => $proposal->currency,
-                    'valid_until' => $proposal->valid_until?->format('Y-m-d'),
-                    'lines_count' => count($data['items'] ?? []),
-                ]
-            );
+                    'supplier_id' => $supplierRequest->supplier_id,
+                    'external_supplier_contact_id' => $supplierRequest->external_supplier_contact_id,
+                    'supplier_party_id' => $supplierRequest->supplier_party_id,
+                    'supplier_snapshot' => $supplierRequest->supplier_snapshot ?? [],
+                    'proposal_number' => $this->generateProposalNumber($supplierRequest->organization_id),
+                    'proposal_date' => $data['proposal_date'] ?? now(),
+                    'status' => SupplierProposalStatusEnum::SUBMITTED,
+                    'subtotal_amount' => $amounts['subtotal_amount'],
+                    'delivery_amount' => $amounts['delivery_amount'],
+                    'vat_amount' => $amounts['vat_amount'],
+                    'total_amount' => $amounts['total_amount'],
+                    'currency' => $data['currency'] ?? 'RUB',
+                    'vat_mode' => $data['vat_mode'] ?? SupplierProposalVatModeEnum::INCLUDED->value,
+                    'vat_rate' => $data['vat_rate'] ?? null,
+                    'valid_until' => $data['valid_until'] ?? null,
+                    'delivery_due_date' => $data['delivery_due_date'] ?? null,
+                    'lead_time_days' => $data['lead_time_days'] ?? null,
+                    'payment_terms' => $data['payment_terms'] ?? null,
+                    'delivery_terms' => $data['delivery_terms'] ?? null,
+                    'warranty_terms' => $data['warranty_terms'] ?? null,
+                    'items' => $data['items'] ?? null,
+                    'notes' => $data['notes'] ?? null,
+                    'metadata' => $data['metadata'] ?? null,
+                ]);
 
-            return $proposal->fresh([
-                'supplier',
-                'externalSupplierContact',
-                'supplierParty',
-                'supplierRequest',
-                'supplierRequestVersion',
-                'lines',
-                'intake',
-                'currentVersion',
+                foreach ($data['items'] ?? [] as $item) {
+                    $quantity = (float) $item['quantity'];
+                    $unitPrice = (float) $item['unit_price'];
+
+                    $proposal->lines()->create([
+                        'supplier_request_line_id' => $item['supplier_request_line_id'] ?? null,
+                        'material_id' => $this->resolveLineMaterialId($supplierRequest, $item['supplier_request_line_id'] ?? null),
+                        'name' => $item['name'],
+                        'quantity' => $quantity,
+                        'unit' => $item['unit'],
+                        'unit_price' => $unitPrice,
+                        'total_amount' => $item['total_amount'] ?? round($quantity * $unitPrice, 2),
+                        'comment' => $item['comment'] ?? null,
+                        'metadata' => $item['metadata'] ?? null,
+                    ]);
+                }
+
+                $stage = 'record_intake';
+                $proposal->load(['supplierParty', 'lines']);
+                $this->intakeService->recordForProposal($proposal, $data, $actorId);
+                $stage = 'create_version';
+                $proposal->load('intake');
+                $this->versionService->createInitialVersion($proposal, $actorId);
+
+                $stage = 'mark_request_responded';
+                $supplierRequest->update([
+                    'status' => SupplierRequestStatusEnum::RESPONDED,
+                    'responded_at' => now(),
+                ]);
+
+                $stage = 'mark_party_responded';
+                $respondedParty = $this->supplierPartyService->markResponded($supplierRequest->supplier_party_id);
+
+                if ($respondedParty !== null) {
+                    $respondedSnapshot = $this->supplierPartyService->snapshotForDocument($respondedParty);
+                    $supplierRequest->update(['supplier_snapshot' => $respondedSnapshot]);
+                    $proposal->update(['supplier_snapshot' => $respondedSnapshot]);
+                }
+
+                $stage = 'dispatch_event';
+                event(new \App\BusinessModules\Features\Procurement\Events\SupplierProposalReceived($proposal));
+
+                $snapshot = is_array($proposal->supplier_snapshot) ? $proposal->supplier_snapshot : [];
+
+                $stage = 'record_audit';
+                $this->auditService->record(
+                    ProcurementAuditEventTypeEnum::SUPPLIER_PROPOSAL_CREATED->value,
+                    $proposal,
+                    (int) $proposal->organization_id,
+                    $actorId,
+                    $proposal->supplier_party_id,
+                    [
+                        'proposal_number' => $proposal->proposal_number,
+                        'status' => $proposal->status->value,
+                        'supplier_request_number' => $supplierRequest->request_number,
+                        'supplier_request_version_id' => $supplierRequestVersion->id,
+                        'supplier_request_version_number' => $supplierRequestVersion->version_number,
+                        'supplier_name' => $this->supplierName($proposal, $snapshot),
+                        'supplier_snapshot' => $snapshot,
+                        'total_amount' => (float) $proposal->total_amount,
+                        'currency' => $proposal->currency,
+                        'valid_until' => $proposal->valid_until?->format('Y-m-d'),
+                        'lines_count' => count($data['items'] ?? []),
+                    ]
+                );
+
+                return $proposal->fresh([
+                    'supplier',
+                    'externalSupplierContact',
+                    'supplierParty',
+                    'supplierRequest',
+                    'supplierRequestVersion',
+                    'lines',
+                    'intake',
+                    'currentVersion',
+                ]);
+            });
+        } catch (Throwable $exception) {
+            Log::error('procurement.supplier_proposals.create_from_request.error', [
+                'stage' => $stage,
+                'supplier_request_id' => $supplierRequest->id,
+                'organization_id' => $supplierRequest->organization_id,
+                'supplier_party_id' => $supplierRequest->supplier_party_id,
+                'has_registered_supplier' => $supplierRequest->supplier_id !== null,
+                'has_external_supplier' => $supplierRequest->external_supplier_contact_id !== null,
+                'items_count' => count($data['items'] ?? []),
+                'exception_class' => $exception::class,
+                'exception_file' => $exception->getFile(),
+                'exception_line' => $exception->getLine(),
             ]);
-        });
+
+            throw $exception;
+        }
     }
 
     public function accept(SupplierProposal $proposal, ?int $actorId = null): SupplierProposal
@@ -159,7 +188,7 @@ class SupplierProposalService
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            if (!$lockedProposal->canBeAccepted()) {
+            if (! $lockedProposal->canBeAccepted()) {
                 throw new \DomainException(trans_message('procurement.proposals.accept_invalid_status'));
             }
 
@@ -195,7 +224,7 @@ class SupplierProposalService
                 throw new \DomainException(trans_message('procurement.proposal_decisions.rejected_decision_cannot_be_accepted'));
             }
 
-            if (!in_array($decision->status, [
+            if (! in_array($decision->status, [
                 SupplierProposalDecisionEnum::SELECTED,
                 SupplierProposalDecisionEnum::APPROVED,
             ], true)) {
@@ -341,7 +370,7 @@ class SupplierProposalService
 
         $proposal->update([
             'status' => SupplierProposalStatusEnum::REJECTED,
-            'notes' => ($proposal->notes ? $proposal->notes . "\n\n" : '') . "Отклонено: {$reason}",
+            'notes' => ($proposal->notes ? $proposal->notes."\n\n" : '')."Отклонено: {$reason}",
         ]);
 
         return $proposal->fresh(['supplier', 'externalSupplierContact', 'supplierParty', 'supplierRequest', 'supplierRequestVersion', 'lines']);
@@ -360,10 +389,10 @@ class SupplierProposalService
 
     private function generateProposalNumber(int $organizationId): string
     {
-        $prefix = 'КП-' . now()->format('Ym');
+        $prefix = 'КП-'.now()->format('Ym');
         $lastNumber = SupplierProposal::query()
             ->where('organization_id', $organizationId)
-            ->where('proposal_number', 'like', $prefix . '-%')
+            ->where('proposal_number', 'like', $prefix.'-%')
             ->count() + 1;
 
         return sprintf('%s-%04d', $prefix, $lastNumber);
@@ -371,10 +400,10 @@ class SupplierProposalService
 
     private function generateOrderNumber(int $organizationId): string
     {
-        $prefix = 'ЗП-' . now()->format('Ym');
+        $prefix = 'ЗП-'.now()->format('Ym');
         $lastNumber = PurchaseOrder::query()
             ->where('organization_id', $organizationId)
-            ->where('order_number', 'like', $prefix . '-%')
+            ->where('order_number', 'like', $prefix.'-%')
             ->count() + 1;
 
         return sprintf('%s-%04d', $prefix, $lastNumber);
@@ -433,7 +462,7 @@ class SupplierProposalService
 
     private function snapshotFloat(array $snapshot, string $key, float $fallback): float
     {
-        if (!array_key_exists($key, $snapshot)) {
+        if (! array_key_exists($key, $snapshot)) {
             return $fallback;
         }
 
