@@ -24,10 +24,12 @@ return [
     'allowed_origins' => [
         'http://localhost:5173',
         'http://localhost:3000',
+        'http://localhost:3001',
         'http://localhost:8081',
         'http://127.0.0.1:8000',
         'http://127.0.0.1:8081',
         'http://127.0.0.1:3000',
+        'http://127.0.0.1:3001',
         'http://89.111.152.112',
         'https://89.111.152.112',
         'http://89.104.68.13',
@@ -84,4 +86,4 @@ return [
     // Разрешить любой origin в режиме разработки (env=local)
     // ВРЕМЕННО ОТКЛЮЧЕНО для продакшена
     'allow_any_origin_in_dev' => false,
-]; 
+];
