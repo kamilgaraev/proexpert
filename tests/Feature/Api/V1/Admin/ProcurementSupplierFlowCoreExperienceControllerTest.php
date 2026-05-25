@@ -60,8 +60,15 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         $bulkResponse->assertJsonPath('success', true);
         $bulkResponse->assertJsonPath('data.0.status', SupplierRequestStatusEnum::SENT->value);
         $bulkResponse->assertJsonPath('data.1.status', SupplierRequestStatusEnum::SENT->value);
+        $bulkResponse->assertJsonPath('data.0.lines_count', 1);
         $this->assertNotNull($bulkResponse->json('data.0.public_url'));
         $this->assertSame(2, SupplierRequest::query()->where('purchase_request_id', $purchaseRequest->id)->count());
+
+        $supplierRequestIndexResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/procurement/supplier-requests?purchase_request_id={$purchaseRequest->id}");
+
+        $supplierRequestIndexResponse->assertOk();
+        $supplierRequestIndexResponse->assertJsonPath('data.0.lines_count', 1);
 
         $firstSupplierRequest = SupplierRequest::query()
             ->where('supplier_id', $firstSupplier->id)

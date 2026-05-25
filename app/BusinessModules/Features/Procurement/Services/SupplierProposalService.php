@@ -26,7 +26,8 @@ class SupplierProposalService
         private readonly SupplierProposalIntakeService $intakeService,
         private readonly SupplierProposalVersionService $versionService,
         private readonly SupplierRequestVersionService $requestVersionService,
-        private readonly ProcurementLifecycleService $lifecycleService
+        private readonly ProcurementLifecycleService $lifecycleService,
+        private readonly SupplierPartyService $supplierPartyService
     ) {}
 
     public function createFromSupplierRequest(
@@ -103,6 +104,14 @@ class SupplierProposalService
                 'status' => SupplierRequestStatusEnum::RESPONDED,
                 'responded_at' => now(),
             ]);
+
+            $respondedParty = $this->supplierPartyService->markResponded($supplierRequest->supplier_party_id);
+
+            if ($respondedParty !== null) {
+                $respondedSnapshot = $this->supplierPartyService->snapshotForDocument($respondedParty);
+                $supplierRequest->update(['supplier_snapshot' => $respondedSnapshot]);
+                $proposal->update(['supplier_snapshot' => $respondedSnapshot]);
+            }
 
             event(new \App\BusinessModules\Features\Procurement\Events\SupplierProposalReceived($proposal));
 
@@ -276,6 +285,14 @@ class SupplierProposalService
             $lockedProposal->update([
                 'purchase_order_id' => $order->id,
             ]);
+
+            $selectedParty = $this->supplierPartyService->markSelected($lockedProposal->supplier_party_id);
+
+            if ($selectedParty !== null) {
+                $selectedSnapshot = $this->supplierPartyService->snapshotForDocument($selectedParty);
+                $lockedProposal->update(['supplier_snapshot' => $selectedSnapshot]);
+                $order->update(['supplier_snapshot' => $selectedSnapshot]);
+            }
 
             $snapshot = is_array($lockedProposal->supplier_snapshot) ? $lockedProposal->supplier_snapshot : [];
 

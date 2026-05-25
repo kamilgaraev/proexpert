@@ -38,6 +38,7 @@ class SupplierRequestResource extends JsonResource
             'comment' => $this->comment,
             'metadata' => $this->metadata,
             'current_version_id' => $this->whenLoaded('currentVersion', fn () => $this->currentVersion?->id),
+            'lines_count' => (int) ($this->lines_count ?? ($this->relationLoaded('lines') ? $this->lines->count() : 0)),
             'can_be_sent' => $this->canBeSent(),
             'can_be_cancelled' => $this->canBeCancelled(),
             'can_receive_public_proposal' => $this->canReceivePublicProposal(),

@@ -8,6 +8,7 @@ use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum
 use App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\ExternalSupplierContact;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
+use App\BusinessModules\Features\Procurement\Models\SupplierParty;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
@@ -157,6 +158,14 @@ class SupplierRequestService
                 'public_opened_at' => null,
             ]);
 
+            $requestedParty = $this->supplierPartyService->markRequested($supplierRequest->supplier_party_id);
+
+            if ($requestedParty instanceof SupplierParty) {
+                $supplierRequest->update([
+                    'supplier_snapshot' => $this->supplierPartyService->snapshotForDocument($requestedParty),
+                ]);
+            }
+
             $supplierRequest->loadMissing('purchaseRequest');
             $version = $this->versionService->createSentVersion($supplierRequest->refresh(), $actorId);
             $snapshot = is_array($supplierRequest->supplier_snapshot) ? $supplierRequest->supplier_snapshot : [];
@@ -230,7 +239,8 @@ class SupplierRequestService
     {
         return SupplierRequest::query()
             ->forOrganization($organizationId)
-            ->with(['supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest', 'currentVersion'])
+            ->with(['supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest', 'lines', 'currentVersion'])
+            ->withCount('lines')
             ->latest('id');
     }
 

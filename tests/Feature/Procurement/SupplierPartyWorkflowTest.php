@@ -49,6 +49,10 @@ class SupplierPartyWorkflowTest extends TestCase
             ],
         ]);
         $supplierRequest = app(SupplierRequestService::class)->send($supplierRequest);
+        $supplierPartyId = $supplierRequest->supplier_party_id;
+
+        $this->assertSame(SupplierPartyStatusEnum::REQUESTED, SupplierParty::query()->findOrFail($supplierPartyId)->status);
+        $this->assertSame('requested', $supplierRequest->supplier_snapshot['status'] ?? null);
 
         $proposal = app(SupplierProposalService::class)->createFromSupplierRequest($supplierRequest, [
             'proposal_date' => now()->toDateString(),
@@ -72,10 +76,14 @@ class SupplierPartyWorkflowTest extends TestCase
             ],
         ]);
 
+        $this->assertSame(SupplierPartyStatusEnum::RESPONDED, SupplierParty::query()->findOrFail($supplierPartyId)->status);
+
         app(SupplierProposalComparisonService::class)->selectWinner($supplierRequest, $proposal->id, null, null);
 
         $acceptedProposal = app(SupplierProposalService::class)->accept($proposal);
         $purchaseOrder = $acceptedProposal->purchaseOrder;
+
+        $this->assertSame(SupplierPartyStatusEnum::SELECTED, SupplierParty::query()->findOrFail($supplierPartyId)->status);
 
         $supplierRequest->refresh();
         $proposal->refresh();
@@ -92,6 +100,10 @@ class SupplierPartyWorkflowTest extends TestCase
             $this->assertSame('7711223344', $document->supplier_snapshot['tax_id'] ?? null);
             $this->assertSame('external', $document->supplier_snapshot['type'] ?? null);
         }
+
+        $this->assertSame('responded', $supplierRequest->supplier_snapshot['status'] ?? null);
+        $this->assertSame('selected', $proposal->supplier_snapshot['status'] ?? null);
+        $this->assertSame('selected', $purchaseOrder->supplier_snapshot['status'] ?? null);
     }
 
     public function test_external_supplier_contact_creates_party_with_document_snapshot(): void

@@ -138,12 +138,76 @@ class SupplierPartyService
         ]);
     }
 
+    public function markRequested(?int $supplierPartyId): ?SupplierParty
+    {
+        return $this->advanceExternalStatus(
+            $supplierPartyId,
+            SupplierPartyStatusEnum::REQUESTED,
+            [SupplierPartyStatusEnum::DRAFT]
+        );
+    }
+
+    public function markResponded(?int $supplierPartyId): ?SupplierParty
+    {
+        return $this->advanceExternalStatus(
+            $supplierPartyId,
+            SupplierPartyStatusEnum::RESPONDED,
+            [SupplierPartyStatusEnum::DRAFT, SupplierPartyStatusEnum::REQUESTED]
+        );
+    }
+
+    public function markSelected(?int $supplierPartyId): ?SupplierParty
+    {
+        return $this->advanceExternalStatus(
+            $supplierPartyId,
+            SupplierPartyStatusEnum::SELECTED,
+            [
+                SupplierPartyStatusEnum::DRAFT,
+                SupplierPartyStatusEnum::REQUESTED,
+                SupplierPartyStatusEnum::RESPONDED,
+            ]
+        );
+    }
+
     private function findActiveSupplier(int $organizationId, int $supplierId): Supplier
     {
         return Supplier::query()
             ->where('organization_id', $organizationId)
             ->where('is_active', true)
             ->findOrFail($supplierId);
+    }
+
+    /**
+     * @param array<int, SupplierPartyStatusEnum> $allowedCurrentStatuses
+     */
+    private function advanceExternalStatus(
+        ?int $supplierPartyId,
+        SupplierPartyStatusEnum $targetStatus,
+        array $allowedCurrentStatuses
+    ): ?SupplierParty {
+        if ($supplierPartyId === null) {
+            return null;
+        }
+
+        return DB::transaction(function () use ($supplierPartyId, $targetStatus, $allowedCurrentStatuses): ?SupplierParty {
+            $party = SupplierParty::query()
+                ->lockForUpdate()
+                ->find($supplierPartyId);
+
+            if (!$party instanceof SupplierParty || $party->type !== SupplierPartyTypeEnum::EXTERNAL) {
+                return $party;
+            }
+
+            if (!in_array($party->status, $allowedCurrentStatuses, true)) {
+                return $party;
+            }
+
+            $party->status = $targetStatus;
+            $party->snapshot = $this->snapshotForDocument($party);
+            $party->save();
+
+            return $party->refresh();
+        });
     }
 
     private function attributesFromSupplier(
