@@ -99,7 +99,7 @@ Route::prefix('landing')->name('landing.')->group(function () {
 
     // Подключение маршрутов биллинга для лендинга/ЛК
     // Эти маршруты должны быть доступны аутентифицированному владельцу организации
-    Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context', 'authorize:billing.manage'])
+    Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context'])
         ->prefix('billing')
         ->name('billing.')
         ->group(function () {
