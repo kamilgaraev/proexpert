@@ -2,9 +2,11 @@
 
 namespace App\BusinessModules\Features\SiteRequests\Http\Controllers;
 
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\SiteRequests\Services\SiteRequestService;
 use App\BusinessModules\Features\SiteRequests\Services\SiteRequestWorkflowService;
+use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\BusinessModules\Features\SiteRequests\Http\Requests\StoreSiteRequestRequest;
 use App\BusinessModules\Features\SiteRequests\Http\Requests\UpdateSiteRequestRequest;
 use App\BusinessModules\Features\SiteRequests\Http\Requests\UpdateSiteRequestGroupRequest;
@@ -12,6 +14,7 @@ use App\BusinessModules\Features\SiteRequests\Http\Requests\ChangeStatusRequest;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestResource;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestCollection;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestGroupResource;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Http\Responses\AdminResponse;
 use App\Models\File;
 use App\Services\Storage\FileService;
@@ -29,7 +32,8 @@ class SiteRequestController extends Controller
     public function __construct(
         private readonly SiteRequestService $service,
         private readonly SiteRequestWorkflowService $workflowService,
-        private readonly FileService $fileService
+        private readonly FileService $fileService,
+        private readonly AuthorizationService $authorizationService
     ) {}
 
     /**
@@ -413,6 +417,10 @@ class SiteRequestController extends Controller
                 return AdminResponse::error(trans('site_requests.not_found'), 404);
             }
 
+            if (!$this->canChangeStatus($request, $siteRequest, (string) $request->input('status'))) {
+                return AdminResponse::error(trans_message('errors.unauthorized'), 403);
+            }
+
             $updated = $this->service->changeStatus(
                 $siteRequest,
                 $userId,
@@ -535,5 +543,38 @@ class SiteRequestController extends Controller
 
             return AdminResponse::error(trans('site_requests.group_submit_error'), 500);
         }
+    }
+
+    private function canChangeStatus(Request $request, SiteRequest $siteRequest, string $toStatus): bool
+    {
+        $requiredPermission = $this->workflowService->getRequiredPermission(
+            (int) $siteRequest->organization_id,
+            $this->resolveStatusValue($siteRequest->status),
+            $toStatus
+        );
+
+        if (!$requiredPermission) {
+            return true;
+        }
+
+        $user = $request->user();
+        if ($user === null) {
+            return false;
+        }
+
+        return $this->authorizationService->can(
+            $user,
+            $requiredPermission,
+            ['organization_id' => (int) $siteRequest->organization_id]
+        );
+    }
+
+    private function resolveStatusValue(SiteRequestStatusEnum|string $status): string
+    {
+        if ($status instanceof SiteRequestStatusEnum) {
+            return $status->value;
+        }
+
+        return $status;
     }
 }

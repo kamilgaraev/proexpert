@@ -113,7 +113,11 @@ class SiteRequestWorkflowService
     ): ?string {
         $transition = $this->getCustomTransition($organizationId, $fromStatus, $toStatus);
 
-        return $transition?->required_permission;
+        if ($transition !== null) {
+            return $transition->required_permission;
+        }
+
+        return $this->getDefaultPermissionForTransition($fromStatus, $toStatus);
     }
 
     /**
@@ -240,5 +244,28 @@ class SiteRequestWorkflowService
             ->with('toStatus')
             ->get();
     }
-}
 
+    private function getDefaultPermissionForTransition(string $fromStatus, string $toStatus): string
+    {
+        if ($toStatus === SiteRequestStatusEnum::APPROVED->value) {
+            return 'site_requests.approve';
+        }
+
+        if ($toStatus === SiteRequestStatusEnum::REJECTED->value) {
+            return 'site_requests.reject';
+        }
+
+        if (
+            $fromStatus === SiteRequestStatusEnum::DRAFT->value
+            && $toStatus === SiteRequestStatusEnum::PENDING->value
+        ) {
+            return 'site_requests.edit';
+        }
+
+        if ($toStatus === SiteRequestStatusEnum::CANCELLED->value) {
+            return 'site_requests.change_status';
+        }
+
+        return 'site_requests.change_status';
+    }
+}
