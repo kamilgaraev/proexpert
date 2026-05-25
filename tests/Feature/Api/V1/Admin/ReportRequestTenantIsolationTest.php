@@ -88,6 +88,23 @@ class ReportRequestTenantIsolationTest extends TestCase
         $response->assertJsonValidationErrors('user_id');
     }
 
+    public function test_material_movements_report_validation_message_uses_first_business_error(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->activateReportsModule($context->organization->id);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/reports/material-movements?' . http_build_query([
+                'warehouse_id' => '',
+                'material_id' => '',
+                'format' => 'json',
+            ]));
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('message', 'Необходимо указать дату начала периода');
+        $response->assertJsonValidationErrors(['date_from', 'date_to']);
+    }
+
     public function test_warehouse_stock_report_rejects_foreign_filter_entities(): void
     {
         $context = AdminApiTestContext::create();

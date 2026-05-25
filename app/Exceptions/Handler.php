@@ -125,11 +125,9 @@ class Handler extends ExceptionHandler
             
             // ValidationException - ошибки валидации
             if ($e instanceof ValidationException) {
-                $data = [
-                    'errors' => $e->errors(),
-                ];
-                $message = $e->getMessage() ?: trans_message('errors.validation_failed');
-                return $respond($responseClass::error($message, $e->status, $data));
+                $errors = $e->errors();
+                $message = $this->getFirstValidationMessage($errors) ?? trans_message('errors.validation_failed');
+                return $respond($responseClass::error($message, $e->status, $errors));
             }
 
             // BusinessLogicException - ошибки бизнес-логики
@@ -596,6 +594,27 @@ class Handler extends ExceptionHandler
         }
 
         return $response;
+    }
+
+    protected function getFirstValidationMessage(array $errors): ?string
+    {
+        foreach ($errors as $messages) {
+            if (is_string($messages) && $messages !== '') {
+                return $messages;
+            }
+
+            if (!is_array($messages)) {
+                continue;
+            }
+
+            foreach ($messages as $message) {
+                if (is_string($message) && $message !== '') {
+                    return $message;
+                }
+            }
+        }
+
+        return null;
     }
 
     /**

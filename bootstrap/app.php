@@ -7,6 +7,7 @@ use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 use App\Http\Middleware\JwtMiddleware;
 use App\Http\Middleware\SetOrganizationContext;
 use App\Services\Logging\SafeLogWriter;
@@ -118,6 +119,52 @@ $app = Application::configure(basePath: dirname(__DIR__))
             app(SafeLogWriter::class)->write('auth', 'info', 'Authentication failed', [
                 'message' => $e->getMessage(),
             ]);
+        });
+
+        $firstValidationMessage = static function (array $errors): ?string {
+            foreach ($errors as $messages) {
+                if (is_string($messages) && $messages !== '') {
+                    return $messages;
+                }
+
+                if (!is_array($messages)) {
+                    continue;
+                }
+
+                foreach ($messages as $message) {
+                    if (is_string($message) && $message !== '') {
+                        return $message;
+                    }
+                }
+            }
+
+            return null;
+        };
+
+        $responseClassForRequest = static function (Request $request): string {
+            $path = $request->path();
+
+            if (str_starts_with($path, 'api/v1/mobile/') || str_starts_with($path, 'api/mobile/')) {
+                return \App\Http\Responses\MobileResponse::class;
+            }
+
+            if (str_starts_with($path, 'api/v1/lk/') || str_starts_with($path, 'api/landing/')) {
+                return \App\Http\Responses\LandingResponse::class;
+            }
+
+            return \App\Http\Responses\AdminResponse::class;
+        };
+
+        $exceptions->render(function (ValidationException $exception, Request $request) use ($firstValidationMessage, $responseClassForRequest) {
+            if (!$request->expectsJson() && !$request->is('api/*')) {
+                return null;
+            }
+
+            $errors = $exception->errors();
+            $message = $firstValidationMessage($errors) ?? trans_message('errors.validation_failed');
+            $responseClass = $responseClassForRequest($request);
+
+            return $responseClass::error($message, $exception->status, $errors);
         });
 
         // Ошибки авторизации -> logs/auth/auth.log
