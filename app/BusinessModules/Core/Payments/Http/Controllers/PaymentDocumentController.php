@@ -76,7 +76,7 @@ class PaymentDocumentController extends Controller
                                 break;
                             case 'pay':
                                 // Для оплаты берем полную сумму остатка
-                                $this->service->registerPayment($document, $document->remaining_amount, [
+                                $this->service->registerPayment($document, (float) $document->remaining_amount, [
                                     'notes' => 'Mass payment action',
                                     'created_by_user_id' => $request->user()->id
                                 ]);
