@@ -6,17 +6,24 @@ namespace App\BusinessModules\Features\Procurement\Listeners;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
 use App\BusinessModules\Features\BasicWarehouse\Services\AssetService;
-use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Events\MaterialReceivedFromSupplier;
+use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
+use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
+use App\BusinessModules\Features\SiteRequests\Services\SiteRequestService;
 use App\Models\MeasurementUnit;
 use App\Modules\Core\AccessController;
+use DomainException;
+use Illuminate\Support\Facades\Log;
+
 use function trans_message;
 
 class UpdateWarehouseOnMaterialReceipt
 {
     public function __construct(
         private readonly AccessController $accessController,
-        private readonly AssetService $assetService
+        private readonly AssetService $assetService,
+        private readonly SiteRequestService $siteRequestService
     ) {
     }
 
@@ -31,6 +38,7 @@ class UpdateWarehouseOnMaterialReceipt
         }
 
         $warehouseService = app(\App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService::class);
+        $receivedMaterialIds = [];
 
         foreach ($items as $itemData) {
             $orderItem = $order->items()->find($itemData['item_id']);
@@ -44,6 +52,7 @@ class UpdateWarehouseOnMaterialReceipt
                 (int) $order->organization_id,
                 (float) $itemData['price']
             );
+            $receivedMaterialIds[] = $materialId;
 
             $warehouseService->receiveAsset(
                 $order->organization_id,
@@ -65,14 +74,23 @@ class UpdateWarehouseOnMaterialReceipt
 
         $siteRequest = $order->purchaseRequest?->siteRequest;
         if ($siteRequest) {
-            $siteRequest->update([
+            $metadata = [
                 'metadata' => array_merge($siteRequest->metadata ?? [], [
                     'materials_received' => true,
                     'received_at' => now()->toDateTimeString(),
                     'warehouse_id' => $warehouseId,
                     'purchase_order_id' => $order->id,
                 ]),
-            ]);
+            ];
+
+            $uniqueMaterialIds = array_values(array_unique($receivedMaterialIds));
+
+            if ($siteRequest->material_id === null && count($uniqueMaterialIds) === 1) {
+                $metadata['material_id'] = $uniqueMaterialIds[0];
+            }
+
+            $siteRequest->update($metadata);
+            $this->completeSiteRequestIfReady($siteRequest->fresh() ?? $siteRequest, $event->userId);
         }
     }
 
@@ -152,5 +170,34 @@ class UpdateWarehouseOnMaterialReceipt
             'is_default' => true,
             'is_system' => false,
         ])->id;
+    }
+
+    private function completeSiteRequestIfReady(SiteRequest $siteRequest, int $userId): void
+    {
+        if ($siteRequest->status === SiteRequestStatusEnum::COMPLETED) {
+            return;
+        }
+
+        if (! in_array($siteRequest->status, [
+            SiteRequestStatusEnum::APPROVED,
+            SiteRequestStatusEnum::FULFILLED,
+        ], true)) {
+            return;
+        }
+
+        try {
+            $this->siteRequestService->changeStatus(
+                $siteRequest,
+                $userId,
+                SiteRequestStatusEnum::COMPLETED->value
+            );
+        } catch (DomainException $exception) {
+            Log::warning('site_request.complete_on_material_receipt.workflow_blocked', [
+                'site_request_id' => $siteRequest->id,
+                'purchase_order_id' => $siteRequest->purchaseOrders()->latest('purchase_orders.id')->value('purchase_orders.id'),
+                'status' => $siteRequest->status->value,
+                'error' => $exception->getMessage(),
+            ]);
+        }
     }
 }

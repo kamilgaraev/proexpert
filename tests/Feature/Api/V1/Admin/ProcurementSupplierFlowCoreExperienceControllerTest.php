@@ -15,10 +15,13 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequestLine;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
+use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Material;
 use App\Models\MeasurementUnit;
+use App\Models\Project;
 use App\Models\Supplier;
 use App\Models\User;
 use App\Modules\Core\AccessController;
@@ -289,7 +292,20 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         $context = AdminApiTestContext::create();
         $supplier = $this->createSupplier($context->organization->id, 'Free Text Supplier', 'free-text@example.test');
         $warehouse = $this->createWarehouse($context->organization->id);
-        $purchaseRequest = $this->createFreeTextPurchaseRequest($context->organization->id);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $siteRequest = SiteRequest::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'user_id' => $context->user->id,
+            'title' => 'Free text material request',
+            'status' => SiteRequestStatusEnum::APPROVED,
+            'request_type' => 'material_request',
+            'priority' => 'medium',
+            'material_name' => 'Custom free-text material',
+            'material_quantity' => 5,
+            'material_unit' => 'pcs',
+        ]);
+        $purchaseRequest = $this->createFreeTextPurchaseRequest($context->organization->id, $siteRequest->id);
         $this->createUnit($context->organization->id);
         $this->allowAdminAccess();
         $this->allowModuleAccess();
@@ -345,7 +361,11 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         $receiveResponse->assertJsonPath('data.status', PurchaseOrderStatusEnum::DELIVERED->value);
 
         $item->refresh();
+        $siteRequest->refresh();
+
         $this->assertNotNull($item->material_id);
+        $this->assertSame($item->material_id, $siteRequest->material_id);
+        $this->assertSame(SiteRequestStatusEnum::COMPLETED, $siteRequest->status);
         $this->assertDatabaseHas('materials', [
             'id' => $item->material_id,
             'organization_id' => $context->organization->id,
@@ -423,10 +443,11 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         return $purchaseRequest;
     }
 
-    private function createFreeTextPurchaseRequest(int $organizationId): PurchaseRequest
+    private function createFreeTextPurchaseRequest(int $organizationId, ?int $siteRequestId = null): PurchaseRequest
     {
         $purchaseRequest = PurchaseRequest::query()->create([
             'organization_id' => $organizationId,
+            'site_request_id' => $siteRequestId,
             'request_number' => 'PR-FREE-' . $organizationId . '-' . uniqid(),
             'status' => PurchaseRequestStatusEnum::APPROVED,
             'budget_currency' => 'RUB',

@@ -241,16 +241,16 @@ class PurchaseOrderService
                 ]);
             }
 
+            $order->update([
+                'status' => $this->lifecycleService->resolveOrderReceiptStatus($order),
+            ]);
+
             event(new \App\BusinessModules\Features\Procurement\Events\MaterialReceivedFromSupplier(
                 $order,
                 $warehouse->id,
                 $items,
                 $userId
             ));
-
-            $order->update([
-                'status' => $this->lifecycleService->resolveOrderReceiptStatus($order),
-            ]);
 
             $receipt->loadMissing('lines');
             $order->loadMissing('items');
