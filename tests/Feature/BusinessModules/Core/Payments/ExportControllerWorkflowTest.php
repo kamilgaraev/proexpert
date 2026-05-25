@@ -60,6 +60,22 @@ class ExportControllerWorkflowTest extends TestCase
         $response->assertJsonValidationErrors(['document_ids.0']);
     }
 
+    public function test_print_order_rejects_foreign_document_without_server_error(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $foreignContext = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $this->activatePaymentsModule($foreignContext->organization->id);
+        $foreignDocument = $this->createDocument($foreignContext);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/payments/documents/{$foreignDocument->id}/print-order");
+
+        $response->assertNotFound();
+        $response->assertJsonPath('success', false);
+        $response->assertJsonPath('message', trans_message('payments.not_found'));
+    }
+
     private function createDocument(AdminApiTestContext $context, array $overrides = []): PaymentDocument
     {
         return PaymentDocument::query()->create(array_merge([

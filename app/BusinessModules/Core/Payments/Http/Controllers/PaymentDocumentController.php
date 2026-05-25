@@ -482,7 +482,7 @@ class PaymentDocumentController extends Controller
     /**
      * Сгенерировать печатную форму платежного поручения
      */
-    public function printOrder(Request $request, int|string $id): \Illuminate\Http\Response
+    public function printOrder(Request $request, int|string $id): \Symfony\Component\HttpFoundation\Response
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
@@ -496,14 +496,16 @@ class PaymentDocumentController extends Controller
                 'Content-Type' => 'application/pdf',
                 'Content-Disposition' => 'inline; filename="payment_order_' . $document->document_number . '.pdf"',
             ]);
+        } catch (ModelNotFoundException $e) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
         } catch (\Exception $e) {
             Log::error('payment_document.print_order.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
-            
-            return response()->view('errors.500', [], 500);
+
+            return AdminResponse::error(trans_message('payments.export.pdf_error'), 500);
         }
     }
 
