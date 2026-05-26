@@ -22,6 +22,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use App\Http\Responses\AdminResponse;
+use App\Models\Contract;
 
 use function trans_message;
 
@@ -261,15 +262,23 @@ class PaymentDocumentController extends Controller
             $isContractRelated = ($validated['invoiceable_type'] ?? null) === 'App\\Models\\Contract'
                 || ($validated['source_type'] ?? null) === 'App\\Models\\Contract'
                 || isset($validated['contract_id']);
+
+            $contract = null;
+            if ($isContractRelated && $contractId) {
+                $contract = Contract::query()
+                    ->whereKey($contractId)
+                    ->where('organization_id', $organizationId)
+                    ->first();
+
+                if ($contract instanceof Contract) {
+                    $validated = $this->applyContractPaymentParties($validated, $contract);
+                }
+            }
             
             if (($validated['invoice_type'] ?? null) === 'advance' 
                 && $isContractRelated
                 && $contractId
                 && (empty($validated['amount']) || $validated['amount'] == 0)) {
-                
-                $contract = \App\Models\Contract::where('id', $contractId)
-                    ->where('organization_id', $organizationId)
-                    ->first();
                 
                 if (!$contract) {
                     Log::warning('payment_document.store.contract_not_found', [
@@ -392,6 +401,35 @@ class PaymentDocumentController extends Controller
 
             return AdminResponse::error(trans_message('payments.documents.create_error'), 500);
         }
+    }
+
+    private function applyContractPaymentParties(array $data, Contract $contract): array
+    {
+        $direction = (string) ($data['direction'] ?? 'outgoing');
+        $hasPayer = isset($data['payer_organization_id']) || isset($data['payer_contractor_id']);
+        $hasPayee = isset($data['payee_organization_id']) || isset($data['payee_contractor_id']);
+
+        if ($direction === 'incoming') {
+            if (!$hasPayer && $contract->contractor_id) {
+                $data['payer_contractor_id'] = $contract->contractor_id;
+            }
+
+            if (!$hasPayee) {
+                $data['payee_organization_id'] = $contract->organization_id;
+            }
+
+            return $data;
+        }
+
+        if (!$hasPayer) {
+            $data['payer_organization_id'] = $contract->organization_id;
+        }
+
+        if (!$hasPayee && $contract->contractor_id) {
+            $data['payee_contractor_id'] = $contract->contractor_id;
+        }
+
+        return $data;
     }
 
     /**

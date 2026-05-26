@@ -518,8 +518,6 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
                 'amount' => 900,
                 'currency' => 'RUB',
                 'contract_id' => $contractId,
-                'payer_organization_id' => $context->organization->id,
-                'payee_contractor_id' => $contractorId,
                 'payment_purpose' => 'Payment for delivered materials',
             ]);
 
@@ -531,6 +529,8 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
             'source_type' => \App\Models\Contract::class,
             'source_id' => $contractId,
             'invoice_type' => 'material_purchase',
+            'payer_organization_id' => $context->organization->id,
+            'payee_contractor_id' => $contractorId,
             'amount' => 900,
         ]);
         $this->assertSame($contractId, PaymentDocument::query()->findOrFail($paymentId)->source_id);
