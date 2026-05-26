@@ -24,6 +24,7 @@ use App\Models\MeasurementUnit;
 use App\Models\Project;
 use App\Models\Supplier;
 use App\Models\User;
+use App\Models\Contractor;
 use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery\MockInterface;
@@ -375,6 +376,114 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
             'organization_id' => $context->organization->id,
             'warehouse_id' => $warehouse->id,
             'material_id' => $item->material_id,
+        ]);
+    }
+
+    public function test_external_supplier_offer_can_create_procurement_contract(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id);
+        $purchaseRequest = $this->createPurchaseRequest($context->organization->id, $material->id);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $bulkResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/procurement/supplier-requests/bulk', [
+                'purchase_request_id' => $purchaseRequest->id,
+                'send_immediately' => true,
+                'suppliers' => [
+                    [
+                        'external_supplier' => [
+                            'name' => 'External Concrete Supplier',
+                            'contact_person' => 'External Contact',
+                            'phone' => '+7 999 000-00-01',
+                            'email' => 'external-concrete@example.test',
+                            'tax_number' => '7712345678',
+                            'address' => 'External supplier address',
+                        ],
+                    ],
+                ],
+            ]);
+
+        $bulkResponse->assertCreated();
+
+        $supplierRequest = SupplierRequest::query()
+            ->where('purchase_request_id', $purchaseRequest->id)
+            ->with(['lines'])
+            ->firstOrFail();
+        $line = $supplierRequest->lines()->firstOrFail();
+        $publicProposalResponse = $this->postJson(
+            "/api/v1/procurement/supplier-requests/{$supplierRequest->public_token}/proposals",
+            [
+                'subtotal_amount' => 900,
+                'delivery_amount' => 0,
+                'vat_amount' => 0,
+                'total_amount' => 900,
+                'currency' => 'RUB',
+                'vat_mode' => 'included',
+                'valid_until' => now()->addDays(10)->toDateString(),
+                'delivery_due_date' => now()->addDays(5)->toDateString(),
+                'payment_terms' => 'Payment after delivery',
+                'delivery_terms' => 'Delivery to warehouse',
+                'items' => [
+                    [
+                        'supplier_request_line_id' => $line->id,
+                        'name' => $line->name,
+                        'quantity' => 5,
+                        'unit' => $line->unit,
+                        'unit_price' => 180,
+                        'total_amount' => 900,
+                    ],
+                ],
+            ]
+        );
+
+        $publicProposalResponse->assertCreated();
+        $proposal = SupplierProposal::query()
+            ->where('supplier_request_id', $supplierRequest->id)
+            ->firstOrFail();
+
+        $decisionResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-requests/{$purchaseRequest->id}/proposal-decision", [
+                'supplier_proposal_id' => $proposal->id,
+            ]);
+
+        $decisionResponse->assertOk();
+
+        $acceptResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/proposals/{$proposal->id}/accept");
+
+        $acceptResponse->assertOk();
+
+        $purchaseOrder = PurchaseOrder::query()
+            ->where('accepted_supplier_proposal_id', $proposal->id)
+            ->firstOrFail();
+
+        $contractResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/create-contract");
+
+        $contractResponse->assertCreated();
+        $contractResponse->assertJsonPath('data.contract.supplier_id', null);
+        $contractResponse->assertJsonPath('data.contract.contractor.name', 'External Concrete Supplier');
+
+        $contractId = $contractResponse->json('data.contract.id');
+        $contractorId = $contractResponse->json('data.contract.contractor_id');
+
+        $this->assertNotNull($contractorId);
+        $this->assertDatabaseHas('contracts', [
+            'id' => $contractId,
+            'organization_id' => $context->organization->id,
+            'supplier_id' => null,
+            'contractor_id' => $contractorId,
+            'contract_category' => 'procurement',
+        ]);
+        $this->assertDatabaseHas('contractors', [
+            'id' => $contractorId,
+            'organization_id' => $context->organization->id,
+            'name' => 'External Concrete Supplier',
+            'inn' => '7712345678',
+            'contractor_type' => Contractor::TYPE_MANUAL,
         ]);
     }
 

@@ -18,6 +18,7 @@ class PurchaseContractResource extends JsonResource
             'id' => $contract->id,
             'organization_id' => $contract->organization_id,
             'project_id' => $contract->project_id,
+            'contractor_id' => $contract->contractor_id,
             'supplier_id' => $contract->supplier_id,
             'contract_category' => $contract->contract_category,
             'number' => $contract->number,
@@ -35,6 +36,11 @@ class PurchaseContractResource extends JsonResource
                 'name' => $contract->supplier->name,
                 'inn' => $contract->supplier->inn,
             ]),
+            'contractor' => $this->whenLoaded('contractor', fn() => $contract->contractor ? [
+                'id' => $contract->contractor->id,
+                'name' => $contract->contractor->name,
+                'inn' => $contract->contractor->inn,
+            ] : null),
             'project' => $this->whenLoaded('project', fn() => $contract->project ? [
                 'id' => $contract->project->id,
                 'name' => $contract->project->name,

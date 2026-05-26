@@ -6,6 +6,7 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Models\Contract;
+use App\Models\Contractor;
 use App\Modules\Core\AccessController;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -59,20 +60,26 @@ class PurchaseContractService
 
     public function createFromOrder(PurchaseOrder $order): Contract
     {
-        $validationData = [
-            'supplier_id' => $order->supplier_id,
-        ];
-
-        $this->validateProcurementContractCreation($validationData, $order->organization_id);
+        $order->loadMissing(['externalSupplierContact', 'supplierParty', 'purchaseRequest.siteRequest']);
 
         DB::beginTransaction();
 
         try {
+            $externalContractor = $this->resolveExternalSupplierContractor($order);
+
+            $validationData = [
+                'supplier_id' => $order->supplier_id,
+                'contractor_id' => $externalContractor?->id,
+            ];
+
+            $this->validateProcurementContractCreation($validationData, $order->organization_id);
+
             $contractNumber = $this->generateContractNumber($order->organization_id);
 
             $contract = Contract::create([
                 'organization_id' => $order->organization_id,
                 'project_id' => $order->purchaseRequest?->siteRequest?->project_id,
+                'contractor_id' => $externalContractor?->id,
                 'supplier_id' => $order->supplier_id,
                 'contract_category' => 'procurement',
                 'number' => $contractNumber,
@@ -102,7 +109,7 @@ class PurchaseContractService
 
             event(new \App\BusinessModules\Features\Procurement\Events\PurchaseContractCreated($contract, $order));
 
-            return $contract->fresh(['supplier', 'organization']);
+            return $contract->fresh(['supplier', 'contractor', 'organization']);
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;
@@ -138,6 +145,16 @@ class PurchaseContractService
                 ->find($data['supplier_id']);
 
             if (!$supplier) {
+                throw new \InvalidArgumentException(trans_message('procurement.contracts.supplier_not_found'));
+            }
+        }
+
+        if (!empty($data['contractor_id'])) {
+            $contractor = Contractor::query()
+                ->where('organization_id', $organizationId)
+                ->find($data['contractor_id']);
+
+            if (!$contractor) {
                 throw new \InvalidArgumentException(trans_message('procurement.contracts.supplier_not_found'));
             }
         }
@@ -192,5 +209,54 @@ class PurchaseContractService
         }
 
         return sprintf('ДП-%s%s-%04d', $year, $month, $nextNumber);
+    }
+
+    private function resolveExternalSupplierContractor(PurchaseOrder $order): ?Contractor
+    {
+        if ($order->supplier_id !== null) {
+            return null;
+        }
+
+        $contact = $order->externalSupplierContact;
+        $party = $order->supplierParty;
+        $snapshot = is_array($order->supplier_snapshot) ? $order->supplier_snapshot : [];
+        $name = trim((string) ($contact?->name ?? $party?->display_name ?? $snapshot['name'] ?? ''));
+
+        if ($name === '') {
+            return null;
+        }
+
+        $inn = $this->contractorInn($contact?->tax_number ?? $party?->tax_id ?? $snapshot['tax_id'] ?? null);
+        $email = trim((string) ($contact?->email ?? $party?->email ?? $snapshot['email'] ?? ''));
+        $lookup = ['organization_id' => $order->organization_id];
+
+        if ($inn !== null) {
+            $lookup['inn'] = $inn;
+        } elseif ($email !== '') {
+            $lookup['email'] = $email;
+        } else {
+            $lookup['name'] = $name;
+        }
+
+        return Contractor::query()->firstOrCreate($lookup, [
+            'name' => $name,
+            'contact_person' => $contact?->contact_person ?? $party?->contact_name ?? null,
+            'phone' => $contact?->phone ?? $party?->phone ?? null,
+            'email' => $email !== '' ? $email : null,
+            'legal_address' => $contact?->address,
+            'inn' => $inn,
+            'contractor_type' => Contractor::TYPE_MANUAL,
+        ]);
+    }
+
+    private function contractorInn(mixed $value): ?string
+    {
+        $inn = trim((string) $value);
+
+        if ($inn === '' || strlen($inn) > 12) {
+            return null;
+        }
+
+        return $inn;
     }
 }
