@@ -17,6 +17,7 @@ use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Material;
@@ -458,7 +459,28 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
 
         $purchaseOrder = PurchaseOrder::query()
             ->where('accepted_supplier_proposal_id', $proposal->id)
+            ->with('items')
             ->firstOrFail();
+        $warehouse = $this->createWarehouse($context->organization->id);
+        $item = $purchaseOrder->items()->firstOrFail();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/mark-in-delivery")
+            ->assertOk();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receive-materials", [
+                'warehouse_id' => $warehouse->id,
+                'receipt_date' => now()->toDateString(),
+                'items' => [
+                    [
+                        'item_id' => $item->id,
+                        'quantity_received' => 5,
+                        'price' => 180,
+                    ],
+                ],
+            ])
+            ->assertOk();
 
         $contractResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/create-contract");
@@ -485,6 +507,33 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
             'inn' => '7712345678',
             'contractor_type' => Contractor::TYPE_MANUAL,
         ]);
+
+        $paymentResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/payments/documents', [
+                'document_type' => 'payment_request',
+                'document_date' => now()->toDateString(),
+                'due_date' => now()->addDays(7)->toDateString(),
+                'invoice_type' => 'material_purchase',
+                'direction' => 'outgoing',
+                'amount' => 900,
+                'currency' => 'RUB',
+                'contract_id' => $contractId,
+                'payer_organization_id' => $context->organization->id,
+                'payee_contractor_id' => $contractorId,
+                'payment_purpose' => 'Payment for delivered materials',
+            ]);
+
+        $paymentResponse->assertCreated();
+        $paymentId = $paymentResponse->json('data.id');
+        $this->assertDatabaseHas('payment_documents', [
+            'id' => $paymentId,
+            'organization_id' => $context->organization->id,
+            'source_type' => \App\Models\Contract::class,
+            'source_id' => $contractId,
+            'invoice_type' => 'material_purchase',
+            'amount' => 900,
+        ]);
+        $this->assertSame($contractId, PaymentDocument::query()->findOrFail($paymentId)->source_id);
     }
 
     private function createProposalThroughApi(

@@ -367,7 +367,7 @@ class PaymentValidationService
                             ->sum('amount');
                     } else {
                         // Для обычного договора берем все акты
-                        $performedAmount = $source->total_performed_amount ?? 0;
+                        $performedAmount = $this->contractPerformedAmount($source, $projectId);
                     }
                     
                     // Получаем сумму неавансовых платежей (исключая финальные расчеты)
@@ -607,7 +607,7 @@ class PaymentValidationService
                     ->sum('amount');
             } else {
                 // Для обычного договора берем все акты
-                $performedAmount = $contract->total_performed_amount ?? 0;
+                $performedAmount = $this->contractPerformedAmount($contract, $projectId);
             }
             
             // Получаем сумму неавансовых платежей (исключая финальные расчеты)
@@ -682,6 +682,34 @@ class PaymentValidationService
                 $document->amount
             );
         }
+    }
+
+    private function contractPerformedAmount(Contract $contract, ?int $projectId = null): float
+    {
+        $procurementAmount = $this->procurementReceivedAmount($contract, $projectId);
+
+        if ($procurementAmount > 0.0) {
+            return $procurementAmount;
+        }
+
+        return (float) ($contract->total_performed_amount ?? 0);
+    }
+
+    private function procurementReceivedAmount(Contract $contract, ?int $projectId = null): float
+    {
+        if ($projectId !== null && $contract->project_id !== null && (int) $contract->project_id !== $projectId) {
+            return 0.0;
+        }
+
+        return (float) DB::table('purchase_receipt_lines')
+            ->join('purchase_receipts', 'purchase_receipts.id', '=', 'purchase_receipt_lines.purchase_receipt_id')
+            ->join('purchase_orders', 'purchase_orders.id', '=', 'purchase_receipts.purchase_order_id')
+            ->where('purchase_orders.contract_id', $contract->id)
+            ->where('purchase_orders.organization_id', $contract->organization_id)
+            ->where('purchase_receipts.status', 'posted')
+            ->whereNull('purchase_orders.deleted_at')
+            ->whereNull('purchase_receipts.deleted_at')
+            ->sum('purchase_receipt_lines.total_amount');
     }
 
     private function contractorExistsForOrganization(int $contractorId, int $organizationId): bool
