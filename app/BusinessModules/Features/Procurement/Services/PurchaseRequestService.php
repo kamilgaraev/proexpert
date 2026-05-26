@@ -172,7 +172,7 @@ class PurchaseRequestService
                 'site_request_id' => $siteRequestId,
                 'assigned_to' => $data['assigned_to'] ?? null,
                 'request_number' => $requestNumber,
-                'status' => PurchaseRequestStatusEnum::DRAFT,
+                'status' => PurchaseRequestStatusEnum::PENDING,
                 'needed_by' => $data['needed_by'] ?? null,
                 'budget_amount' => $data['budget_amount'] ?? null,
                 'budget_currency' => $data['budget_currency'] ?? 'RUB',

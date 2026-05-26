@@ -74,7 +74,8 @@ class PurchaseRequestCoreExperienceControllerTest extends TestCase
 
         $createResponse->assertCreated();
         $createResponse->assertJsonPath('success', true);
-        $createResponse->assertJsonPath('data.status', PurchaseRequestStatusEnum::DRAFT->value);
+        $createResponse->assertJsonPath('data.status', PurchaseRequestStatusEnum::PENDING->value);
+        $createResponse->assertJsonPath('data.can_be_approved', true);
         $createResponse->assertJsonPath('data.site_request_id', $siteRequest->id);
         $createResponse->assertJsonPath('data.assigned_user.id', $assignee->id);
         $createResponse->assertJsonPath('data.lines.0.material_id', $material->id);
@@ -88,7 +89,7 @@ class PurchaseRequestCoreExperienceControllerTest extends TestCase
         $this->assertSame(2, $purchaseRequest->lines()->count());
 
         $indexResponse = $this->withHeaders($context->authHeaders())
-            ->getJson('/api/v1/admin/procurement/purchase-requests?per_page=20&status=draft');
+            ->getJson('/api/v1/admin/procurement/purchase-requests?per_page=20&status=pending');
 
         $indexResponse->assertOk();
         $ids = collect($indexResponse->json('data'))->pluck('id')->all();
