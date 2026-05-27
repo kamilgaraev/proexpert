@@ -9,17 +9,22 @@ use Filament\Actions\Action;
 use Filament\Actions\CreateAction;
 use Filament\Resources\Pages\ListRecords;
 
-class ListBlogArticles extends ListRecords
+class BlogEditorialCalendar extends ListRecords
 {
     protected static string $resource = BlogArticleResource::class;
+
+    public function getTitle(): string
+    {
+        return trans_message('blog_cms.editorial_calendar_title');
+    }
 
     protected function getHeaderActions(): array
     {
         return [
-            Action::make('calendar')
-                ->label(trans_message('blog_cms.editorial_calendar_title'))
-                ->icon('heroicon-o-calendar-days')
-                ->url(BlogArticleResource::getUrl('calendar')),
+            Action::make('all_articles')
+                ->label(trans_message('blog_cms.article_list_action'))
+                ->icon('heroicon-o-queue-list')
+                ->url(BlogArticleResource::getUrl('index')),
             CreateAction::make(),
         ];
     }

@@ -17,6 +17,7 @@ use App\Services\Security\SystemAdminRoleService;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
@@ -64,6 +65,26 @@ class BlogCmsEditorWorkflowTest extends TestCase
         $this->get(BlogArticleResource::getUrl('create'))->assertSuccessful();
         $this->get(BlogArticleResource::getUrl('view', ['record' => $article]))->assertSuccessful();
         $this->get(BlogArticleResource::getUrl('edit', ['record' => $article]))->assertSuccessful();
+    }
+
+    public function test_content_manager_can_open_editorial_calendar_with_safe_bulk_operations(): void
+    {
+        $admin = SystemAdmin::factory()->role('content_manager')->create([
+            'is_active' => true,
+        ]);
+        $this->actingAs($admin, 'system_admin');
+
+        $this->assertTrue(Route::has('filament.admin.resources.blog-articles.calendar'));
+        $this->assertStringContainsString('/calendar', BlogArticleResource::getUrl('calendar'));
+
+        $tableSource = (string) file_get_contents(app_path('Filament/Resources/BlogArticleResource/Schemas/BlogArticleTable.php'));
+
+        $this->assertStringContainsString("BulkAction::make('assign_category')", $tableSource);
+        $this->assertStringContainsString("BulkAction::make('assign_author')", $tableSource);
+        $this->assertStringContainsString("BulkAction::make('move_scheduled_date')", $tableSource);
+        $this->assertStringContainsString("BulkAction::make('archive_drafts')", $tableSource);
+        $this->assertStringNotContainsString("BulkAction::make('publish", $tableSource);
+        $this->assertStringNotContainsString('DeleteBulkAction', $tableSource);
     }
 
     public function test_cms_service_generates_slug_and_keeps_manual_slug_explicit(): void
