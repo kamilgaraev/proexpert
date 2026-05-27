@@ -9,14 +9,21 @@ use App\Filament\Resources\NotificationTemplateResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Filament\Support\Concerns\HasDestructiveActionGuardrails;
 use App\Models\Organization;
+use App\Models\SystemAdmin;
 use App\Policies\SystemAdmin\NotificationTemplatePolicy;
+use App\Services\Filament\NotificationTemplateManagementService;
+use Filament\Actions\Action;
 use Filament\Actions\EditAction;
 use Filament\Forms;
+use Filament\Notifications\Notification as FilamentNotification;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Contracts\View\View;
+use Illuminate\Support\Facades\Auth;
+use RuntimeException;
 
 class NotificationTemplateResource extends Resource
 {
@@ -74,7 +81,10 @@ class NotificationTemplateResource extends Resource
                             ->required(),
                         Forms\Components\Select::make('organization_id')
                             ->label('Организация')
-                            ->options(fn (): array => Organization::query()->orderBy('name')->pluck('name', 'id')->all())
+                            ->options(fn (): array => Organization::query()
+                                ->orderBy('name')
+                                ->pluck('name', 'id')
+                                ->all())
                             ->searchable()
                             ->preload()
                             ->nullable(),
@@ -173,6 +183,37 @@ class NotificationTemplateResource extends Resource
                     ->label('По умолчанию'),
             ])
             ->actions([
+                Action::make('preview')
+                    ->label(trans_message('notifications.template_preview_action'))
+                    ->icon('heroicon-o-eye')
+                    ->modalHeading(trans_message('notifications.template_preview_heading'))
+                    ->modalSubmitAction(false)
+                    ->visible(fn (NotificationTemplate $record): bool => self::canPreviewTemplate($record))
+                    ->modalContent(fn (NotificationTemplate $record): View => view(
+                        'filament.notifications.template-preview',
+                        [
+                            'preview' => app(NotificationTemplateManagementService::class)
+                                ->preview($record, self::currentSystemAdmin()),
+                        ],
+                    )),
+                Action::make('send_test')
+                    ->label(trans_message('notifications.template_send_test_action'))
+                    ->icon('heroicon-o-paper-airplane')
+                    ->requiresConfirmation()
+                    ->modalHeading(trans_message('notifications.template_send_test_heading'))
+                    ->modalDescription(trans_message('notifications.template_send_test_description'))
+                    ->modalSubmitActionLabel(trans_message('notifications.template_send_test_confirm'))
+                    ->visible(fn (NotificationTemplate $record): bool => self::canSendTestTemplate($record))
+                    ->action(function (NotificationTemplate $record): void {
+                        app(NotificationTemplateManagementService::class)->sendTest(
+                            $record,
+                            self::currentSystemAdmin(),
+                        );
+                        FilamentNotification::make()
+                            ->success()
+                            ->title(trans_message('notifications.template_test_sent'))
+                            ->send();
+                    }),
                 EditAction::make(),
                 self::guardedDeleteAction('notification_template'),
             ])
@@ -186,5 +227,32 @@ class NotificationTemplateResource extends Resource
             'create' => Pages\CreateNotificationTemplate::route('/create'),
             'edit' => Pages\EditNotificationTemplate::route('/{record}/edit'),
         ];
+    }
+
+    private static function canPreviewTemplate(NotificationTemplate $template): bool
+    {
+        $systemAdmin = Auth::guard('system_admin')->user();
+
+        return $systemAdmin instanceof SystemAdmin
+            && app(NotificationTemplatePolicy::class)->preview($systemAdmin, $template);
+    }
+
+    private static function canSendTestTemplate(NotificationTemplate $template): bool
+    {
+        $systemAdmin = Auth::guard('system_admin')->user();
+
+        return $systemAdmin instanceof SystemAdmin
+            && app(NotificationTemplatePolicy::class)->sendTest($systemAdmin, $template);
+    }
+
+    private static function currentSystemAdmin(): SystemAdmin
+    {
+        $systemAdmin = Auth::guard('system_admin')->user();
+
+        if (! $systemAdmin instanceof SystemAdmin) {
+            throw new RuntimeException('System admin is required for notification template action.');
+        }
+
+        return $systemAdmin;
     }
 }

@@ -3,6 +3,17 @@
 declare(strict_types=1);
 
 return [
+    'template_preview_action' => 'Предпросмотр',
+    'template_preview_heading' => 'Предпросмотр шаблона',
+    'template_preview_channel' => 'Канал',
+    'template_preview_type' => 'Тип события',
+    'template_preview_subject' => 'Тема',
+    'template_preview_content' => 'Сообщение',
+    'template_send_test_action' => 'Отправить тест',
+    'template_send_test_heading' => 'Отправить тестовое уведомление',
+    'template_send_test_description' => 'Тест будет отправлен только текущему системному администратору.',
+    'template_send_test_confirm' => 'Отправить себе',
+    'template_test_sent' => 'Тестовое уведомление отправлено',
     'not_found' => 'Уведомление не найдено.',
     'load_error' => 'Не удалось загрузить уведомления.',
     'unread_count_error' => 'Не удалось загрузить счетчик непрочитанных уведомлений.',

@@ -29,7 +29,8 @@
     "system_admin.notifications.templates.view",
     "system_admin.notifications.templates.create",
     "system_admin.notifications.templates.update",
-    "system_admin.notifications.templates.delete"
+    "system_admin.notifications.templates.delete",
+    "system_admin.notifications.manage"
   ],
   "module_permissions": {
     "profile": [
@@ -58,7 +59,8 @@
       "system_admin.notifications.templates.view",
       "system_admin.notifications.templates.create",
       "system_admin.notifications.templates.update",
-      "system_admin.notifications.templates.delete"
+      "system_admin.notifications.templates.delete",
+      "system_admin.notifications.manage"
     ]
   },
   "interface_access": [
