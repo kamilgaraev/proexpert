@@ -157,6 +157,16 @@ class Organization extends Model
         return $this->hasOne(OrganizationBalance::class, 'organization_id');
     }
 
+    public function subscriptions(): HasMany
+    {
+        return $this->hasMany(OrganizationSubscription::class, 'organization_id');
+    }
+
+    public function currentSubscription(): HasOne
+    {
+        return $this->hasOne(OrganizationSubscription::class, 'organization_id')->latestOfMany();
+    }
+
     /**
      * Получить родительскую организацию.
      */
