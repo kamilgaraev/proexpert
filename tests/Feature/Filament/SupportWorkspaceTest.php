@@ -14,7 +14,9 @@ use App\Models\User;
 use App\Policies\SystemAdmin\SupportRequestPolicy;
 use App\Services\Filament\SupportWorkspaceService;
 use App\Services\Security\SystemAdminRoleService;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
 
@@ -219,6 +221,36 @@ class SupportWorkspaceTest extends TestCase
             'subject_type' => ContactForm::class,
             'subject_id' => $request->id,
         ]);
+    }
+
+    public function test_reply_email_is_not_sent_when_ticket_history_cannot_be_saved(): void
+    {
+        Mail::fake();
+
+        $actor = SystemAdmin::factory()->role('support_operator')->create([
+            'is_active' => true,
+            'name' => 'Support Operator',
+        ]);
+        $request = $this->supportRequest([
+            'email' => 'stale-ticket@example.test',
+            'subject' => 'РўРёРєРµС‚ СѓРґР°Р»РµРЅ РґРѕ РѕС‚РІРµС‚Р°',
+        ]);
+        DB::table($request->getTable())
+            ->where('id', $request->id)
+            ->delete();
+
+        try {
+            app(SupportWorkspaceService::class)->replyToCustomer(
+                supportRequest: $request,
+                subject: 'Re: РўРёРєРµС‚ СѓРґР°Р»РµРЅ РґРѕ РѕС‚РІРµС‚Р°',
+                body: 'РџРёСЃСЊРјРѕ РЅРµ РґРѕР»Р¶РЅРѕ СѓР№С‚Рё, РµСЃР»Рё РёСЃС‚РѕСЂРёСЏ РѕР±СЂР°С‰РµРЅРёСЏ РЅРµ СЃРѕС…СЂР°РЅРёР»Р°СЃСЊ.',
+                actor: $actor,
+            );
+
+            $this->fail('ModelNotFoundException was not thrown.');
+        } catch (ModelNotFoundException) {
+            Mail::assertNothingSent();
+        }
     }
 
     private function actingAsRole(string $role): SystemAdmin

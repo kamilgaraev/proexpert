@@ -217,20 +217,13 @@ final class SupportWorkspaceService
             throw new DomainException(trans_message('support_workspace.errors.empty_reply_body'));
         }
 
-        Mail::to($recipientEmail)->send(new SupportTicketReplyMail(
-            recipientName: (string) $supportRequest->name,
-            recipientEmail: $recipientEmail,
-            requestSubject: (string) $supportRequest->subject,
-            subjectText: $subject,
-            bodyText: $body,
-            operatorName: $actor->name,
-        ));
-
-        return DB::transaction(function () use ($supportRequest, $subject, $body, $actor, $recipientEmail): ?ActivityEvent {
+        $result = DB::transaction(function () use ($supportRequest, $subject, $body, $actor, $recipientEmail): array {
             $supportRequest->refresh();
             $before = $this->stateSnapshot($supportRequest);
             $notes = is_array($supportRequest->internal_notes) ? $supportRequest->internal_notes : [];
             $now = now();
+            $recipientName = (string) $supportRequest->name;
+            $requestSubject = (string) $supportRequest->subject;
             $notes[] = [
                 'type' => 'customer_reply',
                 'subject' => $subject,
@@ -249,7 +242,7 @@ final class SupportWorkspaceService
                 'last_activity_at' => $now,
             ])->save();
 
-            return $this->recordSupportAction(
+            $event = $this->recordSupportAction(
                 actor: $actor,
                 supportRequest: $supportRequest->refresh(),
                 eventType: 'system_admin.support.customer_replied',
@@ -265,7 +258,24 @@ final class SupportWorkspaceService
                     'reply_length' => mb_strlen($body),
                 ],
             );
+
+            return [
+                'event' => $event,
+                'recipient_name' => $recipientName,
+                'request_subject' => $requestSubject,
+            ];
         });
+
+        Mail::to($recipientEmail)->send(new SupportTicketReplyMail(
+            recipientName: (string) $result['recipient_name'],
+            recipientEmail: $recipientEmail,
+            requestSubject: (string) $result['request_subject'],
+            subjectText: $subject,
+            bodyText: $body,
+            operatorName: $actor->name,
+        ));
+
+        return $result['event'] instanceof ActivityEvent ? $result['event'] : null;
     }
 
     /**
