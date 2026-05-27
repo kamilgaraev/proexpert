@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Policies\SystemAdmin;
 
+use App\Enums\Blog\BlogArticleStatusEnum;
 use App\Models\Blog\BlogArticleRevision;
 use App\Models\SystemAdmin;
 
@@ -21,6 +22,7 @@ class BlogArticleRevisionPolicy extends BaseSystemAdminPolicy
 
     public function restore(SystemAdmin $systemAdmin, BlogArticleRevision $revision): bool
     {
-        return $this->allows($systemAdmin, 'system_admin.blog.revisions.restore');
+        return $this->allows($systemAdmin, 'system_admin.blog.revisions.restore')
+            && $revision->article?->status === BlogArticleStatusEnum::DRAFT;
     }
 }

@@ -49,6 +49,7 @@ class BlogCmsEditorWorkflowTest extends TestCase
         $this->assertFileExists(app_path('Filament/Resources/BlogArticleResource/Schemas/BlogArticleTable.php'));
         $this->assertFileExists(app_path('Filament/Resources/BlogArticleResource/Schemas/BlogArticleInfolist.php'));
         $this->assertFileExists(app_path('Filament/Resources/BlogArticleResource/Schemas/BlogEditorBlocks.php'));
+        $this->assertFileExists(app_path('Filament/Resources/BlogArticleResource/Pages/ViewBlogArticle.php'));
     }
 
     public function test_content_manager_can_open_create_and_edit_article_editor(): void
@@ -61,6 +62,7 @@ class BlogCmsEditorWorkflowTest extends TestCase
         $article = $this->articleFixture($admin);
 
         $this->get(BlogArticleResource::getUrl('create'))->assertSuccessful();
+        $this->get(BlogArticleResource::getUrl('view', ['record' => $article]))->assertSuccessful();
         $this->get(BlogArticleResource::getUrl('edit', ['record' => $article]))->assertSuccessful();
     }
 
@@ -152,6 +154,22 @@ class BlogCmsEditorWorkflowTest extends TestCase
 
         $this->assertSame(BlogArticleStatusEnum::ARCHIVED, $archived->status);
         $this->assertGreaterThanOrEqual(4, $archived->revisions()->count());
+        $this->assertDatabaseHas('blog_article_revisions', [
+            'article_id' => $archived->id,
+            'revision_type' => 'schedule',
+        ]);
+        $this->assertDatabaseHas('blog_article_revisions', [
+            'article_id' => $archived->id,
+            'revision_type' => 'unpublish',
+        ]);
+        $this->assertDatabaseHas('blog_article_revisions', [
+            'article_id' => $archived->id,
+            'revision_type' => 'publish',
+        ]);
+        $this->assertDatabaseHas('blog_article_revisions', [
+            'article_id' => $archived->id,
+            'revision_type' => 'archive',
+        ]);
     }
 
     public function test_cms_service_rejects_editorial_length_limits(): void

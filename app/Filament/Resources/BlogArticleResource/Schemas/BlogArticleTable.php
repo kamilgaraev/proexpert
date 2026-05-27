@@ -7,6 +7,7 @@ namespace App\Filament\Resources\BlogArticleResource\Schemas;
 use App\Filament\Resources\BlogArticleResource;
 use App\Models\Blog\BlogCategory;
 use Filament\Actions\EditAction;
+use Filament\Actions\ViewAction;
 use Filament\Tables;
 use Filament\Tables\Table;
 
@@ -53,7 +54,8 @@ final class BlogArticleTable
                     ->options(fn (): array => BlogCategory::query()->marketing()->pluck('name', 'id')->all()),
             ])
             ->actions([
-                EditAction::make()->label('Открыть редактор'),
+                ViewAction::make()->label(trans_message('blog_cms.article_view_action')),
+                EditAction::make()->label(trans_message('blog_cms.article_edit_action')),
                 BlogArticleResource::guardedArticleDeleteAction(),
             ]);
     }

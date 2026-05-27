@@ -6,6 +6,7 @@ namespace App\Models\Blog;
 
 use App\Enums\Blog\BlogContextEnum;
 use App\Enums\Blog\BlogRevisionTypeEnum;
+use App\Models\LandingAdmin;
 use App\Models\SystemAdmin;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -26,6 +27,7 @@ class BlogArticleRevision extends Model
         'canonical_url',
         'editor_notes',
         'content_html',
+        'body_hash',
         'editor_document',
         'featured_image',
         'gallery_images',
@@ -36,6 +38,9 @@ class BlogArticleRevision extends Model
         'og_description',
         'og_image',
         'structured_data',
+        'author_id',
+        'author_system_admin_id',
+        'author_snapshot',
         'category_id',
         'category_snapshot',
         'tag_ids',
@@ -58,6 +63,7 @@ class BlogArticleRevision extends Model
         'gallery_images' => 'array',
         'meta_keywords' => 'array',
         'structured_data' => 'array',
+        'author_snapshot' => 'array',
         'category_snapshot' => 'array',
         'tag_ids' => 'array',
         'tags_snapshot' => 'array',
@@ -77,5 +83,20 @@ class BlogArticleRevision extends Model
     public function createdBySystemAdmin(): BelongsTo
     {
         return $this->belongsTo(SystemAdmin::class, 'created_by_system_admin_id');
+    }
+
+    public function author(): BelongsTo
+    {
+        return $this->belongsTo(LandingAdmin::class, 'author_id');
+    }
+
+    public function authorSystemAdmin(): BelongsTo
+    {
+        return $this->belongsTo(SystemAdmin::class, 'author_system_admin_id');
+    }
+
+    public function changedBySystemAdmin(): BelongsTo
+    {
+        return $this->createdBySystemAdmin();
     }
 }

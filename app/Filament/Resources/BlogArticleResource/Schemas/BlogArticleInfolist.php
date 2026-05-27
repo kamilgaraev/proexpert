@@ -54,6 +54,12 @@ final class BlogArticleInfolist
                             ->view('filament.blog.article-editor.editorial-checklist')
                             ->hiddenLabel(),
                     ]),
+                Section::make(trans_message('blog_cms.revision_timeline_section'))
+                    ->schema([
+                        Infolists\Components\ViewEntry::make('revision_timeline')
+                            ->view('filament.blog.article-editor.revision-timeline')
+                            ->hiddenLabel(),
+                    ]),
             ]);
     }
 }

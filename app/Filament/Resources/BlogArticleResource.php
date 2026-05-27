@@ -80,6 +80,7 @@ class BlogArticleResource extends Resource
         return [
             'index' => Pages\ListBlogArticles::route('/'),
             'create' => Pages\CreateBlogArticle::route('/create'),
+            'view' => Pages\ViewBlogArticle::route('/{record}'),
             'edit' => Pages\EditBlogArticle::route('/{record}/edit'),
         ];
     }

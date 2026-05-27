@@ -26,6 +26,7 @@ class BlogCmsService
     public function __construct(
         private readonly BlogDocumentRenderer $documentRenderer,
         private readonly BlogEditorialChecklistService $editorialChecklist,
+        private readonly BlogRevisionService $revisionService,
     ) {
     }
 
@@ -35,7 +36,7 @@ class BlogCmsService
             $article = BlogArticle::query()->create($this->prepareArticlePayload($data, $systemAdmin));
             $this->syncTags($article, Arr::wrap($data['tag_ids'] ?? $data['tags'] ?? []));
             $article = $article->fresh(['category', 'tags', 'systemAuthor']);
-            $this->createRevision($article, BlogRevisionTypeEnum::MANUAL, $systemAdmin);
+            $this->revisionService->createSnapshot($article, BlogRevisionTypeEnum::MANUAL, $systemAdmin);
 
             return $article;
         });
@@ -52,7 +53,7 @@ class BlogCmsService
             }
 
             $article = $article->fresh(['category', 'tags', 'systemAuthor']);
-            $this->createRevision($article, $revisionType, $systemAdmin);
+            $this->revisionService->createSnapshot($article, $revisionType, $systemAdmin);
 
             return $article;
         });
@@ -83,7 +84,7 @@ class BlogCmsService
             'status' => BlogArticleStatusEnum::SCHEDULED->value,
             'scheduled_at' => CarbonImmutable::parse($scheduledAt),
             'published_at' => null,
-        ], $systemAdmin);
+        ], $systemAdmin, BlogRevisionTypeEnum::SCHEDULE);
     }
 
     public function draftArticle(BlogArticle $article, SystemAdmin $systemAdmin): BlogArticle
@@ -92,7 +93,7 @@ class BlogCmsService
             'status' => BlogArticleStatusEnum::DRAFT->value,
             'published_at' => null,
             'scheduled_at' => null,
-        ], $systemAdmin);
+        ], $systemAdmin, BlogRevisionTypeEnum::UNPUBLISH);
     }
 
     public function archiveArticle(BlogArticle $article, SystemAdmin $systemAdmin): BlogArticle
@@ -100,7 +101,7 @@ class BlogCmsService
         return $this->updateArticle($article, [
             'status' => BlogArticleStatusEnum::ARCHIVED->value,
             'scheduled_at' => null,
-        ], $systemAdmin);
+        ], $systemAdmin, BlogRevisionTypeEnum::ARCHIVE);
     }
 
     public function duplicateArticle(BlogArticle $article, SystemAdmin $systemAdmin): BlogArticle
@@ -135,33 +136,7 @@ class BlogCmsService
 
     public function restoreRevision(BlogArticleRevision $revision, SystemAdmin $systemAdmin): BlogArticle
     {
-        return $this->updateArticle($revision->article, [
-            'category_id' => $revision->category_id,
-            'title' => $revision->title,
-            'slug' => $revision->slug,
-            'excerpt' => $revision->excerpt,
-            'canonical_url' => $revision->canonical_url,
-            'editor_notes' => $revision->editor_notes,
-            'editor_document' => $revision->editor_document,
-            'featured_image' => $revision->featured_image,
-            'gallery_images' => $revision->gallery_images,
-            'meta_title' => $revision->meta_title,
-            'meta_description' => $revision->meta_description,
-            'meta_keywords' => $revision->meta_keywords,
-            'og_title' => $revision->og_title,
-            'og_description' => $revision->og_description,
-            'og_image' => $revision->og_image,
-            'structured_data' => $revision->structured_data,
-            'status' => $revision->status,
-            'published_at' => $revision->published_at,
-            'scheduled_at' => $revision->scheduled_at,
-            'is_featured' => $revision->is_featured,
-            'allow_comments' => $revision->allow_comments,
-            'is_published_in_rss' => $revision->is_published_in_rss,
-            'noindex' => $revision->noindex,
-            'sort_order' => $revision->sort_order,
-            'tag_ids' => $revision->tag_ids ?? [],
-        ], $systemAdmin, BlogRevisionTypeEnum::RESTORE);
+        return $this->revisionService->restoreRevision($revision, $systemAdmin);
     }
 
     public function makePreviewUrl(BlogArticle $article): string
@@ -311,54 +286,6 @@ class BlogCmsService
                     ?: rtrim((string) config('blog.marketing_frontend_url'), '/') . '/blog/' . $slug,
             ],
         ];
-    }
-
-    private function createRevision(BlogArticle $article, BlogRevisionTypeEnum $revisionType, SystemAdmin $systemAdmin): BlogArticleRevision
-    {
-        $article->loadMissing(['category', 'tags']);
-
-        return $article->revisions()->create([
-            'blog_context' => BlogContextEnum::MARKETING,
-            'revision_type' => $revisionType,
-            'editor_version' => $article->editor_version,
-            'title' => $article->title,
-            'slug' => $article->slug,
-            'excerpt' => $article->excerpt,
-            'canonical_url' => $article->canonical_url,
-            'editor_notes' => $article->editor_notes,
-            'content_html' => $article->content,
-            'editor_document' => $article->editor_document,
-            'featured_image' => $article->featured_image,
-            'gallery_images' => $article->gallery_images,
-            'meta_title' => $article->meta_title,
-            'meta_description' => $article->meta_description,
-            'meta_keywords' => $article->meta_keywords,
-            'og_title' => $article->og_title,
-            'og_description' => $article->og_description,
-            'og_image' => $article->og_image,
-            'structured_data' => $article->structured_data,
-            'category_id' => $article->category_id,
-            'category_snapshot' => $article->category ? [
-                'id' => $article->category->id,
-                'name' => $article->category->name,
-                'slug' => $article->category->slug,
-            ] : null,
-            'tag_ids' => $article->tags->pluck('id')->values()->all(),
-            'tags_snapshot' => $article->tags->map(fn (BlogTag $tag): array => [
-                'id' => $tag->id,
-                'name' => $tag->name,
-                'slug' => $tag->slug,
-            ])->values()->all(),
-            'status' => $article->status->value,
-            'published_at' => $article->published_at,
-            'scheduled_at' => $article->scheduled_at,
-            'is_featured' => $article->is_featured,
-            'allow_comments' => $article->allow_comments,
-            'is_published_in_rss' => $article->is_published_in_rss,
-            'noindex' => $article->noindex,
-            'sort_order' => $article->sort_order,
-            'created_by_system_admin_id' => $systemAdmin->id,
-        ]);
     }
 
     private function syncTags(BlogArticle $article, array $tags): void
