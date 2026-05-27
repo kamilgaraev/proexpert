@@ -33,15 +33,11 @@ class EditBlogMediaAsset extends EditRecord
         $file = $data['upload_file'] ?? null;
 
         if ($file instanceof TemporaryUploadedFile) {
-            $newAsset = app(BlogMediaService::class)->uploadMarketingAsset($file, $systemAdmin, [
+            return app(BlogMediaService::class)->replaceWithUploadedFile($record, $file, $systemAdmin, [
                 'alt_text' => $data['alt_text'] ?? null,
                 'caption' => $data['caption'] ?? null,
                 'focal_point' => $data['focal_point'] ?? null,
             ]);
-
-            app(BlogMediaService::class)->deleteAsset($record);
-
-            return $newAsset;
         }
 
         $record->update([
