@@ -9,6 +9,13 @@ use App\Filament\Pages\EditSystemAdminProfile;
 use App\Filament\Support\FilamentPermission;
 use App\Filament\Support\NavigationGroups;
 use App\Filament\Support\SystemAdminAccess;
+use App\Filament\Widgets\NotificationDeliveryStatsWidget;
+use App\Filament\Widgets\PlatformGrowthStatsWidget;
+use App\Filament\Widgets\PlatformHealthStatsWidget;
+use App\Filament\Widgets\PlatformRiskStatsWidget;
+use App\Filament\Widgets\SaaSIncomeStatsWidget;
+use App\Filament\Widgets\SubscriptionPlanStatsWidget;
+use App\Filament\Widgets\UsersStatsWidget;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
@@ -45,10 +52,15 @@ class AdminPanelProvider extends PanelProvider
             ->pages([
                 Dashboard::class,
             ])
-            ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\Filament\Widgets')
             ->widgets([
                 AccountWidget::class,
-                \App\Filament\Widgets\SaaSIncomeStatsWidget::class,
+                SaaSIncomeStatsWidget::class,
+                UsersStatsWidget::class,
+                SubscriptionPlanStatsWidget::class,
+                PlatformHealthStatsWidget::class,
+                PlatformGrowthStatsWidget::class,
+                PlatformRiskStatsWidget::class,
+                NotificationDeliveryStatsWidget::class,
             ])
             ->navigationGroups(NavigationGroups::panelGroups())
             ->navigationItems([

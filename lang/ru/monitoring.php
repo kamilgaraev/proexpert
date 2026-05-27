@@ -22,7 +22,6 @@ return [
             'occurrences' => 'Повторов',
             'first_seen_at' => 'Впервые замечена',
             'last_seen_at' => 'Последний раз',
-            'exception_class' => 'Класс ошибки',
             'module' => 'Модуль',
             'message' => 'Сообщение',
             'url' => 'Адрес',

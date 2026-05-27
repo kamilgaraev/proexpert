@@ -8,7 +8,7 @@
 @endphp
 
 <div class="rounded-2xl border p-4 shadow-sm {{ $style }}">
-    <div class="text-[11px] font-semibold uppercase tracking-[0.18em]">Callout</div>
+    <div class="text-[11px] font-semibold uppercase tracking-[0.18em]">{{ trans_message('blog_cms.editor_block_callout') }}</div>
     @if (filled($title ?? null))
         <div class="mt-3 text-base font-semibold">{{ $title }}</div>
     @endif

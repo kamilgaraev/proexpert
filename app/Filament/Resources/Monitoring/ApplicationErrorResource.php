@@ -87,8 +87,6 @@ class ApplicationErrorResource extends Resource
                 ->columns(2),
             Section::make(trans_message('monitoring.application_errors.sections.context'))
                 ->schema([
-                    Infolists\Components\TextEntry::make('exception_class')
-                        ->label(trans_message('monitoring.application_errors.fields.exception_class')),
                     Infolists\Components\TextEntry::make('module')
                         ->label(trans_message('monitoring.application_errors.fields.module'))
                         ->placeholder(trans_message('monitoring.common.empty_value')),

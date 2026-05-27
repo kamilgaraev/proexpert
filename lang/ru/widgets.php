@@ -27,6 +27,13 @@ return [
         'new_users' => 'Новые пользователи',
         'total_description' => 'Зарегистрированных пользователей',
         'new_description' => 'Присоединились за этот месяц',
+        'organizations' => 'Организации',
+        'organizations_description' => 'Всего организаций в системе',
+    ],
+    'subscription_plan_stats' => [
+        'active_plans' => 'Активные тарифы',
+        'active_plans_value' => ':active из :total',
+        'active_plans_description' => 'Доступные клиентам тарифные планы',
     ],
     'subscription_plans' => [
         'navigation_label' => 'Тарифы',

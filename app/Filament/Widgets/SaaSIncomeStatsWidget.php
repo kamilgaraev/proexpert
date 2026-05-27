@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Filament\Widgets;
 
 use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
@@ -9,6 +11,8 @@ use App\Filament\Support\SystemAdminAccess;
 use Filament\Widgets\StatsOverviewWidget as BaseWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
 use Illuminate\Support\Number;
+
+use function trans_message;
 
 class SaaSIncomeStatsWidget extends BaseWidget
 {
@@ -35,13 +39,13 @@ class SaaSIncomeStatsWidget extends BaseWidget
             ->sum('amount') ?? 0;
 
         return [
-            Stat::make(__('widgets.saas_income_stats.total_income'), Number::currency($totalIncome, 'RUB', 'ru'))
-                ->description(__('widgets.saas_income_stats.all_time_description'))
+            Stat::make(trans_message('widgets.saas_income_stats.total_income'), Number::currency($totalIncome, 'RUB', 'ru'))
+                ->description(trans_message('widgets.saas_income_stats.all_time_description'))
                 ->descriptionIcon('heroicon-m-arrow-trending-up')
                 ->color('success'),
-                
-            Stat::make(__('widgets.saas_income_stats.monthly_income'), Number::currency($monthIncome, 'RUB', 'ru'))
-                ->description(__('widgets.saas_income_stats.monthly_description', ['date' => now()->translatedFormat('F Y')]))
+
+            Stat::make(trans_message('widgets.saas_income_stats.monthly_income'), Number::currency($monthIncome, 'RUB', 'ru'))
+                ->description(trans_message('widgets.saas_income_stats.monthly_description', ['date' => now()->translatedFormat('F Y')]))
                 ->descriptionIcon('heroicon-m-calendar')
                 ->color('info'),
         ];
