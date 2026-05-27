@@ -33,4 +33,14 @@ final class DockerComposeSecurityTest extends TestCase
         self::assertContains('!/public/build/assets/', $dockerignore);
         self::assertContains('!/public/build/assets/*', $dockerignore);
     }
+
+    public function test_backend_deploy_runs_when_docker_context_rules_change(): void
+    {
+        $workflow = file_get_contents(dirname(__DIR__, 3).'/.github/workflows/deploy-backend.yml');
+
+        self::assertIsString($workflow);
+        self::assertStringContainsString("      - 'Dockerfile.prod'", $workflow);
+        self::assertStringContainsString("      - '.dockerignore'", $workflow);
+        self::assertStringContainsString("      - 'public/**'", $workflow);
+    }
 }

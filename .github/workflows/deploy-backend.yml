@@ -17,6 +17,7 @@ on:
       - 'config/**'
       - 'database/**'
       - 'Dockerfile.prod'
+      - '.dockerignore'
       - 'docker-compose.yml'
       - 'lang/**'
       - 'monitoring/**'
