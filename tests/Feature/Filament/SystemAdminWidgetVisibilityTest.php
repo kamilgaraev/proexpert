@@ -217,7 +217,7 @@ class SystemAdminWidgetVisibilityTest extends TestCase
         $this->assertSame($baseline['blog']['draft'] + 1, $metrics['blog']['draft']);
         $this->assertSame($baseline['blog']['published'] + 1, $metrics['blog']['published']);
         $this->assertSame($baseline['blog']['scheduled'] + 1, $metrics['blog']['scheduled']);
-        $this->assertSame($baseline['support']['pending'] + 2, $metrics['support']['pending']);
+        $this->assertSame($baseline['support']['pending'] + 1, $metrics['support']['pending']);
         $this->assertSame($baseline['support']['urgent'] + 1, $metrics['support']['urgent']);
         $this->assertSame($baseline['audit']['high_risk_24_hours'] + 1, $metrics['audit']['high_risk_24_hours']);
     }

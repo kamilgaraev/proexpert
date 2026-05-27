@@ -166,6 +166,7 @@ class SupportRequestResource extends Resource
     {
         return TableEmptyState::for($table, 'support_requests', 'heroicon-o-lifebuoy')
             ->modifyQueryUsing(fn (Builder $query): Builder => $query
+                ->customerPortalTickets()
                 ->with(['organization', 'assignedSystemAdmin'])
                 ->latest('last_activity_at')
                 ->latest('created_at'))
@@ -201,11 +202,6 @@ class SupportRequestResource extends Resource
                     ->badge()
                     ->color(fn (?string $state): string => self::statusColor($state))
                     ->sortable(),
-                Tables\Columns\TextColumn::make('channel')
-                    ->label(trans_message('support_workspace.fields.channel'))
-                    ->formatStateUsing(fn (?string $state): string => self::channelLabel($state))
-                    ->badge()
-                    ->toggleable(),
                 Tables\Columns\TextColumn::make('assignedSystemAdmin.name')
                     ->label(trans_message('support_workspace.fields.assignee'))
                     ->placeholder(trans_message('support_workspace.not_assigned'))
@@ -228,9 +224,6 @@ class SupportRequestResource extends Resource
                 Tables\Filters\SelectFilter::make('priority')
                     ->label(trans_message('support_workspace.fields.priority'))
                     ->options(self::priorityOptions()),
-                Tables\Filters\SelectFilter::make('channel')
-                    ->label(trans_message('support_workspace.fields.channel'))
-                    ->options(self::channelOptions()),
                 Tables\Filters\SelectFilter::make('assigned_system_admin_id')
                     ->label(trans_message('support_workspace.fields.assignee'))
                     ->options(fn (): array => self::systemAdminOptions())

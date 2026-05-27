@@ -5,14 +5,19 @@ declare(strict_types=1);
 namespace App\Services\Filament;
 
 use App\BusinessModules\Features\Notifications\Models\NotificationTemplate;
+use App\BusinessModules\Features\Notifications\Services\NotificationService;
 use App\BusinessModules\Features\Notifications\Services\TemplateRenderer;
 use App\Models\SystemAdmin;
+use App\Models\User;
 use App\Notifications\SystemAdminTemplatePreviewNotification;
+use DomainException;
+use Illuminate\Support\Collection;
 
 class NotificationTemplateManagementService
 {
     public function __construct(
         private readonly TemplateRenderer $templateRenderer,
+        private readonly NotificationService $notificationService,
     ) {
     }
 
@@ -44,8 +49,107 @@ class NotificationTemplateManagementService
         ));
     }
 
-    private function sampleData(SystemAdmin $systemAdmin): array
+    public function sendToUsers(NotificationTemplate $template, SystemAdmin $systemAdmin, array $userIds): array
     {
+        $normalizedUserIds = $this->normalizeUserIds($userIds);
+
+        if ($normalizedUserIds === []) {
+            throw new DomainException(trans_message('notifications.broadcast_recipients_required'));
+        }
+
+        $users = User::query()
+            ->with('currentOrganization')
+            ->where('is_active', true)
+            ->whereIn('id', $normalizedUserIds)
+            ->orderBy('id')
+            ->get();
+
+        return $this->sendToUserCollection($template, $systemAdmin, $users);
+    }
+
+    public function sendToAllUsers(NotificationTemplate $template, SystemAdmin $systemAdmin): array
+    {
+        $recipientIds = [];
+
+        User::query()
+            ->with('currentOrganization')
+            ->where('is_active', true)
+            ->orderBy('id')
+            ->chunkById(500, function (Collection $users) use ($template, $systemAdmin, &$recipientIds): void {
+                $result = $this->sendToUserCollection($template, $systemAdmin, $users);
+                $recipientIds = array_merge($recipientIds, $result['recipient_ids']);
+            });
+
+        return [
+            'sent_count' => count($recipientIds),
+            'recipient_ids' => $recipientIds,
+        ];
+    }
+
+    private function sendToUserCollection(NotificationTemplate $template, SystemAdmin $systemAdmin, Collection $users): array
+    {
+        $recipientIds = [];
+
+        $template->loadMissing('organization');
+
+        foreach ($users as $user) {
+            if (! $user instanceof User) {
+                continue;
+            }
+
+            $data = $this->notificationData($template, $systemAdmin, $user);
+            $organizationId = is_numeric($template->organization_id)
+                ? (int) $template->organization_id
+                : (is_numeric($user->current_organization_id) ? (int) $user->current_organization_id : null);
+
+            $this->notificationService->send(
+                user: $user,
+                type: (string) $template->type,
+                data: $data,
+                notificationType: 'system_admin_broadcast',
+                priority: 'normal',
+                channels: [(string) $template->channel],
+                organizationId: $organizationId,
+            );
+
+            $recipientIds[] = (int) $user->id;
+        }
+
+        return [
+            'sent_count' => count($recipientIds),
+            'recipient_ids' => $recipientIds,
+        ];
+    }
+
+    private function notificationData(NotificationTemplate $template, SystemAdmin $systemAdmin, User $user): array
+    {
+        $data = $this->sampleData($systemAdmin, $user, $template);
+        $subject = $template->subject
+            ? $this->templateRenderer->renderString((string) $template->subject, $data)
+            : $template->name;
+
+        return [
+            ...$data,
+            'title' => (string) $subject,
+            'message' => $this->templateRenderer->render($template, $data),
+            'template_id' => $template->id,
+            'template_name' => $template->name,
+            'interface' => 'customer',
+        ];
+    }
+
+    private function normalizeUserIds(array $userIds): array
+    {
+        return array_values(array_unique(array_filter(array_map(
+            static fn (mixed $userId): int => is_numeric($userId) ? (int) $userId : 0,
+            $userIds,
+        ), static fn (int $userId): bool => $userId > 0)));
+    }
+
+    private function sampleData(SystemAdmin $systemAdmin, ?User $user = null, ?NotificationTemplate $template = null): array
+    {
+        $organization = $template?->organization ?? $user?->currentOrganization;
+
         return [
             'system_admin' => [
                 'id' => $systemAdmin->id,
@@ -54,13 +158,13 @@ class NotificationTemplateManagementService
                 'role' => $systemAdmin->getRoleName(),
             ],
             'user' => [
-                'id' => 1,
-                'name' => $systemAdmin->name,
-                'email' => $systemAdmin->email,
+                'id' => $user?->id ?? 1,
+                'name' => $user?->name ?? $systemAdmin->name,
+                'email' => $user?->email ?? $systemAdmin->email,
             ],
             'organization' => [
-                'id' => 1,
-                'name' => 'ProHelper Demo',
+                'id' => $organization?->id ?? 1,
+                'name' => $organization?->name ?? 'ProHelper Demo',
             ],
             'project' => [
                 'id' => 1,

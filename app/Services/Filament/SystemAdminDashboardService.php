@@ -17,6 +17,7 @@ use App\Models\OrganizationSubscription;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
+use Illuminate\Database\Eloquent\Builder;
 
 final class SystemAdminDashboardService
 {
@@ -141,17 +142,22 @@ final class SystemAdminDashboardService
 
     private function pendingSupportRequests(): int
     {
-        return ContactForm::query()
+        return $this->supportTicketQuery()
             ->whereIn('status', [ContactForm::STATUS_NEW, ContactForm::STATUS_PROCESSING])
             ->count();
     }
 
     private function urgentSupportRequests(): int
     {
-        return ContactForm::query()
+        return $this->supportTicketQuery()
             ->whereIn('status', [ContactForm::STATUS_NEW, ContactForm::STATUS_PROCESSING])
             ->where('priority', ContactForm::PRIORITY_URGENT)
             ->count();
+    }
+
+    private function supportTicketQuery(): Builder
+    {
+        return ContactForm::query()->customerPortalTickets();
     }
 
     private function highRiskAuditEvents(CarbonImmutable $now): int

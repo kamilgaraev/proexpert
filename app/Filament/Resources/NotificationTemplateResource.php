@@ -4,22 +4,25 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
-use App\Filament\Support\TableEmptyState;
 use App\BusinessModules\Features\Notifications\Models\NotificationTemplate;
 use App\Filament\Resources\NotificationTemplateResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Filament\Support\Concerns\HasDestructiveActionGuardrails;
 use App\Filament\Support\NavigationGroups;
+use App\Filament\Support\TableEmptyState;
 use App\Models\Organization;
 use App\Models\SystemAdmin;
+use App\Models\User;
 use App\Policies\SystemAdmin\NotificationTemplatePolicy;
 use App\Services\Filament\NotificationTemplateManagementService;
+use DomainException;
 use Filament\Actions\Action;
 use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Notifications\Notification as FilamentNotification;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
+use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
@@ -219,6 +222,40 @@ class NotificationTemplateResource extends Resource
                             ->title(trans_message('notifications.template_test_sent'))
                             ->send();
                     }),
+                Action::make('send_to_audience')
+                    ->label(trans_message('notifications.template_send_to_audience_action'))
+                    ->icon('heroicon-o-megaphone')
+                    ->color('warning')
+                    ->requiresConfirmation()
+                    ->modalHeading(trans_message('notifications.template_send_to_audience_heading'))
+                    ->modalDescription(trans_message('notifications.template_send_to_audience_description'))
+                    ->modalSubmitActionLabel(trans_message('notifications.template_send_to_audience_confirm'))
+                    ->schema([
+                        Forms\Components\Select::make('audience')
+                            ->label(trans_message('notifications.template_send_audience_field'))
+                            ->options([
+                                'selected_users' => trans_message('notifications.template_send_audience_selected_users'),
+                                'all_users' => trans_message('notifications.template_send_audience_all_users'),
+                            ])
+                            ->default('selected_users')
+                            ->live()
+                            ->required(),
+                        Forms\Components\Select::make('recipient_user_ids')
+                            ->label(trans_message('notifications.template_send_recipients_field'))
+                            ->options(fn (): array => self::userOptions())
+                            ->multiple()
+                            ->searchable()
+                            ->preload()
+                            ->getSearchResultsUsing(fn (string $search): array => self::userOptions($search))
+                            ->getOptionLabelsUsing(fn (array $values): array => self::userLabels($values))
+                            ->required(fn (Get $get): bool => $get('audience') === 'selected_users')
+                            ->visible(fn (Get $get): bool => $get('audience') === 'selected_users')
+                            ->helperText(trans_message('notifications.template_send_recipients_help')),
+                    ])
+                    ->visible(fn (NotificationTemplate $record): bool => self::canSendAudienceTemplate($record))
+                    ->action(function (array $data, NotificationTemplate $record): void {
+                        self::sendToAudience($record, $data);
+                    }),
                 EditAction::make(),
                 self::guardedDeleteAction('notification_template'),
             ])
@@ -248,6 +285,93 @@ class NotificationTemplateResource extends Resource
 
         return $systemAdmin instanceof SystemAdmin
             && app(NotificationTemplatePolicy::class)->sendTest($systemAdmin, $template);
+    }
+
+    private static function canSendAudienceTemplate(NotificationTemplate $template): bool
+    {
+        $systemAdmin = Auth::guard('system_admin')->user();
+
+        return $systemAdmin instanceof SystemAdmin
+            && app(NotificationTemplatePolicy::class)->sendToAudience($systemAdmin, $template);
+    }
+
+    private static function sendToAudience(NotificationTemplate $template, array $data): void
+    {
+        $service = app(NotificationTemplateManagementService::class);
+        $systemAdmin = self::currentSystemAdmin();
+        $audience = (string) ($data['audience'] ?? 'selected_users');
+
+        try {
+            $result = $audience === 'all_users'
+                ? $service->sendToAllUsers($template, $systemAdmin)
+                : $service->sendToUsers($template, $systemAdmin, (array) ($data['recipient_user_ids'] ?? []));
+        } catch (DomainException $exception) {
+            FilamentNotification::make()
+                ->danger()
+                ->title($exception->getMessage())
+                ->send();
+
+            return;
+        }
+
+        if ((int) $result['sent_count'] === 0) {
+            FilamentNotification::make()
+                ->warning()
+                ->title(trans_message('notifications.template_broadcast_no_recipients'))
+                ->send();
+
+            return;
+        }
+
+        FilamentNotification::make()
+            ->success()
+            ->title(trans_message('notifications.template_broadcast_sent', [
+                'count' => (int) $result['sent_count'],
+            ]))
+            ->send();
+    }
+
+    private static function userOptions(?string $search = null): array
+    {
+        $query = User::query()
+            ->where('is_active', true)
+            ->orderBy('name');
+
+        if (is_string($search) && trim($search) !== '') {
+            $search = trim($search);
+
+            $query->where(function ($query) use ($search): void {
+                $query
+                    ->where('name', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%");
+            });
+        }
+
+        return $query
+            ->limit(50)
+            ->get(['id', 'name', 'email'])
+            ->mapWithKeys(fn (User $user): array => [
+                (int) $user->id => trim(sprintf('%s <%s>', $user->name, $user->email)),
+            ])
+            ->all();
+    }
+
+    private static function userLabels(array $values): array
+    {
+        $userIds = array_values(array_filter(array_map(
+            static fn (mixed $userId): int => is_numeric($userId) ? (int) $userId : 0,
+            $values,
+        ), static fn (int $userId): bool => $userId > 0));
+
+        return User::query()
+            ->where('is_active', true)
+            ->whereIn('id', $userIds)
+            ->orderBy('name')
+            ->get(['id', 'name', 'email'])
+            ->mapWithKeys(fn (User $user): array => [
+                (int) $user->id => trim(sprintf('%s <%s>', $user->name, $user->email)),
+            ])
+            ->all();
     }
 
     private static function currentSystemAdmin(): SystemAdmin

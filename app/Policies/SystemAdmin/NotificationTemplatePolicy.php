@@ -29,6 +29,11 @@ class NotificationTemplatePolicy extends BaseSystemAdminPolicy
         return $this->allows($systemAdmin, 'system_admin.notifications.manage');
     }
 
+    public function sendToAudience(SystemAdmin $systemAdmin, NotificationTemplate $notificationTemplate): bool
+    {
+        return $this->allows($systemAdmin, 'system_admin.notifications.manage');
+    }
+
     public function create(SystemAdmin $systemAdmin): bool
     {
         return $this->allows($systemAdmin, 'system_admin.notifications.templates.create');

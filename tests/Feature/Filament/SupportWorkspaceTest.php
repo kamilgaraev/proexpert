@@ -134,6 +134,39 @@ class SupportWorkspaceTest extends TestCase
         $this->assertStringContainsString('utm_source', $source);
     }
 
+    public function test_support_workspace_lists_only_customer_portal_tickets(): void
+    {
+        $source = (string) file_get_contents(app_path('Filament/Resources/SupportRequestResource.php'));
+
+        $this->assertStringContainsString('customerPortalTickets()', $source);
+        $this->assertStringNotContainsString("Tables\\Filters\\SelectFilter::make('channel')", $source);
+
+        $portalTicket = $this->supportRequest([
+            'subject' => 'Нужна помощь в кабинете',
+            'channel' => ContactForm::CHANNEL_CUSTOMER_PORTAL,
+            'page_source' => 'customer-portal',
+        ]);
+        $siteLead = $this->supportRequest([
+            'subject' => 'Запрос демонстрации',
+            'channel' => ContactForm::CHANNEL_PUBLIC_FORM,
+            'page_source' => 'landing-demo',
+        ]);
+        $manualRequest = $this->supportRequest([
+            'subject' => 'Внутренняя ручная запись',
+            'channel' => ContactForm::CHANNEL_MANUAL,
+            'page_source' => 'manual',
+        ]);
+
+        $visibleIds = ContactForm::query()
+            ->customerPortalTickets()
+            ->pluck('id')
+            ->all();
+
+        $this->assertContains($portalTicket->id, $visibleIds);
+        $this->assertNotContains($siteLead->id, $visibleIds);
+        $this->assertNotContains($manualRequest->id, $visibleIds);
+    }
+
     private function actingAsRole(string $role): SystemAdmin
     {
         $admin = SystemAdmin::factory()->role($role)->create([
@@ -145,9 +178,9 @@ class SupportWorkspaceTest extends TestCase
         return $admin;
     }
 
-    private function supportRequest(): ContactForm
+    private function supportRequest(array $overrides = []): ContactForm
     {
-        return ContactForm::query()->create([
+        return ContactForm::query()->create(array_merge([
             'name' => 'Ирина Клиентова',
             'email' => 'client@example.test',
             'phone' => '+79990000000',
@@ -166,6 +199,6 @@ class SupportWorkspaceTest extends TestCase
                 'user_id' => 200,
             ],
             'is_processed' => false,
-        ]);
+        ], $overrides));
     }
 }
