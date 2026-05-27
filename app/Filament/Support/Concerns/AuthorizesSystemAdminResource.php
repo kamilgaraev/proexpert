@@ -15,6 +15,11 @@ trait AuthorizesSystemAdminResource
         return static::allowsSystemAdminPolicy('viewAny');
     }
 
+    public static function shouldRegisterNavigation(): bool
+    {
+        return static::canViewAny();
+    }
+
     public static function canCreate(): bool
     {
         return static::allowsSystemAdminPolicy('create');

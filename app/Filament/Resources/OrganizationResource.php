@@ -6,6 +6,7 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\OrganizationResource\Pages;
 use App\Filament\Support\FilamentPermission;
+use App\Filament\Support\NavigationGroups;
 use App\Filament\Support\SystemAdminAccess;
 use App\Models\Organization;
 use App\Models\OrganizationSubscription;
@@ -35,7 +36,12 @@ class OrganizationResource extends Resource
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-building-office-2';
 
-    protected static string | \UnitEnum | null $navigationGroup = 'System';
+    protected static ?int $navigationSort = 10;
+
+    public static function getNavigationGroup(): string | \UnitEnum | null
+    {
+        return NavigationGroups::organizations();
+    }
 
     public static function getNavigationLabel(): string
     {
@@ -328,6 +334,11 @@ class OrganizationResource extends Resource
         $user = self::getSystemAdmin();
 
         return $user !== null && app(OrganizationResourcePolicy::class)->viewAny($user);
+    }
+
+    public static function shouldRegisterNavigation(): bool
+    {
+        return self::canViewAny();
     }
 
     public static function canView(Model $record): bool

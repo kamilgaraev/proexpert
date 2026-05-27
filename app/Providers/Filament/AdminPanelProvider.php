@@ -1,26 +1,31 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Providers\Filament;
 
 use App\Filament\Pages\Dashboard;
 use App\Filament\Pages\EditSystemAdminProfile;
-use App\Models\SystemAdmin;
+use App\Filament\Support\FilamentPermission;
+use App\Filament\Support\NavigationGroups;
+use App\Filament\Support\SystemAdminAccess;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
 use Filament\Http\Middleware\DispatchServingFilamentEvent;
+use Filament\Navigation\NavigationItem;
 use Filament\Panel;
 use Filament\PanelProvider;
-use Filament\Navigation\NavigationItem;
 use Filament\Support\Colors\Color;
 use Filament\Widgets\AccountWidget;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 use Illuminate\Routing\Middleware\SubstituteBindings;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Session\Middleware\StartSession;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
+
+use function trans_message;
 
 class AdminPanelProvider extends PanelProvider
 {
@@ -45,18 +50,14 @@ class AdminPanelProvider extends PanelProvider
                 AccountWidget::class,
                 \App\Filament\Widgets\SaaSIncomeStatsWidget::class,
             ])
+            ->navigationGroups(NavigationGroups::panelGroups())
             ->navigationItems([
-                NavigationItem::make('API Docs')
+                NavigationItem::make(trans_message('filament_navigation.api_docs.label'))
                     ->url('/docs/api', shouldOpenInNewTab: true)
                     ->icon('heroicon-o-book-open')
-                    ->group('System')
-                    ->visible(function (): bool {
-                        $user = Auth::guard('system_admin')->user();
-
-                        return $user instanceof SystemAdmin
-                            && $user->hasSystemPermission('system_admin.api_docs.view');
-                    })
-                    ->sort(99),
+                    ->group(NavigationGroups::settings())
+                    ->visible(fn (): bool => SystemAdminAccess::can(FilamentPermission::API_DOCS_VIEW))
+                    ->sort(20),
             ])
             ->authGuard('system_admin')
             ->middleware([

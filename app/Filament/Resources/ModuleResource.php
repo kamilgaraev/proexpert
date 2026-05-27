@@ -7,6 +7,7 @@ namespace App\Filament\Resources;
 use App\Enums\ModuleDevelopmentStatus;
 use App\Filament\Resources\ModuleResource\Pages;
 use App\Filament\Support\FilamentPermission;
+use App\Filament\Support\NavigationGroups;
 use App\Filament\Support\SystemAdminAccess;
 use App\Models\Module;
 use App\Models\Organization;
@@ -32,7 +33,12 @@ class ModuleResource extends Resource
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-squares-2x2';
 
-    protected static string | \UnitEnum | null $navigationGroup = 'Platform';
+    protected static ?int $navigationSort = 10;
+
+    public static function getNavigationGroup(): string | \UnitEnum | null
+    {
+        return NavigationGroups::platform();
+    }
 
     public static function getNavigationLabel(): string
     {
@@ -195,6 +201,11 @@ class ModuleResource extends Resource
     public static function canViewAny(): bool
     {
         return SystemAdminAccess::can(FilamentPermission::MODULES_VIEW);
+    }
+
+    public static function shouldRegisterNavigation(): bool
+    {
+        return self::canViewAny();
     }
 
     public static function canView(Model $record): bool

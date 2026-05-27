@@ -8,6 +8,7 @@ use App\BusinessModules\Features\Notifications\Models\NotificationTemplate;
 use App\Filament\Resources\NotificationTemplateResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Filament\Support\Concerns\HasDestructiveActionGuardrails;
+use App\Filament\Support\NavigationGroups;
 use App\Models\Organization;
 use App\Models\SystemAdmin;
 use App\Policies\SystemAdmin\NotificationTemplatePolicy;
@@ -36,9 +37,12 @@ class NotificationTemplateResource extends Resource
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-envelope-open';
 
-    protected static string | \UnitEnum | null $navigationGroup = 'Уведомления';
+    protected static ?int $navigationSort = 10;
 
-    protected static ?int $navigationSort = 1;
+    public static function getNavigationGroup(): string | \UnitEnum | null
+    {
+        return NavigationGroups::notifications();
+    }
 
     public static function getNavigationLabel(): string
     {

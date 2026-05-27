@@ -7,6 +7,7 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\BlogTagResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Filament\Support\Concerns\HasDestructiveActionGuardrails;
+use App\Filament\Support\NavigationGroups;
 use App\Models\Blog\BlogTag;
 use App\Policies\SystemAdmin\BlogTagPolicy;
 use Filament\Actions\EditAction;
@@ -28,9 +29,12 @@ class BlogTagResource extends Resource
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-hashtag';
 
-    protected static string | \UnitEnum | null $navigationGroup = 'Content';
+    protected static ?int $navigationSort = 30;
 
-    protected static ?int $navigationSort = 3;
+    public static function getNavigationGroup(): string | \UnitEnum | null
+    {
+        return NavigationGroups::blog();
+    }
 
     public static function getNavigationLabel(): string
     {

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Resources;
 
 use App\Filament\Resources\SystemAdminResource\Pages;
+use App\Filament\Support\NavigationGroups;
 use App\Models\SystemAdmin;
 use App\Policies\SystemAdmin\SystemAdminResourcePolicy;
 use App\Services\Security\SystemAdminRoleService;
@@ -26,9 +27,12 @@ class SystemAdminResource extends Resource
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-shield-check';
 
-    protected static string | \UnitEnum | null $navigationGroup = 'System';
+    protected static ?int $navigationSort = 10;
 
-    protected static ?int $navigationSort = 1;
+    public static function getNavigationGroup(): string | \UnitEnum | null
+    {
+        return NavigationGroups::settings();
+    }
 
     public static function getNavigationLabel(): string
     {
@@ -145,6 +149,11 @@ class SystemAdminResource extends Resource
         $user = self::getSystemAdmin();
 
         return $user !== null && app(SystemAdminResourcePolicy::class)->viewAny($user);
+    }
+
+    public static function shouldRegisterNavigation(): bool
+    {
+        return self::canViewAny();
     }
 
     public static function canCreate(): bool

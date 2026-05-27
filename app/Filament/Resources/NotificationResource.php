@@ -8,6 +8,7 @@ use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\Filament\Resources\NotificationResource\Pages;
 use App\Filament\Resources\NotificationResource\RelationManagers\AnalyticsRelationManager;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
+use App\Filament\Support\NavigationGroups;
 use App\Filament\Widgets\NotificationDeliveryStatsWidget;
 use App\Models\Organization;
 use App\Policies\SystemAdmin\NotificationPolicy;
@@ -31,9 +32,12 @@ class NotificationResource extends Resource
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-bell-alert';
 
-    protected static string | \UnitEnum | null $navigationGroup = 'Уведомления';
+    protected static ?int $navigationSort = 20;
 
-    protected static ?int $navigationSort = 2;
+    public static function getNavigationGroup(): string | \UnitEnum | null
+    {
+        return NavigationGroups::notifications();
+    }
 
     public static function getNavigationLabel(): string
     {

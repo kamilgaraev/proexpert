@@ -7,6 +7,7 @@ namespace App\Filament\Resources;
 use App\Enums\Blog\BlogContextEnum;
 use App\Filament\Resources\BlogSeoSettingsResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
+use App\Filament\Support\NavigationGroups;
 use App\Models\Blog\BlogSeoSettings;
 use App\Policies\SystemAdmin\BlogSeoSettingsPolicy;
 use Filament\Actions\EditAction;
@@ -27,9 +28,12 @@ class BlogSeoSettingsResource extends Resource
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-globe-alt';
 
-    protected static string | \UnitEnum | null $navigationGroup = 'Content';
+    protected static ?int $navigationSort = 60;
 
-    protected static ?int $navigationSort = 6;
+    public static function getNavigationGroup(): string | \UnitEnum | null
+    {
+        return NavigationGroups::blog();
+    }
 
     public static function getNavigationLabel(): string
     {

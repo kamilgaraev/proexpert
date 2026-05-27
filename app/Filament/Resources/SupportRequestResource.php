@@ -7,6 +7,7 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\SupportRequestResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Filament\Support\FilamentPermission;
+use App\Filament\Support\NavigationGroups;
 use App\Filament\Support\SystemAdminAccess;
 use App\Models\ContactForm;
 use App\Models\Organization;
@@ -41,11 +42,11 @@ class SupportRequestResource extends Resource
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-lifebuoy';
 
-    protected static ?int $navigationSort = 6;
+    protected static ?int $navigationSort = 10;
 
     public static function getNavigationGroup(): string | UnitEnum | null
     {
-        return trans_message('support_workspace.navigation_group');
+        return NavigationGroups::support();
     }
 
     public static function getNavigationLabel(): string

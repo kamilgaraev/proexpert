@@ -6,6 +6,7 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\OrganizationPackageSubscriptionResource\Pages;
 use App\Filament\Support\FilamentPermission;
+use App\Filament\Support\NavigationGroups;
 use App\Filament\Support\SystemAdminAccess;
 use App\Models\OrganizationPackageSubscription;
 use Filament\Actions\ViewAction;
@@ -26,7 +27,12 @@ class OrganizationPackageSubscriptionResource extends Resource
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-archive-box';
 
-    protected static string | \UnitEnum | null $navigationGroup = 'Platform';
+    protected static ?int $navigationSort = 30;
+
+    public static function getNavigationGroup(): string | \UnitEnum | null
+    {
+        return NavigationGroups::platform();
+    }
 
     public static function getNavigationLabel(): string
     {
@@ -138,6 +144,11 @@ class OrganizationPackageSubscriptionResource extends Resource
     public static function canViewAny(): bool
     {
         return SystemAdminAccess::can(FilamentPermission::MODULES_VIEW);
+    }
+
+    public static function shouldRegisterNavigation(): bool
+    {
+        return self::canViewAny();
     }
 
     public static function canView(Model $record): bool

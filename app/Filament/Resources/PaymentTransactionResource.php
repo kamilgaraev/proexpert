@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\Filament\Resources\PaymentTransactionResource\Pages;
 use App\Filament\Support\FilamentPermission;
+use App\Filament\Support\NavigationGroups;
 use App\Filament\Support\SystemAdminAccess;
 use Filament\Actions\ViewAction;
 use Filament\Infolists;
@@ -27,7 +28,12 @@ class PaymentTransactionResource extends Resource
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-banknotes';
 
-    protected static string | \UnitEnum | null $navigationGroup = 'Billing';
+    protected static ?int $navigationSort = 30;
+
+    public static function getNavigationGroup(): string | \UnitEnum | null
+    {
+        return NavigationGroups::billing();
+    }
 
     public static function getNavigationLabel(): string
     {
@@ -179,6 +185,11 @@ class PaymentTransactionResource extends Resource
     public static function canViewAny(): bool
     {
         return SystemAdminAccess::can(FilamentPermission::PAYMENTS_VIEW);
+    }
+
+    public static function shouldRegisterNavigation(): bool
+    {
+        return self::canViewAny();
     }
 
     public static function canView(Model $record): bool

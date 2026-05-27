@@ -11,6 +11,7 @@ use App\Filament\Resources\BlogArticleResource\Schemas\BlogArticleInfolist;
 use App\Filament\Resources\BlogArticleResource\Schemas\BlogArticleTable;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Filament\Support\Concerns\HasDestructiveActionGuardrails;
+use App\Filament\Support\NavigationGroups;
 use App\Models\Blog\BlogArticle;
 use App\Policies\SystemAdmin\BlogArticlePolicy;
 use Filament\Actions\DeleteAction;
@@ -29,9 +30,12 @@ class BlogArticleResource extends Resource
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-document-text';
 
-    protected static string | \UnitEnum | null $navigationGroup = 'Content';
+    protected static ?int $navigationSort = 10;
 
-    protected static ?int $navigationSort = 1;
+    public static function getNavigationGroup(): string | \UnitEnum | null
+    {
+        return NavigationGroups::blog();
+    }
 
     public static function getNavigationLabel(): string
     {

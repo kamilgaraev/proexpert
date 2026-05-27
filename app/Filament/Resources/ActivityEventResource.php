@@ -8,6 +8,7 @@ use App\Enums\Activity\ActivityActionEnum;
 use App\Enums\Activity\ActivitySeverityEnum;
 use App\Filament\Resources\ActivityEventResource\Pages;
 use App\Filament\Support\FilamentPermission;
+use App\Filament\Support\NavigationGroups;
 use App\Filament\Support\SystemAdminAccess;
 use App\Models\Activity\ActivityEvent;
 use App\Models\Organization;
@@ -32,11 +33,11 @@ class ActivityEventResource extends Resource
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-shield-check';
 
-    protected static ?int $navigationSort = 9;
+    protected static ?int $navigationSort = 10;
 
     public static function getNavigationGroup(): string | UnitEnum | null
     {
-        return trans_message('activity.audit_resource.navigation_group');
+        return NavigationGroups::audit();
     }
 
     public static function getNavigationLabel(): string
@@ -256,6 +257,11 @@ class ActivityEventResource extends Resource
     public static function canViewAny(): bool
     {
         return SystemAdminAccess::can(FilamentPermission::AUDIT_LOGS_VIEW);
+    }
+
+    public static function shouldRegisterNavigation(): bool
+    {
+        return self::canViewAny();
     }
 
     public static function canView(Model $record): bool

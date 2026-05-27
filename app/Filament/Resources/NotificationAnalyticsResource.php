@@ -7,6 +7,7 @@ namespace App\Filament\Resources;
 use App\BusinessModules\Features\Notifications\Models\NotificationAnalytics;
 use App\Filament\Resources\NotificationAnalyticsResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
+use App\Filament\Support\NavigationGroups;
 use App\Policies\SystemAdmin\NotificationAnalyticsPolicy;
 use Filament\Actions\ViewAction;
 use Filament\Forms;
@@ -28,9 +29,12 @@ class NotificationAnalyticsResource extends Resource
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-chart-bar-square';
 
-    protected static string | \UnitEnum | null $navigationGroup = 'Уведомления';
+    protected static ?int $navigationSort = 30;
 
-    protected static ?int $navigationSort = 3;
+    public static function getNavigationGroup(): string | \UnitEnum | null
+    {
+        return NavigationGroups::notifications();
+    }
 
     public static function getNavigationLabel(): string
     {

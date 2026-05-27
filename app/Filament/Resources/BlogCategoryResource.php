@@ -7,6 +7,7 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\BlogCategoryResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Filament\Support\Concerns\HasDestructiveActionGuardrails;
+use App\Filament\Support\NavigationGroups;
 use App\Models\Blog\BlogCategory;
 use App\Policies\SystemAdmin\BlogCategoryPolicy;
 use Filament\Actions\EditAction;
@@ -28,9 +29,12 @@ class BlogCategoryResource extends Resource
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-folder';
 
-    protected static string | \UnitEnum | null $navigationGroup = 'Content';
+    protected static ?int $navigationSort = 20;
 
-    protected static ?int $navigationSort = 2;
+    public static function getNavigationGroup(): string | \UnitEnum | null
+    {
+        return NavigationGroups::blog();
+    }
 
     public static function getNavigationLabel(): string
     {

@@ -7,6 +7,7 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\BlogCommentResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Filament\Support\Concerns\HasDestructiveActionGuardrails;
+use App\Filament\Support\NavigationGroups;
 use App\Models\Blog\BlogComment;
 use App\Models\SystemAdmin;
 use App\Policies\SystemAdmin\BlogCommentPolicy;
@@ -29,9 +30,12 @@ class BlogCommentResource extends Resource
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-chat-bubble-left-right';
 
-    protected static string | \UnitEnum | null $navigationGroup = 'Content';
+    protected static ?int $navigationSort = 50;
 
-    protected static ?int $navigationSort = 5;
+    public static function getNavigationGroup(): string | \UnitEnum | null
+    {
+        return NavigationGroups::blog();
+    }
 
     public static function getNavigationLabel(): string
     {

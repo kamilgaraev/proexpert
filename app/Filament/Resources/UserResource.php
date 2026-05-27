@@ -6,6 +6,7 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\UserResource\Pages;
 use App\Filament\Support\FilamentPermission;
+use App\Filament\Support\NavigationGroups;
 use App\Filament\Support\SystemAdminAccess;
 use App\Models\Organization;
 use App\Models\SystemAdmin;
@@ -35,7 +36,12 @@ class UserResource extends Resource
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-users';
 
-    protected static string | \UnitEnum | null $navigationGroup = 'System';
+    protected static ?int $navigationSort = 10;
+
+    public static function getNavigationGroup(): string | \UnitEnum | null
+    {
+        return NavigationGroups::users();
+    }
 
     public static function getNavigationLabel(): string
     {
@@ -299,6 +305,11 @@ class UserResource extends Resource
         $user = self::getSystemAdmin();
 
         return $user !== null && app(UserResourcePolicy::class)->viewAny($user);
+    }
+
+    public static function shouldRegisterNavigation(): bool
+    {
+        return self::canViewAny();
     }
 
     public static function canView(Model $record): bool

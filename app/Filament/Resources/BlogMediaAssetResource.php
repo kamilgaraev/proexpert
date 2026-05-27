@@ -7,6 +7,7 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\BlogMediaAssetResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Filament\Support\Concerns\HasDestructiveActionGuardrails;
+use App\Filament\Support\NavigationGroups;
 use App\Models\Blog\BlogMediaAsset;
 use App\Policies\SystemAdmin\BlogMediaAssetPolicy;
 use App\Services\Blog\BlogMediaService;
@@ -34,9 +35,12 @@ class BlogMediaAssetResource extends Resource
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-photo';
 
-    protected static string | \UnitEnum | null $navigationGroup = 'Content';
+    protected static ?int $navigationSort = 40;
 
-    protected static ?int $navigationSort = 4;
+    public static function getNavigationGroup(): string | \UnitEnum | null
+    {
+        return NavigationGroups::blog();
+    }
 
     public static function getNavigationLabel(): string
     {

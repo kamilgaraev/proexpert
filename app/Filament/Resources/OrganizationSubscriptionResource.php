@@ -6,6 +6,7 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\OrganizationSubscriptionResource\Pages;
 use App\Filament\Support\FilamentPermission;
+use App\Filament\Support\NavigationGroups;
 use App\Filament\Support\SystemAdminAccess;
 use App\Models\Organization;
 use App\Models\OrganizationSubscription;
@@ -32,7 +33,12 @@ class OrganizationSubscriptionResource extends Resource
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-credit-card';
 
-    protected static string | \UnitEnum | null $navigationGroup = 'Billing';
+    protected static ?int $navigationSort = 20;
+
+    public static function getNavigationGroup(): string | \UnitEnum | null
+    {
+        return NavigationGroups::billing();
+    }
 
     public static function getNavigationLabel(): string
     {
@@ -261,6 +267,11 @@ class OrganizationSubscriptionResource extends Resource
     public static function canViewAny(): bool
     {
         return SystemAdminAccess::can(FilamentPermission::SUBSCRIPTIONS_VIEW);
+    }
+
+    public static function shouldRegisterNavigation(): bool
+    {
+        return self::canViewAny();
     }
 
     public static function canView(Model $record): bool
