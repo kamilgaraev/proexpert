@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\Enums\Activity\ActivitySeverityEnum;
 use App\Enums\Blog\BlogArticleStatusEnum;
 use App\Models\Activity\ActivityEvent;
+use App\Models\ApplicationError;
 use App\Models\Blog\BlogArticle;
 use App\Models\ContactForm;
 use App\Models\Organization;
@@ -27,7 +28,8 @@ final class SystemAdminDashboardService
      *     users: array{new_7_days: int, new_30_days: int},
      *     blog: array{draft: int, published: int, scheduled: int, archived: int},
      *     support: array{pending: int, urgent: int},
-     *     audit: array{high_risk_24_hours: int}
+     *     audit: array{high_risk_24_hours: int},
+     *     monitoring: array{application_errors_24_hours: int, critical_application_errors: int}
      * }
      */
     public function overview(?CarbonInterface $now = null): array
@@ -57,6 +59,10 @@ final class SystemAdminDashboardService
             ],
             'audit' => [
                 'high_risk_24_hours' => $this->highRiskAuditEvents($now),
+            ],
+            'monitoring' => [
+                'application_errors_24_hours' => $this->applicationErrors($now),
+                'critical_application_errors' => $this->criticalApplicationErrors(),
             ],
         ];
     }
@@ -156,6 +162,21 @@ final class SystemAdminDashboardService
                 ActivitySeverityEnum::Critical->value,
             ])
             ->where('occurred_at', '>=', $now->subDay())
+            ->count();
+    }
+
+    private function applicationErrors(CarbonImmutable $now): int
+    {
+        return ApplicationError::query()
+            ->where('last_seen_at', '>=', $now->subDay())
+            ->count();
+    }
+
+    private function criticalApplicationErrors(): int
+    {
+        return ApplicationError::query()
+            ->where('status', 'unresolved')
+            ->where('severity', 'critical')
             ->count();
     }
 

@@ -18,6 +18,7 @@
     "system_admin.subscriptions.view",
     "system_admin.payments.view",
     "system_admin.modules.view",
+    "system_admin.monitoring.view",
     "system_admin.audit_logs.view",
     "system_admin.blog.articles.view",
     "system_admin.blog.revisions.view",
@@ -49,6 +50,9 @@
     ],
     "modules": [
       "system_admin.modules.view"
+    ],
+    "monitoring": [
+      "system_admin.monitoring.view"
     ],
     "security": [
       "system_admin.audit_logs.view"

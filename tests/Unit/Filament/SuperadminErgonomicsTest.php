@@ -15,6 +15,7 @@ class SuperadminErgonomicsTest extends TestCase
     {
         return [
             'activity_events' => 'app/Filament/Resources/ActivityEventResource.php',
+            'application_errors' => 'app/Filament/Resources/Monitoring/ApplicationErrorResource.php',
             'blog_articles' => 'app/Filament/Resources/BlogArticleResource/Schemas/BlogArticleTable.php',
             'blog_categories' => 'app/Filament/Resources/BlogCategoryResource.php',
             'blog_comments' => 'app/Filament/Resources/BlogCommentResource.php',

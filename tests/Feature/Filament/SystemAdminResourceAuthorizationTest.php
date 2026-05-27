@@ -13,6 +13,7 @@ use App\Filament\Resources\BlogMediaAssetResource;
 use App\Filament\Resources\BlogSeoSettingsResource;
 use App\Filament\Resources\BlogTagResource;
 use App\Filament\Resources\ModuleResource;
+use App\Filament\Resources\Monitoring\ApplicationErrorResource;
 use App\Filament\Resources\NotificationAnalyticsResource;
 use App\Filament\Resources\NotificationResource;
 use App\Filament\Resources\NotificationTemplateResource;
@@ -102,6 +103,7 @@ class SystemAdminResourceAuthorizationTest extends TestCase
         $this->assertFalse(SupportRequestResource::canViewAny());
         $this->assertFalse(SystemAdminResource::canViewAny());
         $this->assertFalse(ActivityEventResource::canViewAny());
+        $this->assertFalse(ApplicationErrorResource::canViewAny());
     }
 
     public function test_qa_engineer_can_view_operational_read_models_without_system_admins(): void
@@ -121,6 +123,7 @@ class SystemAdminResourceAuthorizationTest extends TestCase
         $this->assertTrue(NotificationResource::canViewAny());
         $this->assertTrue(NotificationAnalyticsResource::canViewAny());
         $this->assertTrue(NotificationTemplateResource::canViewAny());
+        $this->assertTrue(ApplicationErrorResource::canViewAny());
 
         $this->assertFalse(ActivityEventResource::canViewAny());
         $this->assertFalse(SupportRequestResource::canViewAny());
@@ -147,6 +150,7 @@ class SystemAdminResourceAuthorizationTest extends TestCase
         $this->assertTrue(NotificationResource::canViewAny());
         $this->assertTrue(NotificationAnalyticsResource::canViewAny());
         $this->assertTrue(NotificationTemplateResource::canViewAny());
+        $this->assertTrue(ApplicationErrorResource::canViewAny());
 
         $this->assertFalse(SupportRequestResource::canViewAny());
         $this->assertFalse(BlogMediaAssetResource::canViewAny());
@@ -200,6 +204,7 @@ class SystemAdminResourceAuthorizationTest extends TestCase
             NotificationResource::class,
             NotificationTemplateResource::class,
             ModuleResource::class,
+            ApplicationErrorResource::class,
             OrganizationModuleActivationResource::class,
             OrganizationPackageSubscriptionResource::class,
             OrganizationResource::class,

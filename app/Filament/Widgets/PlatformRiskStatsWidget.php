@@ -59,6 +59,15 @@ class PlatformRiskStatsWidget extends BaseWidget
                 ->description(trans_message('widgets.platform_risk.high_risk_audit_description'))
                 ->descriptionIcon('heroicon-m-shield-exclamation')
                 ->color($metrics['audit']['high_risk_24_hours'] > 0 ? 'warning' : 'success'),
+            Stat::make(
+                trans_message('widgets.platform_risk.application_errors'),
+                $metrics['monitoring']['application_errors_24_hours'],
+            )
+                ->description(trans_message('widgets.platform_risk.application_errors_description', [
+                    'critical' => $metrics['monitoring']['critical_application_errors'],
+                ]))
+                ->descriptionIcon('heroicon-m-bug-ant')
+                ->color($metrics['monitoring']['critical_application_errors'] > 0 ? 'danger' : 'success'),
         ];
     }
 }

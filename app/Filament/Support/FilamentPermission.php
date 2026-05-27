@@ -81,6 +81,9 @@ final class FilamentPermission
     public const SUPPORT_VIEW = 'system_admin.support.view';
     public const SUPPORT_MANAGE = 'system_admin.support.manage';
 
+    public const MONITORING_VIEW = 'system_admin.monitoring.view';
+    public const MONITORING_MANAGE = 'system_admin.monitoring.manage';
+
     public const AUDIT_LOGS_VIEW = 'system_admin.audit_logs.view';
     public const AUDIT_LOGS_EXPORT = 'system_admin.audit_logs.export';
 

@@ -13,6 +13,7 @@ use App\Filament\Resources\BlogMediaAssetResource;
 use App\Filament\Resources\BlogSeoSettingsResource;
 use App\Filament\Resources\BlogTagResource;
 use App\Filament\Resources\ModuleResource;
+use App\Filament\Resources\Monitoring\ApplicationErrorResource;
 use App\Filament\Resources\NotificationAnalyticsResource;
 use App\Filament\Resources\NotificationResource;
 use App\Filament\Resources\NotificationTemplateResource;
@@ -126,6 +127,11 @@ final class SystemAdminNavigationTest extends TestCase
                 'group' => NavigationGroups::platform(),
                 'sort' => 30,
                 'icon' => 'heroicon-o-archive-box',
+            ],
+            ApplicationErrorResource::class => [
+                'group' => NavigationGroups::platform(),
+                'sort' => 40,
+                'icon' => 'heroicon-o-bug-ant',
             ],
             OrganizationResource::class => [
                 'group' => NavigationGroups::organizations(),

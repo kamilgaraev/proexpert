@@ -287,6 +287,8 @@ return [
         'urgent_support_description' => 'Открытые обращения с высоким приоритетом',
         'high_risk_audit' => 'Риск-события',
         'high_risk_audit_description' => 'Предупреждения и критичные события за сутки',
+        'application_errors' => 'Ошибки приложения',
+        'application_errors_description' => 'За сутки; критичных активных: :critical',
     ],
     'package_subscriptions' => [
         'navigation_label' => 'Пакеты организаций',
