@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\Filament\Resources;
 
 use App\Filament\Resources\BlogMediaAssetResource\Pages;
+use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Models\Blog\BlogMediaAsset;
+use App\Policies\SystemAdmin\BlogMediaAssetPolicy;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\EditAction;
 use Filament\Forms;
@@ -17,7 +19,11 @@ use Filament\Tables\Table;
 
 class BlogMediaAssetResource extends Resource
 {
+    use AuthorizesSystemAdminResource;
+
     protected static ?string $model = BlogMediaAsset::class;
+
+    protected static string $systemAdminPolicy = BlogMediaAssetPolicy::class;
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-photo';
 

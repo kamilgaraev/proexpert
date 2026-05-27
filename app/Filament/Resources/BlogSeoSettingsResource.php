@@ -6,7 +6,9 @@ namespace App\Filament\Resources;
 
 use App\Enums\Blog\BlogContextEnum;
 use App\Filament\Resources\BlogSeoSettingsResource\Pages;
+use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Models\Blog\BlogSeoSettings;
+use App\Policies\SystemAdmin\BlogSeoSettingsPolicy;
 use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Resources\Resource;
@@ -17,7 +19,11 @@ use Filament\Tables\Table;
 
 class BlogSeoSettingsResource extends Resource
 {
+    use AuthorizesSystemAdminResource;
+
     protected static ?string $model = BlogSeoSettings::class;
+
+    protected static string $systemAdminPolicy = BlogSeoSettingsPolicy::class;
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-globe-alt';
 

@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\Filament\Resources;
 
 use App\Filament\Resources\BlogCategoryResource\Pages;
+use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Models\Blog\BlogCategory;
+use App\Policies\SystemAdmin\BlogCategoryPolicy;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\EditAction;
 use Filament\Forms;
@@ -17,7 +19,11 @@ use Filament\Tables\Table;
 
 class BlogCategoryResource extends Resource
 {
+    use AuthorizesSystemAdminResource;
+
     protected static ?string $model = BlogCategory::class;
+
+    protected static string $systemAdminPolicy = BlogCategoryPolicy::class;
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-folder';
 

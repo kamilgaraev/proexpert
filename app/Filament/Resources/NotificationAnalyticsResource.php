@@ -6,6 +6,8 @@ namespace App\Filament\Resources;
 
 use App\BusinessModules\Features\Notifications\Models\NotificationAnalytics;
 use App\Filament\Resources\NotificationAnalyticsResource\Pages;
+use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
+use App\Policies\SystemAdmin\NotificationAnalyticsPolicy;
 use Filament\Actions\ViewAction;
 use Filament\Forms;
 use Filament\Infolists;
@@ -18,7 +20,11 @@ use Illuminate\Database\Eloquent\Builder;
 
 class NotificationAnalyticsResource extends Resource
 {
+    use AuthorizesSystemAdminResource;
+
     protected static ?string $model = NotificationAnalytics::class;
+
+    protected static string $systemAdminPolicy = NotificationAnalyticsPolicy::class;
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-chart-bar-square';
 

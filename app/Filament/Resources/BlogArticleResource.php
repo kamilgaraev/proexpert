@@ -6,10 +6,12 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\BlogArticleResource\Pages;
 use App\Filament\Resources\BlogArticleResource\RelationManagers\BlogArticleRevisionsRelationManager;
+use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Models\Blog\BlogArticle;
 use App\Models\Blog\BlogCategory;
 use App\Models\Blog\BlogMediaAsset;
 use App\Models\Blog\BlogTag;
+use App\Policies\SystemAdmin\BlogArticlePolicy;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\EditAction;
 use Filament\Forms;
@@ -27,7 +29,11 @@ use Illuminate\Support\Str;
 
 class BlogArticleResource extends Resource
 {
+    use AuthorizesSystemAdminResource;
+
     protected static ?string $model = BlogArticle::class;
+
+    protected static string $systemAdminPolicy = BlogArticlePolicy::class;
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-document-text';
 

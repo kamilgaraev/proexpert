@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace App\Filament\Resources;
 
 use App\Filament\Resources\BlogCommentResource\Pages;
+use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Models\Blog\BlogComment;
 use App\Models\SystemAdmin;
+use App\Policies\SystemAdmin\BlogCommentPolicy;
 use Filament\Actions\Action;
 use Filament\Actions\DeleteAction;
 use Filament\Forms;
@@ -18,7 +20,11 @@ use Illuminate\Support\Facades\Auth;
 
 class BlogCommentResource extends Resource
 {
+    use AuthorizesSystemAdminResource;
+
     protected static ?string $model = BlogComment::class;
+
+    protected static string $systemAdminPolicy = BlogCommentPolicy::class;
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-chat-bubble-left-right';
 

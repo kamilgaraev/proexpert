@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\Filament\Resources;
 
 use App\Filament\Resources\BlogTagResource\Pages;
+use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Models\Blog\BlogTag;
+use App\Policies\SystemAdmin\BlogTagPolicy;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\EditAction;
 use Filament\Forms;
@@ -17,7 +19,11 @@ use Filament\Tables\Table;
 
 class BlogTagResource extends Resource
 {
+    use AuthorizesSystemAdminResource;
+
     protected static ?string $model = BlogTag::class;
+
+    protected static string $systemAdminPolicy = BlogTagPolicy::class;
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-hashtag';
 

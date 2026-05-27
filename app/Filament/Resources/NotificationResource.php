@@ -7,8 +7,10 @@ namespace App\Filament\Resources;
 use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\Filament\Resources\NotificationResource\Pages;
 use App\Filament\Resources\NotificationResource\RelationManagers\AnalyticsRelationManager;
+use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Filament\Widgets\NotificationDeliveryStatsWidget;
 use App\Models\Organization;
+use App\Policies\SystemAdmin\NotificationPolicy;
 use Filament\Actions\ViewAction;
 use Filament\Forms;
 use Filament\Infolists;
@@ -21,7 +23,11 @@ use Illuminate\Database\Eloquent\Builder;
 
 class NotificationResource extends Resource
 {
+    use AuthorizesSystemAdminResource;
+
     protected static ?string $model = Notification::class;
+
+    protected static string $systemAdminPolicy = NotificationPolicy::class;
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-bell-alert';
 

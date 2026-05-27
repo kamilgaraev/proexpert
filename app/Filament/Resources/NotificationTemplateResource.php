@@ -6,7 +6,9 @@ namespace App\Filament\Resources;
 
 use App\BusinessModules\Features\Notifications\Models\NotificationTemplate;
 use App\Filament\Resources\NotificationTemplateResource\Pages;
+use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Models\Organization;
+use App\Policies\SystemAdmin\NotificationTemplatePolicy;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\EditAction;
 use Filament\Forms;
@@ -18,7 +20,11 @@ use Filament\Tables\Table;
 
 class NotificationTemplateResource extends Resource
 {
+    use AuthorizesSystemAdminResource;
+
     protected static ?string $model = NotificationTemplate::class;
+
+    protected static string $systemAdminPolicy = NotificationTemplatePolicy::class;
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-envelope-open';
 
