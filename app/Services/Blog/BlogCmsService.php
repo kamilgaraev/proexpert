@@ -25,6 +25,7 @@ class BlogCmsService
 {
     public function __construct(
         private readonly BlogDocumentRenderer $documentRenderer,
+        private readonly BlogEditorialChecklistService $editorialChecklist,
     ) {
     }
 
@@ -67,6 +68,7 @@ class BlogCmsService
     public function publishArticle(BlogArticle $article, SystemAdmin $systemAdmin, ?string $publishAt = null): BlogArticle
     {
         $this->validateForPublish($article);
+        $this->editorialChecklist->assertCanPublish($article);
 
         return $this->updateArticle($article, [
             'status' => BlogArticleStatusEnum::PUBLISHED->value,
@@ -464,12 +466,16 @@ class BlogCmsService
             $errors['published_at'] = [trans_message('blog_cms.validation_publish_date')];
         }
 
-        if ($status === BlogArticleStatusEnum::PUBLISHED->value) {
+        if (in_array($status, [BlogArticleStatusEnum::PUBLISHED->value, BlogArticleStatusEnum::SCHEDULED->value], true)) {
             $this->validatePublishablePayload($payload, $errors);
         }
 
         if ($errors !== []) {
             throw ValidationException::withMessages($errors);
+        }
+
+        if (in_array($status, [BlogArticleStatusEnum::PUBLISHED->value, BlogArticleStatusEnum::SCHEDULED->value], true)) {
+            $this->editorialChecklist->assertCanPublish($payload, $article?->id);
         }
     }
 

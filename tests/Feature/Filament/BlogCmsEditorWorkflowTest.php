@@ -9,6 +9,7 @@ use App\Enums\Blog\BlogContextEnum;
 use App\Filament\Resources\BlogArticleResource;
 use App\Models\Blog\BlogArticle;
 use App\Models\Blog\BlogCategory;
+use App\Models\Blog\BlogMediaAsset;
 use App\Models\LandingAdmin;
 use App\Models\SystemAdmin;
 use App\Services\Blog\BlogCmsService;
@@ -198,11 +199,53 @@ class BlogCmsEditorWorkflowTest extends TestCase
         );
     }
 
+    public function test_publish_is_blocked_by_editorial_checklist_but_draft_save_is_allowed(): void
+    {
+        $admin = SystemAdmin::factory()->role('content_manager')->create();
+        $article = $this->articleFixture($admin, slug: 'checklist-blocked-article');
+        $article->forceFill([
+            'featured_image' => 'https://cdn.example.test/blog/missing-alt.jpg',
+            'editor_document' => [
+                [
+                    'type' => 'paragraph',
+                    'data' => ['content' => 'Short body'],
+                ],
+            ],
+            'content' => '<p>Short body</p>',
+        ])->save();
+
+        $draft = app(BlogCmsService::class)->updateArticle($article, [
+            'title' => 'Черновик можно сохранять до завершения чеклиста',
+            'status' => BlogArticleStatusEnum::DRAFT->value,
+        ], $admin);
+
+        $this->assertSame(BlogArticleStatusEnum::DRAFT, $draft->status);
+
+        try {
+            app(BlogCmsService::class)->publishArticle($draft, $admin);
+
+            $this->fail('ValidationException was not thrown.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('editorial_checklist', $exception->errors());
+        }
+    }
+
     private function articleFixture(?SystemAdmin $admin = null, ?BlogCategory $category = null, ?string $slug = null): BlogArticle
     {
         $admin ??= SystemAdmin::factory()->role('content_manager')->create();
         $category ??= $this->categoryFixture('product-updates');
         $landingAdmin = $this->landingAdminFixture($admin);
+        $coverUrl = 'https://cdn.example.test/blog/article-' . str()->random(8) . '.jpg';
+
+        BlogMediaAsset::query()->create([
+            'blog_context' => BlogContextEnum::MARKETING->value,
+            'filename' => basename($coverUrl),
+            'storage_path' => 'blog/' . basename($coverUrl),
+            'public_url' => $coverUrl,
+            'mime_type' => 'image/jpeg',
+            'file_size' => 120000,
+            'alt_text' => 'Скриншот редактора статьи ProHelper',
+        ]);
 
         return BlogArticle::query()->create([
             'blog_context' => BlogContextEnum::MARKETING->value,
@@ -216,7 +259,7 @@ class BlogCmsEditorWorkflowTest extends TestCase
             'content' => '<p>Article body</p>',
             'editor_document' => $this->documentFixture(),
             'editor_version' => 1,
-            'featured_image' => 'https://cdn.example.test/blog/article.jpg',
+            'featured_image' => $coverUrl,
             'meta_title' => 'How to manage projects',
             'meta_description' => 'Short article summary for publishing.',
             'status' => BlogArticleStatusEnum::DRAFT->value,
@@ -255,8 +298,12 @@ class BlogCmsEditorWorkflowTest extends TestCase
     {
         return [
             [
+                'type' => 'heading',
+                'data' => ['content' => 'Практический сценарий', 'level' => 2],
+            ],
+            [
                 'type' => 'paragraph',
-                'data' => ['content' => 'Article body'],
+                'data' => ['content' => str_repeat('Редактор проверяет структуру, пользу, SEO и визуальный контекст статьи. ', 12)],
             ],
         ];
     }

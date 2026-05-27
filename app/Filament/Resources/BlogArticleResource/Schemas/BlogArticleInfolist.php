@@ -48,6 +48,12 @@ final class BlogArticleInfolist
                             ->placeholder('Не указано'),
                     ])
                     ->columns(3),
+                Section::make(trans_message('blog_cms.editorial_checklist_section'))
+                    ->schema([
+                        Infolists\Components\ViewEntry::make('editorial_checklist')
+                            ->view('filament.blog.article-editor.editorial-checklist')
+                            ->hiddenLabel(),
+                    ]),
             ]);
     }
 }

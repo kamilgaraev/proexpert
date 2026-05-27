@@ -135,6 +135,15 @@ final class BlogArticleForm
                             ->columnSpanFull(),
                     ])
                     ->columns(1),
+                Section::make(trans_message('blog_cms.editorial_checklist_section'))
+                    ->schema([
+                        ViewField::make('editorial_checklist')
+                            ->view('filament.blog.article-editor.editorial-checklist')
+                            ->hiddenLabel()
+                            ->dehydrated(false)
+                            ->columnSpanFull(),
+                    ])
+                    ->columns(1),
                 Section::make('Автор и категория')
                     ->description('Редакционная принадлежность статьи и тематическая навигация.')
                     ->schema([
