@@ -96,4 +96,23 @@ class SuperadminErgonomicsTest extends TestCase
         $this->assertStringContainsString("Section::make('Внутренние заметки')", $source);
         $this->assertStringContainsString('->collapsed()', $source);
     }
+
+    public function test_blog_create_form_does_not_render_broken_workspace_view(): void
+    {
+        $source = (string) file_get_contents(app_path('Filament/Resources/BlogArticleResource/Schemas/BlogArticleForm.php'));
+
+        $this->assertStringNotContainsString('editor_workspace_overview', $source);
+        $this->assertStringNotContainsString('workspace-overview', $source);
+        $this->assertFileDoesNotExist(resource_path('views/filament/blog/article-editor/workspace-overview.blade.php'));
+
+        $titlePosition = strpos($source, "Section::make('Заголовок и адрес')");
+        $publicationPosition = strpos($source, "Section::make('Публикация')");
+        $bodyPosition = strpos($source, "Section::make('Текст и краткое описание')");
+
+        $this->assertIsInt($titlePosition);
+        $this->assertIsInt($publicationPosition);
+        $this->assertIsInt($bodyPosition);
+        $this->assertLessThan($publicationPosition, $titlePosition);
+        $this->assertLessThan($bodyPosition, $publicationPosition);
+    }
 }

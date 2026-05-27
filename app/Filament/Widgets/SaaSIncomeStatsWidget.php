@@ -39,15 +39,25 @@ class SaaSIncomeStatsWidget extends BaseWidget
             ->sum('amount') ?? 0;
 
         return [
-            Stat::make(trans_message('widgets.saas_income_stats.total_income'), Number::currency($totalIncome, 'RUB', 'ru'))
+            Stat::make(trans_message('widgets.saas_income_stats.total_income'), self::formatCurrency($totalIncome))
                 ->description(trans_message('widgets.saas_income_stats.all_time_description'))
                 ->descriptionIcon('heroicon-m-arrow-trending-up')
                 ->color('success'),
 
-            Stat::make(trans_message('widgets.saas_income_stats.monthly_income'), Number::currency($monthIncome, 'RUB', 'ru'))
+            Stat::make(trans_message('widgets.saas_income_stats.monthly_income'), self::formatCurrency($monthIncome))
                 ->description(trans_message('widgets.saas_income_stats.monthly_description', ['date' => now()->translatedFormat('F Y')]))
                 ->descriptionIcon('heroicon-m-calendar')
                 ->color('info'),
         ];
+    }
+
+    private static function formatCurrency(int | float | string | null $amount): string
+    {
+        return Number::currency(self::normalizeCurrencyAmount($amount), 'RUB', 'ru');
+    }
+
+    private static function normalizeCurrencyAmount(int | float | string | null $amount): float
+    {
+        return (float) ($amount ?? 0);
     }
 }

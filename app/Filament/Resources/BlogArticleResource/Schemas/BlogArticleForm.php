@@ -30,11 +30,6 @@ final class BlogArticleForm
                 Section::make('Заголовок и адрес')
                     ->description('Основные поля статьи и человекочитаемая ссылка.')
                     ->schema([
-                        ViewField::make('editor_workspace_overview')
-                            ->view('filament.blog.article-editor.workspace-overview')
-                            ->hiddenLabel()
-                            ->dehydrated(false)
-                            ->columnSpanFull(),
                         Forms\Components\TextInput::make('title')
                             ->label('Заголовок')
                             ->required()
@@ -67,32 +62,6 @@ final class BlogArticleForm
                             ->columnSpanFull(),
                     ])
                     ->columns(2)
-                    ->columnSpan(2),
-                Section::make('Текст и краткое описание')
-                    ->description('Лид, структура и основное полотно материала.')
-                    ->schema([
-                        Forms\Components\Textarea::make('excerpt')
-                            ->label('Лид')
-                            ->rows(4)
-                            ->maxLength(500)
-                            ->placeholder('Короткое резюме статьи для листинга, SEO и превью.')
-                            ->helperText(trans_message('blog_cms.helper_excerpt'))
-                            ->columnSpanFull(),
-                        Builder::make('editor_document')
-                            ->label('Полотно статьи')
-                            ->blocks(BlogEditorBlocks::blocks())
-                            ->blockIcons()
-                            ->blockPreviews()
-                            ->blockNumbers(false)
-                            ->collapsible()
-                            ->cloneable()
-                            ->reorderableWithButtons()
-                            ->addActionAlignment(Alignment::Start)
-                            ->addActionLabel('Добавить блок')
-                            ->helperText(trans_message('blog_cms.helper_editor_document'))
-                            ->columnSpanFull(),
-                    ])
-                    ->columns(1)
                     ->columnSpan(2),
                 Section::make('Публикация')
                     ->description('Статус, даты выхода и параметры показа.')
@@ -143,6 +112,32 @@ final class BlogArticleForm
                             ->columnSpanFull(),
                     ])
                     ->columns(1),
+                Section::make('Текст и краткое описание')
+                    ->description('Лид, структура и основное полотно материала.')
+                    ->schema([
+                        Forms\Components\Textarea::make('excerpt')
+                            ->label('Лид')
+                            ->rows(4)
+                            ->maxLength(500)
+                            ->placeholder('Короткое резюме статьи для листинга, SEO и превью.')
+                            ->helperText(trans_message('blog_cms.helper_excerpt'))
+                            ->columnSpanFull(),
+                        Builder::make('editor_document')
+                            ->label('Полотно статьи')
+                            ->blocks(BlogEditorBlocks::blocks())
+                            ->blockIcons()
+                            ->blockPreviews()
+                            ->blockNumbers(false)
+                            ->collapsible()
+                            ->cloneable()
+                            ->reorderableWithButtons()
+                            ->addActionAlignment(Alignment::Start)
+                            ->addActionLabel('Добавить блок')
+                            ->helperText(trans_message('blog_cms.helper_editor_document'))
+                            ->columnSpanFull(),
+                    ])
+                    ->columns(1)
+                    ->columnSpan(2),
                 Section::make(trans_message('blog_cms.editorial_checklist_section'))
                     ->schema([
                         ViewField::make('editorial_checklist')
