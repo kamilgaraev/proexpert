@@ -16,6 +16,7 @@ use App\Models\SystemAdmin;
 use App\Policies\SystemAdmin\ApplicationErrorPolicy;
 use App\Services\Filament\SystemAdminAuditService;
 use Filament\Actions\Action;
+use Filament\Actions\ActionGroup;
 use Filament\Actions\ViewAction;
 use Filament\Forms;
 use Filament\Infolists;
@@ -36,11 +37,11 @@ class ApplicationErrorResource extends Resource
 
     protected static string $systemAdminPolicy = ApplicationErrorPolicy::class;
 
-    protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-bug-ant';
+    protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-bug-ant';
 
     protected static ?int $navigationSort = 40;
 
-    public static function getNavigationGroup(): string | \UnitEnum | null
+    public static function getNavigationGroup(): string|\UnitEnum|null
     {
         return NavigationGroups::platform();
     }
@@ -177,11 +178,13 @@ class ApplicationErrorResource extends Resource
                     ])
                     ->query(fn (Builder $query, array $data): Builder => self::applyLastSeenFilter($query, $data)),
             ])
-            ->actions([
-                ViewAction::make(),
-                self::statusAction('mark_resolved', 'resolved', 'success'),
-                self::statusAction('mark_ignored', 'ignored', 'gray'),
-                self::statusAction('mark_unresolved', 'unresolved', 'warning'),
+            ->recordActions([
+                ActionGroup::make([
+                    ViewAction::make(),
+                    self::statusAction('mark_resolved', 'resolved', 'success'),
+                    self::statusAction('mark_ignored', 'ignored', 'gray'),
+                    self::statusAction('mark_unresolved', 'unresolved', 'warning'),
+                ]),
             ])
             ->defaultSort('last_seen_at', 'desc');
     }
@@ -200,7 +203,7 @@ class ApplicationErrorResource extends Resource
     }
 
     /**
-     * @param array<string, mixed> $data
+     * @param  array<string, mixed>  $data
      */
     private static function applyLastSeenFilter(Builder $query, array $data): Builder
     {

@@ -4,13 +4,14 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\BlogArticleResource\Schemas;
 
-use App\Filament\Support\TableEmptyState;
 use App\Enums\Blog\BlogArticleStatusEnum;
 use App\Filament\Resources\BlogArticleResource;
+use App\Filament\Support\TableEmptyState;
 use App\Models\Blog\BlogArticle;
 use App\Models\Blog\BlogCategory;
 use App\Models\SystemAdmin;
 use App\Services\Blog\BlogEditorialOperationsService;
+use Filament\Actions\ActionGroup;
 use Filament\Actions\BulkAction;
 use Filament\Actions\EditAction;
 use Filament\Actions\ViewAction;
@@ -36,33 +37,41 @@ final class BlogArticleTable
                     ->label(trans_message('blog_cms.article_title_column'))
                     ->searchable()
                     ->sortable()
+                    ->width('24rem')
+                    ->lineClamp(3)
                     ->wrap(),
                 Tables\Columns\TextColumn::make('calendar_date')
                     ->label(trans_message('blog_cms.calendar_date_column'))
                     ->getStateUsing(fn (BlogArticle $record): mixed => app(BlogEditorialOperationsService::class)
                         ->calendarDateFor($record))
-                    ->dateTime()
+                    ->dateTime('d.m.Y H:i')
+                    ->width('10rem')
                     ->toggleable(),
                 Tables\Columns\TextColumn::make('category.name')
                     ->label(trans_message('blog_cms.article_category_column'))
-                    ->badge(),
+                    ->badge()
+                    ->width('11rem'),
                 Tables\Columns\TextColumn::make('status')
                     ->label(trans_message('blog_cms.article_status_column'))
                     ->formatStateUsing(fn (?BlogArticleStatusEnum $state): string => $state !== null
-                        ? trans_message('blog_cms.article_statuses.' . $state->value)
+                        ? trans_message('blog_cms.article_statuses.'.$state->value)
                         : '')
-                    ->badge(),
+                    ->badge()
+                    ->width('9rem'),
                 Tables\Columns\TextColumn::make('systemAuthor.name')
                     ->label(trans_message('blog_cms.article_author_column'))
-                    ->toggleable(),
+                    ->width('9rem')
+                    ->toggleable(isToggledHiddenByDefault: true),
                 Tables\Columns\TextColumn::make('published_at')
                     ->label(trans_message('blog_cms.article_published_at_column'))
-                    ->dateTime()
-                    ->sortable(),
+                    ->dateTime('d.m.Y H:i')
+                    ->sortable()
+                    ->width('10rem'),
                 Tables\Columns\TextColumn::make('last_autosaved_at')
                     ->label(trans_message('blog_cms.article_autosaved_at_column'))
                     ->since()
-                    ->toggleable(),
+                    ->width('8rem')
+                    ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
                 Tables\Filters\SelectFilter::make('status')
@@ -93,10 +102,14 @@ final class BlogArticleTable
                     ->query(fn (Builder $query, array $data): Builder => app(BlogEditorialOperationsService::class)
                         ->applyCalendarDateFilter($query, $data)),
             ])
-            ->actions([
-                ViewAction::make()->label(trans_message('blog_cms.article_view_action')),
-                EditAction::make()->label(trans_message('blog_cms.article_edit_action')),
-                BlogArticleResource::guardedArticleDeleteAction(),
+            ->recordActions([
+                EditAction::make()
+                    ->label(trans_message('blog_cms.article_edit_action'))
+                    ->iconButton(),
+                ActionGroup::make([
+                    ViewAction::make()->label(trans_message('blog_cms.article_view_action')),
+                    BlogArticleResource::guardedArticleDeleteAction(),
+                ]),
             ])
             ->bulkActions([
                 BulkAction::make('assign_category')
@@ -200,7 +213,7 @@ final class BlogArticleTable
     {
         return collect(BlogArticleStatusEnum::cases())
             ->mapWithKeys(fn (BlogArticleStatusEnum $status): array => [
-                $status->value => trans_message('blog_cms.article_statuses.' . $status->value),
+                $status->value => trans_message('blog_cms.article_statuses.'.$status->value),
             ])
             ->all();
     }

@@ -4,16 +4,17 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
-use App\Filament\Support\TableEmptyState;
 use App\Filament\Resources\BlogMediaAssetResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Filament\Support\Concerns\HasDestructiveActionGuardrails;
 use App\Filament\Support\NavigationGroups;
+use App\Filament\Support\TableEmptyState;
 use App\Models\Blog\BlogMediaAsset;
+use App\Models\SystemAdmin;
 use App\Policies\SystemAdmin\BlogMediaAssetPolicy;
 use App\Services\Blog\BlogMediaService;
-use App\Models\SystemAdmin;
 use Filament\Actions\Action;
+use Filament\Actions\ActionGroup;
 use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Notifications\Notification;
@@ -34,11 +35,11 @@ class BlogMediaAssetResource extends Resource
 
     protected static string $systemAdminPolicy = BlogMediaAssetPolicy::class;
 
-    protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-photo';
+    protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-photo';
 
     protected static ?int $navigationSort = 40;
 
-    public static function getNavigationGroup(): string | \UnitEnum | null
+    public static function getNavigationGroup(): string|\UnitEnum|null
     {
         return NavigationGroups::blog();
     }
@@ -81,47 +82,49 @@ class BlogMediaAssetResource extends Resource
                 Tables\Columns\TextColumn::make('usage_metadata.count')->label('Использований')->default(0),
                 Tables\Columns\TextColumn::make('updated_at')->label('Обновлен')->since(),
             ])
-            ->actions([
-                EditAction::make(),
-                Action::make('safe_replace')
-                    ->label(trans_message('blog_cms.media_replace_action'))
-                    ->icon('heroicon-o-arrow-path')
-                    ->color('warning')
-                    ->schema([
-                        Forms\Components\FileUpload::make('replacement_file')
-                            ->label('Файл')
-                            ->acceptedFileTypes(BlogMediaService::allowedMimeTypes())
-                            ->maxSize(BlogMediaService::maxUploadSizeKilobytes())
-                            ->imageEditor()
-                            ->storeFiles(false)
-                            ->required(),
-                        Forms\Components\TextInput::make('alt_text')
-                            ->label(trans_message('blog_cms.field_alt_text'))
-                            ->required(),
-                        Forms\Components\TextInput::make('caption')
-                            ->label('Подпись'),
-                    ])
-                    ->visible(fn (): bool => Auth::guard('system_admin')->user()?->hasSystemPermission('system_admin.blog.media.manage') ?? false)
-                    ->action(function (array $data, BlogMediaAsset $record): void {
-                        /** @var SystemAdmin $systemAdmin */
-                        $systemAdmin = Auth::guard('system_admin')->user();
-                        $file = $data['replacement_file'] ?? null;
+            ->recordActions([
+                ActionGroup::make([
+                    EditAction::make(),
+                    Action::make('safe_replace')
+                        ->label(trans_message('blog_cms.media_replace_action'))
+                        ->icon('heroicon-o-arrow-path')
+                        ->color('warning')
+                        ->schema([
+                            Forms\Components\FileUpload::make('replacement_file')
+                                ->label('Файл')
+                                ->acceptedFileTypes(BlogMediaService::allowedMimeTypes())
+                                ->maxSize(BlogMediaService::maxUploadSizeKilobytes())
+                                ->imageEditor()
+                                ->storeFiles(false)
+                                ->required(),
+                            Forms\Components\TextInput::make('alt_text')
+                                ->label(trans_message('blog_cms.field_alt_text'))
+                                ->required(),
+                            Forms\Components\TextInput::make('caption')
+                                ->label('Подпись'),
+                        ])
+                        ->visible(fn (): bool => Auth::guard('system_admin')->user()?->hasSystemPermission('system_admin.blog.media.manage') ?? false)
+                        ->action(function (array $data, BlogMediaAsset $record): void {
+                            /** @var SystemAdmin $systemAdmin */
+                            $systemAdmin = Auth::guard('system_admin')->user();
+                            $file = $data['replacement_file'] ?? null;
 
-                        if (!$file instanceof TemporaryUploadedFile) {
-                            return;
-                        }
+                            if (! $file instanceof TemporaryUploadedFile) {
+                                return;
+                            }
 
-                        app(BlogMediaService::class)->replaceWithUploadedFile($record, $file, $systemAdmin, [
-                            'alt_text' => $data['alt_text'] ?? null,
-                            'caption' => $data['caption'] ?? null,
-                        ]);
+                            app(BlogMediaService::class)->replaceWithUploadedFile($record, $file, $systemAdmin, [
+                                'alt_text' => $data['alt_text'] ?? null,
+                                'caption' => $data['caption'] ?? null,
+                            ]);
 
-                        Notification::make()
-                            ->success()
-                            ->title(trans_message('blog_cms.media_replace_done'))
-                            ->send();
-                    }),
-                self::guardedDeleteAction('media_asset'),
+                            Notification::make()
+                                ->success()
+                                ->title(trans_message('blog_cms.media_replace_done'))
+                                ->send();
+                        }),
+                    self::guardedDeleteAction('media_asset'),
+                ]),
             ]);
     }
 

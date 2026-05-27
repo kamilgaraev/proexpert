@@ -4,17 +4,18 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
-use App\Filament\Support\TableEmptyState;
 use App\Filament\Resources\OrganizationResource\Pages;
 use App\Filament\Support\FilamentPermission;
 use App\Filament\Support\NavigationGroups;
 use App\Filament\Support\SystemAdminAccess;
+use App\Filament\Support\TableEmptyState;
 use App\Models\Organization;
 use App\Models\OrganizationSubscription;
 use App\Models\SystemAdmin;
 use App\Policies\SystemAdmin\OrganizationResourcePolicy;
 use App\Services\Filament\OrganizationAdminActionService;
 use Filament\Actions\Action;
+use Filament\Actions\ActionGroup;
 use Filament\Actions\EditAction;
 use Filament\Actions\ViewAction;
 use Filament\Forms;
@@ -35,11 +36,11 @@ class OrganizationResource extends Resource
 {
     protected static ?string $model = Organization::class;
 
-    protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-building-office-2';
+    protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-building-office-2';
 
     protected static ?int $navigationSort = 10;
 
-    public static function getNavigationGroup(): string | \UnitEnum | null
+    public static function getNavigationGroup(): string|\UnitEnum|null
     {
         return NavigationGroups::organizations();
     }
@@ -283,33 +284,35 @@ class OrganizationResource extends Resource
                     ])
                     ->query(fn (Builder $query, array $data): Builder => self::applyCreatedPeriodFilter($query, $data)),
             ])
-            ->actions([
-                ViewAction::make(),
-                EditAction::make(),
-                Action::make('suspend')
-                    ->label(trans_message('filament_actions.organization.suspend.label'))
-                    ->icon('heroicon-o-lock-closed')
-                    ->color('warning')
-                    ->requiresConfirmation()
-                    ->modalHeading(trans_message('filament_actions.organization.suspend.heading'))
-                    ->modalDescription(trans_message('filament_actions.organization.suspend.description'))
-                    ->modalSubmitActionLabel(trans_message('filament_actions.organization.suspend.confirm'))
-                    ->visible(fn (Organization $record): bool => self::canSuspendOrganization($record))
-                    ->action(function (Organization $record): void {
-                        self::suspendOrganization($record);
-                    }),
-                Action::make('reactivate')
-                    ->label(trans_message('filament_actions.organization.reactivate.label'))
-                    ->icon('heroicon-o-lock-open')
-                    ->color('success')
-                    ->requiresConfirmation()
-                    ->modalHeading(trans_message('filament_actions.organization.reactivate.heading'))
-                    ->modalDescription(trans_message('filament_actions.organization.reactivate.description'))
-                    ->modalSubmitActionLabel(trans_message('filament_actions.organization.reactivate.confirm'))
-                    ->visible(fn (Organization $record): bool => self::canReactivateOrganization($record))
-                    ->action(function (Organization $record): void {
-                        self::reactivateOrganization($record);
-                    }),
+            ->recordActions([
+                ActionGroup::make([
+                    ViewAction::make(),
+                    EditAction::make(),
+                    Action::make('suspend')
+                        ->label(trans_message('filament_actions.organization.suspend.label'))
+                        ->icon('heroicon-o-lock-closed')
+                        ->color('warning')
+                        ->requiresConfirmation()
+                        ->modalHeading(trans_message('filament_actions.organization.suspend.heading'))
+                        ->modalDescription(trans_message('filament_actions.organization.suspend.description'))
+                        ->modalSubmitActionLabel(trans_message('filament_actions.organization.suspend.confirm'))
+                        ->visible(fn (Organization $record): bool => self::canSuspendOrganization($record))
+                        ->action(function (Organization $record): void {
+                            self::suspendOrganization($record);
+                        }),
+                    Action::make('reactivate')
+                        ->label(trans_message('filament_actions.organization.reactivate.label'))
+                        ->icon('heroicon-o-lock-open')
+                        ->color('success')
+                        ->requiresConfirmation()
+                        ->modalHeading(trans_message('filament_actions.organization.reactivate.heading'))
+                        ->modalDescription(trans_message('filament_actions.organization.reactivate.description'))
+                        ->modalSubmitActionLabel(trans_message('filament_actions.organization.reactivate.confirm'))
+                        ->visible(fn (Organization $record): bool => self::canReactivateOrganization($record))
+                        ->action(function (Organization $record): void {
+                            self::reactivateOrganization($record);
+                        }),
+                ]),
             ])
             ->bulkActions([])
             ->defaultSort('created_at', 'desc');
@@ -446,7 +449,7 @@ class OrganizationResource extends Resource
                             ->where(function (Builder $query): void {
                                 $query->whereNull('ends_at')
                                     ->orWhere('ends_at', '>', now());
-                        });
+                            });
                     });
             }),
             'expired' => $query->where(function (Builder $query): void {
@@ -462,7 +465,7 @@ class OrganizationResource extends Resource
     }
 
     /**
-     * @param array<string, mixed> $data
+     * @param  array<string, mixed>  $data
      */
     private static function applyCreatedPeriodFilter(Builder $query, array $data): Builder
     {
@@ -546,10 +549,10 @@ class OrganizationResource extends Resource
         $megabytes = is_numeric($state) ? (float) $state : 0.0;
 
         if ($megabytes >= 1024.0) {
-            return number_format($megabytes / 1024, 1, '.', ' ') . ' ГБ';
+            return number_format($megabytes / 1024, 1, '.', ' ').' ГБ';
         }
 
-        return number_format($megabytes, 0, '.', ' ') . ' МБ';
+        return number_format($megabytes, 0, '.', ' ').' МБ';
     }
 
     /**

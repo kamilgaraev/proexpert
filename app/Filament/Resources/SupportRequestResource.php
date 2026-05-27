@@ -4,18 +4,19 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
-use App\Filament\Support\TableEmptyState;
 use App\Filament\Resources\SupportRequestResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Filament\Support\FilamentPermission;
 use App\Filament\Support\NavigationGroups;
 use App\Filament\Support\SystemAdminAccess;
+use App\Filament\Support\TableEmptyState;
 use App\Models\ContactForm;
 use App\Models\Organization;
 use App\Models\SystemAdmin;
 use App\Policies\SystemAdmin\SupportRequestPolicy;
 use App\Services\Filament\SupportWorkspaceService;
 use Filament\Actions\Action;
+use Filament\Actions\ActionGroup;
 use Filament\Actions\ViewAction;
 use Filament\Forms;
 use Filament\Infolists;
@@ -41,11 +42,11 @@ class SupportRequestResource extends Resource
 
     protected static string $systemAdminPolicy = SupportRequestPolicy::class;
 
-    protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-lifebuoy';
+    protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-lifebuoy';
 
     protected static ?int $navigationSort = 10;
 
-    public static function getNavigationGroup(): string | UnitEnum | null
+    public static function getNavigationGroup(): string|UnitEnum|null
     {
         return NavigationGroups::support();
     }
@@ -239,9 +240,11 @@ class SupportRequestResource extends Resource
                     ->searchable()
                     ->preload(),
             ])
-            ->actions([
-                ViewAction::make(),
-                ...self::supportRecordActions(),
+            ->recordActions([
+                ActionGroup::make([
+                    ViewAction::make(),
+                    ...self::supportRecordActions(),
+                ]),
             ])
             ->bulkActions([])
             ->defaultSort('last_activity_at', 'desc');
@@ -628,6 +631,6 @@ class SupportRequestResource extends Resource
                     'body' => $body,
                 ]);
             })
-            ->implode(PHP_EOL . PHP_EOL);
+            ->implode(PHP_EOL.PHP_EOL);
     }
 }
