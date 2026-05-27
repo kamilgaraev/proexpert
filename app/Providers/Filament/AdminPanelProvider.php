@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Providers\Filament;
 
+use App\Filament\Auth\SystemAdminLogin;
 use App\Filament\Pages\Dashboard;
 use App\Filament\Pages\EditSystemAdminProfile;
 use App\Filament\Support\FilamentPermission;
@@ -16,6 +17,7 @@ use App\Filament\Widgets\PlatformRiskStatsWidget;
 use App\Filament\Widgets\SaaSIncomeStatsWidget;
 use App\Filament\Widgets\SubscriptionPlanStatsWidget;
 use App\Filament\Widgets\UsersStatsWidget;
+use App\Http\Middleware\EnsureSystemAdminSessionIsFresh;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
@@ -43,7 +45,7 @@ class AdminPanelProvider extends PanelProvider
             ->id('admin')
             ->path('admin')
             ->viteTheme('resources/css/filament/admin/theme.css')
-            ->login()
+            ->login(SystemAdminLogin::class)
             ->profile(EditSystemAdminProfile::class, isSimple: false)
             ->colors([
                 'primary' => Color::Amber,
@@ -86,6 +88,7 @@ class AdminPanelProvider extends PanelProvider
             ])
             ->authMiddleware([
                 Authenticate::class,
-            ]);
+                EnsureSystemAdminSessionIsFresh::class,
+            ], isPersistent: true);
     }
 }
