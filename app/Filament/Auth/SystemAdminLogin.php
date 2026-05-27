@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Auth;
 
+use App\Http\Middleware\EnsureSystemAdminSessionIsFresh;
 use App\Models\SystemAdmin;
 use Filament\Auth\Http\Responses\Contracts\LoginResponse;
 use Filament\Auth\Pages\Login;
@@ -32,6 +33,10 @@ class SystemAdminLogin extends Login
         }
 
         session()->regenerateToken();
+        session()->put(
+            EnsureSystemAdminSessionIsFresh::SESSION_GENERATION_KEY,
+            EnsureSystemAdminSessionIsFresh::currentSessionGeneration(),
+        );
 
         return $response;
     }

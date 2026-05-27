@@ -15,6 +15,8 @@ use Symfony\Component\HttpFoundation\Response;
 
 class EnsureSystemAdminSessionIsFresh
 {
+    public const SESSION_GENERATION_KEY = 'system_admin_session_generation';
+
     public const SESSION_ROTATED_AT_KEY = 'system_admin_session_rotated_at';
 
     public function handle(Request $request, Closure $next): Response
@@ -35,6 +37,10 @@ class EnsureSystemAdminSessionIsFresh
             return $this->rejectRememberCookieLogin($request, $guard, $user);
         }
 
+        if (! $this->sessionMatchesCurrentGeneration($request)) {
+            return $this->rejectStaleSession($request, $guard, $user);
+        }
+
         $this->rotateSessionIdWhenNeeded($request);
 
         return $next($request);
@@ -52,6 +58,30 @@ class EnsureSystemAdminSessionIsFresh
         $request->session()->regenerateToken();
 
         return redirect()->to(Filament::getLoginUrl());
+    }
+
+    private function rejectStaleSession(Request $request, SessionGuard $guard, SystemAdmin $systemAdmin): RedirectResponse
+    {
+        $guard->logout();
+
+        $systemAdmin->forceFill([
+            'remember_token' => Str::random(60),
+        ])->save();
+
+        $request->session()->invalidate();
+        $request->session()->regenerateToken();
+
+        return redirect()->to(Filament::getLoginUrl());
+    }
+
+    private function sessionMatchesCurrentGeneration(Request $request): bool
+    {
+        return $request->session()->get(self::SESSION_GENERATION_KEY) === $this->currentSessionGeneration();
+    }
+
+    public static function currentSessionGeneration(): string
+    {
+        return (string) config('system_admin_security.session_generation', '2026-05-27-session-hardening');
     }
 
     private function rotateSessionIdWhenNeeded(Request $request): void

@@ -45,6 +45,7 @@ class SystemAdminSessionSecurityTest extends TestCase
         $this->assertStringNotContainsString('getRememberFormComponent()', $loginSource);
         $this->assertStringContainsString("\$this->data['remember'] = false;", $loginSource);
         $this->assertStringContainsString('session()->regenerateToken()', $loginSource);
+        $this->assertStringContainsString('SESSION_GENERATION_KEY', $loginSource);
         $this->assertStringContainsString('migrate(true)', (string) file_get_contents(app_path('Http/Middleware/EnsureSystemAdminSessionIsFresh.php')));
         $this->assertTrue(is_subclass_of(SystemAdminLogin::class, \Filament\Auth\Pages\Login::class));
     }
@@ -89,6 +90,23 @@ class SystemAdminSessionSecurityTest extends TestCase
         $this->assertTrue($response->isRedirect(Filament::getLoginUrl()));
     }
 
+    public function test_system_admin_stale_session_generation_is_rejected(): void
+    {
+        [$request, $guard, $admin] = $this->authenticatedRequest();
+
+        $oldRememberToken = $admin->remember_token;
+        $request->session()->put(EnsureSystemAdminSessionIsFresh::SESSION_GENERATION_KEY, 'old-generation');
+
+        $response = app(EnsureSystemAdminSessionIsFresh::class)->handle(
+            $request,
+            fn (): Response => new Response('ok'),
+        );
+
+        $this->assertFalse($guard->check());
+        $this->assertNotSame($oldRememberToken, $admin->fresh()->remember_token);
+        $this->assertTrue($response->isRedirect(Filament::getLoginUrl()));
+    }
+
     /**
      * @return array{0: Request, 1: SessionGuard, 2: SystemAdmin}
      */
@@ -104,6 +122,10 @@ class SystemAdminSessionSecurityTest extends TestCase
         /** @var SessionGuard $guard */
         $guard = Auth::guard('system_admin');
         $guard->setRequest($request);
+        $request->session()->put(
+            EnsureSystemAdminSessionIsFresh::SESSION_GENERATION_KEY,
+            EnsureSystemAdminSessionIsFresh::currentSessionGeneration(),
+        );
 
         $admin = SystemAdmin::factory()->create([
             'role' => 'super_admin',
