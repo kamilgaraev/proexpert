@@ -45,6 +45,7 @@ class SystemAdminSessionSecurityTest extends TestCase
         $this->assertStringNotContainsString('getRememberFormComponent()', $loginSource);
         $this->assertStringContainsString("\$this->data['remember'] = false;", $loginSource);
         $this->assertStringContainsString('session()->regenerateToken()', $loginSource);
+        $this->assertStringContainsString('migrate(true)', (string) file_get_contents(app_path('Http/Middleware/EnsureSystemAdminSessionIsFresh.php')));
         $this->assertTrue(is_subclass_of(SystemAdminLogin::class, \Filament\Auth\Pages\Login::class));
     }
 

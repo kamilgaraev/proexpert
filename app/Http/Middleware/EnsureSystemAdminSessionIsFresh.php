@@ -63,7 +63,7 @@ class EnsureSystemAdminSessionIsFresh
             return;
         }
 
-        $request->session()->regenerate();
+        $request->session()->migrate(true);
         $request->session()->put(self::SESSION_ROTATED_AT_KEY, now()->getTimestamp());
     }
 }
