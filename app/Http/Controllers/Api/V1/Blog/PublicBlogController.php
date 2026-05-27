@@ -52,7 +52,7 @@ class PublicBlogController extends Controller
         }
     }
 
-    public function article(string $slug): JsonResponse
+    public function article(Request $request, string $slug): JsonResponse
     {
         try {
             $article = $this->blogPublicService->getArticleBySlug($slug);
@@ -61,7 +61,9 @@ class PublicBlogController extends Controller
                 return LandingResponse::error(trans_message('blog_cms.article_not_found'), 404);
             }
 
-            $article->incrementViews();
+            if ($request->boolean('track_view', true)) {
+                $article->incrementViews();
+            }
 
             return LandingResponse::success(
                 new PublicBlogArticleResource($article->fresh(['category', 'systemAuthor', 'author', 'tags'])),
@@ -70,6 +72,30 @@ class PublicBlogController extends Controller
         } catch (\Throwable $e) {
             Log::error('Public blog article load failed', [
                 'slug' => $slug,
+                'error' => $e->getMessage(),
+            ]);
+
+            return LandingResponse::error(trans_message('blog_cms.article_not_found'), 500);
+        }
+    }
+
+    public function sitemap(): JsonResponse
+    {
+        try {
+            $articles = $this->blogPublicService
+                ->getSitemapArticles()
+                ->map(fn (BlogArticle $article): array => [
+                    'slug' => $article->slug,
+                    'url' => $article->url,
+                    'published_at' => $article->published_at?->toISOString(),
+                    'updated_at' => $article->updated_at?->toISOString(),
+                ])
+                ->values()
+                ->all();
+
+            return LandingResponse::success($articles, trans_message('blog_cms.articles_loaded'));
+        } catch (\Throwable $e) {
+            Log::error('Public blog sitemap articles load failed', [
                 'error' => $e->getMessage(),
             ]);
 

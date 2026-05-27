@@ -44,6 +44,16 @@ class BlogPublicService
             ->first();
     }
 
+    public function getSitemapArticles(): Collection
+    {
+        return BlogArticle::query()
+            ->marketing()
+            ->published()
+            ->where('noindex', false)
+            ->orderByDesc('updated_at')
+            ->get(['id', 'slug', 'published_at', 'updated_at', 'noindex']);
+    }
+
     public function getPreviewArticle(int $articleId): ?BlogArticle
     {
         return BlogArticle::query()
