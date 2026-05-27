@@ -1,0 +1,43 @@
+{
+  "name": "Оператор поддержки",
+  "slug": "support_operator",
+  "version": "1.0.0",
+  "context": "system_admin",
+  "interface": "admin",
+  "description": "Роль для обработки обращений поддержки, назначения ответственных, изменения статусов и эскалации.",
+  "system_permissions": [
+    "system_admin.access",
+    "system_admin.dashboard.view",
+    "system_admin.profile.view",
+    "system_admin.profile.update",
+    "system_admin.organizations.view",
+    "system_admin.users.view",
+    "system_admin.support.view",
+    "system_admin.support.manage"
+  ],
+  "module_permissions": {
+    "profile": [
+      "system_admin.profile.view",
+      "system_admin.profile.update"
+    ],
+    "organizations": [
+      "system_admin.organizations.view"
+    ],
+    "users": [
+      "system_admin.users.view"
+    ],
+    "support": [
+      "system_admin.support.view",
+      "system_admin.support.manage"
+    ]
+  },
+  "interface_access": [
+    "admin"
+  ],
+  "hierarchy": {
+    "can_manage_roles": [],
+    "cannot_manage": [
+      "*"
+    ]
+  }
+}

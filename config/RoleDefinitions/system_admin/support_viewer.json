@@ -1,0 +1,33 @@
+{
+  "name": "Специалист поддержки",
+  "slug": "support_viewer",
+  "version": "1.0.0",
+  "context": "system_admin",
+  "interface": "admin",
+  "description": "Роль для просмотра обращений поддержки без доступа к служебным данным и управлению.",
+  "system_permissions": [
+    "system_admin.access",
+    "system_admin.dashboard.view",
+    "system_admin.profile.view",
+    "system_admin.profile.update",
+    "system_admin.support.view"
+  ],
+  "module_permissions": {
+    "profile": [
+      "system_admin.profile.view",
+      "system_admin.profile.update"
+    ],
+    "support": [
+      "system_admin.support.view"
+    ]
+  },
+  "interface_access": [
+    "admin"
+  ],
+  "hierarchy": {
+    "can_manage_roles": [],
+    "cannot_manage": [
+      "*"
+    ]
+  }
+}

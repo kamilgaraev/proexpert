@@ -21,6 +21,10 @@ class ContactFormService
      */
     public function submit(array $payload): ContactForm
     {
+        $payload['priority'] ??= ContactForm::PRIORITY_NORMAL;
+        $payload['channel'] ??= ContactForm::CHANNEL_PUBLIC_FORM;
+        $payload['last_activity_at'] ??= now();
+
         $contactForm = ContactForm::create($payload);
         $telegramSent = false;
         $emailSent = false;

@@ -867,6 +867,7 @@ class CustomerPortalService
         $user->loadMissing('currentOrganization');
 
         $contactForm = ContactForm::create([
+            'organization_id' => $organizationId,
             'name' => $user->name,
             'email' => $user->email,
             'phone' => $payload['phone'] ?? $user->phone,
@@ -878,6 +879,9 @@ class CustomerPortalService
             'consent_version' => 'customer-v1',
             'page_source' => 'customer-portal',
             'status' => ContactForm::STATUS_NEW,
+            'priority' => ContactForm::PRIORITY_NORMAL,
+            'channel' => ContactForm::CHANNEL_CUSTOMER_PORTAL,
+            'last_activity_at' => now(),
             'telegram_data' => [
                 'organization_id' => $organizationId,
                 'user_id' => $user->id,
@@ -895,7 +899,8 @@ class CustomerPortalService
             ->where('page_source', 'customer-portal')
             ->where(function (Builder $builder) use ($organizationId, $user): void {
                 $builder
-                    ->whereRaw("(telegram_data->>'organization_id') = ?", [(string) $organizationId])
+                    ->where('organization_id', $organizationId)
+                    ->orWhereRaw("(telegram_data->>'organization_id') = ?", [(string) $organizationId])
                     ->orWhere(function (Builder $inner) use ($user): void {
                         $inner
                             ->where('email', $user->email)
