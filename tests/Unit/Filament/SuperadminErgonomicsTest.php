@@ -70,7 +70,7 @@ class SuperadminErgonomicsTest extends TestCase
             $source,
         );
         $this->assertLessThan(
-            strpos($source, "ActionGroup::make(["),
+            strpos($source, 'ActionGroup::make(['),
             strpos($source, "Action::make('autosave_now')"),
         );
     }
@@ -154,9 +154,37 @@ class SuperadminErgonomicsTest extends TestCase
 
         $themeSource = (string) file_get_contents($themePath);
 
-        $this->assertStringContainsString("vendor/filament/filament/dist/theme.css", $themeSource);
+        $this->assertStringContainsString('vendor/filament/filament/dist/theme.css', $themeSource);
         $this->assertStringContainsString('@tailwind base;', $themeSource);
         $this->assertStringContainsString('@tailwind utilities;', $themeSource);
+    }
+
+    public function test_filament_vite_theme_manifest_and_assets_are_available_for_production(): void
+    {
+        $providerSource = (string) file_get_contents(app_path('Providers/Filament/AdminPanelProvider.php'));
+        $manifestPath = public_path('build/manifest.json');
+
+        $this->assertStringContainsString("->viteTheme('resources/css/filament/admin/theme.css')", $providerSource);
+        $this->assertFileExists($manifestPath);
+
+        $manifest = json_decode((string) file_get_contents($manifestPath), true, flags: JSON_THROW_ON_ERROR);
+
+        $this->assertIsArray($manifest);
+        $this->assertArrayHasKey('resources/css/filament/admin/theme.css', $manifest);
+
+        $trackedFiles = $this->trackedPublicBuildFiles();
+
+        $this->assertContains('public/build/manifest.json', $trackedFiles);
+
+        foreach ($manifest as $entry) {
+            $this->assertIsArray($entry);
+            $this->assertIsString($entry['file'] ?? null);
+
+            $relativePath = 'public/build/'.$entry['file'];
+
+            $this->assertFileExists(base_path($relativePath));
+            $this->assertContains($relativePath, $trackedFiles);
+        }
     }
 
     public function test_blog_editor_custom_views_keep_business_friendly_russian_copy(): void
@@ -166,5 +194,20 @@ class SuperadminErgonomicsTest extends TestCase
         $this->assertStringNotContainsString('Outline', $outlineSource);
         $this->assertStringContainsString("trans_message('blog_cms.editor_outline_title')", $outlineSource);
         $this->assertStringContainsString("trans_message('blog_cms.editor_outline_empty')", $outlineSource);
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function trackedPublicBuildFiles(): array
+    {
+        exec('git ls-files -- public/build', $output, $exitCode);
+
+        $this->assertSame(0, $exitCode);
+
+        return array_values(array_filter(
+            $output,
+            static fn (string $path): bool => $path !== '',
+        ));
     }
 }
