@@ -10,6 +10,7 @@ use App\Filament\Support\FilamentPermission;
 use App\Filament\Support\SystemAdminAccess;
 use Filament\Widgets\StatsOverviewWidget as BaseWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Number;
 
 use function trans_message;
@@ -29,14 +30,9 @@ class SaaSIncomeStatsWidget extends BaseWidget
 
     protected function getStats(): array
     {
-        $totalIncome = PaymentTransaction::query()
-            ->where('status', PaymentTransactionStatus::COMPLETED)
-            ->sum('amount') ?? 0;
-            
-        $monthIncome = PaymentTransaction::query()
-            ->where('status', PaymentTransactionStatus::COMPLETED)
-            ->where('created_at', '>=', now()->startOfMonth())
-            ->sum('amount') ?? 0;
+        [$totalIncome, $monthIncome] = self::paymentTransactionsTableIsAvailable()
+            ? self::incomeTotals()
+            : [0, 0];
 
         return [
             Stat::make(trans_message('widgets.saas_income_stats.total_income'), self::formatCurrency($totalIncome))
@@ -51,9 +47,42 @@ class SaaSIncomeStatsWidget extends BaseWidget
         ];
     }
 
+    /**
+     * @return array{0: int|float|string|null, 1: int|float|string|null}
+     */
+    private static function incomeTotals(): array
+    {
+        $totalIncome = PaymentTransaction::query()
+            ->where('status', PaymentTransactionStatus::COMPLETED)
+            ->sum('amount') ?? 0;
+
+        $monthIncome = PaymentTransaction::query()
+            ->where('status', PaymentTransactionStatus::COMPLETED)
+            ->where('created_at', '>=', now()->startOfMonth())
+            ->sum('amount') ?? 0;
+
+        return [$totalIncome, $monthIncome];
+    }
+
+    private static function paymentTransactionsTableIsAvailable(): bool
+    {
+        $table = (new PaymentTransaction())->getTable();
+
+        return Schema::hasTable($table)
+            && Schema::hasColumn($table, 'amount')
+            && Schema::hasColumn($table, 'status')
+            && Schema::hasColumn($table, 'created_at');
+    }
+
     private static function formatCurrency(int | float | string | null $amount): string
     {
-        return Number::currency(self::normalizeCurrencyAmount($amount), 'RUB', 'ru');
+        $normalizedAmount = self::normalizeCurrencyAmount($amount);
+
+        if (extension_loaded('intl')) {
+            return Number::currency($normalizedAmount, 'RUB', 'ru');
+        }
+
+        return number_format($normalizedAmount, 2, ',', ' ') . ' ₽';
     }
 
     private static function normalizeCurrencyAmount(int | float | string | null $amount): float
