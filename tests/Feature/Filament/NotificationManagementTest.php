@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Filament;
 
-use App\BusinessModules\Features\Notifications\Models\NotificationTemplate;
-use App\BusinessModules\Features\Notifications\Models\Notification as DomainNotification;
 use App\BusinessModules\Features\Notifications\Jobs\SendNotificationJob;
+use App\BusinessModules\Features\Notifications\Models\Notification as DomainNotification;
+use App\BusinessModules\Features\Notifications\Models\NotificationTemplate;
 use App\Filament\Resources\NotificationTemplateResource;
 use App\Models\Activity\ActivityEvent;
 use App\Models\Organization;
@@ -356,6 +356,64 @@ class NotificationManagementTest extends TestCase
             'notifiable_id' => $otherOrganizationUser->id,
         ]);
         Queue::assertPushed(SendNotificationJob::class, 1);
+    }
+
+    public function test_organization_template_recipient_picker_shows_only_active_organization_members(): void
+    {
+        $targetOrganization = Organization::factory()->create(['name' => 'Target Org']);
+        $otherOrganization = Organization::factory()->create(['name' => 'Other Org']);
+        $targetUser = User::factory()->create([
+            'name' => 'Target Member',
+            'email' => 'target-picker@example.test',
+            'is_active' => true,
+            'current_organization_id' => $targetOrganization->id,
+        ]);
+        $otherOrganizationUser = User::factory()->create([
+            'name' => 'Outside Member',
+            'email' => 'outside-picker@example.test',
+            'is_active' => true,
+            'current_organization_id' => $otherOrganization->id,
+        ]);
+        $inactiveMembershipUser = User::factory()->create([
+            'name' => 'Inactive Member',
+            'email' => 'inactive-picker@example.test',
+            'is_active' => true,
+            'current_organization_id' => $targetOrganization->id,
+        ]);
+        $inactiveUser = User::factory()->create([
+            'name' => 'Inactive User',
+            'email' => 'inactive-user-picker@example.test',
+            'is_active' => false,
+            'current_organization_id' => $targetOrganization->id,
+        ]);
+        $targetUser->organizations()->attach($targetOrganization->id, ['is_active' => true]);
+        $otherOrganizationUser->organizations()->attach($otherOrganization->id, ['is_active' => true]);
+        $inactiveMembershipUser->organizations()->attach($targetOrganization->id, ['is_active' => false]);
+        $inactiveUser->organizations()->attach($targetOrganization->id, ['is_active' => true]);
+        $template = $this->templateFixture([
+            'organization_id' => $targetOrganization->id,
+            'channel' => 'in_app',
+        ]);
+
+        $options = NotificationTemplateResource::recipientUserOptions($template);
+        $searchOptions = NotificationTemplateResource::recipientUserOptions($template, 'target');
+        $labels = NotificationTemplateResource::recipientUserLabels($template, [
+            $targetUser->id,
+            $otherOrganizationUser->id,
+        ]);
+
+        $this->assertSame([
+            $targetUser->id => 'Target Member <target-picker@example.test>',
+        ], $options);
+        $this->assertSame([
+            $targetUser->id => 'Target Member <target-picker@example.test>',
+        ], $searchOptions);
+        $this->assertSame([
+            $targetUser->id => 'Target Member <target-picker@example.test>',
+        ], $labels);
+        $this->assertArrayNotHasKey($otherOrganizationUser->id, $options);
+        $this->assertArrayNotHasKey($inactiveMembershipUser->id, $options);
+        $this->assertArrayNotHasKey($inactiveUser->id, $options);
     }
 
     private function templateFixture(array $overrides = []): NotificationTemplate
