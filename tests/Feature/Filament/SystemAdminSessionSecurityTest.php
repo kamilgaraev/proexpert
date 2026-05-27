@@ -90,11 +90,12 @@ class SystemAdminSessionSecurityTest extends TestCase
         $this->assertTrue($response->isRedirect(Filament::getLoginUrl()));
     }
 
-    public function test_system_admin_stale_session_generation_is_rejected(): void
+    public function test_system_admin_stale_session_generation_is_refreshed_without_logout(): void
     {
         [$request, $guard, $admin] = $this->authenticatedRequest();
 
         $oldRememberToken = $admin->remember_token;
+        $oldSessionId = $request->session()->getId();
         $request->session()->put(EnsureSystemAdminSessionIsFresh::SESSION_GENERATION_KEY, 'old-generation');
 
         $response = app(EnsureSystemAdminSessionIsFresh::class)->handle(
@@ -102,9 +103,14 @@ class SystemAdminSessionSecurityTest extends TestCase
             fn (): Response => new Response('ok'),
         );
 
-        $this->assertFalse($guard->check());
-        $this->assertNotSame($oldRememberToken, $admin->fresh()->remember_token);
-        $this->assertTrue($response->isRedirect(Filament::getLoginUrl()));
+        $this->assertSame('ok', $response->getContent());
+        $this->assertTrue($guard->check());
+        $this->assertSame($oldRememberToken, $admin->fresh()->remember_token);
+        $this->assertNotSame($oldSessionId, $request->session()->getId());
+        $this->assertSame(
+            EnsureSystemAdminSessionIsFresh::currentSessionGeneration(),
+            $request->session()->get(EnsureSystemAdminSessionIsFresh::SESSION_GENERATION_KEY),
+        );
     }
 
     /**

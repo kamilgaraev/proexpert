@@ -38,7 +38,7 @@ class EnsureSystemAdminSessionIsFresh
         }
 
         if (! $this->sessionMatchesCurrentGeneration($request)) {
-            return $this->rejectStaleSession($request, $guard, $user);
+            $this->refreshStaleSession($request);
         }
 
         $this->rotateSessionIdWhenNeeded($request);
@@ -60,18 +60,11 @@ class EnsureSystemAdminSessionIsFresh
         return redirect()->to(Filament::getLoginUrl());
     }
 
-    private function rejectStaleSession(Request $request, SessionGuard $guard, SystemAdmin $systemAdmin): RedirectResponse
+    private function refreshStaleSession(Request $request): void
     {
-        $guard->logout();
-
-        $systemAdmin->forceFill([
-            'remember_token' => Str::random(60),
-        ])->save();
-
-        $request->session()->invalidate();
-        $request->session()->regenerateToken();
-
-        return redirect()->to(Filament::getLoginUrl());
+        $request->session()->migrate(true);
+        $request->session()->put(self::SESSION_GENERATION_KEY, $this->currentSessionGeneration());
+        $request->session()->put(self::SESSION_ROTATED_AT_KEY, now()->getTimestamp());
     }
 
     private function sessionMatchesCurrentGeneration(Request $request): bool
