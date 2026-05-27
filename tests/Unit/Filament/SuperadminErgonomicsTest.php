@@ -115,4 +115,33 @@ class SuperadminErgonomicsTest extends TestCase
         $this->assertLessThan($publicationPosition, $titlePosition);
         $this->assertLessThan($bodyPosition, $publicationPosition);
     }
+
+    public function test_filament_panel_loads_project_theme_for_custom_blog_editor_views(): void
+    {
+        $providerSource = (string) file_get_contents(app_path('Providers/Filament/AdminPanelProvider.php'));
+        $viteSource = (string) file_get_contents(base_path('vite.config.js'));
+        $tailwindSource = (string) file_get_contents(base_path('tailwind.config.js'));
+        $themePath = resource_path('css/filament/admin/theme.css');
+
+        $this->assertStringContainsString("->viteTheme('resources/css/filament/admin/theme.css')", $providerSource);
+        $this->assertStringContainsString("'resources/css/filament/admin/theme.css'", $viteSource);
+        $this->assertStringContainsString("darkMode: 'class'", $tailwindSource);
+        $this->assertStringContainsString("'./app/Filament/**/*.php'", $tailwindSource);
+        $this->assertFileExists($themePath);
+
+        $themeSource = (string) file_get_contents($themePath);
+
+        $this->assertStringContainsString("vendor/filament/filament/dist/theme.css", $themeSource);
+        $this->assertStringContainsString('@tailwind base;', $themeSource);
+        $this->assertStringContainsString('@tailwind utilities;', $themeSource);
+    }
+
+    public function test_blog_editor_custom_views_keep_business_friendly_russian_copy(): void
+    {
+        $outlineSource = (string) file_get_contents(resource_path('views/filament/blog/article-editor/outline.blade.php'));
+
+        $this->assertStringNotContainsString('Outline', $outlineSource);
+        $this->assertStringContainsString("trans_message('blog_cms.editor_outline_title')", $outlineSource);
+        $this->assertStringContainsString("trans_message('blog_cms.editor_outline_empty')", $outlineSource);
+    }
 }
