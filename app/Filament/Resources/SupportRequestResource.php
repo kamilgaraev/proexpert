@@ -65,6 +65,11 @@ class SupportRequestResource extends Resource
         return trans_message('support_workspace.plural_model_label');
     }
 
+    public static function getEloquentQuery(): Builder
+    {
+        return parent::getEloquentQuery()->customerPortalTickets();
+    }
+
     public static function form(Schema $schema): Schema
     {
         return $schema->components([]);
@@ -166,7 +171,6 @@ class SupportRequestResource extends Resource
     {
         return TableEmptyState::for($table, 'support_requests', 'heroicon-o-lifebuoy')
             ->modifyQueryUsing(fn (Builder $query): Builder => $query
-                ->customerPortalTickets()
                 ->with(['organization', 'assignedSystemAdmin'])
                 ->latest('last_activity_at')
                 ->latest('created_at'))

@@ -173,6 +173,33 @@ class SupportWorkspaceTest extends TestCase
         $this->assertNotContains($manualRequest->id, $visibleIds);
     }
 
+    public function test_support_resource_base_query_excludes_public_leads(): void
+    {
+        $portalTicket = $this->supportRequest([
+            'subject' => 'РќСѓР¶РЅР° РїРѕРјРѕС‰СЊ РІ РєР°Р±РёРЅРµС‚Рµ',
+            'channel' => ContactForm::CHANNEL_CUSTOMER_PORTAL,
+            'page_source' => 'customer-portal',
+        ]);
+        $siteLead = $this->supportRequest([
+            'subject' => 'Р—Р°РїСЂРѕСЃ РґРµРјРѕРЅСЃС‚СЂР°С†РёРё',
+            'channel' => ContactForm::CHANNEL_PUBLIC_FORM,
+            'page_source' => 'landing-demo',
+        ]);
+        $manualRequest = $this->supportRequest([
+            'subject' => 'Р’РЅСѓС‚СЂРµРЅРЅСЏСЏ СЂСѓС‡РЅР°СЏ Р·Р°РїРёСЃСЊ',
+            'channel' => ContactForm::CHANNEL_MANUAL,
+            'page_source' => 'manual',
+        ]);
+
+        $visibleIds = SupportRequestResource::getEloquentQuery()
+            ->pluck('id')
+            ->all();
+
+        $this->assertContains($portalTicket->id, $visibleIds);
+        $this->assertNotContains($siteLead->id, $visibleIds);
+        $this->assertNotContains($manualRequest->id, $visibleIds);
+    }
+
     public function test_support_operator_can_reply_to_customer_and_record_ticket_history(): void
     {
         Mail::fake();
