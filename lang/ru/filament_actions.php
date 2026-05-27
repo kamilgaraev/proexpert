@@ -3,6 +3,10 @@
 declare(strict_types=1);
 
 return [
+    'audit' => [
+        'deleted_title' => 'Удалена запись: :subject',
+        'deleted_description' => 'Системный администратор удалил запись :subject через суперадминку.',
+    ],
     'delete' => [
         'confirm' => 'Удалить',
         'article' => [
@@ -31,4 +35,3 @@ return [
         ],
     ],
 ];
-

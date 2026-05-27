@@ -12,7 +12,7 @@ use Illuminate\Support\Carbon;
 final class ActivityEventData
 {
     public function __construct(
-        public readonly int $organizationId,
+        public readonly ?int $organizationId,
         public readonly string $module,
         public readonly string $eventType,
         public readonly ActivityActionEnum|string $action,
@@ -39,7 +39,7 @@ final class ActivityEventData
     ) {}
 
     public static function make(
-        int $organizationId,
+        ?int $organizationId,
         string $module,
         string $eventType,
         ActivityActionEnum|string $action,
