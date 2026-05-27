@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace App\Services\Filament;
 
 use App\Enums\Activity\ActivityActionEnum;
+use App\Mail\SupportTicketReplyMail;
 use App\Models\Activity\ActivityEvent;
 use App\Models\ContactForm;
 use App\Models\Organization;
 use App\Models\SystemAdmin;
 use DomainException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
 
 use function trans_message;
 
@@ -111,6 +113,7 @@ final class SupportWorkspaceService
             $before = $this->stateSnapshot($supportRequest);
             $notes = is_array($supportRequest->internal_notes) ? $supportRequest->internal_notes : [];
             $notes[] = [
+                'type' => 'internal_note',
                 'body' => $body,
                 'author_system_admin_id' => (int) $actor->id,
                 'author_name' => $actor->name,
@@ -192,6 +195,75 @@ final class SupportWorkspaceService
                 before: $before,
                 after: $this->stateSnapshot($supportRequest),
                 operation: 'escalate',
+            );
+        });
+    }
+
+    public function replyToCustomer(ContactForm $supportRequest, string $subject, string $body, SystemAdmin $actor): ?ActivityEvent
+    {
+        $subject = trim($subject);
+        $body = trim($body);
+        $recipientEmail = trim((string) $supportRequest->email);
+
+        if ($recipientEmail === '') {
+            throw new DomainException(trans_message('support_workspace.errors.empty_recipient_email'));
+        }
+
+        if ($subject === '') {
+            throw new DomainException(trans_message('support_workspace.errors.empty_reply_subject'));
+        }
+
+        if ($body === '') {
+            throw new DomainException(trans_message('support_workspace.errors.empty_reply_body'));
+        }
+
+        Mail::to($recipientEmail)->send(new SupportTicketReplyMail(
+            recipientName: (string) $supportRequest->name,
+            recipientEmail: $recipientEmail,
+            requestSubject: (string) $supportRequest->subject,
+            subjectText: $subject,
+            bodyText: $body,
+            operatorName: $actor->name,
+        ));
+
+        return DB::transaction(function () use ($supportRequest, $subject, $body, $actor, $recipientEmail): ?ActivityEvent {
+            $supportRequest->refresh();
+            $before = $this->stateSnapshot($supportRequest);
+            $notes = is_array($supportRequest->internal_notes) ? $supportRequest->internal_notes : [];
+            $now = now();
+            $notes[] = [
+                'type' => 'customer_reply',
+                'subject' => $subject,
+                'body' => $body,
+                'sent_to' => $recipientEmail,
+                'author_system_admin_id' => (int) $actor->id,
+                'author_name' => $actor->name,
+                'created_at' => $now->toISOString(),
+            ];
+
+            $supportRequest->forceFill([
+                'status' => ContactForm::STATUS_PROCESSING,
+                'is_processed' => true,
+                'processed_at' => $supportRequest->processed_at ?? $now,
+                'internal_notes' => array_values($notes),
+                'last_activity_at' => $now,
+            ])->save();
+
+            return $this->recordSupportAction(
+                actor: $actor,
+                supportRequest: $supportRequest->refresh(),
+                eventType: 'system_admin.support.customer_replied',
+                action: ActivityActionEnum::Updated,
+                titleKey: 'filament_actions.audit.support_customer_replied_title',
+                descriptionKey: 'filament_actions.audit.support_customer_replied_description',
+                before: $before,
+                after: $this->stateSnapshot($supportRequest),
+                operation: 'reply_to_customer',
+                context: [
+                    'sent_to' => $recipientEmail,
+                    'reply_subject' => $subject,
+                    'reply_length' => mb_strlen($body),
+                ],
             );
         });
     }

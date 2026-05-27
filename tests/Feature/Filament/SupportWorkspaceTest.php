@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Filament;
 
 use App\Filament\Resources\SupportRequestResource;
+use App\Mail\SupportTicketReplyMail;
 use App\Models\Activity\ActivityEvent;
 use App\Models\ContactForm;
 use App\Models\Organization;
@@ -14,6 +15,7 @@ use App\Policies\SystemAdmin\SupportRequestPolicy;
 use App\Services\Filament\SupportWorkspaceService;
 use App\Services\Security\SystemAdminRoleService;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
 
 class SupportWorkspaceTest extends TestCase
@@ -60,6 +62,7 @@ class SupportWorkspaceTest extends TestCase
         $this->assertTrue($policy->addInternalNote($operator, $request));
         $this->assertTrue($policy->linkOrganization($operator, $request));
         $this->assertTrue($policy->escalate($operator, $request));
+        $this->assertTrue($policy->reply($operator, $request));
         $this->assertFalse(SupportRequestResource::canDelete($request));
         $this->assertFalse(SupportRequestResource::canDeleteAny());
 
@@ -96,6 +99,7 @@ class SupportWorkspaceTest extends TestCase
         $this->assertNotNull($request->escalated_at);
         $this->assertSame($actor->id, $request->escalated_by_system_admin_id);
         $this->assertCount(1, $request->internal_notes);
+        $this->assertSame('internal_note', $request->internal_notes[0]['type']);
         $this->assertSame($actor->id, $request->internal_notes[0]['author_system_admin_id']);
 
         foreach ([
@@ -165,6 +169,56 @@ class SupportWorkspaceTest extends TestCase
         $this->assertContains($portalTicket->id, $visibleIds);
         $this->assertNotContains($siteLead->id, $visibleIds);
         $this->assertNotContains($manualRequest->id, $visibleIds);
+    }
+
+    public function test_support_operator_can_reply_to_customer_and_record_ticket_history(): void
+    {
+        Mail::fake();
+
+        $actor = SystemAdmin::factory()->role('support_operator')->create([
+            'is_active' => true,
+            'name' => 'Support Operator',
+        ]);
+        $request = $this->supportRequest([
+            'email' => 'customer-ticket@example.test',
+            'subject' => 'Не открывается акт',
+            'message' => 'В кабинете не открывается акт выполненных работ.',
+            'status' => ContactForm::STATUS_NEW,
+            'is_processed' => false,
+        ]);
+
+        app(SupportWorkspaceService::class)->replyToCustomer(
+            supportRequest: $request,
+            subject: 'Re: Не открывается акт',
+            body: 'Проверили доступ и обновили права. Попробуйте открыть акт еще раз.',
+            actor: $actor,
+        );
+
+        $request->refresh();
+
+        Mail::assertSent(SupportTicketReplyMail::class, function (SupportTicketReplyMail $mail): bool {
+            $mail->assertHasSubject('Ответ поддержки: Re: Не открывается акт');
+
+            return $mail->hasTo('customer-ticket@example.test')
+                && $mail->bodyText === 'Проверили доступ и обновили права. Попробуйте открыть акт еще раз.'
+                && $mail->requestSubject === 'Не открывается акт';
+        });
+
+        $this->assertSame(ContactForm::STATUS_PROCESSING, $request->status);
+        $this->assertTrue($request->is_processed);
+        $this->assertNotNull($request->processed_at);
+        $this->assertNotNull($request->last_activity_at);
+        $this->assertCount(1, $request->internal_notes);
+        $this->assertSame('customer_reply', $request->internal_notes[0]['type']);
+        $this->assertSame('customer-ticket@example.test', $request->internal_notes[0]['sent_to']);
+        $this->assertSame($actor->id, $request->internal_notes[0]['author_system_admin_id']);
+
+        $this->assertDatabaseHas('activity_events', [
+            'event_type' => 'system_admin.support.customer_replied',
+            'actor_type' => 'system_admin',
+            'subject_type' => ContactForm::class,
+            'subject_id' => $request->id,
+        ]);
     }
 
     private function actingAsRole(string $role): SystemAdmin

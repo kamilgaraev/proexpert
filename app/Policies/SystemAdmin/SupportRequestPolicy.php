@@ -65,6 +65,11 @@ class SupportRequestPolicy extends BaseSystemAdminPolicy
         return $this->manage($systemAdmin);
     }
 
+    public function reply(SystemAdmin $systemAdmin, ContactForm $supportRequest): bool
+    {
+        return $this->manage($systemAdmin);
+    }
+
     public function viewTechnicalFields(SystemAdmin $systemAdmin, ContactForm $supportRequest): bool
     {
         return $this->manage($systemAdmin);

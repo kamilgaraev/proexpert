@@ -42,6 +42,8 @@ return [
         'support_status_changed_description' => 'Системный администратор изменил статус обращения :request.',
         'support_internal_note_added_title' => 'Добавлена заметка к обращению: :request',
         'support_internal_note_added_description' => 'Системный администратор добавил внутреннюю заметку к обращению :request.',
+        'support_customer_replied_title' => 'Отправлен ответ клиенту по обращению: :request',
+        'support_customer_replied_description' => 'Системный администратор отправил клиенту ответ по обращению :request.',
         'support_organization_linked_title' => 'Обращение связано с организацией: :request',
         'support_organization_linked_description' => 'Системный администратор обновил связь обращения :request с организацией.',
         'support_escalated_title' => 'Обращение эскалировано: :request',

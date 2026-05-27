@@ -307,6 +307,29 @@ class SupportRequestResource extends Resource
                 ->action(function (array $data, ContactForm $record): void {
                     self::addInternalNote($record, $data);
                 }),
+            Action::make('reply_to_customer')
+                ->label(trans_message('support_workspace.actions.reply.label'))
+                ->icon('heroicon-o-paper-airplane')
+                ->modalHeading(trans_message('support_workspace.actions.reply.heading'))
+                ->modalSubmitActionLabel(trans_message('support_workspace.actions.reply.confirm'))
+                ->schema([
+                    Forms\Components\TextInput::make('subject')
+                        ->label(trans_message('support_workspace.fields.reply_subject'))
+                        ->default(fn (ContactForm $record): string => trans_message('support_workspace.reply_default_subject', [
+                            'subject' => (string) $record->subject,
+                        ]))
+                        ->required()
+                        ->maxLength(255),
+                    Forms\Components\Textarea::make('body')
+                        ->label(trans_message('support_workspace.fields.reply_body'))
+                        ->required()
+                        ->maxLength(5000)
+                        ->rows(8),
+                ])
+                ->visible(fn (ContactForm $record): bool => self::canReplySupport($record))
+                ->action(function (array $data, ContactForm $record): void {
+                    self::replyToCustomer($record, $data);
+                }),
             Action::make('link_organization')
                 ->label(trans_message('support_workspace.actions.link_organization.label'))
                 ->icon('heroicon-o-building-office-2')
@@ -473,6 +496,14 @@ class SupportRequestResource extends Resource
         return SystemAdminAccess::can(FilamentPermission::SUPPORT_MANAGE);
     }
 
+    private static function canReplySupport(ContactForm $record): bool
+    {
+        $systemAdmin = Auth::guard('system_admin')->user();
+
+        return $systemAdmin instanceof SystemAdmin
+            && app(SupportRequestPolicy::class)->reply($systemAdmin, $record);
+    }
+
     private static function assignRequest(ContactForm $record, array $data): void
     {
         app(SupportWorkspaceService::class)->assign(
@@ -504,6 +535,18 @@ class SupportRequestResource extends Resource
         );
 
         self::success('support_workspace.actions.add_internal_note.success');
+    }
+
+    private static function replyToCustomer(ContactForm $record, array $data): void
+    {
+        app(SupportWorkspaceService::class)->replyToCustomer(
+            $record,
+            (string) ($data['subject'] ?? ''),
+            (string) ($data['body'] ?? ''),
+            self::currentSystemAdmin(),
+        );
+
+        self::success('support_workspace.actions.reply.success');
     }
 
     private static function linkOrganization(ContactForm $record, array $data): void
@@ -565,7 +608,21 @@ class SupportRequestResource extends Resource
                 $createdAt = trim((string) ($note['created_at'] ?? ''));
                 $body = trim((string) ($note['body'] ?? ''));
 
-                return trim(sprintf('%s %s: %s', $createdAt, $author, $body));
+                if (($note['type'] ?? null) === 'customer_reply') {
+                    return trans_message('support_workspace.history.customer_reply', [
+                        'created_at' => $createdAt,
+                        'author' => $author,
+                        'subject' => trim((string) ($note['subject'] ?? '')),
+                        'sent_to' => trim((string) ($note['sent_to'] ?? '')),
+                        'body' => $body,
+                    ]);
+                }
+
+                return trans_message('support_workspace.history.internal_note', [
+                    'created_at' => $createdAt,
+                    'author' => $author,
+                    'body' => $body,
+                ]);
             })
             ->implode(PHP_EOL . PHP_EOL);
     }
