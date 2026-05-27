@@ -126,7 +126,7 @@ return [
         'subscription_pending_payment' => 'Ожидает оплаты',
         'subscription_canceled' => 'Отменена',
         'subscription_ends_at' => 'Действует до',
-        'legacy_subscription_expires_at' => 'Срок доступа',
+        'subscription_expires_at' => 'Срок доступа',
         'no_subscription' => 'Нет подписки',
         'users_count' => 'Пользователи',
         'projects_count' => 'Проекты',

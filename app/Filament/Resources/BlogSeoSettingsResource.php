@@ -48,14 +48,14 @@ class BlogSeoSettingsResource extends Resource
                     Forms\Components\TextInput::make('site_name')->label('Название сайта')->required(),
                     Forms\Components\Textarea::make('site_description')->label('Описание')->rows(3),
                     Forms\Components\TagsInput::make('site_keywords')->label('Ключевые слова'),
-                    Forms\Components\TextInput::make('default_og_image')->label('OG image'),
-                    Forms\Components\Toggle::make('auto_generate_meta_description')->label('Автогенерация meta description'),
-                    Forms\Components\TextInput::make('meta_description_length')->label('Длина meta description')->numeric(),
-                    Forms\Components\Toggle::make('enable_breadcrumbs')->label('Breadcrumbs'),
-                    Forms\Components\Toggle::make('enable_structured_data')->label('Structured data'),
-                    Forms\Components\Toggle::make('enable_sitemap')->label('Sitemap'),
+                    Forms\Components\TextInput::make('default_og_image')->label(trans_message('blog_cms.field_open_graph_image')),
+                    Forms\Components\Toggle::make('auto_generate_meta_description')->label(trans_message('blog_cms.field_auto_seo_description')),
+                    Forms\Components\TextInput::make('meta_description_length')->label(trans_message('blog_cms.field_seo_description_length'))->numeric(),
+                    Forms\Components\Toggle::make('enable_breadcrumbs')->label(trans_message('blog_cms.field_breadcrumbs')),
+                    Forms\Components\Toggle::make('enable_structured_data')->label(trans_message('blog_cms.field_structured_data')),
+                    Forms\Components\Toggle::make('enable_sitemap')->label(trans_message('blog_cms.field_sitemap')),
                     Forms\Components\Toggle::make('enable_rss')->label('RSS'),
-                    Forms\Components\Textarea::make('robots_txt')->label('robots.txt')->rows(6),
+                    Forms\Components\Textarea::make('robots_txt')->label(trans_message('blog_cms.field_robots_txt'))->rows(6),
                 ])
                 ->columns(2),
         ]);
@@ -67,7 +67,7 @@ class BlogSeoSettingsResource extends Resource
             ->modifyQueryUsing(fn ($query) => $query->where('blog_context', BlogContextEnum::MARKETING->value))
             ->columns([
                 Tables\Columns\TextColumn::make('site_name')->label('Сайт'),
-                Tables\Columns\IconColumn::make('enable_sitemap')->label('Sitemap')->boolean(),
+                Tables\Columns\IconColumn::make('enable_sitemap')->label(trans_message('blog_cms.field_sitemap'))->boolean(),
                 Tables\Columns\IconColumn::make('enable_rss')->label('RSS')->boolean(),
             ])
             ->actions([

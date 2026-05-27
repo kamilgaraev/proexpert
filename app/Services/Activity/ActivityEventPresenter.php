@@ -27,8 +27,8 @@ final class ActivityEventPresenter
             : [];
 
         return [
-            'title' => $data->title ?: $this->translateText((string) ($eventTranslation['title'] ?? trans_message('activity.fallback.title')), $values),
-            'description' => $data->description ?: $this->translateText((string) ($eventTranslation['description'] ?? trans_message('activity.fallback.description')), $values),
+            'title' => $data->title ?: $this->translateText((string) ($eventTranslation['title'] ?? trans_message('activity.default_event.title')), $values),
+            'description' => $data->description ?: $this->translateText((string) ($eventTranslation['description'] ?? trans_message('activity.default_event.description')), $values),
         ];
     }
 

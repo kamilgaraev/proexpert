@@ -97,35 +97,25 @@ final class NavigationGroups
     {
         return [
             NavigationGroup::make()
-                ->label(self::dashboard())
-                ->icon('heroicon-o-chart-pie'),
+                ->label(self::dashboard()),
             NavigationGroup::make()
-                ->label(self::platform())
-                ->icon('heroicon-o-squares-2x2'),
+                ->label(self::platform()),
             NavigationGroup::make()
-                ->label(self::organizations())
-                ->icon('heroicon-o-building-office-2'),
+                ->label(self::organizations()),
             NavigationGroup::make()
-                ->label(self::billing())
-                ->icon('heroicon-o-credit-card'),
+                ->label(self::billing()),
             NavigationGroup::make()
-                ->label(self::users())
-                ->icon('heroicon-o-users'),
+                ->label(self::users()),
             NavigationGroup::make()
-                ->label(self::blog())
-                ->icon('heroicon-o-document-text'),
+                ->label(self::blog()),
             NavigationGroup::make()
-                ->label(self::support())
-                ->icon('heroicon-o-lifebuoy'),
+                ->label(self::support()),
             NavigationGroup::make()
-                ->label(self::notifications())
-                ->icon('heroicon-o-bell-alert'),
+                ->label(self::notifications()),
             NavigationGroup::make()
-                ->label(self::audit())
-                ->icon('heroicon-o-shield-check'),
+                ->label(self::audit()),
             NavigationGroup::make()
-                ->label(self::settings())
-                ->icon('heroicon-o-cog-6-tooth'),
+                ->label(self::settings()),
         ];
     }
 }

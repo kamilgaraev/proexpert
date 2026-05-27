@@ -139,17 +139,17 @@ class ActivityEventResource extends Resource
                             ->columnSpanFull(),
                     ])
                     ->columns(2),
-                Section::make(trans_message('activity.audit_resource.sections.payload'))
+                Section::make(trans_message('activity.audit_resource.sections.details'))
                     ->schema([
                         Infolists\Components\KeyValueEntry::make('changes')
                             ->label(trans_message('activity.audit_resource.fields.changes'))
-                            ->state(fn (ActivityEvent $record): array => self::redactedPayload($record->changes))
-                            ->placeholder(trans_message('activity.audit_resource.empty_payload'))
+                            ->state(fn (ActivityEvent $record): array => self::redactedDetails($record->changes))
+                            ->placeholder(trans_message('activity.audit_resource.empty_details'))
                             ->columnSpanFull(),
                         Infolists\Components\KeyValueEntry::make('context')
                             ->label(trans_message('activity.audit_resource.fields.context'))
-                            ->state(fn (ActivityEvent $record): array => self::redactedPayload($record->context))
-                            ->placeholder(trans_message('activity.audit_resource.empty_payload'))
+                            ->state(fn (ActivityEvent $record): array => self::redactedDetails($record->context))
+                            ->placeholder(trans_message('activity.audit_resource.empty_details'))
                             ->columnSpanFull(),
                     ]),
             ]);
@@ -322,13 +322,13 @@ class ActivityEventResource extends Resource
     /**
      * @return array<string, mixed>
      */
-    public static function redactedPayload(?array $payload): array
+    public static function redactedDetails(?array $details): array
     {
-        if ($payload === null || $payload === []) {
+        if ($details === null || $details === []) {
             return [];
         }
 
-        return self::flattenPayload(app(ActivityEventRedactor::class)->redact($payload));
+        return self::flattenDetails(app(ActivityEventRedactor::class)->redact($details));
     }
 
     /**
@@ -458,18 +458,18 @@ class ActivityEventResource extends Resource
     }
 
     /**
-     * @param array<string|int, mixed> $payload
+     * @param array<string|int, mixed> $details
      * @return array<string, mixed>
      */
-    private static function flattenPayload(array $payload, string $prefix = ''): array
+    private static function flattenDetails(array $details, string $prefix = ''): array
     {
         $flat = [];
 
-        foreach ($payload as $key => $value) {
+        foreach ($details as $key => $value) {
             $path = $prefix === '' ? (string) $key : $prefix . '.' . (string) $key;
 
             if (is_array($value)) {
-                $flat += self::flattenPayload($value, $path);
+                $flat += self::flattenDetails($value, $path);
                 continue;
             }
 

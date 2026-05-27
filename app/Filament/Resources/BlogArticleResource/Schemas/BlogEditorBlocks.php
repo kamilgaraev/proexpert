@@ -56,7 +56,7 @@ final class BlogEditorBlocks
                 ->preview('filament.blog.article-editor.blocks.image')
                 ->schema([
                     Forms\Components\Select::make('url')->label('Файл')->options(fn (): array => self::getMarketingMediaOptions())->searchable()->preload()->required(),
-                    Forms\Components\TextInput::make('alt')->label('Alt'),
+                    Forms\Components\TextInput::make('alt')->label(trans_message('blog_cms.field_alt_text')),
                     Forms\Components\TextInput::make('caption')->label('Подпись'),
                 ]),
             Builder\Block::make('gallery')
@@ -66,7 +66,7 @@ final class BlogEditorBlocks
                 ->schema([
                     Repeater::make('images')->label('Изображения')->schema([
                         Forms\Components\Select::make('url')->label('Файл')->options(fn (): array => self::getMarketingMediaOptions())->searchable()->preload()->required(),
-                        Forms\Components\TextInput::make('alt')->label('Alt'),
+                        Forms\Components\TextInput::make('alt')->label(trans_message('blog_cms.field_alt_text')),
                     ])->columns(2)->defaultItems(2)->required(),
                 ]),
             Builder\Block::make('table')
@@ -97,23 +97,27 @@ final class BlogEditorBlocks
                 ->preview('filament.blog.article-editor.blocks.divider')
                 ->schema([]),
             Builder\Block::make('callout')
-                ->label(fn (?array $state): string => self::resolveTextBlockLabel('Callout', $state, 'title'))
+                ->label(fn (?array $state): string => self::resolveTextBlockLabel(trans_message('blog_cms.editor_block_callout'), $state, 'title'))
                 ->icon('heroicon-o-megaphone')
                 ->preview('filament.blog.article-editor.blocks.callout')
                 ->schema([
-                    Forms\Components\Select::make('variant')->label('Стиль')->options(['info' => 'Info', 'success' => 'Success', 'warning' => 'Warning'])->default('info'),
+                    Forms\Components\Select::make('variant')->label('Стиль')->options([
+                        'info' => trans_message('blog_cms.editor_block_variant_info'),
+                        'success' => trans_message('blog_cms.editor_block_variant_success'),
+                        'warning' => trans_message('blog_cms.editor_block_variant_warning'),
+                    ])->default('info'),
                     Forms\Components\TextInput::make('title')->label('Заголовок'),
                     Forms\Components\Textarea::make('content')->label('Текст')->rows(3),
                 ]),
             Builder\Block::make('embed')
-                ->label(fn (?array $state): string => self::resolveTextBlockLabel('Embed', $state, 'url'))
+                ->label(fn (?array $state): string => self::resolveTextBlockLabel(trans_message('blog_cms.editor_block_embed'), $state, 'url'))
                 ->icon('heroicon-o-play-circle')
                 ->preview('filament.blog.article-editor.blocks.embed')
                 ->schema([
                     Forms\Components\TextInput::make('url')->label('Ссылка')->required()->url(),
                 ]),
             Builder\Block::make('cta')
-                ->label(fn (?array $state): string => self::resolveTextBlockLabel('CTA', $state, 'label'))
+                ->label(fn (?array $state): string => self::resolveTextBlockLabel(trans_message('blog_cms.editor_block_cta'), $state, 'label'))
                 ->icon('heroicon-o-cursor-arrow-rays')
                 ->preview('filament.blog.article-editor.blocks.cta')
                 ->schema([
@@ -124,37 +128,37 @@ final class BlogEditorBlocks
         ];
     }
 
-    private static function resolveTextBlockLabel(string $fallback, ?array $state, string $field = 'content'): string
+    private static function resolveTextBlockLabel(string $defaultLabel, ?array $state, string $field = 'content'): string
     {
         if ($state === null) {
-            return $fallback;
+            return $defaultLabel;
         }
 
         $value = trim((string) Arr::get($state, $field, ''));
 
-        return $value !== '' ? Str::limit($value, 56) : $fallback;
+        return $value !== '' ? Str::limit($value, 56) : $defaultLabel;
     }
 
-    private static function resolveRepeaterBlockLabel(string $fallback, ?array $state, string $field): string
+    private static function resolveRepeaterBlockLabel(string $defaultLabel, ?array $state, string $field): string
     {
         if ($state === null) {
-            return $fallback;
+            return $defaultLabel;
         }
 
         $count = count(Arr::wrap(Arr::get($state, $field, [])));
 
-        return $count > 0 ? $fallback . ' · ' . $count : $fallback;
+        return $count > 0 ? $defaultLabel . ' · ' . $count : $defaultLabel;
     }
 
-    private static function resolveMediaBlockLabel(string $fallback, ?array $state): string
+    private static function resolveMediaBlockLabel(string $defaultLabel, ?array $state): string
     {
         if ($state === null) {
-            return $fallback;
+            return $defaultLabel;
         }
 
         $value = trim((string) Arr::get($state, 'caption', Arr::get($state, 'alt', '')));
 
-        return $value !== '' ? Str::limit($value, 56) : $fallback;
+        return $value !== '' ? Str::limit($value, 56) : $defaultLabel;
     }
 
     /**

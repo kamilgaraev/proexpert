@@ -171,7 +171,7 @@ class OrganizationResource extends Resource
                             ->dateTime()
                             ->placeholder(trans_message('widgets.organizations.empty_value')),
                         Infolists\Components\TextEntry::make('subscription_expires_at')
-                            ->label(trans_message('widgets.organizations.legacy_subscription_expires_at'))
+                            ->label(trans_message('widgets.organizations.subscription_expires_at'))
                             ->dateTime()
                             ->placeholder(trans_message('widgets.organizations.empty_value')),
                         Infolists\Components\TextEntry::make('storage_used_mb')

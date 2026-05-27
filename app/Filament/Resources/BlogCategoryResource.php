@@ -53,8 +53,8 @@ class BlogCategoryResource extends Resource
                     Forms\Components\TextInput::make('image')->label('Изображение'),
                     Forms\Components\TextInput::make('sort_order')->label('Сортировка')->numeric()->default(0),
                     Forms\Components\Toggle::make('is_active')->label('Активна')->default(true),
-                    Forms\Components\TextInput::make('meta_title')->label('Meta title'),
-                    Forms\Components\Textarea::make('meta_description')->label('Meta description')->rows(3),
+                    Forms\Components\TextInput::make('meta_title')->label(trans_message('blog_cms.field_seo_title')),
+                    Forms\Components\Textarea::make('meta_description')->label(trans_message('blog_cms.field_seo_description'))->rows(3),
                 ])
                 ->columns(2),
         ]);

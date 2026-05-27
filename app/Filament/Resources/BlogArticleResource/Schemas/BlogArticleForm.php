@@ -85,7 +85,7 @@ final class BlogArticleForm
                             ->reorderableWithButtons()
                             ->addActionAlignment(Alignment::Start)
                             ->addActionLabel('Добавить блок')
-                            ->helperText('Соберите статью из блоков: текст, заголовки, списки, цитаты, изображения, таблицы и CTA.')
+                            ->helperText('Соберите статью из блоков: текст, заголовки, списки, цитаты, изображения, таблицы и призыв к действию.')
                             ->columnSpanFull(),
                     ])
                     ->columns(1)
@@ -127,7 +127,7 @@ final class BlogArticleForm
                             ->label('Показывать в RSS')
                             ->default(true),
                         Forms\Components\Toggle::make('noindex')
-                            ->label('Noindex'),
+                            ->label(trans_message('blog_cms.field_noindex')),
                         ViewField::make('editor_outline')
                             ->view('filament.blog.article-editor.outline')
                             ->hiddenLabel()
@@ -197,20 +197,20 @@ final class BlogArticleForm
                     ->description('Метаданные, которые нужны для публикации и красивого превью в поиске.')
                     ->schema([
                         Forms\Components\TextInput::make('meta_title')
-                            ->label('Meta title')
+                            ->label(trans_message('blog_cms.field_seo_title'))
                             ->maxLength(255),
                         Forms\Components\Textarea::make('meta_description')
-                            ->label('Meta description')
+                            ->label(trans_message('blog_cms.field_seo_description'))
                             ->rows(3),
                         Forms\Components\TagsInput::make('meta_keywords')
-                            ->label('Meta keywords'),
+                            ->label(trans_message('blog_cms.field_seo_keywords')),
                         Forms\Components\TextInput::make('og_title')
-                            ->label('OG title'),
+                            ->label(trans_message('blog_cms.field_open_graph_title')),
                         Forms\Components\Textarea::make('og_description')
-                            ->label('OG description')
+                            ->label(trans_message('blog_cms.field_open_graph_description'))
                             ->rows(3),
                         Forms\Components\Select::make('og_image')
-                            ->label('OG image')
+                            ->label(trans_message('blog_cms.field_open_graph_image'))
                             ->options(fn (): array => self::getMarketingMediaOptions())
                             ->searchable()
                             ->preload(),

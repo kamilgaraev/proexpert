@@ -61,7 +61,7 @@ class BlogCommentResource extends Resource
             ])
             ->actions([
                 Action::make('approve')
-                    ->label('Approve')
+                    ->label(trans_message('blog_cms.comment_approve_action'))
                     ->visible(fn (BlogComment $record): bool => $record->status->value !== 'approved')
                     ->action(function (BlogComment $record): void {
                         /** @var SystemAdmin $systemAdmin */
@@ -69,10 +69,10 @@ class BlogCommentResource extends Resource
                         $record->approveBySystemAdmin($systemAdmin);
                     }),
                 Action::make('reject')
-                    ->label('Reject')
+                    ->label(trans_message('blog_cms.comment_reject_action'))
                     ->action(fn (BlogComment $record) => $record->reject()),
                 Action::make('spam')
-                    ->label('Spam')
+                    ->label(trans_message('blog_cms.comment_spam_action'))
                     ->action(fn (BlogComment $record) => $record->markAsSpam()),
                 self::guardedDeleteAction('comment'),
             ]);

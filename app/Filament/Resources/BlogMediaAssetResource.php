@@ -59,10 +59,10 @@ class BlogMediaAssetResource extends Resource
                         ->imageEditor()
                         ->storeFiles(false)
                         ->required(fn (string $operation): bool => $operation === 'create'),
-                    Forms\Components\TextInput::make('alt_text')->label('Alt')->required(),
+                    Forms\Components\TextInput::make('alt_text')->label(trans_message('blog_cms.field_alt_text'))->required(),
                     Forms\Components\TextInput::make('caption')->label('Подпись'),
-                    Forms\Components\TextInput::make('focal_point.x')->label('Focal X')->numeric()->minValue(0)->maxValue(1),
-                    Forms\Components\TextInput::make('focal_point.y')->label('Focal Y')->numeric()->minValue(0)->maxValue(1),
+                    Forms\Components\TextInput::make('focal_point.x')->label(trans_message('blog_cms.field_focal_x'))->numeric()->minValue(0)->maxValue(1),
+                    Forms\Components\TextInput::make('focal_point.y')->label(trans_message('blog_cms.field_focal_y'))->numeric()->minValue(0)->maxValue(1),
                 ])
                 ->columns(2),
         ]);
@@ -95,7 +95,7 @@ class BlogMediaAssetResource extends Resource
                             ->storeFiles(false)
                             ->required(),
                         Forms\Components\TextInput::make('alt_text')
-                            ->label('Alt')
+                            ->label(trans_message('blog_cms.field_alt_text'))
                             ->required(),
                         Forms\Components\TextInput::make('caption')
                             ->label('Подпись'),

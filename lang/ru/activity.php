@@ -24,12 +24,12 @@ return [
         'model_label' => 'Событие аудита',
         'plural_model_label' => 'Журнал событий',
         'empty_value' => 'Не указано',
-        'empty_payload' => 'Нет данных для отображения',
+        'empty_details' => 'Нет данных для отображения',
         'sections' => [
             'event' => 'Событие',
             'actor' => 'Инициатор',
             'subject' => 'Объект',
-            'payload' => 'Безопасные детали',
+            'details' => 'Безопасные детали',
         ],
         'fields' => [
             'occurred_at' => 'Время события',
@@ -406,7 +406,7 @@ return [
             'description' => 'Поступление материалов отражено в закупках.',
         ],
     ],
-    'fallback' => [
+    'default_event' => [
         'title' => ':actor выполнил действие',
         'description' => 'Действие зафиксировано в журнале.',
     ],

@@ -72,6 +72,13 @@ final class SystemAdminNavigationTest extends TestCase
         self::assertSame('heroicon-o-chart-pie', $this->navigationIconFor(Dashboard::class));
     }
 
+    public function test_panel_navigation_groups_do_not_duplicate_resource_icons(): void
+    {
+        foreach (NavigationGroups::panelGroups() as $group) {
+            self::assertNull($group->getIcon(), (string) $group->getLabel());
+        }
+    }
+
     public function test_resource_navigation_uses_expected_groups_sort_order_and_icons(): void
     {
         foreach ($this->expectedResourceNavigation() as $resourceClass => $expected) {

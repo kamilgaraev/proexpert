@@ -61,7 +61,7 @@ class AuditResourceTest extends TestCase
         $this->assertFalse(ActivityEventResource::canViewAny());
     }
 
-    public function test_audit_resource_masks_sensitive_payload_values(): void
+    public function test_audit_resource_masks_sensitive_detail_values(): void
     {
         $organization = Organization::factory()->create();
         $event = ActivityEvent::query()->create([
@@ -96,8 +96,8 @@ class AuditResourceTest extends TestCase
             'occurred_at' => now(),
         ]);
 
-        $changes = ActivityEventResource::redactedPayload($event->changes);
-        $context = ActivityEventResource::redactedPayload($event->context);
+        $changes = ActivityEventResource::redactedDetails($event->changes);
+        $context = ActivityEventResource::redactedDetails($event->context);
 
         $this->assertSame('trial', $changes['before.status']);
         $this->assertSame('active', $changes['after.status']);
