@@ -25,6 +25,7 @@ class PublicBlogArticleResource extends JsonResource
             'title' => $article->title,
             'slug' => $article->slug,
             'excerpt' => $article->excerpt,
+            'canonical_url' => $article->canonical_url,
             'content' => $article->content,
             'featured_image' => $article->featured_image,
             'gallery_images' => $article->gallery_images ?? [],

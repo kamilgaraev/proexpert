@@ -13,11 +13,13 @@ use App\Models\Blog\BlogSeoSettings;
 use App\Models\Blog\BlogTag;
 use App\Models\SystemAdmin;
 use Carbon\CarbonImmutable;
+use Carbon\CarbonInterface;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Throwable;
 
 class BlogCmsService
 {
@@ -69,6 +71,7 @@ class BlogCmsService
         return $this->updateArticle($article, [
             'status' => BlogArticleStatusEnum::PUBLISHED->value,
             'published_at' => $publishAt ? CarbonImmutable::parse($publishAt) : now(),
+            'scheduled_at' => null,
         ], $systemAdmin, BlogRevisionTypeEnum::PUBLISH);
     }
 
@@ -77,6 +80,16 @@ class BlogCmsService
         return $this->updateArticle($article, [
             'status' => BlogArticleStatusEnum::SCHEDULED->value,
             'scheduled_at' => CarbonImmutable::parse($scheduledAt),
+            'published_at' => null,
+        ], $systemAdmin);
+    }
+
+    public function draftArticle(BlogArticle $article, SystemAdmin $systemAdmin): BlogArticle
+    {
+        return $this->updateArticle($article, [
+            'status' => BlogArticleStatusEnum::DRAFT->value,
+            'published_at' => null,
+            'scheduled_at' => null,
         ], $systemAdmin);
     }
 
@@ -84,6 +97,7 @@ class BlogCmsService
     {
         return $this->updateArticle($article, [
             'status' => BlogArticleStatusEnum::ARCHIVED->value,
+            'scheduled_at' => null,
         ], $systemAdmin);
     }
 
@@ -93,9 +107,12 @@ class BlogCmsService
 
         return $this->createDraft([
             'category_id' => $article->category_id,
+            'author_id' => $article->author_id,
             'title' => $article->title . ' (' . trans_message('blog_cms.duplicate_suffix') . ')',
             'slug' => $this->generateUniqueSlug($article->slug . '-copy', $article->id),
             'excerpt' => $article->excerpt,
+            'canonical_url' => null,
+            'editor_notes' => $article->editor_notes,
             'editor_document' => $article->editor_document,
             'featured_image' => $article->featured_image,
             'gallery_images' => $article->gallery_images,
@@ -121,6 +138,8 @@ class BlogCmsService
             'title' => $revision->title,
             'slug' => $revision->slug,
             'excerpt' => $revision->excerpt,
+            'canonical_url' => $revision->canonical_url,
+            'editor_notes' => $revision->editor_notes,
             'editor_document' => $revision->editor_document,
             'featured_image' => $revision->featured_image,
             'gallery_images' => $revision->gallery_images,
@@ -196,13 +215,24 @@ class BlogCmsService
             ? Arr::wrap($data['editor_document'])
             : ($article?->editor_document ?? []);
         $content = $this->documentRenderer->render($editorDocument);
-        $title = (string) ($data['title'] ?? $article?->title ?? '');
-        $slug = (string) ($data['slug'] ?? $article?->slug ?? '');
+        $title = trim((string) ($data['title'] ?? $article?->title ?? ''));
+        $slugWasProvided = array_key_exists('slug', $data);
+        $titleWasProvided = array_key_exists('title', $data);
+        $manualSlug = $slugWasProvided && trim((string) $data['slug']) !== '';
+        $slug = trim((string) ($data['slug'] ?? $article?->slug ?? ''));
 
-        if ($slug === '' && $title !== '') {
+        if ($manualSlug) {
+            $slug = Str::slug($slug);
+        } elseif (
+            ! $slugWasProvided
+            && $titleWasProvided
+            && $article !== null
+            && $slug !== ''
+            && $slug === Str::slug((string) $article->title)
+        ) {
+            $slug = $this->generateUniqueSlug(Str::slug($title), $article->id);
+        } elseif ($slug === '' && $title !== '') {
             $slug = $this->generateUniqueSlug(Str::slug($title), $article?->id);
-        } elseif ($slug !== '') {
-            $slug = $this->generateUniqueSlug(Str::slug($slug), $article?->id);
         }
 
         $seoSettings = BlogSeoSettings::getInstance(BlogContextEnum::MARKETING);
@@ -215,14 +245,17 @@ class BlogCmsService
             );
         }
 
-        return array_filter([
+        $payload = [
             'blog_context' => BlogContextEnum::MARKETING,
             'category_id' => Arr::get($data, 'category_id', $article?->category_id),
-            'author_system_admin_id' => $article?->author_system_admin_id ?? $systemAdmin->id,
+            'author_id' => Arr::get($data, 'author_id', $article?->author_id),
+            'author_system_admin_id' => Arr::get($data, 'author_system_admin_id', $article?->author_system_admin_id ?? $systemAdmin->id),
             'last_edited_by_system_admin_id' => $systemAdmin->id,
             'title' => $title,
             'slug' => $slug,
             'excerpt' => Arr::get($data, 'excerpt', $article?->excerpt),
+            'canonical_url' => $this->normalizeNullableString(Arr::get($data, 'canonical_url', $article?->canonical_url)),
+            'editor_notes' => Arr::get($data, 'editor_notes', $article?->editor_notes),
             'content' => $content,
             'editor_document' => $editorDocument,
             'editor_version' => ($article?->editor_version ?? 0) + 1,
@@ -245,7 +278,11 @@ class BlogCmsService
             'noindex' => (bool) Arr::get($data, 'noindex', $article?->noindex ?? false),
             'sort_order' => (int) Arr::get($data, 'sort_order', $article?->sort_order ?? 0),
             'last_autosaved_at' => Arr::get($data, 'last_autosaved_at', $article?->last_autosaved_at),
-        ], static fn (mixed $value): bool => $value !== null);
+        ];
+
+        $this->validateEditorPayload($payload, $article, $manualSlug);
+
+        return $payload;
     }
 
     private function buildStructuredData(array $data, ?BlogArticle $article, SystemAdmin $systemAdmin, string $title, string $slug, string $content): array
@@ -268,7 +305,8 @@ class BlogCmsService
             'dateModified' => now()->toISOString(),
             'mainEntityOfPage' => [
                 '@type' => 'WebPage',
-                '@id' => rtrim((string) config('blog.marketing_frontend_url'), '/') . '/blog/' . $slug,
+                '@id' => Arr::get($data, 'canonical_url', $article?->canonical_url)
+                    ?: rtrim((string) config('blog.marketing_frontend_url'), '/') . '/blog/' . $slug,
             ],
         ];
     }
@@ -284,6 +322,8 @@ class BlogCmsService
             'title' => $article->title,
             'slug' => $article->slug,
             'excerpt' => $article->excerpt,
+            'canonical_url' => $article->canonical_url,
+            'editor_notes' => $article->editor_notes,
             'content_html' => $article->content,
             'editor_document' => $article->editor_document,
             'featured_image' => $article->featured_image,
@@ -360,7 +400,6 @@ class BlogCmsService
 
         while (
             BlogArticle::query()
-                ->marketing()
                 ->when($ignoreArticleId !== null, fn ($query) => $query->where('id', '!=', $ignoreArticleId))
                 ->where('slug', $candidate)
                 ->exists()
@@ -370,5 +409,139 @@ class BlogCmsService
         }
 
         return $candidate;
+    }
+
+    private function validateEditorPayload(array $payload, ?BlogArticle $article, bool $manualSlug): void
+    {
+        $errors = [];
+        $title = trim((string) ($payload['title'] ?? ''));
+        $slug = trim((string) ($payload['slug'] ?? ''));
+        $excerpt = (string) ($payload['excerpt'] ?? '');
+        $canonicalUrl = trim((string) ($payload['canonical_url'] ?? ''));
+        $status = $payload['status'] instanceof BlogArticleStatusEnum
+            ? $payload['status']->value
+            : (string) ($payload['status'] ?? BlogArticleStatusEnum::DRAFT->value);
+
+        if (mb_strlen($title) < 3) {
+            $errors['title'] = [trans_message('blog_cms.validation_title_min')];
+        }
+
+        if (mb_strlen($title) > 255) {
+            $errors['title'] = [trans_message('blog_cms.validation_title_max')];
+        }
+
+        if ($slug === '') {
+            $errors['slug'] = [trans_message('blog_cms.publish_slug_required')];
+        } elseif ($manualSlug && $this->slugExists($slug, $article?->id)) {
+            $errors['slug'] = [trans_message('blog_cms.validation_slug_unique')];
+        }
+
+        if (mb_strlen($excerpt) > 500) {
+            $errors['excerpt'] = [trans_message('blog_cms.validation_excerpt_max')];
+        }
+
+        if ($canonicalUrl !== '' && ! $this->isHttpUrl($canonicalUrl)) {
+            $errors['canonical_url'] = [trans_message('blog_cms.validation_canonical_url')];
+        }
+
+        if (BlogArticleStatusEnum::tryFrom($status) === null) {
+            $errors['status'] = [trans_message('blog_cms.validation_status')];
+        }
+
+        $scheduledAt = $this->parseDateTime($payload['scheduled_at'] ?? null);
+
+        if ($status === BlogArticleStatusEnum::SCHEDULED->value) {
+            if ($scheduledAt === null) {
+                $errors['scheduled_at'] = [trans_message('blog_cms.validation_schedule_required')];
+            } elseif ($scheduledAt->lessThanOrEqualTo(now())) {
+                $errors['scheduled_at'] = [trans_message('blog_cms.validation_schedule_future')];
+            }
+        }
+
+        $publishedAt = $this->parseDateTime($payload['published_at'] ?? null);
+
+        if ($status === BlogArticleStatusEnum::PUBLISHED->value && $publishedAt?->greaterThan(now()->addMinute())) {
+            $errors['published_at'] = [trans_message('blog_cms.validation_publish_date')];
+        }
+
+        if ($status === BlogArticleStatusEnum::PUBLISHED->value) {
+            $this->validatePublishablePayload($payload, $errors);
+        }
+
+        if ($errors !== []) {
+            throw ValidationException::withMessages($errors);
+        }
+    }
+
+    private function validatePublishablePayload(array $payload, array &$errors): void
+    {
+        if (($payload['title'] ?? '') === '') {
+            $errors['title'] = [trans_message('blog_cms.publish_title_required')];
+        }
+
+        if (($payload['slug'] ?? '') === '') {
+            $errors['slug'] = [trans_message('blog_cms.publish_slug_required')];
+        }
+
+        if (($payload['category_id'] ?? null) === null) {
+            $errors['category_id'] = [trans_message('blog_cms.publish_category_required')];
+        }
+
+        if (blank($payload['content'] ?? null)) {
+            $errors['content'] = [trans_message('blog_cms.publish_content_required')];
+        }
+
+        if (blank($payload['featured_image'] ?? null)) {
+            $errors['featured_image'] = [trans_message('blog_cms.publish_featured_image_required')];
+        }
+
+        if (blank($payload['meta_title'] ?? null) || blank($payload['meta_description'] ?? null)) {
+            $errors['seo'] = [trans_message('blog_cms.publish_seo_required')];
+        }
+    }
+
+    private function slugExists(string $slug, ?int $ignoreArticleId = null): bool
+    {
+        return BlogArticle::query()
+            ->when($ignoreArticleId !== null, fn ($query) => $query->where('id', '!=', $ignoreArticleId))
+            ->where('slug', $slug)
+            ->exists();
+    }
+
+    private function parseDateTime(mixed $value): ?CarbonImmutable
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if ($value instanceof CarbonInterface) {
+            return CarbonImmutable::instance($value->toDateTime());
+        }
+
+        try {
+            return CarbonImmutable::parse((string) $value);
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    private function isHttpUrl(string $url): bool
+    {
+        if (filter_var($url, FILTER_VALIDATE_URL) === false) {
+            return false;
+        }
+
+        return in_array(parse_url($url, PHP_URL_SCHEME), ['http', 'https'], true);
+    }
+
+    private function normalizeNullableString(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $value = trim((string) $value);
+
+        return $value === '' ? null : $value;
     }
 }

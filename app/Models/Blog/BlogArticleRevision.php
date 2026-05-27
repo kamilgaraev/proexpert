@@ -23,6 +23,8 @@ class BlogArticleRevision extends Model
         'title',
         'slug',
         'excerpt',
+        'canonical_url',
+        'editor_notes',
         'content_html',
         'editor_document',
         'featured_image',

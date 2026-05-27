@@ -23,7 +23,9 @@ class CreateBlogArticle extends CreateRecord
 
     public static bool $formActionsAreSticky = true;
 
-    protected ?string $subheading = 'Создайте базовый draft и сразу переходите в полноценный редактор.';
+    protected ?bool $hasUnsavedDataChangesAlert = true;
+
+    protected ?string $subheading = 'Создайте черновик и сразу переходите в полноценный редактор.';
 
     public function getBreadcrumbs(): array
     {

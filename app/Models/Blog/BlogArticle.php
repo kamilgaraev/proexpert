@@ -34,6 +34,8 @@ class BlogArticle extends Model
         'title',
         'slug',
         'excerpt',
+        'canonical_url',
+        'editor_notes',
         'content',
         'editor_document',
         'editor_version',
