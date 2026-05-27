@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Console;
 
+use App\BusinessModules\Features\AIAssistant\Exceptions\RagEmbeddingUnavailableException;
 use App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob;
 use App\BusinessModules\Features\AIAssistant\Models\RagChunk;
 use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
@@ -339,6 +340,29 @@ class AIAssistantRagBackfillCommandTest extends TestCase
             'indexed_chunks' => 7,
             'source_count' => 1,
             'chunk_count' => 1,
+        ]);
+    }
+
+    public function test_sync_backfill_handles_unavailable_embedding_provider_without_throwing(): void
+    {
+        $organization = Organization::factory()->create();
+        $indexer = new BackfillCommandRecordingRagIndexer(
+            0,
+            static fn (): never => throw new RagEmbeddingUnavailableException('Сервис подготовки контекста временно недоступен.')
+        );
+        $this->app->instance(RagIndexer::class, $indexer);
+
+        $this->artisan('ai-assistant:rag-backfill', [
+            'organization_id' => $organization->id,
+            '--sync' => true,
+        ])
+            ->expectsOutput('Сервис подготовки контекста временно недоступен.')
+            ->assertExitCode(1);
+
+        $this->assertDatabaseHas('ai_rag_index_runs', [
+            'organization_id' => $organization->id,
+            'status' => RagIndexRun::STATUS_FAILED,
+            'mode' => RagIndexRun::MODE_SYNC,
         ]);
     }
 

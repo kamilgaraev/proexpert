@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Console\Commands;
 
+use App\BusinessModules\Features\AIAssistant\Exceptions\RagEmbeddingUnavailableException;
 use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
@@ -93,11 +94,17 @@ class BackfillRagIndexCommand extends Command
         }
 
         if ($sync) {
-            $run = $coordinator->indexOrganizationSync($organizationId, $projectId, $sourceType);
-            $this->info("Indexed RAG chunks: {$run->indexed_chunks}");
-            $this->info("RAG index run: {$run->id}");
+            try {
+                $run = $coordinator->indexOrganizationSync($organizationId, $projectId, $sourceType);
+                $this->info("Indexed RAG chunks: {$run->indexed_chunks}");
+                $this->info("RAG index run: {$run->id}");
 
-            return self::SUCCESS;
+                return self::SUCCESS;
+            } catch (RagEmbeddingUnavailableException $exception) {
+                $this->error($exception->getMessage());
+
+                return self::FAILURE;
+            }
         }
 
         $run = $coordinator->queueOrganization($organizationId, $projectId, $sourceType);
@@ -163,14 +170,20 @@ class BackfillRagIndexCommand extends Command
         int $staleAfterHours
     ): int
     {
-        $result = $coordinator->indexAllActiveOrganizationsSync(
-            (bool) $this->option('include-inactive'),
-            $this->nullableIntOption('limit'),
-            $projectId,
-            $sourceType,
-            $staleOnly,
-            $staleAfterHours
-        );
+        try {
+            $result = $coordinator->indexAllActiveOrganizationsSync(
+                (bool) $this->option('include-inactive'),
+                $this->nullableIntOption('limit'),
+                $projectId,
+                $sourceType,
+                $staleOnly,
+                $staleAfterHours
+            );
+        } catch (RagEmbeddingUnavailableException $exception) {
+            $this->error($exception->getMessage());
+
+            return self::FAILURE;
+        }
 
         $this->info("Synchronously indexed organizations: {$result['processed']}");
 
