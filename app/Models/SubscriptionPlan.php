@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -16,7 +18,9 @@ class SubscriptionPlan extends Model
         'description',
         'price',
         'currency',
+        'billing_cycle',
         'duration_in_days',
+        'trial_days',
         'max_foremen',
         'max_projects',
         'max_storage_gb',
@@ -30,6 +34,7 @@ class SubscriptionPlan extends Model
 
     protected $casts = [
         'price' => 'decimal:2',
+        'trial_days' => 'integer',
         'included_packages' => 'array',
         'features' => AsArrayObject::class, // Для удобной работы с JSON-полем
         'is_active' => 'boolean',

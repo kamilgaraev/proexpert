@@ -15,6 +15,8 @@
     "system_admin.users.view",
     "system_admin.organizations.view",
     "system_admin.subscription_plans.view",
+    "system_admin.subscriptions.view",
+    "system_admin.payments.view",
     "system_admin.audit_logs.view",
     "system_admin.blog.articles.view",
     "system_admin.blog.revisions.view",
@@ -39,6 +41,10 @@
     ],
     "subscription_plans": [
       "system_admin.subscription_plans.view"
+    ],
+    "billing": [
+      "system_admin.subscriptions.view",
+      "system_admin.payments.view"
     ],
     "security": [
       "system_admin.audit_logs.view"
