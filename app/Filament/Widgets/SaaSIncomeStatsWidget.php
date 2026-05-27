@@ -4,6 +4,8 @@ namespace App\Filament\Widgets;
 
 use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
+use App\Filament\Support\FilamentPermission;
+use App\Filament\Support\SystemAdminAccess;
 use Filament\Widgets\StatsOverviewWidget as BaseWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
 use Illuminate\Support\Number;
@@ -11,6 +13,15 @@ use Illuminate\Support\Number;
 class SaaSIncomeStatsWidget extends BaseWidget
 {
     protected static ?int $sort = 1;
+
+    public static function canView(): bool
+    {
+        return SystemAdminAccess::can(FilamentPermission::DASHBOARD_VIEW)
+            && SystemAdminAccess::canAny([
+                FilamentPermission::DASHBOARD_REVENUE_VIEW,
+                FilamentPermission::BILLING_REVENUE_VIEW,
+            ]);
+    }
 
     protected function getStats(): array
     {

@@ -6,10 +6,10 @@ namespace App\Filament\Widgets;
 
 use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\BusinessModules\Features\Notifications\Models\NotificationAnalytics;
-use App\Models\SystemAdmin;
+use App\Filament\Support\FilamentPermission;
+use App\Filament\Support\SystemAdminAccess;
 use Filament\Widgets\StatsOverviewWidget as BaseWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
-use Illuminate\Support\Facades\Auth;
 
 class NotificationDeliveryStatsWidget extends BaseWidget
 {
@@ -17,13 +17,10 @@ class NotificationDeliveryStatsWidget extends BaseWidget
 
     public static function canView(): bool
     {
-        $user = Auth::guard('system_admin')->user();
-
-        return $user instanceof SystemAdmin
-            && (
-                $user->hasSystemPermission('system_admin.notifications.delivery_log.view')
-                || $user->hasSystemPermission('system_admin.notifications.analytics.view')
-            );
+        return SystemAdminAccess::canAny([
+            FilamentPermission::NOTIFICATIONS_DELIVERY_LOG_VIEW,
+            FilamentPermission::NOTIFICATIONS_ANALYTICS_VIEW,
+        ]);
     }
 
     protected function getStats(): array
