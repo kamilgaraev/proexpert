@@ -134,7 +134,8 @@ final class BlogArticleForm
                             ->label('Показывать в RSS')
                             ->default(true),
                         Forms\Components\Toggle::make('noindex')
-                            ->label(trans_message('blog_cms.field_noindex')),
+                            ->label(trans_message('blog_cms.field_noindex'))
+                            ->live(),
                         ViewField::make('editor_outline')
                             ->view('filament.blog.article-editor.outline')
                             ->hiddenLabel()
@@ -183,6 +184,7 @@ final class BlogArticleForm
                             ->label('Обложка')
                             ->options(fn (): array => self::getMarketingMediaOptions())
                             ->helperText(trans_message('blog_cms.helper_featured_image'))
+                            ->live()
                             ->searchable()
                             ->preload(),
                         Forms\Components\Select::make('gallery_images')
@@ -212,23 +214,33 @@ final class BlogArticleForm
                         Forms\Components\TextInput::make('meta_title')
                             ->label(trans_message('blog_cms.field_seo_title'))
                             ->helperText(trans_message('blog_cms.helper_meta_title'))
+                            ->live(onBlur: true)
                             ->maxLength(255),
                         Forms\Components\Textarea::make('meta_description')
                             ->label(trans_message('blog_cms.field_seo_description'))
                             ->rows(3)
+                            ->live(onBlur: true)
                             ->helperText(trans_message('blog_cms.helper_meta_description')),
                         Forms\Components\TagsInput::make('meta_keywords')
                             ->label(trans_message('blog_cms.field_seo_keywords')),
                         Forms\Components\TextInput::make('og_title')
-                            ->label(trans_message('blog_cms.field_open_graph_title')),
+                            ->label(trans_message('blog_cms.field_open_graph_title'))
+                            ->live(onBlur: true),
                         Forms\Components\Textarea::make('og_description')
                             ->label(trans_message('blog_cms.field_open_graph_description'))
-                            ->rows(3),
+                            ->rows(3)
+                            ->live(onBlur: true),
                         Forms\Components\Select::make('og_image')
                             ->label(trans_message('blog_cms.field_open_graph_image'))
                             ->options(fn (): array => self::getMarketingMediaOptions())
+                            ->live()
                             ->searchable()
                             ->preload(),
+                        ViewField::make('seo_preview')
+                            ->view('filament.blog.article-editor.seo-preview')
+                            ->hiddenLabel()
+                            ->dehydrated(false)
+                            ->columnSpanFull(),
                     ])
                     ->columns(1)
                     ->collapsible(),
