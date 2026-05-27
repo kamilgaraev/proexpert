@@ -12,6 +12,7 @@ use App\Models\SystemAdmin;
 use App\Models\User;
 use App\Notifications\SystemAdminTemplatePreviewNotification;
 use DomainException;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
 class NotificationTemplateManagementService
@@ -61,9 +62,8 @@ class NotificationTemplateManagementService
             throw new DomainException(trans_message('notifications.broadcast_recipients_required'));
         }
 
-        $users = User::query()
+        $users = $this->activeRecipientQuery($template)
             ->with('currentOrganization')
-            ->where('is_active', true)
             ->whereIn('id', $normalizedUserIds)
             ->orderBy('id')
             ->get();
@@ -81,9 +81,8 @@ class NotificationTemplateManagementService
         $recipientIdsHash = hash_init('sha256');
         $hasRecipients = false;
 
-        User::query()
+        $this->activeRecipientQuery($template)
             ->with('currentOrganization')
-            ->where('is_active', true)
             ->orderBy('id')
             ->chunkById(500, function (Collection $users) use (
                 $template,
@@ -122,6 +121,23 @@ class NotificationTemplateManagementService
         return $result;
     }
 
+    private function activeRecipientQuery(NotificationTemplate $template): Builder
+    {
+        $query = User::query()
+            ->where('is_active', true);
+        $organizationId = $this->templateOrganizationId($template);
+
+        if ($organizationId !== null) {
+            $query->whereHas('organizations', function (Builder $organizationQuery) use ($organizationId): void {
+                $organizationQuery
+                    ->where('organizations.id', $organizationId)
+                    ->where('organization_user.is_active', true);
+            });
+        }
+
+        return $query;
+    }
+
     private function sendToUserCollection(NotificationTemplate $template, SystemAdmin $systemAdmin, Collection $users): array
     {
         $recipientIds = [];
@@ -155,6 +171,11 @@ class NotificationTemplateManagementService
             'sent_count' => count($recipientIds),
             'recipient_ids' => $recipientIds,
         ];
+    }
+
+    private function templateOrganizationId(NotificationTemplate $template): ?int
+    {
+        return is_numeric($template->organization_id) ? (int) $template->organization_id : null;
     }
 
     private function notificationData(NotificationTemplate $template, SystemAdmin $systemAdmin, User $user): array

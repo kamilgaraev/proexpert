@@ -9,6 +9,7 @@ use App\BusinessModules\Features\Notifications\Models\Notification as DomainNoti
 use App\BusinessModules\Features\Notifications\Jobs\SendNotificationJob;
 use App\Filament\Resources\NotificationTemplateResource;
 use App\Models\Activity\ActivityEvent;
+use App\Models\Organization;
 use App\Models\SystemAdmin;
 use App\Models\User;
 use App\Notifications\SystemAdminTemplatePreviewNotification;
@@ -229,6 +230,132 @@ class NotificationManagementTest extends TestCase
         $this->assertArrayNotHasKey('recipient_ids', $after);
         $this->assertNotEmpty($after['recipient_ids_hash']);
         Queue::assertPushed(SendNotificationJob::class, 3);
+    }
+
+    public function test_organization_template_broadcast_is_limited_to_active_organization_members(): void
+    {
+        Queue::fake();
+
+        $admin = SystemAdmin::factory()->role('content_manager')->create([
+            'is_active' => true,
+            'name' => 'Current Admin',
+            'email' => 'org-admin@example.test',
+        ]);
+        $targetOrganization = Organization::factory()->create(['name' => 'Target Org']);
+        $otherOrganization = Organization::factory()->create(['name' => 'Other Org']);
+        $targetUser = User::factory()->create([
+            'name' => 'Target Member',
+            'email' => 'target-member@example.test',
+            'is_active' => true,
+            'current_organization_id' => $targetOrganization->id,
+        ]);
+        $otherOrganizationUser = User::factory()->create([
+            'name' => 'Other Member',
+            'email' => 'other-member@example.test',
+            'is_active' => true,
+            'current_organization_id' => $otherOrganization->id,
+        ]);
+        $inactiveMembershipUser = User::factory()->create([
+            'name' => 'Inactive Member',
+            'email' => 'inactive-member@example.test',
+            'is_active' => true,
+            'current_organization_id' => $targetOrganization->id,
+        ]);
+        $noOrganizationUser = User::factory()->create([
+            'name' => 'No Organization',
+            'email' => 'no-organization@example.test',
+            'is_active' => true,
+        ]);
+        $targetUser->organizations()->attach($targetOrganization->id, ['is_active' => true]);
+        $otherOrganizationUser->organizations()->attach($otherOrganization->id, ['is_active' => true]);
+        $inactiveMembershipUser->organizations()->attach($targetOrganization->id, ['is_active' => false]);
+        $template = $this->templateFixture([
+            'organization_id' => $targetOrganization->id,
+            'channel' => 'in_app',
+            'subject' => 'Organization update',
+            'content' => 'Update for {{organization.name}} and {{user.name}}.',
+        ]);
+
+        $result = app(NotificationTemplateManagementService::class)->sendToAllUsers($template, $admin);
+
+        $this->assertSame(1, $result['sent_count']);
+        $this->assertSame([$targetUser->id], $result['recipient_sample_ids']);
+        $this->assertDatabaseHas('notifications', [
+            'notifiable_type' => User::class,
+            'notifiable_id' => $targetUser->id,
+            'organization_id' => $targetOrganization->id,
+            'notification_type' => 'system_admin_broadcast',
+        ]);
+        foreach ([$otherOrganizationUser, $inactiveMembershipUser, $noOrganizationUser] as $user) {
+            $this->assertDatabaseMissing('notifications', [
+                'notifiable_type' => User::class,
+                'notifiable_id' => $user->id,
+            ]);
+        }
+
+        $auditEvent = ActivityEvent::query()
+            ->where('event_type', 'system_admin.notifications.broadcast_sent')
+            ->where('subject_id', $template->id)
+            ->firstOrFail();
+        $after = $auditEvent->changes['after'] ?? [];
+
+        $this->assertSame($targetOrganization->id, $auditEvent->organization_id);
+        $this->assertSame(1, $after['sent_count']);
+        $this->assertSame([$targetUser->id], $after['recipient_sample_ids']);
+        Queue::assertPushed(SendNotificationJob::class, 1);
+    }
+
+    public function test_organization_template_selected_recipients_ignore_users_outside_organization(): void
+    {
+        Queue::fake();
+
+        $admin = SystemAdmin::factory()->role('content_manager')->create([
+            'is_active' => true,
+            'name' => 'Current Admin',
+            'email' => 'selected-org-admin@example.test',
+        ]);
+        $targetOrganization = Organization::factory()->create(['name' => 'Target Org']);
+        $otherOrganization = Organization::factory()->create(['name' => 'Other Org']);
+        $targetUser = User::factory()->create([
+            'name' => 'Selected Member',
+            'email' => 'selected-member@example.test',
+            'is_active' => true,
+            'current_organization_id' => $targetOrganization->id,
+        ]);
+        $otherOrganizationUser = User::factory()->create([
+            'name' => 'Selected Outside',
+            'email' => 'selected-outside@example.test',
+            'is_active' => true,
+            'current_organization_id' => $otherOrganization->id,
+        ]);
+        $targetUser->organizations()->attach($targetOrganization->id, ['is_active' => true]);
+        $otherOrganizationUser->organizations()->attach($otherOrganization->id, ['is_active' => true]);
+        $template = $this->templateFixture([
+            'organization_id' => $targetOrganization->id,
+            'channel' => 'in_app',
+            'subject' => 'Selected update',
+            'content' => 'Selected update for {{organization.name}}.',
+        ]);
+
+        $result = app(NotificationTemplateManagementService::class)->sendToUsers(
+            $template,
+            $admin,
+            [$targetUser->id, $otherOrganizationUser->id],
+        );
+
+        $this->assertSame(1, $result['sent_count']);
+        $this->assertSame([$targetUser->id], $result['recipient_ids']);
+        $this->assertDatabaseHas('notifications', [
+            'notifiable_type' => User::class,
+            'notifiable_id' => $targetUser->id,
+            'organization_id' => $targetOrganization->id,
+            'notification_type' => 'system_admin_broadcast',
+        ]);
+        $this->assertDatabaseMissing('notifications', [
+            'notifiable_type' => User::class,
+            'notifiable_id' => $otherOrganizationUser->id,
+        ]);
+        Queue::assertPushed(SendNotificationJob::class, 1);
     }
 
     private function templateFixture(array $overrides = []): NotificationTemplate
