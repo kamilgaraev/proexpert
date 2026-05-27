@@ -19,17 +19,20 @@ class CreateBlogArticle extends CreateRecord
 
     protected static string $layout = 'filament-panels::components.layout.simple';
 
-    protected Width | string | null $maxContentWidth = Width::Screen;
+    protected Width|string|null $maxContentWidth = Width::Screen;
 
     public static bool $formActionsAreSticky = true;
 
     protected ?bool $hasUnsavedDataChangesAlert = true;
 
-    protected ?string $subheading = 'Создайте черновик и сразу переходите в полноценный редактор.';
-
     public function getBreadcrumbs(): array
     {
         return [];
+    }
+
+    public function getSubheading(): string
+    {
+        return trans_message('blog_cms.create_subheading');
     }
 
     protected function handleRecordCreation(array $data): BlogArticle

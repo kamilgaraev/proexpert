@@ -93,7 +93,7 @@ class SuperadminErgonomicsTest extends TestCase
             $this->assertStringContainsString("trans_message('blog_cms.{$translationKey}')", $source);
         }
 
-        $this->assertStringContainsString("Section::make('Внутренние заметки')", $source);
+        $this->assertStringContainsString("Section::make(trans_message('blog_cms.form_section_editor_notes'))", $source);
         $this->assertStringContainsString('->collapsed()', $source);
     }
 
@@ -105,9 +105,9 @@ class SuperadminErgonomicsTest extends TestCase
         $this->assertStringNotContainsString('workspace-overview', $source);
         $this->assertFileDoesNotExist(resource_path('views/filament/blog/article-editor/workspace-overview.blade.php'));
 
-        $titlePosition = strpos($source, "Section::make('Заголовок и адрес')");
-        $publicationPosition = strpos($source, "Section::make('Публикация')");
-        $bodyPosition = strpos($source, "Section::make('Текст и краткое описание')");
+        $titlePosition = strpos($source, "Section::make(trans_message('blog_cms.form_section_title_address'))");
+        $publicationPosition = strpos($source, "Section::make(trans_message('blog_cms.form_section_publication'))");
+        $bodyPosition = strpos($source, "Section::make(trans_message('blog_cms.form_section_content'))");
 
         $this->assertIsInt($titlePosition);
         $this->assertIsInt($publicationPosition);
@@ -187,6 +187,38 @@ class SuperadminErgonomicsTest extends TestCase
         }
     }
 
+    public function test_filament_theme_preserves_core_icon_dimensions_after_tailwind_purge(): void
+    {
+        $themeSource = (string) file_get_contents(resource_path('css/filament/admin/theme.css'));
+        $assetSource = (string) file_get_contents($this->filamentThemeBuildAssetPath());
+
+        foreach ([
+            '.fi-icon {',
+            '.fi-icon.fi-size-xs',
+            '.fi-icon.fi-size-sm',
+            '.fi-icon.fi-size-md',
+            '.fi-icon.fi-size-lg',
+            '.fi-icon.fi-size-xl',
+            '.fi-icon.fi-size-2xl',
+            '.fi-icon > svg',
+        ] as $sourceFragment) {
+            $this->assertStringContainsString($sourceFragment, $themeSource);
+        }
+
+        foreach ([
+            '.fi-icon{width:1.25rem;height:1.25rem;',
+            '.fi-icon.fi-size-xs{width:.75rem;height:.75rem;',
+            '.fi-icon.fi-size-sm{width:1rem;height:1rem;',
+            '.fi-icon.fi-size-md{width:1.25rem;height:1.25rem;',
+            '.fi-icon.fi-size-lg{width:1.5rem;height:1.5rem;',
+            '.fi-icon.fi-size-xl{width:1.75rem;height:1.75rem;',
+            '.fi-icon.fi-size-2xl{width:2rem;height:2rem;',
+            '.fi-icon>svg{width:inherit;height:inherit;',
+        ] as $assetFragment) {
+            $this->assertStringContainsString($assetFragment, $assetSource);
+        }
+    }
+
     public function test_blog_editor_custom_views_keep_business_friendly_russian_copy(): void
     {
         $outlineSource = (string) file_get_contents(resource_path('views/filament/blog/article-editor/outline.blade.php'));
@@ -194,6 +226,75 @@ class SuperadminErgonomicsTest extends TestCase
         $this->assertStringNotContainsString('Outline', $outlineSource);
         $this->assertStringContainsString("trans_message('blog_cms.editor_outline_title')", $outlineSource);
         $this->assertStringContainsString("trans_message('blog_cms.editor_outline_empty')", $outlineSource);
+    }
+
+    public function test_blog_editor_primary_ui_copy_is_translation_backed(): void
+    {
+        $source = implode("\n", [
+            (string) file_get_contents(app_path('Filament/Resources/BlogArticleResource/Schemas/BlogArticleForm.php')),
+            (string) file_get_contents(app_path('Filament/Resources/BlogArticleResource/Schemas/BlogEditorBlocks.php')),
+            (string) file_get_contents(app_path('Filament/Resources/BlogArticleResource/Pages/CreateBlogArticle.php')),
+            (string) file_get_contents(app_path('Filament/Resources/BlogArticleResource/Pages/EditBlogArticle.php')),
+        ]);
+
+        foreach ([
+            'form_section_title_address',
+            'form_section_title_address_description',
+            'field_title',
+            'field_slug',
+            'form_section_publication',
+            'form_section_publication_description',
+            'field_status',
+            'field_sort_order',
+            'field_is_featured',
+            'field_allow_comments',
+            'field_rss_visibility',
+            'form_section_content',
+            'form_section_content_description',
+            'field_excerpt',
+            'placeholder_excerpt',
+            'field_editor_document',
+            'editor_add_block_action',
+            'form_section_author_category',
+            'form_section_author_category_description',
+            'field_author',
+            'field_category',
+            'field_tags',
+            'form_section_media',
+            'form_section_media_description',
+            'field_featured_image',
+            'field_gallery',
+            'form_section_editor_notes',
+            'form_section_editor_notes_description',
+            'form_section_seo',
+            'form_section_seo_description',
+            'create_subheading',
+            'edit_subheading',
+            'action_preview',
+            'action_autosave',
+            'action_publish',
+            'action_schedule',
+            'action_to_draft',
+            'action_archive',
+            'action_duplicate',
+            'editor_block_paragraph',
+            'editor_block_heading',
+            'editor_block_list',
+            'editor_block_quote',
+            'editor_block_image',
+            'editor_block_gallery',
+            'editor_block_table',
+            'editor_block_code',
+            'editor_block_divider',
+            'editor_field_text',
+            'editor_field_caption',
+            'editor_field_link',
+            'editor_field_description',
+        ] as $translationKey) {
+            $this->assertStringContainsString("trans_message('blog_cms.{$translationKey}')", $source);
+        }
+
+        $this->assertStringNotContainsString('protected ?string $subheading = \'', $source);
     }
 
     /**
@@ -209,5 +310,15 @@ class SuperadminErgonomicsTest extends TestCase
             $output,
             static fn (string $path): bool => $path !== '',
         ));
+    }
+
+    private function filamentThemeBuildAssetPath(): string
+    {
+        $manifest = json_decode((string) file_get_contents(public_path('build/manifest.json')), true, flags: JSON_THROW_ON_ERROR);
+
+        $this->assertIsArray($manifest);
+        $this->assertIsString($manifest['resources/css/filament/admin/theme.css']['file'] ?? null);
+
+        return public_path('build/'.$manifest['resources/css/filament/admin/theme.css']['file']);
     }
 }

@@ -23,17 +23,20 @@ class EditBlogArticle extends EditRecord
 
     protected static string $layout = 'filament-panels::components.layout.simple';
 
-    protected Width | string | null $maxContentWidth = Width::Screen;
+    protected Width|string|null $maxContentWidth = Width::Screen;
 
     public static bool $formActionsAreSticky = true;
 
     protected ?bool $hasUnsavedDataChangesAlert = true;
 
-    protected ?string $subheading = 'Полноэкранный редактор статьи с черновиком, предпросмотром и историей изменений.';
-
     public function getBreadcrumbs(): array
     {
         return [];
+    }
+
+    public function getSubheading(): string
+    {
+        return trans_message('blog_cms.edit_subheading');
     }
 
     protected function mutateFormDataBeforeFill(array $data): array
@@ -72,18 +75,18 @@ class EditBlogArticle extends EditRecord
     {
         return [
             Action::make('preview')
-                ->label('Предпросмотр')
+                ->label(trans_message('blog_cms.action_preview'))
                 ->icon('heroicon-o-eye')
                 ->visible(fn (): bool => Auth::guard('system_admin')->user()?->hasSystemPermission('system_admin.blog.preview.view') ?? false)
                 ->url(fn (): string => app(BlogCmsService::class)->makePreviewUrl($this->getRecord()), shouldOpenInNewTab: true),
             Action::make('autosave_now')
-                ->label('Сохранить черновик')
+                ->label(trans_message('blog_cms.action_autosave'))
                 ->icon('heroicon-o-cloud-arrow-up')
                 ->visible(fn (): bool => Auth::guard('system_admin')->user()?->hasSystemPermission('system_admin.blog.articles.update') ?? false)
                 ->action(fn () => $this->autosave()),
             ActionGroup::make([
                 Action::make('publish')
-                    ->label('Опубликовать')
+                    ->label(trans_message('blog_cms.action_publish'))
                     ->icon('heroicon-o-paper-airplane')
                     ->visible(fn (): bool => Auth::guard('system_admin')->user()?->hasSystemPermission('system_admin.blog.articles.publish') ?? false)
                     ->action(function (): void {
@@ -94,7 +97,7 @@ class EditBlogArticle extends EditRecord
                         $this->refreshFormData(['status', 'published_at']);
                     }),
                 Action::make('schedule')
-                    ->label('Запланировать')
+                    ->label(trans_message('blog_cms.action_schedule'))
                     ->icon('heroicon-o-calendar-days')
                     ->color('info')
                     ->schema([
@@ -112,7 +115,7 @@ class EditBlogArticle extends EditRecord
                         $this->refreshFormData(['status', 'scheduled_at', 'published_at']);
                     }),
                 Action::make('draft')
-                    ->label('В черновик')
+                    ->label(trans_message('blog_cms.action_to_draft'))
                     ->icon('heroicon-o-pencil-square')
                     ->color('gray')
                     ->requiresConfirmation()
@@ -128,7 +131,7 @@ class EditBlogArticle extends EditRecord
                         $this->refreshFormData(['status', 'scheduled_at', 'published_at']);
                     }),
                 Action::make('archive')
-                    ->label('В архив')
+                    ->label(trans_message('blog_cms.action_archive'))
                     ->icon('heroicon-o-archive-box')
                     ->color('warning')
                     ->requiresConfirmation()
@@ -150,7 +153,7 @@ class EditBlogArticle extends EditRecord
                 ->button()
                 ->visible(fn (): bool => Auth::guard('system_admin')->user()?->hasSystemPermission('system_admin.blog.articles.publish') ?? false),
             Action::make('duplicate')
-                ->label('Дублировать')
+                ->label(trans_message('blog_cms.action_duplicate'))
                 ->icon('heroicon-o-square-2-stack')
                 ->visible(fn (): bool => Auth::guard('system_admin')->user()?->hasSystemPermission('system_admin.blog.articles.create') ?? false)
                 ->action(function (): void {
