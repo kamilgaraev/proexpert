@@ -1,224 +1,211 @@
 # Инвентарь Filament-суперадминки
 
-Документ составлен для выполнения плана `docs/superpowers/plans/2026-05-27-filament-superadmin-production-grade.md`.
+Документ фиксирует финальное состояние Filament-суперадминки после выполнения production-grade плана `docs/superpowers/plans/2026-05-27-filament-superadmin-production-grade.md`.
 
-Дата фиксации: 2026-05-27.
-Ветка: `main`.
-Панель: Filament panel `admin`, URL `/admin`, guard `system_admin`.
+- Дата фиксации: 2026-05-27.
+- Ветка: `main`.
+- Панель: Filament panel `admin`, URL `/admin`, guard `system_admin`.
+- Роли панели: `config/RoleDefinitions/system_admin/*.json`.
+- Основной permission namespace: `system_admin.*`.
 
-## Границы инвентаря
+## Границы
 
-Проверена серверная Filament-панель в `app/Filament`, модель системного администратора, provider панели и JSON-роли контекста `system_admin`.
+Проверенная зона:
 
-Текущие незавершенные изменения в `main`, которые не относятся к этой работе и не должны затрагиваться:
+- Filament panel provider: `app/Providers/Filament/AdminPanelProvider.php`.
+- Pages, resources, relation managers, widgets and support classes in `app/Filament`.
+- System admin model and role service: `app/Models/SystemAdmin.php`, `app/Services/Security/SystemAdminRoleService.php`.
+- Domain services for high-risk operations: `app/Services/Filament`, `app/Services/Blog`.
+- Role JSON files in `config/RoleDefinitions/system_admin`.
+
+Не относящиеся к суперадминке dirty-файлы, оставленные нетронутыми:
 
 - `app/BusinessModules/Features/AIAssistant/Console/Commands/BackfillRagIndexCommand.php`
 - `tests/Feature/Console/AIAssistantRagBackfillCommandTest.php`
 - `storage/prometheus/`
 
-## Доступ к панели
+## Доступ
 
-- Provider панели: `app/Providers/Filament/AdminPanelProvider.php`.
-- Panel ID: `admin`.
-- Panel path: `admin`.
-- Auth guard: `system_admin`.
-- User model: `app/Models/SystemAdmin.php`.
-- Проверка входа в панель: `SystemAdmin::canAccessPanel()`.
-- Условия входа:
-  - panel id равен `admin`;
-  - системный администратор активен;
-  - роль имеет `interface_access: ["admin"]`;
-  - роль имеет permission `system_admin.access`.
+Вход в панель управляется моделью `SystemAdmin`.
 
-Важно: путь `/admin` и panel id `admin` не означают, что используются роли из `config/RoleDefinitions/admin`. Для этой Filament-суперадминки используется `SystemAdminRoleService`, который читает роли из `config/RoleDefinitions/system_admin`.
+Условия доступа:
 
-## Роли суперадминки
+- panel id равен `admin`;
+- системный администратор активен;
+- роль имеет `interface_access: ["admin"]`;
+- роль имеет permission `system_admin.access`.
 
-Файлы ролей:
+Важно: path `/admin` не означает использование ролей из `config/RoleDefinitions/admin`. Эта панель читает роли из `config/RoleDefinitions/system_admin`.
 
-- `config/RoleDefinitions/system_admin/super_admin.json`
-- `config/RoleDefinitions/system_admin/content_manager.json`
-- `config/RoleDefinitions/system_admin/qa_engineer.json`
-- `config/RoleDefinitions/system_admin/security_auditor.json`
+## Роли
 
-Ключевые наблюдения:
+| Роль | Назначение | Характер доступа |
+| --- | --- | --- |
+| `super_admin` | Владелец платформы | Полный доступ через `*`. |
+| `content_manager` | Контент, блог, медиатека, SEO, шаблоны | Управляет редакционным контуром и частью уведомлений. |
+| `qa_engineer` | Проверка платформы и клиентских сценариев | Просмотр операционных разделов, ограниченные действия с пользователями. |
+| `security_auditor` | Аудит, проверки доступа, расследования | Read-only доступ к критичным областям и журналу аудита. |
+| `support_operator` | Обработка обращений | Управляет обращениями поддержки, видит базовый контекст организаций и пользователей. |
+| `support_viewer` | Наблюдение поддержки | Только просмотр обращений. |
 
-- `super_admin` получает полный доступ через `*`.
-- `content_manager` сфокусирован на блоге, медиатеке, SEO, ревизиях и шаблонах уведомлений.
-- `qa_engineer` имеет просмотр и ограниченное управление пользователями, организациями, тарифами, блогом и уведомлениями.
-- `security_auditor` имеет в основном read-only доступ к системным разделам, аудиту, блогу и уведомлениям.
-- Permission namespace уже выстроен вокруг `system_admin.*`, но нет единого PHP-реестра permission-констант.
+Единый PHP-реестр permissions находится в `app/Filament/Support/FilamentPermission.php`. JSON-роли проверяются тестами `FilamentPermissionTest` и `RoleDefinitionJsonContractTest`.
 
-## Страницы
+## Навигация
 
-Текущие Filament pages:
+Группы навигации централизованы в `app/Filament/Support/NavigationGroups.php`, русские названия вынесены в `lang/ru/filament_navigation.php`.
 
-- `app/Filament/Pages/Dashboard.php`
-- `app/Filament/Pages/EditSystemAdminProfile.php`
+Текущие группы:
 
-Наблюдения:
+- Обзор
+- Платформа
+- Организации
+- Биллинг
+- Пользователи
+- Блог CMS
+- Поддержка
+- Уведомления
+- Аудит
+- Настройки
 
-- `Dashboard` проверяет `system_admin.dashboard.view`.
-- `EditSystemAdminProfile` проверяет `system_admin.profile.view` и `system_admin.profile.update`.
-- Страница профиля уже завязана на `system_admin` guard.
+Ресурсы скрываются из меню через `shouldRegisterNavigation()`, если текущая роль не может их просматривать.
 
-## Ресурсы
+## Pages
 
-Текущие top-level resources:
+- `Dashboard`: command center платформы, проверяет `system_admin.dashboard.view`.
+- `EditSystemAdminProfile`: профиль системного администратора, проверяет `system_admin.profile.view` и `system_admin.profile.update`.
 
+## Resources
+
+Top-level resources:
+
+- `ActivityEventResource`
 - `BlogArticleResource`
 - `BlogCategoryResource`
 - `BlogCommentResource`
 - `BlogMediaAssetResource`
 - `BlogSeoSettingsResource`
 - `BlogTagResource`
+- `ModuleResource`
 - `NotificationAnalyticsResource`
 - `NotificationResource`
 - `NotificationTemplateResource`
+- `OrganizationModuleActivationResource`
+- `OrganizationPackageSubscriptionResource`
 - `OrganizationResource`
+- `OrganizationSubscriptionResource`
+- `PaymentTransactionResource`
 - `SubscriptionPlanResource`
+- `SupportRequestResource`
 - `SystemAdminResource`
 - `UserResource`
 
-Текущая группировка навигации:
+Все ресурсы имеют явную resource-level authorization через policies, `AuthorizesSystemAdminResource` или собственные `can*` методы. Проверка покрытия: `SystemAdminResourceAuthorizationTest`.
 
-- Блоговые ресурсы: `Content`.
-- Уведомления: `Уведомления`.
-- Организации, пользователи, тарифы, системные администраторы: `System`.
+## Widgets
 
-Риски по навигации:
+Dashboard widgets:
 
-- Группы смешивают английские и русские названия.
-- SaaS-операции пока не разложены по рабочим зонам: Platform, Organizations, Billing, Users, Blog CMS, Support, Notifications, Audit, Settings.
-- Нет отдельного command center для организации как главной операционной сущности.
-
-## Виджеты
-
-Текущие widgets:
-
+- `PlatformHealthStatsWidget`
+- `PlatformGrowthStatsWidget`
+- `PlatformRiskStatsWidget`
 - `NotificationDeliveryStatsWidget`
 - `SaaSIncomeStatsWidget`
 - `SubscriptionPlanStatsWidget`
 - `UsersStatsWidget`
 
-Наблюдения:
+Все виджеты имеют `canView()` и не раскрывают метрики ролям без нужных permissions. Проверка покрытия: `SystemAdminWidgetVisibilityTest`.
 
-- `NotificationDeliveryStatsWidget` уже имеет `canView()` и проверяет permissions уведомлений.
-- `SaaSIncomeStatsWidget`, `SubscriptionPlanStatsWidget` и `UsersStatsWidget` должны получить явный `canView()`.
-- `AdminPanelProvider` использует widget discovery, поэтому отсутствие `canView()` у метрик является риском утечки операционных данных между ролями.
+## Операционные поверхности
 
-## Авторизация ресурсов
-
-Ресурсы с явными `canViewAny`, `canCreate`, `canEdit`, `canDelete`, `canDeleteAny`:
-
-- `OrganizationResource`
-- `SubscriptionPlanResource`
-- `SystemAdminResource`
-- `UserResource`
-
-Ресурсы, где требуется дополнительная проверка единообразной авторизации:
-
-- `BlogArticleResource`
-- `BlogCategoryResource`
-- `BlogCommentResource`
-- `BlogMediaAssetResource`
-- `BlogSeoSettingsResource`
-- `BlogTagResource`
-- `NotificationResource`
-- `NotificationAnalyticsResource`
-- `NotificationTemplateResource`
-
-Текущий риск:
-
-- Часть ресурсов авторизуется явно, часть полагается на поведение Filament, page actions или локальные `visible()`.
-- Нужен общий слой `FilamentPermission` и helper/trait для resource-level authorization.
+- Организации: профиль, верификация, подписка, метрики, приостановка и реактивация.
+- Пользователи: блокировка, разблокировка, подтверждение email, отправка сброса пароля.
+- Биллинг: тарифы, подписки, платежи, ручные продления, отмена и реактивация подписок.
+- Модули: каталог модулей, подключения организаций, ручная синхронизация прав.
+- Блог CMS: статьи, календарь, ревизии, чеклист публикации, медиатека, SEO, комментарии.
+- Уведомления: шаблоны, preview, test-send, доставка и аналитика.
+- Поддержка: рабочее место обращений, назначение, статусы, внутренние заметки, эскалация.
+- Аудит: read-only просмотр событий с фильтрами, маскированием чувствительных деталей и корреляцией.
 
 ## Опасные действия
 
-Найдены destructive actions:
+Опасные действия не реализуются как bulk-delete:
 
-- `BlogArticleResource`: `DeleteAction`.
-- `BlogCategoryResource`: `DeleteAction`.
-- `BlogCommentResource`: `DeleteAction`.
-- `BlogTagResource`: `DeleteAction`.
-- `NotificationTemplateResource`: `DeleteAction`.
-- `BlogMediaAssetResource`: `DeleteAction`.
-- `SubscriptionPlanResource`: `DeleteBulkAction`.
-- `OrganizationResource`: `DeleteBulkAction`.
+- `rg "DeleteBulkAction|ForceDeleteAction" app\Filament` возвращает пустой результат.
+- Удаление Filament-записей проходит через `HasDestructiveActionGuardrails`.
+- Доменные действия используют сервисы и пишут audit event.
+- Организации, пользователи, подписки, модули, support и blog media меняются через безопасные workflow-сервисы.
 
-Критичный риск:
+Покрывающие тесты:
 
-- `DeleteBulkAction` на организациях и тарифах должен быть заменен на доменные безопасные операции: deactivate, archive candidate, hide from sale, mark deprecated.
-- Удаление media asset должно учитывать использование в опубликованных статьях.
-- Удаление blog entities должно быть привязано к статусам, зависимостям и audit trail.
-- Удаление notification templates должно учитывать отправленные уведомления и историю.
+- `SystemAdminDangerousActionsTest`
+- `SystemAdminAuditServiceTest`
+- `OrganizationCommandCenterTest`
+- `UserManagementWorkflowTest`
+- `BillingOperationsTest`
+- `OrganizationModuleManagementTest`
+- `SupportWorkspaceTest`
+- `BlogMediaLibraryTest`
 
 ## Блог CMS
 
-Текущая поверхность:
+Редактор статьи вынесен в отдельные schema-классы:
 
-- Articles: create, edit, list, revisions relation manager.
-- Categories: create, edit, list.
-- Tags: create, edit, list.
-- Comments: list.
-- Media assets: create, edit, list.
-- SEO settings: create, edit, list.
+- `BlogArticleForm`
+- `BlogArticleTable`
+- `BlogArticleInfolist`
+- `BlogEditorBlocks`
 
-Наблюдения:
+Финальное состояние:
 
-- `BlogArticleResource` уже имеет отдельные page actions для preview, publish, unpublish, duplicate и draft save с проверками permissions на уровне видимости.
-- `BlogMediaAssetResource` содержит `FileUpload::make('upload_file')`; требуется усилить MIME, размер, image rules, alt text и проверку использования файла.
-- Для идеального редакторского UX нужны checklist, revisions, publication history, editorial calendar, понятные статусы и защита публикации от неполных SEO/контентных данных.
+- полноэкранный редактор с черновым сохранением;
+- публикационные действия сгруппированы отдельно от сохранения черновика;
+- публикация защищена редакционным чеклистом;
+- календарь поддерживает безопасные bulk-действия без массовой публикации и удаления;
+- ревизии доступны для просмотра и восстановления черновиков;
+- медиатека проверяет тип, размер, alt-текст и блокирует удаление/замену, если файл используется опубликованными статьями;
+- SEO-поля, Open Graph, canonical URL и noindex находятся в форме статьи.
 
-## Уведомления
+Покрывающие тесты:
 
-Текущая поверхность:
+- `BlogCmsEditorWorkflowTest`
+- `BlogMediaLibraryTest`
+- `BlogDocumentRendererTest`
+- `BlogEditorialChecklistServiceTest`
+- `BlogEditorialOperationsServiceTest`
+- `BlogRevisionServiceTest`
 
-- `NotificationResource`
-- `NotificationAnalyticsResource`
-- `NotificationTemplateResource`
-- `NotificationDeliveryStatsWidget`
-- Relation manager для attempts у notifications.
+## UI и тексты
 
-Наблюдения:
+Финальная проверка UI-copy:
 
-- Раздел уже присутствует, но требует проверки read-only полей, preview/send-test workflow, audit для действий и единых permissions.
+- пользовательские empty states добавлены через `app/Filament/Support/TableEmptyState.php`;
+- тексты empty states находятся в `lang/ru/filament_empty_states.php`;
+- навигация и основные тексты суперадминки русифицированы;
+- служебные слова вроде `fallback`, `legacy`, `payload`, `dto`, `exception`, `sql`, `constraint` не появляются в проверяемом UI-copy.
 
-## SaaS Management Gaps
+Команды проверки описаны в `docs/admin/superadmin-ui-copy-checks.md`.
 
-Для production-grade управления платформой не хватает цельных рабочих поверхностей:
+## Проверки
 
-- организация как command center;
-- платежи и транзакции;
-- подписки и ручные продления;
-- модули и entitlements;
-- support workspace;
-- audit/activity resource;
-- platform health dashboard;
-- безопасные настройки и операционные действия.
+Финальный targeted набор:
 
-## Тесты
+```powershell
+php artisan test tests\Feature\Filament --stop-on-failure
+php artisan test tests\Unit\Filament --stop-on-failure
+php artisan test tests\Unit\Blog --stop-on-failure
+php artisan test tests\Unit\RoleDefinitions --stop-on-failure
+vendor\bin\phpstan analyse app\Filament app\Services\Filament app\Services\Blog app\Services\Security app\Models\SystemAdmin.php --memory-limit=1G --no-progress
+```
 
-На момент инвентаря отдельные Filament feature tests не найдены через поиск `tests/**/*Filament*.php`.
+Дополнительно выполнен `php -l` по 147 PHP-файлам из Filament, связанных сервисов, тестов и scoped translations.
 
-Первый тестовый каркас должен покрыть:
+## Browser QA
 
-- доступ активного системного администратора в panel `admin`;
-- отказ для неактивного системного администратора;
-- отказ для обычного пользователя приложения;
-- загрузку ролей `system_admin`;
-- wildcard permission `*`;
-- prefix permission вида `system_admin.blog.*`;
-- отсутствие доступа при неизвестной роли;
-- отсутствие доступа при неактивном системном администраторе.
+Browser QA не выполнен, потому что ни один локальный admin URL не был доступен:
 
-## Ближайшие контрольные точки
+- `http://127.0.0.1:8000/admin`
+- `http://localhost:8000/admin`
+- `http://127.0.0.1/admin`
+- `http://localhost/admin`
 
-1. Добавить тестовый каркас для `SystemAdmin::canAccessPanel()` и `SystemAdminRoleService`.
-2. Ввести единый реестр Filament permissions.
-3. Закрыть `canView()` у всех dashboard widgets.
-4. Убрать unsafe bulk delete из организаций и тарифов.
-5. Усилить медиатеку блога.
-6. Привести blog resources и notification resources к единым resource authorization methods.
-7. Добавить audit trail для high-risk действий.
-
+Dev-сервер не запускался, потому что правила проекта запрещают поднимать его только ради QA. Скриншоты не создавались по той же причине.
