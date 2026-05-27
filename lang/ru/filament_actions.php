@@ -26,6 +26,16 @@ return [
         'subscription_manual_extension_granted_description' => 'Системный администратор вручную продлил срок действия подписки :subscription.',
         'subscription_manual_extension_revoked_title' => 'Отменено ручное продление подписки: :subscription',
         'subscription_manual_extension_revoked_description' => 'Системный администратор отменил ручное продление подписки :subscription.',
+        'module_enabled_title' => 'Модуль подключен: :module',
+        'module_enabled_description' => 'Системный администратор подключил модуль :module для организации :organization.',
+        'module_disabled_title' => 'Модуль отключен: :module',
+        'module_disabled_description' => 'Системный администратор отключил модуль :module для организации :organization.',
+        'module_trial_started_title' => 'Пробный период модуля: :module',
+        'module_trial_started_description' => 'Системный администратор запустил пробный период модуля :module для организации :organization.',
+        'module_access_extended_title' => 'Продлен доступ к модулю: :module',
+        'module_access_extended_description' => 'Системный администратор продлил доступ к модулю :module для организации :organization.',
+        'module_entitlements_synced_title' => 'Синхронизированы права организации: :organization',
+        'module_entitlements_synced_description' => 'Системный администратор синхронизировал модули и пакеты организации :organization.',
     ],
     'delete' => [
         'confirm' => 'Удалить',
@@ -125,6 +135,37 @@ return [
             'revoke_label' => 'Отменить продление',
             'revoke_heading' => 'Отменить ручное продление',
             'revoke_success' => 'Ручное продление отменено',
+        ],
+    ],
+    'module' => [
+        'reason' => 'Причина',
+        'days' => 'Дней',
+        'invalid_days' => 'Срок должен быть больше нуля.',
+        'inactive_module' => 'Модуль отключен в каталоге и не может быть подключен организации.',
+        'unavailable_module' => 'Модуль пока недоступен для подключения.',
+        'operation_success' => 'Операция выполнена',
+        'enable_for_organization' => [
+            'label' => 'Подключить организации',
+            'heading' => 'Подключить модуль организации',
+            'success' => 'Модуль подключен',
+        ],
+        'enable' => [
+            'label' => 'Включить',
+        ],
+        'disable' => [
+            'label' => 'Отключить',
+            'heading' => 'Отключить модуль',
+        ],
+        'start_trial' => [
+            'label' => 'Пробный период',
+        ],
+        'extend_access' => [
+            'label' => 'Продлить доступ',
+        ],
+        'sync_entitlements' => [
+            'label' => 'Синхронизировать права',
+            'heading' => 'Синхронизировать модули и пакеты организации',
+            'success' => 'Права организации синхронизированы',
         ],
     ],
 ];

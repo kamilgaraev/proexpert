@@ -18,6 +18,7 @@
     "system_admin.subscription_plans.view",
     "system_admin.subscriptions.view",
     "system_admin.payments.view",
+    "system_admin.modules.view",
     "system_admin.blog.articles.view",
     "system_admin.blog.media.view",
     "system_admin.blog.revisions.view",
@@ -45,6 +46,9 @@
     "billing": [
       "system_admin.subscriptions.view",
       "system_admin.payments.view"
+    ],
+    "modules": [
+      "system_admin.modules.view"
     ],
     "blog": [
       "system_admin.blog.articles.view",
