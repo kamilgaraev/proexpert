@@ -13,6 +13,8 @@ use Illuminate\Http\Resources\Json\JsonResource;
  */
 class PublicBlogArticleResource extends JsonResource
 {
+    private const MARKETING_OG_IMAGE_PATTERN = '~^(https?://(?:www\.)?prohelper\.pro)?/og/([^?#]+)\.svg([?#].*)?$~i';
+
     public function toArray(Request $request): array
     {
         /** @var BlogArticle $article */
@@ -31,7 +33,7 @@ class PublicBlogArticleResource extends JsonResource
             'meta_keywords' => $article->meta_keywords ?? [],
             'og_title' => $article->og_title,
             'og_description' => $article->og_description,
-            'og_image' => $article->og_image,
+            'og_image' => self::normalizeMarketingOgImage($article->og_image),
             'structured_data' => $article->structured_data,
             'status' => $article->status?->value ?? $article->status,
             'published_at' => $article->published_at?->toISOString(),
@@ -74,5 +76,16 @@ class PublicBlogArticleResource extends JsonResource
             'created_at' => $article->created_at?->toISOString(),
             'updated_at' => $article->updated_at?->toISOString(),
         ];
+    }
+
+    private static function normalizeMarketingOgImage(?string $image): ?string
+    {
+        if ($image === null || $image === '') {
+            return $image;
+        }
+
+        $normalized = preg_replace(self::MARKETING_OG_IMAGE_PATTERN, '$1/og/$2.png$3', $image);
+
+        return is_string($normalized) ? $normalized : $image;
     }
 }
