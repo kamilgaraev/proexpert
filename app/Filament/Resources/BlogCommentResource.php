@@ -6,11 +6,11 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\BlogCommentResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
+use App\Filament\Support\Concerns\HasDestructiveActionGuardrails;
 use App\Models\Blog\BlogComment;
 use App\Models\SystemAdmin;
 use App\Policies\SystemAdmin\BlogCommentPolicy;
 use Filament\Actions\Action;
-use Filament\Actions\DeleteAction;
 use Filament\Forms;
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
@@ -21,6 +21,7 @@ use Illuminate\Support\Facades\Auth;
 class BlogCommentResource extends Resource
 {
     use AuthorizesSystemAdminResource;
+    use HasDestructiveActionGuardrails;
 
     protected static ?string $model = BlogComment::class;
 
@@ -69,7 +70,7 @@ class BlogCommentResource extends Resource
                 Action::make('spam')
                     ->label('Spam')
                     ->action(fn (BlogComment $record) => $record->markAsSpam()),
-                DeleteAction::make(),
+                self::guardedDeleteAction('comment'),
             ]);
     }
 

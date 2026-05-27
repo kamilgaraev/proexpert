@@ -7,9 +7,9 @@ namespace App\Filament\Resources;
 use App\BusinessModules\Features\Notifications\Models\NotificationTemplate;
 use App\Filament\Resources\NotificationTemplateResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
+use App\Filament\Support\Concerns\HasDestructiveActionGuardrails;
 use App\Models\Organization;
 use App\Policies\SystemAdmin\NotificationTemplatePolicy;
-use Filament\Actions\DeleteAction;
 use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Resources\Resource;
@@ -21,6 +21,7 @@ use Filament\Tables\Table;
 class NotificationTemplateResource extends Resource
 {
     use AuthorizesSystemAdminResource;
+    use HasDestructiveActionGuardrails;
 
     protected static ?string $model = NotificationTemplate::class;
 
@@ -173,7 +174,7 @@ class NotificationTemplateResource extends Resource
             ])
             ->actions([
                 EditAction::make(),
-                DeleteAction::make(),
+                self::guardedDeleteAction('notification_template'),
             ])
             ->defaultSort('updated_at', 'desc');
     }

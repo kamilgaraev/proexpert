@@ -6,9 +6,9 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\BlogMediaAssetResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
+use App\Filament\Support\Concerns\HasDestructiveActionGuardrails;
 use App\Models\Blog\BlogMediaAsset;
 use App\Policies\SystemAdmin\BlogMediaAssetPolicy;
-use Filament\Actions\DeleteAction;
 use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Resources\Resource;
@@ -20,6 +20,7 @@ use Filament\Tables\Table;
 class BlogMediaAssetResource extends Resource
 {
     use AuthorizesSystemAdminResource;
+    use HasDestructiveActionGuardrails;
 
     protected static ?string $model = BlogMediaAsset::class;
 
@@ -68,7 +69,7 @@ class BlogMediaAssetResource extends Resource
             ])
             ->actions([
                 EditAction::make(),
-                DeleteAction::make(),
+                self::guardedDeleteAction('media_asset'),
             ]);
     }
 

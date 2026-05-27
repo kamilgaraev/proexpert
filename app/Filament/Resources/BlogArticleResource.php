@@ -7,12 +7,12 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\BlogArticleResource\Pages;
 use App\Filament\Resources\BlogArticleResource\RelationManagers\BlogArticleRevisionsRelationManager;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
+use App\Filament\Support\Concerns\HasDestructiveActionGuardrails;
 use App\Models\Blog\BlogArticle;
 use App\Models\Blog\BlogCategory;
 use App\Models\Blog\BlogMediaAsset;
 use App\Models\Blog\BlogTag;
 use App\Policies\SystemAdmin\BlogArticlePolicy;
-use Filament\Actions\DeleteAction;
 use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Forms\Components\Builder;
@@ -30,6 +30,7 @@ use Illuminate\Support\Str;
 class BlogArticleResource extends Resource
 {
     use AuthorizesSystemAdminResource;
+    use HasDestructiveActionGuardrails;
 
     protected static ?string $model = BlogArticle::class;
 
@@ -232,7 +233,7 @@ class BlogArticleResource extends Resource
             ])
             ->actions([
                 EditAction::make()->label('Открыть редактор'),
-                DeleteAction::make(),
+                self::guardedDeleteAction('article'),
             ]);
     }
 

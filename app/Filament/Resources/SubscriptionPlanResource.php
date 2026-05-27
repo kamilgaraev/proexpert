@@ -6,8 +6,6 @@ use App\Filament\Resources\SubscriptionPlanResource\Pages;
 use App\Models\SubscriptionPlan;
 use App\Models\SystemAdmin;
 use App\Policies\SystemAdmin\SubscriptionPlanResourcePolicy;
-use Filament\Actions\BulkActionGroup;
-use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Resources\Resource;
@@ -107,11 +105,7 @@ class SubscriptionPlanResource extends Resource
             ->actions([
                 EditAction::make(),
             ])
-            ->bulkActions([
-                BulkActionGroup::make([
-                    DeleteBulkAction::make(),
-                ]),
-            ]);
+            ->bulkActions([]);
     }
 
     public static function getPages(): array

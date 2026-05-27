@@ -6,8 +6,6 @@ use App\Filament\Resources\OrganizationResource\Pages;
 use App\Models\Organization;
 use App\Models\SystemAdmin;
 use App\Policies\SystemAdmin\OrganizationResourcePolicy;
-use Filament\Actions\BulkActionGroup;
-use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Resources\Resource;
@@ -108,11 +106,7 @@ class OrganizationResource extends Resource
             ->actions([
                 EditAction::make(),
             ])
-            ->bulkActions([
-                BulkActionGroup::make([
-                    DeleteBulkAction::make(),
-                ]),
-            ]);
+            ->bulkActions([]);
     }
 
     public static function getRelations(): array

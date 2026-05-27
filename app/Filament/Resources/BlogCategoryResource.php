@@ -6,9 +6,9 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\BlogCategoryResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
+use App\Filament\Support\Concerns\HasDestructiveActionGuardrails;
 use App\Models\Blog\BlogCategory;
 use App\Policies\SystemAdmin\BlogCategoryPolicy;
-use Filament\Actions\DeleteAction;
 use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Resources\Resource;
@@ -20,6 +20,7 @@ use Filament\Tables\Table;
 class BlogCategoryResource extends Resource
 {
     use AuthorizesSystemAdminResource;
+    use HasDestructiveActionGuardrails;
 
     protected static ?string $model = BlogCategory::class;
 
@@ -67,7 +68,7 @@ class BlogCategoryResource extends Resource
             ])
             ->actions([
                 EditAction::make(),
-                DeleteAction::make(),
+                self::guardedDeleteAction('category'),
             ]);
     }
 
