@@ -18,6 +18,7 @@ use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Schema;
 use Filament\Support\Enums\Alignment;
+use Filament\Support\Enums\Operation;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
 
@@ -111,7 +112,8 @@ final class BlogArticleForm
                             ->dehydrated(false)
                             ->columnSpanFull(),
                     ])
-                    ->columns(1),
+                    ->columns(1)
+                    ->hiddenOn(Operation::Create),
                 Section::make('Текст и краткое описание')
                     ->description('Лид, структура и основное полотно материала.')
                     ->schema([
@@ -134,6 +136,7 @@ final class BlogArticleForm
                             ->addActionAlignment(Alignment::Start)
                             ->addActionLabel('Добавить блок')
                             ->helperText(trans_message('blog_cms.helper_editor_document'))
+                            ->hiddenOn(Operation::Create)
                             ->columnSpanFull(),
                     ])
                     ->columns(1)
@@ -146,7 +149,8 @@ final class BlogArticleForm
                             ->dehydrated(false)
                             ->columnSpanFull(),
                     ])
-                    ->columns(1),
+                    ->columns(1)
+                    ->hiddenOn(Operation::Create),
                 Section::make('Автор и категория')
                     ->description('Редакционная принадлежность статьи и тематическая навигация.')
                     ->schema([
@@ -190,7 +194,8 @@ final class BlogArticleForm
                             ->preload(),
                     ])
                     ->columns(1)
-                    ->collapsible(),
+                    ->collapsible()
+                    ->hiddenOn(Operation::Create),
                 Section::make('Внутренние заметки')
                     ->description('Редакционный контекст, который не показывается читателям.')
                     ->schema([
@@ -202,7 +207,8 @@ final class BlogArticleForm
                     ])
                     ->columns(1)
                     ->collapsible()
-                    ->collapsed(),
+                    ->collapsed()
+                    ->hiddenOn(Operation::Create),
                 Section::make('SEO и Open Graph')
                     ->description('Метаданные, которые нужны для публикации и красивого превью в поиске.')
                     ->schema([
@@ -238,7 +244,8 @@ final class BlogArticleForm
                             ->columnSpanFull(),
                     ])
                     ->columns(1)
-                    ->collapsible(),
+                    ->collapsible()
+                    ->hiddenOn(Operation::Create),
             ])
             ->columns(3);
     }

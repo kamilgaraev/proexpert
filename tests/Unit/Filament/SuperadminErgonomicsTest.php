@@ -116,6 +116,29 @@ class SuperadminErgonomicsTest extends TestCase
         $this->assertLessThan($bodyPosition, $publicationPosition);
     }
 
+    public function test_blog_create_form_keeps_heavy_editor_surfaces_for_editing(): void
+    {
+        $source = (string) file_get_contents(app_path('Filament/Resources/BlogArticleResource/Schemas/BlogArticleForm.php'));
+
+        $this->assertStringContainsString('use Filament\Support\Enums\Operation;', $source);
+        $this->assertMatchesRegularExpression(
+            "/ViewField::make\\('editor_outline'\\)[\\s\\S]+?->hiddenOn\\(Operation::Create\\)/",
+            $source,
+        );
+        $this->assertMatchesRegularExpression(
+            "/Builder::make\\('editor_document'\\)[\\s\\S]+?->hiddenOn\\(Operation::Create\\)/",
+            $source,
+        );
+        $this->assertMatchesRegularExpression(
+            "/Section::make\\(trans_message\\('blog_cms\\.editorial_checklist_section'\\)\\)[\\s\\S]+?->hiddenOn\\(Operation::Create\\)/",
+            $source,
+        );
+        $this->assertMatchesRegularExpression(
+            "/ViewField::make\\('seo_preview'\\)[\\s\\S]+?->hiddenOn\\(Operation::Create\\)/",
+            $source,
+        );
+    }
+
     public function test_filament_panel_loads_project_theme_for_custom_blog_editor_views(): void
     {
         $providerSource = (string) file_get_contents(app_path('Providers/Filament/AdminPanelProvider.php'));
