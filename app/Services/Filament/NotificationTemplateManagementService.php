@@ -7,6 +7,7 @@ namespace App\Services\Filament;
 use App\BusinessModules\Features\Notifications\Models\NotificationTemplate;
 use App\BusinessModules\Features\Notifications\Services\NotificationService;
 use App\BusinessModules\Features\Notifications\Services\TemplateRenderer;
+use App\Enums\Activity\ActivityActionEnum;
 use App\Models\SystemAdmin;
 use App\Models\User;
 use App\Notifications\SystemAdminTemplatePreviewNotification;
@@ -18,6 +19,7 @@ class NotificationTemplateManagementService
     public function __construct(
         private readonly TemplateRenderer $templateRenderer,
         private readonly NotificationService $notificationService,
+        private readonly SystemAdminAuditService $auditService,
     ) {
     }
 
@@ -64,7 +66,10 @@ class NotificationTemplateManagementService
             ->orderBy('id')
             ->get();
 
-        return $this->sendToUserCollection($template, $systemAdmin, $users);
+        $result = $this->sendToUserCollection($template, $systemAdmin, $users);
+        $this->recordBroadcastAudit($template, $systemAdmin, $result, 'selected_users');
+
+        return $result;
     }
 
     public function sendToAllUsers(NotificationTemplate $template, SystemAdmin $systemAdmin): array
@@ -80,10 +85,13 @@ class NotificationTemplateManagementService
                 $recipientIds = array_merge($recipientIds, $result['recipient_ids']);
             });
 
-        return [
+        $result = [
             'sent_count' => count($recipientIds),
             'recipient_ids' => $recipientIds,
         ];
+        $this->recordBroadcastAudit($template, $systemAdmin, $result, 'all_users');
+
+        return $result;
     }
 
     private function sendToUserCollection(NotificationTemplate $template, SystemAdmin $systemAdmin, Collection $users): array
@@ -144,6 +152,40 @@ class NotificationTemplateManagementService
             static fn (mixed $userId): int => is_numeric($userId) ? (int) $userId : 0,
             $userIds,
         ), static fn (int $userId): bool => $userId > 0)));
+    }
+
+    private function recordBroadcastAudit(
+        NotificationTemplate $template,
+        SystemAdmin $systemAdmin,
+        array $result,
+        string $audience,
+    ): void {
+        $this->auditService->record(
+            actor: $systemAdmin,
+            eventType: 'system_admin.notifications.broadcast_sent',
+            action: ActivityActionEnum::Created,
+            subjectType: NotificationTemplate::class,
+            subjectId: is_numeric($template->id) ? (int) $template->id : null,
+            subjectLabel: (string) $template->name,
+            organizationId: is_numeric($template->organization_id) ? (int) $template->organization_id : null,
+            title: trans_message('filament_actions.audit.notification_broadcast_sent_title', [
+                'template' => (string) $template->name,
+            ]),
+            description: trans_message('filament_actions.audit.notification_broadcast_sent_description', [
+                'template' => (string) $template->name,
+                'count' => (int) ($result['sent_count'] ?? 0),
+            ]),
+            after: [
+                'sent_count' => (int) ($result['sent_count'] ?? 0),
+                'recipient_ids' => $result['recipient_ids'] ?? [],
+            ],
+            context: [
+                'operation' => 'notification_broadcast',
+                'audience' => $audience,
+                'template_type' => (string) $template->type,
+                'template_channel' => (string) $template->channel,
+            ],
+        );
     }
 
     private function sampleData(SystemAdmin $systemAdmin, ?User $user = null, ?NotificationTemplate $template = null): array

@@ -48,6 +48,8 @@ return [
         'support_organization_linked_description' => 'Системный администратор обновил связь обращения :request с организацией.',
         'support_escalated_title' => 'Обращение эскалировано: :request',
         'support_escalated_description' => 'Системный администратор эскалировал обращение :request.',
+        'notification_broadcast_sent_title' => 'Отправлена рассылка уведомления: :template',
+        'notification_broadcast_sent_description' => 'Системный администратор отправил уведомление по шаблону :template получателям: :count.',
     ],
     'delete' => [
         'confirm' => 'Удалить',

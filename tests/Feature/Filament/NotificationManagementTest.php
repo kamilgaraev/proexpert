@@ -208,6 +208,12 @@ class NotificationManagementTest extends TestCase
             'notifiable_type' => User::class,
             'notifiable_id' => $inactiveUser->id,
         ]);
+        $this->assertDatabaseHas('activity_events', [
+            'event_type' => 'system_admin.notifications.broadcast_sent',
+            'actor_type' => 'system_admin',
+            'subject_type' => NotificationTemplate::class,
+            'subject_id' => $template->id,
+        ]);
         Queue::assertPushed(SendNotificationJob::class, 3);
     }
 
