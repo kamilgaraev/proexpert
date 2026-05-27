@@ -19,7 +19,7 @@ class CreateBlogArticle extends CreateRecord
 
     protected static string $layout = 'filament-panels::components.layout.simple';
 
-    protected Width|string|null $maxContentWidth = Width::Screen;
+    protected Width|string|null $maxContentWidth = 'fi-blog-article-editor-screen';
 
     public static bool $formActionsAreSticky = true;
 

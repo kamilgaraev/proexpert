@@ -13,7 +13,7 @@ class ViewBlogArticle extends ViewRecord
 {
     protected static string $resource = BlogArticleResource::class;
 
-    protected Width | string | null $maxContentWidth = Width::Screen;
+    protected Width | string | null $maxContentWidth = 'fi-blog-article-editor-screen';
 
     protected function getHeaderActions(): array
     {
