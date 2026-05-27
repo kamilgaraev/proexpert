@@ -28,6 +28,8 @@ final class FilamentPermission
     public const USERS_UPDATE = 'system_admin.users.update';
     public const USERS_DELETE = 'system_admin.users.delete';
     public const USERS_BLOCK = 'system_admin.users.block';
+    public const USERS_VERIFY_EMAIL = 'system_admin.users.verify_email';
+    public const USERS_SEND_PASSWORD_RESET = 'system_admin.users.send_password_reset';
 
     public const ORGANIZATIONS_VIEW = 'system_admin.organizations.view';
     public const ORGANIZATIONS_CREATE = 'system_admin.organizations.create';
@@ -93,4 +95,3 @@ final class FilamentPermission
         return array_values((new ReflectionClass(self::class))->getConstants());
     }
 }
-
