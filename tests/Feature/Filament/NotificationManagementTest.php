@@ -8,6 +8,7 @@ use App\BusinessModules\Features\Notifications\Models\NotificationTemplate;
 use App\BusinessModules\Features\Notifications\Models\Notification as DomainNotification;
 use App\BusinessModules\Features\Notifications\Jobs\SendNotificationJob;
 use App\Filament\Resources\NotificationTemplateResource;
+use App\Models\Activity\ActivityEvent;
 use App\Models\SystemAdmin;
 use App\Models\User;
 use App\Notifications\SystemAdminTemplatePreviewNotification;
@@ -194,7 +195,7 @@ class NotificationManagementTest extends TestCase
         $result = app(NotificationTemplateManagementService::class)->sendToAllUsers($template, $admin);
 
         $this->assertSame(3, $result['sent_count']);
-        $this->assertSame($activeUsers->pluck('id')->all(), $result['recipient_ids']);
+        $this->assertArrayNotHasKey('recipient_ids', $result);
 
         foreach ($activeUsers as $user) {
             $this->assertDatabaseHas('notifications', [
@@ -214,6 +215,19 @@ class NotificationManagementTest extends TestCase
             'subject_type' => NotificationTemplate::class,
             'subject_id' => $template->id,
         ]);
+
+        $auditEvent = ActivityEvent::query()
+            ->where('event_type', 'system_admin.notifications.broadcast_sent')
+            ->where('subject_id', $template->id)
+            ->firstOrFail();
+        $after = $auditEvent->changes['after'] ?? [];
+
+        $this->assertSame(3, $after['sent_count']);
+        $this->assertSame($activeUsers->pluck('id')->all(), $after['recipient_sample_ids']);
+        $this->assertSame(3, $after['recipient_sample_count']);
+        $this->assertSame(0, $after['omitted_recipient_count']);
+        $this->assertArrayNotHasKey('recipient_ids', $after);
+        $this->assertNotEmpty($after['recipient_ids_hash']);
         Queue::assertPushed(SendNotificationJob::class, 3);
     }
 

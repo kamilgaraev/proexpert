@@ -16,6 +16,8 @@ use Illuminate\Support\Collection;
 
 class NotificationTemplateManagementService
 {
+    private const AUDIT_RECIPIENT_SAMPLE_LIMIT = 20;
+
     public function __construct(
         private readonly TemplateRenderer $templateRenderer,
         private readonly NotificationService $notificationService,
@@ -74,20 +76,46 @@ class NotificationTemplateManagementService
 
     public function sendToAllUsers(NotificationTemplate $template, SystemAdmin $systemAdmin): array
     {
-        $recipientIds = [];
+        $sentCount = 0;
+        $recipientSampleIds = [];
+        $recipientIdsHash = hash_init('sha256');
+        $hasRecipients = false;
 
         User::query()
             ->with('currentOrganization')
             ->where('is_active', true)
             ->orderBy('id')
-            ->chunkById(500, function (Collection $users) use ($template, $systemAdmin, &$recipientIds): void {
+            ->chunkById(500, function (Collection $users) use (
+                $template,
+                $systemAdmin,
+                &$sentCount,
+                &$recipientSampleIds,
+                $recipientIdsHash,
+                &$hasRecipients,
+            ): void {
                 $result = $this->sendToUserCollection($template, $systemAdmin, $users);
-                $recipientIds = array_merge($recipientIds, $result['recipient_ids']);
+                $sentCount += (int) $result['sent_count'];
+
+                foreach ($result['recipient_ids'] as $recipientId) {
+                    if ($hasRecipients) {
+                        hash_update($recipientIdsHash, ',');
+                    }
+
+                    hash_update($recipientIdsHash, (string) $recipientId);
+                    $hasRecipients = true;
+
+                    if (count($recipientSampleIds) < self::AUDIT_RECIPIENT_SAMPLE_LIMIT) {
+                        $recipientSampleIds[] = (int) $recipientId;
+                    }
+                }
             });
 
         $result = [
-            'sent_count' => count($recipientIds),
-            'recipient_ids' => $recipientIds,
+            'sent_count' => $sentCount,
+            'recipient_sample_ids' => $recipientSampleIds,
+            'recipient_sample_count' => count($recipientSampleIds),
+            'omitted_recipient_count' => max(0, $sentCount - count($recipientSampleIds)),
+            'recipient_ids_hash' => hash_final($recipientIdsHash),
         ];
         $this->recordBroadcastAudit($template, $systemAdmin, $result, 'all_users');
 
@@ -160,6 +188,8 @@ class NotificationTemplateManagementService
         array $result,
         string $audience,
     ): void {
+        $recipientSummary = $this->recipientAuditSummary($result);
+
         $this->auditService->record(
             actor: $systemAdmin,
             eventType: 'system_admin.notifications.broadcast_sent',
@@ -177,7 +207,7 @@ class NotificationTemplateManagementService
             ]),
             after: [
                 'sent_count' => (int) ($result['sent_count'] ?? 0),
-                'recipient_ids' => $result['recipient_ids'] ?? [],
+                ...$recipientSummary,
             ],
             context: [
                 'operation' => 'notification_broadcast',
@@ -186,6 +216,34 @@ class NotificationTemplateManagementService
                 'template_channel' => (string) $template->channel,
             ],
         );
+    }
+
+    private function recipientAuditSummary(array $result): array
+    {
+        $recipientIds = $this->normalizeUserIds((array) ($result['recipient_ids'] ?? []));
+        $sampleIds = $this->normalizeUserIds((array) ($result['recipient_sample_ids'] ?? []));
+        $sentCount = (int) ($result['sent_count'] ?? count($recipientIds));
+
+        if ($sampleIds === [] && $recipientIds !== []) {
+            $sampleIds = array_slice($recipientIds, 0, self::AUDIT_RECIPIENT_SAMPLE_LIMIT);
+        }
+
+        $recipientIdsHash = (string) ($result['recipient_ids_hash'] ?? '');
+
+        if ($recipientIdsHash === '' && $recipientIds !== []) {
+            $recipientIdsHash = hash('sha256', implode(',', $recipientIds));
+        }
+
+        if ($recipientIdsHash === '') {
+            $recipientIdsHash = hash('sha256', '');
+        }
+
+        return [
+            'recipient_sample_ids' => $sampleIds,
+            'recipient_sample_count' => count($sampleIds),
+            'omitted_recipient_count' => max(0, $sentCount - count($sampleIds)),
+            'recipient_ids_hash' => $recipientIdsHash,
+        ];
     }
 
     private function sampleData(SystemAdmin $systemAdmin, ?User $user = null, ?NotificationTemplate $template = null): array
