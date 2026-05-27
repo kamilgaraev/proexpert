@@ -2,7 +2,10 @@
 /.github
 /.agent
 /node_modules
-/public/build
+/public/build/*
+!/public/build/manifest.json
+!/public/build/assets/
+!/public/build/assets/*
 /tests
 /.env
 /.env.*
