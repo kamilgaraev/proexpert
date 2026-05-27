@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Filament;
 
 use App\BusinessModules\Features\Notifications\Models\Notification;
+use App\Filament\Resources\ActivityEventResource;
 use App\Filament\Resources\BlogArticleResource;
 use App\Filament\Resources\BlogCategoryResource;
 use App\Filament\Resources\BlogCommentResource;
@@ -54,6 +55,7 @@ class SystemAdminResourceAuthorizationTest extends TestCase
         $this->actingAs(User::factory()->create());
 
         $this->assertFalse(BlogArticleResource::canViewAny());
+        $this->assertFalse(ActivityEventResource::canViewAny());
         $this->assertFalse(NotificationTemplateResource::canViewAny());
         $this->assertFalse(UserResource::canViewAny());
         $this->assertFalse(OrganizationResource::canViewAny());
@@ -99,6 +101,7 @@ class SystemAdminResourceAuthorizationTest extends TestCase
         $this->assertFalse(SubscriptionPlanResource::canViewAny());
         $this->assertFalse(SupportRequestResource::canViewAny());
         $this->assertFalse(SystemAdminResource::canViewAny());
+        $this->assertFalse(ActivityEventResource::canViewAny());
     }
 
     public function test_qa_engineer_can_view_operational_read_models_without_system_admins(): void
@@ -119,6 +122,7 @@ class SystemAdminResourceAuthorizationTest extends TestCase
         $this->assertTrue(NotificationAnalyticsResource::canViewAny());
         $this->assertTrue(NotificationTemplateResource::canViewAny());
 
+        $this->assertFalse(ActivityEventResource::canViewAny());
         $this->assertFalse(SupportRequestResource::canViewAny());
         $this->assertFalse(SystemAdminResource::canViewAny());
         $this->assertFalse(BlogCategoryResource::canViewAny());
@@ -186,6 +190,7 @@ class SystemAdminResourceAuthorizationTest extends TestCase
     {
         return [
             BlogArticleResource::class,
+            ActivityEventResource::class,
             BlogCategoryResource::class,
             BlogCommentResource::class,
             BlogMediaAssetResource::class,
