@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
+use App\Filament\Support\TableEmptyState;
 use App\Filament\Resources\SubscriptionPlanResource\Pages;
 use App\Filament\Support\NavigationGroups;
 use App\Models\SubscriptionPlan;
@@ -173,7 +174,7 @@ class SubscriptionPlanResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
+        return TableEmptyState::for($table, 'subscription_plans', 'heroicon-o-credit-card')
             ->columns([
                 Tables\Columns\TextColumn::make('name')
                     ->label(trans_message('widgets.subscription_plans.name'))

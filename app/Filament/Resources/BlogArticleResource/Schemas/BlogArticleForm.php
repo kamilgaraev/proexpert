@@ -40,6 +40,7 @@ final class BlogArticleForm
                             ->required()
                             ->minLength(3)
                             ->maxLength(255)
+                            ->helperText(trans_message('blog_cms.helper_title'))
                             ->live(onBlur: true)
                             ->afterStateUpdated(function (Get $get, Set $set, ?string $state, ?string $old): void {
                                 $currentSlug = (string) $get('slug');
@@ -55,12 +56,14 @@ final class BlogArticleForm
                             ->label('Slug')
                             ->required()
                             ->maxLength(255)
+                            ->helperText(trans_message('blog_cms.helper_slug'))
                             ->dehydrateStateUsing(fn (?string $state): string => Str::slug((string) $state))
                             ->unique(BlogArticle::class, 'slug', ignoreRecord: true),
                         Forms\Components\TextInput::make('canonical_url')
                             ->label(trans_message('blog_cms.field_canonical_url'))
                             ->url()
                             ->maxLength(2048)
+                            ->helperText(trans_message('blog_cms.helper_canonical_url'))
                             ->columnSpanFull(),
                     ])
                     ->columns(2)
@@ -73,6 +76,7 @@ final class BlogArticleForm
                             ->rows(4)
                             ->maxLength(500)
                             ->placeholder('Короткое резюме статьи для листинга, SEO и превью.')
+                            ->helperText(trans_message('blog_cms.helper_excerpt'))
                             ->columnSpanFull(),
                         Builder::make('editor_document')
                             ->label('Полотно статьи')
@@ -85,7 +89,7 @@ final class BlogArticleForm
                             ->reorderableWithButtons()
                             ->addActionAlignment(Alignment::Start)
                             ->addActionLabel('Добавить блок')
-                            ->helperText('Соберите статью из блоков: текст, заголовки, списки, цитаты, изображения, таблицы и призыв к действию.')
+                            ->helperText(trans_message('blog_cms.helper_editor_document'))
                             ->columnSpanFull(),
                     ])
                     ->columns(1)
@@ -103,12 +107,15 @@ final class BlogArticleForm
                             ])
                             ->default('draft')
                             ->live()
+                            ->helperText(trans_message('blog_cms.helper_status'))
                             ->required(),
                         Forms\Components\DateTimePicker::make('published_at')
                             ->label('Дата публикации')
+                            ->helperText(trans_message('blog_cms.helper_published_at'))
                             ->rules(['nullable', 'date', 'before_or_equal:now']),
                         Forms\Components\DateTimePicker::make('scheduled_at')
                             ->label('План публикации')
+                            ->helperText(trans_message('blog_cms.helper_scheduled_at'))
                             ->rules([
                                 fn (Get $get): string => $get('status') === BlogArticleStatusEnum::SCHEDULED->value
                                     ? 'required|date|after:now'
@@ -157,6 +164,7 @@ final class BlogArticleForm
                         Forms\Components\Select::make('category_id')
                             ->label('Категория')
                             ->options(fn (): array => BlogCategory::query()->marketing()->orderBy('sort_order')->pluck('name', 'id')->all())
+                            ->helperText(trans_message('blog_cms.helper_category'))
                             ->searchable()
                             ->preload(),
                         Forms\Components\Select::make('tag_ids')
@@ -166,13 +174,15 @@ final class BlogArticleForm
                             ->searchable()
                             ->preload(),
                     ])
-                    ->columns(1),
+                    ->columns(1)
+                    ->collapsible(),
                 Section::make('Обложка и медиа')
                     ->description('Основное изображение и дополнительные материалы статьи.')
                     ->schema([
                         Forms\Components\Select::make('featured_image')
                             ->label('Обложка')
                             ->options(fn (): array => self::getMarketingMediaOptions())
+                            ->helperText(trans_message('blog_cms.helper_featured_image'))
                             ->searchable()
                             ->preload(),
                         Forms\Components\Select::make('gallery_images')
@@ -182,7 +192,8 @@ final class BlogArticleForm
                             ->searchable()
                             ->preload(),
                     ])
-                    ->columns(1),
+                    ->columns(1)
+                    ->collapsible(),
                 Section::make('Внутренние заметки')
                     ->description('Редакционный контекст, который не показывается читателям.')
                     ->schema([
@@ -192,16 +203,20 @@ final class BlogArticleForm
                             ->maxLength(5000)
                             ->columnSpanFull(),
                     ])
-                    ->columns(1),
+                    ->columns(1)
+                    ->collapsible()
+                    ->collapsed(),
                 Section::make('SEO и Open Graph')
                     ->description('Метаданные, которые нужны для публикации и красивого превью в поиске.')
                     ->schema([
                         Forms\Components\TextInput::make('meta_title')
                             ->label(trans_message('blog_cms.field_seo_title'))
+                            ->helperText(trans_message('blog_cms.helper_meta_title'))
                             ->maxLength(255),
                         Forms\Components\Textarea::make('meta_description')
                             ->label(trans_message('blog_cms.field_seo_description'))
-                            ->rows(3),
+                            ->rows(3)
+                            ->helperText(trans_message('blog_cms.helper_meta_description')),
                         Forms\Components\TagsInput::make('meta_keywords')
                             ->label(trans_message('blog_cms.field_seo_keywords')),
                         Forms\Components\TextInput::make('og_title')
@@ -215,7 +230,8 @@ final class BlogArticleForm
                             ->searchable()
                             ->preload(),
                     ])
-                    ->columns(1),
+                    ->columns(1)
+                    ->collapsible(),
             ])
             ->columns(3);
     }

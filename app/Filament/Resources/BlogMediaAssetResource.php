@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
+use App\Filament\Support\TableEmptyState;
 use App\Filament\Resources\BlogMediaAssetResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Filament\Support\Concerns\HasDestructiveActionGuardrails;
@@ -70,7 +71,7 @@ class BlogMediaAssetResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
+        return TableEmptyState::for($table, 'blog_media_assets', 'heroicon-o-photo')
             ->modifyQueryUsing(fn ($query) => $query->where('blog_context', 'marketing'))
             ->columns([
                 Tables\Columns\ImageColumn::make('public_url')->label('Превью'),

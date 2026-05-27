@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\BlogArticleResource\RelationManagers;
 
+use App\Filament\Support\TableEmptyState;
 use App\Enums\Blog\BlogArticleStatusEnum;
 use App\Enums\Blog\BlogRevisionTypeEnum;
 use App\Models\Blog\BlogArticleRevision;
@@ -29,7 +30,7 @@ class BlogArticleRevisionsRelationManager extends RelationManager
 
     public function table(Table $table): Table
     {
-        return $table
+        return TableEmptyState::for($table, 'blog_revisions', 'heroicon-o-clock')
             ->recordTitleAttribute('title')
             ->columns([
                 Tables\Columns\TextColumn::make('revision_type')

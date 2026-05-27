@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
+use App\Filament\Support\TableEmptyState;
 use App\Enums\ModuleDevelopmentStatus;
 use App\Filament\Resources\ModuleResource\Pages;
 use App\Filament\Support\FilamentPermission;
@@ -110,7 +111,7 @@ class ModuleResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
+        return TableEmptyState::for($table, 'modules', 'heroicon-o-squares-2x2')
             ->modifyQueryUsing(fn (Builder $query): Builder => $query->withCount('activeActivations'))
             ->columns([
                 Tables\Columns\TextColumn::make('name')

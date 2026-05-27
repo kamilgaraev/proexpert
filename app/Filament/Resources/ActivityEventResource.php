@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
+use App\Filament\Support\TableEmptyState;
 use App\Enums\Activity\ActivityActionEnum;
 use App\Enums\Activity\ActivitySeverityEnum;
 use App\Filament\Resources\ActivityEventResource\Pages;
@@ -157,7 +158,7 @@ class ActivityEventResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
+        return TableEmptyState::for($table, 'activity_events', 'heroicon-o-shield-check')
             ->modifyQueryUsing(fn (Builder $query): Builder => $query
                 ->with(['organization', 'actor', 'targetUser', 'project'])
                 ->latest('occurred_at'))

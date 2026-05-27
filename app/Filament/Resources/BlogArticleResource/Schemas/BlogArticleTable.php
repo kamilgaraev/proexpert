@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\BlogArticleResource\Schemas;
 
+use App\Filament\Support\TableEmptyState;
 use App\Enums\Blog\BlogArticleStatusEnum;
 use App\Filament\Resources\BlogArticleResource;
 use App\Models\Blog\BlogArticle;
@@ -28,7 +29,7 @@ final class BlogArticleTable
 {
     public static function configure(Table $table): Table
     {
-        return $table
+        return TableEmptyState::for($table, 'blog_articles', 'heroicon-o-document-text')
             ->modifyQueryUsing(fn (Builder $query): Builder => $query->marketing()->with(['category', 'systemAuthor']))
             ->columns([
                 Tables\Columns\TextColumn::make('title')

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\NotificationResource\RelationManagers;
 
+use App\Filament\Support\TableEmptyState;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Tables;
 use Filament\Tables\Table;
@@ -16,7 +17,7 @@ class AnalyticsRelationManager extends RelationManager
 
     public function table(Table $table): Table
     {
-        return $table
+        return TableEmptyState::for($table, 'notification_events', 'heroicon-o-paper-airplane')
             ->columns([
                 Tables\Columns\TextColumn::make('channel')
                     ->label('Канал')

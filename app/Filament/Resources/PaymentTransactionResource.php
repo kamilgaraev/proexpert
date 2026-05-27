@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
+use App\Filament\Support\TableEmptyState;
 use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\Filament\Resources\PaymentTransactionResource\Pages;
@@ -119,7 +120,7 @@ class PaymentTransactionResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
+        return TableEmptyState::for($table, 'payments', 'heroicon-o-credit-card')
             ->modifyQueryUsing(fn (Builder $query): Builder => $query->with([
                 'organization',
                 'payerOrganization',

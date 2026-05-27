@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
+use App\Filament\Support\TableEmptyState;
 use App\Filament\Resources\BlogCommentResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Filament\Support\Concerns\HasDestructiveActionGuardrails;
@@ -51,7 +52,7 @@ class BlogCommentResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
+        return TableEmptyState::for($table, 'blog_comments', 'heroicon-o-chat-bubble-left-right')
             ->modifyQueryUsing(fn ($query) => $query->marketing()->with('article'))
             ->columns([
                 Tables\Columns\TextColumn::make('article.title')->label('Статья')->wrap()->searchable(),

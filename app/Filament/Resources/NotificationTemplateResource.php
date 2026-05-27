@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
+use App\Filament\Support\TableEmptyState;
 use App\BusinessModules\Features\Notifications\Models\NotificationTemplate;
 use App\Filament\Resources\NotificationTemplateResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
@@ -133,7 +134,7 @@ class NotificationTemplateResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
+        return TableEmptyState::for($table, 'notification_templates', 'heroicon-o-envelope-open')
             ->modifyQueryUsing(fn ($query) => $query->with('organization'))
             ->columns([
                 Tables\Columns\TextColumn::make('name')

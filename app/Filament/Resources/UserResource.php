@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
+use App\Filament\Support\TableEmptyState;
 use App\Filament\Resources\UserResource\Pages;
 use App\Filament\Support\FilamentPermission;
 use App\Filament\Support\NavigationGroups;
@@ -156,7 +157,7 @@ class UserResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
+        return TableEmptyState::for($table, 'users', 'heroicon-o-users')
             ->modifyQueryUsing(fn (Builder $query): Builder => $query
                 ->with(['currentOrganization'])
                 ->withCount(['organizations', 'roleAssignments']))

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
+use App\Filament\Support\TableEmptyState;
 use App\Enums\Blog\BlogContextEnum;
 use App\Filament\Resources\BlogSeoSettingsResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
@@ -63,7 +64,7 @@ class BlogSeoSettingsResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
+        return TableEmptyState::for($table, 'blog_seo_settings', 'heroicon-o-magnifying-glass')
             ->modifyQueryUsing(fn ($query) => $query->where('blog_context', BlogContextEnum::MARKETING->value))
             ->columns([
                 Tables\Columns\TextColumn::make('site_name')->label('Сайт'),

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
+use App\Filament\Support\TableEmptyState;
 use App\Filament\Resources\OrganizationSubscriptionResource\Pages;
 use App\Filament\Support\FilamentPermission;
 use App\Filament\Support\NavigationGroups;
@@ -125,7 +126,7 @@ class OrganizationSubscriptionResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
+        return TableEmptyState::for($table, 'subscriptions', 'heroicon-o-credit-card')
             ->modifyQueryUsing(fn (Builder $query): Builder => $query->with(['organization', 'plan']))
             ->columns([
                 Tables\Columns\TextColumn::make('organization.name')

@@ -9,6 +9,7 @@ use App\Models\Blog\BlogArticle;
 use App\Models\SystemAdmin;
 use App\Services\Blog\BlogCmsService;
 use Filament\Actions\Action;
+use Filament\Actions\ActionGroup;
 use Filament\Forms;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\EditRecord;
@@ -75,62 +76,79 @@ class EditBlogArticle extends EditRecord
                 ->icon('heroicon-o-eye')
                 ->visible(fn (): bool => Auth::guard('system_admin')->user()?->hasSystemPermission('system_admin.blog.preview.view') ?? false)
                 ->url(fn (): string => app(BlogCmsService::class)->makePreviewUrl($this->getRecord()), shouldOpenInNewTab: true),
-            Action::make('publish')
-                ->label('Опубликовать')
+            Action::make('autosave_now')
+                ->label('Сохранить черновик')
+                ->icon('heroicon-o-cloud-arrow-up')
+                ->visible(fn (): bool => Auth::guard('system_admin')->user()?->hasSystemPermission('system_admin.blog.articles.update') ?? false)
+                ->action(fn () => $this->autosave()),
+            ActionGroup::make([
+                Action::make('publish')
+                    ->label('Опубликовать')
+                    ->icon('heroicon-o-paper-airplane')
+                    ->visible(fn (): bool => Auth::guard('system_admin')->user()?->hasSystemPermission('system_admin.blog.articles.publish') ?? false)
+                    ->action(function (): void {
+                        /** @var SystemAdmin $systemAdmin */
+                        $systemAdmin = Auth::guard('system_admin')->user();
+                        app(BlogCmsService::class)->publishArticle($this->getRecord(), $systemAdmin);
+                        Notification::make()->success()->title(trans_message('blog_cms.article_published'))->send();
+                        $this->refreshFormData(['status', 'published_at']);
+                    }),
+                Action::make('schedule')
+                    ->label('Запланировать')
+                    ->icon('heroicon-o-calendar-days')
+                    ->color('info')
+                    ->schema([
+                        Forms\Components\DateTimePicker::make('scheduled_at')
+                            ->label(trans_message('blog_cms.field_scheduled_at'))
+                            ->required()
+                            ->rules(['required', 'date', 'after:now']),
+                    ])
+                    ->visible(fn (): bool => Auth::guard('system_admin')->user()?->hasSystemPermission('system_admin.blog.articles.publish') ?? false)
+                    ->action(function (array $data): void {
+                        /** @var SystemAdmin $systemAdmin */
+                        $systemAdmin = Auth::guard('system_admin')->user();
+                        app(BlogCmsService::class)->scheduleArticle($this->getRecord(), $systemAdmin, (string) $data['scheduled_at']);
+                        Notification::make()->success()->title(trans_message('blog_cms.article_scheduled'))->send();
+                        $this->refreshFormData(['status', 'scheduled_at', 'published_at']);
+                    }),
+                Action::make('draft')
+                    ->label('В черновик')
+                    ->icon('heroicon-o-pencil-square')
+                    ->color('gray')
+                    ->requiresConfirmation()
+                    ->modalHeading(trans_message('blog_cms.draft_action_heading'))
+                    ->modalDescription(trans_message('blog_cms.draft_action_description'))
+                    ->modalSubmitActionLabel(trans_message('blog_cms.draft_action_confirm'))
+                    ->visible(fn (): bool => Auth::guard('system_admin')->user()?->hasSystemPermission('system_admin.blog.articles.publish') ?? false)
+                    ->action(function (): void {
+                        /** @var SystemAdmin $systemAdmin */
+                        $systemAdmin = Auth::guard('system_admin')->user();
+                        app(BlogCmsService::class)->draftArticle($this->getRecord(), $systemAdmin);
+                        Notification::make()->success()->title(trans_message('blog_cms.article_moved_to_draft'))->send();
+                        $this->refreshFormData(['status', 'scheduled_at', 'published_at']);
+                    }),
+                Action::make('archive')
+                    ->label('В архив')
+                    ->icon('heroicon-o-archive-box')
+                    ->color('warning')
+                    ->requiresConfirmation()
+                    ->modalHeading(trans_message('blog_cms.archive_action_heading'))
+                    ->modalDescription(trans_message('blog_cms.archive_action_description'))
+                    ->modalSubmitActionLabel(trans_message('blog_cms.archive_action_confirm'))
+                    ->visible(fn (): bool => Auth::guard('system_admin')->user()?->hasSystemPermission('system_admin.blog.articles.publish') ?? false)
+                    ->action(function (): void {
+                        /** @var SystemAdmin $systemAdmin */
+                        $systemAdmin = Auth::guard('system_admin')->user();
+                        app(BlogCmsService::class)->archiveArticle($this->getRecord(), $systemAdmin);
+                        Notification::make()->success()->title(trans_message('blog_cms.article_archived'))->send();
+                        $this->refreshFormData(['status']);
+                    }),
+            ])
+                ->label(trans_message('blog_cms.publication_actions_group'))
                 ->icon('heroicon-o-paper-airplane')
-                ->visible(fn (): bool => Auth::guard('system_admin')->user()?->hasSystemPermission('system_admin.blog.articles.publish') ?? false)
-                ->action(function (): void {
-                    /** @var SystemAdmin $systemAdmin */
-                    $systemAdmin = Auth::guard('system_admin')->user();
-                    app(BlogCmsService::class)->publishArticle($this->getRecord(), $systemAdmin);
-                    Notification::make()->success()->title(trans_message('blog_cms.article_published'))->send();
-                    $this->refreshFormData(['status', 'published_at']);
-                }),
-            Action::make('schedule')
-                ->label('Запланировать')
-                ->icon('heroicon-o-calendar-days')
-                ->color('info')
-                ->schema([
-                    Forms\Components\DateTimePicker::make('scheduled_at')
-                        ->label(trans_message('blog_cms.field_scheduled_at'))
-                        ->required()
-                        ->rules(['required', 'date', 'after:now']),
-                ])
-                ->visible(fn (): bool => Auth::guard('system_admin')->user()?->hasSystemPermission('system_admin.blog.articles.publish') ?? false)
-                ->action(function (array $data): void {
-                    /** @var SystemAdmin $systemAdmin */
-                    $systemAdmin = Auth::guard('system_admin')->user();
-                    app(BlogCmsService::class)->scheduleArticle($this->getRecord(), $systemAdmin, (string) $data['scheduled_at']);
-                    Notification::make()->success()->title(trans_message('blog_cms.article_scheduled'))->send();
-                    $this->refreshFormData(['status', 'scheduled_at', 'published_at']);
-                }),
-            Action::make('draft')
-                ->label('В черновик')
-                ->icon('heroicon-o-pencil-square')
-                ->color('gray')
-                ->requiresConfirmation()
-                ->modalHeading(trans_message('blog_cms.draft_action_heading'))
-                ->modalDescription(trans_message('blog_cms.draft_action_description'))
-                ->modalSubmitActionLabel(trans_message('blog_cms.draft_action_confirm'))
-                ->visible(fn (): bool => Auth::guard('system_admin')->user()?->hasSystemPermission('system_admin.blog.articles.publish') ?? false)
-                ->action(function (): void {
-                    /** @var SystemAdmin $systemAdmin */
-                    $systemAdmin = Auth::guard('system_admin')->user();
-                    app(BlogCmsService::class)->draftArticle($this->getRecord(), $systemAdmin);
-                    Notification::make()->success()->title(trans_message('blog_cms.article_moved_to_draft'))->send();
-                    $this->refreshFormData(['status', 'scheduled_at', 'published_at']);
-                }),
-            Action::make('archive')
-                ->label('В архив')
-                ->icon('heroicon-o-archive-box')
-                ->visible(fn (): bool => Auth::guard('system_admin')->user()?->hasSystemPermission('system_admin.blog.articles.publish') ?? false)
-                ->action(function (): void {
-                    /** @var SystemAdmin $systemAdmin */
-                    $systemAdmin = Auth::guard('system_admin')->user();
-                    app(BlogCmsService::class)->archiveArticle($this->getRecord(), $systemAdmin);
-                    Notification::make()->success()->title(trans_message('blog_cms.article_archived'))->send();
-                    $this->refreshFormData(['status']);
-                }),
+                ->color('warning')
+                ->button()
+                ->visible(fn (): bool => Auth::guard('system_admin')->user()?->hasSystemPermission('system_admin.blog.articles.publish') ?? false),
             Action::make('duplicate')
                 ->label('Дублировать')
                 ->icon('heroicon-o-square-2-stack')
@@ -141,11 +159,6 @@ class EditBlogArticle extends EditRecord
                     $copy = app(BlogCmsService::class)->duplicateArticle($this->getRecord(), $systemAdmin);
                     $this->redirect(BlogArticleResource::getUrl('edit', ['record' => $copy]));
                 }),
-            Action::make('autosave_now')
-                ->label('Сохранить черновик')
-                ->icon('heroicon-o-cloud-arrow-up')
-                ->visible(fn (): bool => Auth::guard('system_admin')->user()?->hasSystemPermission('system_admin.blog.articles.update') ?? false)
-                ->action(fn () => $this->autosave()),
         ];
     }
 

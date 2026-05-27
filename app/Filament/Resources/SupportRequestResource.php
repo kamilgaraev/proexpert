@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
+use App\Filament\Support\TableEmptyState;
 use App\Filament\Resources\SupportRequestResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Filament\Support\FilamentPermission;
@@ -163,7 +164,7 @@ class SupportRequestResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
+        return TableEmptyState::for($table, 'support_requests', 'heroicon-o-lifebuoy')
             ->modifyQueryUsing(fn (Builder $query): Builder => $query
                 ->with(['organization', 'assignedSystemAdmin'])
                 ->latest('last_activity_at')

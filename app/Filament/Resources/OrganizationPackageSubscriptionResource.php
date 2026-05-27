@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
+use App\Filament\Support\TableEmptyState;
 use App\Filament\Resources\OrganizationPackageSubscriptionResource\Pages;
 use App\Filament\Support\FilamentPermission;
 use App\Filament\Support\NavigationGroups;
@@ -92,7 +93,7 @@ class OrganizationPackageSubscriptionResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
+        return TableEmptyState::for($table, 'package_subscriptions', 'heroicon-o-archive-box')
             ->modifyQueryUsing(fn (Builder $query): Builder => $query->with(['organization', 'subscription']))
             ->columns([
                 Tables\Columns\TextColumn::make('organization.name')

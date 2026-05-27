@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
+use App\Filament\Support\TableEmptyState;
 use App\Filament\Resources\BlogCategoryResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Filament\Support\Concerns\HasDestructiveActionGuardrails;
@@ -62,7 +63,7 @@ class BlogCategoryResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
+        return TableEmptyState::for($table, 'blog_categories', 'heroicon-o-folder')
             ->modifyQueryUsing(fn ($query) => $query->marketing())
             ->columns([
                 Tables\Columns\TextColumn::make('name')->label('Название')->searchable()->sortable(),

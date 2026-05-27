@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
+use App\Filament\Support\TableEmptyState;
 use App\BusinessModules\Features\Notifications\Models\NotificationAnalytics;
 use App\Filament\Resources\NotificationAnalyticsResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
@@ -116,7 +117,7 @@ class NotificationAnalyticsResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
+        return TableEmptyState::for($table, 'notification_analytics', 'heroicon-o-chart-bar')
             ->modifyQueryUsing(fn ($query) => $query->with('notification'))
             ->columns([
                 Tables\Columns\TextColumn::make('notification.notification_type')

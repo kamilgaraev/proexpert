@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
+use App\Filament\Support\TableEmptyState;
 use App\Filament\Resources\SystemAdminResource\Pages;
 use App\Filament\Support\NavigationGroups;
 use App\Models\SystemAdmin;
@@ -106,7 +107,7 @@ class SystemAdminResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
+        return TableEmptyState::for($table, 'system_admins', 'heroicon-o-shield-check')
             ->columns([
                 Tables\Columns\TextColumn::make('name')
                     ->label('Имя')

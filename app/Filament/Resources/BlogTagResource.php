@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
+use App\Filament\Support\TableEmptyState;
 use App\Filament\Resources\BlogTagResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Filament\Support\Concerns\HasDestructiveActionGuardrails;
@@ -58,7 +59,7 @@ class BlogTagResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
+        return TableEmptyState::for($table, 'blog_tags', 'heroicon-o-tag')
             ->modifyQueryUsing(fn ($query) => $query->marketing())
             ->columns([
                 Tables\Columns\TextColumn::make('name')->label('Тег')->searchable()->sortable(),
