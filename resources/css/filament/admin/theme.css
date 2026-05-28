@@ -67,17 +67,25 @@
 }
 
 .fi-btn.fi-color-primary:not(.fi-outlined) {
-    border-color: color-mix(in oklab, var(--primary-300) 70%, transparent);
-    background: linear-gradient(180deg, var(--primary-400), var(--primary-500));
-    color: rgb(17 24 39);
+    border-color: color-mix(in oklab, var(--primary-400) 42%, rgb(255 255 255 / 0.14));
+    background: linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--primary-500) 58%, rgb(31 41 55)),
+        color-mix(in oklab, var(--primary-600) 64%, rgb(17 24 39))
+    );
+    color: var(--color-white);
     box-shadow:
-        0 1px 0 rgb(255 255 255 / 0.18) inset,
-        0 8px 18px color-mix(in oklab, var(--primary-500) 24%, transparent);
+        0 1px 0 rgb(255 255 255 / 0.12) inset,
+        0 4px 10px color-mix(in oklab, var(--primary-700) 14%, transparent);
 }
 
 .fi-btn.fi-color-primary:not(.fi-outlined):hover {
-    border-color: color-mix(in oklab, var(--primary-200) 80%, transparent);
-    background: linear-gradient(180deg, var(--primary-300), var(--primary-500));
+    border-color: color-mix(in oklab, var(--primary-300) 54%, rgb(255 255 255 / 0.16));
+    background: linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--primary-400) 62%, rgb(31 41 55)),
+        color-mix(in oklab, var(--primary-600) 68%, rgb(17 24 39))
+    );
 }
 
 .fi-btn.fi-color:not(.fi-color-primary):not(.fi-outlined) {
@@ -102,7 +110,7 @@
 .fi-btn:focus-visible,
 .fi-icon-btn:focus-visible,
 .fi-input-wrp:focus-within {
-    outline: 2px solid color-mix(in oklab, var(--primary-400) 65%, transparent);
+    outline: 2px solid color-mix(in oklab, var(--primary-400) 48%, transparent);
     outline-offset: 2px;
 }
 
