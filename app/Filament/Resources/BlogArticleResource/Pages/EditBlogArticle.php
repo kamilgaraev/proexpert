@@ -67,8 +67,14 @@ class EditBlogArticle extends EditRecord
         $data = $this->form->getState();
         app(BlogCmsService::class)->autosaveArticle($record, $data, $systemAdmin);
         $this->rememberData();
+        $this->dispatch('blog-article-saved');
 
         Notification::make()->success()->title(trans_message('blog_cms.draft_autosaved'))->send();
+    }
+
+    protected function afterSave(): void
+    {
+        $this->dispatch('blog-article-saved');
     }
 
     protected function getHeaderActions(): array

@@ -5,19 +5,18 @@ declare(strict_types=1);
 namespace App\Filament\Resources\BlogArticleResource\Schemas;
 
 use App\Enums\Blog\BlogArticleStatusEnum;
+use App\Filament\Forms\Components\BlogInlineBlockEditor;
 use App\Models\Blog\BlogArticle;
 use App\Models\Blog\BlogCategory;
 use App\Models\Blog\BlogMediaAsset;
 use App\Models\Blog\BlogTag;
 use App\Models\SystemAdmin;
 use Filament\Forms;
-use Filament\Forms\Components\Builder;
 use Filament\Forms\Components\ViewField;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Schema;
-use Filament\Support\Enums\Alignment;
 use Filament\Support\Enums\Operation;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
@@ -124,17 +123,10 @@ final class BlogArticleForm
                             ->placeholder(trans_message('blog_cms.placeholder_excerpt'))
                             ->helperText(trans_message('blog_cms.helper_excerpt'))
                             ->columnSpanFull(),
-                        Builder::make('editor_document')
+                        BlogInlineBlockEditor::make('editor_document')
                             ->label(trans_message('blog_cms.field_editor_document'))
-                            ->blocks(BlogEditorBlocks::blocks())
-                            ->blockIcons()
-                            ->blockPreviews()
-                            ->blockNumbers(false)
-                            ->collapsible()
-                            ->cloneable()
-                            ->reorderableWithButtons()
-                            ->addActionAlignment(Alignment::Start)
-                            ->addActionLabel(trans_message('blog_cms.editor_add_block_action'))
+                            ->blockDefinitions(fn (): array => BlogEditorBlockCatalog::forEditor())
+                            ->mediaOptions(fn (): array => self::getMarketingMediaOptions())
                             ->helperText(trans_message('blog_cms.helper_editor_document'))
                             ->hiddenOn(Operation::Create)
                             ->columnSpanFull(),

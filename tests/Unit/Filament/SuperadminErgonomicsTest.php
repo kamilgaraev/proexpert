@@ -126,7 +126,7 @@ class SuperadminErgonomicsTest extends TestCase
             $source,
         );
         $this->assertMatchesRegularExpression(
-            "/Builder::make\\('editor_document'\\)[\\s\\S]+?->hiddenOn\\(Operation::Create\\)/",
+            "/BlogInlineBlockEditor::make\\('editor_document'\\)[\\s\\S]+?->hiddenOn\\(Operation::Create\\)/",
             $source,
         );
         $this->assertMatchesRegularExpression(
@@ -146,8 +146,11 @@ class SuperadminErgonomicsTest extends TestCase
         $tailwindSource = (string) file_get_contents(base_path('tailwind.config.js'));
         $themePath = resource_path('css/filament/admin/theme.css');
 
-        $this->assertStringContainsString("->viteTheme('resources/css/filament/admin/theme.css')", $providerSource);
+        $this->assertStringContainsString('->viteTheme([', $providerSource);
+        $this->assertStringContainsString("'resources/css/filament/admin/theme.css'", $providerSource);
+        $this->assertStringContainsString("'resources/js/filament/blog-inline-block-editor.js'", $providerSource);
         $this->assertStringContainsString("'resources/css/filament/admin/theme.css'", $viteSource);
+        $this->assertStringContainsString("'resources/js/filament/blog-inline-block-editor.js'", $viteSource);
         $this->assertStringContainsString("darkMode: 'class'", $tailwindSource);
         $this->assertStringContainsString("'./app/Filament/**/*.php'", $tailwindSource);
         $this->assertFileExists($themePath);
@@ -164,7 +167,8 @@ class SuperadminErgonomicsTest extends TestCase
         $providerSource = (string) file_get_contents(app_path('Providers/Filament/AdminPanelProvider.php'));
         $manifestPath = public_path('build/manifest.json');
 
-        $this->assertStringContainsString("->viteTheme('resources/css/filament/admin/theme.css')", $providerSource);
+        $this->assertStringContainsString("'resources/css/filament/admin/theme.css'", $providerSource);
+        $this->assertStringContainsString("'resources/js/filament/blog-inline-block-editor.js'", $providerSource);
         $this->assertFileExists($manifestPath);
 
         $manifest = json_decode((string) file_get_contents($manifestPath), true, flags: JSON_THROW_ON_ERROR);
@@ -232,9 +236,11 @@ class SuperadminErgonomicsTest extends TestCase
     {
         $source = implode("\n", [
             (string) file_get_contents(app_path('Filament/Resources/BlogArticleResource/Schemas/BlogArticleForm.php')),
+            (string) file_get_contents(app_path('Filament/Resources/BlogArticleResource/Schemas/BlogEditorBlockCatalog.php')),
             (string) file_get_contents(app_path('Filament/Resources/BlogArticleResource/Schemas/BlogEditorBlocks.php')),
             (string) file_get_contents(app_path('Filament/Resources/BlogArticleResource/Pages/CreateBlogArticle.php')),
             (string) file_get_contents(app_path('Filament/Resources/BlogArticleResource/Pages/EditBlogArticle.php')),
+            (string) file_get_contents(resource_path('views/filament/forms/components/blog-inline-block-editor.blade.php')),
         ]);
 
         foreach ([
@@ -254,7 +260,7 @@ class SuperadminErgonomicsTest extends TestCase
             'field_excerpt',
             'placeholder_excerpt',
             'field_editor_document',
-            'editor_add_block_action',
+            'inline_editor_add_block',
             'form_section_author_category',
             'form_section_author_category_description',
             'field_author',

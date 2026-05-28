@@ -8,6 +8,7 @@ export default defineConfig({
                 'resources/css/app.css',
                 'resources/js/app.js',
                 'resources/css/filament/admin/theme.css',
+                'resources/js/filament/blog-inline-block-editor.js',
             ],
             refresh: true,
         }),

@@ -31,6 +31,25 @@ class BlogArticleEditorLayoutTest extends TestCase
         $this->assertStringContainsString('padding-bottom: 7rem', $css);
     }
 
+    public function test_article_form_uses_inline_block_editor_component(): void
+    {
+        $source = (string) file_get_contents(__DIR__ . '/../../../app/Filament/Resources/BlogArticleResource/Schemas/BlogArticleForm.php');
+
+        $this->assertStringContainsString('BlogInlineBlockEditor::make(\'editor_document\')', $source);
+        $this->assertStringContainsString('BlogEditorBlockCatalog::forEditor()', $source);
+        $this->assertStringNotContainsString('Builder::make(\'editor_document\')', $source);
+    }
+
+    public function test_theme_defines_inline_blog_editor_layout(): void
+    {
+        $css = (string) file_get_contents(__DIR__ . '/../../../resources/css/filament/admin/theme.css');
+
+        $this->assertStringContainsString('.ph-blog-inline-editor', $css);
+        $this->assertStringContainsString('.ph-blog-inline-editor__block', $css);
+        $this->assertStringContainsString('.ph-blog-inline-editor__toolbar', $css);
+        $this->assertStringContainsString('.ph-blog-inline-editor__slash-menu', $css);
+    }
+
     /**
      * @return iterable<string, array{pageClass: class-string}>
      */

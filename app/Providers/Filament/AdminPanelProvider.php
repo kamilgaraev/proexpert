@@ -44,7 +44,10 @@ class AdminPanelProvider extends PanelProvider
             ->default()
             ->id('admin')
             ->path('admin')
-            ->viteTheme('resources/css/filament/admin/theme.css')
+            ->viteTheme([
+                'resources/css/filament/admin/theme.css',
+                'resources/js/filament/blog-inline-block-editor.js',
+            ])
             ->login(SystemAdminLogin::class)
             ->profile(EditSystemAdminProfile::class, isSimple: false)
             ->colors([

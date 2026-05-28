@@ -49,6 +49,8 @@ class BlogCmsEditorWorkflowTest extends TestCase
         $this->assertFileExists(app_path('Filament/Resources/BlogArticleResource/Schemas/BlogArticleForm.php'));
         $this->assertFileExists(app_path('Filament/Resources/BlogArticleResource/Schemas/BlogArticleTable.php'));
         $this->assertFileExists(app_path('Filament/Resources/BlogArticleResource/Schemas/BlogArticleInfolist.php'));
+        $this->assertFileExists(app_path('Filament/Forms/Components/BlogInlineBlockEditor.php'));
+        $this->assertFileExists(app_path('Filament/Resources/BlogArticleResource/Schemas/BlogEditorBlockCatalog.php'));
         $this->assertFileExists(app_path('Filament/Resources/BlogArticleResource/Schemas/BlogEditorBlocks.php'));
         $this->assertFileExists(app_path('Filament/Resources/BlogArticleResource/Pages/ViewBlogArticle.php'));
     }
@@ -65,6 +67,31 @@ class BlogCmsEditorWorkflowTest extends TestCase
         $this->get(BlogArticleResource::getUrl('create'))->assertSuccessful();
         $this->get(BlogArticleResource::getUrl('view', ['record' => $article]))->assertSuccessful();
         $this->get(BlogArticleResource::getUrl('edit', ['record' => $article]))->assertSuccessful();
+    }
+
+    public function test_article_edit_page_renders_inline_block_editor_marker(): void
+    {
+        $admin = SystemAdmin::factory()->role('content_manager')->create([
+            'is_active' => true,
+        ]);
+        $this->actingAs($admin, 'system_admin');
+
+        $article = $this->articleFixture($admin);
+
+        $this->get(BlogArticleResource::getUrl('edit', ['record' => $article]))
+            ->assertSuccessful()
+            ->assertSee('data-blog-inline-editor', false);
+    }
+
+    public function test_inline_editor_clears_local_buffer_after_successful_save(): void
+    {
+        $pageSource = (string) file_get_contents(app_path('Filament/Resources/BlogArticleResource/Pages/EditBlogArticle.php'));
+        $scriptSource = (string) file_get_contents(resource_path('js/filament/blog-inline-block-editor.js'));
+
+        $this->assertStringContainsString('blog-article-saved', $pageSource);
+        $this->assertStringContainsString('blog-article-saved', $scriptSource);
+        $this->assertStringContainsString('localStorage', $scriptSource);
+        $this->assertStringContainsString('restoreLocalDraft', $scriptSource);
     }
 
     public function test_content_manager_can_open_editorial_calendar_with_safe_bulk_operations(): void
