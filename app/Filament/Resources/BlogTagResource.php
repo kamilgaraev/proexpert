@@ -47,8 +47,14 @@ class BlogTagResource extends Resource
         return $schema->components([
             Section::make('Тег')
                 ->schema([
-                    Forms\Components\TextInput::make('name')->label('Название')->required(),
-                    Forms\Components\TextInput::make('slug')->label('Slug')->required(),
+                    Forms\Components\TextInput::make('name')
+                        ->label('Название')
+                        ->required()
+                        ->unique(ignoreRecord: true),
+                    Forms\Components\TextInput::make('slug')
+                        ->label('Slug')
+                        ->required()
+                        ->unique(ignoreRecord: true),
                     Forms\Components\Textarea::make('description')->label('Описание')->rows(3),
                     Forms\Components\TextInput::make('color')->label('Цвет')->default('#334155')->required(),
                     Forms\Components\Toggle::make('is_active')->label('Активен')->default(true),

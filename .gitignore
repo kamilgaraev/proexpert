@@ -8,6 +8,7 @@
 /public/hot
 /public/storage
 /storage/*.key
+/storage/prometheus/
 /storage/pail
 /vendor
 .env
