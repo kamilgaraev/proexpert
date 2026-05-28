@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Resources\BlogArticleResource\Schemas;
 
 use App\Models\Blog\BlogMediaAsset;
+use App\Services\Blog\BlogMediaService;
 use Filament\Forms;
 use Filament\Forms\Components\Builder;
 use Filament\Forms\Components\Repeater;
@@ -168,6 +169,7 @@ final class BlogEditorBlocks
     {
         return BlogMediaAsset::query()
             ->where('blog_context', 'marketing')
+            ->whereIn('mime_type', BlogMediaService::allowedImageMimeTypes())
             ->latest()
             ->pluck('filename', 'public_url')
             ->all();

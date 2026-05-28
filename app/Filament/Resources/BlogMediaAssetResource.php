@@ -13,6 +13,7 @@ use App\Models\Blog\BlogMediaAsset;
 use App\Models\SystemAdmin;
 use App\Policies\SystemAdmin\BlogMediaAssetPolicy;
 use App\Services\Blog\BlogMediaService;
+use Closure;
 use Filament\Actions\Action;
 use Filament\Actions\ActionGroup;
 use Filament\Actions\EditAction;
@@ -46,26 +47,74 @@ class BlogMediaAssetResource extends Resource
 
     public static function getNavigationLabel(): string
     {
-        return 'Медиатека';
+        return trans_message('blog_cms.media_navigation_label');
+    }
+
+    public static function getModelLabel(): string
+    {
+        return trans_message('blog_cms.media_model_label');
+    }
+
+    public static function getPluralModelLabel(): string
+    {
+        return trans_message('blog_cms.media_plural_model_label');
+    }
+
+    public static function hasTitleCaseModelLabel(): bool
+    {
+        return false;
+    }
+
+    public static function getBreadcrumb(): string
+    {
+        return trans_message('blog_cms.media_list_title');
+    }
+
+    public static function uploadFormSchema(
+        string $fileFieldName = 'upload_file',
+        bool|Closure $fileRequired = true,
+        bool $imagesOnly = false,
+    ): array
+    {
+        return [
+            Forms\Components\FileUpload::make($fileFieldName)
+                ->label(trans_message('blog_cms.media_field_file'))
+                ->acceptedFileTypes($imagesOnly ? BlogMediaService::allowedImageMimeTypes() : BlogMediaService::allowedMimeTypes())
+                ->maxSize(BlogMediaService::maxUploadSizeKilobytes())
+                ->imageEditor()
+                ->panelLayout('grid')
+                ->imagePreviewHeight('12rem')
+                ->uploadingMessage(trans_message('blog_cms.media_uploading'))
+                ->helperText(trans_message($imagesOnly ? 'blog_cms.media_image_file_helper' : 'blog_cms.media_file_helper'))
+                ->storeFiles(false)
+                ->required($fileRequired)
+                ->columnSpanFull(),
+            Forms\Components\TextInput::make('alt_text')
+                ->label(trans_message('blog_cms.field_alt_text'))
+                ->required(),
+            Forms\Components\TextInput::make('caption')
+                ->label(trans_message('blog_cms.media_field_caption')),
+            Forms\Components\TextInput::make('focal_point.x')
+                ->label(trans_message('blog_cms.field_focal_x'))
+                ->numeric()
+                ->minValue(0)
+                ->maxValue(1),
+            Forms\Components\TextInput::make('focal_point.y')
+                ->label(trans_message('blog_cms.field_focal_y'))
+                ->numeric()
+                ->minValue(0)
+                ->maxValue(1),
+        ];
     }
 
     public static function form(Schema $schema): Schema
     {
         return $schema->components([
-            Section::make('Файл')
-                ->schema([
-                    Forms\Components\FileUpload::make('upload_file')
-                        ->label('Файл')
-                        ->acceptedFileTypes(BlogMediaService::allowedMimeTypes())
-                        ->maxSize(BlogMediaService::maxUploadSizeKilobytes())
-                        ->imageEditor()
-                        ->storeFiles(false)
-                        ->required(fn (string $operation): bool => $operation === 'create'),
-                    Forms\Components\TextInput::make('alt_text')->label(trans_message('blog_cms.field_alt_text'))->required(),
-                    Forms\Components\TextInput::make('caption')->label('Подпись'),
-                    Forms\Components\TextInput::make('focal_point.x')->label(trans_message('blog_cms.field_focal_x'))->numeric()->minValue(0)->maxValue(1),
-                    Forms\Components\TextInput::make('focal_point.y')->label(trans_message('blog_cms.field_focal_y'))->numeric()->minValue(0)->maxValue(1),
-                ])
+            Section::make(trans_message('blog_cms.media_form_section_file'))
+                ->description(trans_message('blog_cms.media_form_section_file_description'))
+                ->schema(self::uploadFormSchema(
+                    fileRequired: fn (string $operation): bool => $operation === 'create',
+                ))
                 ->columns(2),
         ]);
     }
@@ -75,12 +124,14 @@ class BlogMediaAssetResource extends Resource
         return TableEmptyState::for($table, 'blog_media_assets', 'heroicon-o-photo')
             ->modifyQueryUsing(fn ($query) => $query->where('blog_context', 'marketing'))
             ->columns([
-                Tables\Columns\ImageColumn::make('public_url')->label('Превью'),
-                Tables\Columns\TextColumn::make('filename')->label('Файл')->searchable(),
-                Tables\Columns\TextColumn::make('mime_type')->label('MIME'),
-                Tables\Columns\TextColumn::make('file_size')->label('Размер'),
-                Tables\Columns\TextColumn::make('usage_metadata.count')->label('Использований')->default(0),
-                Tables\Columns\TextColumn::make('updated_at')->label('Обновлен')->since(),
+                Tables\Columns\ImageColumn::make('public_url')->label(trans_message('blog_cms.media_field_preview')),
+                Tables\Columns\TextColumn::make('filename')->label(trans_message('blog_cms.media_field_filename'))->searchable(),
+                Tables\Columns\TextColumn::make('mime_type')->label(trans_message('blog_cms.media_field_mime')),
+                Tables\Columns\TextColumn::make('file_size')
+                    ->label(trans_message('blog_cms.media_field_size'))
+                    ->formatStateUsing(fn (?int $state): string => self::formatFileSize($state)),
+                Tables\Columns\TextColumn::make('usage_metadata.count')->label(trans_message('blog_cms.media_field_usage_count'))->default(0),
+                Tables\Columns\TextColumn::make('updated_at')->label(trans_message('blog_cms.media_field_updated_at'))->since(),
             ])
             ->recordActions([
                 ActionGroup::make([
@@ -89,20 +140,7 @@ class BlogMediaAssetResource extends Resource
                         ->label(trans_message('blog_cms.media_replace_action'))
                         ->icon('heroicon-o-arrow-path')
                         ->color('warning')
-                        ->schema([
-                            Forms\Components\FileUpload::make('replacement_file')
-                                ->label('Файл')
-                                ->acceptedFileTypes(BlogMediaService::allowedMimeTypes())
-                                ->maxSize(BlogMediaService::maxUploadSizeKilobytes())
-                                ->imageEditor()
-                                ->storeFiles(false)
-                                ->required(),
-                            Forms\Components\TextInput::make('alt_text')
-                                ->label(trans_message('blog_cms.field_alt_text'))
-                                ->required(),
-                            Forms\Components\TextInput::make('caption')
-                                ->label('Подпись'),
-                        ])
+                        ->schema(self::uploadFormSchema(fileFieldName: 'replacement_file'))
                         ->visible(fn (): bool => Auth::guard('system_admin')->user()?->hasSystemPermission('system_admin.blog.media.manage') ?? false)
                         ->action(function (array $data, BlogMediaAsset $record): void {
                             /** @var SystemAdmin $systemAdmin */
@@ -116,6 +154,7 @@ class BlogMediaAssetResource extends Resource
                             app(BlogMediaService::class)->replaceWithUploadedFile($record, $file, $systemAdmin, [
                                 'alt_text' => $data['alt_text'] ?? null,
                                 'caption' => $data['caption'] ?? null,
+                                'focal_point' => $data['focal_point'] ?? null,
                             ]);
 
                             Notification::make()
@@ -135,5 +174,22 @@ class BlogMediaAssetResource extends Resource
             'create' => Pages\CreateBlogMediaAsset::route('/create'),
             'edit' => Pages\EditBlogMediaAsset::route('/{record}/edit'),
         ];
+    }
+
+    private static function formatFileSize(?int $size): string
+    {
+        if ($size === null || $size <= 0) {
+            return trans_message('blog_cms.media_size_bytes', ['size' => '0']);
+        }
+
+        if ($size < 1024 * 1024) {
+            return trans_message('blog_cms.media_size_kilobytes', [
+                'size' => number_format($size / 1024, 1, ',', ' '),
+            ]);
+        }
+
+        return trans_message('blog_cms.media_size_megabytes', [
+            'size' => number_format($size / (1024 * 1024), 1, ',', ' '),
+        ]);
     }
 }

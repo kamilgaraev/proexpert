@@ -12,6 +12,16 @@ class ListBlogMediaAssets extends ListRecords
 {
     protected static string $resource = BlogMediaAssetResource::class;
 
+    public function getTitle(): string
+    {
+        return trans_message('blog_cms.media_list_title');
+    }
+
+    public function getBreadcrumb(): string
+    {
+        return trans_message('blog_cms.media_list_title');
+    }
+
     protected function getHeaderActions(): array
     {
         return [CreateAction::make()];

@@ -162,6 +162,23 @@ class SuperadminErgonomicsTest extends TestCase
         $this->assertStringContainsString('@tailwind utilities;', $themeSource);
     }
 
+    public function test_filament_theme_keeps_light_and_dark_form_surfaces_separate(): void
+    {
+        $themeSource = (string) file_get_contents(resource_path('css/filament/admin/theme.css'));
+
+        foreach ([
+            'background-color: rgb(255 255 255 / 0.96)',
+            'color: rgb(15 23 42)',
+            'border-color: rgb(217 119 6 / 0.62)',
+            '.fi-sc-actions.fi-sticky > .fi-ac',
+            '.dark .fi-input-wrp',
+            '.dark .fi-btn.fi-outlined',
+            '.dark .fi-sc-actions.fi-sticky > .fi-ac',
+        ] as $sourceFragment) {
+            $this->assertStringContainsString($sourceFragment, $themeSource);
+        }
+    }
+
     public function test_filament_vite_theme_manifest_and_assets_are_available_for_production(): void
     {
         $providerSource = (string) file_get_contents(app_path('Providers/Filament/AdminPanelProvider.php'));

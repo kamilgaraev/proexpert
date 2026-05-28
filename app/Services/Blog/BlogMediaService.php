@@ -45,6 +45,11 @@ class BlogMediaService
         return array_merge(self::IMAGE_MIME_TYPES, self::DOCUMENT_MIME_TYPES);
     }
 
+    public static function allowedImageMimeTypes(): array
+    {
+        return self::IMAGE_MIME_TYPES;
+    }
+
     public static function maxUploadSizeKilobytes(): int
     {
         return self::MAX_UPLOAD_SIZE_KILOBYTES;
@@ -52,7 +57,23 @@ class BlogMediaService
 
     public function uploadMarketingAsset(UploadedFile $file, SystemAdmin $systemAdmin, array $meta = []): BlogMediaAsset
     {
-        $this->validateUpload($file, $meta);
+        return $this->storeMarketingAsset($file, $systemAdmin, $meta, self::allowedMimeTypes(), 'blog_cms.media_upload_type_invalid');
+    }
+
+    public function uploadMarketingImageAsset(UploadedFile $file, SystemAdmin $systemAdmin, array $meta = []): BlogMediaAsset
+    {
+        return $this->storeMarketingAsset($file, $systemAdmin, $meta, self::allowedImageMimeTypes(), 'blog_cms.media_image_upload_type_invalid');
+    }
+
+    private function storeMarketingAsset(
+        UploadedFile $file,
+        SystemAdmin $systemAdmin,
+        array $meta,
+        array $allowedMimeTypes,
+        string $invalidTypeMessageKey,
+    ): BlogMediaAsset
+    {
+        $this->validateUpload($file, $meta, $allowedMimeTypes, $invalidTypeMessageKey);
 
         $organization = $this->resolveContentOrganization();
         $storagePath = $this->fileService->upload(
@@ -71,7 +92,7 @@ class BlogMediaService
         $publicUrl = $this->fileService->publicUrl($storagePath, $organization)
             ?? $this->fileService->url($storagePath, $organization);
 
-        if (!is_string($publicUrl) || $publicUrl === '') {
+        if (! is_string($publicUrl) || $publicUrl === '') {
             throw new RuntimeException('Blog media public URL generation failed.');
         }
 
@@ -274,20 +295,20 @@ class BlogMediaService
     {
         $size = @getimagesize($file->getRealPath() ?: '');
 
-        if (!is_array($size)) {
+        if (! is_array($size)) {
             return [null, null];
         }
 
         return [$size[0] ?? null, $size[1] ?? null];
     }
 
-    private function validateUpload(UploadedFile $file, array $meta): void
+    private function validateUpload(UploadedFile $file, array $meta, array $allowedMimeTypes, string $invalidTypeMessageKey): void
     {
         $mimeType = $file->getMimeType() ?? $file->getClientMimeType() ?? '';
         $errors = [];
 
-        if (!in_array($mimeType, self::allowedMimeTypes(), true)) {
-            $errors['upload_file'] = [trans_message('blog_cms.media_upload_type_invalid')];
+        if (!in_array($mimeType, $allowedMimeTypes, true)) {
+            $errors['upload_file'] = [trans_message($invalidTypeMessageKey)];
         }
 
         if (($file->getSize() ?: 0) > self::MAX_UPLOAD_SIZE_KILOBYTES * 1024) {
@@ -325,7 +346,7 @@ class BlogMediaService
             || $payload['gallery_images'] !== ($article->gallery_images ?? [])
             || $payload['editor_document'] !== ($article->editor_document ?? []);
 
-        if (!$changed) {
+        if (! $changed) {
             return false;
         }
 

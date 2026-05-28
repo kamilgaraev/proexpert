@@ -48,6 +48,8 @@ class BlogArticleEditorLayoutTest extends TestCase
         $this->assertStringContainsString('.ph-blog-inline-editor__block', $css);
         $this->assertStringContainsString('.ph-blog-inline-editor__toolbar', $css);
         $this->assertStringContainsString('.ph-blog-inline-editor__slash-menu', $css);
+        $this->assertStringContainsString('.ph-blog-inline-editor__upload-button', $css);
+        $this->assertStringContainsString('.dark .ph-blog-inline-editor__upload-button', $css);
     }
 
     /**

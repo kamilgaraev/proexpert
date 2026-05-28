@@ -8,6 +8,7 @@
             wire: $wire,
             blockDefinitions: @js($getBlockDefinitions()),
             mediaOptions: @js($getMediaOptions()),
+            acceptedImageTypes: @js($getAcceptedImageTypes()),
             labels: {
                 restoreTitle: @js(trans_message('blog_cms.inline_editor_restore_title')),
                 restoreDescription: @js(trans_message('blog_cms.inline_editor_restore_description')),
@@ -36,6 +37,10 @@
                 buttonPlaceholder: @js(trans_message('blog_cms.inline_editor_button_placeholder')),
                 tableHeaderPlaceholder: @js(trans_message('blog_cms.inline_editor_table_header_placeholder')),
                 tableCellPlaceholder: @js(trans_message('blog_cms.inline_editor_table_cell_placeholder')),
+                uploadImage: @js(trans_message('blog_cms.media_upload_action')),
+                uploadingImage: @js(trans_message('blog_cms.media_uploading')),
+                uploadFailed: @js(trans_message('blog_cms.media_upload_failed')),
+                altRequiredBeforeUpload: @js(trans_message('blog_cms.media_alt_required_before_upload')),
             },
         })"
     >
@@ -117,6 +122,20 @@
                                 </template>
                             </select>
                             <input x-model="block.data.alt" x-on:input="touchState()" :placeholder="labels.altPlaceholder">
+                            <div class="ph-blog-inline-editor__media-upload">
+                                <label class="ph-blog-inline-editor__upload-button" :class="{ 'is-disabled': isUploadingImage(index) }">
+                                    <span x-text="isUploadingImage(index) ? labels.uploadingImage : labels.uploadImage"></span>
+                                    <input
+                                        class="ph-blog-inline-editor__file-input"
+                                        type="file"
+                                        accept="{{ implode(',', $getAcceptedImageTypes()) }}"
+                                        x-bind:disabled="isUploadingImage(index)"
+                                        x-on:change="uploadImage($event, index)"
+                                    >
+                                </label>
+                                <span class="ph-blog-inline-editor__upload-status" x-show="isUploadingImage(index)" x-cloak x-text="labels.uploadingImage"></span>
+                            </div>
+                            <div class="ph-blog-inline-editor__upload-error" x-show="uploadError(index)" x-cloak x-text="uploadError(index)"></div>
                             <input x-model="block.data.caption" x-on:input="touchState()" :placeholder="labels.captionPlaceholder">
                         </div>
                     </template>
@@ -132,6 +151,20 @@
                                         </template>
                                     </select>
                                     <input x-model="image.alt" x-on:input="touchState()" :placeholder="labels.altPlaceholder">
+                                    <div class="ph-blog-inline-editor__media-upload">
+                                        <label class="ph-blog-inline-editor__upload-button" :class="{ 'is-disabled': isUploadingImage(index, imageIndex) }">
+                                            <span x-text="isUploadingImage(index, imageIndex) ? labels.uploadingImage : labels.uploadImage"></span>
+                                            <input
+                                                class="ph-blog-inline-editor__file-input"
+                                                type="file"
+                                                accept="{{ implode(',', $getAcceptedImageTypes()) }}"
+                                                x-bind:disabled="isUploadingImage(index, imageIndex)"
+                                                x-on:change="uploadImage($event, index, imageIndex)"
+                                            >
+                                        </label>
+                                        <span class="ph-blog-inline-editor__upload-status" x-show="isUploadingImage(index, imageIndex)" x-cloak x-text="labels.uploadingImage"></span>
+                                    </div>
+                                    <div class="ph-blog-inline-editor__upload-error" x-show="uploadError(index, imageIndex)" x-cloak x-text="uploadError(index, imageIndex)"></div>
                                     <button type="button" x-on:click="removeGalleryImage(index, imageIndex)" x-text="labels.remove"></button>
                                 </div>
                             </template>

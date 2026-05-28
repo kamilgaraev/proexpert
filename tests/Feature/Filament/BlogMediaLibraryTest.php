@@ -6,6 +6,7 @@ namespace Tests\Feature\Filament;
 
 use App\Enums\Blog\BlogArticleStatusEnum;
 use App\Enums\Blog\BlogContextEnum;
+use App\Filament\Resources\BlogMediaAssetResource;
 use App\Models\Activity\ActivityEvent;
 use App\Models\Blog\BlogArticle;
 use App\Models\Blog\BlogCategory;
@@ -40,12 +41,85 @@ class BlogMediaLibraryTest extends TestCase
     {
         $resourceSource = (string) file_get_contents(app_path('Filament/Resources/BlogMediaAssetResource.php'));
 
-        $this->assertStringContainsString('acceptedFileTypes(BlogMediaService::allowedMimeTypes())', $resourceSource);
+        $this->assertStringContainsString('BlogMediaService::allowedMimeTypes()', $resourceSource);
+        $this->assertStringContainsString('BlogMediaService::allowedImageMimeTypes()', $resourceSource);
         $this->assertStringContainsString('maxSize(BlogMediaService::maxUploadSizeKilobytes())', $resourceSource);
         $this->assertStringContainsString('imageEditor()', $resourceSource);
         $this->assertStringContainsString("TextInput::make('alt_text')", $resourceSource);
         $this->assertStringContainsString("Action::make('safe_replace')", $resourceSource);
         $this->assertStringContainsString('replaceWithUploadedFile', $resourceSource);
+    }
+
+    public function test_media_resource_uses_business_friendly_russian_page_labels(): void
+    {
+        $resourceSource = (string) file_get_contents(app_path('Filament/Resources/BlogMediaAssetResource.php'));
+        $listPageSource = (string) file_get_contents(app_path('Filament/Resources/BlogMediaAssetResource/Pages/ListBlogMediaAssets.php'));
+        $createPageSource = (string) file_get_contents(app_path('Filament/Resources/BlogMediaAssetResource/Pages/CreateBlogMediaAsset.php'));
+        $editPageSource = (string) file_get_contents(app_path('Filament/Resources/BlogMediaAssetResource/Pages/EditBlogMediaAsset.php'));
+
+        $this->assertSame('Медиатека', BlogMediaAssetResource::getNavigationLabel());
+        $this->assertSame('медиафайл', BlogMediaAssetResource::getModelLabel());
+        $this->assertSame('Медиафайлы', BlogMediaAssetResource::getPluralModelLabel());
+        $this->assertSame('Медиафайлы', BlogMediaAssetResource::getBreadcrumb());
+        $this->assertFalse(BlogMediaAssetResource::hasTitleCaseModelLabel());
+
+        foreach ([
+            "trans_message('blog_cms.media_navigation_label')",
+            "trans_message('blog_cms.media_model_label')",
+            "trans_message('blog_cms.media_plural_model_label')",
+            "trans_message('blog_cms.media_form_section_file')",
+            "trans_message('blog_cms.media_field_file')",
+            "trans_message('blog_cms.media_field_caption')",
+            "trans_message('blog_cms.media_field_preview')",
+            "trans_message('blog_cms.media_field_size')",
+            "trans_message('blog_cms.media_field_usage_count')",
+            "trans_message('blog_cms.media_field_updated_at')",
+        ] as $translationCall) {
+            $this->assertStringContainsString($translationCall, $resourceSource);
+        }
+
+        $this->assertStringContainsString("trans_message('blog_cms.media_list_title')", $listPageSource);
+        $this->assertStringContainsString("trans_message('blog_cms.media_create_title')", $createPageSource);
+        $this->assertStringContainsString("trans_message('blog_cms.media_create_breadcrumb')", $createPageSource);
+        $this->assertStringContainsString("trans_message('blog_cms.media_edit_title')", $editPageSource);
+        $this->assertStringNotContainsString('Blog media file is required.', $createPageSource);
+    }
+
+    public function test_article_editor_can_upload_media_without_leaving_article_form(): void
+    {
+        $formSource = (string) file_get_contents(app_path('Filament/Resources/BlogArticleResource/Schemas/BlogArticleForm.php'));
+        $mediaResourceSource = (string) file_get_contents(app_path('Filament/Resources/BlogMediaAssetResource.php'));
+        $editPageSource = (string) file_get_contents(app_path('Filament/Resources/BlogArticleResource/Pages/EditBlogArticle.php'));
+        $componentSource = (string) file_get_contents(app_path('Filament/Forms/Components/BlogInlineBlockEditor.php'));
+        $viewSource = (string) file_get_contents(resource_path('views/filament/forms/components/blog-inline-block-editor.blade.php'));
+        $scriptSource = (string) file_get_contents(resource_path('js/filament/blog-inline-block-editor.js'));
+        $formAndMediaSource = $formSource . "\n" . $mediaResourceSource;
+
+        foreach ([
+            'createOptionForm(BlogMediaAssetResource::uploadFormSchema(imagesOnly: true))',
+            'createOptionUsing(fn (array $data): string => self::createMarketingImageOption($data))',
+            'BlogMediaService::allowedImageMimeTypes()',
+            'storeFiles(false)',
+            'uploadMarketingImageAsset',
+        ] as $sourceFragment) {
+            $this->assertStringContainsString($sourceFragment, $formAndMediaSource);
+        }
+
+        foreach ([
+            'use WithFileUploads;',
+            'public mixed $inline_media_upload = null;',
+            'uploadInlineMedia',
+            'uploadMarketingImageAsset',
+            'BlogMediaService::class',
+        ] as $sourceFragment) {
+            $this->assertStringContainsString($sourceFragment, $editPageSource);
+        }
+
+        $this->assertStringContainsString('acceptedImageTypes', $componentSource);
+        $this->assertStringContainsString('x-on:change="uploadImage($event, index)"', $viewSource);
+        $this->assertStringContainsString('x-on:change="uploadImage($event, index, imageIndex)"', $viewSource);
+        $this->assertStringContainsString('this.wire.upload(', $scriptSource);
+        $this->assertStringContainsString('this.wire.uploadInlineMedia', $scriptSource);
     }
 
     public function test_usage_metadata_finds_references_and_delete_is_blocked_when_asset_is_used(): void

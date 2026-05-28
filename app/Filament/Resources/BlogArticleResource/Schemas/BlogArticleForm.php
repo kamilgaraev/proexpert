@@ -6,11 +6,14 @@ namespace App\Filament\Resources\BlogArticleResource\Schemas;
 
 use App\Enums\Blog\BlogArticleStatusEnum;
 use App\Filament\Forms\Components\BlogInlineBlockEditor;
+use App\Filament\Resources\BlogMediaAssetResource;
 use App\Models\Blog\BlogArticle;
 use App\Models\Blog\BlogCategory;
 use App\Models\Blog\BlogMediaAsset;
 use App\Models\Blog\BlogTag;
 use App\Models\SystemAdmin;
+use App\Services\Blog\BlogMediaService;
+use Filament\Actions\Action;
 use Filament\Forms;
 use Filament\Forms\Components\ViewField;
 use Filament\Schemas\Components\Section;
@@ -20,6 +23,8 @@ use Filament\Schemas\Schema;
 use Filament\Support\Enums\Operation;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
+use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
 
 final class BlogArticleForm
 {
@@ -127,6 +132,7 @@ final class BlogArticleForm
                             ->label(trans_message('blog_cms.field_editor_document'))
                             ->blockDefinitions(fn (): array => BlogEditorBlockCatalog::forEditor())
                             ->mediaOptions(fn (): array => self::getMarketingMediaOptions())
+                            ->acceptedImageTypes(BlogMediaService::allowedImageMimeTypes())
                             ->helperText(trans_message('blog_cms.helper_editor_document'))
                             ->hiddenOn(Operation::Create)
                             ->columnSpanFull(),
@@ -171,16 +177,14 @@ final class BlogArticleForm
                 Section::make(trans_message('blog_cms.form_section_media'))
                     ->description(trans_message('blog_cms.form_section_media_description'))
                     ->schema([
-                        Forms\Components\Select::make('featured_image')
+                        self::configureMarketingMediaSelect(Forms\Components\Select::make('featured_image'))
                             ->label(trans_message('blog_cms.field_featured_image'))
-                            ->options(fn (): array => self::getMarketingMediaOptions())
                             ->helperText(trans_message('blog_cms.helper_featured_image'))
                             ->live()
                             ->searchable()
                             ->preload(),
-                        Forms\Components\Select::make('gallery_images')
+                        self::configureMarketingMediaSelect(Forms\Components\Select::make('gallery_images'))
                             ->label(trans_message('blog_cms.field_gallery'))
-                            ->options(fn (): array => self::getMarketingMediaOptions())
                             ->multiple()
                             ->searchable()
                             ->preload(),
@@ -223,9 +227,8 @@ final class BlogArticleForm
                             ->label(trans_message('blog_cms.field_open_graph_description'))
                             ->rows(3)
                             ->live(onBlur: true),
-                        Forms\Components\Select::make('og_image')
+                        self::configureMarketingMediaSelect(Forms\Components\Select::make('og_image'))
                             ->label(trans_message('blog_cms.field_open_graph_image'))
-                            ->options(fn (): array => self::getMarketingMediaOptions())
                             ->live()
                             ->searchable()
                             ->preload(),
@@ -249,8 +252,97 @@ final class BlogArticleForm
     {
         return BlogMediaAsset::query()
             ->where('blog_context', 'marketing')
+            ->whereIn('mime_type', BlogMediaService::allowedImageMimeTypes())
             ->latest()
             ->pluck('filename', 'public_url')
             ->all();
+    }
+
+    private static function configureMarketingMediaSelect(Forms\Components\Select $select): Forms\Components\Select
+    {
+        return $select
+            ->options(fn (): array => self::getMarketingMediaOptions())
+            ->getOptionLabelUsing(fn (?string $value): ?string => self::getMarketingMediaLabel($value))
+            ->getOptionLabelsUsing(fn (array $values): array => self::getMarketingMediaLabels($values))
+            ->createOptionForm(BlogMediaAssetResource::uploadFormSchema(imagesOnly: true))
+            ->createOptionUsing(fn (array $data): string => self::createMarketingImageOption($data))
+            ->createOptionModalHeading(trans_message('blog_cms.media_upload_modal_heading'))
+            ->createOptionAction(fn (Action $action): Action => $action
+                ->label(trans_message('blog_cms.media_upload_action'))
+                ->modalSubmitActionLabel(trans_message('blog_cms.media_upload_submit'))
+                ->visible(fn (): bool => self::canUploadMedia()));
+    }
+
+    private static function createMarketingImageOption(array $data): string
+    {
+        $file = $data['upload_file'] ?? null;
+
+        if (! $file instanceof TemporaryUploadedFile) {
+            throw ValidationException::withMessages([
+                'upload_file' => [trans_message('blog_cms.media_upload_required')],
+            ]);
+        }
+
+        /** @var SystemAdmin $systemAdmin */
+        $systemAdmin = Auth::guard('system_admin')->user();
+
+        if (! $systemAdmin instanceof SystemAdmin || ! $systemAdmin->hasSystemPermission('system_admin.blog.media.upload')) {
+            throw ValidationException::withMessages([
+                'upload_file' => [trans_message('blog_cms.media_upload_forbidden')],
+            ]);
+        }
+
+        $asset = app(BlogMediaService::class)->uploadMarketingImageAsset($file, $systemAdmin, [
+            'alt_text' => $data['alt_text'] ?? null,
+            'caption' => $data['caption'] ?? null,
+            'focal_point' => $data['focal_point'] ?? null,
+        ]);
+
+        return $asset->public_url;
+    }
+
+    private static function getMarketingMediaLabel(?string $value): ?string
+    {
+        if (blank($value)) {
+            return null;
+        }
+
+        return BlogMediaAsset::query()
+            ->where('blog_context', 'marketing')
+            ->whereIn('mime_type', BlogMediaService::allowedImageMimeTypes())
+            ->where('public_url', $value)
+            ->value('filename');
+    }
+
+    /**
+     * @param array<int, mixed> $values
+     *
+     * @return array<string, string>
+     */
+    private static function getMarketingMediaLabels(array $values): array
+    {
+        $urls = collect($values)
+            ->filter(fn (mixed $value): bool => is_string($value) && $value !== '')
+            ->values()
+            ->all();
+
+        if ($urls === []) {
+            return [];
+        }
+
+        return BlogMediaAsset::query()
+            ->where('blog_context', 'marketing')
+            ->whereIn('mime_type', BlogMediaService::allowedImageMimeTypes())
+            ->whereIn('public_url', $urls)
+            ->pluck('filename', 'public_url')
+            ->all();
+    }
+
+    private static function canUploadMedia(): bool
+    {
+        $systemAdmin = Auth::guard('system_admin')->user();
+
+        return $systemAdmin instanceof SystemAdmin
+            && $systemAdmin->hasSystemPermission('system_admin.blog.media.upload');
     }
 }

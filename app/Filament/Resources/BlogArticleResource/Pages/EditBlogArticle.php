@@ -8,6 +8,7 @@ use App\Filament\Resources\BlogArticleResource;
 use App\Models\Blog\BlogArticle;
 use App\Models\SystemAdmin;
 use App\Services\Blog\BlogCmsService;
+use App\Services\Blog\BlogMediaService;
 use Filament\Actions\Action;
 use Filament\Actions\ActionGroup;
 use Filament\Forms;
@@ -16,9 +17,14 @@ use Filament\Resources\Pages\EditRecord;
 use Filament\Support\Enums\Width;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\ValidationException;
+use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
+use Livewire\WithFileUploads;
 
 class EditBlogArticle extends EditRecord
 {
+    use WithFileUploads;
+
     protected static string $resource = BlogArticleResource::class;
 
     protected static string $layout = 'filament-panels::components.layout.simple';
@@ -28,6 +34,8 @@ class EditBlogArticle extends EditRecord
     public static bool $formActionsAreSticky = true;
 
     protected ?bool $hasUnsavedDataChangesAlert = true;
+
+    public mixed $inline_media_upload = null;
 
     public function getBreadcrumbs(): array
     {
@@ -70,6 +78,43 @@ class EditBlogArticle extends EditRecord
         $this->dispatch('blog-article-saved');
 
         Notification::make()->success()->title(trans_message('blog_cms.draft_autosaved'))->send();
+    }
+
+    /**
+     * @return array{url: string, label: string, alt_text: ?string, caption: ?string}
+     */
+    public function uploadInlineMedia(?string $altText = null, ?string $caption = null): array
+    {
+        $file = $this->inline_media_upload;
+
+        if (! $file instanceof TemporaryUploadedFile) {
+            throw ValidationException::withMessages([
+                'inline_media_upload' => [trans_message('blog_cms.media_upload_required')],
+            ]);
+        }
+
+        /** @var SystemAdmin $systemAdmin */
+        $systemAdmin = Auth::guard('system_admin')->user();
+
+        if (! $systemAdmin instanceof SystemAdmin || ! $systemAdmin->hasSystemPermission('system_admin.blog.media.upload')) {
+            throw ValidationException::withMessages([
+                'inline_media_upload' => [trans_message('blog_cms.media_upload_forbidden')],
+            ]);
+        }
+
+        $asset = app(BlogMediaService::class)->uploadMarketingImageAsset($file, $systemAdmin, [
+            'alt_text' => $altText,
+            'caption' => $caption,
+        ]);
+
+        $this->inline_media_upload = null;
+
+        return [
+            'url' => $asset->public_url,
+            'label' => $asset->filename,
+            'alt_text' => $asset->alt_text,
+            'caption' => $asset->caption,
+        ];
     }
 
     protected function afterSave(): void

@@ -11,11 +11,22 @@ use App\Services\Blog\BlogMediaService;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\CreateRecord;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\ValidationException;
 use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
 
 class CreateBlogMediaAsset extends CreateRecord
 {
     protected static string $resource = BlogMediaAssetResource::class;
+
+    public function getTitle(): string
+    {
+        return trans_message('blog_cms.media_create_title');
+    }
+
+    public function getBreadcrumb(): string
+    {
+        return trans_message('blog_cms.media_create_breadcrumb');
+    }
 
     protected function handleRecordCreation(array $data): BlogMediaAsset
     {
@@ -23,8 +34,10 @@ class CreateBlogMediaAsset extends CreateRecord
         $systemAdmin = Auth::guard('system_admin')->user();
         $file = $data['upload_file'] ?? null;
 
-        if (!$file instanceof TemporaryUploadedFile) {
-            throw new \RuntimeException('Blog media file is required.');
+        if (! $file instanceof TemporaryUploadedFile) {
+            throw ValidationException::withMessages([
+                'upload_file' => [trans_message('blog_cms.media_upload_required')],
+            ]);
         }
 
         return app(BlogMediaService::class)->uploadMarketingAsset($file, $systemAdmin, [
@@ -36,6 +49,6 @@ class CreateBlogMediaAsset extends CreateRecord
 
     protected function getCreatedNotification(): ?Notification
     {
-        return Notification::make()->success()->title('Файл загружен');
+        return Notification::make()->success()->title(trans_message('blog_cms.media_uploaded'));
     }
 }

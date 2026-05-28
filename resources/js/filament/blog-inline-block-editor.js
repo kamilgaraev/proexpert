@@ -1,10 +1,11 @@
 const registerBlogInlineBlockEditor = (Alpine) => {
-    Alpine.data('blogInlineBlockEditor', ({ state, statePath, wire, blockDefinitions = [], mediaOptions = {}, labels = {} }) => ({
+    Alpine.data('blogInlineBlockEditor', ({ state, statePath, wire, blockDefinitions = [], mediaOptions = {}, acceptedImageTypes = [], labels = {} }) => ({
         state,
         statePath,
         wire,
         blockDefinitions,
         mediaOptions,
+        acceptedImageTypes,
         labels,
         activeIndex: 0,
         menuIndex: null,
@@ -12,6 +13,8 @@ const registerBlogInlineBlockEditor = (Alpine) => {
         pendingLocalDraft: null,
         serverSnapshot: '',
         persistTimer: null,
+        uploadingImages: {},
+        uploadErrors: {},
 
         init() {
             this.state = this.normalizeState(this.state);
@@ -233,6 +236,106 @@ const registerBlogInlineBlockEditor = (Alpine) => {
 
         mediaEntries() {
             return Object.entries(this.mediaOptions ?? {});
+        },
+
+        uploadKey(index, imageIndex = null) {
+            return imageIndex === null ? `${index}` : `${index}.${imageIndex}`;
+        },
+
+        isUploadingImage(index, imageIndex = null) {
+            return this.uploadingImages[this.uploadKey(index, imageIndex)] === true;
+        },
+
+        uploadError(index, imageIndex = null) {
+            return this.uploadErrors[this.uploadKey(index, imageIndex)] ?? '';
+        },
+
+        setUploadError(index, imageIndex, message) {
+            this.uploadErrors = {
+                ...this.uploadErrors,
+                [this.uploadKey(index, imageIndex)]: message,
+            };
+        },
+
+        setUploadingImage(index, imageIndex, isUploading) {
+            this.uploadingImages = {
+                ...this.uploadingImages,
+                [this.uploadKey(index, imageIndex)]: isUploading,
+            };
+        },
+
+        imagePayload(index, imageIndex = null) {
+            if (imageIndex === null) {
+                return this.state[index]?.data ?? null;
+            }
+
+            return this.state[index]?.data?.images?.[imageIndex] ?? null;
+        },
+
+        uploadImage(event, index, imageIndex = null) {
+            const file = event.target.files?.[0] ?? null;
+            const payload = this.imagePayload(index, imageIndex);
+            const alt = String(payload?.alt ?? '').trim();
+
+            if (!file || !payload) {
+                return;
+            }
+
+            if (alt === '') {
+                this.setUploadError(index, imageIndex, this.labels.altRequiredBeforeUpload ?? '');
+                event.target.value = '';
+                return;
+            }
+
+            this.setUploadError(index, imageIndex, '');
+            this.setUploadingImage(index, imageIndex, true);
+
+            this.wire.upload(
+                'inline_media_upload',
+                file,
+                async () => {
+                    try {
+                        const asset = await this.wire.uploadInlineMedia(alt, payload.caption ?? '');
+
+                        if (!asset?.url) {
+                            throw new Error(this.labels.uploadFailed ?? '');
+                        }
+
+                        this.mediaOptions = {
+                            ...(this.mediaOptions ?? {}),
+                            [asset.url]: asset.label ?? asset.url,
+                        };
+                        payload.url = asset.url;
+                        payload.alt = asset.alt_text ?? alt;
+                        payload.caption = payload.caption || asset.caption || '';
+                        this.touchState();
+                    } catch (error) {
+                        this.setUploadError(index, imageIndex, this.extractUploadError(error));
+                    } finally {
+                        this.setUploadingImage(index, imageIndex, false);
+                        event.target.value = '';
+                    }
+                },
+                () => {
+                    this.setUploadingImage(index, imageIndex, false);
+                    this.setUploadError(index, imageIndex, this.labels.uploadFailed ?? '');
+                    event.target.value = '';
+                },
+            );
+        },
+
+        extractUploadError(error) {
+            const errors = error?.response?.data?.errors ?? error?.errors ?? null;
+
+            if (errors && typeof errors === 'object') {
+                const first = Object.values(errors).flat().find(Boolean);
+
+                if (first) {
+                    return String(first);
+                }
+            }
+
+            return error?.message || this.labels.uploadFailed || '';
         },
 
         focusBlock(index) {

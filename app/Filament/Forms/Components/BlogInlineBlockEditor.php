@@ -22,6 +22,11 @@ class BlogInlineBlockEditor extends Field
     protected array|Closure $mediaOptions = [];
 
     /**
+     * @var array<int, string>|Closure
+     */
+    protected array|Closure $acceptedImageTypes = [];
+
+    /**
      * @param array<int, array<string, mixed>>|Closure $blockDefinitions
      */
     public function blockDefinitions(array|Closure $blockDefinitions): static
@@ -42,6 +47,16 @@ class BlogInlineBlockEditor extends Field
     }
 
     /**
+     * @param array<int, string>|Closure $acceptedImageTypes
+     */
+    public function acceptedImageTypes(array|Closure $acceptedImageTypes): static
+    {
+        $this->acceptedImageTypes = $acceptedImageTypes;
+
+        return $this;
+    }
+
+    /**
      * @return array<int, array<string, mixed>>
      */
     public function getBlockDefinitions(): array
@@ -55,5 +70,13 @@ class BlogInlineBlockEditor extends Field
     public function getMediaOptions(): array
     {
         return $this->evaluate($this->mediaOptions);
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    public function getAcceptedImageTypes(): array
+    {
+        return $this->evaluate($this->acceptedImageTypes);
     }
 }

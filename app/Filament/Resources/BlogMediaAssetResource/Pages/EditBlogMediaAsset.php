@@ -18,6 +18,11 @@ class EditBlogMediaAsset extends EditRecord
 {
     protected static string $resource = BlogMediaAssetResource::class;
 
+    public function getTitle(): string
+    {
+        return trans_message('blog_cms.media_edit_title');
+    }
+
     protected function mutateFormDataBeforeFill(array $data): array
     {
         $data['upload_file'] = null;
@@ -53,6 +58,6 @@ class EditBlogMediaAsset extends EditRecord
 
     protected function getSavedNotification(): ?Notification
     {
-        return Notification::make()->success()->title('Медиа обновлена');
+        return Notification::make()->success()->title(trans_message('blog_cms.media_saved'));
     }
 }
