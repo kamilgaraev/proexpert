@@ -94,6 +94,14 @@ class BlogCmsEditorWorkflowTest extends TestCase
         $this->assertStringContainsString('restoreLocalDraft', $scriptSource);
     }
 
+    public function test_inline_editor_does_not_use_structured_clone_for_alpine_payloads(): void
+    {
+        $scriptSource = (string) file_get_contents(resource_path('js/filament/blog-inline-block-editor.js'));
+
+        $this->assertStringNotContainsString('structuredClone', $scriptSource);
+        $this->assertStringContainsString('JSON.parse(JSON.stringify(value))', $scriptSource);
+    }
+
     public function test_content_manager_can_open_editorial_calendar_with_safe_bulk_operations(): void
     {
         $admin = SystemAdmin::factory()->role('content_manager')->create([

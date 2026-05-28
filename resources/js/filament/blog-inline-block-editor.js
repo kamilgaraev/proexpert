@@ -309,8 +309,8 @@ const registerBlogInlineBlockEditor = (Alpine) => {
         },
 
         clone(value) {
-            if (typeof structuredClone === 'function') {
-                return structuredClone(value);
+            if (value === undefined) {
+                return undefined;
             }
 
             return JSON.parse(JSON.stringify(value));
