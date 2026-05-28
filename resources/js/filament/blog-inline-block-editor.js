@@ -1,6 +1,8 @@
 const registerBlogInlineBlockEditor = (Alpine) => {
-    Alpine.data('blogInlineBlockEditor', ({ state, blockDefinitions = [], mediaOptions = {}, labels = {} }) => ({
+    Alpine.data('blogInlineBlockEditor', ({ state, statePath, wire, blockDefinitions = [], mediaOptions = {}, labels = {} }) => ({
         state,
+        statePath,
+        wire,
         blockDefinitions,
         mediaOptions,
         labels,
@@ -244,6 +246,15 @@ const registerBlogInlineBlockEditor = (Alpine) => {
                 type: block.type,
                 data: this.clone(block.data),
             }));
+            this.syncLivewireState();
+        },
+
+        syncLivewireState() {
+            if (!this.statePath || !this.wire?.$set) {
+                return;
+            }
+
+            this.wire.$set(this.statePath, this.dehydrate(this.state), false);
         },
 
         draftKey() {

@@ -3,7 +3,9 @@
         class="ph-blog-inline-editor"
         data-blog-inline-editor
         x-data="blogInlineBlockEditor({
-            state: $wire.$entangle('{{ $getStatePath() }}'),
+            state: $wire.$get('{{ $getStatePath() }}'),
+            statePath: '{{ $getStatePath() }}',
+            wire: $wire,
             blockDefinitions: @js($getBlockDefinitions()),
             mediaOptions: @js($getMediaOptions()),
             labels: {

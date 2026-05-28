@@ -102,6 +102,18 @@ class BlogCmsEditorWorkflowTest extends TestCase
         $this->assertStringContainsString('JSON.parse(JSON.stringify(value))', $scriptSource);
     }
 
+    public function test_inline_editor_keeps_article_body_local_until_next_livewire_action(): void
+    {
+        $viewSource = (string) file_get_contents(resource_path('views/filament/forms/components/blog-inline-block-editor.blade.php'));
+        $scriptSource = (string) file_get_contents(resource_path('js/filament/blog-inline-block-editor.js'));
+
+        $this->assertStringNotContainsString('$entangle', $viewSource);
+        $this->assertStringContainsString("\$wire.\$get('{{ \$getStatePath() }}')", $viewSource);
+        $this->assertStringContainsString("statePath: '{{ \$getStatePath() }}'", $viewSource);
+        $this->assertStringContainsString('syncLivewireState()', $scriptSource);
+        $this->assertStringContainsString('$set(this.statePath, this.dehydrate(this.state), false)', $scriptSource);
+    }
+
     public function test_content_manager_can_open_editorial_calendar_with_safe_bulk_operations(): void
     {
         $admin = SystemAdmin::factory()->role('content_manager')->create([
