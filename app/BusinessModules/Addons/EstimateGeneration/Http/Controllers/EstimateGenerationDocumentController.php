@@ -75,7 +75,7 @@ class EstimateGenerationDocumentController extends Controller
 
             $document->forceFill([
                 'status' => 'queued',
-                'processing_stage' => 'queued',
+                'processing_stage' => 'stored',
                 'progress_percent' => 0,
                 'ocr_started_at' => null,
                 'ocr_finished_at' => null,
@@ -129,7 +129,7 @@ class EstimateGenerationDocumentController extends Controller
 
             $document->forceFill([
                 'status' => 'ignored',
-                'processing_stage' => 'ignored',
+                'processing_stage' => 'completed',
                 'progress_percent' => 100,
                 'ignored_at' => now(),
                 'meta' => [

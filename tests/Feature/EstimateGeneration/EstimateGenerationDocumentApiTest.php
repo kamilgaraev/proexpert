@@ -84,7 +84,13 @@ class EstimateGenerationDocumentApiTest extends TestCase
 
         $this->assertTrue($payload['success']);
         $this->assertSame('queued', $payload['data']['document']['status']);
+        $this->assertSame('stored', $payload['data']['document']['processing_stage']);
         $this->assertSame(1, $payload['data']['documents_summary']['pending_count']);
+        $this->assertDatabaseHas('estimate_generation_documents', [
+            'id' => $document->id,
+            'status' => 'queued',
+            'processing_stage' => 'stored',
+        ]);
         Queue::assertPushed(
             ProcessEstimateGenerationDocumentJob::class,
             static fn (ProcessEstimateGenerationDocumentJob $job): bool => $job->queue === ProcessEstimateGenerationDocumentJob::QUEUE
@@ -111,7 +117,13 @@ class EstimateGenerationDocumentApiTest extends TestCase
 
         $this->assertTrue($allowedPayload['success']);
         $this->assertSame('ignored', $allowedPayload['data']['document']['status']);
+        $this->assertSame('completed', $allowedPayload['data']['document']['processing_stage']);
         $this->assertSame(1, $allowedPayload['data']['documents_summary']['ignored_count']);
+        $this->assertDatabaseHas('estimate_generation_documents', [
+            'id' => $failed->id,
+            'status' => 'ignored',
+            'processing_stage' => 'completed',
+        ]);
     }
 
     public function test_document_from_another_session_is_not_accessible(): void
@@ -154,6 +166,12 @@ class EstimateGenerationDocumentApiTest extends TestCase
 
     private function makeDocument(EstimateGenerationSession $session, string $status): EstimateGenerationDocument
     {
+        $processingStage = match ($status) {
+            'queued' => 'stored',
+            'processing' => 'preflight',
+            default => 'completed',
+        };
+
         return EstimateGenerationDocument::query()->create([
             'session_id' => $session->id,
             'organization_id' => $session->organization_id,
@@ -163,7 +181,7 @@ class EstimateGenerationDocumentApiTest extends TestCase
             'mime_type' => 'application/pdf',
             'storage_path' => 'org-' . $session->organization_id . '/estimate-generation/documents/' . $status . '.pdf',
             'status' => $status,
-            'processing_stage' => $status,
+            'processing_stage' => $processingStage,
             'progress_percent' => $status === 'ready' ? 100 : 30,
             'quality_score' => $status === 'ready' ? 0.92 : null,
             'quality_level' => $status === 'ready' ? 'good' : null,
