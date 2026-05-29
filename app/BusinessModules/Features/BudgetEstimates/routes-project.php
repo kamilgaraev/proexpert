@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\V1\Admin\EstimateProgressController;
 use App\Http\Controllers\Api\V1\Admin\EstimateContractController;
 use App\Http\Controllers\Api\V1\Admin\EstimateExportController;
 use App\Http\Controllers\Api\V1\Admin\EstimatePaymentController;
+use App\Http\Controllers\Api\V1\Admin\EstimateVersionController;
 use App\BusinessModules\Features\BudgetEstimates\Http\Controllers\EstimateNormativeController;
 
 /*
@@ -64,8 +65,7 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
                 Route::get('/{norm}', [EstimateNormativeController::class, 'show'])->name('show');
             });
 
-            // Временно отключено - контроллер не существует
-            // Route::post('/{estimate}/what-if', [EstimateVersionController::class, 'whatIf'])->name('what_if');
+            Route::post('/{estimate}/what-if', [EstimateVersionController::class, 'whatIfForProject'])->name('what_if');
             // Route::post('/{estimate}/schedule', [EstimateVersionController::class, 'schedule'])->name('schedule');
             
             // Разделы сметы

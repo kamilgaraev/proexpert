@@ -120,6 +120,16 @@ class EstimateVersionController extends Controller
 
     public function whatIf(Request $request, int $estimateId): JsonResponse
     {
+        return $this->runWhatIfSimulation($request, $estimateId);
+    }
+
+    public function whatIfForProject(Request $request, int $project, int $estimate): JsonResponse
+    {
+        return $this->runWhatIfSimulation($request, $estimate);
+    }
+
+    private function runWhatIfSimulation(Request $request, int $estimateId): JsonResponse
+    {
         $estimate = $this->findEstimateOrFail($estimateId);
         $this->authorize('view', $estimate);
         $request->validate([
