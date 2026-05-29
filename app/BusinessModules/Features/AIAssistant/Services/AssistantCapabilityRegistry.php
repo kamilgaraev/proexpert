@@ -48,7 +48,7 @@ class AssistantCapabilityRegistry
             $this->makeCapability(
                 'reports',
                 'Отчеты',
-                ['отчет', 'отчеты', 'сводка', 'аналитика', 'pdf', 'excel'],
+                ['отчет', 'отчеты', 'сводк', 'аналитика', 'финанс', 'финансы', 'бюджет', 'затрат', 'расход', 'прибыл', 'рентабельн', 'маржинальн', 'pdf', 'excel'],
                 ['reports.view', 'admin.reports.view'],
                 ['reports.create', 'reports.edit', 'reports.export'],
                 [
@@ -78,7 +78,7 @@ class AssistantCapabilityRegistry
             $this->makeCapability(
                 'payments',
                 'Платежи',
-                ['платеж', 'платежи', 'оплата', 'счет', 'счета', 'согласование'],
+                ['платеж', 'платежи', 'оплат', 'счет', 'счета', 'счёт', 'счёта', 'выплат', 'долг', 'задолж', 'согласование'],
                 ['payments.invoice_view', 'payments.transaction_view', 'admin.payments.view'],
                 ['payments.settings_manage', 'payments.reconciliation_perform'],
                 [

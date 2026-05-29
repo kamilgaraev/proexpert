@@ -74,6 +74,19 @@ class AssistantTaskOrchestratorTest extends TestCase
         $this->assertSame(['route' => '/projects/56/schedules'], $plan['navigation_target']);
     }
 
+    public function test_finance_summary_routes_to_reports_capability(): void
+    {
+        $orchestrator = $this->makeOrchestratorWithRealRegistry();
+
+        $plan = $orchestrator->plan('Собери короткую сводку по финансам', [], [
+            'organization_id' => 15,
+            'permissions_flat' => ['reports.view'],
+        ]);
+
+        $this->assertSame('summary', $plan['task_type']);
+        $this->assertSame('reports', $plan['capability']['id'] ?? null);
+    }
+
     public function test_data_capability_is_not_high_confidence_without_tool_evidence(): void
     {
         $orchestrator = $this->makeOrchestratorWithRealRegistry();
@@ -131,6 +144,7 @@ class AssistantTaskOrchestratorTest extends TestCase
             'act' => ['создай задачу в графике', 'act'],
             'find' => ['найди проект Дом 300', 'find'],
             'analyze' => ['проанализируй риски по срокам', 'analyze'],
+            'finance skew analyze' => ['есть ли перекос по финансам', 'analyze'],
             'wizard' => ['помоги оформить заявку пошагово', 'wizard'],
         ];
     }

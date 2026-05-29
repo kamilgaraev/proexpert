@@ -167,7 +167,7 @@ class AssistantTaskOrchestrator
             return 'find';
         }
 
-        if ($this->containsAny($query, ['почему', 'риск', 'риски', 'проанализируй', 'что критично', 'что горит', 'проблем'])) {
+        if ($this->containsAny($query, ['почему', 'риск', 'риски', 'проанализируй', 'что критично', 'что горит', 'проблем', 'перекос', 'отклонен'])) {
             return 'analyze';
         }
 

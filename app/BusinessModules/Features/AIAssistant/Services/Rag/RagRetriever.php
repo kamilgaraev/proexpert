@@ -316,6 +316,10 @@ SQL;
             }
         }
 
+        if ($this->isFinanceQuery($normalized)) {
+            return ['payment', 'contract', 'performance_act', 'project', 'estimate', 'project_pulse'];
+        }
+
         return [];
     }
 
@@ -379,7 +383,45 @@ SQL;
             $terms[] = $term;
         }
 
-        return array_values(array_unique($terms));
+        return array_values(array_unique(array_merge($terms, $this->expandedLexicalTerms($terms, $normalized))));
+    }
+
+    /**
+     * @param  array<int, string>  $terms
+     * @return array<int, string>
+     */
+    private function expandedLexicalTerms(array $terms, string $normalizedQuery): array
+    {
+        if (! $this->isFinanceQuery($normalizedQuery) && ! in_array('финанс', $terms, true)) {
+            return [];
+        }
+
+        return [
+            'платеж',
+            'оплат',
+            'сумма',
+            'оплачено',
+            'остаток',
+            'счет',
+            'счёт',
+            'договор',
+            'контракт',
+            'бюджет',
+            'акт',
+            'прибыл',
+            'рентабельн',
+        ];
+    }
+
+    private function isFinanceQuery(string $normalizedQuery): bool
+    {
+        foreach (['финанс', 'бюджет', 'затрат', 'расход', 'оплат', 'платеж', 'платёж', 'счет', 'счёт', 'прибыл', 'рентабельн', 'маржинальн'] as $marker) {
+            if (str_contains($normalizedQuery, $marker)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function stemLexicalTerm(string $term): string

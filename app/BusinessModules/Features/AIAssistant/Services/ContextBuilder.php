@@ -188,7 +188,62 @@ class ContextBuilder
             }
         }
 
+        if (! isset($params['project_id'])) {
+            $projectId = $this->resolveContextProjectId($conversationContext);
+            if ($projectId !== null) {
+                $params['project_id'] = $projectId;
+            }
+        }
+
         return $params;
+    }
+
+    protected function resolveContextProjectId(array $conversationContext): ?int
+    {
+        foreach ([
+            $conversationContext['current_request_context'] ?? null,
+            $conversationContext['last_request_context'] ?? null,
+            $conversationContext['current_request']['context'] ?? null,
+            $conversationContext['last_request']['context'] ?? null,
+            $conversationContext,
+        ] as $context) {
+            if (! is_array($context)) {
+                continue;
+            }
+
+            $projectId = $this->resolveProjectIdFromContext($context);
+            if ($projectId !== null) {
+                return $projectId;
+            }
+        }
+
+        return null;
+    }
+
+    protected function resolveProjectIdFromContext(array $context): ?int
+    {
+        foreach ([
+            $context['project_id'] ?? null,
+            $context['filters']['project_id'] ?? null,
+            $context['ui_state']['selected_project_id'] ?? null,
+        ] as $value) {
+            if (is_numeric($value)) {
+                return (int) $value;
+            }
+        }
+
+        foreach (($context['entity_refs'] ?? []) as $entityRef) {
+            if (! is_array($entityRef) || ($entityRef['type'] ?? null) !== 'project') {
+                continue;
+            }
+
+            $entityId = $entityRef['id'] ?? null;
+            if (is_numeric($entityId)) {
+                return (int) $entityId;
+            }
+        }
+
+        return null;
     }
 
     public function getOrganizationContext(int $organizationId): array

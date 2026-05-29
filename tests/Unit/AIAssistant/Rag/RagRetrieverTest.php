@@ -203,6 +203,39 @@ class RagRetrieverTest extends TestCase
         $this->assertSame('site_request', $results[0]->sourceType);
     }
 
+    public function test_finance_query_expands_lexical_terms_to_payment_sources(): void
+    {
+        [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(
+            UserProjectAccessMode::ALL_PROJECTS->value
+        );
+
+        $this->indexChunk(
+            $organization->id,
+            $project->id,
+            'Платеж: INV-77',
+            'Платежный документ INV-77. Сумма: 150 000.00. Оплачено: 50 000.00. Остаток: 100 000.00.',
+            [1.0, 0.0, 0.0],
+            'payment',
+            'payment_document'
+        );
+
+        $retriever = new RagRetriever(
+            new FailingRetrieverEmbeddingProvider,
+            app(UserProjectAccessService::class)
+        );
+
+        $results = $retriever->search(
+            'Собери короткую сводку по финансам',
+            $organization->id,
+            $user,
+            ['project_id' => $project->id]
+        );
+
+        $this->assertCount(1, $results);
+        $this->assertSame('Платеж: INV-77', $results[0]->title);
+        $this->assertSame('payment', $results[0]->sourceType);
+    }
+
     public function test_search_returns_compact_evidence_safe_excerpt(): void
     {
         [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(

@@ -163,12 +163,16 @@ class AIAssistantService
         );
 
         $previousIntent = $conversation->context['last_intent'] ?? null;
+        $legacyConversationContext = array_merge($conversation->context ?? [], [
+            'current_request' => $taskPlan['request'],
+            'current_request_context' => $taskPlan['request']['context'] ?? [],
+        ]);
         $legacyContext = $this->contextBuilder->buildContext(
             $query,
             $organizationId,
             $user->id,
             $previousIntent,
-            $conversation->context ?? []
+            $legacyConversationContext
         );
 
         $this->logging->technical('ai.context.built', [
@@ -1467,7 +1471,7 @@ class AIAssistantService
             'contracts' => ['get_contract_snapshot', 'search_contractors'],
             'reports' => ['get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot', 'generate_profitability_report', 'generate_work_completion_report', 'generate_material_movements_report', 'generate_contractor_settlements_report', 'generate_contract_payments_report', 'generate_project_timelines_report', 'generate_time_tracking_report', 'generate_warehouse_stock_report', 'generate_operational_pdf_report'],
             'warehouse' => ['search_warehouse', 'search_materials'],
-            'payments' => ['approve_payment_request', 'generate_contract_payments_report'],
+            'payments' => ['get_contract_snapshot', 'get_project_snapshot', 'approve_payment_request', 'generate_contract_payments_report'],
             'schedules' => ['get_schedule_snapshot', 'search_projects', 'create_schedule_task', 'update_schedule_task_status'],
             'procurement' => ['get_procurement_snapshot', 'get_project_snapshot', 'search_materials', 'search_contractors'],
             'notifications' => ['search_projects', 'search_users', 'send_project_notification'],
