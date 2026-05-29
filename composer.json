@@ -27,6 +27,7 @@
         "resend/resend-php": "^0.15.1",
         "sentry/sentry-laravel": "^4.18",
         "shuchkin/simplexlsx": "^1.1",
+        "smalot/pdfparser": "^2.11",
         "spiral/roadrunner-cli": "2.6",
         "spiral/roadrunner-http": "3.3",
         "symfony/console": "~7.4",

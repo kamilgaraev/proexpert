@@ -10,5 +10,6 @@ final readonly class OcrDocumentInput
         public string $content,
         public string $mimeType,
         public ?string $filename = null,
+        public ?int $pageCount = null,
     ) {}
 }

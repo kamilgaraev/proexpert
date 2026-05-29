@@ -17,6 +17,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\SpreadsheetDocume
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use Dompdf\Dompdf;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
@@ -58,25 +59,25 @@ class EstimateGenerationDocumentUploadTest extends TestCase
         Storage::fake('s3');
 
         [, , $session] = $this->makeSession();
-        $storagePath = "org-{$session->organization_id}/estimate-generation/sessions/{$session->id}/documents/plan.pdf";
-        Storage::disk('s3')->put($storagePath, '%PDF document content');
+        $storagePath = "org-{$session->organization_id}/estimate-generation/sessions/{$session->id}/documents/plan.png";
+        Storage::disk('s3')->put($storagePath, 'image content');
 
         $document = EstimateGenerationDocument::query()->create([
             'session_id' => $session->id,
             'organization_id' => $session->organization_id,
             'project_id' => $session->project_id,
             'user_id' => $session->user_id,
-            'filename' => 'plan.pdf',
-            'mime_type' => 'application/pdf',
+            'filename' => 'plan.png',
+            'mime_type' => 'image/png',
             'storage_path' => $storagePath,
             'status' => 'queued',
             'processing_stage' => 'stored',
             'progress_percent' => 0,
-            'file_size_bytes' => 21,
-            'checksum_sha256' => hash('sha256', '%PDF document content'),
+            'file_size_bytes' => 13,
+            'checksum_sha256' => hash('sha256', 'image content'),
             'structured_payload' => [],
             'meta' => [
-                'original_extension' => 'pdf',
+                'original_extension' => 'png',
             ],
         ]);
 
@@ -177,6 +178,100 @@ class EstimateGenerationDocumentUploadTest extends TestCase
         ]);
     }
 
+    public function test_document_processor_extracts_pdf_text_layer_before_calling_ocr_provider(): void
+    {
+        Storage::fake('s3');
+
+        [, , $session] = $this->makeSession();
+        $content = $this->pdfContent([
+            'Общая площадь дома 151,76 м2',
+            'Жилая площадь 80,21 м2',
+        ]);
+        $storagePath = "org-{$session->organization_id}/estimate-generation/sessions/{$session->id}/documents/project.pdf";
+        Storage::disk('s3')->put($storagePath, $content);
+
+        $document = EstimateGenerationDocument::query()->create([
+            'session_id' => $session->id,
+            'organization_id' => $session->organization_id,
+            'project_id' => $session->project_id,
+            'user_id' => $session->user_id,
+            'filename' => 'project.pdf',
+            'mime_type' => 'application/pdf',
+            'storage_path' => $storagePath,
+            'status' => 'queued',
+            'processing_stage' => 'stored',
+            'progress_percent' => 0,
+            'file_size_bytes' => strlen($content),
+            'checksum_sha256' => hash('sha256', $content),
+            'structured_payload' => [],
+            'meta' => [
+                'original_extension' => 'pdf',
+            ],
+        ]);
+
+        $this->app->instance(OcrClientInterface::class, new class implements OcrClientInterface {
+            public function recognize(OcrDocumentInput $input): OcrRecognitionResult
+            {
+                throw new \RuntimeException('OCR provider must not be called when PDF text layer is usable.');
+            }
+        });
+
+        app(OcrDocumentProcessor::class)->process($document);
+        $document->refresh();
+
+        $this->assertSame('ready', $document->status);
+        $this->assertSame('completed', $document->processing_stage);
+        $this->assertSame('pdf_text_layer', $document->ocr_provider);
+        $this->assertSame(2, $document->page_count);
+        $this->assertSame(2, $document->processed_page_count);
+        $this->assertStringContainsString('Общая площадь дома 151,76 м2', (string) $document->extracted_text);
+        $this->assertEquals(151.76, $document->facts_summary['total_area_m2']);
+    }
+
+    public function test_document_processor_fails_multi_page_pdf_without_text_layer_before_calling_ocr_provider(): void
+    {
+        Storage::fake('s3');
+
+        [, , $session] = $this->makeSession();
+        $content = "%PDF-1.4\n<< /Type /Page >>\n<< /Type /Page >>";
+        $storagePath = "org-{$session->organization_id}/estimate-generation/sessions/{$session->id}/documents/scanned.pdf";
+        Storage::disk('s3')->put($storagePath, $content);
+
+        $document = EstimateGenerationDocument::query()->create([
+            'session_id' => $session->id,
+            'organization_id' => $session->organization_id,
+            'project_id' => $session->project_id,
+            'user_id' => $session->user_id,
+            'filename' => 'scanned.pdf',
+            'mime_type' => 'application/pdf',
+            'storage_path' => $storagePath,
+            'status' => 'queued',
+            'processing_stage' => 'stored',
+            'progress_percent' => 0,
+            'file_size_bytes' => strlen($content),
+            'checksum_sha256' => hash('sha256', $content),
+            'structured_payload' => [],
+            'meta' => [
+                'original_extension' => 'pdf',
+            ],
+        ]);
+
+        $this->app->instance(OcrClientInterface::class, new class implements OcrClientInterface {
+            public function recognize(OcrDocumentInput $input): OcrRecognitionResult
+            {
+                throw new \RuntimeException('OCR provider must not be called for multi-page PDF without text layer.');
+            }
+        });
+
+        app(OcrDocumentProcessor::class)->process($document);
+        $document->refresh();
+
+        $this->assertSame('failed', $document->status);
+        $this->assertSame('pdf_text_layer_missing', $document->error_code);
+        $this->assertSame('estimate_generation.ocr_pdf_text_layer_missing', $document->error_message_key);
+        $this->assertSame(2, $document->page_count);
+    }
+
     /**
      * @return array{0: User, 1: Project, 2: EstimateGenerationSession}
      */
@@ -228,5 +323,27 @@ class EstimateGenerationDocumentUploadTest extends TestCase
         unlink($path);
 
         return $content === false ? '' : $content;
+    }
+
+    /**
+     * @param array<int, string> $pages
+     */
+    private function pdfContent(array $pages): string
+    {
+        $html = '<html><meta charset="utf-8"><style>body { font-family: DejaVu Sans, sans-serif; }</style><body>';
+
+        foreach ($pages as $index => $text) {
+            $style = $index + 1 < count($pages) ? ' style="page-break-after: always;"' : '';
+            $html .= '<div' . $style . '><p>' . htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</p></div>';
+        }
+
+        $html .= '</body></html>';
+
+        $dompdf = new Dompdf();
+        $dompdf->loadHtml($html, 'UTF-8');
+        $dompdf->setPaper('A4');
+        $dompdf->render();
+
+        return $dompdf->output();
     }
 }

@@ -86,6 +86,8 @@ class DocumentGenerationReadinessService
             'status' => $status,
             'processing_stage' => $document->processing_stage,
             'progress_percent' => $document->progress_percent,
+            'page_count' => $document->page_count,
+            'processed_page_count' => $document->processed_page_count,
             'quality_level' => $document->quality_level,
             'quality_score' => $document->quality_score,
             'quality_flags' => $qualityFlags,

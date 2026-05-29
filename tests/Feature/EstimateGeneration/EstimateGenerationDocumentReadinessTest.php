@@ -89,6 +89,8 @@ class EstimateGenerationDocumentReadinessTest extends TestCase
         $this->assertTrue($payload['success']);
         $this->assertSame(1, $payload['data']['documents_summary']['ready_count']);
         $this->assertTrue($payload['data']['documents_summary']['can_generate']);
+        $this->assertSame(2, $payload['data']['documents_summary']['items'][0]['page_count']);
+        $this->assertSame(2, $payload['data']['documents_summary']['items'][0]['processed_page_count']);
     }
 
     public function test_empty_session_without_description_or_ready_documents_is_not_generated(): void
@@ -156,6 +158,8 @@ class EstimateGenerationDocumentReadinessTest extends TestCase
             'status' => $status,
             'processing_stage' => $status,
             'progress_percent' => $status === 'ready' ? 100 : 30,
+            'page_count' => $status === 'ready' ? 2 : null,
+            'processed_page_count' => $status === 'ready' ? 2 : 0,
             'quality_score' => $status === 'ready' ? 0.92 : null,
             'quality_level' => $status === 'ready' ? 'good' : null,
             'quality_flags' => [],

@@ -6,12 +6,16 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services\Ocr;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrProviderException;
+use Smalot\PdfParser\Parser;
+use Throwable;
 
 class OcrPreflightService
 {
     private const OCR_EXTENSIONS = ['pdf', 'jpg', 'jpeg', 'png'];
 
     private const SPREADSHEET_EXTENSIONS = ['xlsx', 'xls'];
+
+    public function __construct(private readonly PdfParserRuntime $pdfParserRuntime) {}
 
     public function validateForRecognition(EstimateGenerationDocument $document): void
     {
@@ -41,13 +45,70 @@ class OcrPreflightService
         }
     }
 
+    public function validatePdfPageCount(EstimateGenerationDocument $document, string $content): ?int
+    {
+        if (!$this->isPdf($document)) {
+            return null;
+        }
+
+        $pageCount = $this->detectPdfPageCount($content);
+
+        if ($pageCount === null) {
+            return null;
+        }
+
+        $maxPages = max(1, (int) config('estimate-generation.ocr.max_pdf_pages', 200));
+
+        if ($pageCount > $maxPages) {
+            throw new OcrProviderException(
+                'estimate_generation.ocr_pdf_too_many_pages',
+                providerCode: 'pdf_page_limit_exceeded',
+                context: [
+                    'page_count' => $pageCount,
+                    'max_pdf_pages' => $maxPages,
+                ],
+            );
+        }
+
+        return $pageCount;
+    }
+
     public function isSpreadsheet(EstimateGenerationDocument $document): bool
     {
         return in_array($this->extension($document), self::SPREADSHEET_EXTENSIONS, true);
     }
 
+    public function isPdf(EstimateGenerationDocument $document): bool
+    {
+        return $this->extension($document) === 'pdf'
+            || str_contains(strtolower((string) $document->mime_type), 'pdf');
+    }
+
     public function extension(EstimateGenerationDocument $document): string
     {
         return strtolower((string) ($document->meta['original_extension'] ?? pathinfo($document->filename, PATHINFO_EXTENSION)));
+    }
+
+    private function detectPdfPageCount(string $content): ?int
+    {
+        try {
+            $pageCount = $this->pdfParserRuntime->withRaisedMemoryLimit(
+                static fn (): int => count((new Parser())->parseContent($content)->getPages())
+            );
+
+            if ($pageCount > 0) {
+                return $pageCount;
+            }
+        } catch (Throwable) {
+        }
+
+        $matches = [];
+        $count = preg_match_all('/\/Type\s*\/Page\b/', $content, $matches);
+
+        if ($count === false || $count === 0) {
+            return null;
+        }
+
+        return $count;
     }
 }

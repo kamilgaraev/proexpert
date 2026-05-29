@@ -82,7 +82,7 @@ class EstimateGenerationDocumentE2ETest extends TestCase
 
         $documents = app(DocumentParsingService::class)->storeParsedDocuments(
             $session,
-            [UploadedFile::fake()->createWithContent('warehouse-plan.pdf', '%PDF test content')],
+            [UploadedFile::fake()->createWithContent('warehouse-plan.png', 'image content')],
             $user
         );
         $document = $documents->firstOrFail();

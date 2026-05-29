@@ -47,7 +47,7 @@ return new class extends Migration
             DB::statement(
                 "ALTER TABLE estimate_generation_documents
                     ADD CONSTRAINT estimate_generation_documents_processing_stage_check
-                    CHECK (processing_stage IN ('stored', 'preflight', 'pdf_text_layer', 'ocr_request', 'ocr_polling', 'normalization', 'fact_extraction', 'quality_check', 'completed'))"
+                    CHECK (processing_stage IN ('stored', 'preflight', 'pdf_text_layer', 'ocr_request', 'ocr_polling', 'spreadsheet_extraction', 'normalization', 'fact_extraction', 'quality_check', 'completed'))"
             );
             DB::statement(
                 "ALTER TABLE estimate_generation_documents
