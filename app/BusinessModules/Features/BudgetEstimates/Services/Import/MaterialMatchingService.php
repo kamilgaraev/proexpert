@@ -4,6 +4,7 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services\Import;
 
 use App\Models\Material;
 use App\Models\MeasurementUnit;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 
@@ -213,24 +214,40 @@ class MaterialMatchingService
     {
         $normalized = mb_strtolower(trim($unitName));
 
-        $unit = MeasurementUnit::where('organization_id', $organizationId)
-            ->whereRaw('LOWER(TRIM(name)) = LOWER(TRIM(?))', [$normalized])
-            ->first();
+        $unit = $this->findUnitByNameOrShortName($normalized, $organizationId);
 
         if ($unit === null) {
             $shortName = mb_strlen($unitName) > 10
                 ? mb_substr($unitName, 0, 10)
                 : $unitName;
 
-            $unit = MeasurementUnit::create([
-                'organization_id' => $organizationId,
-                'name' => $unitName,
-                'short_name' => $shortName,
-                'type' => 'material',
-            ]);
+            try {
+                $unit = MeasurementUnit::create([
+                    'organization_id' => $organizationId,
+                    'name' => $unitName,
+                    'short_name' => $shortName,
+                    'type' => 'material',
+                ]);
+            } catch (UniqueConstraintViolationException $exception) {
+                $unit = $this->findUnitByNameOrShortName(mb_strtolower(trim($shortName)), $organizationId);
+
+                if ($unit === null) {
+                    throw $exception;
+                }
+            }
         }
 
         return $unit;
+    }
+
+    private function findUnitByNameOrShortName(string $normalizedUnitName, int $organizationId): ?MeasurementUnit
+    {
+        return MeasurementUnit::where('organization_id', $organizationId)
+            ->where(function ($query) use ($normalizedUnitName): void {
+                $query->whereRaw('LOWER(TRIM(name)) = ?', [$normalizedUnitName])
+                    ->orWhereRaw('LOWER(TRIM(short_name)) = ?', [$normalizedUnitName]);
+            })
+            ->first();
     }
 
     /**
