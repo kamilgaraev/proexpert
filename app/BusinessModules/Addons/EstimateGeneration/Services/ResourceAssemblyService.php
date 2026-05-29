@@ -140,10 +140,16 @@ class ResourceAssemblyService
             return $this->applyCandidateOnlyMatch($workItem, $match, $decision->toArray());
         }
 
-        $workItem = $this->applyNormativeResources($workItem, $match);
+        $decisionPayload = $decision->toArray();
+        $workItem = $this->applyNormativeResources($workItem, $match, false, $decisionPayload);
         $flags = $this->acceptedFlags($workItem['validation_flags'] ?? []);
 
-        if ((float) $selected['confidence'] < self::LOW_CONFIDENCE_THRESHOLD) {
+        if ($decision->status !== 'accepted') {
+            $flags[] = 'normative_candidate_only';
+            $flags[] = 'requires_normative_review';
+        }
+
+        if ((float) $selected['confidence'] < self::LOW_CONFIDENCE_THRESHOLD || in_array('low_confidence', $decision->warnings, true)) {
             $flags[] = 'normative_match_low_confidence';
         }
 
@@ -165,7 +171,7 @@ class ResourceAssemblyService
      * @param array<string, mixed> $match
      * @return array<string, mixed>
      */
-    private function applyNormativeResources(array $workItem, array $match, bool $selectedByUser = false): array
+    private function applyNormativeResources(array $workItem, array $match, bool $selectedByUser = false, ?array $decision = null): array
     {
         $selected = $match['selected'];
         $version = $match['version'];
@@ -185,6 +191,11 @@ class ResourceAssemblyService
         $workItem['normative_rate_code'] = $selected['code'];
         $workItem['normative_dataset'] = $version;
         $workItem['price_dataset'] = $priceVersion;
+        $warnings = $selectedByUser ? [] : array_values(array_unique([
+            ...($selected['warnings'] ?? []),
+            ...($decision['warnings'] ?? []),
+        ]));
+
         $workItem['normative_match'] = [
             'status' => 'matched',
             'selected_by_user' => $selectedByUser,
@@ -200,7 +211,8 @@ class ResourceAssemblyService
             'score' => $selected['score'],
             'confidence' => $selectedByUser ? 1.0 : $selected['confidence'],
             'match_reasons' => $selected['match_reasons'],
-            'warnings' => $selectedByUser ? [] : $selected['warnings'],
+            'warnings' => $warnings,
+            'decision' => $decision,
             'resources_count' => $this->resourcesCount($resources),
             'priced_resources_count' => $this->pricedResourcesCount($resources),
             'work_composition' => $this->normalizeComposition($selected['work_composition'] ?? []),

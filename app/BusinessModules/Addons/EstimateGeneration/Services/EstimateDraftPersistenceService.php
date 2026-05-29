@@ -13,9 +13,6 @@ use App\Models\EstimateSection;
 use App\Models\MeasurementUnit;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\ValidationException;
-
-use function trans_message;
 
 class EstimateDraftPersistenceService
 {
@@ -29,13 +26,6 @@ class EstimateDraftPersistenceService
         }
         if (($draft['quality_summary']['status'] ?? null) === 'critical') {
             throw new \RuntimeException('Draft requires review before applying.');
-        }
-
-        $unresolvedNormatives = (int) data_get($draft, 'quality_summary.normative_items.requires_review', 0);
-        if ($unresolvedNormatives > 0) {
-            throw ValidationException::withMessages([
-                'normatives' => [trans_message('estimate_generation.unresolved_normatives', ['count' => $unresolvedNormatives])],
-            ]);
         }
 
         return DB::transaction(function () use ($session, $payload, $draft): Estimate {

@@ -176,12 +176,18 @@ class EstimateValidationService
     ): array {
         $requiresNormativeReview = $normativeCandidateWorkItems + $normativeRejectedWorkItems + $normativeNotFoundWorkItems;
         $criticalFlags = array_values(array_intersect($projectFlags, ['missing_price', 'missing_resources', 'regional_context_missing']));
+        $reviewFlags = array_values(array_intersect($projectFlags, [
+            'requires_normative_review',
+            'normative_candidate_only',
+            'normative_match_low_confidence',
+            'low_confidence',
+        ]));
         $warningFlags = array_values(array_diff($projectFlags, $criticalFlags));
         $status = 'ready';
 
         if ($totalWorkItems === 0 || $zeroPriceWorkItems === $totalWorkItems || $pricedWorkItems === 0) {
             $status = 'critical';
-        } elseif ($zeroPriceWorkItems > 0 || $marketEstimateWorkItems > 0 || $criticalFlags !== [] || $requiresNormativeReview > 0) {
+        } elseif ($zeroPriceWorkItems > 0 || $marketEstimateWorkItems > 0 || $criticalFlags !== [] || $requiresNormativeReview > 0 || $reviewFlags !== []) {
             $status = 'review_required';
         }
 

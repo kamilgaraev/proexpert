@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 use Illuminate\Support\Facades\DB;
@@ -72,7 +73,7 @@ class EstimateNormativeMatcherTest extends TestCase
             'local_estimate_title' => 'Фундамент',
         ]);
 
-        $item = $items[0];
+        $item = app(EstimatePricingService::class)->price($items)[0];
 
         $this->assertSame('matched', $item['normative_match']['status']);
         $this->assertSame('01-01-001-01', $item['normative_rate_code']);
@@ -118,6 +119,42 @@ class EstimateNormativeMatcherTest extends TestCase
         $this->assertNotContains('unit_mismatch', $item['normative_match']['warnings']);
     }
 
+    public function test_resource_assembly_prices_review_candidate_instead_of_leaving_zero_total(): void
+    {
+        $versionId = $this->createVersion('fsnb_2022', '2026-05-07');
+        $priceVersionId = $this->createVersion('fsbc', '2026-05-07');
+        $collectionId = $this->createCollection($versionId);
+        $sectionId = $this->createSection($collectionId, 'Фундаменты');
+        $normId = $this->createNorm($collectionId, $sectionId, '01-01-001-01', 'Бетонирование фундаментов', 'м3');
+        $this->createNormResource($normId, '01.1.01.01-0001', 'Бетон тяжелый', 'м3', 1.5, 'material');
+        $this->createResourcePrice($priceVersionId, '01.1.01.01-0001', 'Бетон тяжелый', 'м3', 1000, 'material');
+
+        $items = app(ResourceAssemblyService::class)->enrich([[
+            'key' => 'foundation-work-1',
+            'name' => 'Опалубка ленточного фундамента',
+            'description' => 'Опалубка ленточного фундамента',
+            'work_category' => 'foundation',
+            'normative_rate_code' => '01-01-001-01',
+            'unit' => 'м2',
+            'quantity' => 2,
+            'confidence' => 0.6,
+            'validation_flags' => [],
+        ]], [
+            'scope_type' => 'foundation',
+            'section_title' => 'Фундаменты',
+            'local_estimate_title' => 'Фундамент',
+        ]);
+
+        $item = app(EstimatePricingService::class)->price($items)[0];
+
+        $this->assertSame('matched', $item['normative_match']['status']);
+        $this->assertSame(3000.0, $item['materials'][0]['total_price']);
+        $this->assertSame(3540.0, $item['total_cost']);
+        $this->assertContains('unit_mismatch', $item['normative_match']['warnings']);
+        $this->assertContains('requires_normative_review', $item['validation_flags']);
+        $this->assertContains('normative_candidate_only', $item['validation_flags']);
+    }
+
     public function test_validation_preserves_normative_flags(): void
     {
         $draft = app(EstimateValidationService::class)->validate([
@@ -152,6 +189,41 @@ class EstimateNormativeMatcherTest extends TestCase
         $this->assertContains('missing_price', $flags);
         $this->assertContains('missing_resources', $flags);
         $this->assertContains('normative_not_found', $draft['problem_flags']);
+    }
+
+    public function test_validation_marks_priced_review_flags_without_unresolved_normative_blocker(): void
+    {
+        $draft = app(EstimateValidationService::class)->validate([
+            'local_estimates' => [[
+                'key' => 'local-1',
+                'title' => 'Локальная смета',
+                'scope_type' => 'foundation',
+                'source_refs' => ['doc-1'],
+                'sections' => [[
+                    'key' => 'section-1',
+                    'title' => 'Раздел',
+                    'source_refs' => ['doc-1'],
+                    'work_items' => [[
+                        'key' => 'work-1',
+                        'name' => 'Работа',
+                        'quantity' => 1,
+                        'quantity_basis' => 'по чертежу',
+                        'total_cost' => 1000,
+                        'materials' => [['total_price' => 1000]],
+                        'labor' => [],
+                        'machinery' => [],
+                        'confidence' => 0.8,
+                        'validation_flags' => ['requires_normative_review'],
+                        'normative_match' => ['status' => 'matched'],
+                    ]],
+                ]],
+            ]],
+        ]);
+
+        $this->assertSame('review_required', $draft['quality_summary']['status']);
+        $this->assertSame(1, $draft['quality_summary']['normative_items']['accepted']);
+        $this->assertSame(0, $draft['quality_summary']['normative_items']['requires_review']);
+        $this->assertContains('requires_normative_review', $draft['quality_summary']['warning_flags']);
     }
 
     private function createVersion(string $sourceType, string $versionKey): int

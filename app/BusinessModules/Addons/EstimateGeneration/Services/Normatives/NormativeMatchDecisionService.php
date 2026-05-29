@@ -48,12 +48,12 @@ class NormativeMatchDecisionService
             $reasons[] = 'prices_present';
         }
 
-        if (!$unitCompatible) {
-            return new NormativeMatchDecisionData('rejected', false, $confidence, $reasons, $warnings, $candidate);
+        if ($unitCompatible && $confidence >= self::ACCEPT_CONFIDENCE_THRESHOLD && $resourceCount > 0 && $pricedCount > 0) {
+            return new NormativeMatchDecisionData('accepted', true, $confidence, $reasons, $warnings, $candidate);
         }
 
-        if ($confidence >= self::ACCEPT_CONFIDENCE_THRESHOLD && $resourceCount > 0 && $pricedCount > 0) {
-            return new NormativeMatchDecisionData('accepted', true, $confidence, $reasons, $warnings, $candidate);
+        if ($resourceCount > 0 && $pricedCount > 0) {
+            return new NormativeMatchDecisionData('candidate', true, $confidence, $reasons, $warnings, $candidate);
         }
 
         $status = $confidence >= self::CANDIDATE_CONFIDENCE_THRESHOLD ? 'candidate' : 'rejected';
