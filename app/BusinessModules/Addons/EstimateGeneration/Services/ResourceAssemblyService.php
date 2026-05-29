@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeMatchDecisionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidatePresenter;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 
 use function trans_message;
 
@@ -169,14 +170,18 @@ class ResourceAssemblyService
         $selected = $match['selected'];
         $version = $match['version'];
         $priceVersion = $match['price_version'] ?? null;
-        $workQuantity = max((float) ($workItem['quantity'] ?? 0), 0.0);
+        $normQuantity = max((float) ($workItem['quantity'] ?? 0), 0.0)
+            * NormativeUnitNormalizer::quantityFactor(
+                (string) ($workItem['unit'] ?? ''),
+                (string) ($selected['unit'] ?? '')
+            );
         $resources = $selected['resources'];
         $workItem = $this->clearNonNormativeResources($workItem);
 
-        $workItem['materials'] = $this->mapResources($resources['materials'] ?? [], 'material', $workQuantity, $selected, $version, $workItem);
-        $workItem['labor'] = $this->mapResources($resources['labor'] ?? [], 'labor', $workQuantity, $selected, $version, $workItem);
-        $workItem['machinery'] = $this->mapResources($resources['machinery'] ?? [], 'machinery', $workQuantity, $selected, $version, $workItem);
-        $workItem['other_resources'] = $this->mapResources($resources['other'] ?? [], 'other', $workQuantity, $selected, $version, $workItem);
+        $workItem['materials'] = $this->mapResources($resources['materials'] ?? [], 'material', $normQuantity, $selected, $version, $workItem);
+        $workItem['labor'] = $this->mapResources($resources['labor'] ?? [], 'labor', $normQuantity, $selected, $version, $workItem);
+        $workItem['machinery'] = $this->mapResources($resources['machinery'] ?? [], 'machinery', $normQuantity, $selected, $version, $workItem);
+        $workItem['other_resources'] = $this->mapResources($resources['other'] ?? [], 'other', $normQuantity, $selected, $version, $workItem);
         $workItem['normative_rate_code'] = $selected['code'];
         $workItem['normative_dataset'] = $version;
         $workItem['price_dataset'] = $priceVersion;
@@ -270,12 +275,12 @@ class ResourceAssemblyService
      * @param array<string, mixed> $version
      * @return array<int, array<string, mixed>>
      */
-    private function mapResources(array $resources, string $targetType, float $workQuantity, array $selected, array $version, array $workItem): array
+    private function mapResources(array $resources, string $targetType, float $normQuantity, array $selected, array $version, array $workItem): array
     {
         return array_map(
-            function (array $resource, int $index) use ($targetType, $workQuantity, $selected, $version, $workItem): array {
+            function (array $resource, int $index) use ($targetType, $normQuantity, $selected, $version, $workItem): array {
                 $quantityPerUnit = $resource['quantity'] !== null ? (float) $resource['quantity'] : 0.0;
-                $quantity = round($quantityPerUnit * $workQuantity, 6);
+                $quantity = round($quantityPerUnit * $normQuantity, 6);
                 $unitPrice = (float) ($resource['unit_price'] ?? 0);
 
                 return [

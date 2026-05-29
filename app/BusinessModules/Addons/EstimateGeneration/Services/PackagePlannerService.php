@@ -33,7 +33,9 @@ class PackagePlannerService
         $object = is_array($analysis['object'] ?? null) ? $analysis['object'] : [];
         $regionalContext = is_array($analysis['regional_context'] ?? null) ? $analysis['regional_context'] : [];
         $documentContext = is_array($analysis['document_context'] ?? null) ? $analysis['document_context'] : [];
-        $type = mb_strtolower((string) ($object['object_type'] ?? $object['building_type'] ?? 'custom'));
+        $objectType = mb_strtolower((string) ($object['object_type'] ?? ''));
+        $buildingType = mb_strtolower((string) ($object['building_type'] ?? ''));
+        $type = $objectType !== '' ? $objectType : ($buildingType !== '' ? $buildingType : 'custom');
         $zones = is_array($object['zones'] ?? null) ? $object['zones'] : [];
         $zoneText = implode(' ', array_map(
             static fn (array $zone): string => (string) ($zone['label'] ?? $zone['scope_key'] ?? ''),
@@ -44,20 +46,20 @@ class PackagePlannerService
             (string) ($documentContext['context_text'] ?? ''),
             $zoneText,
         ])));
-        $hasWarehouse = str_contains($type, 'склад')
-            || str_contains($type, 'warehouse')
-            || str_contains($description, 'склад')
-            || str_contains($description, 'warehouse');
-        $hasOffice = str_contains($type, 'офис')
-            || str_contains($type, 'office')
-            || str_contains($description, 'офис')
-            || str_contains($description, 'office');
+        $hasWarehouse = $this->containsWarehouseObjectSignal($type)
+            || $this->containsWarehouseObjectSignal($description);
+        $hasIndustrial = $this->containsIndustrialObjectSignal($type)
+            || $this->containsIndustrialObjectSignal($description);
+        $hasOffice = $this->containsOfficeSignal($type)
+            || $this->containsOfficeSignal($description);
 
-        if (($hasWarehouse || str_contains($type, 'производ')) && $hasOffice) {
+        if ($this->containsResidentialObjectSignal($buildingType)) {
+            $type = 'house';
+        } elseif (str_contains($type, 'mixed_warehouse_office') || (($hasWarehouse || $hasIndustrial) && $hasOffice)) {
             $type = 'mixed_warehouse_office';
-        } elseif ($hasWarehouse || str_contains($type, 'industrial') || str_contains($type, 'производ')) {
+        } elseif ($hasWarehouse || $hasIndustrial || str_contains($type, 'industrial')) {
             $type = 'warehouse';
-        } elseif (str_contains($type, 'жил') || str_contains($type, 'ижс') || str_contains($type, 'дом') || str_contains($type, 'house')) {
+        } elseif ($this->containsResidentialObjectSignal($type)) {
             $type = 'house';
         }
 
@@ -91,6 +93,28 @@ class PackagePlannerService
     private function isMixedWarehouseOffice(ObjectProfileData $profile): bool
     {
         return mb_strtolower($profile->objectType) === 'mixed_warehouse_office';
+    }
+
+    private function containsResidentialObjectSignal(string $text): bool
+    {
+        return preg_match('/(?:^|[^\p{L}\p{N}])(?:ижс|жил\p{L}*|дом|house|residential)(?=$|[^\p{L}\p{N}])/u', $text) === 1;
+    }
+
+    private function containsWarehouseObjectSignal(string $text): bool
+    {
+        $text = preg_replace('/(?:^|[^\p{L}\p{N}])складирован\p{L}*(?=$|[^\p{L}\p{N}])/u', ' ', $text) ?? $text;
+
+        return preg_match('/(?:^|[^\p{L}\p{N}])(?:офисно-склад\p{L}*|склад(?:ск\p{L}*|[а-я]{0,3})?|warehouse)(?=$|[^\p{L}\p{N}])/u', $text) === 1;
+    }
+
+    private function containsIndustrialObjectSignal(string $text): bool
+    {
+        return preg_match('/(?:^|[^\p{L}\p{N}])(?:производствен\p{L}*|цех\p{L}*|industrial)(?=$|[^\p{L}\p{N}])/u', $text) === 1;
+    }
+
+    private function containsOfficeSignal(string $text): bool
+    {
+        return preg_match('/(?:^|[^\p{L}\p{N}])(?:офис\p{L}*|office)(?=$|[^\p{L}\p{N}])/u', $text) === 1;
     }
 
     /**

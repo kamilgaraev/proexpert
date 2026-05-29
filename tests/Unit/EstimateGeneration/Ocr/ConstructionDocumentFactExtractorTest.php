@@ -50,6 +50,36 @@ class ConstructionDocumentFactExtractorTest extends TestCase
         $this->assertSame('plan.pdf', $totalArea->sourceRef['filename']);
     }
 
+    public function test_it_uses_total_area_after_parenthetical_terrace_with_split_unit(): void
+    {
+        $result = new OcrRecognitionResult(
+            provider: 'test',
+            model: 'page',
+            pages: [
+                new OcrPageResult(
+                    pageNumber: 2,
+                    text: implode("\n", [
+                        '1. Общая площадь дома (в т.ч. терраса 22,15 кв.м.) - 151,76 м',
+                        '2',
+                        '2. Жилая площадь - 80,21 м',
+                        '2',
+                    ]),
+                    confidence: 1.0,
+                ),
+            ],
+        );
+
+        $facts = app(ConstructionDocumentFactExtractor::class)->extract($result, 21, 'house.pdf');
+        $summary = app(DocumentFactMerger::class)->summarize($facts);
+        $totalAreaValues = array_map(
+            static fn (ExtractedDocumentFact $fact): ?float => $fact->factType === 'total_area' ? $fact->valueNumber : null,
+            $facts,
+        );
+
+        $this->assertSame(151.76, $summary['total_area_m2']);
+        $this->assertNotContains(22.15, array_values(array_filter($totalAreaValues)));
+    }
+
     public function test_fact_merger_summarizes_values_and_conflicts(): void
     {
         $facts = [

@@ -13,6 +13,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNormResource;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegionalPriceVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateResourcePrice;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
@@ -372,15 +373,16 @@ class EstimateNormativeMatcher
         foreach ($resources as $resource) {
             $type = $resource->resource_type?->value ?? EstimateResourceType::OTHER->value;
             $price = $this->resolvePrice($prices->get($resource->resource_code) ?? collect(), $type, (string) ($resource->unit ?? ''));
+            $unitPrice = $this->effectiveUnitPrice($price, $type, (string) ($resource->unit ?? ''));
             $payload = [
                 'code' => $resource->resource_code,
                 'name' => $resource->resource_name,
                 'resource_type' => $type,
                 'unit' => $resource->unit,
                 'quantity' => $resource->quantity !== null ? (float) $resource->quantity : null,
-                'unit_price' => $this->effectiveUnitPrice($price, $type),
+                'unit_price' => $unitPrice,
                 'total_price' => $price !== null && $resource->quantity !== null
-                    ? round($this->effectiveUnitPrice($price, $type) * (float) $resource->quantity, 2)
+                    ? round($unitPrice * (float) $resource->quantity, 2)
                     : 0.0,
                 'price_source' => $price !== null && $price->datasetVersion !== null
                     ? $price->datasetVersion->source_type->value . '_base'
@@ -479,17 +481,19 @@ class EstimateNormativeMatcher
         }) ?? $prices->first();
     }
 
-    private function effectiveUnitPrice(?EstimateResourcePrice $price, string $resourceType): float
+    private function effectiveUnitPrice(?EstimateResourcePrice $price, string $resourceType, string $resourceUnit = ''): float
     {
         if ($price === null) {
             return 0.0;
         }
 
         if ($resourceType === EstimateResourceType::MACHINE->value && $price->machine_price_without_salary !== null) {
-            return (float) $price->machine_price_without_salary;
+            $basePrice = (float) $price->machine_price_without_salary;
+        } else {
+            $basePrice = $price->base_price !== null ? (float) $price->base_price : 0.0;
         }
 
-        return $price->base_price !== null ? (float) $price->base_price : 0.0;
+        return $basePrice * NormativeUnitNormalizer::quantityFactor($resourceUnit, (string) ($price->unit ?? ''));
     }
 
     private function pricePayload(?EstimateResourcePrice $price): array
@@ -577,24 +581,7 @@ class EstimateNormativeMatcher
 
     private function sameUnit(string $left, string $right): bool
     {
-        $left = $this->normalizeUnit($left);
-        $right = $this->normalizeUnit($right);
-
-        return $left !== '' && $right !== '' && $left === $right;
-    }
-
-    private function normalizeUnit(string $unit): string
-    {
-        $unit = mb_strtolower(trim($unit));
-        $unit = str_replace([' ', '.', '³', '²'], ['', '', '3', '2'], $unit);
-
-        return match ($unit) {
-            'кубм', 'куб.м', 'м^3' => 'м3',
-            'квм', 'кв.м', 'м^2' => 'м2',
-            'челч', 'чел.-ч', 'чел/ч' => 'чел-ч',
-            'машч', 'маш.-ч', 'маш/ч' => 'маш-ч',
-            default => $unit,
-        };
+        return NormativeUnitNormalizer::compatible($left, $right);
     }
 
     private function collectionMatchesScope(string $normType, string $scopeType): bool

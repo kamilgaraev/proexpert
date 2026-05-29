@@ -82,6 +82,42 @@ class EstimateNormativeMatcherTest extends TestCase
         $this->assertNotContains('normative_not_found', $item['validation_flags']);
     }
 
+    public function test_resource_assembly_accepts_scaled_normative_units_and_scales_resources(): void
+    {
+        $versionId = $this->createVersion('fsnb_2022', '2026-05-07');
+        $priceVersionId = $this->createVersion('fsbc', '2026-05-07');
+        $collectionId = $this->createCollection($versionId);
+        $sectionId = $this->createSection($collectionId, 'Земляные работы');
+        $normId = $this->createNorm($collectionId, $sectionId, '01-01-006-01', 'Разработка грунта экскаваторами', '1000 м3');
+        $this->createNormResource($normId, '01.1.01.01-0001', 'Песок строительный', 'м3', 2.0, 'material');
+        $this->createResourcePrice($priceVersionId, '01.1.01.01-0001', 'Песок строительный', '1000 м3', 500000, 'material');
+
+        $items = app(ResourceAssemblyService::class)->enrich([[
+            'key' => 'earthworks-work-1',
+            'name' => 'Разработка грунта под фундамент',
+            'description' => 'Разработка грунта экскаваторами',
+            'work_category' => 'earthworks',
+            'normative_rate_code' => '01-01-006-01',
+            'unit' => 'м3',
+            'quantity' => 500,
+            'confidence' => 0.7,
+            'validation_flags' => [],
+        ]], [
+            'scope_type' => 'foundation',
+            'section_title' => 'Земляные работы',
+            'local_estimate_title' => 'Земляные работы',
+        ]);
+
+        $item = $items[0];
+
+        $this->assertSame('matched', $item['normative_match']['status']);
+        $this->assertSame('01-01-006-01', $item['normative_rate_code']);
+        $this->assertSame(1.0, $item['materials'][0]['quantity']);
+        $this->assertSame(500.0, $item['materials'][0]['unit_price']);
+        $this->assertSame(500.0, $item['materials'][0]['total_price']);
+        $this->assertNotContains('unit_mismatch', $item['normative_match']['warnings']);
+    }
+
     public function test_validation_preserves_normative_flags(): void
     {
         $draft = app(EstimateValidationService::class)->validate([

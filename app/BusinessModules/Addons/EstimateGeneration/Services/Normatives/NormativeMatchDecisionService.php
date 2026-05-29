@@ -67,21 +67,7 @@ class NormativeMatchDecisionService
             return false;
         }
 
-        return $this->normalizeUnit($candidateUnit) === $this->normalizeUnit($workUnit);
-    }
-
-    private function normalizeUnit(string $unit): string
-    {
-        $unit = mb_strtolower(trim($unit));
-        $unit = str_replace([' ', '.', '³', '²'], ['', '', '3', '2'], $unit);
-
-        return match ($unit) {
-            'кубм', 'куб.м', 'м^3' => 'м3',
-            'квм', 'кв.м', 'м^2' => 'м2',
-            'челч', 'чел.-ч', 'чел/ч' => 'чел-ч',
-            'машч', 'маш.-ч', 'маш/ч' => 'маш-ч',
-            default => $unit,
-        };
+        return NormativeUnitNormalizer::compatible($candidateUnit, $workUnit);
     }
 
     /**

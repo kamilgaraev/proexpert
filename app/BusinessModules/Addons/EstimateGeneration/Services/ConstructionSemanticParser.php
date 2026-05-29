@@ -35,8 +35,14 @@ class ConstructionSemanticParser
         $documentContext = $this->buildDocumentContext($documentsPayload);
         $combinedText = trim($description . "\n" . ($documentContext['context_text'] ?? ''));
         $objectDescription = trim($description . "\n" . ($documentContext['context_text'] ?? ''));
-        $buildingType = (string) ($input['building_type'] ?? $this->detectBuildingType($combinedText) ?? 'custom');
-        $objectType = (string) ($input['object_type'] ?? $this->detectObjectType($objectDescription, $documentContext) ?? $buildingType);
+        $explicitBuildingType = isset($input['building_type']) ? (string) $input['building_type'] : null;
+        $buildingType = (string) ($explicitBuildingType ?? $this->detectBuildingType($combinedText) ?? 'custom');
+        $objectType = (string) (
+            $input['object_type']
+            ?? $this->objectTypeFromExplicitBuildingType($explicitBuildingType)
+            ?? $this->detectObjectType($objectDescription, $documentContext)
+            ?? $buildingType
+        );
         $sourceRefs = $this->extractSourceRefs($combinedText);
         $explicitScopes = $this->mergeScopes(
             $this->extractScopes($description, true),
@@ -240,6 +246,29 @@ class ConstructionSemanticParser
         return array_values($unique);
     }
 
+    private function objectTypeFromExplicitBuildingType(?string $buildingType): ?string
+    {
+        if ($buildingType === null || trim($buildingType) === '') {
+            return null;
+        }
+
+        $normalized = mb_strtolower($buildingType);
+
+        if ($this->containsResidentialObjectSignal($normalized)) {
+            return 'house';
+        }
+
+        if ($this->containsWarehouseObjectSignal($normalized) && $this->containsOfficeSignal($normalized)) {
+            return 'mixed_warehouse_office';
+        }
+
+        if ($this->containsWarehouseObjectSignal($normalized) || $this->containsIndustrialObjectSignal($normalized)) {
+            return 'warehouse';
+        }
+
+        return null;
+    }
+
     /**
      * @param array<string, mixed> $documentContext
      */
@@ -254,20 +283,16 @@ class ConstructionSemanticParser
             array_filter($zones, 'is_array')
         )));
 
-        $hasWarehouse = str_contains($normalized, 'склад')
-            || str_contains($normalized, 'warehouse')
-            || str_contains($zoneText, 'склад')
-            || str_contains($zoneText, 'warehouse');
-        $hasOffice = str_contains($normalized, 'офис')
-            || str_contains($normalized, 'office')
-            || str_contains($zoneText, 'офис')
-            || str_contains($zoneText, 'office');
+        $hasWarehouse = $this->containsWarehouseObjectSignal($normalized)
+            || $this->containsWarehouseObjectSignal($zoneText);
+        $hasOffice = $this->containsOfficeSignal($normalized)
+            || $this->containsOfficeSignal($zoneText);
 
         if ($hasWarehouse && $hasOffice) {
             return 'mixed_warehouse_office';
         }
 
-        if ($hasWarehouse || str_contains($normalized, 'производ') || str_contains($normalized, 'цех')) {
+        if ($hasWarehouse || $this->containsIndustrialObjectSignal($normalized)) {
             return 'warehouse';
         }
 
@@ -388,15 +413,15 @@ class ConstructionSemanticParser
     {
         $normalizedBuildingType = mb_strtolower($buildingType);
         $normalizedDescription = mb_strtolower($description);
-        $isResidentialLike = in_array($normalizedBuildingType, ['ижс', 'жилой', 'residential', 'custom'], true)
-            || str_contains($normalizedDescription, 'жил')
+        $isResidentialLike = in_array($normalizedBuildingType, ['custom'], true)
+            || $this->containsResidentialObjectSignal($normalizedBuildingType)
+            || $this->containsResidentialObjectSignal($normalizedDescription)
             || str_contains($normalizedDescription, 'спальн')
             || str_contains($normalizedDescription, 'гостиная');
-        $isWarehouseLike = str_contains($normalizedBuildingType, 'склад')
-            || str_contains($normalizedBuildingType, 'производ')
-            || str_contains($normalizedDescription, 'склад')
-            || str_contains($normalizedDescription, 'производ')
-            || str_contains($normalizedDescription, 'офисно-склад');
+        $isWarehouseLike = $this->containsWarehouseObjectSignal($normalizedBuildingType)
+            || $this->containsIndustrialObjectSignal($normalizedBuildingType)
+            || $this->containsWarehouseObjectSignal($normalizedDescription)
+            || $this->containsIndustrialObjectSignal($normalizedDescription);
 
         if ($isWarehouseLike) {
             $defaults = [
@@ -621,9 +646,31 @@ class ConstructionSemanticParser
             str_contains($normalized, 'ижс') => 'ижс',
             str_contains($normalized, 'жил') => 'residential',
             str_contains($normalized, 'торгов') || str_contains($normalized, 'офис') => 'commercial',
-            str_contains($normalized, 'цех') || str_contains($normalized, 'производ') => 'industrial',
+            $this->containsIndustrialObjectSignal($normalized) => 'industrial',
             default => null,
         };
+    }
+
+    private function containsResidentialObjectSignal(string $text): bool
+    {
+        return preg_match('/(?:^|[^\p{L}\p{N}])(?:ижс|жил\p{L}*|дом|house|residential)(?=$|[^\p{L}\p{N}])/u', $text) === 1;
+    }
+
+    private function containsWarehouseObjectSignal(string $text): bool
+    {
+        $text = preg_replace('/(?:^|[^\p{L}\p{N}])складирован\p{L}*(?=$|[^\p{L}\p{N}])/u', ' ', $text) ?? $text;
+
+        return preg_match('/(?:^|[^\p{L}\p{N}])(?:офисно-склад\p{L}*|склад(?:ск\p{L}*|[а-я]{0,3})?|warehouse)(?=$|[^\p{L}\p{N}])/u', $text) === 1;
+    }
+
+    private function containsIndustrialObjectSignal(string $text): bool
+    {
+        return preg_match('/(?:^|[^\p{L}\p{N}])(?:производствен\p{L}*|цех\p{L}*|industrial)(?=$|[^\p{L}\p{N}])/u', $text) === 1;
+    }
+
+    private function containsOfficeSignal(string $text): bool
+    {
+        return preg_match('/(?:^|[^\p{L}\p{N}])(?:офис\p{L}*|office)(?=$|[^\p{L}\p{N}])/u', $text) === 1;
     }
 
     protected function detectRegion(string $text): ?string

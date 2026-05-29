@@ -93,4 +93,27 @@ class PackagePlannerServiceTest extends TestCase
         $this->assertContains('industrial_floor', $keys);
         $this->assertContains('office_partitions', $keys);
     }
+
+    public function test_profile_from_analysis_keeps_explicit_residential_type_over_storage_wording(): void
+    {
+        $analysis = [
+            'object' => [
+                'object_type' => 'warehouse',
+                'building_type' => 'Жилой',
+                'description' => 'Индивидуальный жилой дом. Временное складирование материалов на площадке.',
+                'area' => 151.76,
+            ],
+            'document_context' => [
+                'context_text' => 'Фундамент, стены, кровля и временное складирование материалов.',
+            ],
+        ];
+
+        $profile = app(PackagePlannerService::class)->profileFromAnalysis($analysis);
+        $plan = app(PackagePlannerService::class)->plan($profile);
+        $keys = array_column($plan->packages, 'key');
+
+        $this->assertSame('house', $profile->objectType);
+        $this->assertContains('foundation', $keys);
+        $this->assertNotContains('industrial_floor', $keys);
+    }
 }

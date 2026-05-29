@@ -18,7 +18,7 @@ class ConstructionDocumentFactExtractor
         $facts = [];
 
         foreach ($recognition->pages as $page) {
-            foreach ($this->lines($page) as $line) {
+            foreach ($this->normalizedLines($page) as $line) {
                 array_push(
                     $facts,
                     ...$this->extractAreaFacts($line, $page, $documentId, $filename),
@@ -45,29 +45,100 @@ class ConstructionDocumentFactExtractor
     }
 
     /**
+     * @return array<int, string>
+     */
+    private function normalizedLines(OcrPageResult $page): array
+    {
+        $lines = $this->lines($page);
+        $normalized = [];
+        $count = count($lines);
+
+        for ($index = 0; $index < $count; $index++) {
+            $line = $lines[$index];
+            $nextLine = $lines[$index + 1] ?? null;
+
+            if (
+                $nextLine !== null
+                && preg_match('/\d+(?:[,.]\d+)?\s*м$/iu', $line) === 1
+                && preg_match('/^[2²]$/u', $nextLine) === 1
+            ) {
+                $line .= '2';
+                $index++;
+            }
+
+            $normalized[] = $line;
+        }
+
+        return $normalized;
+    }
+
+    /**
      * @return array<int, ExtractedDocumentFact>
      */
     private function extractAreaFacts(string $line, OcrPageResult $page, int $documentId, string $filename): array
     {
-        preg_match_all('/(?P<label>[А-ЯA-Zа-яa-z0-9 №\\-]{0,60}?)(?P<value>\d+(?:[,.]\d+)?)\s*(?:м2|м²|кв\.?\s*м)/iu', $line, $matches, PREG_SET_ORDER);
+        preg_match_all(
+            '/(?P<label>[А-ЯA-Zа-яa-z0-9 №\\-]{0,80}?)(?P<value>\d+(?:[,.]\d+)?)\s*(?:м2|м²|кв\.?\s*м)/iu',
+            $line,
+            $matches,
+            PREG_SET_ORDER | PREG_OFFSET_CAPTURE
+        );
 
-        return array_values(array_map(function (array $match) use ($line, $page, $documentId, $filename): ExtractedDocumentFact {
-            $label = trim((string) ($match['label'] ?? 'Площадь'));
-            $value = $this->number((string) $match['value']);
-            $isTotal = preg_match('/общ|итого|всего|площадь\s+здания|площадь\s+объекта/iu', $label . ' ' . $line) === 1;
+        $lastNonParentheticalIndex = null;
+        foreach ($matches as $index => $match) {
+            if (!$this->isInsideParentheses($line, (int) $match['value'][1])) {
+                $lastNonParentheticalIndex = $index;
+            }
+        }
+
+        return array_values(array_map(function (array $match, int $index) use ($line, $page, $documentId, $filename, $lastNonParentheticalIndex): ExtractedDocumentFact {
+            $rawLabel = trim((string) ($match['label'][0] ?? ''));
+            $valueText = (string) $match['value'][0];
+            $value = $this->number($valueText);
+            $insideParentheses = $this->isInsideParentheses($line, (int) $match['value'][1]);
+            $lineHasTotal = $this->hasTotalAreaKeyword($line);
+            $isTotal = !$insideParentheses
+                && (
+                    $this->hasTotalAreaKeyword($rawLabel)
+                    || ($lineHasTotal && $index === $lastNonParentheticalIndex)
+                );
+            $label = $this->areaLabel($rawLabel, $isTotal);
 
             return new ExtractedDocumentFact(
                 factType: $isTotal ? 'total_area' : 'zone_area',
-                label: $label !== '' ? $label : ($isTotal ? 'Общая площадь' : 'Площадь зоны'),
+                label: $label,
                 confidence: $page->confidence ?? 0.7,
                 scopeKey: $isTotal ? 'total_area' : $this->scopeKey($label),
-                valueText: $match['value'] . ' м2',
+                valueText: $valueText . ' м2',
                 valueNumber: $value,
                 unit: 'м2',
                 sourceRef: $this->sourceRef($documentId, $filename, $page, $line),
                 normalizedPayload: ['line' => $line],
             );
-        }, $matches));
+        }, $matches, array_keys($matches)));
+    }
+
+    private function hasTotalAreaKeyword(string $value): bool
+    {
+        return preg_match('/общ|итого|всего|площадь\s+здания|площадь\s+объекта|площадь\s+дома/iu', $value) === 1;
+    }
+
+    private function isInsideParentheses(string $line, int $byteOffset): bool
+    {
+        $before = substr($line, 0, max($byteOffset, 0));
+
+        return substr_count($before, '(') > substr_count($before, ')');
+    }
+
+    private function areaLabel(string $label, bool $isTotal): string
+    {
+        $label = trim((string) preg_replace('/^[\s().,:;–—-]+|[\s().,:;–—-]+$/u', '', $label));
+
+        if ($label !== '') {
+            return $label;
+        }
+
+        return $isTotal ? 'Общая площадь' : 'Площадь зоны';
     }
 
     /**

@@ -130,6 +130,42 @@ class ConstructionSemanticParserTest extends TestCase
         $this->assertSame([], $analysis['problem_flags']);
     }
 
+    public function test_parser_keeps_explicit_house_type_when_document_mentions_storage_process(): void
+    {
+        $parser = new ConstructionSemanticParser();
+
+        $analysis = $parser->parse([
+            'description' => 'Хочу получить подробную смету на частный дом',
+            'building_type' => 'Жилой',
+        ], [[
+            'id' => 79,
+            'filename' => 'house-plan.pdf',
+            'status' => 'ready',
+            'quality' => ['level' => 'good', 'score' => 0.95, 'flags' => []],
+            'extracted_text' => implode("\n", [
+                'Индивидуальный жилой дом',
+                'Обратную засыпку пазух котлована выполнять с послойным уплотнением грунта.',
+                'Временное складирование материалов допускается только на строительной площадке.',
+            ]),
+            'facts_summary' => [
+                'total_area_m2' => 151.76,
+                'floor_count' => 1.0,
+                'zones' => [],
+                'engineering_systems' => [],
+                'conflicts' => [],
+            ],
+            'facts' => [],
+        ]]);
+        $scopeTitles = array_column($analysis['detected_structure']['scopes'], 'title');
+        $scopeTypes = array_column($analysis['detected_structure']['scopes'], 'scope_type');
+
+        $this->assertSame('Жилой', $analysis['object']['building_type']);
+        $this->assertSame('house', $analysis['object']['object_type']);
+        $this->assertNotContains('Промышленный пол', $scopeTitles);
+        $this->assertNotContains('Металлокаркас', $scopeTitles);
+        $this->assertNotContains('structural', $scopeTypes);
+    }
+
     public function test_parser_does_not_trust_low_quality_ocr_for_object_defaults(): void
     {
         $parser = new ConstructionSemanticParser();

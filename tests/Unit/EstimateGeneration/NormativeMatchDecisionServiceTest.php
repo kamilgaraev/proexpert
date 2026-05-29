@@ -61,4 +61,22 @@ class NormativeMatchDecisionServiceTest extends TestCase
         $this->assertSame('accepted', $decision->status);
         $this->assertTrue($decision->canUseForPricing);
     }
+
+    public function test_scaled_normative_unit_is_compatible_with_work_unit(): void
+    {
+        $decision = app(NormativeMatchDecisionService::class)->decide([
+            'confidence' => 0.84,
+            'unit' => '1000 м3',
+            'resources' => [
+                'materials' => [['price_source' => 'fsbc_base']],
+                'labor' => [],
+                'machinery' => [],
+                'other' => [],
+            ],
+        ], ['unit' => 'м3']);
+
+        $this->assertSame('accepted', $decision->status);
+        $this->assertTrue($decision->canUseForPricing);
+        $this->assertNotContains('unit_mismatch', $decision->warnings);
+    }
 }
