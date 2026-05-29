@@ -5,7 +5,10 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\QualityControl\Http\Resources;
 
 use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
+use App\BusinessModules\Features\QualityControl\Models\QualityDefectPhoto;
 use App\BusinessModules\Features\QualityControl\Services\QualityDefectWorkflowService;
+use App\Models\Organization;
+use App\Services\Storage\FileService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -66,14 +69,9 @@ final class QualityDefectResource extends JsonResource
                 'id' => $this->assignedUser->id,
                 'name' => $this->assignedUser->name,
             ] : null),
-            'photos' => $this->whenLoaded('photos', fn () => $this->photos->map(fn ($photo) => [
-                'id' => $photo->id,
-                'type' => $photo->type,
-                'url' => $photo->url,
-                'caption' => $photo->caption,
-                'uploaded_by' => $photo->uploaded_by,
-                'created_at' => $photo->created_at?->toIso8601String(),
-            ])),
+            'photos' => $this->whenLoaded('photos', fn () => $this->photos->map(
+                fn (QualityDefectPhoto $photo): array => $this->photoPayload($photo, $defect)
+            )),
             'status_history' => $this->whenLoaded('statusHistory', fn () => $this->statusHistory->map(fn ($history) => [
                 'id' => $history->id,
                 'from_status' => $history->from_status?->value,
@@ -85,5 +83,85 @@ final class QualityDefectResource extends JsonResource
             'created_at' => $defect->created_at->toIso8601String(),
             'updated_at' => $defect->updated_at->toIso8601String(),
         ];
+    }
+
+    private function photoPayload(
+        QualityDefectPhoto $photo,
+        QualityDefect $defect,
+    ): array
+    {
+        $rawUrl = trim((string) $photo->url);
+        $path = $this->resolvePhotoStoragePath($rawUrl);
+        $organization = $defect->relationLoaded('organization')
+            ? $defect->organization
+            : null;
+        $previewUrl = $this->resolvePhotoPreviewUrl(
+            $rawUrl,
+            $path,
+            $organization
+        );
+
+        return [
+            'id' => $photo->id,
+            'type' => $photo->type,
+            'url' => $rawUrl,
+            'path' => $path,
+            'preview_url' => $previewUrl,
+            'caption' => $photo->caption,
+            'uploaded_by' => $photo->uploaded_by,
+            'created_at' => $photo->created_at?->toIso8601String(),
+        ];
+    }
+
+    private function resolvePhotoPreviewUrl(
+        string $rawUrl,
+        ?string $path,
+        ?Organization $organization
+    ): ?string
+    {
+        if ($rawUrl === '') {
+            return null;
+        }
+
+        $scheme = parse_url($rawUrl, PHP_URL_SCHEME);
+
+        if (in_array($scheme, ['http', 'https'], true)) {
+            return $rawUrl;
+        }
+
+        if ($path === null) {
+            return null;
+        }
+
+        $fileService = app(FileService::class);
+
+        return $fileService->temporaryUrl($path, 60, $organization)
+            ?? $fileService->url($path, $organization);
+    }
+
+    private function resolvePhotoStoragePath(string $rawUrl): ?string
+    {
+        if ($rawUrl === '') {
+            return null;
+        }
+
+        $scheme = parse_url($rawUrl, PHP_URL_SCHEME);
+
+        if ($scheme === null || $scheme === '') {
+            return ltrim($rawUrl, '/');
+        }
+
+        if ($scheme !== 's3') {
+            return null;
+        }
+
+        $host = parse_url($rawUrl, PHP_URL_HOST);
+        $path = parse_url($rawUrl, PHP_URL_PATH);
+        $parts = array_filter([
+            $host,
+            $path !== null ? ltrim($path, '/') : null,
+        ]);
+
+        return $parts === [] ? null : implode('/', $parts);
     }
 }

@@ -134,15 +134,21 @@ final class QualityControlMobileTest extends TestCase
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $this->allowAccess();
 
-        $this->mock(FileService::class, function (MockInterface $mock): void {
-            $mock->shouldReceive('upload')
-                ->once()
-                ->andReturn('https://storage.example/quality/result.jpg');
-        });
-
         $defect = $this->createDefect($context, $project, 'in_progress', 'critical', [
             'inspection_required' => true,
         ]);
+        $storedPath = "org-{$context->organization->id}/quality-control/defects/{$defect->id}/result.jpg";
+        $previewUrl = 'https://storage.example/signed/quality-result.jpg';
+
+        $this->mock(FileService::class, function (MockInterface $mock) use ($storedPath, $previewUrl): void {
+            $mock->shouldReceive('upload')
+                ->once()
+                ->andReturn($storedPath);
+            $mock->shouldReceive('temporaryUrl')
+                ->atLeast()
+                ->once()
+                ->andReturn($previewUrl);
+        });
 
         $resolveResponse = $this->withHeaders($context->authHeaders())
             ->post("/api/v1/mobile/quality-control/defects/{$defect->id}/resolve", [
@@ -156,11 +162,13 @@ final class QualityControlMobileTest extends TestCase
 
         $resolveResponse->assertOk()
             ->assertJsonPath('data.status', QualityDefectStatusEnum::READY_FOR_REVIEW->value)
-            ->assertJsonPath('data.photos.0.url', 'https://storage.example/quality/result.jpg');
+            ->assertJsonPath('data.photos.0.url', $storedPath)
+            ->assertJsonPath('data.photos.0.path', $storedPath)
+            ->assertJsonPath('data.photos.0.preview_url', $previewUrl);
         $this->assertDatabaseHas('quality_defect_photos', [
             'quality_defect_id' => $defect->id,
             'type' => 'after',
-            'url' => 'https://storage.example/quality/result.jpg',
+            'url' => $storedPath,
         ]);
 
         $verifyResponse = $this->withHeaders($context->authHeaders())

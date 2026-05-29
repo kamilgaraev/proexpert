@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\DB;
 final class QualityDefectService
 {
     private const RESOURCE_RELATIONS = [
+        'organization',
         'project',
         'contractor',
         'createdBy',

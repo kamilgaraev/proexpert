@@ -163,6 +163,7 @@ class QualityDefectControllerWorkflowTest extends TestCase
                 'project_id' => $project->id,
                 'title' => 'Photo quality defect',
                 'severity' => 'major',
+                'inspection_required' => true,
                 'photos' => [
                     [
                         'type' => 'before',
