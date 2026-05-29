@@ -66,4 +66,31 @@ class PackagePlannerServiceTest extends TestCase
         $this->assertContains('fire_safety', $keys);
         $this->assertGreaterThanOrEqual(600, $plan->targetItemsMinTotal());
     }
+
+    public function test_profile_from_analysis_uses_ocr_document_context_for_warehouse_plan(): void
+    {
+        $analysis = [
+            'object' => [
+                'building_type' => 'custom',
+                'description' => '',
+                'area' => 1280,
+                'zones' => [
+                    ['scope_key' => 'warehouse_area', 'label' => 'Склад', 'area_m2' => 900.0],
+                    ['scope_key' => 'office_area', 'label' => 'Офис', 'area_m2' => 280.0],
+                ],
+            ],
+            'document_context' => [
+                'context_text' => 'Складской корпус с офисной зоной, пожарной сигнализацией и освещением.',
+            ],
+        ];
+
+        $profile = app(PackagePlannerService::class)->profileFromAnalysis($analysis);
+        $plan = app(PackagePlannerService::class)->plan($profile);
+        $keys = array_column($plan->packages, 'key');
+
+        $this->assertSame('mixed_warehouse_office', $profile->objectType);
+        $this->assertSame(1280.0, $profile->area);
+        $this->assertContains('industrial_floor', $keys);
+        $this->assertContains('office_partitions', $keys);
+    }
 }

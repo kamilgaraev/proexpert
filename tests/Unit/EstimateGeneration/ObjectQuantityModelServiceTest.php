@@ -102,6 +102,31 @@ class ObjectQuantityModelServiceTest extends TestCase
         $this->assertSame((float) $model['area'], round($warehouseArea + $officeArea + $commonArea, 2));
     }
 
+    public function test_quantity_model_uses_ocr_zones_without_text_zone_split(): void
+    {
+        $analysis = [
+            'object' => [
+                'object_type' => 'mixed_warehouse_office',
+                'description' => '',
+                'area' => 1280,
+                'floors' => 1,
+                'zones' => [
+                    ['scope_key' => 'warehouse_area', 'label' => 'Склад', 'area_m2' => 900.0],
+                    ['scope_key' => 'office_area', 'label' => 'Офис', 'area_m2' => 280.0],
+                ],
+            ],
+        ];
+
+        $model = app(ObjectQuantityModelService::class)->build($analysis);
+
+        $this->assertSame(1280.0, $model['area']);
+        $this->assertSame(900.0, $model['zones']['warehouse_area']);
+        $this->assertSame(280.0, $model['zones']['office_area']);
+        $this->assertSame(100.0, $model['zones']['common_area']);
+        $this->assertSame(900.0, $model['quantities']['warehouse.floor']['value']);
+        $this->assertSame(280.0, $model['quantities']['office.floor']['value']);
+    }
+
     /**
      * @return array<string, array{0: array<string, mixed>, 1: string, 2: array<int, string>}>
      */

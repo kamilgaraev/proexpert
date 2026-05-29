@@ -23,7 +23,7 @@ class CreateEstimateGenerationSessionRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'description' => ['required', 'string', 'min:10', 'max:10000'],
+            'description' => ['nullable', 'string', 'max:10000'],
             'building_type' => ['nullable', 'string', 'max:255'],
             'region' => ['nullable', 'string', 'max:255'],
             'estimate_regional_price_version_id' => ['nullable', 'integer', 'exists:estimate_regional_price_versions,id'],

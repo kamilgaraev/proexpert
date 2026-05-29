@@ -25,8 +25,22 @@ class EstimateGenerationOrchestrator
     public function analyze(EstimateGenerationSession $session): EstimateGenerationSession
     {
         $documents = $session->documents()
-            ->get(['filename', 'extracted_text', 'structured_payload'])
-            ->map(static fn ($document): array => $document->toArray())
+            ->with('facts')
+            ->get()
+            ->map(static fn ($document): array => [
+                'id' => $document->id,
+                'filename' => $document->filename,
+                'status' => $document->status,
+                'extracted_text' => $document->extracted_text,
+                'structured_payload' => $document->structured_payload ?? [],
+                'facts_summary' => $document->facts_summary ?? [],
+                'quality' => [
+                    'score' => $document->quality_score,
+                    'level' => $document->quality_level,
+                    'flags' => $document->quality_flags ?? [],
+                ],
+                'facts' => $document->facts->map(static fn ($fact): array => $fact->toArray())->all(),
+            ])
             ->all();
 
         $analysis = $this->semanticParser->parse($session->input_payload ?? [], $documents);
@@ -90,9 +104,12 @@ class EstimateGenerationOrchestrator
             'local_estimates' => $localEstimates,
             'traceability' => [
                 'analysis' => Arr::get($analysis, 'detected_structure', []),
+                'document_context' => Arr::get($analysis, 'document_context', []),
+                'document_source_refs' => Arr::get($analysis, 'document_context.source_refs', []),
             ],
             'regional_context' => $regionalContext,
             'contingency_percent' => Arr::get($analysis, 'object.contingency_percent'),
+            'problem_flags' => Arr::get($analysis, 'problem_flags', []),
         ];
         $draft['normative_matching'] = $this->normativeMatchingSummary($localEstimates);
 

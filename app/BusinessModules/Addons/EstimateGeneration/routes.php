@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationDocumentController;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Http\Controllers\EstimateNormativeStatusController;
 use Illuminate\Support\Facades\Route;
 
@@ -20,7 +21,11 @@ Route::middleware([
     ->group(function (): void {
         Route::get('/', [EstimateGenerationController::class, 'index'])->name('index');
         Route::post('/', [EstimateGenerationController::class, 'store'])->name('store');
+        Route::get('/{session}/documents', [EstimateGenerationDocumentController::class, 'index'])->name('documents.index');
         Route::post('/{session}/documents', [EstimateGenerationController::class, 'uploadDocuments'])->name('documents.store');
+        Route::get('/{session}/documents/{document}', [EstimateGenerationDocumentController::class, 'show'])->name('documents.show');
+        Route::post('/{session}/documents/{document}/retry', [EstimateGenerationDocumentController::class, 'retry'])->name('documents.retry');
+        Route::post('/{session}/documents/{document}/ignore', [EstimateGenerationDocumentController::class, 'ignore'])->name('documents.ignore');
         Route::post('/{session}/analyze', [EstimateGenerationController::class, 'analyze'])->name('analyze');
         Route::post('/{session}/generate', [EstimateGenerationController::class, 'generate'])->name('generate');
         Route::get('/{session}/status', [EstimateGenerationController::class, 'status'])->name('status');

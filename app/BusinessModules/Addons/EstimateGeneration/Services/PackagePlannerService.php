@@ -32,14 +32,30 @@ class PackagePlannerService
     {
         $object = is_array($analysis['object'] ?? null) ? $analysis['object'] : [];
         $regionalContext = is_array($analysis['regional_context'] ?? null) ? $analysis['regional_context'] : [];
+        $documentContext = is_array($analysis['document_context'] ?? null) ? $analysis['document_context'] : [];
         $type = mb_strtolower((string) ($object['object_type'] ?? $object['building_type'] ?? 'custom'));
-        $description = mb_strtolower((string) ($object['description'] ?? ''));
-        $hasWarehouse = str_contains($type, 'склад') || str_contains($description, 'склад');
-        $hasOffice = str_contains($type, 'офис') || str_contains($description, 'офис');
+        $zones = is_array($object['zones'] ?? null) ? $object['zones'] : [];
+        $zoneText = implode(' ', array_map(
+            static fn (array $zone): string => (string) ($zone['label'] ?? $zone['scope_key'] ?? ''),
+            array_filter($zones, 'is_array')
+        ));
+        $description = mb_strtolower(implode("\n", array_filter([
+            (string) ($object['description'] ?? ''),
+            (string) ($documentContext['context_text'] ?? ''),
+            $zoneText,
+        ])));
+        $hasWarehouse = str_contains($type, 'склад')
+            || str_contains($type, 'warehouse')
+            || str_contains($description, 'склад')
+            || str_contains($description, 'warehouse');
+        $hasOffice = str_contains($type, 'офис')
+            || str_contains($type, 'office')
+            || str_contains($description, 'офис')
+            || str_contains($description, 'office');
 
         if (($hasWarehouse || str_contains($type, 'производ')) && $hasOffice) {
             $type = 'mixed_warehouse_office';
-        } elseif (str_contains($type, 'склад') || str_contains($type, 'warehouse') || str_contains($type, 'производ')) {
+        } elseif ($hasWarehouse || str_contains($type, 'industrial') || str_contains($type, 'производ')) {
             $type = 'warehouse';
         } elseif (str_contains($type, 'жил') || str_contains($type, 'ижс') || str_contains($type, 'дом') || str_contains($type, 'house')) {
             $type = 'house';

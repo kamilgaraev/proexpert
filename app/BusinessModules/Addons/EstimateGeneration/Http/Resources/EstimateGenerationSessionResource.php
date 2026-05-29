@@ -33,12 +33,7 @@ class EstimateGenerationSessionResource extends JsonResource
             'applied_estimate_id' => $session->applied_estimate_id,
             'last_error' => $session->last_error,
             'documents' => $this->whenLoaded('documents', function (): array {
-                return $this->documents->map(static fn ($document): array => [
-                    'id' => $document->id,
-                    'filename' => $document->filename,
-                    'mime_type' => $document->mime_type,
-                    'meta' => $document->meta ?? [],
-                ])->all();
+                return EstimateGenerationDocumentResource::collection($this->documents)->resolve();
             }, []),
             'created_at' => $session->created_at,
             'updated_at' => $session->updated_at,

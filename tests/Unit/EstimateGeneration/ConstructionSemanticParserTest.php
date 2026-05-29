@@ -81,6 +81,84 @@ class ConstructionSemanticParserTest extends TestCase
         );
     }
 
+    public function test_parser_uses_trusted_ocr_facts_when_manual_description_is_empty(): void
+    {
+        $parser = new ConstructionSemanticParser();
+
+        $analysis = $parser->parse([
+            'description' => '',
+        ], [[
+            'id' => 77,
+            'filename' => 'warehouse-plan.pdf',
+            'status' => 'ready',
+            'quality' => ['level' => 'good', 'score' => 0.91, 'flags' => []],
+            'extracted_text' => 'Складской корпус 1280 м2. Склад 900 м2. Офис 280 м2. 1 этаж. Пожарная сигнализация, освещение.',
+            'facts_summary' => [
+                'total_area_m2' => 1280.0,
+                'floor_count' => 1.0,
+                'zones' => [
+                    ['scope_key' => 'warehouse_area', 'label' => 'Склад', 'area_m2' => 900.0],
+                    ['scope_key' => 'office_area', 'label' => 'Офис', 'area_m2' => 280.0],
+                ],
+                'engineering_systems' => [
+                    ['key' => 'fire_alarm', 'label' => 'Пожарная сигнализация'],
+                    ['key' => 'lighting', 'label' => 'Освещение'],
+                ],
+                'conflicts' => [],
+            ],
+            'facts' => [[
+                'fact_type' => 'total_area',
+                'scope_key' => 'total_area',
+                'label' => 'Общая площадь',
+                'value_number' => 1280.0,
+                'source_ref' => [
+                    'type' => 'document',
+                    'document_id' => 77,
+                    'filename' => 'warehouse-plan.pdf',
+                    'page_number' => 1,
+                    'excerpt' => 'Складской корпус 1280 м2',
+                ],
+            ]],
+        ]]);
+
+        $this->assertSame('', $analysis['object']['manual_description']);
+        $this->assertSame(1280.0, $analysis['object']['area']);
+        $this->assertSame(1.0, $analysis['object']['floors']);
+        $this->assertSame('mixed_warehouse_office', $analysis['object']['object_type']);
+        $this->assertSame(['fire_alarm', 'lighting'], $analysis['object']['engineering_systems']);
+        $this->assertSame(77, $analysis['document_context']['source_refs'][0]['document_id']);
+        $this->assertSame([], $analysis['problem_flags']);
+    }
+
+    public function test_parser_does_not_trust_low_quality_ocr_for_object_defaults(): void
+    {
+        $parser = new ConstructionSemanticParser();
+
+        $analysis = $parser->parse([
+            'description' => 'Ручное описание объекта',
+            'area' => 180,
+        ], [[
+            'id' => 78,
+            'filename' => 'bad-scan.pdf',
+            'status' => 'needs_review',
+            'quality' => ['level' => 'low', 'score' => 0.31, 'flags' => ['low_quality']],
+            'extracted_text' => 'Склад 5000 м2',
+            'facts_summary' => [
+                'total_area_m2' => 5000.0,
+                'floor_count' => 1.0,
+                'zones' => [],
+                'engineering_systems' => [],
+                'conflicts' => [],
+            ],
+            'facts' => [],
+        ]]);
+
+        $this->assertSame(180, $analysis['object']['area']);
+        $this->assertSame('', $analysis['document_context']['context_text']);
+        $this->assertContains('document_review_required', $analysis['problem_flags']);
+        $this->assertSame(78, $analysis['document_context']['review_required_documents'][0]['id']);
+    }
+
     private function housePrompt(): string
     {
         return <<<'TEXT'

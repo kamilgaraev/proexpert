@@ -1,0 +1,64 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Addons\EstimateGeneration\Models;
+
+use App\Models\Organization;
+use App\Models\Project;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+
+class EstimateGenerationDocumentPage extends Model
+{
+    protected $table = 'estimate_generation_document_pages';
+
+    protected $fillable = [
+        'document_id',
+        'organization_id',
+        'project_id',
+        'session_id',
+        'page_number',
+        'width',
+        'height',
+        'rotation',
+        'language_codes',
+        'text',
+        'text_hash',
+        'confidence',
+        'raw_payload_path',
+        'normalized_payload',
+        'quality_flags',
+    ];
+
+    protected $casts = [
+        'page_number' => 'integer',
+        'width' => 'integer',
+        'height' => 'integer',
+        'rotation' => 'integer',
+        'language_codes' => 'array',
+        'confidence' => 'float',
+        'normalized_payload' => 'array',
+        'quality_flags' => 'array',
+    ];
+
+    public function document(): BelongsTo
+    {
+        return $this->belongsTo(EstimateGenerationDocument::class, 'document_id');
+    }
+
+    public function session(): BelongsTo
+    {
+        return $this->belongsTo(EstimateGenerationSession::class, 'session_id');
+    }
+
+    public function organization(): BelongsTo
+    {
+        return $this->belongsTo(Organization::class);
+    }
+
+    public function project(): BelongsTo
+    {
+        return $this->belongsTo(Project::class);
+    }
+}

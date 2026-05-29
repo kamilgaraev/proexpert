@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration;
 
-use App\BusinessModules\Addons\AIEstimates\Services\FileProcessing\FileParserService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\ClassifyEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\ImportEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\InspectEstimateNormativesCommand;
@@ -34,6 +33,18 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationExc
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\ConstructionDocumentFactExtractor;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentProcessingStatusService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentFactMerger;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Clients\YandexCloudOcrClient;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrDocumentProcessor;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrDocumentStorageService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrPreflightService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrQualityAnalyzer;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrUsageLogger;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\SpreadsheetDocumentExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\WorkItemGenerationService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\ExcelEstimateBuilder;
@@ -43,9 +54,20 @@ class EstimateGenerationServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        $this->app->singleton(DocumentParsingService::class, fn () => new DocumentParsingService(
-            app(FileParserService::class)
-        ));
+        $this->mergeConfigFrom(config_path('estimate-generation.php'), 'estimate-generation');
+
+        $this->app->singleton(DocumentParsingService::class);
+        $this->app->singleton(OcrClientInterface::class, YandexCloudOcrClient::class);
+        $this->app->singleton(OcrDocumentStorageService::class);
+        $this->app->singleton(OcrPreflightService::class);
+        $this->app->singleton(OcrUsageLogger::class);
+        $this->app->singleton(SpreadsheetDocumentExtractor::class);
+        $this->app->singleton(DocumentGenerationReadinessService::class);
+        $this->app->singleton(DocumentProcessingStatusService::class);
+        $this->app->singleton(OcrQualityAnalyzer::class);
+        $this->app->singleton(ConstructionDocumentFactExtractor::class);
+        $this->app->singleton(DocumentFactMerger::class);
+        $this->app->singleton(OcrDocumentProcessor::class);
         $this->app->singleton(ConstructionSemanticParser::class);
         $this->app->singleton(EstimateDecompositionService::class);
         $this->app->singleton(WorkItemGenerationService::class);

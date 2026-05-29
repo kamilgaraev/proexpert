@@ -16,17 +16,27 @@ class ConstructionSemanticParser
         $description = (string) ($input['description'] ?? '');
         $documentsPayload = array_map(function (array $document): array {
             $text = (string) ($document['extracted_text'] ?? '');
+            $facts = is_array($document['facts'] ?? null) ? $document['facts'] : [];
+            $factsSummary = is_array($document['facts_summary'] ?? null) ? $document['facts_summary'] : [];
 
             return [
+                'id' => $document['id'] ?? null,
                 'filename' => $document['filename'] ?? 'document',
+                'status' => $document['status'] ?? null,
                 'text' => $text,
+                'facts' => $facts,
+                'facts_summary' => $factsSummary,
+                'quality' => is_array($document['quality'] ?? null) ? $document['quality'] : [],
                 'source_refs' => $this->extractSourceRefs($text),
                 'scopes' => $this->extractScopes($text, false),
             ];
         }, $documents);
 
-        $combinedText = trim($description . "\n" . implode("\n", array_column($documentsPayload, 'text')));
+        $documentContext = $this->buildDocumentContext($documentsPayload);
+        $combinedText = trim($description . "\n" . ($documentContext['context_text'] ?? ''));
+        $objectDescription = trim($description . "\n" . ($documentContext['context_text'] ?? ''));
         $buildingType = (string) ($input['building_type'] ?? $this->detectBuildingType($combinedText) ?? 'custom');
+        $objectType = (string) ($input['object_type'] ?? $this->detectObjectType($objectDescription, $documentContext) ?? $buildingType);
         $sourceRefs = $this->extractSourceRefs($combinedText);
         $explicitScopes = $this->mergeScopes(
             $this->extractScopes($description, true),
@@ -38,21 +48,33 @@ class ConstructionSemanticParser
 
         $scopes = $explicitScopes['items'] !== []
             ? $explicitScopes
-            : $this->inferDefaultScopes($buildingType, $sourceRefs, $description);
+            : $this->inferDefaultScopes($buildingType, $sourceRefs, $objectDescription !== '' ? $objectDescription : $description);
         $regionalContext = is_array($input['regional_context'] ?? null) ? $input['regional_context'] : [];
         $period = $this->detectPeriod($combinedText);
 
         return [
             'object' => [
-                'description' => $description,
+                'manual_description' => $description,
+                'description' => $objectDescription !== '' ? $objectDescription : $description,
+                'object_type' => $objectType,
                 'building_type' => $buildingType,
                 'region' => $input['region'] ?? $regionalContext['region_name'] ?? $this->detectRegion($combinedText),
-                'area' => $input['area'] ?? null,
+                'area' => $input['area'] ?? $documentContext['facts_summary']['total_area_m2'] ?? null,
+                'floors' => $input['floors'] ?? $documentContext['facts_summary']['floor_count'] ?? null,
+                'height' => $input['height'] ?? $documentContext['facts_summary']['height_m'] ?? null,
+                'dimensions' => is_array($input['dimensions'] ?? null)
+                    ? $input['dimensions']
+                    : ($documentContext['facts_summary']['dimensions'] ?? []),
+                'zones' => $documentContext['facts_summary']['zones'] ?? [],
+                'engineering_systems' => array_column($documentContext['facts_summary']['engineering_systems'] ?? [], 'key'),
+                'document_facts' => $documentContext['facts'],
                 'year' => $regionalContext['year'] ?? $period['year'],
                 'quarter' => $regionalContext['quarter'] ?? $period['quarter'],
                 'contingency_percent' => $this->detectContingencyPercent($combinedText),
             ],
             'regional_context' => $regionalContext,
+            'document_context' => $documentContext,
+            'problem_flags' => $documentContext['problem_flags'] ?? [],
             'source_documents' => $documentsPayload,
             'detected_structure' => [
                 'floors' => array_values(array_unique($sourceRefs['floors'])),
@@ -63,6 +85,193 @@ class ConstructionSemanticParser
                 'scopes' => $scopes['items'],
             ],
         ];
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $documentsPayload
+     * @return array<string, mixed>
+     */
+    private function buildDocumentContext(array $documentsPayload): array
+    {
+        $facts = [];
+        $summary = [
+            'total_area_m2' => null,
+            'floor_count' => null,
+            'height_m' => null,
+            'dimensions' => [],
+            'zones' => [],
+            'engineering_systems' => [],
+            'conflicts' => [],
+        ];
+        $contextLines = [];
+        $sourceRefs = [];
+        $trustedDocumentIds = [];
+        $reviewRequiredDocuments = [];
+        $problemFlags = [];
+
+        foreach ($documentsPayload as $document) {
+            if (!$this->isDocumentTrusted($document)) {
+                $reviewRequiredDocuments[] = [
+                    'id' => $document['id'] ?? null,
+                    'filename' => $document['filename'] ?? 'document',
+                    'status' => $document['status'] ?? null,
+                    'quality' => $document['quality'] ?? [],
+                ];
+                $problemFlags[] = 'document_review_required';
+                continue;
+            }
+
+            if (($document['id'] ?? null) !== null) {
+                $trustedDocumentIds[] = (int) $document['id'];
+            }
+
+            foreach ($document['facts'] ?? [] as $fact) {
+                if (!is_array($fact)) {
+                    continue;
+                }
+
+                $facts[] = $fact;
+
+                if (is_array($fact['source_ref'] ?? null)) {
+                    $sourceRefs[] = $fact['source_ref'];
+                }
+
+                if (($summary['height_m'] ?? null) === null && ($fact['fact_type'] ?? null) === 'height' && isset($fact['value_number'])) {
+                    $summary['height_m'] = (float) $fact['value_number'];
+                }
+
+                if (($fact['fact_type'] ?? null) === 'dimension' && is_array($fact['normalized_payload'] ?? null)) {
+                    $payload = $fact['normalized_payload'];
+
+                    if (isset($payload['length'], $payload['width'])) {
+                        $summary['dimensions'] = [
+                            'length' => (float) $payload['length'],
+                            'width' => (float) $payload['width'],
+                        ];
+                    }
+                }
+            }
+
+            $factsSummary = is_array($document['facts_summary'] ?? null) ? $document['facts_summary'] : [];
+
+            if (($summary['total_area_m2'] ?? null) === null && isset($factsSummary['total_area_m2'])) {
+                $summary['total_area_m2'] = $factsSummary['total_area_m2'];
+            }
+
+            if (($summary['floor_count'] ?? null) === null && isset($factsSummary['floor_count'])) {
+                $summary['floor_count'] = $factsSummary['floor_count'];
+            }
+
+            foreach ($factsSummary['zones'] ?? [] as $zone) {
+                if (is_array($zone)) {
+                    $summary['zones'][] = $zone;
+                }
+            }
+
+            foreach ($factsSummary['engineering_systems'] ?? [] as $system) {
+                if (is_array($system)) {
+                    $summary['engineering_systems'][] = $system;
+                }
+            }
+
+            foreach ($factsSummary['conflicts'] ?? [] as $conflict) {
+                if (is_array($conflict)) {
+                    $summary['conflicts'][] = $conflict;
+                    $problemFlags[] = 'document_fact_conflict';
+                }
+            }
+
+            $text = trim((string) ($document['text'] ?? ''));
+
+            if ($text !== '') {
+                $contextLines[] = $text;
+            }
+        }
+
+        return [
+            'facts' => $facts,
+            'facts_summary' => $summary,
+            'context_text' => trim(implode("\n", $contextLines)),
+            'source_refs' => $this->uniqueSourceRefs($sourceRefs),
+            'trusted_document_ids' => array_values(array_unique($trustedDocumentIds)),
+            'review_required_documents' => $reviewRequiredDocuments,
+            'problem_flags' => array_values(array_unique($problemFlags)),
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $document
+     */
+    private function isDocumentTrusted(array $document): bool
+    {
+        if (($document['status'] ?? null) === 'ignored') {
+            return false;
+        }
+
+        $quality = is_array($document['quality'] ?? null) ? $document['quality'] : [];
+        $level = (string) ($quality['level'] ?? '');
+
+        if ($level !== '' && !in_array($level, ['good', 'acceptable'], true)) {
+            return false;
+        }
+
+        return in_array((string) ($document['status'] ?? 'ready'), ['ready', 'uploaded'], true);
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $sourceRefs
+     * @return array<int, array<string, mixed>>
+     */
+    private function uniqueSourceRefs(array $sourceRefs): array
+    {
+        $unique = [];
+
+        foreach ($sourceRefs as $sourceRef) {
+            $key = implode('|', [
+                $sourceRef['type'] ?? 'document',
+                $sourceRef['document_id'] ?? '',
+                $sourceRef['page_number'] ?? '',
+                $sourceRef['excerpt'] ?? '',
+            ]);
+
+            $unique[$key] = $sourceRef;
+        }
+
+        return array_values($unique);
+    }
+
+    /**
+     * @param array<string, mixed> $documentContext
+     */
+    private function detectObjectType(string $description, array $documentContext): ?string
+    {
+        $normalized = mb_strtolower($description);
+        $zones = is_array($documentContext['facts_summary']['zones'] ?? null)
+            ? $documentContext['facts_summary']['zones']
+            : [];
+        $zoneText = mb_strtolower(implode(' ', array_map(
+            static fn (array $zone): string => (string) ($zone['label'] ?? $zone['scope_key'] ?? ''),
+            array_filter($zones, 'is_array')
+        )));
+
+        $hasWarehouse = str_contains($normalized, 'склад')
+            || str_contains($normalized, 'warehouse')
+            || str_contains($zoneText, 'склад')
+            || str_contains($zoneText, 'warehouse');
+        $hasOffice = str_contains($normalized, 'офис')
+            || str_contains($normalized, 'office')
+            || str_contains($zoneText, 'офис')
+            || str_contains($zoneText, 'office');
+
+        if ($hasWarehouse && $hasOffice) {
+            return 'mixed_warehouse_office';
+        }
+
+        if ($hasWarehouse || str_contains($normalized, 'производ') || str_contains($normalized, 'цех')) {
+            return 'warehouse';
+        }
+
+        return null;
     }
 
     /**

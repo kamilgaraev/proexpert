@@ -18,10 +18,16 @@ class ObjectQuantityModelService
         $area = max((float) ($object['area'] ?? 100), 30.0);
         $floors = max((int) ($object['floors'] ?? $this->detectFloors($description)), 1);
         $rooms = max((int) ($object['rooms'] ?? $this->detectRooms($description)), 1);
-        $warehouseArea = $this->detectZoneArea($normalizedDescription, ['склад']);
-        $officeArea = $this->detectZoneArea($normalizedDescription, ['офис']);
-        $isWarehouseLike = str_contains($normalizedDescription, 'склад') || str_contains(mb_strtolower((string) ($object['building_type'] ?? '')), 'склад');
-        $isMixedUse = $warehouseArea !== null && ($officeArea !== null || str_contains($normalizedDescription, 'офис'));
+        $warehouseArea = $this->zoneAreaFromObject($object, ['склад', 'warehouse'])
+            ?? $this->detectZoneArea($normalizedDescription, ['склад', 'warehouse']);
+        $officeArea = $this->zoneAreaFromObject($object, ['офис', 'office'])
+            ?? $this->detectZoneArea($normalizedDescription, ['офис', 'office']);
+        $normalizedBuildingType = mb_strtolower((string) ($object['building_type'] ?? $object['object_type'] ?? ''));
+        $isWarehouseLike = str_contains($normalizedDescription, 'склад')
+            || str_contains($normalizedDescription, 'warehouse')
+            || str_contains($normalizedBuildingType, 'склад')
+            || str_contains($normalizedBuildingType, 'warehouse');
+        $isMixedUse = $warehouseArea !== null && ($officeArea !== null || str_contains($normalizedDescription, 'офис') || str_contains($normalizedDescription, 'office'));
 
         if (
             $isMixedUse
@@ -238,6 +244,31 @@ class ObjectQuantityModelService
         }
 
         return 4;
+    }
+
+    /**
+     * @param array<string, mixed> $object
+     * @param array<int, string> $keywords
+     */
+    private function zoneAreaFromObject(array $object, array $keywords): ?float
+    {
+        $zones = is_array($object['zones'] ?? null) ? $object['zones'] : [];
+
+        foreach ($zones as $zone) {
+            if (!is_array($zone)) {
+                continue;
+            }
+
+            $label = mb_strtolower(trim((string) ($zone['label'] ?? $zone['scope_key'] ?? '')));
+
+            foreach ($keywords as $keyword) {
+                if (str_contains($label, mb_strtolower($keyword)) && isset($zone['area_m2'])) {
+                    return (float) $zone['area_m2'];
+                }
+            }
+        }
+
+        return null;
     }
 
     /**

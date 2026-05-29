@@ -46,22 +46,28 @@ class EstimateDecompositionService
     public function decomposePackagePlan(array $analysis, PackagePlanData $plan): array
     {
         return array_map(function (array $package) use ($analysis): array {
+            $sourceRefs = $package['source_refs'] ?? [];
+
+            if ($sourceRefs === []) {
+                $sourceRefs = $this->documentSourceRefs($analysis);
+            }
+
             return [
                 'key' => $package['key'],
                 'title' => $package['title'],
                 'scope_type' => $package['scope_type'],
                 'target_items_min' => $package['target_items_min'],
                 'target_items_max' => $package['target_items_max'],
-                'source_refs' => $package['source_refs'] ?? [],
+                'source_refs' => $sourceRefs,
                 'assumptions' => $this->buildAssumptions($analysis, [
-                    'source_refs' => $package['source_refs'] ?? [],
+                    'source_refs' => $sourceRefs,
                 ]),
                 'sections' => [
                     [
                         'key' => $package['key'] . '-section-1',
                         'title' => $package['title'],
                         'construction_part' => $package['scope_type'],
-                        'source_refs' => $package['source_refs'] ?? [],
+                        'source_refs' => $sourceRefs,
                     ],
                 ],
             ];
@@ -110,5 +116,17 @@ class EstimateDecompositionService
         }
 
         return $refs;
+    }
+
+    /**
+     * @param array<string, mixed> $analysis
+     * @return array<int, array<string, mixed>>
+     */
+    private function documentSourceRefs(array $analysis): array
+    {
+        $documentContext = is_array($analysis['document_context'] ?? null) ? $analysis['document_context'] : [];
+        $sourceRefs = is_array($documentContext['source_refs'] ?? null) ? $documentContext['source_refs'] : [];
+
+        return array_values(array_filter($sourceRefs, 'is_array'));
     }
 }

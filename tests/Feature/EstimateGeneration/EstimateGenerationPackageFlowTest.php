@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentFact;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
 use App\Models\Organization;
@@ -116,5 +118,92 @@ class EstimateGenerationPackageFlowTest extends TestCase
             'item_type' => 'priced_work',
             'quantity' => 780.000000,
         ]);
+    }
+
+    public function test_ocr_only_ready_document_drives_package_plan_quantities_and_source_refs(): void
+    {
+        $organization = Organization::factory()->create();
+        $user = User::factory()->create([
+            'current_organization_id' => $organization->id,
+        ]);
+        $project = Project::factory()->create([
+            'organization_id' => $organization->id,
+        ]);
+        $session = EstimateGenerationSession::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'user_id' => $user->id,
+            'status' => 'created',
+            'processing_stage' => 'created',
+            'processing_progress' => 0,
+            'input_payload' => [
+                'description' => '',
+                'regional_context' => [
+                    'region_name' => 'Республика Татарстан',
+                    'year' => 2026,
+                    'quarter' => 1,
+                    'version_key' => '2026-q1-ru-ta',
+                ],
+            ],
+            'problem_flags' => [],
+        ]);
+        $document = EstimateGenerationDocument::query()->create([
+            'session_id' => $session->id,
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'user_id' => $user->id,
+            'filename' => 'warehouse-plan.pdf',
+            'mime_type' => 'application/pdf',
+            'storage_path' => 'org-' . $organization->id . '/estimate-generation/sessions/' . $session->id . '/documents/warehouse-plan.pdf',
+            'status' => 'ready',
+            'processing_stage' => 'completed',
+            'progress_percent' => 100,
+            'extracted_text' => 'Складской корпус 1280 м2. Склад 900 м2. Офис 280 м2. 1 этаж. Плоская кровля.',
+            'quality_score' => 0.91,
+            'quality_level' => 'good',
+            'quality_flags' => [],
+            'facts_summary' => [
+                'total_area_m2' => 1280.0,
+                'floor_count' => 1.0,
+                'zones' => [
+                    ['scope_key' => 'warehouse_area', 'label' => 'Склад', 'area_m2' => 900.0],
+                    ['scope_key' => 'office_area', 'label' => 'Офис', 'area_m2' => 280.0],
+                ],
+                'engineering_systems' => [],
+                'conflicts' => [],
+            ],
+        ]);
+        EstimateGenerationDocumentFact::query()->create([
+            'document_id' => $document->id,
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'session_id' => $session->id,
+            'fact_type' => 'total_area',
+            'scope_key' => 'total_area',
+            'label' => 'Общая площадь',
+            'value_text' => '1280 м2',
+            'value_number' => 1280.0,
+            'unit' => 'м2',
+            'confidence' => 0.91,
+            'source_ref' => [
+                'type' => 'document',
+                'document_id' => $document->id,
+                'filename' => 'warehouse-plan.pdf',
+                'page_number' => 1,
+                'excerpt' => 'Складской корпус 1280 м2',
+            ],
+        ]);
+
+        $session = app(EstimateGenerationOrchestrator::class)->generate($session);
+        $packageKeys = $session->packages()->pluck('key')->all();
+        $draft = $session->draft_payload;
+
+        $this->assertContains('industrial_floor', $packageKeys);
+        $this->assertContains('office_partitions', $packageKeys);
+        $this->assertEquals(1280.0, $draft['object_profile']['area']);
+        $this->assertSame($document->id, $draft['traceability']['document_source_refs'][0]['document_id']);
+        $this->assertSame($document->id, $draft['local_estimates'][0]['source_refs'][0]['document_id']);
+        $this->assertSame($document->id, $draft['local_estimates'][0]['sections'][0]['work_items'][0]['source_refs'][0]['document_id']);
+        $this->assertNotSame(100.0, $draft['object_profile']['area']);
     }
 }
