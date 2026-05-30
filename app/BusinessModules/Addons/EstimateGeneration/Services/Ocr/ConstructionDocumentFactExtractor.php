@@ -103,17 +103,22 @@ class ConstructionDocumentFactExtractor
                     || ($lineHasTotal && $index === $lastNonParentheticalIndex)
                 );
             $label = $this->areaLabel($rawLabel, $isTotal);
+            $areaRole = $this->areaRole($label, $line, $isTotal);
 
             return new ExtractedDocumentFact(
-                factType: $isTotal ? 'total_area' : 'zone_area',
+                factType: $areaRole === 'total' ? 'total_area' : 'zone_area',
                 label: $label,
                 confidence: $page->confidence ?? 0.7,
-                scopeKey: $isTotal ? 'total_area' : $this->scopeKey($label),
+                scopeKey: $areaRole === 'total' ? 'total_area' : $this->scopeKey($label),
                 valueText: $valueText . ' м2',
                 valueNumber: $value,
                 unit: 'м2',
                 sourceRef: $this->sourceRef($documentId, $filename, $page, $line),
-                normalizedPayload: ['line' => $line],
+                normalizedPayload: [
+                    'area_role' => $areaRole,
+                    'source_rank' => $this->areaSourceRank($areaRole),
+                    'line' => $line,
+                ],
             );
         }, $matches, array_keys($matches)));
     }
@@ -139,6 +144,46 @@ class ConstructionDocumentFactExtractor
         }
 
         return $isTotal ? 'Общая площадь' : 'Площадь зоны';
+    }
+
+    private function areaRole(string $label, string $line, bool $isTotal): string
+    {
+        if ($isTotal) {
+            return 'total';
+        }
+
+        $value = mb_strtolower($label . ' ' . $line);
+
+        if (preg_match('/террас/u', $value) === 1) {
+            return 'terrace';
+        }
+
+        if (preg_match('/жил/u', $value) === 1) {
+            return 'living';
+        }
+
+        if (preg_match('/комнат|помещен/u', $value) === 1) {
+            return 'room';
+        }
+
+        if (preg_match('/зон/u', $value) === 1) {
+            return 'zone';
+        }
+
+        return 'unknown';
+    }
+
+    private function areaSourceRank(string $areaRole): int
+    {
+        return match ($areaRole) {
+            'total' => 10,
+            'living' => 40,
+            'terrace' => 50,
+            'zone' => 60,
+            'unknown' => 70,
+            'room' => 50,
+            default => 70,
+        };
     }
 
     /**

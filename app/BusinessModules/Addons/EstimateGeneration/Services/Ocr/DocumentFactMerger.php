@@ -74,7 +74,16 @@ class DocumentFactMerger
             return null;
         }
 
-        usort($facts, static fn (ExtractedDocumentFact $a, ExtractedDocumentFact $b): int => $b->confidence <=> $a->confidence);
+        usort($facts, static function (ExtractedDocumentFact $a, ExtractedDocumentFact $b): int {
+            $rankComparison = ((int) ($a->normalizedPayload['source_rank'] ?? PHP_INT_MAX))
+                <=> ((int) ($b->normalizedPayload['source_rank'] ?? PHP_INT_MAX));
+
+            if ($rankComparison !== 0) {
+                return $rankComparison;
+            }
+
+            return $b->confidence <=> $a->confidence;
+        });
 
         return $facts[0]->valueNumber;
     }
