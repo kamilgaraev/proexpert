@@ -13,6 +13,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNormResource;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegionalPriceVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateResourcePrice;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningEvidenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSearchService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use Illuminate\Database\Eloquent\Builder;
@@ -24,9 +25,16 @@ class EstimateNormativeMatcher
     private const MIN_TOKEN_LENGTH = 3;
     private const LOW_CONFIDENCE_THRESHOLD = 0.55;
 
+    private readonly NormativeCandidateSearchService $candidateSearchService;
+    private readonly EstimateGenerationLearningEvidenceService $learningEvidenceService;
+
     public function __construct(
-        private readonly NormativeCandidateSearchService $candidateSearchService,
-    ) {}
+        ?NormativeCandidateSearchService $candidateSearchService = null,
+        ?EstimateGenerationLearningEvidenceService $learningEvidenceService = null,
+    ) {
+        $this->candidateSearchService = $candidateSearchService ?? app(NormativeCandidateSearchService::class);
+        $this->learningEvidenceService = $learningEvidenceService ?? app(EstimateGenerationLearningEvidenceService::class);
+    }
 
     /**
      * @return array<string, mixed>|null
@@ -47,8 +55,16 @@ class EstimateNormativeMatcher
             return null;
         }
 
+        $learningEvidence = $this->learningEvidenceService->summarizeForCandidates($candidates, $workItem, $context);
         $ranked = $candidates
-            ->map(fn (EstimateNorm $norm): array => $this->scoreNorm($norm, $workItem, $context, $tokens, $priceVersions))
+            ->map(fn (EstimateNorm $norm): array => $this->scoreNorm(
+                $norm,
+                $workItem,
+                $context,
+                $tokens,
+                $priceVersions,
+                $learningEvidence[(int) $norm->id] ?? $this->emptyLearningEvidence()
+            ))
             ->filter(static fn (array $candidate): bool => (float) $candidate['score'] > 0)
             ->sortByDesc('score')
             ->values()
@@ -102,7 +118,15 @@ class EstimateNormativeMatcher
         }
 
         $tokens = $this->tokensForWorkItem($workItem, $context);
-        $candidate = $this->scoreNorm($norm, $workItem, $context, $tokens, $priceVersions);
+        $learningEvidence = $this->learningEvidenceService->summarizeForCandidates(collect([$norm]), $workItem, $context);
+        $candidate = $this->scoreNorm(
+            $norm,
+            $workItem,
+            $context,
+            $tokens,
+            $priceVersions,
+            $learningEvidence[(int) $norm->id] ?? $this->emptyLearningEvidence()
+        );
 
         return [
             'version' => [
@@ -248,7 +272,14 @@ class EstimateNormativeMatcher
      * @param array<int, string> $tokens
      * @return array<string, mixed>
      */
-    private function scoreNorm(EstimateNorm $norm, array $workItem, array $context, array $tokens, Collection $priceVersions): array
+    private function scoreNorm(
+        EstimateNorm $norm,
+        array $workItem,
+        array $context,
+        array $tokens,
+        Collection $priceVersions,
+        array $learningEvidence
+    ): array
     {
         $name = mb_strtolower($norm->name);
         $section = mb_strtolower((string) ($norm->section_name ?? ''));
@@ -293,6 +324,21 @@ class EstimateNormativeMatcher
             $reasons[] = 'scope_collection';
         }
 
+        $learningScore = (float) ($learningEvidence['learning_score'] ?? 0);
+        $learningPositiveCount = (int) ($learningEvidence['learning_positive_count'] ?? 0);
+        $learningNegativeCount = (int) ($learningEvidence['learning_negative_count'] ?? 0);
+        if ($learningScore !== 0.0) {
+            $score += max(-45.0, min(32.0, $learningScore));
+        }
+
+        if ($learningPositiveCount > 0) {
+            $reasons[] = 'learning_positive_evidence';
+        }
+
+        if ($learningNegativeCount > 0) {
+            $reasons[] = 'learning_negative_evidence';
+        }
+
         $resources = $this->resourcesForNorm($norm, $priceVersions, $context);
         $resourceCount = count($resources['materials']) + count($resources['machinery']) + count($resources['labor']) + count($resources['other']);
         $pricedCount = $this->pricedResourcesCount($resources);
@@ -331,8 +377,18 @@ class EstimateNormativeMatcher
             'score' => round($score, 2),
             'confidence' => $confidence,
             'match_reasons' => array_values(array_unique($reasons)),
-            'warnings' => $this->warningsForCandidate($confidence, $resourceCount, $pricedCount, !$unitMatches),
+            'warnings' => $this->warningsForCandidate(
+                $confidence,
+                $resourceCount,
+                $pricedCount,
+                !$unitMatches,
+                $learningNegativeCount
+            ),
             'resources' => $resources,
+            'learning_positive_count' => $learningPositiveCount,
+            'learning_negative_count' => $learningNegativeCount,
+            'learning_score' => round($learningScore, 2),
+            'learning_sources' => array_values($learningEvidence['learning_sources'] ?? []),
         ];
     }
 
@@ -445,7 +501,13 @@ class EstimateNormativeMatcher
     /**
      * @return array<int, string>
      */
-    private function warningsForCandidate(float $confidence, int $resourceCount, int $pricedCount, bool $unitMismatch): array
+    private function warningsForCandidate(
+        float $confidence,
+        int $resourceCount,
+        int $pricedCount,
+        bool $unitMismatch,
+        int $learningNegativeCount = 0
+    ): array
     {
         $warnings = [];
 
@@ -465,7 +527,24 @@ class EstimateNormativeMatcher
             $warnings[] = 'unit_mismatch';
         }
 
+        if ($learningNegativeCount > 0) {
+            $warnings[] = 'learning_negative_evidence';
+        }
+
         return $warnings;
+    }
+
+    /**
+     * @return array{learning_positive_count: int, learning_negative_count: int, learning_score: float, learning_sources: array<int, array<string, mixed>>}
+     */
+    private function emptyLearningEvidence(): array
+    {
+        return [
+            'learning_positive_count' => 0,
+            'learning_negative_count' => 0,
+            'learning_score' => 0.0,
+            'learning_sources' => [],
+        ];
     }
 
     private function resolvePrice(Collection $prices, string $resourceType, string $unit): ?EstimateResourcePrice

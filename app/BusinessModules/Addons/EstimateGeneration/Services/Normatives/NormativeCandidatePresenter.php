@@ -29,6 +29,10 @@ class NormativeCandidatePresenter
             'match_reasons' => array_values($candidate['match_reasons'] ?? []),
             'warnings' => array_values($candidate['warnings'] ?? []),
             'work_composition' => $this->normalizeComposition($candidate['work_composition'] ?? []),
+            'learning_positive_count' => (int) ($candidate['learning_positive_count'] ?? 0),
+            'learning_negative_count' => (int) ($candidate['learning_negative_count'] ?? 0),
+            'learning_score' => round((float) ($candidate['learning_score'] ?? 0), 2),
+            'learning_sources' => array_values($candidate['learning_sources'] ?? []),
         ];
     }
 

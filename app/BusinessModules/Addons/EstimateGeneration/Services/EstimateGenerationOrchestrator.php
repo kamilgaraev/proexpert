@@ -82,6 +82,9 @@ class EstimateGenerationOrchestrator
                     $this->updateGenerationProgress($session, 'resource_enrichment', min($progress, $packageProgressEnd));
                 };
                 $workItems = $this->resourceAssemblyService->enrich($workItems, [
+                    'organization_id' => $session->organization_id,
+                    'project_id' => $session->project_id,
+                    'user_id' => $session->user_id,
                     'scope_type' => $localEstimate['scope_type'] ?? null,
                     'local_estimate_title' => $localEstimate['title'] ?? null,
                     'section_title' => $section['title'] ?? null,

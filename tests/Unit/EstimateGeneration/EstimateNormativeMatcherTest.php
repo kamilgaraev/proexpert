@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationLearningExample;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
+use App\Models\Organization;
+use App\Models\Project;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -46,6 +49,63 @@ class EstimateNormativeMatcherTest extends TestCase
         $this->assertCount(1, $match['selected']['resources']['labor']);
         $this->assertCount(1, $match['selected']['resources']['machinery']);
         $this->assertSame(4200.0, $match['selected']['resources']['materials'][0]['unit_price']);
+    }
+
+    public function test_matcher_includes_learning_evidence_in_candidate_scoring(): void
+    {
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $versionId = $this->createVersion('fsnb_2022', '2026-05-30');
+        $priceVersionId = $this->createVersion('fsbc', '2026-05-30');
+        $collectionId = $this->createCollection($versionId);
+        $sectionId = $this->createSection($collectionId, 'Фундаменты');
+        $normId = $this->createNorm($collectionId, $sectionId, '01-01-001-01', 'Бетонирование фундаментной ленты', 'м3');
+        $this->createNormResource($normId, '01.1.01.01-0001', 'Бетон тяжелый', 'м3', 1.02, 'material');
+        $this->createResourcePrice($priceVersionId, '01.1.01.01-0001', 'Бетон тяжелый', 'м3', 4200, 'material');
+
+        EstimateGenerationLearningExample::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'source_type' => 'user_selection',
+            'source_entity_type' => 'estimate_generation_package_item',
+            'source_entity_id' => 700001,
+            'work_name' => 'Бетонирование фундаментной ленты B22.5',
+            'work_unit' => 'м3',
+            'work_quantity' => 13.8,
+            'work_intent' => ['scope' => 'foundation', 'action' => 'concreting', 'system' => null],
+            'estimate_norm_id' => $normId,
+            'norm_code' => '01-01-001-01',
+            'normative_name' => 'Бетонирование фундаментной ленты',
+            'normative_unit' => 'м3',
+            'decision_status' => 'selected_by_user',
+            'confidence' => 1.0,
+            'is_positive' => true,
+            'source_quality_score' => 1.0,
+            'context_payload' => ['section_title' => 'Фундамент'],
+            'source_refs' => [],
+            'quality_flags' => ['unit_compatible'],
+            'accepted_at' => now(),
+        ]);
+
+        $match = app(EstimateNormativeMatcher::class)->matchWorkItem([
+            'name' => 'Бетонирование фундаментной ленты B22.5',
+            'unit' => 'м3',
+            'quantity' => 13.8,
+        ], [
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'scope_type' => 'foundation',
+            'section_title' => 'Фундамент',
+            'local_estimate_title' => 'Фундамент',
+        ]);
+
+        $this->assertNotNull($match);
+        $this->assertSame('01-01-001-01', $match['selected']['code']);
+        $this->assertSame(1, $match['selected']['learning_positive_count']);
+        $this->assertSame(0, $match['selected']['learning_negative_count']);
+        $this->assertGreaterThan(0, $match['selected']['learning_score']);
+        $this->assertContains('learning_positive_evidence', $match['selected']['match_reasons']);
+        $this->assertSame('user_selection', $match['selected']['learning_sources'][0]['source_type']);
     }
 
     public function test_matcher_does_not_drop_roof_norm_after_code_ordered_earthwork_pool(): void
