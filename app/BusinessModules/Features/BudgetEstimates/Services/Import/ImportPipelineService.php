@@ -2,6 +2,7 @@
 
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Import;
 
+use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningRecorder;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\Factory\ParserFactory;
 use App\Models\Estimate;
@@ -50,7 +51,8 @@ class ImportPipelineService
         private FormulaAwarenessService $formulaAwareness,
         private \App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService $calculationService,
         private MaterialMatchingService $materialMatcher,
-        private EstimateImportFinancialSettingsResolver $financialSettingsResolver
+        private EstimateImportFinancialSettingsResolver $financialSettingsResolver,
+        private EstimateGenerationLearningRecorder $estimateGenerationLearningRecorder
     ) {}
 
     private function updateProgress(ImportSession $session, int $progress, string $message): void
@@ -208,6 +210,18 @@ class ImportPipelineService
             }
             
             DB::commit();
+
+            try {
+                $freshEstimate = $estimate->fresh() ?? $estimate;
+                $stats['learning_examples_created'] = $this->estimateGenerationLearningRecorder
+                    ->recordImportedEstimate($freshEstimate, $session->fresh());
+            } catch (\Throwable $e) {
+                Log::warning('[ImportPipeline] Estimate generation learning failed', [
+                    'session_id' => $session->id,
+                    'estimate_id' => $estimate->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
             
             Log::info("[ImportPipeline] Finished for session {$session->id}", $stats);
             
