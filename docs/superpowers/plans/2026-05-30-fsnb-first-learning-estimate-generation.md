@@ -10,6 +10,27 @@
 
 ---
 
+## Progress
+
+- [x] Task 1: Safety Regression Harness
+- [x] Task 2: Unit Compatibility And Conversion Model
+- [x] Task 3: Work Intent Classifier And Scope Rules
+- [ ] Task 4: Safe Candidate Search Before Scoring
+- [ ] Task 5: Hard Gate Decision Service
+- [ ] Task 6: Resource Assembly And Pricing Cannot Use Unsafe Candidates
+- [ ] Task 7: Line-Level Outlier Guard
+- [ ] Task 8: OCR Area Fact Ranking
+- [ ] Task 9: Learning Examples Schema
+- [ ] Task 10: Extract Learning Pairs From Imported Estimates
+- [ ] Task 11: Record User Normative Corrections
+- [ ] Task 12: RAG Source For Learning Examples
+- [ ] Task 13: Learning Evidence Retrieval For Normative Matching
+- [ ] Task 14: Normative Candidate Reranker
+- [ ] Task 15: Generation Flow And Progress UX Contract
+- [ ] Task 16: Admin UI For Progress, Evidence, And Review
+- [ ] Task 17: End-To-End Backend Quality Suite
+- [ ] Task 18: Production Diagnostic Readiness
+
 ## Operating Rules
 
 - Work directly in `prohelper` on `main`, as requested.

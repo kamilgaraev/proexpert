@@ -36,4 +36,11 @@ return [
             'auth_mode' => env('YANDEX_OCR_AUTH_MODE', 'api_key'),
         ],
     ],
+    'normative_matching' => [
+        'intent_classifier' => [
+            'enabled' => (bool) env('ESTIMATE_GENERATION_INTENT_CLASSIFIER_ENABLED', true),
+            'default_scope' => 'general',
+            'low_confidence_threshold' => 0.6,
+        ],
+    ],
 ];
