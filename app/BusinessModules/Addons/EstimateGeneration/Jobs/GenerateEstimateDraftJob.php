@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Jobs;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNotificationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -47,7 +48,10 @@ class GenerateEstimateDraftJob implements ShouldQueue
         $this->onQueue(self::QUEUE);
     }
 
-    public function handle(EstimateGenerationOrchestrator $orchestrator): void
+    public function handle(
+        EstimateGenerationOrchestrator $orchestrator,
+        ?EstimateGenerationNotificationService $notificationService = null
+    ): void
     {
         $session = EstimateGenerationSession::query()->find($this->sessionId);
 
@@ -66,12 +70,14 @@ class GenerateEstimateDraftJob implements ShouldQueue
             'last_error' => null,
         ])->save();
 
-        $orchestrator->generate($session);
+        $generatedSession = $orchestrator->generate($session);
+        $notificationService ??= app(EstimateGenerationNotificationService::class);
+        $notificationService->notifyFinished($generatedSession);
     }
 
     public function failed(\Throwable $exception): void
     {
-        EstimateGenerationSession::query()
+        $updated = EstimateGenerationSession::query()
             ->where('id', $this->sessionId)
             ->whereNotIn('status', self::TERMINAL_STATUSES)
             ->update([
@@ -81,6 +87,14 @@ class GenerateEstimateDraftJob implements ShouldQueue
                 'last_error' => mb_substr($exception->getMessage(), 0, 500),
                 'updated_at' => now(),
             ]);
+
+        if ($updated > 0) {
+            $session = EstimateGenerationSession::query()->find($this->sessionId);
+
+            if ($session instanceof EstimateGenerationSession) {
+                app(EstimateGenerationNotificationService::class)->notifyFailed($session, $exception);
+            }
+        }
 
         Log::error('[EstimateGeneration] Draft generation job failed', [
             'session_id' => $this->sessionId,

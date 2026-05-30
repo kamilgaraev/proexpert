@@ -7,7 +7,10 @@ namespace Tests\Feature\EstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationController;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNotificationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
+use App\BusinessModules\Features\Notifications\Models\Notification;
+use App\BusinessModules\Features\Notifications\Services\NotificationService;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -114,6 +117,74 @@ class EstimateGenerationQueueTest extends TestCase
         $session->refresh();
 
         $this->assertSame('ready_for_review', $session->status);
+    }
+
+    public function test_generation_job_notifies_user_when_generation_finishes(): void
+    {
+        [, , $session] = $this->makeGenerationSession('queued');
+        $orchestrator = Mockery::mock(EstimateGenerationOrchestrator::class);
+        $orchestrator->shouldReceive('generate')
+            ->once()
+            ->andReturnUsing(static function (EstimateGenerationSession $session): EstimateGenerationSession {
+                $session->forceFill([
+                    'status' => 'ready_for_review',
+                    'processing_stage' => 'validation_and_normalization',
+                    'processing_progress' => 100,
+                ])->save();
+
+                return $session->fresh(['documents']);
+            });
+
+        $notifications = Mockery::mock(EstimateGenerationNotificationService::class);
+        $notifications->shouldReceive('notifyFinished')
+            ->once()
+            ->with(Mockery::on(static fn (EstimateGenerationSession $notifiedSession): bool => $notifiedSession->id === $session->id
+                && $notifiedSession->status === 'ready_for_review'));
+
+        $job = new GenerateEstimateDraftJob($session->id);
+        $job->handle($orchestrator, $notifications);
+    }
+
+    public function test_generation_job_notifies_user_when_generation_fails(): void
+    {
+        [, , $session] = $this->makeGenerationSession('queued');
+        $notifications = Mockery::mock(EstimateGenerationNotificationService::class);
+        $notifications->shouldReceive('notifyFailed')
+            ->once()
+            ->with(
+                Mockery::on(static fn (EstimateGenerationSession $notifiedSession): bool => $notifiedSession->id === $session->id
+                    && $notifiedSession->status === 'failed'),
+                Mockery::type(RuntimeException::class)
+            );
+        $this->app->instance(EstimateGenerationNotificationService::class, $notifications);
+
+        $job = new GenerateEstimateDraftJob($session->id);
+        $job->failed(new RuntimeException('generation failed'));
+    }
+
+    public function test_estimate_generation_notification_contains_admin_target_route(): void
+    {
+        [$user, $project, $session] = $this->makeGenerationSession('ready_for_review');
+        $notificationService = Mockery::mock(NotificationService::class);
+        $notificationService->shouldReceive('send')
+            ->once()
+            ->with(
+                Mockery::on(static fn (User $recipient): bool => $recipient->is($user)),
+                'estimate_generation_completed',
+                Mockery::on(static fn (array $data): bool => $data['target_route'] === "/projects/{$project->id}/estimates/ai-workspace/{$session->id}"
+                    && $data['force_send'] === true
+                    && $data['entity_type'] === 'estimate_generation_session'
+                    && $data['entity_id'] === $session->id
+                    && $data['project_id'] === $project->id
+                    && ($data['actions'][0]['route'] ?? null) === $data['target_route']),
+                'custom',
+                'normal',
+                ['in_app', 'websocket'],
+                $session->organization_id
+            )
+            ->andReturn(new Notification());
+
+        (new EstimateGenerationNotificationService($notificationService))->notifyFinished($session);
     }
 
     public function test_status_returns_lightweight_generation_state(): void
