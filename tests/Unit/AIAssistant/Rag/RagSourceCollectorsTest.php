@@ -169,7 +169,7 @@ class RagSourceCollectorsTest extends TestCase
     {
         [$organization] = $this->seedExpandedRagDomainRecords();
 
-        $chunks = iterator_to_array((new EstimateReferenceRagSource())->collectForOrganization($organization->id));
+        $chunks = iterator_to_array((new EstimateReferenceRagSource)->collectForOrganization($organization->id));
         $entityTypes = array_map(static fn ($chunk): string => $chunk->entityType, $chunks);
 
         $this->assertContains('estimate_template', $entityTypes);
@@ -182,6 +182,71 @@ class RagSourceCollectorsTest extends TestCase
         $this->assertTrue(collect($chunks)->contains(static fn ($chunk): bool => $chunk->metadata['reference_kind'] === 'normative_rate'));
     }
 
+    public function test_estimate_collector_indexes_sections_with_their_positions(): void
+    {
+        [$organization, $projectA, $projectB] = $this->seedExpandedRagDomainRecords();
+        $estimate = Estimate::query()->where('project_id', $projectA->id)->firstOrFail();
+        $parentSection = EstimateSection::query()->where('estimate_id', $estimate->id)->firstOrFail();
+        $childSection = EstimateSection::query()->create([
+            'estimate_id' => $estimate->id,
+            'parent_section_id' => $parentSection->id,
+            'section_number' => '1.1',
+            'name' => 'Pile works A',
+            'sort_order' => 2,
+            'section_total_amount' => 20000,
+        ]);
+        EstimateItem::query()->create([
+            'estimate_id' => $estimate->id,
+            'estimate_section_id' => $childSection->id,
+            'item_type' => 'work',
+            'position_number' => '1.1-A',
+            'name' => 'Pile cap concrete A',
+            'quantity' => 4,
+            'quantity_total' => 4,
+            'unit_price' => 5000,
+            'current_unit_price' => 5000,
+            'total_amount' => 20000,
+            'current_total_amount' => 20000,
+        ]);
+
+        $chunks = iterator_to_array((new EstimateRagSource)->collectForOrganization($organization->id, $projectA->id));
+        $sectionChunk = collect($chunks)->first(static fn ($chunk): bool => $chunk->entityType === 'estimate_section');
+
+        $this->assertNotNull($sectionChunk);
+        $this->assertSame($organization->id, $sectionChunk->organizationId);
+        $this->assertSame($projectA->id, $sectionChunk->projectId);
+        $this->assertSame('estimate', $sectionChunk->sourceType);
+        $this->assertStringContainsString('Foundation section A', $sectionChunk->title);
+        $this->assertStringContainsString('Foundation section A', $sectionChunk->content);
+        $this->assertStringContainsString('Concrete foundation A', $sectionChunk->content);
+        $this->assertStringContainsString('Pile cap concrete A', $sectionChunk->content);
+        $this->assertStringContainsString('FER06-01-001', $sectionChunk->content);
+        $this->assertSame(2, $sectionChunk->metadata['items_count']);
+        $this->assertSame(120000.0, $sectionChunk->metadata['section_total_amount']);
+        $this->assertNotSame($projectB->id, $sectionChunk->projectId);
+    }
+
+    public function test_estimate_collector_collects_single_section_entity(): void
+    {
+        [$organization, $projectA] = $this->seedExpandedRagDomainRecords();
+
+        $section = EstimateSection::query()
+            ->whereHas('estimate', static fn ($query) => $query->where('project_id', $projectA->id))
+            ->firstOrFail();
+
+        $chunks = iterator_to_array((new EstimateRagSource)->collectEntity(
+            $organization->id,
+            'estimate_section',
+            $section->id
+        ));
+
+        $this->assertCount(1, $chunks);
+        $this->assertSame('estimate_section', $chunks[0]->entityType);
+        $this->assertSame($section->id, $chunks[0]->entityId);
+        $this->assertSame($section->estimate_id, $chunks[0]->metadata['estimate_id']);
+        $this->assertStringContainsString('Concrete foundation A', $chunks[0]->content);
+    }
+
     public function test_operational_collectors_index_expanded_entity_types(): void
     {
         [$organization, $project, $user, $material] = $this->seedRagCoreRecords();
@@ -190,7 +255,7 @@ class RagSourceCollectorsTest extends TestCase
         $this->seedWarehouseEntities($organization, $project, $user, $material);
         $this->seedScheduleEntities($organization, $project, $user);
 
-        $this->assertCollectorEntityTypes(new ProcurementRagSource(), $organization->id, [
+        $this->assertCollectorEntityTypes(new ProcurementRagSource, $organization->id, [
             'purchase_request',
             'supplier_request',
             'supplier_proposal',
@@ -201,7 +266,7 @@ class RagSourceCollectorsTest extends TestCase
             'procurement_audit_event',
         ]);
 
-        $this->assertCollectorEntityTypes(new WarehouseRagSource(), $organization->id, [
+        $this->assertCollectorEntityTypes(new WarehouseRagSource, $organization->id, [
             'project_material_delivery',
             'warehouse_balance',
             'warehouse_movement',
@@ -213,7 +278,7 @@ class RagSourceCollectorsTest extends TestCase
             'warehouse_asset',
         ]);
 
-        $this->assertCollectorEntityTypes(new ScheduleRagSource(), $organization->id, [
+        $this->assertCollectorEntityTypes(new ScheduleRagSource, $organization->id, [
             'schedule',
             'schedule_task',
         ]);
@@ -235,7 +300,7 @@ class RagSourceCollectorsTest extends TestCase
         $this->seedChangeManagementEntities($organization, $project, $user);
         $this->seedHandoverAcceptanceEntities($organization, $project, $user);
 
-        $this->assertCollectorEntityTypes(new SafetyRagSource(), $organization->id, [
+        $this->assertCollectorEntityTypes(new SafetyRagSource, $organization->id, [
             'safety_incident',
             'safety_violation',
             'safety_work_permit',
@@ -243,7 +308,7 @@ class RagSourceCollectorsTest extends TestCase
             'safety_corrective_action',
         ]);
 
-        $this->assertCollectorEntityTypes(new MachineryRagSource(), $organization->id, [
+        $this->assertCollectorEntityTypes(new MachineryRagSource, $organization->id, [
             'machinery_asset',
             'machinery_assignment',
             'machinery_shift_report',
@@ -253,7 +318,7 @@ class RagSourceCollectorsTest extends TestCase
             'machinery_production_record',
         ]);
 
-        $this->assertCollectorEntityTypes(new ProductionLaborRagSource(), $organization->id, [
+        $this->assertCollectorEntityTypes(new ProductionLaborRagSource, $organization->id, [
             'production_labor_work_order',
             'production_labor_work_order_line',
             'production_labor_timesheet',
@@ -262,7 +327,7 @@ class RagSourceCollectorsTest extends TestCase
             'production_labor_payroll_accrual',
         ]);
 
-        $this->assertCollectorEntityTypes(new ChangeManagementRagSource(), $organization->id, [
+        $this->assertCollectorEntityTypes(new ChangeManagementRagSource, $organization->id, [
             'change_management_rfi',
             'change_request',
             'change_claim',
@@ -271,7 +336,7 @@ class RagSourceCollectorsTest extends TestCase
             'variation_order',
         ]);
 
-        $this->assertCollectorEntityTypes(new HandoverAcceptanceRagSource(), $organization->id, [
+        $this->assertCollectorEntityTypes(new HandoverAcceptanceRagSource, $organization->id, [
             'project_location',
             'acceptance_scope',
             'acceptance_session',
@@ -971,11 +1036,11 @@ class RagSourceCollectorsTest extends TestCase
     private function collectors(): array
     {
         return [
-            [new ProcurementRagSource(), 'procurement'],
-            [new WarehouseRagSource(), 'warehouse'],
-            [new SiteRequestRagSource(), 'site_request'],
-            [new WorkCompletionRagSource(), 'work_completion'],
-            [new ProjectPulseRagSource(), 'project_pulse'],
+            [new ProcurementRagSource, 'procurement'],
+            [new WarehouseRagSource, 'warehouse'],
+            [new SiteRequestRagSource, 'site_request'],
+            [new WorkCompletionRagSource, 'work_completion'],
+            [new ProjectPulseRagSource, 'project_pulse'],
         ];
     }
 
@@ -985,11 +1050,11 @@ class RagSourceCollectorsTest extends TestCase
     private function expandedCollectors(): array
     {
         return [
-            [new EstimateRagSource(), 'estimate'],
-            [new ConstructionJournalRagSource(), 'construction_journal'],
-            [new PerformanceActRagSource(), 'performance_act'],
-            [new PaymentRagSource(), 'payment'],
-            [new QualityAndExecutiveDocsRagSource(), 'quality_executive_docs'],
+            [new EstimateRagSource, 'estimate'],
+            [new ConstructionJournalRagSource, 'construction_journal'],
+            [new PerformanceActRagSource, 'performance_act'],
+            [new PaymentRagSource, 'payment'],
+            [new QualityAndExecutiveDocsRagSource, 'quality_executive_docs'],
         ];
     }
 

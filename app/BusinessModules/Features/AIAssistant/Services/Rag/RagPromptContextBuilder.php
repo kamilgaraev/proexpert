@@ -66,7 +66,7 @@ final class RagPromptContextBuilder
             '- Отвечай на русском и опирайся только на источники ниже.',
             '- Если запрос о проблемах, рисках, заявках или внимании, дай компактный рабочий список в формате: Проблема — что не так — что сделать.',
             '- Если пользователь просит сравнить договоры, сметы, работы и платежи, дай текстовый анализ расхождений и рисков по найденным источникам, без генерации файла.',
-            '- Если запрос явно про справочники, нормативы, каталоги или расценки, не подменяй их проектными сметами; если таких источников нет, честно напиши, что в справочниках ничего подходящего не найдено.',
+            '- Если запрос только или явно именно про справочники, нормативы, каталоги или расценки, не подменяй их проектными сметами; если вопрос одновременно про сметы и нормативы, используй оба типа источников и отдельно отметь, если справочников нет.',
             '- Не называй проект или ситуацию критической без явной метки critical/urgent/high или прямого критического факта в источниках; при косвенных признаках пиши мягче: "есть признаки проблемы".',
         ];
 
@@ -90,6 +90,7 @@ final class RagPromptContextBuilder
         $entityId = is_numeric($result->entityId) ? (int) $result->entityId : null;
         $journalId = self::metadataInt($result, 'journal_id');
         $documentSetId = self::metadataInt($result, 'document_set_id');
+        $estimateId = self::metadataInt($result, 'estimate_id');
 
         $route = match ($result->entityType) {
             'project' => $entityId !== null ? "/projects/{$entityId}" : null,
@@ -99,6 +100,9 @@ final class RagPromptContextBuilder
             'contract' => $entityId !== null ? "/contracts/{$entityId}" : null,
             'estimate' => $entityId !== null && $result->projectId !== null
                 ? "/projects/{$result->projectId}/estimates/{$entityId}"
+                : ($result->projectId !== null ? "/projects/{$result->projectId}/estimates" : null),
+            'estimate_section' => $estimateId !== null && $result->projectId !== null
+                ? "/projects/{$result->projectId}/estimates/{$estimateId}"
                 : ($result->projectId !== null ? "/projects/{$result->projectId}/estimates" : null),
             'estimate_template' => '/templates/library',
             'estimate_library_item' => '/libraries',

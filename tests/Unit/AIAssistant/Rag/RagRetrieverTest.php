@@ -141,6 +141,34 @@ class RagRetrieverTest extends TestCase
         $this->assertNotContains('estimate', array_map(static fn ($result): string => $result->sourceType, $results));
     }
 
+    public function test_search_keeps_project_estimates_for_mixed_estimate_and_reference_query(): void
+    {
+        [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(
+            UserProjectAccessMode::ALL_PROJECTS->value
+        );
+
+        $this->indexChunk(
+            $organization->id,
+            $project->id,
+            'Смета: Фундамент',
+            'Смета проекта содержит раздел Фундамент и позиции по бетонированию.',
+            [1.0, 0.0, 0.0],
+            'estimate',
+            'estimate_section'
+        );
+
+        $results = $this->retriever([1.0, 0.0, 0.0])->search(
+            'На основе существующих смет и нормативов что похоже на устройство фундамента?',
+            $organization->id,
+            $user,
+            ['project_id' => $project->id]
+        );
+
+        $this->assertCount(1, $results);
+        $this->assertSame('estimate', $results[0]->sourceType);
+        $this->assertSame('estimate_section', $results[0]->entityType);
+    }
+
     public function test_search_uses_lexical_fallback_when_vector_matches_are_below_threshold(): void
     {
         [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(

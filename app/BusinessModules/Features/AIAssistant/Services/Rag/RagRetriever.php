@@ -18,8 +18,7 @@ final class RagRetriever
     public function __construct(
         private readonly RagEmbeddingProviderInterface $embeddingProvider,
         private readonly UserProjectAccessService $projectAccessService
-    ) {
-    }
+    ) {}
 
     /**
      * @param  array<string, mixed>  $requestContext
@@ -310,10 +309,10 @@ SQL;
     {
         $normalized = str_replace('ё', 'е', mb_strtolower($query));
 
-        foreach (['справочник', 'справочн', 'норматив', 'расценк', 'каталог'] as $marker) {
-            if (str_contains($normalized, $marker)) {
-                return ['estimate_reference'];
-            }
+        if ($this->hasAnyMarker($normalized, ['справочник', 'справочн', 'норматив', 'расценк', 'каталог'])) {
+            return $this->hasAnyMarker($normalized, ['смет', 'сметн'])
+                ? ['estimate', 'estimate_reference']
+                : ['estimate_reference'];
         }
 
         if ($this->isFinanceQuery($normalized)) {
@@ -416,6 +415,20 @@ SQL;
     private function isFinanceQuery(string $normalizedQuery): bool
     {
         foreach (['финанс', 'бюджет', 'затрат', 'расход', 'оплат', 'платеж', 'платёж', 'счет', 'счёт', 'прибыл', 'рентабельн', 'маржинальн'] as $marker) {
+            if (str_contains($normalizedQuery, $marker)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  array<int, string>  $markers
+     */
+    private function hasAnyMarker(string $normalizedQuery, array $markers): bool
+    {
+        foreach ($markers as $marker) {
             if (str_contains($normalizedQuery, $marker)) {
                 return true;
             }

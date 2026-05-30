@@ -20,7 +20,7 @@ class RagPromptContextBuilderTest extends TestCase
 
     public function test_builds_prompt_and_metadata_from_results(): void
     {
-        $builder = new RagPromptContextBuilder();
+        $builder = new RagPromptContextBuilder;
         $result = new RagSearchResult(
             sourceType: 'schedule',
             entityType: 'schedule',
@@ -55,7 +55,7 @@ class RagPromptContextBuilderTest extends TestCase
 
     public function test_empty_results_mark_context_unused_without_sources(): void
     {
-        $context = (new RagPromptContextBuilder())->build('missing context', []);
+        $context = (new RagPromptContextBuilder)->build('missing context', []);
 
         $this->assertSame('', $context['prompt']);
         $this->assertTrue($context['metadata']['enabled']);
@@ -70,6 +70,7 @@ class RagPromptContextBuilderTest extends TestCase
 
         $cases = [
             ['estimate', '55', 10, [], '/projects/10/estimates/55'],
+            ['estimate_section', '56', 10, ['estimate_id' => 55], '/projects/10/estimates/55'],
             ['estimate_template', '7', null, [], '/templates/library'],
             ['estimate_library_item', '8', null, [], '/libraries'],
             ['normative_rate', '9', null, [], '/catalogs/estimate-positions'],
@@ -147,7 +148,7 @@ class RagPromptContextBuilderTest extends TestCase
             $cases
         );
 
-        $context = (new RagPromptContextBuilder())->build('open source', $results);
+        $context = (new RagPromptContextBuilder)->build('open source', $results);
 
         foreach ($cases as $index => $case) {
             $this->assertSame($case[4], $context['metadata']['sources'][$index]['navigation_target']['route']);
