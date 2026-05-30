@@ -36,6 +36,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationSer
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningEvidenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSearchService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeScopeRuleCatalog;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\LLMNormativeCandidateReranker;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\NormativeCandidateRerankerInterface;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\RuleBasedNormativeCandidateReranker;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\ConstructionDocumentFactExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
@@ -52,6 +55,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\SpreadsheetDocume
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\WorkItemGenerationService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\ExcelEstimateBuilder;
+use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use Illuminate\Support\ServiceProvider;
 
 class EstimateGenerationServiceProvider extends ServiceProvider
@@ -83,6 +87,19 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(WorkIntentClassifier::class);
         $this->app->singleton(NormativeCandidateSearchService::class);
         $this->app->singleton(EstimateGenerationLearningEvidenceService::class);
+        $this->app->singleton(RuleBasedNormativeCandidateReranker::class);
+        $this->app->singleton(LLMNormativeCandidateReranker::class, fn ($app) => new LLMNormativeCandidateReranker(
+            $app->make(LLMProviderInterface::class),
+            $app->make(RuleBasedNormativeCandidateReranker::class)
+        ));
+        $this->app->singleton(NormativeCandidateRerankerInterface::class, function ($app): NormativeCandidateRerankerInterface {
+            $provider = (string) config('estimate-generation.normative_matching.reranker.provider', 'rule_based');
+            $llmEnabled = (bool) config('estimate-generation.normative_matching.reranker.llm_enabled', false);
+
+            return $provider === 'llm' && $llmEnabled
+                ? $app->make(LLMNormativeCandidateReranker::class)
+                : $app->make(RuleBasedNormativeCandidateReranker::class);
+        });
         $this->app->singleton(EstimateGenerationExcelExportService::class, fn () => new EstimateGenerationExcelExportService(
             app(ExcelEstimateBuilder::class)
         ));

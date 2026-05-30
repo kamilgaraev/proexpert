@@ -13,9 +13,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNormResource;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegionalPriceVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateResourcePrice;
+use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\NormativeRerankResultData;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningEvidenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSearchService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\NormativeCandidateRerankerInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
@@ -27,13 +29,16 @@ class EstimateNormativeMatcher
 
     private readonly NormativeCandidateSearchService $candidateSearchService;
     private readonly EstimateGenerationLearningEvidenceService $learningEvidenceService;
+    private readonly NormativeCandidateRerankerInterface $reranker;
 
     public function __construct(
         ?NormativeCandidateSearchService $candidateSearchService = null,
         ?EstimateGenerationLearningEvidenceService $learningEvidenceService = null,
+        ?NormativeCandidateRerankerInterface $reranker = null,
     ) {
         $this->candidateSearchService = $candidateSearchService ?? app(NormativeCandidateSearchService::class);
         $this->learningEvidenceService = $learningEvidenceService ?? app(EstimateGenerationLearningEvidenceService::class);
+        $this->reranker = $reranker ?? app(NormativeCandidateRerankerInterface::class);
     }
 
     /**
@@ -75,6 +80,9 @@ class EstimateNormativeMatcher
             return null;
         }
 
+        $rerankResult = $this->reranker->rerank($workItem, $context, $ranked);
+        $ranked = $this->applyRerankResult($ranked, $rerankResult);
+
         return [
             'version' => [
                 'source_type' => $version->source_type->value,
@@ -88,6 +96,7 @@ class EstimateNormativeMatcher
                 'source_type' => $version->source_type->value,
                 'version_key' => $version->version_key,
             ])->values()->all(),
+            'rerank' => $rerankResult->toArray(),
             'selected' => $ranked[0],
             'candidates' => $ranked,
         ];
@@ -141,6 +150,7 @@ class EstimateNormativeMatcher
                 'source_type' => $version->source_type->value,
                 'version_key' => $version->version_key,
             ])->values()->all(),
+            'rerank' => null,
             'selected' => $candidate,
             'candidates' => [$candidate],
         ];
@@ -545,6 +555,34 @@ class EstimateNormativeMatcher
             'learning_score' => 0.0,
             'learning_sources' => [],
         ];
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $ranked
+     * @return array<int, array<string, mixed>>
+     */
+    private function applyRerankResult(array $ranked, NormativeRerankResultData $result): array
+    {
+        if ($result->selectedCandidateKey === null) {
+            return $ranked;
+        }
+
+        $selectedIndex = null;
+        foreach ($ranked as $index => $candidate) {
+            if ((string) ($candidate['key'] ?? '') === $result->selectedCandidateKey) {
+                $selectedIndex = $index;
+                break;
+            }
+        }
+
+        if ($selectedIndex === null || $selectedIndex === 0) {
+            return $ranked;
+        }
+
+        $selected = $ranked[$selectedIndex];
+        unset($ranked[$selectedIndex]);
+
+        return array_values([$selected, ...$ranked]);
     }
 
     private function resolvePrice(Collection $prices, string $resourceType, string $unit): ?EstimateResourcePrice

@@ -25,7 +25,7 @@
 - [x] Task 11: Record User Normative Corrections
 - [x] Task 12: RAG Source For Learning Examples
 - [x] Task 13: Learning Evidence Retrieval For Normative Matching
-- [ ] Task 14: Normative Candidate Reranker
+- [x] Task 14: Normative Candidate Reranker
 - [ ] Task 15: Generation Flow And Progress UX Contract
 - [ ] Task 16: Admin UI For Progress, Evidence, And Review
 - [ ] Task 17: End-To-End Backend Quality Suite

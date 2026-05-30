@@ -42,5 +42,11 @@ return [
             'default_scope' => 'general',
             'low_confidence_threshold' => 0.6,
         ],
+        'reranker' => [
+            'provider' => env('ESTIMATE_GENERATION_NORM_RERANKER', 'rule_based'),
+            'llm_enabled' => (bool) env('ESTIMATE_GENERATION_NORM_RERANKER_LLM_ENABLED', false),
+            'max_candidates' => (int) env('ESTIMATE_GENERATION_NORM_RERANKER_MAX_CANDIDATES', 8),
+            'timeout_seconds' => (int) env('ESTIMATE_GENERATION_NORM_RERANKER_TIMEOUT', 15),
+        ],
     ],
 ];
