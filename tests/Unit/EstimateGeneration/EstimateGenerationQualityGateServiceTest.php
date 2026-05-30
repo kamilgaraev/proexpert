@@ -54,4 +54,58 @@ class EstimateGenerationQualityGateServiceTest extends TestCase
         $this->assertContains('total_out_of_range', $report->criticalFlags);
         $this->assertContains('section_total_anomaly', $report->criticalFlags);
     }
+
+    public function test_candidate_line_total_anomaly_blocks_generation(): void
+    {
+        $report = app(EstimateGenerationQualityGateService::class)->evaluate([
+            'object_profile' => [
+                'object_type' => 'house',
+                'area' => 150,
+            ],
+            'totals' => [
+                'total_cost' => 40000000,
+                'work_items_count' => 320,
+            ],
+            'local_estimates' => [
+                [
+                    'scope_type' => 'engineering',
+                    'totals' => ['items_count' => 120, 'total_cost' => 16000000],
+                    'sections' => [
+                        [
+                            'totals' => ['items_count' => 60, 'total_cost' => 16000000],
+                            'validation_flags' => [],
+                            'work_items' => [
+                                [
+                                    'name' => 'Разводка труб отопления',
+                                    'unit' => 'м2',
+                                    'quantity' => 15,
+                                    'total_cost' => 14500000,
+                                    'normative_match' => [
+                                        'status' => 'candidate',
+                                        'can_use_for_pricing' => true,
+                                        'warnings' => ['unit_mismatch'],
+                                    ],
+                                    'validation_flags' => [],
+                                ],
+                            ],
+                        ],
+                    ],
+                    'validation_flags' => [],
+                ],
+                [
+                    'scope_type' => 'roof',
+                    'totals' => ['items_count' => 100, 'total_cost' => 12000000],
+                    'validation_flags' => [],
+                ],
+                [
+                    'scope_type' => 'finishing',
+                    'totals' => ['items_count' => 100, 'total_cost' => 12000000],
+                    'validation_flags' => [],
+                ],
+            ],
+        ]);
+
+        $this->assertSame('blocked', $report->level);
+        $this->assertContains('line_total_anomaly', $report->criticalFlags);
+    }
 }

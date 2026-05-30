@@ -27,7 +27,7 @@ class NormativeMatchDecisionServiceTest extends TestCase
         $this->assertContains('low_confidence', $decision->warnings);
     }
 
-    public function test_unit_mismatch_candidate_can_be_used_for_pricing_with_review_warning(): void
+    public function test_unit_mismatch_candidate_cannot_be_used_for_pricing(): void
     {
         $decision = app(NormativeMatchDecisionService::class)->decide([
             'confidence' => 0.9,
@@ -41,7 +41,7 @@ class NormativeMatchDecisionServiceTest extends TestCase
         ], ['unit' => 'м2']);
 
         $this->assertSame('candidate', $decision->status);
-        $this->assertTrue($decision->canUseForPricing);
+        $this->assertFalse($decision->canUseForPricing);
         $this->assertContains('unit_mismatch', $decision->warnings);
     }
 
