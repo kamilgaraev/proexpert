@@ -29,7 +29,7 @@
 - [x] Task 15: Generation Flow And Progress UX Contract
 - [x] Task 16: Admin UI For Progress, Evidence, And Review
 - [x] Task 17: End-To-End Backend Quality Suite
-- [ ] Task 18: Production Diagnostic Readiness
+- [x] Task 18: Production Diagnostic Readiness
 
 ## Operating Rules
 

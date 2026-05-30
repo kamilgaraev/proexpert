@@ -29,6 +29,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticP
 use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecompositionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationAuditService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationExcelExportService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
@@ -83,6 +84,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(EstimatePricingService::class);
         $this->app->singleton(EstimateValidationService::class);
         $this->app->singleton(EstimateDraftPersistenceService::class);
+        $this->app->singleton(EstimateGenerationAuditService::class);
         $this->app->singleton(NormativeScopeRuleCatalog::class);
         $this->app->singleton(WorkIntentClassifier::class);
         $this->app->singleton(NormativeCandidateSearchService::class);

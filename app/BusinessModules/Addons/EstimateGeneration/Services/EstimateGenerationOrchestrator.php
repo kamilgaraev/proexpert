@@ -20,6 +20,7 @@ class EstimateGenerationOrchestrator
         protected PackagePlannerService $packagePlannerService,
         protected EstimateGenerationPackagePersistenceService $packagePersistenceService,
         protected EstimateGenerationQualityGateService $qualityGateService,
+        protected EstimateGenerationAuditService $auditService,
     ) {}
 
     public function analyze(EstimateGenerationSession $session): EstimateGenerationSession
@@ -130,6 +131,7 @@ class EstimateGenerationOrchestrator
             ...$qualityReport->warningFlags,
         ]));
         $this->packagePersistenceService->syncFromDraft($session, $draft);
+        $this->auditService->recordNormativeDecisionSummary($session, $draft);
 
         $status = match ($qualityReport->level) {
             'passed' => 'ready_for_review',
