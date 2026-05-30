@@ -34,6 +34,7 @@ class RagSourceRegistryTest extends TestCase
             'schedule',
             'contract',
             'estimate',
+            'estimate_generation_learning',
             'estimate_reference',
             'procurement',
             'warehouse',

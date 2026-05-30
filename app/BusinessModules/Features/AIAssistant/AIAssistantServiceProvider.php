@@ -57,6 +57,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\YandexRagEmbeddingProv
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ChangeManagementRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ConstructionJournalRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ContractRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\EstimateGenerationLearningRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\EstimateRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\EstimateReferenceRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\HandoverAcceptanceRagSource;
@@ -104,6 +105,7 @@ class AIAssistantServiceProvider extends ServiceProvider
                 $app->make(ScheduleRagSource::class),
                 $app->make(ContractRagSource::class),
                 $app->make(EstimateRagSource::class),
+                $app->make(EstimateGenerationLearningRagSource::class),
                 $app->make(EstimateReferenceRagSource::class),
                 $app->make(ProcurementRagSource::class),
                 $app->make(WarehouseRagSource::class),
