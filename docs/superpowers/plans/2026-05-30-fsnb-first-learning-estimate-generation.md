@@ -34,6 +34,137 @@ Production session evidence from project `56`, latest investigated session `23`:
 
 The implementation is successful only when these cases are impossible to price automatically.
 
+## Product Architecture: Estimate Memory + FSNB RAG
+
+This plan is not about trying to "teach one neural network estimates" once. The target product architecture is a learning normative system: ProHelper accumulates estimate experience from real imports and user corrections, then uses that evidence to improve FSNB selection while backend guardrails keep every generated draft safe.
+
+### Core Learning Loop
+
+Every useful estimate interaction becomes structured data:
+
+```text
+Imported estimates
++ user manual corrections
++ selected/rejected FSNB norms
++ actual quantities and units
++ region and price period
+= Estimate Memory
+```
+
+For a new generated position, the system retrieves evidence from Estimate Memory and FSNB:
+
+```text
+"Утепление кровли 200 мм"
+-> similar imported estimate lines
+-> norms users actually selected for similar lines
+-> user corrections where AI was wrong
+-> FSNB norms by title, collection, table, unit, composition, resources
+-> curated map for common private-house works
+-> reranked candidate list
+-> backend hard gates
+```
+
+The LLM/reranker helps choose among candidates. It is not allowed to invent a norm, skip unit checks, or turn an unsafe candidate into a priced line.
+
+### Data Corpora
+
+**FSNB Corpus**
+
+- Full normative corpus: code, collection, table, section, name, unit, work composition, resources, price availability, dataset version.
+- Used for authoritative pricing and resource decomposition.
+- Searchable both lexically and by structured filters: collection, section prefix, unit dimension, scope type, resources.
+
+**Imported Estimate Corpus**
+
+- Real imported estimates from users: project/object context, estimate section, work name, unit, quantity, normative code, price, region, quarter, import source.
+- Converted into learning examples only after normalization and quality checks.
+- High-value examples: imported work lines with a clear FSNB norm, compatible unit, non-zero quantity, and sane price.
+
+**Correction Corpus**
+
+- The most valuable data: cases where the system selected/offered one norm and the user selected another.
+- Stores both sides:
+  - rejected candidate;
+  - accepted candidate;
+  - work context;
+  - reason/feedback when provided.
+- Used as positive and negative ranking evidence.
+
+**Curated Map**
+
+- Expert deterministic map for common private-house and warehouse works.
+- Examples: `foundation.concreting`, `foundation.reinforcement`, `roof.insulation`, `engineering.heating_pipe_layout`, `engineering.cable_installation`.
+- Gives safe first-pass scope and section constraints before any neural/rag ranking.
+
+### Quality Gate Before Learning
+
+No online fine-tune from raw imports. A bad uploaded estimate must not poison the system.
+
+An imported or corrected example is allowed into active learning only when it has:
+
+- normalized work name;
+- known unit dimension;
+- FSNB code or selected norm id;
+- compatible work unit and norm unit, or explicit conversion metadata;
+- non-empty object/section context;
+- sane quantity and price range;
+- organization/project provenance;
+- source quality status.
+
+Low-quality examples stay stored for audit but do not influence ranking until reviewed or normalized.
+
+### Retrieval And Ranking Flow
+
+For each generated work item:
+
+1. `WorkIntentClassifier` determines scope/action/object/material/system.
+2. `NormativeCandidateSearchService` retrieves FSNB candidates with structured filters.
+3. `EstimateGenerationLearningEvidenceService` retrieves similar imported lines and corrections.
+4. RAG source `estimate_generation_learning` provides semantic evidence when indexed chunks exist.
+5. `RuleBasedNormativeCandidateReranker` ranks candidates deterministically by hard facts and evidence.
+6. Optional `LLMNormativeCandidateReranker` receives only the short safe candidate list and may choose a candidate or `none`.
+7. `NormativeMatchDecisionService` applies backend hard gates.
+8. `ResourceAssemblyService` applies resources only if the decision allows pricing.
+9. `EstimateGenerationQualityGateService` checks line, section, and draft-level anomalies.
+
+### Confidence Semantics
+
+- High confidence + hard gates passed: norm is selected and priced.
+- Medium confidence + hard gates passed: norm is priced, but the line is marked as needing review.
+- Low confidence: candidate is shown, but the line is not priced.
+- Unit mismatch, scope mismatch, forbidden domain, missing resources, missing prices, or outlier risk: candidate cannot price the line.
+
+### Development Stages
+
+**Stage 1: RAG and Estimate Memory without fine-tune**
+
+- Extract learning examples from imports and corrections.
+- Add deterministic retrieval and RAG source.
+- Use examples to boost/penalize candidates.
+- This is the first production milestone because it improves quality without risky model training.
+
+**Stage 2: Train or tune a reranker**
+
+- Use curated examples to train a small ranking layer: "which norm among these candidates is best for this position".
+- Keep backend hard gates unchanged.
+- Evaluate on held-out imported/corrected estimates.
+
+**Stage 3: Fine-tune an LLM only after enough clean data**
+
+- Start only after at least thousands of quality examples exist.
+- Fine-tune for structured reasoning and explanation, not for bypassing FSNB retrieval.
+- The fine-tuned model remains advisory; FSNB data and backend validation stay authoritative.
+
+### Product Moat
+
+The valuable asset becomes the accumulated graph:
+
+```text
+work text -> construction context -> FSNB norm -> unit conversion -> quantity pattern -> resources -> price period -> region -> user correction
+```
+
+This is why the product should evolve into a learning normative system, not a one-off AI generator. More real estimates through ProHelper should directly improve future FSNB matching quality.
+
 ## File Map
 
 ### Backend, EstimateGeneration
