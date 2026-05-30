@@ -312,7 +312,19 @@
       "contractor_invitations.stats",
       "contractor_invitations.cancel",
       "organizations.search",
-      "organizations.suggestions"
+      "organizations.suggestions",
+      "organizations.recommendations",
+      "organizations.availability.check",
+      "contractor_marketplace.categories.view",
+      "contractor_marketplace.search.view",
+      "contractor_marketplace.profile.view",
+      "contractor_marketplace.profile.edit",
+      "contractor_marketplace.profile.publish",
+      "contractor_marketplace.offers.view",
+      "contractor_marketplace.offers.create",
+      "contractor_marketplace.offers.cancel",
+      "contractor_marketplace.offers.review",
+      "contractor_marketplace.offers.respond"
     ],
     "file-management": [
       "personal_files.view",

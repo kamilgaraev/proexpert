@@ -9,9 +9,9 @@ use App\Http\Resources\Api\V1\Admin\ContractorInvitation\ContractorInvitationRes
 use App\Http\Resources\Api\V1\Admin\ContractorInvitation\ContractorInvitationCollection;
 use App\Exceptions\BusinessLogicException;
 use App\Http\Responses\AdminResponse;
+use App\Models\ContractorInvitation;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 
 class ContractorInvitationController extends Controller
@@ -113,7 +113,14 @@ class ContractorInvitationController extends Controller
         }
 
         try {
-            $invitation = \App\Models\ContractorInvitation::with(['invitedOrganization', 'invitedBy', 'organization'])
+            $invitation = ContractorInvitation::with([
+                'invitedOrganization',
+                'invitedBy',
+                'organization',
+                'acceptedBy',
+                'declinedBy',
+                'cancelledBy',
+            ])
                 ->where('id', $id)
                 ->where(function ($query) use ($organizationId) {
                     $query->where('organization_id', $organizationId)
@@ -147,22 +154,16 @@ class ContractorInvitationController extends Controller
         }
 
         try {
-            $invitation = \App\Models\ContractorInvitation::where('id', $id)
-                ->where('organization_id', $organizationId)
-                ->where('status', 'pending')
-                ->firstOrFail();
-
-            $invitation->update(['status' => 'expired']);
-
-            Log::info('Contractor invitation cancelled', [
-                'invitation_id' => $id,
-                'cancelled_by' => $user->id,
-                'organization_id' => $organizationId,
-            ]);
+            $this->invitationService->cancelInvitation(
+                $id,
+                (int) $organizationId,
+                $user,
+                $request->input('reason')
+            );
 
             return AdminResponse::success(null, trans_message('contract.invitation_cancelled'));
 
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+        } catch (BusinessLogicException $e) {
             return AdminResponse::error(trans_message('contract.invitation_not_found'), 404);
 
         } catch (\Exception $e) {

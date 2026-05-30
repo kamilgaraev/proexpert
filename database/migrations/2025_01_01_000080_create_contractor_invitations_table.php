@@ -14,10 +14,15 @@ return new class extends Migration
             $table->unsignedBigInteger('invited_organization_id');
             $table->unsignedBigInteger('invited_by_user_id');
             $table->string('token', 64)->unique();
-            $table->enum('status', ['pending', 'accepted', 'declined', 'expired'])->default('pending');
+            $table->enum('status', ['pending', 'accepted', 'declined', 'expired', 'cancelled'])->default('pending');
             $table->timestamp('expires_at');
             $table->timestamp('accepted_at')->nullable();
             $table->unsignedBigInteger('accepted_by_user_id')->nullable();
+            $table->timestamp('declined_at')->nullable();
+            $table->unsignedBigInteger('declined_by_user_id')->nullable();
+            $table->timestamp('cancelled_at')->nullable();
+            $table->unsignedBigInteger('cancelled_by_user_id')->nullable();
+            $table->text('status_reason')->nullable();
             $table->text('invitation_message')->nullable();
             $table->json('metadata')->nullable();
             $table->timestamps();
@@ -26,14 +31,14 @@ return new class extends Migration
             $table->foreign('invited_organization_id')->references('id')->on('organizations')->onDelete('cascade');
             $table->foreign('invited_by_user_id')->references('id')->on('users')->onDelete('cascade');
             $table->foreign('accepted_by_user_id')->references('id')->on('users')->onDelete('set null');
+            $table->foreign('declined_by_user_id')->references('id')->on('users')->onDelete('set null');
+            $table->foreign('cancelled_by_user_id')->references('id')->on('users')->onDelete('set null');
 
             $table->index(['organization_id', 'status']);
             $table->index(['invited_organization_id', 'status']);
             $table->index('expires_at');
             $table->index('created_at');
             $table->index(['organization_id', 'invited_organization_id']);
-            
-            $table->unique(['organization_id', 'invited_organization_id', 'status'], 'unique_active_invitation');
         });
     }
 

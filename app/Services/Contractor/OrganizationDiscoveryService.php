@@ -51,60 +51,44 @@ class OrganizationDiscoveryService
 
     public function getOrganizationAvailabilityStatus(int $organizationId, int $targetOrganizationId): array
     {
-        $cacheKey = "org_availability:{$organizationId}:{$targetOrganizationId}";
-        
-        return Cache::remember($cacheKey, 300, function () use ($organizationId, $targetOrganizationId) {
-            $existingInvitation = ContractorInvitation::where('organization_id', $organizationId)
-                ->where('invited_organization_id', $targetOrganizationId)
-                ->active()
-                ->first();
+        $existingInvitation = ContractorInvitation::where('organization_id', $organizationId)
+            ->where('invited_organization_id', $targetOrganizationId)
+            ->active()
+            ->first();
 
-            $existingContractor = Contractor::where('organization_id', $organizationId)
-                ->where('source_organization_id', $targetOrganizationId)
-                ->first();
+        $existingContractor = Contractor::where('organization_id', $organizationId)
+            ->where('source_organization_id', $targetOrganizationId)
+            ->first();
 
-            $reverseInvitation = ContractorInvitation::where('organization_id', $targetOrganizationId)
-                ->where('invited_organization_id', $organizationId)
-                ->active()
-                ->first();
+        $reverseInvitation = ContractorInvitation::where('organization_id', $targetOrganizationId)
+            ->where('invited_organization_id', $organizationId)
+            ->active()
+            ->first();
 
-            return [
-                'can_invite' => !$existingInvitation && !$existingContractor,
-                'existing_invitation' => $existingInvitation?->only(['id', 'status', 'created_at']),
-                'existing_contractor' => $existingContractor?->only(['id', 'name', 'connected_at']),
-                'reverse_invitation' => $reverseInvitation?->only(['id', 'status', 'created_at']),
-                'is_mutual' => $existingContractor && Contractor::where('organization_id', $targetOrganizationId)
-                    ->where('source_organization_id', $organizationId)
-                    ->exists(),
-            ];
-        });
+        return [
+            'can_invite' => !$existingInvitation && !$existingContractor && !$reverseInvitation,
+            'existing_invitation' => $existingInvitation?->only(['id', 'status', 'created_at']),
+            'existing_contractor' => $existingContractor?->only(['id', 'name', 'connected_at']),
+            'reverse_invitation' => $reverseInvitation?->only(['id', 'status', 'created_at']),
+            'is_mutual' => $existingContractor && Contractor::where('organization_id', $targetOrganizationId)
+                ->where('source_organization_id', $organizationId)
+                ->exists(),
+        ];
     }
 
     public function getBulkAvailabilityStatus(int $organizationId, array $targetOrganizationIds): array
     {
         $results = [];
-        $uncachedIds = [];
-        
-        foreach ($targetOrganizationIds as $targetId) {
-            $cacheKey = "org_availability:{$organizationId}:{$targetId}";
-            $cached = Cache::get($cacheKey);
-            
-            if ($cached !== null) {
-                $results[$targetId] = $cached;
-            } else {
-                $uncachedIds[] = $targetId;
-            }
+        $targetOrganizationIds = array_values(array_unique(array_map('intval', $targetOrganizationIds)));
+
+        if ($targetOrganizationIds === []) {
+            return $results;
         }
 
-        if (!empty($uncachedIds)) {
-            $bulkData = $this->getBulkAvailabilityData($organizationId, $uncachedIds);
-            
-            foreach ($uncachedIds as $targetId) {
-                $status = $this->processAvailabilityData($bulkData, $organizationId, $targetId);
-                $results[$targetId] = $status;
-                
-                Cache::put("org_availability:{$organizationId}:{$targetId}", $status, 300);
-            }
+        $bulkData = $this->getBulkAvailabilityData($organizationId, $targetOrganizationIds);
+
+        foreach ($targetOrganizationIds as $targetId) {
+            $results[$targetId] = $this->processAvailabilityData($bulkData, $organizationId, $targetId);
         }
 
         return $results;
@@ -123,14 +107,17 @@ class OrganizationDiscoveryService
                       ->orWhere('city', 'LIKE', "%{$query}%");
                 })
                 ->select(['id', 'name', 'city', 'is_verified'])
-                ->orderByRaw("
-                    CASE 
-                        WHEN name LIKE '{$query}%' THEN 1
-                        WHEN name LIKE '%{$query}%' THEN 2
-                        WHEN legal_name LIKE '%{$query}%' THEN 3
+                ->orderByRaw(
+                    '
+                    CASE
+                        WHEN name LIKE ? THEN 1
+                        WHEN name LIKE ? THEN 2
+                        WHEN legal_name LIKE ? THEN 3
                         ELSE 4
                     END
-                ")
+                    ',
+                    ["{$query}%", "%{$query}%", "%{$query}%"]
+                )
                 ->limit($limit)
                 ->get()
                 ->toArray();
@@ -181,6 +168,11 @@ class OrganizationDiscoveryService
                          ->from('contractor_invitations')
                          ->where('organization_id', $excludeOrganizationId)
                          ->whereIn('status', ['pending', 'accepted']);
+            })->whereNotIn('id', function ($subquery) use ($excludeOrganizationId) {
+                $subquery->select('organization_id')
+                    ->from('contractor_invitations')
+                    ->where('invited_organization_id', $excludeOrganizationId)
+                    ->whereIn('status', ['pending', 'accepted']);
             });
         }
 
@@ -202,14 +194,17 @@ class OrganizationDiscoveryService
             case 'relevance':
                 if (!empty($filters['search'])) {
                     $searchTerm = $filters['search'];
-                    $query->orderByRaw("
-                        CASE 
-                            WHEN name LIKE '{$searchTerm}%' THEN 1
-                            WHEN name LIKE '%{$searchTerm}%' THEN 2
-                            WHEN legal_name LIKE '%{$searchTerm}%' THEN 3
+                    $query->orderByRaw(
+                        '
+                        CASE
+                            WHEN name LIKE ? THEN 1
+                            WHEN name LIKE ? THEN 2
+                            WHEN legal_name LIKE ? THEN 3
                             ELSE 4
                         END
-                    ");
+                        ',
+                        ["{$searchTerm}%", "%{$searchTerm}%", "%{$searchTerm}%"]
+                    );
                 } else {
                     $query->orderByDesc('is_verified')
                           ->orderByDesc('contractor_connections_count');
@@ -296,7 +291,7 @@ class OrganizationDiscoveryService
         $isMutual = isset($bulkData['mutual_contractors'][$targetOrganizationId]) && $existingContractor;
 
         return [
-            'can_invite' => !$existingInvitation && !$existingContractor,
+            'can_invite' => !$existingInvitation && !$existingContractor && !$reverseInvitation,
             'existing_invitation' => $existingInvitation?->only(['id', 'status', 'created_at']),
             'existing_contractor' => $existingContractor?->only(['id', 'name', 'connected_at']),
             'reverse_invitation' => $reverseInvitation?->only(['id', 'status', 'created_at']),

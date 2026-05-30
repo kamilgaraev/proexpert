@@ -90,7 +90,16 @@ class ContractorPortalModule implements ModuleInterface, ConfigurableInterface
             'organizations.search',
             'organizations.suggestions',
             'organizations.recommendations',
-            'organizations.availability.check'
+            'organizations.availability.check',
+            'contractor_marketplace.categories.view',
+            'contractor_marketplace.search.view',
+            'contractor_marketplace.profile.view',
+            'contractor_marketplace.profile.edit',
+            'contractor_marketplace.profile.publish',
+            'contractor_marketplace.offers.view',
+            'contractor_marketplace.offers.create',
+            'contractor_marketplace.offers.cancel',
+            'contractor_marketplace.offers.respond'
         ];
     }
 

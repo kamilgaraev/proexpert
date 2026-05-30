@@ -20,6 +20,9 @@ class ContractorInvitationResource extends ModelJsonResource
             'expires_at' => $this->expires_at?->toISOString(),
             'created_at' => $this->created_at?->toISOString(),
             'accepted_at' => $this->accepted_at?->toISOString(),
+            'declined_at' => $this->declined_at?->toISOString(),
+            'cancelled_at' => $this->cancelled_at?->toISOString(),
+            'status_reason' => $this->status_reason,
             'is_expired' => $invitation->isExpired(),
             'can_be_accepted' => $invitation->canBeAccepted(),
             

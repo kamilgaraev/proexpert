@@ -313,6 +313,38 @@ return [
             'title' => ':actor отправил приглашение подрядчику :subject',
             'description' => 'Подрядчику отправлено приглашение к сотрудничеству.',
         ],
+        'contractor_marketplace.profile.published' => [
+            'title' => ':actor опубликовал профиль подрядчика :subject',
+            'description' => 'Профиль подрядчика стал доступен в закрытом каталоге.',
+        ],
+        'contractor_marketplace.profile.paused' => [
+            'title' => ':actor скрыл профиль подрядчика :subject',
+            'description' => 'Профиль подрядчика временно скрыт из закрытого каталога.',
+        ],
+        'contractor_marketplace.offer.sent' => [
+            'title' => ':actor отправил офер подрядчику :target',
+            'description' => 'Подрядчику отправлено проектное предложение на выполнение работ.',
+        ],
+        'contractor_marketplace.offer.viewed' => [
+            'title' => ':actor просмотрел офер :subject',
+            'description' => 'Подрядчик открыл проектное предложение.',
+        ],
+        'contractor_marketplace.offer.accepted' => [
+            'title' => ':actor принял офер :subject',
+            'description' => 'Подрядчик принял проектное предложение и добавлен в команду проекта.',
+        ],
+        'contractor_marketplace.offer.declined' => [
+            'title' => ':actor отклонил офер :subject',
+            'description' => 'Подрядчик отклонил проектное предложение.',
+        ],
+        'contractor_marketplace.offer.cancelled' => [
+            'title' => ':actor отменил офер :subject',
+            'description' => 'Проектное предложение подрядчику отменено.',
+        ],
+        'contractor_marketplace.offer.reviewed' => [
+            'title' => ':actor оценил работу подрядчика :subject',
+            'description' => 'Оценка по оферу обновила рейтинг подрядчика в marketplace.',
+        ],
         'agreement.applied_to_contract' => [
             'title' => ':actor применил допсоглашение :subject',
             'description' => 'Дополнительное соглашение применено к договору.',
@@ -414,6 +446,7 @@ return [
         'role' => 'Роль',
         'scope' => 'Область',
         'status' => 'Статус',
+        'marketplace_visibility' => 'Видимость в каталоге',
         'reason' => 'Причина',
         'document_number' => 'Документ',
         'contract_number' => 'Договор',

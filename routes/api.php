@@ -140,6 +140,9 @@ Route::prefix('landing')->name('landing.')->group(function () {
                     if (file_exists(__DIR__ . '/api/v1/landing/contractor_invitations.php')) {
                         require __DIR__ . '/api/v1/landing/contractor_invitations.php';
                     }
+                    if (file_exists(__DIR__ . '/api/v1/landing/contractor_marketplace.php')) {
+                        require __DIR__ . '/api/v1/landing/contractor_marketplace.php';
+                    }
                 });
 
             // Подключение маршрутов новой системы авторизации
@@ -259,6 +262,7 @@ Route::prefix('v1/admin')->middleware('admin.response')->name('admin.')->group(f
         require __DIR__ . '/api/v1/admin/time_tracking.php';
         require __DIR__ . '/api/v1/admin/contractors.php';
         require __DIR__ . '/api/v1/admin/contractor_invitations.php';
+        require __DIR__ . '/api/v1/admin/contractor_marketplace.php';
         require __DIR__ . '/api/v1/admin/brigades.php';
         require __DIR__ . '/api/v1/admin/custom-reports.php';
         require __DIR__ . '/api/v1/admin/estimates.php';

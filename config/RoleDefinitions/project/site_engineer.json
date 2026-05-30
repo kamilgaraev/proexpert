@@ -76,7 +76,11 @@
     "contractor-portal": [
       "contractor_invitations.view",
       "contractor_invitations.create",
-      "organizations.search"
+      "organizations.search",
+      "organizations.availability.check",
+      "contractor_marketplace.categories.view",
+      "contractor_marketplace.search.view",
+      "contractor_marketplace.offers.view"
     ],
     "file-management": [
       "personal_files.view",

@@ -131,6 +131,25 @@ class OrganizationSearchControllerTest extends TestCase
         ]);
     }
 
+    public function test_availability_blocks_invite_when_reverse_pending_invitation_exists(): void
+    {
+        $this->allowAdminAccess();
+        $context = AdminApiTestContext::create();
+        $targetOrganization = Organization::factory()->verified()->create([
+            'name' => 'Pending Reverse Invite',
+        ]);
+        $reverseInvitation = $this->createInvitation($targetOrganization, $context->organization);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/organizations/{$targetOrganization->id}/availability");
+
+        $response->assertOk();
+        $response->assertJsonPath('success', true);
+        $response->assertJsonPath('data.can_invite', false);
+        $response->assertJsonPath('data.reverse_invitation.id', $reverseInvitation->id);
+        $response->assertJsonPath('data.existing_contractor', null);
+    }
+
     public function test_validation_error_for_search_uses_readable_russian_message(): void
     {
         $this->allowAdminAccess();

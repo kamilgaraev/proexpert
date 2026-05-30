@@ -2,6 +2,7 @@
 
 namespace App\Services\Contractor;
 
+use App\BusinessModules\ContractorMarketplace\Domain\Services\MarketplaceNetworkService;
 use App\Models\ContractorInvitation;
 use App\Models\Contractor;
 use App\Models\Organization;
@@ -12,7 +13,6 @@ use App\Exceptions\BusinessLogicException;
 use App\Repositories\Interfaces\ContractorRepositoryInterface;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -24,15 +24,18 @@ class ContractorInvitationService
     protected SubscriptionLimitsService $subscriptionLimitsService;
     protected ContractorRepositoryInterface $contractorRepository;
     protected LoggingService $logging;
+    protected MarketplaceNetworkService $marketplaceNetworkService;
 
     public function __construct(
         SubscriptionLimitsService $subscriptionLimitsService,
         ContractorRepositoryInterface $contractorRepository,
-        LoggingService $logging
+        LoggingService $logging,
+        MarketplaceNetworkService $marketplaceNetworkService
     ) {
         $this->subscriptionLimitsService = $subscriptionLimitsService;
         $this->contractorRepository = $contractorRepository;
         $this->logging = $logging;
+        $this->marketplaceNetworkService = $marketplaceNetworkService;
     }
 
     public function createInvitation(
@@ -44,13 +47,13 @@ class ContractorInvitationService
     ): ContractorInvitation {
         $this->validateInvitationRequest($organizationId, $invitedOrganizationId, $invitedBy);
 
-        if (!$this->subscriptionLimitsService->canCreateContractorInvitation($invitedBy)) {
-            throw new BusinessLogicException('Достигнут лимит приглашений подрядчиков по вашему тарифному плану');
+        if (!$this->subscriptionLimitsService->canCreateContractorInvitationForOrganization($invitedBy, $organizationId)) {
+            throw new BusinessLogicException(trans_message('contract.invitation_limit_reached'));
         }
 
         $existingInvitation = $this->getExistingActiveInvitation($organizationId, $invitedOrganizationId);
         if ($existingInvitation) {
-            throw new BusinessLogicException('Активное приглашение для данной организации уже существует');
+            throw new BusinessLogicException(trans_message('contract.invitation_active_exists'));
         }
 
         DB::beginTransaction();
@@ -84,85 +87,155 @@ class ContractorInvitationService
                 'from_org' => $organizationId,
                 'to_org' => $invitedOrganizationId,
             ]);
-            throw new BusinessLogicException('Ошибка при создании приглашения: ' . $e->getMessage());
+            throw new BusinessLogicException(trans_message('contract.invitation_create_error'));
         }
     }
 
     public function acceptInvitation(string $token, User $acceptedBy): Contractor
     {
-        $invitation = ContractorInvitation::where('token', $token)->first();
-
-        if (!$invitation) {
-            throw new BusinessLogicException('Приглашение не найдено');
-        }
-
-        if (!$invitation->canBeAccepted()) {
-            throw new BusinessLogicException('Приглашение недействительно или истекло');
-        }
-
-        if (!$acceptedBy->belongsToOrganization($invitation->invited_organization_id)) {
-            throw new BusinessLogicException('У вас нет прав принять это приглашение');
-        }
-
-        $existingContractor = $this->findExistingContractor(
-            $invitation->organization_id,
-            $invitation->invited_organization_id
-        );
-
-        if ($existingContractor) {
-            throw new BusinessLogicException('Подрядчик уже существует в данной организации');
-        }
-
-        DB::beginTransaction();
         try {
-            $invitation->accept($acceptedBy);
+            return DB::transaction(function () use ($token, $acceptedBy): Contractor {
+                $invitation = ContractorInvitation::query()
+                    ->where('token', $token)
+                    ->lockForUpdate()
+                    ->first();
 
-            $contractor = $this->createContractorFromInvitation($invitation);
+                if (!$invitation) {
+                    throw new BusinessLogicException(trans_message('contract.invitation_not_found'));
+                }
 
-            $this->createReverseContractorConnection($invitation, $contractor);
+                if (
+                    (int) $acceptedBy->current_organization_id !== (int) $invitation->invited_organization_id
+                    || !$acceptedBy->belongsToOrganization($invitation->invited_organization_id)
+                ) {
+                    throw new BusinessLogicException(trans_message('contract.invitation_accept_forbidden'));
+                }
 
-            Log::info('Contractor invitation accepted', [
-                'invitation_id' => $invitation->id,
-                'contractor_id' => $contractor->id,
-                'accepted_by' => $acceptedBy->id,
-            ]);
+                $existingContractor = $this->findExistingContractor(
+                    $invitation->organization_id,
+                    $invitation->invited_organization_id
+                );
 
-            DB::commit();
-            return $contractor;
+                if ($invitation->status === ContractorInvitation::STATUS_ACCEPTED) {
+                    if ($existingContractor) {
+                        return $existingContractor;
+                    }
+
+                    throw new BusinessLogicException(trans_message('contract.invitation_already_processed'));
+                }
+
+                if (!$invitation->canBeAccepted()) {
+                    throw new BusinessLogicException(trans_message('contract.invitation_unavailable'));
+                }
+
+                if ($existingContractor) {
+                    throw new BusinessLogicException(trans_message('contract.invitation_organization_already_contractor'));
+                }
+
+                $invitation->accept($acceptedBy);
+
+                $contractor = $this->createContractorFromInvitation($invitation);
+
+                $this->createReverseContractorConnection($invitation, $contractor);
+                $this->marketplaceNetworkService->bootstrapDraftProfileFromInvitation($invitation);
+
+                Log::info('Contractor invitation accepted', [
+                    'invitation_id' => $invitation->id,
+                    'contractor_id' => $contractor->id,
+                    'accepted_by' => $acceptedBy->id,
+                ]);
+
+                return $contractor;
+            });
         } catch (\Exception $e) {
-            DB::rollBack();
             Log::error('Failed to accept contractor invitation', [
                 'error' => $e->getMessage(),
-                'invitation_id' => $invitation->id,
+                'token' => $token,
             ]);
-            throw new BusinessLogicException('Ошибка при принятии приглашения: ' . $e->getMessage());
+
+            if ($e instanceof BusinessLogicException) {
+                throw $e;
+            }
+
+            throw new BusinessLogicException(trans_message('contract.invitation_accept_error'));
         }
     }
 
-    public function declineInvitation(string $token, User $declinedBy): bool
+    public function declineInvitation(string $token, User $declinedBy, ?string $reason = null): bool
     {
-        $invitation = ContractorInvitation::where('token', $token)->first();
+        return DB::transaction(function () use ($token, $declinedBy, $reason): bool {
+            $invitation = ContractorInvitation::query()
+                ->where('token', $token)
+                ->lockForUpdate()
+                ->first();
 
-        if (!$invitation) {
-            throw new BusinessLogicException('Приглашение не найдено');
+            if (!$invitation) {
+                throw new BusinessLogicException(trans_message('contract.invitation_not_found'));
+            }
+
+            if (!$invitation->canBeAccepted()) {
+                throw new BusinessLogicException(trans_message('contract.invitation_already_processed'));
+            }
+
+            if (
+                (int) $declinedBy->current_organization_id !== (int) $invitation->invited_organization_id
+                || !$declinedBy->belongsToOrganization($invitation->invited_organization_id)
+            ) {
+                throw new BusinessLogicException(trans_message('contract.invitation_decline_forbidden'));
+            }
+
+            $result = $invitation->decline($declinedBy, $reason);
+
+            Log::info('Contractor invitation declined', [
+                'invitation_id' => $invitation->id,
+                'declined_by' => $declinedBy->id,
+            ]);
+
+            return $result;
+        });
+    }
+
+    public function cancelInvitation(int $invitationId, int $organizationId, User $cancelledBy, ?string $reason = null): ContractorInvitation
+    {
+        try {
+            return DB::transaction(function () use ($invitationId, $organizationId, $cancelledBy, $reason): ContractorInvitation {
+                $invitation = ContractorInvitation::query()
+                    ->where('id', $invitationId)
+                    ->where('organization_id', $organizationId)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$invitation || !$invitation->isPending()) {
+                    throw new BusinessLogicException(trans_message('contract.invitation_not_found'));
+                }
+
+                if (!$cancelledBy->belongsToOrganization($organizationId)) {
+                    throw new BusinessLogicException(trans_message('contract.invitation_cancel_forbidden'));
+                }
+
+                $invitation->cancel($cancelledBy, $reason);
+
+                Log::info('Contractor invitation cancelled', [
+                    'invitation_id' => $invitationId,
+                    'cancelled_by' => $cancelledBy->id,
+                    'organization_id' => $organizationId,
+                ]);
+
+                return $invitation;
+            });
+        } catch (\Exception $e) {
+            if ($e instanceof BusinessLogicException) {
+                throw $e;
+            }
+
+            Log::error('Failed to cancel contractor invitation', [
+                'error' => $e->getMessage(),
+                'invitation_id' => $invitationId,
+                'organization_id' => $organizationId,
+            ]);
+
+            throw new BusinessLogicException(trans_message('contract.invitation_cancel_error'));
         }
-
-        if (!$invitation->canBeAccepted()) {
-            throw new BusinessLogicException('Приглашение уже обработано или истекло');
-        }
-
-        if (!$declinedBy->belongsToOrganization($invitation->invited_organization_id)) {
-            throw new BusinessLogicException('У вас нет прав отклонить это приглашение');
-        }
-
-        $result = $invitation->decline();
-
-        Log::info('Contractor invitation declined', [
-            'invitation_id' => $invitation->id,
-            'declined_by' => $declinedBy->id,
-        ]);
-
-        return $result;
     }
 
     public function getInvitationsForOrganization(
@@ -171,37 +244,33 @@ class ContractorInvitationService
         int $perPage = 15,
         array $filters = []
     ): LengthAwarePaginator {
-        $cacheKey = $this->getInvitationsCacheKey($organizationId, $type, $perPage, $filters);
-        
-        return Cache::remember($cacheKey, 300, function () use ($organizationId, $type, $perPage, $filters) {
-            $query = ContractorInvitation::query();
+        $query = ContractorInvitation::query();
 
-            if ($type === 'sent') {
-                $query->forOrganization($organizationId);
-            } else {
-                $query->toOrganization($organizationId);
-            }
+        if ($type === 'sent') {
+            $query->forOrganization($organizationId);
+        } else {
+            $query->toOrganization($organizationId);
+        }
 
-            if (isset($filters['status'])) {
-                $query->byStatus($filters['status']);
-            }
+        if (isset($filters['status'])) {
+            $query->byStatus($filters['status']);
+        }
 
-            if (isset($filters['date_from'])) {
-                $query->where('created_at', '>=', Carbon::parse($filters['date_from'])->toDateTimeString());
-            }
+        if (isset($filters['date_from'])) {
+            $query->where('created_at', '>=', Carbon::parse($filters['date_from'])->toDateTimeString());
+        }
 
-            if (isset($filters['date_to'])) {
-                $query->where('created_at', '<=', Carbon::parse($filters['date_to'])->toDateTimeString());
-            }
+        if (isset($filters['date_to'])) {
+            $query->where('created_at', '<=', Carbon::parse($filters['date_to'])->toDateTimeString());
+        }
 
-            $relations = $type === 'sent' 
-                ? ['invitedOrganization', 'invitedBy']
-                : ['organization', 'invitedBy'];
+        $relations = $type === 'sent'
+            ? ['invitedOrganization', 'invitedBy', 'acceptedBy', 'declinedBy', 'cancelledBy']
+            : ['organization', 'invitedBy', 'acceptedBy', 'declinedBy', 'cancelledBy'];
 
-            return $query->with($relations)
-                        ->orderBy('created_at', 'desc')
-                        ->paginate($perPage);
-        });
+        return $query->with($relations)
+            ->orderBy('created_at', 'desc')
+            ->paginate($perPage);
     }
 
     public function expireOldInvitations(): int
@@ -217,39 +286,47 @@ class ContractorInvitationService
 
     public function getInvitationStats(int $organizationId): array
     {
-        $cacheKey = "contractor_invitations:stats:{$organizationId}";
-        
-        return Cache::remember($cacheKey, 900, function () use ($organizationId) {
-            return [
-                'sent' => [
-                    'total' => ContractorInvitation::forOrganization($organizationId)->count(),
-                    'pending' => ContractorInvitation::forOrganization($organizationId)->pending()->count(),
-                    'accepted' => ContractorInvitation::forOrganization($organizationId)->byStatus('accepted')->count(),
-                    'declined' => ContractorInvitation::forOrganization($organizationId)->byStatus('declined')->count(),
-                ],
-                'received' => [
-                    'total' => ContractorInvitation::toOrganization($organizationId)->count(),
-                    'pending' => ContractorInvitation::toOrganization($organizationId)->pending()->count(),
-                    'accepted' => ContractorInvitation::toOrganization($organizationId)->byStatus('accepted')->count(),
-                    'declined' => ContractorInvitation::toOrganization($organizationId)->byStatus('declined')->count(),
-                ],
-            ];
-        });
+        return [
+            'sent' => [
+                'total' => ContractorInvitation::forOrganization($organizationId)->count(),
+                'pending' => ContractorInvitation::forOrganization($organizationId)->pending()->count(),
+                'accepted' => ContractorInvitation::forOrganization($organizationId)->byStatus(ContractorInvitation::STATUS_ACCEPTED)->count(),
+                'declined' => ContractorInvitation::forOrganization($organizationId)->byStatus(ContractorInvitation::STATUS_DECLINED)->count(),
+                'expired' => ContractorInvitation::forOrganization($organizationId)->byStatus(ContractorInvitation::STATUS_EXPIRED)->count(),
+                'cancelled' => ContractorInvitation::forOrganization($organizationId)->byStatus(ContractorInvitation::STATUS_CANCELLED)->count(),
+            ],
+            'received' => [
+                'total' => ContractorInvitation::toOrganization($organizationId)->count(),
+                'pending' => ContractorInvitation::toOrganization($organizationId)->pending()->count(),
+                'accepted' => ContractorInvitation::toOrganization($organizationId)->byStatus(ContractorInvitation::STATUS_ACCEPTED)->count(),
+                'declined' => ContractorInvitation::toOrganization($organizationId)->byStatus(ContractorInvitation::STATUS_DECLINED)->count(),
+                'expired' => ContractorInvitation::toOrganization($organizationId)->byStatus(ContractorInvitation::STATUS_EXPIRED)->count(),
+                'cancelled' => ContractorInvitation::toOrganization($organizationId)->byStatus(ContractorInvitation::STATUS_CANCELLED)->count(),
+            ],
+        ];
     }
 
     protected function validateInvitationRequest(int $organizationId, int $invitedOrganizationId, User $invitedBy): void
     {
         if ($organizationId === $invitedOrganizationId) {
-            throw new BusinessLogicException('Нельзя пригласить собственную организацию');
+            throw new BusinessLogicException(trans_message('contract.invitation_self_not_allowed'));
         }
 
         if (!$invitedBy->belongsToOrganization($organizationId)) {
-            throw new BusinessLogicException('У вас нет прав создавать приглашения от имени данной организации');
+            throw new BusinessLogicException(trans_message('contract.invitation_create_forbidden'));
         }
 
         $invitedOrg = Organization::find($invitedOrganizationId);
         if (!$invitedOrg || !$invitedOrg->is_active) {
-            throw new BusinessLogicException('Приглашаемая организация не найдена или неактивна');
+            throw new BusinessLogicException(trans_message('contract.invitation_target_unavailable'));
+        }
+
+        if ($this->findExistingContractor($organizationId, $invitedOrganizationId)) {
+            throw new BusinessLogicException(trans_message('contract.invitation_organization_already_contractor'));
+        }
+
+        if ($this->getExistingReverseActiveInvitation($organizationId, $invitedOrganizationId)) {
+            throw new BusinessLogicException(trans_message('contract.invitation_reverse_active_exists'));
         }
     }
 
@@ -257,6 +334,14 @@ class ContractorInvitationService
     {
         return ContractorInvitation::where('organization_id', $organizationId)
             ->where('invited_organization_id', $invitedOrganizationId)
+            ->active()
+            ->first();
+    }
+
+    protected function getExistingReverseActiveInvitation(int $organizationId, int $invitedOrganizationId): ?ContractorInvitation
+    {
+        return ContractorInvitation::where('organization_id', $invitedOrganizationId)
+            ->where('invited_organization_id', $organizationId)
             ->active()
             ->first();
     }
@@ -296,6 +381,10 @@ class ContractorInvitationService
 
     protected function createReverseContractorConnection(ContractorInvitation $invitation, Contractor $contractor): void
     {
+        if ($this->findExistingContractor($invitation->invited_organization_id, $invitation->organization_id)) {
+            return;
+        }
+
         $reverseContractorData = [
             'organization_id' => $invitation->invited_organization_id,
             'source_organization_id' => $invitation->organization_id,
@@ -316,12 +405,6 @@ class ContractorInvitationService
         ];
 
         $this->contractorRepository->create($reverseContractorData);
-    }
-
-    protected function getInvitationsCacheKey(int $organizationId, string $type, int $perPage, array $filters): string
-    {
-        $filterHash = md5(serialize($filters));
-        return "contractor_invitations:{$organizationId}:{$type}:{$perPage}:{$filterHash}";
     }
 
     protected function sendInvitationNotifications(ContractorInvitation $invitation): void

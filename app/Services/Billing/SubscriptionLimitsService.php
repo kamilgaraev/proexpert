@@ -372,6 +372,28 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
         return $invitationLimit['is_unlimited'] || $invitationLimit['used'] < $invitationLimit['limit'];
     }
 
+    public function canCreateContractorInvitationForOrganization(User $user, int $organizationId): bool
+    {
+        if (! $user->belongsToOrganization($organizationId)) {
+            return false;
+        }
+
+        $currentUsage = $this->getContractorInvitationsUsage($organizationId);
+        $orgSubscription = $this->organizationSubscriptionRepo->getByOrganizationId($organizationId);
+
+        if (! $orgSubscription || $orgSubscription->status !== 'active' || $orgSubscription->ends_at <= now()) {
+            $defaultLimits = config('billing.default_limits');
+            return $currentUsage < ($defaultLimits['max_contractor_invitations'] ?? 5);
+        }
+
+        $plan = $orgSubscription->plan;
+        $constructorLimits = $this->getEnterpriseConstructorLimits($orgSubscription);
+        $invitationLimit = $constructorLimits['contractor_invitations']
+            ?? ($plan->max_contractor_invitations ?? null);
+
+        return $invitationLimit === null || $currentUsage < $invitationLimit;
+    }
+
     public function getContractorInvitationsUsage(int $organizationId): int
     {
         return DB::table('contractor_invitations')

@@ -20,8 +20,12 @@ class ContractorInvitationResource extends ModelJsonResource
             'expires_at' => $this->expires_at?->toISOString(),
             'created_at' => $this->created_at?->toISOString(),
             'accepted_at' => $this->accepted_at?->toISOString(),
+            'declined_at' => $this->declined_at?->toISOString(),
+            'cancelled_at' => $this->cancelled_at?->toISOString(),
+            'status_reason' => $this->status_reason,
             'is_expired' => $invitation->isExpired(),
             'can_be_accepted' => $invitation->canBeAccepted(),
+            'can_be_cancelled' => $invitation->isPending(),
             'invitation_url' => $this->when($invitation->canBeAccepted(), $invitation->getInvitationUrl()),
             
             'organization' => $this->whenLoaded('organization', function () {
@@ -57,6 +61,22 @@ class ContractorInvitationResource extends ModelJsonResource
                     'id' => $this->acceptedBy->id,
                     'name' => $this->acceptedBy->name,
                     'email' => $this->acceptedBy->email,
+                ];
+            }),
+
+            'declined_by' => $this->whenLoaded('declinedBy', function () {
+                return [
+                    'id' => $this->declinedBy->id,
+                    'name' => $this->declinedBy->name,
+                    'email' => $this->declinedBy->email,
+                ];
+            }),
+
+            'cancelled_by' => $this->whenLoaded('cancelledBy', function () {
+                return [
+                    'id' => $this->cancelledBy->id,
+                    'name' => $this->cancelledBy->name,
+                    'email' => $this->cancelledBy->email,
                 ];
             }),
             

@@ -126,7 +126,11 @@ class ContractorInvitationController extends Controller
         ]);
 
         try {
-            $declined = $this->invitationService->declineInvitation($token, $user);
+            $declined = $this->invitationService->declineInvitation(
+                $token,
+                $user,
+                $request->input('reason')
+            );
 
             if (!$declined) {
                 return LandingResponse::error(trans_message('contract.invitation_decline_error'), 400);

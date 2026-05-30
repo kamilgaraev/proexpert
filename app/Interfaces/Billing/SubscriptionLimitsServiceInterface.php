@@ -40,4 +40,6 @@ interface SubscriptionLimitsServiceInterface
      * Проверить, может ли пользователь создать приглашение подрядчика
      */
     public function canCreateContractorInvitation(User $user): bool;
+
+    public function canCreateContractorInvitationForOrganization(User $user, int $organizationId): bool;
 } 

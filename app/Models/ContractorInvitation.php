@@ -17,6 +17,7 @@ class ContractorInvitation extends Model
     const STATUS_ACCEPTED = 'accepted';
     const STATUS_DECLINED = 'declined';
     const STATUS_EXPIRED = 'expired';
+    const STATUS_CANCELLED = 'cancelled';
 
     protected $fillable = [
         'organization_id',
@@ -27,6 +28,11 @@ class ContractorInvitation extends Model
         'expires_at',
         'accepted_at',
         'accepted_by_user_id',
+        'declined_at',
+        'declined_by_user_id',
+        'cancelled_at',
+        'cancelled_by_user_id',
+        'status_reason',
         'invitation_message',
         'metadata',
     ];
@@ -34,6 +40,8 @@ class ContractorInvitation extends Model
     protected $casts = [
         'expires_at' => 'datetime',
         'accepted_at' => 'datetime',
+        'declined_at' => 'datetime',
+        'cancelled_at' => 'datetime',
         'metadata' => 'array',
     ];
 
@@ -71,6 +79,16 @@ class ContractorInvitation extends Model
         return $this->belongsTo(User::class, 'accepted_by_user_id');
     }
 
+    public function declinedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'declined_by_user_id');
+    }
+
+    public function cancelledBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'cancelled_by_user_id');
+    }
+
     public function contractor(): HasOne
     {
         return $this->hasOne(Contractor::class, 'contractor_invitation_id');
@@ -89,7 +107,7 @@ class ContractorInvitation extends Model
 
     public function scopeActive($query)
     {
-        return $query->whereIn('status', [self::STATUS_PENDING, self::STATUS_ACCEPTED])
+        return $query->where('status', self::STATUS_PENDING)
                     ->where('expires_at', '>', now());
     }
 
@@ -146,13 +164,35 @@ class ContractorInvitation extends Model
         return true;
     }
 
-    public function decline(): bool
+    public function decline(User $declinedBy, ?string $reason = null): bool
     {
         if (!$this->isPending()) {
             return false;
         }
 
-        $this->update(['status' => self::STATUS_DECLINED]);
+        $this->update([
+            'status' => self::STATUS_DECLINED,
+            'declined_at' => now(),
+            'declined_by_user_id' => $declinedBy->id,
+            'status_reason' => $reason,
+        ]);
+
+        return true;
+    }
+
+    public function cancel(User $cancelledBy, ?string $reason = null): bool
+    {
+        if (!$this->isPending()) {
+            return false;
+        }
+
+        $this->update([
+            'status' => self::STATUS_CANCELLED,
+            'cancelled_at' => now(),
+            'cancelled_by_user_id' => $cancelledBy->id,
+            'status_reason' => $reason,
+        ]);
+
         return true;
     }
 

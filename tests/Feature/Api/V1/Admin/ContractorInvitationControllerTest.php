@@ -147,7 +147,10 @@ class ContractorInvitationControllerTest extends TestCase
 
         $senderCancelResponse->assertOk();
         $senderCancelResponse->assertJsonPath('success', true);
-        $this->assertSame(ContractorInvitation::STATUS_EXPIRED, $invitation->fresh()->status);
+        $cancelledInvitation = $invitation->fresh();
+        $this->assertSame(ContractorInvitation::STATUS_CANCELLED, $cancelledInvitation->status);
+        $this->assertSame($senderContext->user->id, $cancelledInvitation->cancelled_by_user_id);
+        $this->assertNotNull($cancelledInvitation->cancelled_at);
 
         $this->resetAdminGuard();
 
@@ -195,10 +198,135 @@ class ContractorInvitationControllerTest extends TestCase
 
         $duplicateResponse->assertStatus(422);
         $duplicateResponse->assertJsonValidationErrors(['invited_organization_id']);
-        $this->assertStringContainsString(
-            'Активное приглашение для данной организации уже существует.',
+        $this->assertStringNotContainsString(
+            'Рђ',
             $duplicateResponse->json('errors.invited_organization_id.0')
         );
+    }
+
+    public function test_store_rejects_reverse_pending_invitation(): void
+    {
+        $this->allowAdminAccess();
+        $this->allowContractorInvitationLimit();
+        $context = AdminApiTestContext::create();
+        $targetOrganization = Organization::factory()->verified()->create([
+            'name' => 'Reverse Pending Contractor',
+        ]);
+        $targetUser = User::factory()->create([
+            'current_organization_id' => $targetOrganization->id,
+        ]);
+        $targetOrganization->users()->attach($targetUser->id, [
+            'is_owner' => true,
+            'is_active' => true,
+            'settings' => null,
+        ]);
+
+        $this->createInvitation($targetOrganization, $context->organization, $targetUser);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/contractor-invitations', [
+                'invited_organization_id' => $targetOrganization->id,
+            ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['invited_organization_id']);
+        $this->assertStringContainsString(
+            'Эта организация уже отправила вам приглашение.',
+            $response->json('errors.invited_organization_id.0')
+        );
+        $this->assertDatabaseMissing('contractor_invitations', [
+            'organization_id' => $context->organization->id,
+            'invited_organization_id' => $targetOrganization->id,
+        ]);
+    }
+
+    public function test_store_uses_jwt_organization_context_not_user_current_organization_for_validation(): void
+    {
+        $this->allowAdminAccess();
+        $this->allowContractorInvitationLimit();
+        $context = AdminApiTestContext::create();
+        $jwtOrganization = $this->attachOrganizationContextToUser($context->user);
+        $targetOrganization = Organization::factory()->verified()->create([
+            'name' => 'Context Target Contractor',
+        ]);
+
+        $this->createInvitation($context->organization, $targetOrganization, $context->user);
+
+        $response = $this->withHeaders($this->authHeadersFor($context->user, $jwtOrganization))
+            ->postJson('/api/v1/admin/contractor-invitations', [
+                'invited_organization_id' => $targetOrganization->id,
+                'message' => 'Invite from JWT organization',
+            ]);
+
+        $response->assertCreated();
+        $response->assertJsonPath('success', true);
+        $response->assertJsonPath('data.invited_organization.id', $targetOrganization->id);
+
+        $this->assertDatabaseHas('contractor_invitations', [
+            'organization_id' => $jwtOrganization->id,
+            'invited_organization_id' => $targetOrganization->id,
+            'status' => ContractorInvitation::STATUS_PENDING,
+        ]);
+    }
+
+    public function test_accept_invitation_is_idempotent_for_recipient_organization(): void
+    {
+        $this->allowAdminAccess();
+        $senderContext = AdminApiTestContext::create();
+        $recipientOrganization = Organization::factory()->verified()->create([
+            'name' => 'Recipient Contractor',
+        ]);
+        $recipientUser = User::factory()->create([
+            'current_organization_id' => $recipientOrganization->id,
+        ]);
+        $recipientOrganization->users()->attach($recipientUser->id, [
+            'is_owner' => true,
+            'is_active' => true,
+            'settings' => null,
+        ]);
+        $invitation = $this->createInvitation(
+            $senderContext->organization,
+            $recipientOrganization,
+            $senderContext->user
+        );
+
+        $service = app(\App\Services\Contractor\ContractorInvitationService::class);
+
+        $firstContractor = $service->acceptInvitation($invitation->token, $recipientUser);
+        $secondContractor = $service->acceptInvitation($invitation->token, $recipientUser);
+
+        $this->assertSame($firstContractor->id, $secondContractor->id);
+        $this->assertSame(ContractorInvitation::STATUS_ACCEPTED, $invitation->fresh()->status);
+        $this->assertDatabaseCount('contractors', 2);
+        $this->assertDatabaseHas('contractors', [
+            'organization_id' => $senderContext->organization->id,
+            'source_organization_id' => $recipientOrganization->id,
+            'contractor_invitation_id' => $invitation->id,
+        ]);
+        $this->assertDatabaseHas('contractors', [
+            'organization_id' => $recipientOrganization->id,
+            'source_organization_id' => $senderContext->organization->id,
+            'contractor_invitation_id' => $invitation->id,
+        ]);
+    }
+
+    public function test_store_requires_create_permission(): void
+    {
+        $this->denyPermission('contractor_invitations.create');
+        $context = AdminApiTestContext::create();
+        $targetOrganization = Organization::factory()->verified()->create();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/contractor-invitations', [
+                'invited_organization_id' => $targetOrganization->id,
+            ]);
+
+        $response->assertForbidden();
+        $response->assertJsonPath('success', false);
+        $this->assertDatabaseMissing('contractor_invitations', [
+            'organization_id' => $context->organization->id,
+            'invited_organization_id' => $targetOrganization->id,
+        ]);
     }
 
     private function allowAdminAccess(): void
@@ -209,10 +337,21 @@ class ContractorInvitationControllerTest extends TestCase
         });
     }
 
+    private function denyPermission(string $deniedPermission): void
+    {
+        $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($deniedPermission): void {
+            $mock->shouldReceive('canAccessInterface')->andReturn(true);
+            $mock->shouldReceive('can')->andReturnUsing(
+                static fn (User $user, string $permission, ?array $context = null): bool => $permission !== $deniedPermission
+            );
+        });
+    }
+
     private function allowContractorInvitationLimit(): void
     {
         $this->mock(SubscriptionLimitsService::class, function (MockInterface $mock): void {
             $mock->shouldReceive('canCreateContractorInvitation')->andReturn(true);
+            $mock->shouldReceive('canCreateContractorInvitationForOrganization')->andReturn(true);
         });
     }
 

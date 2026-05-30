@@ -131,6 +131,7 @@ class AppServiceProvider extends ServiceProvider
         $this->app->register(\App\BusinessModules\Enterprise\MultiOrganization\Reporting\ReportingServiceProvider::class);
         $this->app->register(\App\BusinessModules\Enterprise\MultiOrganization\Core\MultiOrganizationEventServiceProvider::class);
         $this->app->register(\App\BusinessModules\Addons\MaterialAnalytics\MaterialAnalyticsServiceProvider::class);
+        $this->app->register(\App\BusinessModules\ContractorMarketplace\ContractorMarketplaceServiceProvider::class);
         
         // Регистрируем складские модули
         $this->app->register(\App\BusinessModules\Features\BasicWarehouse\BasicWarehouseServiceProvider::class);

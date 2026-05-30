@@ -39,6 +39,7 @@ class ContractorInvitationCollection extends PaginatedResourceCollection
             'accepted' => $statusCounts->get('accepted', 0),
             'declined' => $statusCounts->get('declined', 0),
             'expired' => $statusCounts->get('expired', 0),
+            'cancelled' => $statusCounts->get('cancelled', 0),
         ];
     }
 }
