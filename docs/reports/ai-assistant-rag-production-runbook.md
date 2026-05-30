@@ -51,7 +51,7 @@ Bulk synchronous mode is guarded and must not be used in normal production opera
 Laravel scheduler queues incremental SaaS indexing hourly:
 
 ```bash
-ai-assistant:rag-backfill --all --limit=${AI_RAG_SCHEDULED_LIMIT:-50}
+ai-assistant:rag-backfill --all --stale --stale-after-hours=${AI_RAG_STALE_AFTER_HOURS:-24} --limit=${AI_RAG_SCHEDULED_LIMIT:-50}
 ```
 
 Output is appended to `storage/logs/schedule-ai-rag-backfill.log`. Failed schedule runs are logged to stderr.

@@ -43,6 +43,29 @@ rg "DeleteBulkAction|ForceDeleteAction" app\Filament
 
 The `rg` check must return no matches. Browser QA is required against a reachable `/admin` URL; if no URL is reachable, document that explicitly in the runbook and final status.
 
+## AI Assistant RAG Gate
+
+Run after changes in `app\BusinessModules\Features\AIAssistant`, RAG collectors, RAG API contracts, source navigation, or the admin AI-assistant page:
+
+```powershell
+php artisan test tests\Unit\AIAssistant\Rag --stop-on-failure
+php artisan test tests\Feature\Api\V1\Admin\AIAssistantRagContextTest.php tests\Feature\Api\V1\Admin\AIAssistantRagOperationsTest.php --stop-on-failure
+php artisan test tests\Feature\Console\AIAssistantRagBackfillCommandTest.php --stop-on-failure
+php artisan test tests\Unit\AIAssistant\AIAssistantSourceEncodingTest.php --stop-on-failure
+vendor\bin\phpstan.bat analyse app\BusinessModules\Features\AIAssistant --memory-limit=1G
+```
+
+For admin contract or navigation changes:
+
+```powershell
+cd ..\prohelper_admin
+npx tsc --noEmit
+npx vitest run src\pages\AIAssistant\ragSources.test.ts src\services\aiAssistantService.test.ts
+cd ..\prohelper
+```
+
+Do not run local migrations, frontend dev servers, or forbidden admin/land builds only for this gate. If browser smoke is required but no URL is already reachable, record that limitation explicitly.
+
 ## Notes
 
 The full backend suite does not need to be the fastest feedback path on every local change. For day-to-day work, use syntax checks, targeted Larastan, and focused tests first; reserve the full suite for release, nightly, or CI validation.
