@@ -182,6 +182,21 @@ class EstimateGenerationController extends Controller
             $readiness = $this->documentReadinessService->evaluate($session->load('documents'));
 
             if (!$readiness['can_generate']) {
+                if ($this->canWaitForDocuments($session, $readiness['summary'])) {
+                    $session->forceFill([
+                        'status' => 'waiting_for_documents',
+                        'processing_stage' => 'documents_processing',
+                        'processing_progress' => max((int) ($session->processing_progress ?? 0), 5),
+                        'last_error' => null,
+                    ])->save();
+
+                    return AdminResponse::success(
+                        $this->sessionPayload($session->fresh(['documents'])),
+                        trans_message('estimate_generation.generation_waiting_for_documents'),
+                        202
+                    );
+                }
+
                 return AdminResponse::error(
                     trans_message($readiness['blocking_message_key'] ?? 'estimate_generation.documents_require_action'),
                     409,
@@ -244,6 +259,7 @@ class EstimateGenerationController extends Controller
             'status' => $session->status,
             'processing_stage' => $session->processing_stage,
             'processing_progress' => $session->processing_progress,
+            'progress' => EstimateGenerationSessionResource::progressPayload($session),
             'packages_summary' => $this->packagePresenter->collection($packages)['summary'],
             'documents_summary' => $documentsSummary,
             'problem_flags_count' => count($session->problem_flags ?? []),
@@ -480,5 +496,19 @@ class EstimateGenerationController extends Controller
         $description = trim((string) ($session->input_payload['description'] ?? ''));
 
         return $description !== '' || (int) ($documentsSummary['ready_count'] ?? 0) > 0;
+    }
+
+    /**
+     * @param array<string, mixed> $documentsSummary
+     */
+    private function canWaitForDocuments(EstimateGenerationSession $session, array $documentsSummary): bool
+    {
+        if ((int) ($documentsSummary['pending_count'] ?? 0) <= 0 || (int) ($documentsSummary['action_required_count'] ?? 0) > 0) {
+            return false;
+        }
+
+        $description = trim((string) ($session->input_payload['description'] ?? ''));
+
+        return $description !== '' || (int) ($documentsSummary['total'] ?? 0) > 0;
     }
 }

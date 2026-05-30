@@ -47,7 +47,7 @@ class EstimateGenerationOrchestrator
 
         $session->forceFill([
             'status' => 'analyzed',
-            'processing_stage' => 'object_understanding',
+            'processing_stage' => 'object_analysis',
             'processing_progress' => 35,
             'analysis_payload' => $analysis,
             'last_error' => null,
@@ -63,6 +63,7 @@ class EstimateGenerationOrchestrator
         }
 
         $analysis = $session->analysis_payload ?? [];
+        $this->updateGenerationProgress($session, 'package_planning', 40);
         $objectProfile = $this->packagePlannerService->profileFromAnalysis($analysis);
         $packagePlan = $this->packagePlannerService->plan($objectProfile);
         $localEstimates = $this->decompositionService->decomposePackagePlan($analysis, $packagePlan);
@@ -72,10 +73,11 @@ class EstimateGenerationOrchestrator
         foreach ($localEstimates as $localIndex => $localEstimate) {
             $packageProgressStart = 45 + (int) floor(($localIndex / $localEstimatesCount) * 45);
             $packageProgressEnd = 45 + (int) floor((($localIndex + 1) / $localEstimatesCount) * 45);
-            $this->updateGenerationProgress($session, 'resource_enrichment', $packageProgressStart);
+            $this->updateGenerationProgress($session, 'work_generation', $packageProgressStart);
 
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 $workItems = $this->workItemGenerationService->build($localEstimate, $analysis);
+                $this->updateGenerationProgress($session, 'normative_matching', min($packageProgressStart + 3, $packageProgressEnd));
                 $progressCallback = function (int $processed, int $total) use ($session, $packageProgressStart, $packageProgressEnd): void {
                     $range = max($packageProgressEnd - $packageProgressStart, 1);
                     $progress = $packageProgressStart + (int) floor(($processed / max($total, 1)) * $range);

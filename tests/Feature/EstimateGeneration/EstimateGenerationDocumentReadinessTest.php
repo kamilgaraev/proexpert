@@ -19,7 +19,7 @@ use Tests\TestCase;
 
 class EstimateGenerationDocumentReadinessTest extends TestCase
 {
-    public function test_pending_document_blocks_generation_with_summary(): void
+    public function test_pending_document_defers_generation_with_summary(): void
     {
         Queue::fake();
 
@@ -30,9 +30,11 @@ class EstimateGenerationDocumentReadinessTest extends TestCase
         $response = app(EstimateGenerationController::class)->generate($request, $project, $session);
         $payload = json_decode($response->getContent(), true, 512, JSON_THROW_ON_ERROR);
 
-        $this->assertSame(409, $response->getStatusCode());
-        $this->assertFalse($payload['success']);
-        $this->assertSame(1, $payload['documents_summary']['pending_count']);
+        $this->assertSame(202, $response->getStatusCode());
+        $this->assertTrue($payload['success']);
+        $this->assertSame('waiting_for_documents', $payload['data']['status']);
+        $this->assertSame(1, $payload['data']['documents_summary']['pending_count']);
+        $this->assertSame('documents_processing', $payload['data']['progress']['stage']);
         Queue::assertNotPushed(GenerateEstimateDraftJob::class);
     }
 

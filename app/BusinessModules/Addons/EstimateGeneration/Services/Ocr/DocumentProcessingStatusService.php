@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Ocr;
 
+use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 
 class DocumentProcessingStatusService
 {
@@ -42,6 +44,8 @@ class DocumentProcessingStatusService
             'facts_summary' => $factsSummary,
             'ocr_finished_at' => now(),
         ])->save();
+
+        $this->continueDeferredGeneration($document);
     }
 
     /**
@@ -84,5 +88,38 @@ class DocumentProcessingStatusService
             'error_context' => $context,
             'ocr_finished_at' => now(),
         ])->save();
+    }
+
+    private function continueDeferredGeneration(EstimateGenerationDocument $document): void
+    {
+        $session = $document->session()->with('documents')->first();
+
+        if (!$session instanceof EstimateGenerationSession || $session->status !== 'waiting_for_documents') {
+            return;
+        }
+
+        $readiness = app(DocumentGenerationReadinessService::class)->evaluate($session);
+        if (!$readiness['can_generate'] || !$this->hasGenerationInput($session, $readiness['summary'])) {
+            return;
+        }
+
+        $session->forceFill([
+            'status' => 'queued',
+            'processing_stage' => 'queued',
+            'processing_progress' => 40,
+            'last_error' => null,
+        ])->save();
+
+        GenerateEstimateDraftJob::dispatch($session->id)->onQueue(GenerateEstimateDraftJob::QUEUE);
+    }
+
+    /**
+     * @param array<string, mixed> $documentsSummary
+     */
+    private function hasGenerationInput(EstimateGenerationSession $session, array $documentsSummary): bool
+    {
+        $description = trim((string) ($session->input_payload['description'] ?? ''));
+
+        return $description !== '' || (int) ($documentsSummary['ready_count'] ?? 0) > 0;
     }
 }
