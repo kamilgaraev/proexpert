@@ -136,55 +136,55 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
     
     // === SCHEDULES ===
     Route::prefix('schedules')->group(function () {
-        Route::get('/', [ProjectScheduleController::class, 'index']);
-        Route::post('/', [ProjectScheduleController::class, 'store']);
-        Route::post('/from-estimate', [ScheduleEstimateController::class, 'createFromEstimate']);
-        Route::get('/{schedule}', [ProjectScheduleController::class, 'show']);
-        Route::put('/{schedule}', [ProjectScheduleController::class, 'update']);
-        Route::delete('/{schedule}', [ProjectScheduleController::class, 'destroy']);
+        Route::get('/', [ProjectScheduleController::class, 'index'])->middleware('authorize:schedule.view,project,project');
+        Route::post('/', [ProjectScheduleController::class, 'store'])->middleware('authorize:schedule.create,project,project');
+        Route::post('/from-estimate', [ScheduleEstimateController::class, 'createFromEstimate'])->middleware('authorize:schedule.create,project,project');
+        Route::get('/{schedule}', [ProjectScheduleController::class, 'show'])->middleware('authorize:schedule.view,project,project');
+        Route::put('/{schedule}', [ProjectScheduleController::class, 'update'])->middleware('authorize:schedule.edit,project,project');
+        Route::delete('/{schedule}', [ProjectScheduleController::class, 'destroy'])->middleware('authorize:schedule.delete,project,project');
         
         // Специальные методы графика
-        Route::post('/{schedule}/critical-path', [ProjectScheduleController::class, 'calculateCriticalPath']);
-        Route::post('/{schedule}/baseline', [ProjectScheduleController::class, 'saveBaseline']);
-        Route::delete('/{schedule}/baseline', [ProjectScheduleController::class, 'clearBaseline']);
+        Route::post('/{schedule}/critical-path', [ProjectScheduleController::class, 'calculateCriticalPath'])->middleware('authorize:schedule.edit,project,project');
+        Route::post('/{schedule}/baseline', [ProjectScheduleController::class, 'saveBaseline'])->middleware('authorize:schedule.edit,project,project');
+        Route::delete('/{schedule}/baseline', [ProjectScheduleController::class, 'clearBaseline'])->middleware('authorize:schedule.edit,project,project');
         
         // Задачи графика
-        Route::get('/{schedule}/tasks', [ProjectScheduleController::class, 'tasks']);
-        Route::post('/{schedule}/tasks', [ProjectScheduleController::class, 'storeTask']);
-        Route::get('/{schedule}/tasks/{task}', [ScheduleTaskController::class, 'show']);
-        Route::put('/{schedule}/tasks/{task}', [ScheduleTaskController::class, 'update']);
-        Route::patch('/{schedule}/tasks/{task}', [ScheduleTaskController::class, 'update']);
-        Route::delete('/{schedule}/tasks/{task}', [ScheduleTaskController::class, 'destroy']);
-        Route::post('/{schedule}/tasks/{task}/resources', [ScheduleTaskController::class, 'storeResource']);
-        Route::delete('/{schedule}/tasks/{task}/resources/{resource}', [ScheduleTaskController::class, 'destroyResource']);
+        Route::get('/{schedule}/tasks', [ProjectScheduleController::class, 'tasks'])->middleware('authorize:schedule.view,project,project');
+        Route::post('/{schedule}/tasks', [ProjectScheduleController::class, 'storeTask'])->middleware('authorize:schedule.edit,project,project');
+        Route::get('/{schedule}/tasks/{task}', [ScheduleTaskController::class, 'show'])->middleware('authorize:schedule.view,project,project');
+        Route::put('/{schedule}/tasks/{task}', [ScheduleTaskController::class, 'update'])->middleware('authorize:schedule.edit,project,project');
+        Route::patch('/{schedule}/tasks/{task}', [ScheduleTaskController::class, 'update'])->middleware('authorize:schedule.edit,project,project');
+        Route::delete('/{schedule}/tasks/{task}', [ScheduleTaskController::class, 'destroy'])->middleware('authorize:schedule.edit,project,project');
+        Route::post('/{schedule}/tasks/{task}/resources', [ScheduleTaskController::class, 'storeResource'])->middleware('authorize:schedule.edit,project,project');
+        Route::delete('/{schedule}/tasks/{task}/resources/{resource}', [ScheduleTaskController::class, 'destroyResource'])->middleware('authorize:schedule.edit,project,project');
         
         // Зависимости и ресурсы
-        Route::get('/{schedule}/dependencies', [ProjectScheduleController::class, 'dependencies']);
-        Route::post('/{schedule}/dependencies', [ProjectScheduleController::class, 'storeDependency']);
-        Route::put('/{schedule}/dependencies/{dependency}', [ProjectScheduleController::class, 'updateDependency']);
-        Route::patch('/{schedule}/dependencies/{dependency}', [ProjectScheduleController::class, 'updateDependency']);
-        Route::delete('/{schedule}/dependencies/{dependency}', [ProjectScheduleController::class, 'destroyDependency']);
-        Route::get('/{schedule}/resource-conflicts', [ProjectScheduleController::class, 'resourceConflicts']);
-        Route::get('/{schedule}/export', [ProjectScheduleController::class, 'export']);
+        Route::get('/{schedule}/dependencies', [ProjectScheduleController::class, 'dependencies'])->middleware('authorize:schedule.view,project,project');
+        Route::post('/{schedule}/dependencies', [ProjectScheduleController::class, 'storeDependency'])->middleware('authorize:schedule.edit,project,project');
+        Route::put('/{schedule}/dependencies/{dependency}', [ProjectScheduleController::class, 'updateDependency'])->middleware('authorize:schedule.edit,project,project');
+        Route::patch('/{schedule}/dependencies/{dependency}', [ProjectScheduleController::class, 'updateDependency'])->middleware('authorize:schedule.edit,project,project');
+        Route::delete('/{schedule}/dependencies/{dependency}', [ProjectScheduleController::class, 'destroyDependency'])->middleware('authorize:schedule.edit,project,project');
+        Route::get('/{schedule}/resource-conflicts', [ProjectScheduleController::class, 'resourceConflicts'])->middleware('authorize:schedule.view,project,project');
+        Route::get('/{schedule}/export', [ProjectScheduleController::class, 'export'])->middleware('authorize:schedule.export,project,project');
         
         // Интеграция со сметой
-        Route::post('/{schedule}/sync-from-estimate', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ScheduleEstimateController::class, 'syncFromEstimate']);
-        Route::post('/{schedule}/sync-to-estimate', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ScheduleEstimateController::class, 'syncToEstimate']);
-        Route::get('/{schedule}/estimate-conflicts', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ScheduleEstimateController::class, 'getConflicts']);
-        Route::get('/{schedule}/estimate-info', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ScheduleEstimateController::class, 'getEstimateInfo']);
+        Route::post('/{schedule}/sync-from-estimate', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ScheduleEstimateController::class, 'syncFromEstimate'])->middleware('authorize:schedule.edit,project,project');
+        Route::post('/{schedule}/sync-to-estimate', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ScheduleEstimateController::class, 'syncToEstimate'])->middleware('authorize:schedule.edit,project,project');
+        Route::get('/{schedule}/estimate-conflicts', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ScheduleEstimateController::class, 'getConflicts'])->middleware('authorize:schedule.view,project,project');
+        Route::get('/{schedule}/estimate-info', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ScheduleEstimateController::class, 'getEstimateInfo'])->middleware('authorize:schedule.view,project,project');
 
-        Route::get('/{schedule}/lookahead-plans', [LookaheadPlanningController::class, 'indexPlans']);
-        Route::post('/{schedule}/lookahead-plans', [LookaheadPlanningController::class, 'storePlan']);
-        Route::post('/{schedule}/lookahead-plans/{plan}/tasks', [LookaheadPlanningController::class, 'storePlanTask']);
-        Route::post('/{schedule}/lookahead-tasks/{planTask}/constraints', [LookaheadPlanningController::class, 'storeConstraint']);
-        Route::post('/{schedule}/daily-plans', [LookaheadPlanningController::class, 'storeDailyPlan']);
-        Route::post('/{schedule}/daily-plans/{dailyPlan}/publish', [LookaheadPlanningController::class, 'publishDailyPlan']);
-        Route::post('/{schedule}/daily-plans/{dailyPlan}/submit', [LookaheadPlanningController::class, 'submitDailyPlan']);
-        Route::post('/{schedule}/daily-plans/{dailyPlan}/accept', [LookaheadPlanningController::class, 'acceptDailyPlan']);
-        Route::post('/{schedule}/daily-plans/{dailyPlan}/return', [LookaheadPlanningController::class, 'returnDailyPlan']);
-        Route::post('/{schedule}/daily-plans/{dailyPlan}/close', [LookaheadPlanningController::class, 'closeDailyPlan']);
-        Route::post('/{schedule}/daily-plans/{dailyPlan}/revise', [LookaheadPlanningController::class, 'reviseDailyPlan']);
-        Route::patch('/{schedule}/daily-plan-assignments/{assignment}/fact', [LookaheadPlanningController::class, 'recordAssignmentFact']);
+        Route::get('/{schedule}/lookahead-plans', [LookaheadPlanningController::class, 'indexPlans'])->middleware('authorize:schedule.view,project,project');
+        Route::post('/{schedule}/lookahead-plans', [LookaheadPlanningController::class, 'storePlan'])->middleware('authorize:schedule.edit,project,project');
+        Route::post('/{schedule}/lookahead-plans/{plan}/tasks', [LookaheadPlanningController::class, 'storePlanTask'])->middleware('authorize:schedule.edit,project,project');
+        Route::post('/{schedule}/lookahead-tasks/{planTask}/constraints', [LookaheadPlanningController::class, 'storeConstraint'])->middleware('authorize:schedule.edit,project,project');
+        Route::post('/{schedule}/daily-plans', [LookaheadPlanningController::class, 'storeDailyPlan'])->middleware('authorize:schedule.edit,project,project');
+        Route::post('/{schedule}/daily-plans/{dailyPlan}/publish', [LookaheadPlanningController::class, 'publishDailyPlan'])->middleware('authorize:schedule.edit,project,project');
+        Route::post('/{schedule}/daily-plans/{dailyPlan}/submit', [LookaheadPlanningController::class, 'submitDailyPlan'])->middleware('authorize:schedule.edit,project,project');
+        Route::post('/{schedule}/daily-plans/{dailyPlan}/accept', [LookaheadPlanningController::class, 'acceptDailyPlan'])->middleware('authorize:schedule.edit,project,project');
+        Route::post('/{schedule}/daily-plans/{dailyPlan}/return', [LookaheadPlanningController::class, 'returnDailyPlan'])->middleware('authorize:schedule.edit,project,project');
+        Route::post('/{schedule}/daily-plans/{dailyPlan}/close', [LookaheadPlanningController::class, 'closeDailyPlan'])->middleware('authorize:schedule.edit,project,project');
+        Route::post('/{schedule}/daily-plans/{dailyPlan}/revise', [LookaheadPlanningController::class, 'reviseDailyPlan'])->middleware('authorize:schedule.edit,project,project');
+        Route::patch('/{schedule}/daily-plan-assignments/{assignment}/fact', [LookaheadPlanningController::class, 'recordAssignmentFact'])->middleware('authorize:schedule.edit,project,project');
     });
     
     // === MATERIAL ANALYTICS (в контексте проекта) ===

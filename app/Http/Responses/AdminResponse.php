@@ -96,6 +96,17 @@ class AdminResponse
         if ($data instanceof ResourceCollection) {
             $resolved = $data->response()->getData(true);
 
+            if (
+                is_array($resolved)
+                && (
+                    array_key_exists('meta', $resolved)
+                    || array_key_exists('links', $resolved)
+                    || array_key_exists('summary', $resolved)
+                )
+            ) {
+                return $resolved;
+            }
+
             return $resolved['data'] ?? $resolved;
         }
 
