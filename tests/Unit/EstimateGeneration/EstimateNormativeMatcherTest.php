@@ -208,7 +208,7 @@ class EstimateNormativeMatcherTest extends TestCase
         $this->assertNotContains('unit_mismatch', $item['normative_match']['warnings']);
     }
 
-    public function test_resource_assembly_prices_review_candidate_instead_of_leaving_zero_total(): void
+    public function test_resource_assembly_keeps_unit_mismatch_candidate_unpriced(): void
     {
         $versionId = $this->createVersion('fsnb_2022', '2026-05-07');
         $priceVersionId = $this->createVersion('fsbc', '2026-05-07');
@@ -236,9 +236,9 @@ class EstimateNormativeMatcherTest extends TestCase
 
         $item = app(EstimatePricingService::class)->price($items)[0];
 
-        $this->assertSame('matched', $item['normative_match']['status']);
-        $this->assertSame(3000.0, $item['materials'][0]['total_price']);
-        $this->assertSame(3540.0, $item['total_cost']);
+        $this->assertSame('candidate', $item['normative_match']['status']);
+        $this->assertSame([], $item['materials']);
+        $this->assertSame(0.0, $item['total_cost']);
         $this->assertContains('unit_mismatch', $item['normative_match']['warnings']);
         $this->assertContains('requires_normative_review', $item['validation_flags']);
         $this->assertContains('normative_candidate_only', $item['validation_flags']);

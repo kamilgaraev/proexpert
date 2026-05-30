@@ -16,7 +16,7 @@
 - [x] Task 2: Unit Compatibility And Conversion Model
 - [x] Task 3: Work Intent Classifier And Scope Rules
 - [x] Task 4: Safe Candidate Search Before Scoring
-- [ ] Task 5: Hard Gate Decision Service
+- [x] Task 5: Hard Gate Decision Service
 - [ ] Task 6: Resource Assembly And Pricing Cannot Use Unsafe Candidates
 - [ ] Task 7: Line-Level Outlier Guard
 - [ ] Task 8: OCR Area Fact Ranking

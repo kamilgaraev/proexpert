@@ -9,7 +9,7 @@ use Tests\TestCase;
 
 class NormativeMatchDecisionServiceTest extends TestCase
 {
-    public function test_low_confidence_candidate_can_be_used_for_pricing_with_review_warning(): void
+    public function test_low_confidence_candidate_is_not_used_for_pricing(): void
     {
         $decision = app(NormativeMatchDecisionService::class)->decide([
             'confidence' => 0.41,
@@ -23,8 +23,27 @@ class NormativeMatchDecisionServiceTest extends TestCase
         ], ['unit' => 'м2']);
 
         $this->assertSame('candidate', $decision->status);
+        $this->assertFalse($decision->canUseForPricing);
+        $this->assertContains('low_confidence', $decision->warnings);
+    }
+
+    public function test_middle_confidence_safe_candidate_is_priced_with_review(): void
+    {
+        $decision = app(NormativeMatchDecisionService::class)->decide([
+            'confidence' => 0.61,
+            'unit' => 'м2',
+            'resources' => [
+                'materials' => [['price_source' => 'fsbc_base']],
+                'labor' => [],
+                'machinery' => [],
+                'other' => [],
+            ],
+        ], ['unit' => 'м2']);
+
+        $this->assertSame('review_priced', $decision->status);
         $this->assertTrue($decision->canUseForPricing);
         $this->assertContains('low_confidence', $decision->warnings);
+        $this->assertContains('requires_normative_review', $decision->warnings);
     }
 
     public function test_unit_mismatch_candidate_cannot_be_used_for_pricing(): void
@@ -61,6 +80,29 @@ class NormativeMatchDecisionServiceTest extends TestCase
         $this->assertSame('candidate', $decision->status);
         $this->assertFalse($decision->canUseForPricing);
         $this->assertContains('norm_without_prices', $decision->warnings);
+    }
+
+    public function test_scope_mismatch_candidate_is_not_used_for_pricing(): void
+    {
+        $decision = app(NormativeMatchDecisionService::class)->decide([
+            'confidence' => 0.9,
+            'unit' => 'м',
+            'collection' => ['norm_type' => 'gesn'],
+            'section' => ['code' => '01-01'],
+            'resources' => [
+                'materials' => [['price_source' => 'fsbc_base']],
+                'labor' => [],
+                'machinery' => [],
+                'other' => [],
+            ],
+        ], [
+            'unit' => 'м',
+            'work_intent' => ['scope' => 'engineering', 'system' => 'heating'],
+        ]);
+
+        $this->assertSame('candidate', $decision->status);
+        $this->assertFalse($decision->canUseForPricing);
+        $this->assertContains('scope_mismatch', $decision->warnings);
     }
 
     public function test_high_confidence_priced_candidate_is_accepted(): void
