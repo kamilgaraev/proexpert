@@ -176,11 +176,22 @@ class ResourceAssemblyService
         $selected = $match['selected'];
         $version = $match['version'];
         $priceVersion = $match['price_version'] ?? null;
-        $normQuantity = max((float) ($workItem['quantity'] ?? 0), 0.0)
-            * NormativeUnitNormalizer::quantityFactor(
-                (string) ($workItem['unit'] ?? ''),
-                (string) ($selected['unit'] ?? '')
-            );
+        $quantityFactor = NormativeUnitNormalizer::safeQuantityFactor(
+            (string) ($workItem['unit'] ?? ''),
+            (string) ($selected['unit'] ?? '')
+        );
+
+        if ($quantityFactor === null) {
+            return $this->applyCandidateOnlyMatch($workItem, $match, [
+                'status' => 'candidate',
+                'can_use_for_pricing' => false,
+                'confidence' => (float) ($selected['confidence'] ?? 0),
+                'reasons' => [],
+                'warnings' => ['unit_mismatch'],
+            ]);
+        }
+
+        $normQuantity = max((float) ($workItem['quantity'] ?? 0), 0.0) * $quantityFactor;
         $resources = $selected['resources'];
         $workItem = $this->clearNonNormativeResources($workItem);
 

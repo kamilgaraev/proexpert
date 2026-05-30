@@ -17,7 +17,7 @@
 - [x] Task 3: Work Intent Classifier And Scope Rules
 - [x] Task 4: Safe Candidate Search Before Scoring
 - [x] Task 5: Hard Gate Decision Service
-- [ ] Task 6: Resource Assembly And Pricing Cannot Use Unsafe Candidates
+- [x] Task 6: Resource Assembly And Pricing Cannot Use Unsafe Candidates
 - [ ] Task 7: Line-Level Outlier Guard
 - [ ] Task 8: OCR Area Fact Ranking
 - [ ] Task 9: Learning Examples Schema

@@ -315,6 +315,68 @@ class EstimateNormativeMatcherTest extends TestCase
         $this->assertContains('requires_normative_review', $draft['quality_summary']['warning_flags']);
     }
 
+    public function test_validation_summarizes_review_priced_and_candidate_only_normative_items(): void
+    {
+        $draft = app(EstimateValidationService::class)->validate([
+            'local_estimates' => [[
+                'key' => 'local-1',
+                'title' => 'Локальная смета',
+                'scope_type' => 'roof',
+                'source_refs' => ['doc-1'],
+                'sections' => [[
+                    'key' => 'section-1',
+                    'title' => 'Кровля',
+                    'source_refs' => ['doc-1'],
+                    'work_items' => [
+                        [
+                            'key' => 'work-1',
+                            'name' => 'Утепление кровли',
+                            'quantity' => 10,
+                            'quantity_basis' => 'по чертежу',
+                            'total_cost' => 1000,
+                            'materials' => [['total_price' => 1000]],
+                            'labor' => [],
+                            'machinery' => [],
+                            'confidence' => 0.8,
+                            'validation_flags' => ['requires_normative_review'],
+                            'normative_match' => [
+                                'status' => 'matched',
+                                'warnings' => ['low_confidence'],
+                                'decision' => [
+                                    'status' => 'review_priced',
+                                    'warnings' => ['requires_normative_review'],
+                                ],
+                            ],
+                        ],
+                        [
+                            'key' => 'work-2',
+                            'name' => 'Ошибочная норма',
+                            'quantity' => 1,
+                            'quantity_basis' => 'по чертежу',
+                            'total_cost' => 0,
+                            'materials' => [],
+                            'labor' => [],
+                            'machinery' => [],
+                            'confidence' => 0.7,
+                            'validation_flags' => ['normative_candidate_only', 'requires_normative_review'],
+                            'normative_match' => [
+                                'status' => 'candidate',
+                                'warnings' => ['unit_mismatch'],
+                            ],
+                        ],
+                    ],
+                ]],
+            ]],
+        ]);
+
+        $items = $draft['quality_summary']['normative_items'];
+
+        $this->assertSame(0, $items['accepted']);
+        $this->assertSame(1, $items['review_priced']);
+        $this->assertSame(1, $items['candidate_only']);
+        $this->assertSame(1, $items['unit_mismatch']);
+    }
+
     private function createVersion(string $sourceType, string $versionKey): int
     {
         return (int) DB::table('estimate_dataset_versions')->insertGetId([

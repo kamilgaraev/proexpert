@@ -20,9 +20,13 @@ class EstimateValidationService
         $pricedWorkItemsCount = 0;
         $zeroPriceWorkItemsCount = 0;
         $normativeMatchedWorkItemsCount = 0;
+        $normativeReviewPricedWorkItemsCount = 0;
         $normativeCandidateWorkItemsCount = 0;
+        $normativeCandidateOnlyWorkItemsCount = 0;
         $normativeRejectedWorkItemsCount = 0;
         $normativeNotFoundWorkItemsCount = 0;
+        $normativeUnitMismatchWorkItemsCount = 0;
+        $normativeScopeMismatchWorkItemsCount = 0;
         $marketEstimateWorkItemsCount = 0;
 
         foreach ($draft['local_estimates'] as $localIndex => $localEstimate) {
@@ -70,11 +74,29 @@ class EstimateValidationService
                         $flags[] = 'low_confidence';
                     }
 
-                    $normativeStatus = $workItem['normative_match']['status'] ?? null;
+                    $normativeMatch = is_array($workItem['normative_match'] ?? null) ? $workItem['normative_match'] : [];
+                    $normativeStatus = $normativeMatch['status'] ?? null;
+                    $normativeDecision = is_array($normativeMatch['decision'] ?? null) ? $normativeMatch['decision'] : [];
+                    $normativeDecisionStatus = (string) ($normativeDecision['status'] ?? '');
+                    $normativeWarnings = $this->normativeWarnings($normativeMatch);
+
+                    if (in_array('unit_mismatch', $normativeWarnings, true)) {
+                        $normativeUnitMismatchWorkItemsCount++;
+                    }
+
+                    if (in_array('scope_mismatch', $normativeWarnings, true)) {
+                        $normativeScopeMismatchWorkItemsCount++;
+                    }
+
                     if ($normativeStatus === 'matched') {
-                        $normativeMatchedWorkItemsCount++;
+                        if ($normativeDecisionStatus === 'review_priced') {
+                            $normativeReviewPricedWorkItemsCount++;
+                        } else {
+                            $normativeMatchedWorkItemsCount++;
+                        }
                     } elseif ($normativeStatus === 'candidate') {
                         $normativeCandidateWorkItemsCount++;
+                        $normativeCandidateOnlyWorkItemsCount++;
                     } elseif ($normativeStatus === 'rejected') {
                         $normativeRejectedWorkItemsCount++;
                     } elseif ($normativeStatus === 'not_found') {
@@ -132,9 +154,13 @@ class EstimateValidationService
             $pricedWorkItemsCount,
             $zeroPriceWorkItemsCount,
             $normativeMatchedWorkItemsCount,
+            $normativeReviewPricedWorkItemsCount,
             $normativeCandidateWorkItemsCount,
+            $normativeCandidateOnlyWorkItemsCount,
             $normativeRejectedWorkItemsCount,
             $normativeNotFoundWorkItemsCount,
+            $normativeUnitMismatchWorkItemsCount,
+            $normativeScopeMismatchWorkItemsCount,
             $marketEstimateWorkItemsCount,
             $projectFlags
         );
@@ -168,9 +194,13 @@ class EstimateValidationService
         int $pricedWorkItems,
         int $zeroPriceWorkItems,
         int $normativeMatchedWorkItems,
+        int $normativeReviewPricedWorkItems,
         int $normativeCandidateWorkItems,
+        int $normativeCandidateOnlyWorkItems,
         int $normativeRejectedWorkItems,
         int $normativeNotFoundWorkItems,
+        int $normativeUnitMismatchWorkItems,
+        int $normativeScopeMismatchWorkItems,
         int $marketEstimateWorkItems,
         array $projectFlags
     ): array {
@@ -200,13 +230,31 @@ class EstimateValidationService
             'market_estimate_work_items' => $marketEstimateWorkItems,
             'normative_items' => [
                 'accepted' => $normativeMatchedWorkItems,
+                'review_priced' => $normativeReviewPricedWorkItems,
                 'candidate' => $normativeCandidateWorkItems,
+                'candidate_only' => $normativeCandidateOnlyWorkItems,
                 'rejected' => $normativeRejectedWorkItems,
                 'not_found' => $normativeNotFoundWorkItems,
+                'unit_mismatch' => $normativeUnitMismatchWorkItems,
+                'scope_mismatch' => $normativeScopeMismatchWorkItems,
                 'requires_review' => $requiresNormativeReview,
             ],
             'critical_flags' => $criticalFlags,
             'warning_flags' => $warningFlags,
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $normativeMatch
+     * @return array<int, string>
+     */
+    private function normativeWarnings(array $normativeMatch): array
+    {
+        $decision = is_array($normativeMatch['decision'] ?? null) ? $normativeMatch['decision'] : [];
+
+        return array_values(array_unique([
+            ...array_map('strval', $normativeMatch['warnings'] ?? []),
+            ...array_map('strval', $decision['warnings'] ?? []),
+        ]));
     }
 }
