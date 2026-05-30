@@ -28,7 +28,7 @@
 - [x] Task 14: Normative Candidate Reranker
 - [x] Task 15: Generation Flow And Progress UX Contract
 - [x] Task 16: Admin UI For Progress, Evidence, And Review
-- [ ] Task 17: End-To-End Backend Quality Suite
+- [x] Task 17: End-To-End Backend Quality Suite
 - [ ] Task 18: Production Diagnostic Readiness
 
 ## Operating Rules
