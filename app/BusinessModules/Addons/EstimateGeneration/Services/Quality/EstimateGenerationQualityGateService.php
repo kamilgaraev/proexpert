@@ -15,6 +15,8 @@ class EstimateGenerationQualityGateService
     private const WAREHOUSE_TOTAL_PER_M2_MIN = 15000;
     private const WAREHOUSE_TOTAL_PER_M2_MAX = 180000;
     private const SECTION_SHARE_MAX = 0.45;
+    private const LINE_SHARE_MAX = 0.35;
+    private const LINE_TOTAL_PER_M2_MAX = 800000;
 
     /**
      * @param array<string, mixed> $draft
@@ -27,6 +29,7 @@ class EstimateGenerationQualityGateService
         $area = (float) ($profile['area'] ?? 0);
         $totalCost = (float) ($totals['total_cost'] ?? $totals['base_total_cost'] ?? 0);
         $itemsCount = (int) ($totals['work_items_count'] ?? $this->countItems($draft));
+        $lineAnomalies = $this->lineAnomalies($draft, $totalCost, $area);
         $criticalFlags = [];
         $warningFlags = [];
 
@@ -50,6 +53,10 @@ class EstimateGenerationQualityGateService
             $criticalFlags[] = 'section_total_anomaly';
         }
 
+        if ($lineAnomalies !== []) {
+            $criticalFlags[] = 'line_total_anomaly';
+        }
+
         if (($totals['zero_price_work_items'] ?? 0) > 0) {
             $criticalFlags[] = 'missing_prices';
         }
@@ -71,7 +78,11 @@ class EstimateGenerationQualityGateService
         $warningFlags = array_values(array_unique($warningFlags));
         $level = $criticalFlags === [] ? 'passed' : 'review_required';
 
-        if (in_array('total_out_of_range', $criticalFlags, true) || in_array('section_total_anomaly', $criticalFlags, true)) {
+        if (
+            in_array('total_out_of_range', $criticalFlags, true)
+            || in_array('section_total_anomaly', $criticalFlags, true)
+            || in_array('line_total_anomaly', $criticalFlags, true)
+        ) {
             $level = 'blocked';
         }
 
@@ -85,6 +96,9 @@ class EstimateGenerationQualityGateService
                 'area' => $area > 0 ? $area : null,
                 'total_per_square_meter' => $area > 0 ? round($totalCost / $area, 2) : null,
                 'target_items_min' => $minItems,
+                'max_line_total' => $lineAnomalies !== [] ? max(array_column($lineAnomalies, 'total_cost')) : 0,
+                'max_line_share' => $lineAnomalies !== [] ? max(array_column($lineAnomalies, 'share')) : 0,
+                'anomalous_line_keys' => array_values(array_column($lineAnomalies, 'key')),
             ],
         );
     }
@@ -94,6 +108,85 @@ class EstimateGenerationQualityGateService
         return str_contains($objectType, 'warehouse')
             || str_contains($objectType, 'склад')
             || str_contains($objectType, 'industrial');
+    }
+
+    /**
+     * @param array<string, mixed> $draft
+     * @return array<int, array{key: string, total_cost: float, share: float}>
+     */
+    private function lineAnomalies(array $draft, float $totalCost, float $area): array
+    {
+        if ($totalCost <= 0) {
+            return [];
+        }
+
+        $anomalies = [];
+
+        foreach ($draft['local_estimates'] ?? [] as $localEstimate) {
+            foreach ($localEstimate['sections'] ?? [] as $section) {
+                foreach ($section['work_items'] ?? [] as $workItem) {
+                    $lineTotal = (float) ($workItem['total_cost'] ?? 0);
+
+                    if ($lineTotal <= 0) {
+                        continue;
+                    }
+
+                    $share = $lineTotal / $totalCost;
+                    $totalPerProjectSquareMeter = $area > 0 ? $lineTotal / $area : 0;
+                    $normativeAccepted = $this->isNormativeAccepted($workItem);
+                    $pricedMismatch = $this->hasPricedNormativeMismatch($workItem);
+
+                    if (
+                        $pricedMismatch
+                        || $totalPerProjectSquareMeter > self::LINE_TOTAL_PER_M2_MAX
+                        || ($share > self::LINE_SHARE_MAX && !$normativeAccepted)
+                    ) {
+                        $anomalies[] = [
+                            'key' => (string) ($workItem['key'] ?? $workItem['name'] ?? 'work_item'),
+                            'total_cost' => round($lineTotal, 2),
+                            'share' => round($share, 4),
+                        ];
+                    }
+                }
+            }
+        }
+
+        return $anomalies;
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     */
+    private function isNormativeAccepted(array $workItem): bool
+    {
+        $match = is_array($workItem['normative_match'] ?? null) ? $workItem['normative_match'] : [];
+        $decision = is_array($match['decision'] ?? null) ? $match['decision'] : [];
+
+        if (($decision['status'] ?? null) === 'accepted') {
+            return true;
+        }
+
+        return ($match['status'] ?? null) === 'matched' && ($decision['status'] ?? null) === null;
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     */
+    private function hasPricedNormativeMismatch(array $workItem): bool
+    {
+        $lineTotal = (float) ($workItem['total_cost'] ?? 0);
+        if ($lineTotal <= 0) {
+            return false;
+        }
+
+        $match = is_array($workItem['normative_match'] ?? null) ? $workItem['normative_match'] : [];
+        $decision = is_array($match['decision'] ?? null) ? $match['decision'] : [];
+        $warnings = array_values(array_unique([
+            ...array_map('strval', $match['warnings'] ?? []),
+            ...array_map('strval', $decision['warnings'] ?? []),
+        ]));
+
+        return in_array('unit_mismatch', $warnings, true) || in_array('scope_mismatch', $warnings, true);
     }
 
     /**

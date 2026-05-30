@@ -18,7 +18,7 @@
 - [x] Task 4: Safe Candidate Search Before Scoring
 - [x] Task 5: Hard Gate Decision Service
 - [x] Task 6: Resource Assembly And Pricing Cannot Use Unsafe Candidates
-- [ ] Task 7: Line-Level Outlier Guard
+- [x] Task 7: Line-Level Outlier Guard
 - [ ] Task 8: OCR Area Fact Ranking
 - [ ] Task 9: Learning Examples Schema
 - [ ] Task 10: Extract Learning Pairs From Imported Estimates
