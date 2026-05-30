@@ -52,6 +52,16 @@ class AIAssistantSourceEncodingTest extends TestCase
             'admin assistant types' => ['../prohelper_admin/src/types/aiAssistant.ts'],
             'yandex rag embedding provider' => ['app/BusinessModules/Features/AIAssistant/Services/Rag/YandexRagEmbeddingProvider.php'],
             'yandex rag embedding provider test' => ['tests/Unit/AIAssistant/Rag/YandexRagEmbeddingProviderTest.php'],
+            'rag source formatting concern' => ['app/BusinessModules/Features/AIAssistant/Services/Rag/Sources/Concerns/FormatsRagSourceContent.php'],
+            'safety rag source' => ['app/BusinessModules/Features/AIAssistant/Services/Rag/Sources/SafetyRagSource.php'],
+            'machinery rag source' => ['app/BusinessModules/Features/AIAssistant/Services/Rag/Sources/MachineryRagSource.php'],
+            'production labor rag source' => ['app/BusinessModules/Features/AIAssistant/Services/Rag/Sources/ProductionLaborRagSource.php'],
+            'change management rag source' => ['app/BusinessModules/Features/AIAssistant/Services/Rag/Sources/ChangeManagementRagSource.php'],
+            'handover acceptance rag source' => ['app/BusinessModules/Features/AIAssistant/Services/Rag/Sources/HandoverAcceptanceRagSource.php'],
+            'warehouse rag source' => ['app/BusinessModules/Features/AIAssistant/Services/Rag/Sources/WarehouseRagSource.php'],
+            'procurement rag source' => ['app/BusinessModules/Features/AIAssistant/Services/Rag/Sources/ProcurementRagSource.php'],
+            'schedule rag source' => ['app/BusinessModules/Features/AIAssistant/Services/Rag/Sources/ScheduleRagSource.php'],
+            'rag source collectors test' => ['tests/Unit/AIAssistant/Rag/RagSourceCollectorsTest.php'],
         ];
     }
 }
