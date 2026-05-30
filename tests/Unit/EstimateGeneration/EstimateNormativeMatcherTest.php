@@ -48,6 +48,95 @@ class EstimateNormativeMatcherTest extends TestCase
         $this->assertSame(4200.0, $match['selected']['resources']['materials'][0]['unit_price']);
     }
 
+    public function test_matcher_does_not_drop_roof_norm_after_code_ordered_earthwork_pool(): void
+    {
+        $versionId = $this->createVersion('fsnb_2022', '2026-05-08');
+        $priceVersionId = $this->createVersion('fsbc', '2026-05-08');
+        $collectionId = $this->createCollection($versionId);
+        $earthworkSectionId = $this->createSection($collectionId, 'Земляные работы', '01');
+        $roofSectionId = $this->createSection($collectionId, 'Кровли', '12');
+
+        for ($index = 1; $index <= 60; $index++) {
+            $this->createNorm(
+                $collectionId,
+                $earthworkSectionId,
+                sprintf('01-01-063-%02d', $index),
+                'Утепление грунта в траншеях',
+                'км',
+                '01-01-063'
+            );
+        }
+
+        $normId = $this->createNorm(
+            $collectionId,
+            $roofSectionId,
+            '12-01-013-01',
+            'Утепление покрытий кровли минераловатными плитами',
+            'м2',
+            '12-01-013'
+        );
+        $this->createNormResource($normId, '12.1.01.01-0001', 'Плиты минераловатные', 'м2', 1.05, 'material');
+        $this->createResourcePrice($priceVersionId, '12.1.01.01-0001', 'Плиты минераловатные', 'м2', 800, 'material');
+
+        $match = app(EstimateNormativeMatcher::class)->matchWorkItem([
+            'name' => 'Утепление кровли 200 мм',
+            'unit' => 'м2',
+            'quantity' => 194.25,
+        ], [
+            'scope_type' => 'roof',
+            'section_title' => 'Кровля',
+            'local_estimate_title' => 'Кровля',
+        ]);
+
+        $this->assertNotNull($match);
+        $this->assertSame('12-01-013-01', $match['selected']['code']);
+        $this->assertSame('м2', $match['selected']['unit']);
+    }
+
+    public function test_matcher_prefers_length_cable_norm_over_piece_equipment_norm(): void
+    {
+        $versionId = $this->createVersion('fsnb_2022', '2026-05-09');
+        $priceVersionId = $this->createVersion('fsbc', '2026-05-09');
+        $collectionId = $this->createCollection($versionId, 'gesnm');
+        $electricalSectionId = $this->createSection($collectionId, 'Электромонтажные работы', '08');
+
+        for ($index = 1; $index <= 55; $index++) {
+            $this->createNorm(
+                $collectionId,
+                $electricalSectionId,
+                sprintf('08-01-025-%02d', $index),
+                'Прокладка кабельных линий для блочных подстанций',
+                'шт',
+                '08-01-025'
+            );
+        }
+
+        $normId = $this->createNorm(
+            $collectionId,
+            $electricalSectionId,
+            '08-02-147-01',
+            'Прокладка кабеля в готовых каналах',
+            'м',
+            '08-02-147'
+        );
+        $this->createNormResource($normId, '08.2.01.01-0001', 'Кабель силовой', 'м', 1.0, 'material');
+        $this->createResourcePrice($priceVersionId, '08.2.01.01-0001', 'Кабель силовой', 'м', 250, 'material');
+
+        $match = app(EstimateNormativeMatcher::class)->matchWorkItem([
+            'name' => 'Прокладка кабельных линий',
+            'unit' => 'м',
+            'quantity' => 834.68,
+        ], [
+            'scope_type' => 'engineering',
+            'section_title' => 'Электроснабжение',
+            'local_estimate_title' => 'Инженерные сети',
+        ]);
+
+        $this->assertNotNull($match);
+        $this->assertSame('08-02-147-01', $match['selected']['code']);
+        $this->assertSame('м', $match['selected']['unit']);
+    }
+
     public function test_resource_assembly_uses_normative_resources_without_template_prices(): void
     {
         $versionId = $this->createVersion('fsnb_2022', '2026-05-07');
@@ -243,35 +332,42 @@ class EstimateNormativeMatcherTest extends TestCase
         ]);
     }
 
-    private function createCollection(int $versionId): int
+    private function createCollection(int $versionId, string $normType = 'gesn'): int
     {
         return (int) DB::table('estimate_norm_collections')->insertGetId([
             'dataset_version_id' => $versionId,
-            'code' => 'gesn',
+            'code' => $normType,
             'name' => 'ГЭСН',
-            'norm_type' => 'gesn',
+            'norm_type' => $normType,
             'source_file' => 'ГЭСН.xml',
             'created_at' => now(),
             'updated_at' => now(),
         ]);
     }
 
-    private function createSection(int $collectionId, string $name): int
+    private function createSection(int $collectionId, string $name, string $code = '01'): int
     {
         return (int) DB::table('estimate_norm_sections')->insertGetId([
             'collection_id' => $collectionId,
             'parent_id' => null,
-            'code' => '01',
+            'code' => $code,
             'name' => $name,
             'section_type' => 'Сборник',
             'depth' => 0,
-            'path' => '01',
+            'path' => $code,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
     }
 
-    private function createNorm(int $collectionId, int $sectionId, string $code, string $name, string $unit): int
+    private function createNorm(
+        int $collectionId,
+        int $sectionId,
+        string $code,
+        string $name,
+        string $unit,
+        ?string $sectionCode = null
+    ): int
     {
         return (int) DB::table('estimate_norms')->insertGetId([
             'collection_id' => $collectionId,
@@ -279,8 +375,8 @@ class EstimateNormativeMatcherTest extends TestCase
             'code' => $code,
             'name' => $name,
             'unit' => $unit,
-            'section_code' => '01-01-001',
-            'section_name' => 'Фундаменты',
+            'section_code' => $sectionCode ?? substr($code, 0, 8),
+            'section_name' => $name,
             'work_composition' => json_encode(['Подготовка основания', 'Укладка бетонной смеси'], JSON_UNESCAPED_UNICODE),
             'created_at' => now(),
             'updated_at' => now(),

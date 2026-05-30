@@ -13,6 +13,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNormResource;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegionalPriceVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateResourcePrice;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSearchService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -22,6 +23,10 @@ class EstimateNormativeMatcher
     private const MAX_QUERY_TOKENS = 10;
     private const MIN_TOKEN_LENGTH = 3;
     private const LOW_CONFIDENCE_THRESHOLD = 0.55;
+
+    public function __construct(
+        private readonly NormativeCandidateSearchService $candidateSearchService,
+    ) {}
 
     /**
      * @return array<string, mixed>|null
@@ -36,7 +41,7 @@ class EstimateNormativeMatcher
         }
 
         $tokens = $this->tokensForWorkItem($workItem, $context);
-        $candidates = $this->candidateNorms($version, $tokens, max($limit * 10, 50));
+        $candidates = $this->candidateSearchService->search($version, $workItem, $context, $tokens, max($limit * 10, 50));
 
         if ($candidates->isEmpty()) {
             return null;
