@@ -22,7 +22,7 @@
 - [x] Task 8: OCR Area Fact Ranking
 - [x] Task 9: Learning Examples Schema
 - [x] Task 10: Extract Learning Pairs From Imported Estimates
-- [ ] Task 11: Record User Normative Corrections
+- [x] Task 11: Record User Normative Corrections
 - [ ] Task 12: RAG Source For Learning Examples
 - [ ] Task 13: Learning Evidence Retrieval For Normative Matching
 - [ ] Task 14: Normative Candidate Reranker

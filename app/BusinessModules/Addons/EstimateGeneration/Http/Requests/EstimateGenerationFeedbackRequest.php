@@ -20,6 +20,12 @@ class EstimateGenerationFeedbackRequest extends FormRequest
             'section_key' => ['nullable', 'string', 'max:255'],
             'work_item_key' => ['nullable', 'string', 'max:255'],
             'payload' => ['nullable', 'array'],
+            'payload.norm_id' => ['nullable', 'integer'],
+            'payload.normative_code' => ['nullable', 'string', 'max:100'],
+            'payload.reason' => ['nullable', 'string', 'max:1000'],
+            'norm_id' => ['nullable', 'integer'],
+            'normative_code' => ['nullable', 'string', 'max:100'],
+            'reason' => ['nullable', 'string', 'max:1000'],
             'comments' => ['nullable', 'string', 'max:2000'],
         ];
     }

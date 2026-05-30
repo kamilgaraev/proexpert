@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services\Normatives;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
@@ -22,6 +23,7 @@ class NormativeCandidateSelectionService
         protected EstimatePricingService $pricingService,
         protected EstimateValidationService $validationService,
         protected EstimateGenerationPackagePersistenceService $packagePersistenceService,
+        protected EstimateGenerationLearningRecorder $learningRecorder,
     ) {}
 
     /**
@@ -33,6 +35,7 @@ class NormativeCandidateSelectionService
         $regionalContext = $draft['regional_context'] ?? $session->input_payload['regional_context'] ?? [];
         $found = false;
         $updated = false;
+        $learningSelection = null;
 
         foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] ?? [] as $sectionIndex => $section) {
@@ -43,14 +46,17 @@ class NormativeCandidateSelectionService
 
                     $found = true;
                     $this->assertCandidateWasOffered($workItem, $normId);
+                    $originalWorkItem = $workItem;
 
-                    $match = $this->matcher->matchSelectedNorm($normId, $workItem, [
+                    $context = [
                         'scope_type' => $localEstimate['scope_type'] ?? null,
                         'local_estimate_title' => $localEstimate['title'] ?? null,
                         'section_title' => $section['title'] ?? null,
                         'source_refs' => $section['source_refs'] ?? $localEstimate['source_refs'] ?? [],
                         'regional_context' => $regionalContext,
-                    ]);
+                    ];
+
+                    $match = $this->matcher->matchSelectedNorm($normId, $workItem, $context);
 
                     if ($match === null) {
                         throw ValidationException::withMessages([
@@ -60,6 +66,7 @@ class NormativeCandidateSelectionService
 
                     $workItem = $this->resourceAssemblyService->applySelectedNormativeMatch($workItem, $match);
                     $workItem = $this->pricingService->price([$workItem])[0];
+                    $learningSelection = [$originalWorkItem, $workItem, $context];
                     $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex] = $workItem;
                     $updated = true;
 
@@ -82,6 +89,10 @@ class NormativeCandidateSelectionService
 
         $draft = $this->validationService->validate($draft);
         $this->packagePersistenceService->syncFromDraft($session, $draft);
+        if ($learningSelection !== null) {
+            [$originalWorkItem, $selectedWorkItem, $context] = $learningSelection;
+            $this->learningRecorder->recordUserSelection($session, $originalWorkItem, $selectedWorkItem, $normId, $context);
+        }
         $status = ((int) data_get($draft, 'quality_summary.normative_items.requires_review', 0)) > 0
             ? 'review_required'
             : 'ready_for_review';

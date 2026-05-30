@@ -22,6 +22,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationExc
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSelectionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use App\Http\Controllers\Controller;
@@ -47,6 +48,7 @@ class EstimateGenerationController extends Controller
         protected EstimateGenerationPackagePresenter $packagePresenter,
         protected NormativeCandidateSelectionService $candidateSelectionService,
         protected DocumentGenerationReadinessService $documentReadinessService,
+        protected EstimateGenerationLearningRecorder $learningRecorder,
     ) {}
 
     public function index(Request $request, Project $project): JsonResponse
@@ -431,6 +433,7 @@ class EstimateGenerationController extends Controller
                 'payload' => $request->validated('payload', []),
                 'comments' => $request->validated('comments'),
             ]);
+            $this->learningRecorder->recordUserRejection($session, $feedback);
 
             return AdminResponse::success([
                 'feedback_id' => $feedback->id,
