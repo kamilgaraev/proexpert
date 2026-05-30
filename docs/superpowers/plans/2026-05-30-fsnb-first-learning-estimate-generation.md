@@ -27,7 +27,7 @@
 - [x] Task 13: Learning Evidence Retrieval For Normative Matching
 - [x] Task 14: Normative Candidate Reranker
 - [x] Task 15: Generation Flow And Progress UX Contract
-- [ ] Task 16: Admin UI For Progress, Evidence, And Review
+- [x] Task 16: Admin UI For Progress, Evidence, And Review
 - [ ] Task 17: End-To-End Backend Quality Suite
 - [ ] Task 18: Production Diagnostic Readiness
 
