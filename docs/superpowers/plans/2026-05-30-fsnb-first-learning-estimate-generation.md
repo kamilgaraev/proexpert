@@ -20,7 +20,7 @@
 - [x] Task 6: Resource Assembly And Pricing Cannot Use Unsafe Candidates
 - [x] Task 7: Line-Level Outlier Guard
 - [x] Task 8: OCR Area Fact Ranking
-- [ ] Task 9: Learning Examples Schema
+- [x] Task 9: Learning Examples Schema
 - [ ] Task 10: Extract Learning Pairs From Imported Estimates
 - [ ] Task 11: Record User Normative Corrections
 - [ ] Task 12: RAG Source For Learning Examples
