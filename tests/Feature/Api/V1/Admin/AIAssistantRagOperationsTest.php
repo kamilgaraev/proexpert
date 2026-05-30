@@ -66,7 +66,9 @@ class AIAssistantRagOperationsTest extends TestCase
             ->assertJsonPath('data.chunk_count', 1)
             ->assertJsonPath('data.latest_run.id', $successRun->id)
             ->assertJsonPath('data.last_successful_run.id', $successRun->id)
-            ->assertJsonPath('data.last_failed_run.id', $failedRun->id);
+            ->assertJsonPath('data.last_failed_run.id', $failedRun->id)
+            ->assertJsonPath('data.source_catalog.0.type', 'project')
+            ->assertJsonPath('data.source_catalog.0.enabled', true);
     }
 
     public function test_reindex_queues_current_organization_run(): void
@@ -113,6 +115,21 @@ class AIAssistantRagOperationsTest extends TestCase
             ->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/ai-assistant/rag/reindex', [
                 'project_id' => $foreignProject->id,
+            ]);
+
+        $response->assertStatus(422);
+    }
+
+    public function test_reindex_rejects_unknown_source_type(): void
+    {
+        $this->withoutMiddleware();
+        $context = AdminApiTestContext::create(roleSlug: 'organization_admin');
+
+        $response = $this
+            ->actingAs($context->user, 'api_admin')
+            ->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/ai-assistant/rag/reindex', [
+                'source_type' => 'missing_source',
             ]);
 
         $response->assertStatus(422);

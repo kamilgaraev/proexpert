@@ -39,6 +39,26 @@ class OpenAIRagEmbeddingProviderTest extends TestCase
         $this->assertSame([
             'model' => 'text-embedding-3-small',
             'input' => 'Контекст проекта',
+            'dimensions' => 3,
+        ], $client->embeddings->lastParameters);
+    }
+
+    public function test_openai_provider_passes_configured_dimensions_for_text_embedding_3_models(): void
+    {
+        $client = new FakeOpenAIEmbeddingClient([0.4, 0.5, 0.6]);
+        $provider = new OpenAIRagEmbeddingProvider(
+            client: $client,
+            apiKey: 'test-key',
+            model: 'text-embedding-3-small',
+            dimensions: 256
+        );
+
+        $provider->embed('Контекст проекта');
+
+        $this->assertSame([
+            'model' => 'text-embedding-3-small',
+            'input' => 'Контекст проекта',
+            'dimensions' => 256,
         ], $client->embeddings->lastParameters);
     }
 

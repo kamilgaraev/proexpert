@@ -93,6 +93,46 @@ class RagIndexerTest extends TestCase
         $this->assertSame(1, $provider->calls);
     }
 
+    public function test_indexes_long_content_into_multiple_chunks(): void
+    {
+        config()->set('ai-assistant.rag.chunk_chars', 80);
+
+        [$organizationId, $projectId] = $this->seedScope();
+        $provider = new RecordingEmbeddingProvider([0.1, 0.2, 0.3]);
+        $indexer = new RagIndexer($provider, new RagSourceRegistry([]));
+
+        $indexer->indexChunk(new RagChunkData(
+            organizationId: $organizationId,
+            projectId: $projectId,
+            sourceType: 'project',
+            entityType: 'project',
+            entityId: $projectId,
+            title: 'Большой проект',
+            content: implode("\n\n", [
+                'Первый длинный блок про сроки и закупки.',
+                'Второй длинный блок про оплату и подрядчика.',
+                'Третий длинный блок про качество и замечания.',
+            ]),
+            metadata: ['test' => true],
+            updatedAt: now()
+        ));
+
+        $this->assertDatabaseCount('ai_rag_chunks', 3);
+        $this->assertDatabaseHas('ai_rag_chunks', [
+            'chunk_index' => 0,
+            'content' => 'Первый длинный блок про сроки и закупки.',
+        ]);
+        $this->assertDatabaseHas('ai_rag_chunks', [
+            'chunk_index' => 1,
+            'content' => 'Второй длинный блок про оплату и подрядчика.',
+        ]);
+        $this->assertDatabaseHas('ai_rag_chunks', [
+            'chunk_index' => 2,
+            'content' => 'Третий длинный блок про качество и замечания.',
+        ]);
+        $this->assertSame(3, $provider->calls);
+    }
+
     /**
      * @return array{0: int, 1: int}
      */

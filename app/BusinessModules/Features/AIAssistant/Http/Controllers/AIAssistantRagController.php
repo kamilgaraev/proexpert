@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\AIAssistant\Http\Controllers;
 use App\BusinessModules\Features\AIAssistant\Http\Resources\RagIndexStatusResource;
 use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\User;
@@ -19,7 +20,8 @@ use Throwable;
 class AIAssistantRagController extends Controller
 {
     public function __construct(
-        private readonly RagIndexingCoordinator $coordinator
+        private readonly RagIndexingCoordinator $coordinator,
+        private readonly RagSourceRegistry $sourceRegistry
     ) {
     }
 
@@ -61,7 +63,7 @@ class AIAssistantRagController extends Controller
                 'integer',
                 Rule::exists('projects', 'id')->where('organization_id', $organizationId),
             ],
-            'source_type' => ['nullable', 'string', 'max:80'],
+            'source_type' => ['nullable', 'string', 'max:80', Rule::in($this->sourceRegistry->enabledSourceTypes())],
         ]);
 
         try {
@@ -105,6 +107,7 @@ class AIAssistantRagController extends Controller
             'latest_run' => $latestRun,
             'last_successful_run' => $lastSuccessfulRun,
             'last_failed_run' => $lastFailedRun,
+            'source_catalog' => $this->sourceRegistry->sourceCatalog(),
         ];
     }
 

@@ -230,6 +230,7 @@ $ragScheduledLimit = max(1, (int) config('ai-assistant.rag.scheduled_limit', 50)
 $ragBackfillCommand = implode(' ', [
     'ai-assistant:rag-backfill',
     '--all',
+    '--stale',
     "--limit={$ragScheduledLimit}",
 ]);
 

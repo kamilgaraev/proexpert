@@ -259,6 +259,16 @@ class AIAssistantRagBackfillCommandTest extends TestCase
         );
     }
 
+    public function test_scheduled_backfill_command_is_stale_only(): void
+    {
+        $consoleRoutes = file_get_contents(base_path('routes/console.php'));
+
+        $this->assertIsString($consoleRoutes);
+        $this->assertStringContainsString("'ai-assistant:rag-backfill',", $consoleRoutes);
+        $this->assertStringContainsString("'--all',", $consoleRoutes);
+        $this->assertStringContainsString("'--stale',", $consoleRoutes);
+    }
+
     public function test_sync_all_requires_force(): void
     {
         $this->artisan('ai-assistant:rag-backfill', [

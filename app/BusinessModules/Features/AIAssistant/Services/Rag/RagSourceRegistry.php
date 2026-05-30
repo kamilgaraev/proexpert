@@ -32,6 +32,28 @@ final class RagSourceRegistry
         );
     }
 
+    /**
+     * @return array<int, string>
+     */
+    public function enabledSourceTypes(): array
+    {
+        return array_keys($this->enabledCollectors());
+    }
+
+    /**
+     * @return array<int, array{type: string, enabled: bool}>
+     */
+    public function sourceCatalog(): array
+    {
+        return array_values(array_map(
+            static fn (RagSourceCollectorInterface $collector): array => [
+                'type' => $collector->sourceType(),
+                'enabled' => $collector->enabled(),
+            ],
+            $this->enabledCollectors()
+        ));
+    }
+
     public function collector(string $sourceType): ?RagSourceCollectorInterface
     {
         return $this->collectors[$sourceType] ?? null;

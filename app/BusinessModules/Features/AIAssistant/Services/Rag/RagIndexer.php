@@ -36,27 +36,14 @@ class RagIndexer
             return;
         }
 
-        try {
-            $embedding = $this->embeddingProvider->embed(
-                $chunk->content,
-                RagEmbeddingProviderInterface::PURPOSE_DOCUMENT
-            );
-        } catch (Throwable $throwable) {
-            Log::warning('ai_assistant.rag.embedding_failed', [
-                'organization_id' => $chunk->organizationId,
-                'project_id' => $chunk->projectId,
-                'source_type' => $chunk->sourceType,
-                'entity_type' => $chunk->entityType,
-                'entity_id' => (string) $chunk->entityId,
-                'exception_class' => $throwable::class,
-            ]);
-
-            throw $throwable;
+        $contentChunks = $this->splitContent($chunk->content);
+        if ($contentChunks === []) {
+            return;
         }
 
-        $vector = $this->vectorLiteral($embedding);
+        $embeddedChunks = $this->embedContentChunks($chunk, $contentChunks);
 
-        DB::transaction(function () use ($chunk, $checksum, $vector): void {
+        DB::transaction(function () use ($chunk, $checksum, $embeddedChunks): void {
             $source = RagSource::query()->updateOrCreate(
                 [
                     'organization_id' => $chunk->organizationId,
@@ -75,20 +62,25 @@ class RagIndexer
 
             $source->chunks()->delete();
 
-            $ragChunk = RagChunk::query()->create([
-                'source_id' => $source->id,
-                'organization_id' => $chunk->organizationId,
-                'project_id' => $chunk->projectId,
-                'chunk_index' => 0,
-                'content' => $chunk->content,
-                'content_hash' => hash('sha256', $this->normalizeText($chunk->content)),
-                'metadata' => $chunk->metadata,
-                'embedding_provider' => $this->embeddingProvider->provider(),
-                'embedding_model' => $this->embeddingProvider->model(),
-                'embedding_created_at' => now(),
-            ]);
+            foreach ($embeddedChunks as $index => $embeddedChunk) {
+                $ragChunk = RagChunk::query()->create([
+                    'source_id' => $source->id,
+                    'organization_id' => $chunk->organizationId,
+                    'project_id' => $chunk->projectId,
+                    'chunk_index' => $index,
+                    'content' => $embeddedChunk['content'],
+                    'content_hash' => hash('sha256', $this->normalizeText($embeddedChunk['content'])),
+                    'metadata' => array_merge($chunk->metadata, [
+                        'chunk_index' => $index,
+                        'chunk_count' => count($embeddedChunks),
+                    ]),
+                    'embedding_provider' => $this->embeddingProvider->provider(),
+                    'embedding_model' => $this->embeddingProvider->model(),
+                    'embedding_created_at' => now(),
+                ]);
 
-            $this->storeVector($ragChunk, $vector);
+                $this->storeVector($ragChunk, $embeddedChunk['vector']);
+            }
         });
     }
 
@@ -141,6 +133,123 @@ class RagIndexer
         $value = preg_replace("/\n{3,}/", "\n\n", $value) ?? $value;
 
         return trim($value);
+    }
+
+    /**
+     * @param  array<int, string>  $contentChunks
+     * @return array<int, array{content: string, vector: string}>
+     */
+    private function embedContentChunks(RagChunkData $chunk, array $contentChunks): array
+    {
+        $embeddedChunks = [];
+
+        foreach ($contentChunks as $index => $content) {
+            try {
+                $embedding = $this->embeddingProvider->embed(
+                    $content,
+                    RagEmbeddingProviderInterface::PURPOSE_DOCUMENT
+                );
+            } catch (Throwable $throwable) {
+                Log::warning('ai_assistant.rag.embedding_failed', [
+                    'organization_id' => $chunk->organizationId,
+                    'project_id' => $chunk->projectId,
+                    'source_type' => $chunk->sourceType,
+                    'entity_type' => $chunk->entityType,
+                    'entity_id' => (string) $chunk->entityId,
+                    'chunk_index' => $index,
+                    'exception_class' => $throwable::class,
+                ]);
+
+                throw $throwable;
+            }
+
+            $embeddedChunks[] = [
+                'content' => $content,
+                'vector' => $this->vectorLiteral($embedding),
+            ];
+        }
+
+        return $embeddedChunks;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function splitContent(string $content): array
+    {
+        $content = $this->normalizeText($content);
+        if ($content === '') {
+            return [];
+        }
+
+        $limit = $this->configInt('ai-assistant.rag.chunk_chars', 1200);
+        $paragraphs = preg_split("/\n{2,}/u", $content) ?: [$content];
+        $chunks = [];
+        $current = '';
+
+        foreach ($paragraphs as $paragraph) {
+            $paragraph = trim((string) $paragraph);
+            if ($paragraph === '') {
+                continue;
+            }
+
+            if (mb_strlen($paragraph) > $limit) {
+                if ($current !== '') {
+                    $chunks[] = $current;
+                    $current = '';
+                }
+
+                foreach ($this->splitLongParagraph($paragraph, $limit) as $part) {
+                    $chunks[] = $part;
+                }
+
+                continue;
+            }
+
+            $candidate = $current === '' ? $paragraph : $current."\n\n".$paragraph;
+            if (mb_strlen($candidate) > $limit && $current !== '') {
+                $chunks[] = $current;
+                $current = $paragraph;
+
+                continue;
+            }
+
+            $current = $candidate;
+        }
+
+        if ($current !== '') {
+            $chunks[] = $current;
+        }
+
+        return $chunks !== [] ? $chunks : [$content];
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function splitLongParagraph(string $paragraph, int $limit): array
+    {
+        $parts = [];
+        $offset = 0;
+        $length = mb_strlen($paragraph);
+
+        while ($offset < $length) {
+            $parts[] = trim(mb_substr($paragraph, $offset, $limit));
+            $offset += $limit;
+        }
+
+        return array_values(array_filter($parts, static fn (string $part): bool => $part !== ''));
+    }
+
+    private function configInt(string $key, int $default): int
+    {
+        try {
+            $value = config($key, $default);
+        } catch (Throwable) {
+            return $default;
+        }
+
+        return is_numeric($value) && (int) $value > 0 ? (int) $value : $default;
     }
 
     private function storeVector(RagChunk $chunk, string $vector): void

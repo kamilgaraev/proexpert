@@ -25,7 +25,32 @@ class RagIndexStatusResource extends JsonResource
             'latest_run' => self::runPayload($payload['latest_run'] ?? null),
             'last_successful_run' => self::runPayload($payload['last_successful_run'] ?? null),
             'last_failed_run' => self::runPayload($payload['last_failed_run'] ?? null),
+            'source_catalog' => self::sourceCatalogPayload($payload['source_catalog'] ?? []),
         ];
+    }
+
+    /**
+     * @return array<int, array{type: string, enabled: bool}>
+     */
+    private static function sourceCatalogPayload(mixed $catalog): array
+    {
+        if (! is_array($catalog)) {
+            return [];
+        }
+
+        return array_values(array_filter(array_map(
+            static function (mixed $source): ?array {
+                if (! is_array($source) || ! is_string($source['type'] ?? null)) {
+                    return null;
+                }
+
+                return [
+                    'type' => $source['type'],
+                    'enabled' => (bool) ($source['enabled'] ?? true),
+                ];
+            },
+            $catalog
+        )));
     }
 
     /**

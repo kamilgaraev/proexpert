@@ -49,10 +49,16 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
             ));
         }
 
-        $response = $embeddings->create([
+        $parameters = [
             'model' => $this->model,
             'input' => $text,
-        ]);
+        ];
+
+        if (str_starts_with($this->model, 'text-embedding-3') && $this->dimensions > 0) {
+            $parameters['dimensions'] = $this->dimensions;
+        }
+
+        $response = $embeddings->create($parameters);
 
         $embedding = $response->embeddings[0]->embedding ?? null;
         if (! is_array($embedding)) {
