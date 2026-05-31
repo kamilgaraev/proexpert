@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\Procurement\Services;
 use App\BusinessModules\Features\Procurement\Models\ProcurementApproval;
 use App\BusinessModules\Features\Procurement\Models\ProcurementApprovalPolicy;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
+use App\Models\User;
 use Illuminate\Validation\ValidationException;
 
 use function trans_message;
@@ -34,7 +35,11 @@ class ProcurementDutySeparationService
         ProcurementApprovalPolicy $policy,
         int $actorId
     ): array {
-        if (!$policy->is_active) {
+        if (! $policy->is_active) {
+            return [];
+        }
+
+        if ($this->isOrganizationOwner($approval, $actorId)) {
             return [];
         }
 
@@ -71,5 +76,13 @@ class ProcurementDutySeparationService
         throw ValidationException::withMessages([
             'approval' => [trans_message("procurement_enterprise.duty_separation.{$rule}")],
         ]);
+    }
+
+    private function isOrganizationOwner(ProcurementApproval $approval, int $actorId): bool
+    {
+        $user = User::query()->find($actorId);
+
+        return $user instanceof User
+            && $user->isOrganizationOwner((int) $approval->organization_id);
     }
 }

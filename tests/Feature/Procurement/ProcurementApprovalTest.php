@@ -8,11 +8,14 @@ use App\BusinessModules\Features\Procurement\Models\ProcurementApproval;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
+use App\BusinessModules\Features\Procurement\Models\SupplierProposalIntake;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Services\ProcurementApprovalService;
 use App\BusinessModules\Features\Procurement\Services\SupplierProposalComparisonService;
 use App\BusinessModules\Features\Procurement\Services\SupplierProposalService;
 use App\BusinessModules\Features\Procurement\Services\SupplierProposalVersionService;
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Models\Organization;
 use App\Models\Supplier;
 use App\Models\User;
@@ -222,6 +225,47 @@ class ProcurementApprovalTest extends TestCase
         app(ProcurementApprovalService::class)->approve($approval, $approver->id, 'Approve expired offer.');
     }
 
+    public function test_organization_owner_can_resolve_own_procurement_approval(): void
+    {
+        $organization = Organization::factory()->create();
+        $owner = $this->createOrganizationOwner($organization);
+        $supplierRequest = $this->createSupplierRequest($organization, budgetAmount: 1000);
+        $proposal = $this->createProposal($organization, $supplierRequest, 'KP-APR-009', 1200);
+
+        SupplierProposalIntake::query()->create([
+            'organization_id' => $organization->id,
+            'supplier_proposal_id' => $proposal->id,
+            'source' => 'email',
+            'received_at' => now(),
+            'entered_by' => $owner->id,
+            'attachment_ids' => [],
+        ]);
+
+        $decision = app(SupplierProposalComparisonService::class)->selectWinner(
+            $supplierRequest,
+            $proposal->id,
+            null,
+            $owner->id
+        );
+
+        $approval = ProcurementApproval::query()
+            ->where('approvable_type', $decision->getMorphClass())
+            ->where('approvable_id', $decision->id)
+            ->firstOrFail();
+
+        $blockers = app(ProcurementApprovalService::class)->resolutionBlockers($approval->load('approvable'), $owner->id);
+
+        $this->assertSame([], $blockers);
+
+        app(ProcurementApprovalService::class)->approve($approval, $owner->id, 'Owner works alone.');
+
+        $this->assertDatabaseHas('procurement_approvals', [
+            'id' => $approval->id,
+            'status' => 'approved',
+            'approved_by' => $owner->id,
+        ]);
+    }
+
     private function createSupplierRequest(
         Organization $organization,
         ?float $budgetAmount = null,
@@ -282,5 +326,26 @@ class ProcurementApprovalTest extends TestCase
         app(SupplierProposalVersionService::class)->createInitialVersion($proposal);
 
         return $proposal->refresh();
+    }
+
+    private function createOrganizationOwner(Organization $organization): User
+    {
+        $owner = User::factory()->create([
+            'current_organization_id' => $organization->id,
+        ]);
+
+        $organization->users()->attach($owner->id, [
+            'is_owner' => true,
+            'is_active' => true,
+            'settings' => null,
+        ]);
+
+        UserRoleAssignment::assignRole(
+            $owner,
+            'organization_owner',
+            AuthorizationContext::getOrganizationContext($organization->id)
+        );
+
+        return $owner;
     }
 }
