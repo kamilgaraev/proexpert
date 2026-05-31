@@ -529,7 +529,9 @@ class EVMService
             ->where('status', '!=', 'cancelled')
             ->sum('estimated_cost');
 
-        return $tasksAmount > 0 ? $tasksAmount : (float) ($schedule->total_estimated_cost ?? 0);
+        $scheduleAmount = (float) ($schedule->total_estimated_cost ?? 0);
+
+        return $scheduleAmount > 0 ? $scheduleAmount : $tasksAmount;
     }
 
     private function getProjectContractIds(Project $project, ?int $visibleOrganizationId = null): Collection

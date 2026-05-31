@@ -167,6 +167,50 @@ class DashboardEVMServiceTest extends TestCase
         $this->assertFalse(Cache::has($this->evmCacheKey($project)));
     }
 
+    public function test_full_budget_uses_schedule_total_when_tasks_do_not_include_resources(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-01-15 12:00:00'));
+
+        [$organization, $user] = $this->createOrganizationAndUser();
+        $project = $this->createProject($organization, [
+            'budget_amount' => 200000000,
+            'start_date' => '2026-01-01',
+            'end_date' => '2026-01-10',
+        ]);
+
+        $scheduleId = DB::table('project_schedules')->insertGetId([
+            'project_id' => $project->id,
+            'organization_id' => $organization->id,
+            'created_by_user_id' => $user->id,
+            'name' => 'Schedule with resources',
+            'planned_start_date' => '2026-01-01',
+            'planned_end_date' => '2026-01-10',
+            'status' => 'draft',
+            'total_estimated_cost' => 214300,
+            'overall_progress_percent' => 0,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->createScheduleTask($scheduleId, $organization, $user, [
+            'name' => 'Work line',
+            'planned_start_date' => '2026-01-01',
+            'planned_end_date' => '2026-01-01',
+            'estimated_cost' => 300,
+        ]);
+        $this->createScheduleTask($scheduleId, $organization, $user, [
+            'name' => 'Concrete work',
+            'planned_start_date' => '2026-01-02',
+            'planned_end_date' => '2026-01-10',
+            'estimated_cost' => 115000,
+        ]);
+
+        $metrics = app(EVMService::class)->calculateMetrics($project);
+
+        $this->assertSame(214300.0, $metrics['bac']);
+        $this->assertSame(214300.0, $metrics['pv']);
+    }
+
     public function test_schedule_task_plan_changes_invalidate_evm_cache_for_project(): void
     {
         Carbon::setTestNow(Carbon::parse('2026-01-15 12:00:00'));
