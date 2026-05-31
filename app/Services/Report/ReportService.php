@@ -11,6 +11,7 @@ use App\Services\Export\PdfExporterService;
 use App\Services\Logging\LoggingService;
 use App\Models\User;
 use App\Models\Role;
+use App\Models\ContractPerformanceAct;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -665,6 +666,271 @@ class ReportService
             'filters' => $filters,
             'generated_at' => Carbon::now(),
         ];
+    }
+
+    public function getActReportsReport(Request $request): array | StreamedResponse
+    {
+        $organizationId = $this->getCurrentOrgId($request);
+        $format = $request->query('format', 'json');
+
+        $this->logging->business('report.act_reports.requested', [
+            'organization_id' => $organizationId,
+            'filters' => $request->only(['project_id', 'contractor_id', 'contract_id', 'status', 'date_from', 'date_to']),
+            'user_id' => $request->user()?->id,
+        ]);
+
+        $query = DB::table('contract_performance_acts as acts')
+            ->join('contracts', 'acts.contract_id', '=', 'contracts.id')
+            ->leftJoin('projects as act_projects', 'acts.project_id', '=', 'act_projects.id')
+            ->leftJoin('projects as contract_projects', 'contracts.project_id', '=', 'contract_projects.id')
+            ->leftJoin('contractors', 'contracts.contractor_id', '=', 'contractors.id')
+            ->where('contracts.organization_id', $organizationId)
+            ->select([
+                'acts.id',
+                'acts.contract_id',
+                'acts.project_id',
+                'acts.act_document_number',
+                'acts.act_date',
+                'acts.period_start',
+                'acts.period_end',
+                'acts.amount',
+                'acts.status',
+                'acts.is_approved',
+                'contracts.number as contract_number',
+                'contracts.contract_number as legacy_contract_number',
+                'contracts.subject as contract_subject',
+                'contractors.id as contractor_id',
+                'contractors.name as contractor_name',
+                DB::raw('COALESCE(act_projects.id, contract_projects.id) as resolved_project_id'),
+                DB::raw('COALESCE(act_projects.name, contract_projects.name) as project_name'),
+                DB::raw('(SELECT COUNT(*) FROM performance_act_lines WHERE performance_act_lines.performance_act_id = acts.id) as lines_count'),
+                DB::raw('(SELECT COUNT(*) FROM performance_act_completed_works WHERE performance_act_completed_works.performance_act_id = acts.id) as completed_works_count'),
+                DB::raw('(SELECT COUNT(*) FROM files WHERE files.fileable_type = \'App\\\\Models\\\\ContractPerformanceAct\' AND files.fileable_id = acts.id) as files_count'),
+            ]);
+
+        $this->applyActReportFilters($query, $request);
+
+        $rows = $query
+            ->orderByDesc('acts.act_date')
+            ->orderByDesc('acts.id')
+            ->get()
+            ->map(fn ($row): array => $this->mapActReportRow($row))
+            ->values();
+
+        $totals = [
+            'total_acts' => $rows->count(),
+            'approved_acts' => $rows->where('is_approved', true)->count(),
+            'pending_acts' => $rows
+                ->filter(fn (array $row): bool => !$row['is_approved'] && $row['status'] !== ContractPerformanceAct::STATUS_REJECTED)
+                ->count(),
+            'rejected_acts' => $rows->where('status', ContractPerformanceAct::STATUS_REJECTED)->count(),
+            'signed_acts' => $rows->where('status', ContractPerformanceAct::STATUS_SIGNED)->count(),
+            'total_amount' => round((float) $rows->sum('amount'), 2),
+            'approved_amount' => round((float) $rows->where('is_approved', true)->sum('amount'), 2),
+            'pending_amount' => round((float) $rows
+                ->filter(fn (array $row): bool => !$row['is_approved'] && $row['status'] !== ContractPerformanceAct::STATUS_REJECTED)
+                ->sum('amount'), 2),
+            'average_amount' => $rows->count() > 0 ? round((float) $rows->avg('amount'), 2) : 0.0,
+            'acts_with_files' => $rows->filter(fn (array $row): bool => $row['files_count'] > 0)->count(),
+        ];
+
+        $byStatus = $rows
+            ->groupBy('status')
+            ->map(fn ($items, string $status): array => [
+                'status' => $status,
+                'status_label' => $this->actStatusLabel($status),
+                'acts_count' => $items->count(),
+                'total_amount' => round((float) $items->sum('amount'), 2),
+                'approved_amount' => round((float) $items->where('is_approved', true)->sum('amount'), 2),
+            ])
+            ->sortBy(fn (array $item): int => $this->actStatusSortWeight($item['status']))
+            ->values();
+
+        $byProjects = $rows
+            ->groupBy(fn (array $row): string => (string) ($row['project_id'] ?? 0))
+            ->map(fn ($items): array => [
+                'project_id' => $items->first()['project_id'],
+                'project' => $items->first()['project'],
+                'acts_count' => $items->count(),
+                'approved_acts' => $items->where('is_approved', true)->count(),
+                'total_amount' => round((float) $items->sum('amount'), 2),
+                'approved_amount' => round((float) $items->where('is_approved', true)->sum('amount'), 2),
+            ])
+            ->sortByDesc('total_amount')
+            ->values();
+
+        $byContractors = $rows
+            ->groupBy(fn (array $row): string => (string) ($row['contractor_id'] ?? 0))
+            ->map(fn ($items): array => [
+                'contractor_id' => $items->first()['contractor_id'],
+                'contractor' => $items->first()['contractor'],
+                'acts_count' => $items->count(),
+                'approved_acts' => $items->where('is_approved', true)->count(),
+                'total_amount' => round((float) $items->sum('amount'), 2),
+                'approved_amount' => round((float) $items->where('is_approved', true)->sum('amount'), 2),
+            ])
+            ->sortByDesc('total_amount')
+            ->values();
+
+        if ($format === 'excel') {
+            $columns = [
+                'Номер акта' => 'act_document_number',
+                'Дата акта' => 'act_date',
+                'Период с' => 'period_start',
+                'Период по' => 'period_end',
+                'Договор' => 'contract_number',
+                'Предмет договора' => 'contract_subject',
+                'Объект' => 'project',
+                'Подрядчик' => 'contractor',
+                'Статус' => 'status_label',
+                'Сумма' => 'amount',
+                'Работ в акте' => 'works_count',
+                'Файлов' => 'files_count',
+            ];
+
+            $exportable = $this->excelExporter->prepareDataForExport($rows->toArray(), $columns);
+
+            return $this->excelExporter->streamDownload(
+                'act_reports_report_' . now()->format('d-m-Y_H-i') . '.xlsx',
+                $exportable['headers'],
+                $exportable['data']
+            );
+        }
+
+        if ($format === 'pdf') {
+            return $this->pdfExporter->streamDownload(
+                'reports.act-reports-pdf',
+                [
+                    'data' => $rows->toArray(),
+                    'totals' => $totals,
+                    'by_status' => $byStatus->toArray(),
+                    'by_projects' => $byProjects->take(10)->toArray(),
+                    'generated_at' => Carbon::now()->format('d.m.Y H:i'),
+                ],
+                'act_reports_report_' . now()->format('d-m-Y_H-i') . '.pdf',
+                'a4',
+                'landscape'
+            );
+        }
+
+        return [
+            'title' => 'Отчет по актам выполненных работ',
+            'data' => $rows,
+            'totals' => $totals,
+            'by_status' => $byStatus,
+            'by_projects' => $byProjects,
+            'by_contractors' => $byContractors,
+            'filters' => $request->only(['project_id', 'contractor_id', 'contract_id', 'status', 'date_from', 'date_to', 'search']),
+            'generated_at' => Carbon::now(),
+            'has_data' => $rows->isNotEmpty(),
+        ];
+    }
+
+    private function applyActReportFilters($query, Request $request): void
+    {
+        if ($request->filled('contract_id')) {
+            $query->where('acts.contract_id', (int) $request->query('contract_id'));
+        }
+
+        if ($request->filled('contractor_id')) {
+            $query->where('contracts.contractor_id', (int) $request->query('contractor_id'));
+        }
+
+        if ($request->filled('project_id')) {
+            $projectId = (int) $request->query('project_id');
+            $query->where(function ($builder) use ($projectId): void {
+                $builder
+                    ->where('acts.project_id', $projectId)
+                    ->orWhere('contracts.project_id', $projectId)
+                    ->orWhereExists(function ($subquery) use ($projectId): void {
+                        $subquery
+                            ->select(DB::raw(1))
+                            ->from('contract_project')
+                            ->whereColumn('contract_project.contract_id', 'contracts.id')
+                            ->where('contract_project.project_id', $projectId);
+                    });
+            });
+        }
+
+        if ($request->filled('status')) {
+            $query->where('acts.status', $request->query('status'));
+        }
+
+        if ($request->filled('date_from')) {
+            $query->whereDate('acts.act_date', '>=', $request->query('date_from'));
+        }
+
+        if ($request->filled('date_to')) {
+            $query->whereDate('acts.act_date', '<=', $request->query('date_to'));
+        }
+
+        if ($request->filled('search')) {
+            $search = (string) $request->query('search');
+            $query->where(function ($builder) use ($search): void {
+                $builder
+                    ->where('acts.act_document_number', 'like', "%{$search}%")
+                    ->orWhere('acts.description', 'like', "%{$search}%")
+                    ->orWhere('contracts.number', 'like', "%{$search}%")
+                    ->orWhere('contracts.contract_number', 'like', "%{$search}%")
+                    ->orWhere('contracts.subject', 'like', "%{$search}%")
+                    ->orWhere('act_projects.name', 'like', "%{$search}%")
+                    ->orWhere('contract_projects.name', 'like', "%{$search}%")
+                    ->orWhere('contractors.name', 'like', "%{$search}%");
+            });
+        }
+    }
+
+    private function mapActReportRow(object $row): array
+    {
+        $status = $row->status ?: ((bool) $row->is_approved ? ContractPerformanceAct::STATUS_APPROVED : ContractPerformanceAct::STATUS_DRAFT);
+        $contractNumber = $row->contract_number ?: $row->legacy_contract_number;
+        $linesCount = (int) ($row->lines_count ?? 0);
+        $completedWorksCount = (int) ($row->completed_works_count ?? 0);
+
+        return [
+            'id' => (int) $row->id,
+            'act_document_number' => $row->act_document_number ?: 'Акт ' . $row->id,
+            'act_date' => $row->act_date ? Carbon::parse($row->act_date)->toDateString() : null,
+            'period_start' => $row->period_start ? Carbon::parse($row->period_start)->toDateString() : null,
+            'period_end' => $row->period_end ? Carbon::parse($row->period_end)->toDateString() : null,
+            'contract_id' => (int) $row->contract_id,
+            'contract_number' => $contractNumber ?: 'Договор ' . $row->contract_id,
+            'contract_subject' => $row->contract_subject,
+            'project_id' => $row->resolved_project_id ? (int) $row->resolved_project_id : null,
+            'project' => $row->project_name ?: 'Без объекта',
+            'contractor_id' => $row->contractor_id ? (int) $row->contractor_id : null,
+            'contractor' => $row->contractor_name ?: 'Без подрядчика',
+            'status' => $status,
+            'status_label' => $this->actStatusLabel($status),
+            'is_approved' => (bool) $row->is_approved,
+            'amount' => round((float) $row->amount, 2),
+            'works_count' => max($linesCount, $completedWorksCount),
+            'files_count' => (int) ($row->files_count ?? 0),
+        ];
+    }
+
+    private function actStatusLabel(string $status): string
+    {
+        return match ($status) {
+            ContractPerformanceAct::STATUS_APPROVED => 'Утвержден',
+            ContractPerformanceAct::STATUS_PENDING_APPROVAL => 'На согласовании',
+            ContractPerformanceAct::STATUS_REJECTED => 'Отклонен',
+            ContractPerformanceAct::STATUS_SIGNED => 'Подписан',
+            ContractPerformanceAct::STATUS_DRAFT => 'Черновик',
+            default => 'Без статуса',
+        };
+    }
+
+    private function actStatusSortWeight(string $status): int
+    {
+        return match ($status) {
+            ContractPerformanceAct::STATUS_APPROVED => 10,
+            ContractPerformanceAct::STATUS_SIGNED => 20,
+            ContractPerformanceAct::STATUS_PENDING_APPROVAL => 30,
+            ContractPerformanceAct::STATUS_DRAFT => 40,
+            ContractPerformanceAct::STATUS_REJECTED => 50,
+            default => 60,
+        };
     }
 
     public function getContractPaymentsReport(Request $request): array | StreamedResponse

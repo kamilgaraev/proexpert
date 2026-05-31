@@ -32,6 +32,7 @@ Route::prefix('reports')->name('reports.')->group(function () {
         Route::get('project-status-summary', [ReportController::class, 'projectStatusSummaryReport'])->name('project_status_summary');
         
         Route::get('contract-payments', [ReportController::class, 'contractPaymentsReport'])->name('contract_payments');
+        Route::get('act-reports', [ReportController::class, 'actReportsReport'])->name('act_reports');
         Route::get('contractor-settlements', [ReportController::class, 'contractorSettlementsReport'])->name('contractor_settlements');
         Route::get('warehouse-stock', [ReportController::class, 'warehouseStockReport'])->name('warehouse_stock');
         Route::get('material-movements', [ReportController::class, 'materialMovementsReport'])->name('material_movements');

@@ -24,6 +24,7 @@ use App\Http\Requests\Api\V1\Admin\Report\MaterialMovementsReportRequest;
 use App\Http\Requests\Api\V1\Admin\Report\TimeTrackingReportRequest;
 use App\Http\Requests\Api\V1\Admin\Report\ProjectProfitabilityReportRequest;
 use App\Http\Requests\Api\V1\Admin\Report\ProjectTimelinesReportRequest;
+use App\Http\Requests\Api\V1\Admin\Report\ActReportsReportRequest;
 use App\Services\Landing\OrganizationModuleService;
 
 use function trans_message;
@@ -156,6 +157,19 @@ class ReportController extends Controller
         return $this->generateReport(
             fn() => $this->reportService->getContractPaymentsReport($request),
             'reports.contract_payments'
+        );
+    }
+
+    /**
+     * Отчёт по актам выполненных работ
+     *
+     * GET /api/v1/admin/reports/act-reports
+     */
+    public function actReportsReport(ActReportsReportRequest $request): JsonResponse | StreamedResponse
+    {
+        return $this->generateReport(
+            fn() => $this->reportService->getActReportsReport($request),
+            'reports.act_reports'
         );
     }
 
