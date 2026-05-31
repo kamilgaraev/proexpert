@@ -94,7 +94,7 @@ class PurchaseContractController extends Controller
                 ->with(['supplier', 'contractor', 'project', 'organization'])
                 ->find($id);
 
-            if (!$contract) {
+            if (! $contract) {
                 return AdminResponse::error(trans_message('procurement.contracts.not_found'), 404);
             }
 

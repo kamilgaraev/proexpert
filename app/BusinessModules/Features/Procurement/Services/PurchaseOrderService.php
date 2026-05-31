@@ -218,14 +218,26 @@ class PurchaseOrderService
         DB::beginTransaction();
 
         try {
+            $receiptNumber = $this->generateReceiptNumber();
+            $receiptDate = $receiptData['receipt_date'] ?? now()->toDateString();
+            $receiptMetadata = is_array($receiptData['metadata'] ?? null) ? $receiptData['metadata'] : [];
+            $receiptMetadata['receipt_document'] = $this->buildReceiptDocument(
+                $order,
+                $warehouse,
+                $orderItems,
+                $items,
+                $receiptNumber,
+                $receiptDate
+            );
+
             $receipt = $order->receipts()->create([
                 'organization_id' => $order->organization_id,
                 'warehouse_id' => $warehouse->id,
                 'received_by_user_id' => $userId,
-                'receipt_number' => $this->generateReceiptNumber($order->organization_id),
-                'receipt_date' => $receiptData['receipt_date'] ?? now()->toDateString(),
+                'receipt_number' => $receiptNumber,
+                'receipt_date' => $receiptDate,
                 'notes' => $receiptData['notes'] ?? null,
-                'metadata' => $receiptData['metadata'] ?? null,
+                'metadata' => $receiptMetadata,
             ]);
 
             foreach ($items as $item) {
@@ -356,6 +368,7 @@ class PurchaseOrderService
             ->values();
 
         $orderItems = $order->items()
+            ->with('material')
             ->whereIn('id', $orderItemIds)
             ->get()
             ->keyBy('id');
@@ -367,24 +380,162 @@ class PurchaseOrderService
         return $orderItems->values();
     }
 
-    private function generateReceiptNumber(int $organizationId): string
+    private function buildReceiptDocument(
+        PurchaseOrder $order,
+        OrganizationWarehouse $warehouse,
+        Collection $orderItems,
+        array $items,
+        string $receiptNumber,
+        string $receiptDate
+    ): array {
+        $order->loadMissing(['organization', 'supplier', 'externalSupplierContact', 'supplierParty']);
+        $orderItemsById = $orderItems->keyBy('id');
+        $rows = collect($items)
+            ->values()
+            ->map(function (array $item, int $index) use ($orderItemsById): array {
+                $orderItem = $orderItemsById->get((int) $item['item_id']);
+                $quantity = (float) $item['quantity_received'];
+                $price = (float) $item['price'];
+                $amount = round($quantity * $price, 2);
+                $unit = trim((string) ($orderItem?->unit ?? ''));
+
+                return [
+                    'row_number' => $index + 1,
+                    'name' => $orderItem?->material_name ?: $orderItem?->material?->name,
+                    'code' => $orderItem?->material?->code,
+                    'unit_name' => $unit,
+                    'okei_code' => $this->okeiCode($unit),
+                    'package_type' => null,
+                    'quantity_in_package' => null,
+                    'places_count' => null,
+                    'gross_weight' => null,
+                    'quantity' => $quantity,
+                    'price' => $price,
+                    'amount_without_vat' => $amount,
+                    'vat_rate' => null,
+                    'vat_amount' => 0.0,
+                    'amount_with_vat' => $amount,
+                ];
+            })
+            ->all();
+
+        $amountWithVat = round((float) collect($rows)->sum('amount_with_vat'), 2);
+
+        return [
+            'form_code' => 'ТОРГ-12',
+            'okud' => '0330212',
+            'title' => trans_message('procurement.receipt_document.torg12_title'),
+            'approved_by' => trans_message('procurement.receipt_document.torg12_approved_by'),
+            'document_number' => $receiptNumber,
+            'document_date' => $receiptDate,
+            'operation_type' => trans_message('procurement.receipt_document.operation_type'),
+            'basis' => [
+                'document_type' => trans_message('procurement.receipt_document.basis_order'),
+                'number' => $order->order_number,
+                'date' => $order->order_date?->format('Y-m-d'),
+            ],
+            'shipper' => $this->supplierDocumentParty($order),
+            'supplier' => $this->supplierDocumentParty($order),
+            'consignee' => $this->organizationDocumentParty($order, $warehouse),
+            'payer' => $this->organizationDocumentParty($order, $warehouse),
+            'warehouse' => [
+                'id' => $warehouse->id,
+                'name' => $warehouse->name,
+                'address' => $warehouse->address,
+            ],
+            'rows' => $rows,
+            'totals' => [
+                'rows_count' => count($rows),
+                'quantity' => round((float) collect($rows)->sum('quantity'), 3),
+                'amount_without_vat' => $amountWithVat,
+                'vat_amount' => 0.0,
+                'amount_with_vat' => $amountWithVat,
+            ],
+            'signatures' => [
+                'released_by' => trans_message('procurement.receipt_document.signatures.released_by'),
+                'chief_accountant' => trans_message('procurement.receipt_document.signatures.chief_accountant'),
+                'accepted_by' => trans_message('procurement.receipt_document.signatures.accepted_by'),
+                'received_by' => trans_message('procurement.receipt_document.signatures.received_by'),
+            ],
+        ];
+    }
+
+    private function supplierDocumentParty(PurchaseOrder $order): array
+    {
+        $supplier = $order->supplier;
+        $contact = $order->externalSupplierContact;
+        $party = $order->supplierParty;
+        $snapshot = is_array($order->supplier_snapshot) ? $order->supplier_snapshot : [];
+        $partySnapshot = is_array($party?->snapshot) ? $party->snapshot : [];
+
+        return [
+            'name' => $supplier?->name
+                ?? $contact?->name
+                ?? $party?->display_name
+                ?? $snapshot['display_name']
+                ?? $snapshot['name']
+                ?? null,
+            'inn' => $supplier?->inn
+                ?? $supplier?->tax_number
+                ?? $contact?->tax_number
+                ?? $party?->tax_id
+                ?? $snapshot['tax_id']
+                ?? null,
+            'phone' => $supplier?->phone ?? $contact?->phone ?? $party?->phone ?? $snapshot['phone'] ?? null,
+            'email' => $supplier?->email ?? $contact?->email ?? $party?->email ?? $snapshot['email'] ?? null,
+            'address' => $supplier?->address ?? $contact?->address ?? $partySnapshot['address'] ?? $snapshot['address'] ?? null,
+        ];
+    }
+
+    private function organizationDocumentParty(PurchaseOrder $order, OrganizationWarehouse $warehouse): array
+    {
+        $organization = $order->organization;
+
+        return [
+            'name' => $organization?->legal_name ?: $organization?->name,
+            'inn' => $organization?->tax_number,
+            'phone' => $organization?->phone,
+            'email' => $organization?->email,
+            'address' => $organization?->address,
+            'warehouse_name' => $warehouse->name,
+            'warehouse_address' => $warehouse->address,
+        ];
+    }
+
+    private function okeiCode(?string $unit): ?string
+    {
+        $normalized = mb_strtolower(trim((string) $unit));
+
+        return match ($normalized) {
+            'шт', 'pcs', 'piece', 'pieces' => '796',
+            'кг', 'kg' => '166',
+            'т', 'tn', 'ton', 'tons' => '168',
+            'м', 'm' => '006',
+            'м2', 'м²', 'm2' => '055',
+            'м3', 'м³', 'm3' => '113',
+            'л', 'l', 'liter', 'litre' => '112',
+            default => null,
+        };
+    }
+
+    private function generateReceiptNumber(): string
     {
         $year = date('Y');
         $month = date('m');
+        $prefix = sprintf('PR-%s%s', $year, $month);
 
-        $lastReceipt = PurchaseReceipt::query()
-            ->where('organization_id', $organizationId)
-            ->whereYear('created_at', $year)
-            ->whereMonth('created_at', $month)
-            ->orderByDesc('id')
-            ->first();
+        $lastReceiptNumber = PurchaseReceipt::withTrashed()
+            ->where('receipt_number', 'like', $prefix.'-%')
+            ->orderByDesc('receipt_number')
+            ->pluck('receipt_number')
+            ->first(static fn (string $receiptNumber): bool => preg_match('/^PR-\d{6}-(\d+)$/', $receiptNumber) === 1);
 
         $nextNumber = 1;
-        if ($lastReceipt && preg_match('/(\d+)$/', $lastReceipt->receipt_number, $matches)) {
+        if ($lastReceiptNumber && preg_match('/(\d+)$/', $lastReceiptNumber, $matches)) {
             $nextNumber = ((int) $matches[1]) + 1;
         }
 
-        return sprintf('PR-%s%s-%04d', $year, $month, $nextNumber);
+        return sprintf('%s-%04d', $prefix, $nextNumber);
     }
 
     private function generateOrderNumber(): string

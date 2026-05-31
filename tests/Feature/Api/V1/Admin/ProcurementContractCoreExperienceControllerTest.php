@@ -6,6 +6,7 @@ namespace Tests\Feature\Api\V1\Admin;
 
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
+use App\BusinessModules\Features\Procurement\Models\ExternalSupplierContact;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\Domain\Authorization\Models\AuthorizationContext;
@@ -13,6 +14,7 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Models\Contract;
+use App\Models\Contractor;
 use App\Models\Project;
 use App\Models\Supplier;
 use App\Models\User;
@@ -159,6 +161,57 @@ class ProcurementContractCoreExperienceControllerTest extends TestCase
             ->count());
     }
 
+    public function test_external_supplier_contract_from_order_is_visible_in_registry_and_detail(): void
+    {
+        $context = AdminApiTestContext::create();
+        $purchaseOrder = $this->createExternalPurchaseOrder($context->organization->id);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $createResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/create-contract");
+
+        $createResponse->assertCreated();
+        $createResponse->assertJsonPath('data.contract.supplier_id', null);
+        $createResponse->assertJsonPath('data.contract.supplier_display_name', 'External Concrete Supplier');
+        $createResponse->assertJsonPath('data.contract.contractor.name', 'External Concrete Supplier');
+
+        $contractId = (int) $createResponse->json('data.contract.id');
+
+        $indexResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/procurement/contracts?per_page=20');
+
+        $indexResponse->assertOk();
+        $registryContract = collect($indexResponse->json('data'))
+            ->firstWhere('id', $contractId);
+
+        $this->assertIsArray($registryContract);
+        $this->assertSame('External Concrete Supplier', $registryContract['supplier_display_name'] ?? null);
+        $this->assertSame('External Concrete Supplier', $registryContract['contractor']['name'] ?? null);
+
+        $showResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/procurement/contracts/{$contractId}");
+
+        $showResponse->assertOk();
+        $showResponse->assertJsonPath('data.supplier_display_name', 'External Concrete Supplier');
+        $showResponse->assertJsonPath('data.contractor.name', 'External Concrete Supplier');
+
+        $this->assertDatabaseHas('contracts', [
+            'id' => $contractId,
+            'organization_id' => $context->organization->id,
+            'supplier_id' => null,
+            'contractor_id' => $registryContract['contractor_id'],
+            'contract_category' => 'procurement',
+        ]);
+        $this->assertDatabaseHas('contractors', [
+            'id' => $registryContract['contractor_id'],
+            'organization_id' => $context->organization->id,
+            'name' => 'External Concrete Supplier',
+            'inn' => '7712345678',
+            'contractor_type' => Contractor::TYPE_MANUAL,
+        ]);
+    }
+
     public function test_procurement_contract_creation_requires_contract_create_permission(): void
     {
         $context = AdminApiTestContext::create();
@@ -225,7 +278,7 @@ class ProcurementContractCoreExperienceControllerTest extends TestCase
     {
         $purchaseRequest = PurchaseRequest::query()->create([
             'organization_id' => $organizationId,
-            'request_number' => 'PR-CONTRACT-' . uniqid(),
+            'request_number' => 'PR-CONTRACT-'.uniqid(),
             'status' => PurchaseRequestStatusEnum::APPROVED,
         ]);
 
@@ -233,7 +286,45 @@ class ProcurementContractCoreExperienceControllerTest extends TestCase
             'organization_id' => $organizationId,
             'purchase_request_id' => $purchaseRequest->id,
             'supplier_id' => $supplierId,
-            'order_number' => 'PO-CONTRACT-' . uniqid(),
+            'order_number' => 'PO-CONTRACT-'.uniqid(),
+            'order_date' => now()->toDateString(),
+            'status' => PurchaseOrderStatusEnum::CONFIRMED,
+            'total_amount' => 50000,
+            'currency' => 'RUB',
+        ]);
+    }
+
+    private function createExternalPurchaseOrder(int $organizationId): PurchaseOrder
+    {
+        $purchaseRequest = PurchaseRequest::query()->create([
+            'organization_id' => $organizationId,
+            'request_number' => 'PR-EXTERNAL-CONTRACT-'.uniqid(),
+            'status' => PurchaseRequestStatusEnum::APPROVED,
+        ]);
+
+        $contact = ExternalSupplierContact::query()->create([
+            'organization_id' => $organizationId,
+            'name' => 'External Concrete Supplier',
+            'contact_person' => 'External Manager',
+            'phone' => '+7 900 111-22-33',
+            'email' => 'external-concrete@example.test',
+            'tax_number' => '7712345678',
+            'address' => 'Industrial street 1',
+        ]);
+
+        return PurchaseOrder::query()->create([
+            'organization_id' => $organizationId,
+            'purchase_request_id' => $purchaseRequest->id,
+            'supplier_id' => null,
+            'external_supplier_contact_id' => $contact->id,
+            'supplier_snapshot' => [
+                'type' => 'external',
+                'display_name' => 'External Concrete Supplier',
+                'email' => 'external-concrete@example.test',
+                'phone' => '+7 900 111-22-33',
+                'tax_id' => '7712345678',
+            ],
+            'order_number' => 'PO-EXTERNAL-CONTRACT-'.uniqid(),
             'order_date' => now()->toDateString(),
             'status' => PurchaseOrderStatusEnum::CONFIRMED,
             'total_amount' => 50000,
@@ -249,7 +340,7 @@ class ProcurementContractCoreExperienceControllerTest extends TestCase
             'organization_id' => $organizationId,
             'supplier_id' => $supplier->id,
             'contract_category' => 'procurement',
-            'number' => 'SUP-FOR-' . uniqid(),
+            'number' => 'SUP-FOR-'.uniqid(),
             'date' => now()->toDateString(),
             'subject' => 'Foreign procurement contract',
             'work_type_category' => ContractWorkTypeCategoryEnum::SUPPLY,
@@ -263,7 +354,7 @@ class ProcurementContractCoreExperienceControllerTest extends TestCase
         return Supplier::query()->create([
             'organization_id' => $organizationId,
             'name' => $name,
-            'email' => strtolower(str_replace(' ', '-', $name)) . '-' . uniqid() . '@example.test',
+            'email' => strtolower(str_replace(' ', '-', $name)).'-'.uniqid().'@example.test',
             'is_active' => true,
         ]);
     }

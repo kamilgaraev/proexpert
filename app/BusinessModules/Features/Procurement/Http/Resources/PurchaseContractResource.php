@@ -35,17 +35,17 @@ class PurchaseContractResource extends JsonResource
             'supplier_display_name' => $this->supplierDisplayName($contract),
             'supplier_display_inn' => $this->supplierDisplayInn($contract),
             'supplier_display_source' => $this->supplierDisplaySource($contract),
-            'supplier' => $this->whenLoaded('supplier', fn() => $contract->supplier ? [
+            'supplier' => $this->whenLoaded('supplier', fn () => $contract->supplier ? [
                 'id' => $contract->supplier->id,
                 'name' => $contract->supplier->name,
                 'inn' => $contract->supplier->inn,
             ] : null),
-            'contractor' => $this->whenLoaded('contractor', fn() => $contract->contractor ? [
+            'contractor' => $this->whenLoaded('contractor', fn () => $contract->contractor ? [
                 'id' => $contract->contractor->id,
                 'name' => $contract->contractor->name,
                 'inn' => $contract->contractor->inn,
             ] : null),
-            'project' => $this->whenLoaded('project', fn() => $contract->project ? [
+            'project' => $this->whenLoaded('project', fn () => $contract->project ? [
                 'id' => $contract->project->id,
                 'name' => $contract->project->name,
             ] : null),
@@ -93,4 +93,3 @@ class PurchaseContractResource extends JsonResource
         return null;
     }
 }
-

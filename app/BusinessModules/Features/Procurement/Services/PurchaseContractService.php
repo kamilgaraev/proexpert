@@ -10,6 +10,7 @@ use App\Models\Contractor;
 use App\Modules\Core\AccessController;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+
 use function trans_message;
 
 class PurchaseContractService
@@ -109,7 +110,7 @@ class PurchaseContractService
 
             event(new \App\BusinessModules\Features\Procurement\Events\PurchaseContractCreated($contract, $order));
 
-            return $contract->fresh(['supplier', 'contractor', 'organization']);
+            return $contract->fresh(['supplier', 'contractor', 'project', 'organization']);
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;
@@ -120,13 +121,13 @@ class PurchaseContractService
     {
         $accessController = app(AccessController::class);
 
-        if (!$accessController->hasModuleAccess($organizationId, 'procurement')) {
+        if (! $accessController->hasModuleAccess($organizationId, 'procurement')) {
             throw new \DomainException(
                 trans_message('procurement.contracts.procurement_module_required')
             );
         }
 
-        if (!$accessController->hasModuleAccess($organizationId, 'basic-warehouse')) {
+        if (! $accessController->hasModuleAccess($organizationId, 'basic-warehouse')) {
             throw new \DomainException(
                 trans_message('procurement.contracts.warehouse_module_required')
             );
@@ -138,34 +139,34 @@ class PurchaseContractService
             );
         }
 
-        if (!empty($data['supplier_id'])) {
+        if (! empty($data['supplier_id'])) {
             $supplier = \App\Models\Supplier::query()
                 ->where('organization_id', $organizationId)
                 ->where('is_active', true)
                 ->find($data['supplier_id']);
 
-            if (!$supplier) {
+            if (! $supplier) {
                 throw new \InvalidArgumentException(trans_message('procurement.contracts.supplier_not_found'));
             }
         }
 
-        if (!empty($data['contractor_id'])) {
+        if (! empty($data['contractor_id'])) {
             $contractor = Contractor::query()
                 ->where('organization_id', $organizationId)
                 ->find($data['contractor_id']);
 
-            if (!$contractor) {
+            if (! $contractor) {
                 throw new \InvalidArgumentException(trans_message('procurement.contracts.supplier_not_found'));
             }
         }
 
-        if (!empty($data['project_id'])) {
+        if (! empty($data['project_id'])) {
             $projectExists = \App\Models\Project::query()
                 ->where('organization_id', $organizationId)
                 ->whereKey($data['project_id'])
                 ->exists();
 
-            if (!$projectExists) {
+            if (! $projectExists) {
                 throw new \InvalidArgumentException(trans_message('procurement.contracts.project_not_found'));
             }
         }
@@ -220,7 +221,7 @@ class PurchaseContractService
         $contact = $order->externalSupplierContact;
         $party = $order->supplierParty;
         $snapshot = is_array($order->supplier_snapshot) ? $order->supplier_snapshot : [];
-        $name = trim((string) ($contact?->name ?? $party?->display_name ?? $snapshot['name'] ?? ''));
+        $name = trim((string) ($contact?->name ?? $party?->display_name ?? $snapshot['display_name'] ?? $snapshot['name'] ?? ''));
 
         if ($name === '') {
             return null;

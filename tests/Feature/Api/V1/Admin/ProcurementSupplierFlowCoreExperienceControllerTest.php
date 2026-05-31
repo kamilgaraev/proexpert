@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
@@ -11,21 +12,22 @@ use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
+use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
+use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequestLine;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
-use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\Contractor;
 use App\Models\Material;
 use App\Models\MeasurementUnit;
 use App\Models\Project;
 use App\Models\Supplier;
 use App\Models\User;
-use App\Models\Contractor;
 use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery\MockInterface;
@@ -115,11 +117,6 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         $decisionResponse->assertJsonPath('data.winning_supplier_proposal_id', $secondProposal->id);
         $decisionResponse->assertJsonPath('data.is_lowest_price_selected', true);
 
-        $acceptResponse = $this->withHeaders($context->authHeaders())
-            ->postJson("/api/v1/admin/procurement/proposals/{$secondProposal->id}/accept");
-
-        $acceptResponse->assertOk();
-        $acceptResponse->assertJsonPath('data.status', SupplierProposalStatusEnum::ACCEPTED->value);
         $this->assertSame(SupplierProposalStatusEnum::ACCEPTED, $secondProposal->fresh()->status);
 
         $purchaseOrder = PurchaseOrder::query()
@@ -167,6 +164,13 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         $receiveResponse->assertOk();
         $receiveResponse->assertJsonPath('data.status', PurchaseOrderStatusEnum::DELIVERED->value);
         $receiveResponse->assertJsonPath('data.receipts.0.lines.0.purchase_order_item_id', $item->id);
+        $receiveResponse->assertJsonPath('data.receipts.0.metadata.receipt_document.form_code', 'ТОРГ-12');
+        $receiveResponse->assertJsonPath('data.receipts.0.metadata.receipt_document.okud', '0330212');
+        $receiveResponse->assertJsonPath('data.receipts.0.metadata.receipt_document.title', 'Товарная накладная');
+        $receiveResponse->assertJsonPath('data.receipts.0.metadata.receipt_document.rows.0.name', 'Rebar A500');
+        $receiveResponse->assertJsonPath('data.receipts.0.metadata.receipt_document.rows.0.quantity', 5);
+        $receiveResponse->assertJsonPath('data.receipts.0.metadata.receipt_document.rows.0.price', 190);
+        $receiveResponse->assertJsonPath('data.receipts.0.metadata.receipt_document.totals.amount_with_vat', 950);
 
         $this->assertDatabaseHas('purchase_receipts', [
             'organization_id' => $context->organization->id,
@@ -191,6 +195,70 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         $this->assertSame(1, PurchaseOrder::query()
             ->where('accepted_supplier_proposal_id', $secondProposal->id)
             ->count());
+    }
+
+    public function test_purchase_order_receipt_number_is_unique_across_organizations(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreignContext = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id);
+        $purchaseRequest = $this->createPurchaseRequest($context->organization->id, $material->id);
+        $supplier = $this->createSupplier($context->organization->id, 'Receipt Supplier', 'receipt@example.test');
+        $warehouse = $this->createWarehouse($context->organization->id);
+        $foreignWarehouse = $this->createWarehouse($foreignContext->organization->id);
+        $foreignOrder = $this->createForeignPurchaseOrder($foreignContext);
+        $existingNumber = 'PR-'.now()->format('Ym').'-0001';
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        PurchaseReceipt::query()->create([
+            'organization_id' => $foreignContext->organization->id,
+            'purchase_order_id' => $foreignOrder->id,
+            'warehouse_id' => $foreignWarehouse->id,
+            'receipt_number' => $existingNumber,
+            'receipt_date' => now()->toDateString(),
+        ]);
+
+        $purchaseOrder = PurchaseOrder::query()->create([
+            'organization_id' => $context->organization->id,
+            'purchase_request_id' => $purchaseRequest->id,
+            'supplier_id' => $supplier->id,
+            'order_number' => 'PO-RECEIPT-'.uniqid(),
+            'order_date' => now()->toDateString(),
+            'status' => PurchaseOrderStatusEnum::CONFIRMED,
+            'total_amount' => 500,
+            'currency' => 'RUB',
+        ]);
+
+        $item = PurchaseOrderItem::query()->create([
+            'purchase_order_id' => $purchaseOrder->id,
+            'material_id' => $material->id,
+            'material_name' => $material->name,
+            'quantity' => 5,
+            'unit' => 'pcs',
+            'unit_price' => 100,
+            'total_price' => 500,
+        ]);
+
+        $receiveResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receive-materials", [
+                'warehouse_id' => $warehouse->id,
+                'items' => [
+                    [
+                        'item_id' => $item->id,
+                        'quantity_received' => 5,
+                        'price' => 100,
+                    ],
+                ],
+            ]);
+
+        $receiveResponse->assertOk();
+        $this->assertNotSame($existingNumber, $receiveResponse->json('data.receipts.0.receipt_number'));
+        $this->assertDatabaseHas('purchase_receipts', [
+            'organization_id' => $context->organization->id,
+            'purchase_order_id' => $purchaseOrder->id,
+        ]);
     }
 
     public function test_supplier_flow_rejects_foreign_purchase_request_supplier_and_proposal_links_without_mutation(): void
@@ -334,11 +402,7 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
             ]);
 
         $decisionResponse->assertOk();
-
-        $acceptResponse = $this->withHeaders($context->authHeaders())
-            ->postJson("/api/v1/admin/procurement/proposals/{$proposal->id}/accept");
-
-        $acceptResponse->assertOk();
+        $this->assertSame(SupplierProposalStatusEnum::ACCEPTED, $proposal->fresh()->status);
 
         $purchaseOrder = PurchaseOrder::query()
             ->where('accepted_supplier_proposal_id', $proposal->id)
@@ -451,11 +515,7 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
             ]);
 
         $decisionResponse->assertOk();
-
-        $acceptResponse = $this->withHeaders($context->authHeaders())
-            ->postJson("/api/v1/admin/procurement/proposals/{$proposal->id}/accept");
-
-        $acceptResponse->assertOk();
+        $this->assertSame(SupplierProposalStatusEnum::ACCEPTED, $proposal->fresh()->status);
 
         $purchaseOrder = PurchaseOrder::query()
             ->where('accepted_supplier_proposal_id', $proposal->id)
@@ -585,7 +645,7 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
     {
         $purchaseRequest = PurchaseRequest::query()->create([
             'organization_id' => $organizationId,
-            'request_number' => 'PR-FLOW-' . $organizationId . '-' . uniqid(),
+            'request_number' => 'PR-FLOW-'.$organizationId.'-'.uniqid(),
             'status' => PurchaseRequestStatusEnum::APPROVED,
             'budget_currency' => 'RUB',
         ]);
@@ -606,7 +666,7 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         $purchaseRequest = PurchaseRequest::query()->create([
             'organization_id' => $organizationId,
             'site_request_id' => $siteRequestId,
-            'request_number' => 'PR-FREE-' . $organizationId . '-' . uniqid(),
+            'request_number' => 'PR-FREE-'.$organizationId.'-'.uniqid(),
             'status' => PurchaseRequestStatusEnum::APPROVED,
             'budget_currency' => 'RUB',
         ]);
@@ -633,7 +693,7 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
             'organization_id' => $context->organization->id,
             'purchase_request_id' => $purchaseRequest->id,
             'supplier_id' => $supplier->id,
-            'order_number' => 'PO-FOR-' . uniqid(),
+            'order_number' => 'PO-FOR-'.uniqid(),
             'order_date' => now()->toDateString(),
             'status' => PurchaseOrderStatusEnum::CONFIRMED,
             'total_amount' => 10,
@@ -668,7 +728,7 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         return Material::query()->create([
             'organization_id' => $organizationId,
             'name' => 'Rebar A500',
-            'code' => 'REB-FLOW-' . $organizationId . '-' . uniqid(),
+            'code' => 'REB-FLOW-'.$organizationId.'-'.uniqid(),
             'measurement_unit_id' => $unitId,
             'category' => 'Procurement',
             'default_price' => 100,
@@ -681,7 +741,7 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         return OrganizationWarehouse::query()->create([
             'organization_id' => $organizationId,
             'name' => 'Main warehouse',
-            'code' => 'WH-FLOW-' . $organizationId,
+            'code' => 'WH-FLOW-'.$organizationId,
             'warehouse_type' => OrganizationWarehouse::TYPE_CENTRAL,
             'is_main' => true,
             'is_active' => true,
