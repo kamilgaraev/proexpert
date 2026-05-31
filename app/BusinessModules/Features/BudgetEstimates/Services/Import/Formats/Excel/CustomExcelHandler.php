@@ -150,6 +150,8 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
     {
         $headerRow = $structure->headerRow ?? 0;
         $mapping = $this->mappingForStructure($structure);
+        $currentSectionPath = null;
+        $generatedSectionNumber = 0;
 
         foreach ($rows as $rowNumber => $row) {
             if ($rowNumber <= $headerRow || $this->isEmptyRow($row) || $this->isRepeatedHeader($row, $mapping)) {
@@ -159,21 +161,44 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
             $name = $this->value($row, $mapping['name'] ?? null);
             $code = $this->value($row, $mapping['code'] ?? null);
             $positionNumber = $this->value($row, $mapping['position_number'] ?? ($mapping['section_number'] ?? null));
-
-            if ($name === '' && $code === '') {
-                continue;
-            }
-
-            if ($this->isFooterRow($name)) {
-                continue;
-            }
-
-            $isSection = $this->isSectionRow($row, $name, $positionNumber, $mapping);
             $quantity = $this->number($this->value($row, $mapping['quantity'] ?? null));
             $unitPrice = $this->number($this->value($row, $mapping['unit_price'] ?? null));
             $total = $this->number($this->value($row, $mapping['total_price'] ?? ($mapping['current_total_amount'] ?? null)));
+            $section = $this->detectSectionRow($row, $name, $positionNumber, $code, $mapping, $quantity, $unitPrice, $total);
 
-            if (!$isSection && $name !== '' && $quantity === null && $unitPrice === null && $total === null && $code === '') {
+            if ($this->isFooterRow($name !== '' ? $name : $positionNumber)) {
+                continue;
+            }
+
+            if ($name === '' && $code === '' && $section === null) {
+                continue;
+            }
+
+            if ($section !== null) {
+                $sectionNumber = $section['number'];
+                if ($sectionNumber === null || $sectionNumber === '') {
+                    $generatedSectionNumber++;
+                    $sectionNumber = (string) $generatedSectionNumber;
+                }
+
+                $sectionPath = $section['path'] ?: $sectionNumber;
+                $currentSectionPath = $sectionPath;
+
+                yield new EstimateImportRowDTO(
+                    rowNumber: (int) $rowNumber,
+                    sectionNumber: $sectionNumber,
+                    itemName: $section['name'],
+                    isSection: true,
+                    itemType: 'section',
+                    level: $section['level'],
+                    sectionPath: $sectionPath,
+                    rawData: $row,
+                );
+
+                continue;
+            }
+
+            if ($name !== '' && $quantity === null && $unitPrice === null && $total === null && $code === '') {
                 continue;
             }
 
@@ -185,8 +210,9 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
                 quantity: $quantity,
                 unitPrice: $unitPrice,
                 code: $this->nullable($code),
-                isSection: $isSection,
+                isSection: false,
                 itemType: 'work',
+                sectionPath: $currentSectionPath,
                 rawData: $row,
                 currentTotalAmount: $total,
             );
@@ -365,19 +391,83 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
      * @param array<int, mixed> $row
      * @param array<string, string> $mapping
      */
-    protected function isSectionRow(array $row, string $name, string $positionNumber, array $mapping): bool
+    protected function detectSectionRow(
+        array $row,
+        string $name,
+        string $positionNumber,
+        string $code,
+        array $mapping,
+        ?float $quantity,
+        ?float $unitPrice,
+        ?float $total
+    ): ?array
     {
-        $normalized = mb_strtolower($name);
+        $unit = $this->value($row, $mapping['unit'] ?? null);
+        $hasMoneyOrQuantity = $quantity !== null || $unitPrice !== null || $total !== null;
+        $nameText = trim($name);
+        $positionText = trim($positionNumber);
 
-        if (preg_match('/^(раздел|глава|объект|локальная смета|смета)\b/u', $normalized) === 1) {
-            return true;
+        if ($hasMoneyOrQuantity || $unit !== '' || $code !== '') {
+            return null;
         }
 
-        $quantity = $this->value($row, $mapping['quantity'] ?? null);
-        $unitPrice = $this->value($row, $mapping['unit_price'] ?? null);
-        $total = $this->value($row, $mapping['total_price'] ?? ($mapping['current_total_amount'] ?? null));
+        foreach ([$nameText, $positionText] as $text) {
+            $explicit = $this->parseExplicitSectionTitle($text, $positionText);
+            if ($explicit !== null) {
+                return $explicit;
+            }
+        }
 
-        return $positionNumber === '' && $name !== '' && $quantity === '' && $unitPrice === '' && $total === '';
+        if ($nameText !== '' && $this->looksLikeSectionNumber($positionText)) {
+            return $this->sectionCandidate($positionText, $nameText);
+        }
+
+        if ($nameText !== '' && $positionText === '') {
+            return $this->sectionCandidate(null, $nameText);
+        }
+
+        return null;
+    }
+
+    private function parseExplicitSectionTitle(string $text, string $positionNumber): ?array
+    {
+        if ($text === '') {
+            return null;
+        }
+
+        if (preg_match('/^(раздел|глава|объект|локальная смета|смета)\s*(?:№|N|No\.?)?\s*(\d+(?:\.\d+)*)?[.\s:–—-]*(.*)$/iu', $text, $match) !== 1) {
+            return null;
+        }
+
+        $number = trim((string) ($match[2] ?? ''));
+        if ($number === '' && $this->looksLikeSectionNumber($positionNumber)) {
+            $number = $positionNumber;
+        }
+
+        $title = trim((string) ($match[3] ?? ''));
+        if ($title === '') {
+            $title = trim($text);
+        }
+
+        return $this->sectionCandidate($number !== '' ? $number : null, $title);
+    }
+
+    private function sectionCandidate(?string $number, string $name): array
+    {
+        $normalizedNumber = $number !== null ? trim($number, ". \t\n\r\0\x0B") : null;
+        $sectionName = trim($name, ". \t\n\r\0\x0B");
+
+        return [
+            'number' => $normalizedNumber,
+            'name' => $sectionName !== '' ? $sectionName : ($normalizedNumber ?? ''),
+            'path' => $normalizedNumber,
+            'level' => $normalizedNumber !== null ? substr_count($normalizedNumber, '.') : 0,
+        ];
+    }
+
+    private function looksLikeSectionNumber(string $value): bool
+    {
+        return preg_match('/^\d+(?:\.\d+)*\.?$/u', trim($value)) === 1;
     }
 
     protected function isFooterRow(string $name): bool

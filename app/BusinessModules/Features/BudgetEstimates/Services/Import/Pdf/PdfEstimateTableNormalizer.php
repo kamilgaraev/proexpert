@@ -18,41 +18,45 @@ final class PdfEstimateTableNormalizer
         $rows = [];
         $lines = $this->normalizeLines($text);
         $linesCount = count($lines);
+        $currentSectionPath = null;
 
         for ($index = 0; $index < $linesCount; $index++) {
             $line = $lines[$index];
-            $sectionMatch = $this->matchSection($line);
+            $sectionMatch = $this->matchExplicitSection($line);
             if ($sectionMatch !== null) {
-                $rows[] = new EstimateImportRowDTO(
-                    rowNumber: $index + 1,
-                    itemName: $sectionMatch,
-                    isSection: true,
-                    rawData: [$line],
-                );
+                $section = $this->sectionDto($sectionMatch, $index + 1, $line);
+                $currentSectionPath = $section->sectionPath;
+                $rows[] = $section;
                 continue;
             }
 
-            if (!$this->looksLikeItemStart($line)) {
-                continue;
-            }
+            if ($this->looksLikeItemStart($line)) {
+                $candidate = $line;
+                for ($span = 0; $span < self::MAX_ROW_LINE_SPAN && ($index + $span) < $linesCount; $span++) {
+                    if ($span > 0) {
+                        $nextLine = $lines[$index + $span];
+                        if ($this->looksLikeItemStart($nextLine) || $this->matchExplicitSection($nextLine) !== null) {
+                            break;
+                        }
 
-            $candidate = $line;
-            for ($span = 0; $span < self::MAX_ROW_LINE_SPAN && ($index + $span) < $linesCount; $span++) {
-                if ($span > 0) {
-                    $nextLine = $lines[$index + $span];
-                    if ($this->looksLikeItemStart($nextLine) || $this->matchSection($nextLine) !== null) {
-                        break;
+                        $candidate .= ' ' . $nextLine;
                     }
 
-                    $candidate .= ' ' . $nextLine;
+                    $row = $this->parseItemRow($candidate, $index + 1, $currentSectionPath);
+                    if ($row !== null) {
+                        $rows[] = $row;
+                        $index += $span;
+                        continue 2;
+                    }
                 }
+            }
 
-                $row = $this->parseItemRow($candidate, $index + 1);
-                if ($row !== null) {
-                    $rows[] = $row;
-                    $index += $span;
-                    continue 2;
-                }
+            $sectionMatch = $this->matchNumberedSection($line);
+            if ($sectionMatch !== null) {
+                $section = $this->sectionDto($sectionMatch, $index + 1, $line);
+                $currentSectionPath = $section->sectionPath;
+                $rows[] = $section;
+                continue;
             }
         }
 
@@ -79,13 +83,79 @@ final class PdfEstimateTableNormalizer
         return $normalized;
     }
 
-    private function matchSection(string $line): ?string
+    /**
+     * @return array{number: string|null, name: string, path: string|null, level: int}|null
+     */
+    private function matchExplicitSection(string $line): ?array
     {
-        if (preg_match('/^(раздел|глава)\s+(.+)/ui', $line, $sectionMatch) !== 1) {
+        if (preg_match('/^(раздел|глава)\s*(?:№|N|No\.?)?\s*(\d+(?:\.\d+)*)?[.\s:–—-]*(.*)$/ui', $line, $sectionMatch) !== 1) {
             return null;
         }
 
-        return trim($sectionMatch[0]);
+        $number = trim((string) ($sectionMatch[2] ?? ''));
+        $name = trim((string) ($sectionMatch[3] ?? ''));
+
+        return $this->sectionData($number !== '' ? $number : null, $name !== '' ? $name : trim($line));
+    }
+
+    /**
+     * @return array{number: string|null, name: string, path: string|null, level: int}|null
+     */
+    private function matchNumberedSection(string $line): ?array
+    {
+        if (preg_match('/^(\d+(?:\.\d+)*)\s+(.+)$/u', $line, $match) !== 1) {
+            return null;
+        }
+
+        $name = trim($match[2]);
+        if ($name === '' || !$this->hasLetters($name) || $this->startsWithColumnNumberSequence($name)) {
+            return null;
+        }
+
+        $tokens = preg_split('/\s+/u', $name) ?: [];
+        if ($this->startsWithScaleUnitNoise($match[1], $tokens)) {
+            return null;
+        }
+
+        $firstToken = $tokens[0] ?? '';
+        if ($this->looksLikeRateCode($firstToken) || $this->isSummaryOrResourceRow($name)) {
+            return null;
+        }
+
+        return $this->sectionData($match[1], $name);
+    }
+
+    /**
+     * @param array{number: string|null, name: string, path: string|null, level: int} $section
+     */
+    private function sectionDto(array $section, int $rowNumber, string $line): EstimateImportRowDTO
+    {
+        return new EstimateImportRowDTO(
+            rowNumber: $rowNumber,
+            sectionNumber: $section['number'],
+            itemName: $section['name'],
+            isSection: true,
+            itemType: 'section',
+            level: $section['level'],
+            sectionPath: $section['path'],
+            rawData: [$line],
+        );
+    }
+
+    /**
+     * @return array{number: string|null, name: string, path: string|null, level: int}
+     */
+    private function sectionData(?string $number, string $name): array
+    {
+        $normalizedNumber = $number !== null ? trim($number, ". \t\n\r\0\x0B") : null;
+        $sectionName = trim($name, ". \t\n\r\0\x0B");
+
+        return [
+            'number' => $normalizedNumber,
+            'name' => $sectionName !== '' ? $sectionName : ($normalizedNumber ?? ''),
+            'path' => $normalizedNumber,
+            'level' => $normalizedNumber !== null ? substr_count($normalizedNumber, '.') : 0,
+        ];
     }
 
     private function looksLikeItemStart(string $line): bool
@@ -93,7 +163,7 @@ final class PdfEstimateTableNormalizer
         return preg_match('/^\d+(?:\.\d+)*\s+\S+/u', $line) === 1;
     }
 
-    private function parseItemRow(string $line, int $rowNumber): ?EstimateImportRowDTO
+    private function parseItemRow(string $line, int $rowNumber, ?string $currentSectionPath): ?EstimateImportRowDTO
     {
         if (preg_match('/^(\d+(?:\.\d+)*)\s+(.+)$/u', $line, $match) !== 1) {
             return null;
@@ -164,6 +234,7 @@ final class PdfEstimateTableNormalizer
             unitPrice: $unitPrice,
             code: $code,
             isSection: false,
+            sectionPath: $currentSectionPath,
             rawData: [$line],
             currentTotalAmount: $total,
         );
@@ -211,6 +282,11 @@ final class PdfEstimateTableNormalizer
     private function hasLetters(string $value): bool
     {
         return preg_match('/\p{L}/u', $value) === 1;
+    }
+
+    private function startsWithColumnNumberSequence(string $value): bool
+    {
+        return preg_match('/^(?:\d+\s+){3,}\d+/u', $value) === 1;
     }
 
     private function number(string $value): float

@@ -104,6 +104,35 @@ class ImportContractCleanupTest extends TestCase
         }
     }
 
+    public function test_custom_excel_handler_preserves_numbered_sections_for_arbitrary_tables(): void
+    {
+        $filePath = $this->createTemporarySpreadsheet([
+            ['№', 'Наименование работ', 'Ед. изм.', 'Кол-во', 'Цена', 'Сумма'],
+            ['1', 'Земляные работы', null, null, null, null],
+            ['1.1', 'Разработка грунта вручную', 'м3', 2, 100, 200],
+            ['2', 'Фундамент', null, null, null, null],
+            ['2.1', 'Устройство основания', 'м2', 3, 300, 900],
+        ]);
+
+        try {
+            $handler = new CustomExcelHandler(new SpreadsheetTableReader(), new SpreadsheetHeaderDetector());
+            $session = new ImportSession();
+            $structure = $handler->detectStructure($session, $filePath);
+            $preview = $handler->preview($session, $filePath, $structure);
+
+            self::assertCount(2, $preview->sections);
+            self::assertSame('1', $preview->sections[0]['section_number'] ?? null);
+            self::assertSame('1', $preview->sections[0]['section_path'] ?? null);
+            self::assertSame('Земляные работы', $preview->sections[0]['item_name'] ?? null);
+            self::assertSame('1', $preview->items[0]['section_path'] ?? null);
+            self::assertSame('2', $preview->sections[1]['section_number'] ?? null);
+            self::assertSame('2', $preview->items[1]['section_path'] ?? null);
+            self::assertSame(1100.0, $preview->totals['total_amount'] ?? null);
+        } finally {
+            @unlink($filePath);
+        }
+    }
+
     public function test_spreadsheet_ai_column_mapper_overrides_price_column_misclassified_as_code(): void
     {
         $provider = new class implements LLMProviderInterface {
@@ -343,6 +372,26 @@ class ImportContractCleanupTest extends TestCase
         self::assertSame(2.5, $rows[0]->quantity);
         self::assertSame(1000.0, $rows[0]->unitPrice);
         self::assertSame(12500.0, $rows[0]->currentTotalAmount);
+    }
+
+    public function test_pdf_table_normalizer_preserves_numbered_sections(): void
+    {
+        $rows = (new PdfEstimateTableNormalizer())->normalize(implode("\n", [
+            '1 Земляные работы',
+            '1.1 Разработка грунта вручную м3 2 100 200',
+            '2 Фундамент',
+            '2.1 Устройство основания м2 3 300 900',
+        ]));
+
+        self::assertCount(4, $rows);
+        self::assertTrue($rows[0]->isSection);
+        self::assertSame('1', $rows[0]->sectionNumber);
+        self::assertSame('1', $rows[0]->sectionPath);
+        self::assertSame('Земляные работы', $rows[0]->itemName);
+        self::assertSame('1', $rows[1]->sectionPath);
+        self::assertTrue($rows[2]->isSection);
+        self::assertSame('2', $rows[2]->sectionNumber);
+        self::assertSame('2', $rows[3]->sectionPath);
     }
 
     public function test_estimate_import_translation_keys_exist_in_primary_language_file(): void
