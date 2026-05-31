@@ -49,7 +49,7 @@ class ProjectPulseWorkFactSource implements ProjectPulseFactSourceInterface
                     'type' => 'completed_work',
                     'id' => (int) $row->id,
                     'label' => 'Выполненные работы #' . $row->id,
-                    'route' => '/completed-works/' . $row->id,
+                    'route' => '/workflow/completed-works',
                 ],
                 amount: $row->total_amount !== null ? (float) $row->total_amount : null,
                 occurredAt: $this->dateString($row->completion_date),

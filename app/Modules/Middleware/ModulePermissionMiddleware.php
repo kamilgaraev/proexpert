@@ -3,10 +3,12 @@
 namespace App\Modules\Middleware;
 
 use Closure;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use App\Modules\Services\ModulePermissionService;
 use Symfony\Component\HttpFoundation\Response;
+use function trans_message;
 
 class ModulePermissionMiddleware
 {
@@ -27,21 +29,21 @@ class ModulePermissionMiddleware
         $user = Auth::user();
         
         if (!$user) {
-            return \App\Http\Responses\AdminResponse::fromPayload([
+            return AdminResponse::fromPayload([
                 'success' => false,
-                'message' => 'РќРµРѕР±С…РѕРґРёРјР° Р°РІС‚РѕСЂРёР·Р°С†РёСЏ',
+                'message' => trans_message('errors.unauthenticated'),
             ], 401);
         }
 
         if (!$this->permissionService->userHasPermission($user, $permission)) {
             $permissionDetails = $this->permissionService->getPermissionDetails($permission);
             
-            return \App\Http\Responses\AdminResponse::fromPayload([
+            return AdminResponse::fromPayload([
                 'success' => false,
-                'message' => 'РќРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ РїСЂР°РІ РґРѕСЃС‚СѓРїР°',
+                'message' => trans_message('errors.forbidden'),
                 'required_permission' => $permission,
                 'available_in_modules' => $permissionDetails['provided_by_modules'],
-                'error_code' => 'PERMISSION_DENIED'
+                'error_code' => 'PERMISSION_DENIED',
             ], 403);
         }
 

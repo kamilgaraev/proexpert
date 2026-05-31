@@ -75,7 +75,7 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
             ->getJson("/api/v1/admin/projects/{$project->id}/works?per_page=20&sort_by=id&sort_direction=asc");
 
         $indexResponse->assertOk();
-        $indexIds = collect($indexResponse->json('data'))->pluck('id')->all();
+        $indexIds = collect($indexResponse->json('data.data', $indexResponse->json('data')))->pluck('id')->all();
         $this->assertContains($work->id, $indexIds);
         $this->assertNotContains($otherProjectWork->id, $indexIds);
 
@@ -162,7 +162,7 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
             ->getJson("/api/v1/admin/projects/{$project->id}/works?per_page=20");
 
         $indexResponse->assertOk();
-        $indexIds = collect($indexResponse->json('data'))->pluck('id')->all();
+        $indexIds = collect($indexResponse->json('data.data', $indexResponse->json('data')))->pluck('id')->all();
         $this->assertContains($ownWork->id, $indexIds);
         $this->assertNotContains($otherWork->id, $indexIds);
 

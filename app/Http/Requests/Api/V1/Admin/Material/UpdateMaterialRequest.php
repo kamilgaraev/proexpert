@@ -2,22 +2,22 @@
 
 namespace App\Http\Requests\Api\V1\Admin\Material;
 
-use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rule;
-use Illuminate\Support\Facades\Auth;
-use App\Models\Role;
-use App\Models\Material; // РРјРїРѕСЂС‚РёСЂСѓРµРј РјРѕРґРµР»СЊ Material
+use App\Http\Responses\AdminResponse;
+use App\Models\Material;
 use Illuminate\Contracts\Validation\Validator;
+use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use function trans_message;
 
 class UpdateMaterialRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        // Р”РѕСЃС‚СѓРї Рє РєРѕРЅС‚СЂРѕР»Р»РµСЂСѓ СѓР¶Рµ РїСЂРѕРІРµСЂРµРЅ middleware СЃС‚РµРєРѕРј Р°РІС‚РѕСЂРёР·Р°С†РёРё Р°РґРјРёРЅРєРё
-        return Auth::check(); 
+        return Auth::check();
     }
 
     public function rules(): array
@@ -25,13 +25,13 @@ class UpdateMaterialRequest extends FormRequest
         $organizationId = $this->getOrganizationId();
 
         /** @var Material|string|null $material */
-        $material = $this->route('material'); // РњРѕР¶РµС‚ Р±С‹С‚СЊ РјРѕРґРµР»СЊСЋ РёР»Рё ID
+        $material = $this->route('material');
 
         if ($material && !($material instanceof Material)) {
             $material = Material::find($material);
         }
 
-        $materialId = $material?->id; // ID С‚РµРєСѓС‰РµРіРѕ РјР°С‚РµСЂРёР°Р»Р°
+        $materialId = $material?->id;
 
         return [
             'name' => [
@@ -44,7 +44,7 @@ class UpdateMaterialRequest extends FormRequest
                         return $query->where('organization_id', $organizationId)
                                     ->whereNull('deleted_at');
                     })
-                    ->ignore($materialId), // РРіРЅРѕСЂРёСЂСѓРµРј С‚РµРєСѓС‰РёР№ РјР°С‚РµСЂРёР°Р»
+                    ->ignore($materialId),
             ],
             'code' => 'sometimes|nullable|string|max:50',
             'measurement_unit_id' => [
@@ -58,19 +58,18 @@ class UpdateMaterialRequest extends FormRequest
             'default_price' => 'sometimes|nullable|numeric|min:0',
             'additional_properties' => 'sometimes|nullable|array',
             'is_active' => 'sometimes|boolean',
-            
-            // РџРѕР»СЏ РґР»СЏ Р±СѓС…РіР°Р»С‚РµСЂСЃРєРѕР№ РёРЅС‚РµРіСЂР°С†РёРё
+
             'external_code' => [
                 'sometimes',
-                'nullable', 
-                'string', 
+                'nullable',
+                'string',
                 'max:100',
                 Rule::unique('materials', 'external_code')
                     ->where(function ($query) use ($organizationId) {
                         return $query->where('organization_id', $organizationId)
                                     ->whereNull('deleted_at');
                     })
-                    ->ignore($materialId), // РРіРЅРѕСЂРёСЂСѓРµРј С‚РµРєСѓС‰РёР№ РјР°С‚РµСЂРёР°Р»
+                    ->ignore($materialId),
             ],
             'sbis_nomenclature_code' => 'sometimes|nullable|string|max:100',
             'sbis_unit_code' => 'sometimes|nullable|string|max:100',
@@ -105,21 +104,16 @@ class UpdateMaterialRequest extends FormRequest
             });
     }
 
-    /**
-     * РџРѕР»СѓС‡РёС‚СЊ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊСЃРєРёРµ СЃРѕРѕР±С‰РµРЅРёСЏ РѕР± РѕС€РёР±РєР°С… РґР»СЏ РїСЂР°РІРёР» РїСЂРѕРІРµСЂРєРё.
-     *
-     * @return array<string, string>
-     */
     public function messages(): array
     {
         return [
-            'name.required' => 'РќР°Р·РІР°РЅРёРµ РјР°С‚РµСЂРёР°Р»Р° РѕР±СЏР·Р°С‚РµР»СЊРЅРѕ РґР»СЏ Р·Р°РїРѕР»РЅРµРЅРёСЏ.',
-            'name.unique' => 'РњР°С‚РµСЂРёР°Р» СЃ С‚Р°РєРёРј РЅР°Р·РІР°РЅРёРµРј СѓР¶Рµ СЃСѓС‰РµСЃС‚РІСѓРµС‚ РІ РІР°С€РµР№ РѕСЂРіР°РЅРёР·Р°С†РёРё.',
-            'measurement_unit_id.required' => 'РќРµРѕР±С…РѕРґРёРјРѕ СѓРєР°Р·Р°С‚СЊ РµРґРёРЅРёС†Сѓ РёР·РјРµСЂРµРЅРёСЏ.',
-            'measurement_unit_id.exists' => 'Р’С‹Р±СЂР°РЅРЅР°СЏ РµРґРёРЅРёС†Р° РёР·РјРµСЂРµРЅРёСЏ РЅРµ СЃСѓС‰РµСЃС‚РІСѓРµС‚.',
-            'external_code.unique' => 'РњР°С‚РµСЂРёР°Р» СЃ С‚Р°РєРёРј РІРЅРµС€РЅРёРј РєРѕРґРѕРј СѓР¶Рµ СЃСѓС‰РµСЃС‚РІСѓРµС‚ РІ РІР°С€РµР№ РѕСЂРіР°РЅРёР·Р°С†РёРё.',
-            'default_price.min' => 'Р¦РµРЅР° РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РЅРµ РјРѕР¶РµС‚ Р±С‹С‚СЊ РѕС‚СЂРёС†Р°С‚РµР»СЊРЅРѕР№.',
-            'consumption_rates.*.min' => 'РќРѕСЂРјР° СЃРїРёСЃР°РЅРёСЏ РЅРµ РјРѕР¶РµС‚ Р±С‹С‚СЊ РѕС‚СЂРёС†Р°С‚РµР»СЊРЅРѕР№.',
+            'name.required' => trans_message('materials.validation.name_required'),
+            'name.unique' => trans_message('materials.validation.name_unique'),
+            'measurement_unit_id.required' => trans_message('materials.validation.measurement_unit_required'),
+            'measurement_unit_id.exists' => trans_message('materials.validation.measurement_unit_exists'),
+            'external_code.unique' => trans_message('materials.validation.external_code_unique'),
+            'default_price.min' => trans_message('materials.validation.default_price_min'),
+            'consumption_rates.*.min' => trans_message('materials.validation.consumption_rate_min'),
         ];
     }
 
@@ -128,9 +122,9 @@ class UpdateMaterialRequest extends FormRequest
         $errors = (new ValidationException($validator))->errors();
 
         throw new HttpResponseException(
-            \App\Http\Responses\AdminResponse::fromPayload([
+            AdminResponse::fromPayload([
                 'success' => false,
-                'message' => 'Р”Р°РЅРЅС‹Рµ РЅРµ РїСЂРѕС€Р»Рё РІР°Р»РёРґР°С†РёСЋ.',
+                'message' => trans_message('errors.validation_failed'),
                 'errors' => $errors,
             ], JsonResponse::HTTP_UNPROCESSABLE_ENTITY)
         );

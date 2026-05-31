@@ -109,7 +109,7 @@ final class RagPromptContextBuilder
             'normative_rate', 'estimate_catalog_item' => '/catalogs/estimate-positions',
             'purchase_request' => $entityId !== null ? "/procurement/purchase-requests/{$entityId}" : null,
             'site_request' => $entityId !== null ? "/site-requests/{$entityId}" : null,
-            'completed_work' => $entityId !== null ? "/completed-works/{$entityId}" : null,
+            'completed_work' => $entityId !== null ? '/workflow/completed-works' : null,
             'construction_journal_entry' => $entityId !== null && $journalId !== null
                 ? "/journals/{$journalId}/entries/{$entityId}"
                 : ($result->projectId !== null ? "/projects/{$result->projectId}/journals" : null),

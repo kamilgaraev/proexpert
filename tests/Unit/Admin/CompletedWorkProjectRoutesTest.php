@@ -65,10 +65,6 @@ class CompletedWorkProjectRoutesTest extends TestCase
     public function test_controller_methods_match_completed_work_route_parameter_name(): void
     {
         $methods = [
-            'show',
-            'update',
-            'destroy',
-            'syncMaterials',
             'attachScheduleTask',
             'createScheduleTaskFromWork',
         ];

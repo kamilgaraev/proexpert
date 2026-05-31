@@ -3,10 +3,12 @@
 namespace App\Modules\Middleware;
 
 use Closure;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use App\Modules\Services\ModulePermissionService;
 use Symfony\Component\HttpFoundation\Response;
+use function trans_message;
 
 class ModuleAccessMiddleware
 {
@@ -22,18 +24,18 @@ class ModuleAccessMiddleware
         $user = Auth::user();
         
         if (!$user) {
-            return \App\Http\Responses\AdminResponse::fromPayload([
+            return AdminResponse::fromPayload([
                 'success' => false,
-                'message' => 'РќРµРѕР±С…РѕРґРёРјР° Р°РІС‚РѕСЂРёР·Р°С†РёСЏ',
+                'message' => trans_message('errors.unauthenticated'),
             ], 401);
         }
 
         if (!$this->permissionService->userHasModuleAccess($user, $moduleSlug)) {
-            return \App\Http\Responses\AdminResponse::fromPayload([
+            return AdminResponse::fromPayload([
                 'success' => false,
-                'message' => 'Р”РѕСЃС‚СѓРї Рє РјРѕРґСѓР»СЋ Р·Р°РїСЂРµС‰РµРЅ',
+                'message' => trans_message('errors.forbidden'),
                 'required_module' => $moduleSlug,
-                'error_code' => 'MODULE_ACCESS_DENIED'
+                'error_code' => 'MODULE_ACCESS_DENIED',
             ], 403);
         }
 

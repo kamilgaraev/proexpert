@@ -10,7 +10,6 @@ use App\DTOs\CompletedWork\CompletedWorkMaterialDTO;
 use App\Http\Controllers\Controller;
 use App\Http\Middleware\ProjectContextMiddleware;
 use App\Http\Requests\Api\V1\Admin\CompletedWork\StoreCompletedWorkRequest;
-use App\Http\Requests\Api\V1\Admin\CompletedWork\SyncCompletedWorkMaterialsRequest;
 use App\Http\Requests\Api\V1\Admin\CompletedWork\UpdateCompletedWorkRequest;
 use App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkCollection;
 use App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkResource;
@@ -149,27 +148,6 @@ class CompletedWorkController extends Controller
         }
     }
 
-    public function show(CompletedWork $completed_work): JsonResponse
-    {
-        $completedWork = $completed_work;
-
-        try {
-            if ($completedWork->organization_id !== Auth::user()->current_organization_id) {
-                return AdminResponse::error(trans_message('completed_work.not_found'), 404);
-            }
-
-            return AdminResponse::success(new CompletedWorkResource($this->loadWorkRelations($completedWork)));
-        } catch (\Throwable $e) {
-            Log::error('completed_work.show.error', [
-                'error' => $e->getMessage(),
-                'completed_work_id' => $completedWork->id,
-                'user_id' => Auth::id(),
-            ]);
-
-            return AdminResponse::error(trans_message('completed_work.load_error'), 500);
-        }
-    }
-
     public function showProjectWork(int $project, CompletedWork $completed_work): JsonResponse
     {
         if ((int) $completed_work->project_id !== $project) {
@@ -181,41 +159,6 @@ class CompletedWorkController extends Controller
         }
 
         return AdminResponse::success(new CompletedWorkResource($this->loadWorkRelations($completed_work)));
-    }
-
-    public function update(UpdateCompletedWorkRequest $request, CompletedWork $completed_work): JsonResponse
-    {
-        $completedWork = $completed_work;
-
-        if ($completedWork->organization_id !== Auth::user()->current_organization_id) {
-            return AdminResponse::error(trans_message('completed_work.forbidden'), 403);
-        }
-
-        try {
-            $dto = $request->toDto();
-            $updatedWork = $this->completedWorkService->update($completedWork->id, $dto);
-
-            return AdminResponse::success(
-                new CompletedWorkResource($this->loadWorkRelations($updatedWork)),
-                trans_message('completed_work.updated')
-            );
-        } catch (BusinessLogicException $e) {
-            Log::error('completed_work.update.error', [
-                'error' => $e->getMessage(),
-                'completed_work_id' => $completedWork->id,
-                'user_id' => Auth::id(),
-            ]);
-
-            return AdminResponse::error($e->getMessage(), $e->getCode() ?: Response::HTTP_BAD_REQUEST);
-        } catch (\Throwable $e) {
-            Log::error('completed_work.update.error', [
-                'error' => $e->getMessage(),
-                'completed_work_id' => $completedWork->id,
-                'user_id' => Auth::id(),
-            ]);
-
-            return AdminResponse::error(trans_message('completed_work.update_error'), 500);
-        }
     }
 
     public function updateProjectWork(UpdateCompletedWorkRequest $request, int $project, CompletedWork $completed_work): JsonResponse
@@ -260,37 +203,6 @@ class CompletedWorkController extends Controller
         }
     }
 
-    public function destroy(CompletedWork $completed_work): JsonResponse
-    {
-        $completedWork = $completed_work;
-
-        if ($completedWork->organization_id !== Auth::user()->current_organization_id) {
-            return AdminResponse::error(trans_message('completed_work.forbidden'), 403);
-        }
-
-        try {
-            $this->completedWorkService->delete($completedWork->id, $completedWork->organization_id);
-
-            return AdminResponse::success(null, trans_message('completed_work.deleted'), Response::HTTP_NO_CONTENT);
-        } catch (BusinessLogicException $e) {
-            Log::error('completed_work.destroy.error', [
-                'error' => $e->getMessage(),
-                'completed_work_id' => $completedWork->id,
-                'user_id' => Auth::id(),
-            ]);
-
-            return AdminResponse::error($e->getMessage(), $e->getCode() ?: Response::HTTP_BAD_REQUEST);
-        } catch (\Throwable $e) {
-            Log::error('completed_work.destroy.error', [
-                'error' => $e->getMessage(),
-                'completed_work_id' => $completedWork->id,
-                'user_id' => Auth::id(),
-            ]);
-
-            return AdminResponse::error(trans_message('completed_work.delete_error'), 500);
-        }
-    }
-
     public function destroyProjectWork(int $project, CompletedWork $completed_work): JsonResponse
     {
         if ((int) $completed_work->project_id !== $project) {
@@ -326,77 +238,6 @@ class CompletedWorkController extends Controller
             ]);
 
             return AdminResponse::error(trans_message('completed_work.delete_error'), 500);
-        }
-    }
-
-    public function syncMaterials(SyncCompletedWorkMaterialsRequest $request, CompletedWork $completed_work): JsonResponse
-    {
-        $completedWork = $completed_work;
-
-        if ($completedWork->organization_id !== Auth::user()->current_organization_id) {
-            return AdminResponse::error(trans_message('completed_work.forbidden'), 403);
-        }
-
-        try {
-            $materials = $request->getMaterialsArray();
-            $updatedWork = $this->completedWorkService->syncCompletedWorkMaterials(
-                $completedWork->id,
-                $materials,
-                $completedWork->organization_id
-            );
-
-            return AdminResponse::success(
-                new CompletedWorkResource($this->loadWorkRelations($updatedWork)),
-                trans_message('completed_work.materials_synced')
-            );
-        } catch (BusinessLogicException $e) {
-            Log::error('completed_work.sync_materials.error', [
-                'error' => $e->getMessage(),
-                'completed_work_id' => $completedWork->id,
-                'user_id' => Auth::id(),
-            ]);
-
-            return AdminResponse::error($e->getMessage(), $e->getCode() ?: Response::HTTP_BAD_REQUEST);
-        } catch (\Throwable $e) {
-            Log::error('completed_work.sync_materials.error', [
-                'error' => $e->getMessage(),
-                'completed_work_id' => $completedWork->id,
-                'user_id' => Auth::id(),
-            ]);
-
-            return AdminResponse::error(trans_message('completed_work.materials_sync_error'), 500);
-        }
-    }
-
-    public function getWorkTypeMaterialDefaults(Request $request): JsonResponse
-    {
-        $request->validate([
-            'work_type_id' => 'required|integer|exists:work_types,id',
-        ]);
-
-        $organizationId = Auth::user()->current_organization_id;
-        $workTypeId = (int) $request->input('work_type_id');
-
-        try {
-            $defaults = $this->completedWorkService->getWorkTypeMaterialDefaults($workTypeId, $organizationId);
-
-            return AdminResponse::success($defaults);
-        } catch (BusinessLogicException $e) {
-            Log::error('completed_work.material_defaults.error', [
-                'error' => $e->getMessage(),
-                'work_type_id' => $workTypeId,
-                'user_id' => Auth::id(),
-            ]);
-
-            return AdminResponse::error($e->getMessage(), $e->getCode() ?: Response::HTTP_BAD_REQUEST);
-        } catch (\Throwable $e) {
-            Log::error('completed_work.material_defaults.error', [
-                'error' => $e->getMessage(),
-                'work_type_id' => $workTypeId,
-                'user_id' => Auth::id(),
-            ]);
-
-            return AdminResponse::error(trans_message('completed_work.material_defaults_error'), 500);
         }
     }
 

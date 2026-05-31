@@ -241,7 +241,6 @@ Route::prefix('v1/admin')->middleware('admin.response')->name('admin.')->group(f
         
         // OLD ROUTES - Закомментированы для Project-Based RBAC
         // Используйте новые маршруты: /api/v1/admin/projects/{project}/...
-        // require __DIR__ . '/api/v1/admin/completed_works.php';
         // require __DIR__ . '/api/v1/admin/agreements.php';
         
         // Сюда можно будет добавлять require для новых файлов маршрутов админки

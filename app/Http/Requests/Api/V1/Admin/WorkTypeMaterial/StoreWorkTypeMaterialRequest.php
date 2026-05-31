@@ -2,20 +2,22 @@
 
 namespace App\Http\Requests\Api\V1\Admin\WorkTypeMaterial;
 
-use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Support\Facades\Auth;
 use App\DTOs\WorkTypeMaterial\WorkTypeMaterialDTO;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Contracts\Validation\Validator;
+use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use function trans_message;
 
 class StoreWorkTypeMaterialRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return Auth::check(); // Р”РѕСЃС‚СѓРї Рє Р°РґРјРёРЅРєРµ РѕР±С‹С‡РЅРѕ РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ middleware РіСЂСѓРїРїС‹
+        return Auth::check();
     }
 
     public function rules(): array
@@ -42,9 +44,9 @@ class StoreWorkTypeMaterialRequest extends FormRequest
     {
         $errors = (new ValidationException($validator))->errors();
         throw new HttpResponseException(
-            \App\Http\Responses\AdminResponse::fromPayload([
+            AdminResponse::fromPayload([
                 'success' => false,
-                'message' => 'Р”Р°РЅРЅС‹Рµ РЅРµ РїСЂРѕС€Р»Рё РІР°Р»РёРґР°С†РёСЋ.',
+                'message' => trans_message('errors.validation_failed'),
                 'errors' => $errors,
             ], JsonResponse::HTTP_UNPROCESSABLE_ENTITY)
         );
@@ -59,11 +61,10 @@ class StoreWorkTypeMaterialRequest extends FormRequest
         foreach ($this->validated()['materials'] as $materialData) {
             $dtos[] = new WorkTypeMaterialDTO(
                 material_id: $materialData['material_id'],
-                default_quantity: (float)$materialData['default_quantity'],
-                notes: $materialData['notes'] ?? null
-                // organization_id Рё work_type_id Р±СѓРґСѓС‚ СѓСЃС‚Р°РЅРѕРІР»РµРЅС‹ РІ СЃРµСЂРІРёСЃРµ
+                default_quantity: (float) $materialData['default_quantity'],
+                notes: $materialData['notes'] ?? null,
             );
         }
         return $dtos;
     }
-} 
+}

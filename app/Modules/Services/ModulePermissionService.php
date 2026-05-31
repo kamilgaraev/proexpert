@@ -2,10 +2,12 @@
 
 namespace App\Modules\Services;
 
+use App\Http\Responses\AdminResponse;
 use App\Models\User;
 use App\Models\Module;
 use App\Modules\Core\AccessController;
 use Illuminate\Support\Collection;
+use function trans_message;
 
 class ModulePermissionService
 {
@@ -146,21 +148,21 @@ class ModulePermissionService
             $user = auth()->user();
             
             if (!$user) {
-                return \App\Http\Responses\AdminResponse::fromPayload([
+                return AdminResponse::fromPayload([
                     'success' => false,
-                    'message' => 'РќРµРѕР±С…РѕРґРёРјР° Р°РІС‚РѕСЂРёР·Р°С†РёСЏ'
+                    'message' => trans_message('errors.unauthenticated'),
                 ], 401);
             }
             
             if (!$this->userHasModuleAccess($user, $moduleSlug)) {
-                return \App\Http\Responses\AdminResponse::fromPayload([
+                return AdminResponse::fromPayload([
                     'success' => false,
-                    'message' => 'Р”РѕСЃС‚СѓРї Рє РјРѕРґСѓР»СЋ Р·Р°РїСЂРµС‰РµРЅ',
-                    'required_module' => $moduleSlug
+                    'message' => trans_message('errors.forbidden'),
+                    'required_module' => $moduleSlug,
                 ], 403);
             }
             
-            return null; // Р”РѕСЃС‚СѓРї СЂР°Р·СЂРµС€РµРЅ
+            return null;
         };
     }
     
@@ -170,24 +172,24 @@ class ModulePermissionService
             $user = auth()->user();
             
             if (!$user) {
-                return \App\Http\Responses\AdminResponse::fromPayload([
+                return AdminResponse::fromPayload([
                     'success' => false,
-                    'message' => 'РќРµРѕР±С…РѕРґРёРјР° Р°РІС‚РѕСЂРёР·Р°С†РёСЏ'
+                    'message' => trans_message('errors.unauthenticated'),
                 ], 401);
             }
             
             if (!$this->userHasPermission($user, $permission)) {
                 $permissionDetails = $this->getPermissionDetails($permission);
                 
-                return \App\Http\Responses\AdminResponse::fromPayload([
+                return AdminResponse::fromPayload([
                     'success' => false,
-                    'message' => 'РќРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ РїСЂР°РІ РґРѕСЃС‚СѓРїР°',
+                    'message' => trans_message('errors.forbidden'),
                     'required_permission' => $permission,
-                    'available_in_modules' => $permissionDetails['provided_by_modules']
+                    'available_in_modules' => $permissionDetails['provided_by_modules'],
                 ], 403);
             }
             
-            return null; // Р”РѕСЃС‚СѓРї СЂР°Р·СЂРµС€РµРЅ
+            return null;
         };
     }
     

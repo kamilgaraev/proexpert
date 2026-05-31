@@ -9,7 +9,6 @@ use App\DTOs\CompletedWork\CompletedWorkMaterialDTO;
 use App\Services\Logging\LoggingService;
 use App\Services\Project\ProjectContextService;
 use App\Domain\Project\ValueObjects\ProjectContext;
-use Illuminate\Support\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 use App\Repositories\Interfaces\CompletedWorkRepositoryInterface;
 use App\Exceptions\BusinessLogicException;
@@ -375,35 +374,6 @@ class CompletedWorkService
         }
 
         $completedWork->materials()->sync($syncData);
-    }
-
-    public function syncCompletedWorkMaterials(int $completedWorkId, array $materials, int $organizationId): CompletedWork
-    {
-        $completedWork = $this->getById($completedWorkId, $organizationId);
-        
-        $this->syncMaterials($completedWork, $materials);
-        
-        return $completedWork->fresh(['materials.measurementUnit']);
-    }
-
-    public function getWorkTypeMaterialDefaults(int $workTypeId, int $organizationId): Collection
-    {
-        return DB::table('work_type_materials as wtm')
-            ->join('materials as m', 'wtm.material_id', '=', 'm.id')
-            ->leftJoin('measurement_units as mu', 'm.measurement_unit_id', '=', 'mu.id')
-            ->where('wtm.work_type_id', $workTypeId)
-            ->where('wtm.organization_id', $organizationId)
-            ->whereNull('wtm.deleted_at')
-            ->whereNull('m.deleted_at')
-            ->select([
-                'm.id as material_id',
-                'm.name as material_name',
-                'm.default_price',
-                'wtm.default_quantity as quantity',
-                'wtm.notes',
-                'mu.short_name as measurement_unit'
-            ])
-            ->get();
     }
 
     /**
