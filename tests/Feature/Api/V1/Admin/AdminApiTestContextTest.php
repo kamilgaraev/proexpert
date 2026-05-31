@@ -111,3 +111,25 @@ it('organization owner resolves mdm permissions through catalog management packa
         'organization_id' => $context->organization->id,
     ]))->toBeTrue();
 });
+
+it('organization owner resolves contractor marketplace permissions through contractor portal package access', function (): void {
+    /** @var \Tests\TestCase $this */
+    $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+
+    Cache::flush();
+
+    app()->instance(AccessController::class, \Mockery::mock(AccessController::class, function (MockInterface $mock) use ($context): void {
+        $mock->shouldReceive('hasModuleAccess')
+            ->withArgs(static fn (int $organizationId, string $module): bool => $organizationId === $context->organization->id)
+            ->andReturnUsing(static fn (int $organizationId, string $module): bool => $module === 'contractor-portal');
+    }));
+
+    app()->forgetInstance(ModulePermissionChecker::class);
+    app()->forgetInstance(PermissionResolver::class);
+    app()->forgetInstance(AuthorizationService::class);
+
+    expect(app(AuthorizationService::class)->can($context->user, 'contractor_marketplace.profile.view', [
+        'context_type' => 'organization',
+        'organization_id' => $context->organization->id,
+    ]))->toBeTrue();
+});

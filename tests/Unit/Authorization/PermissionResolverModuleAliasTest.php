@@ -76,4 +76,21 @@ class PermissionResolverModuleAliasTest extends TestCase
         $this->assertContains('one-c-basic-exchange', $resolver->variants('one_c_exchange'));
         $this->assertContains('one_c_exchange', $resolver->variants('one-c-basic-exchange'));
     }
+
+    public function test_contractor_marketplace_permission_uses_contractor_portal_module_alias(): void
+    {
+        $resolver = new class extends PermissionResolver {
+            public function __construct()
+            {
+            }
+
+            public function variants(string $module): array
+            {
+                return $this->expandModuleVariants($module);
+            }
+        };
+
+        $this->assertContains('contractor-portal', $resolver->variants('contractor_marketplace'));
+        $this->assertContains('contractor_marketplace', $resolver->variants('contractor-portal'));
+    }
 }

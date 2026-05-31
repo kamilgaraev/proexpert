@@ -536,6 +536,8 @@ class PermissionResolver
             'workforce' => 'workforce-management',
             'one_c_exchange' => 'one-c-basic-exchange',
             'one-c-exchange' => 'one-c-basic-exchange',
+            'contractor_marketplace' => 'contractor-portal',
+            'contractor-marketplace' => 'contractor-portal',
         ];
 
         $reverseMapping = [
@@ -550,6 +552,7 @@ class PermissionResolver
             'workflow-management' => 'completed_works',
             'workforce-management' => 'workforce',
             'one-c-basic-exchange' => 'one_c_exchange',
+            'contractor-portal' => 'contractor_marketplace',
         ];
 
         $variants = [
